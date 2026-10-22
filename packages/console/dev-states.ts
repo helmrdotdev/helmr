@@ -264,7 +264,7 @@ function deliveryPosts() {
     id: id(tail), turn_id: null, sequence: 1, role: "intermediate", continuation_ordinal: 0, status: "uncertain",
     text: "Agent progress that may already be in Slack", payload_expired_at: null, created_at: ago(3), desired_revision: 2,
     confirmed_revision: 0, publication_revision: 2, method: "chat.postMessage", attempt_id: id(795), message_ts: null,
-    root_known: true, opening: false, stream_state: "none", check_paused_at: now(), disposed_at: null, disposed_by: null,
+    root_known: true, opening: false, stream_status: "none", check_paused_at: now(), disposed_at: null, disposed_by: null,
     error: "history_no_match", ...fields,
   });
   return [

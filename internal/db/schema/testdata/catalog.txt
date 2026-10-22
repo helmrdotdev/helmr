@@ -739,6 +739,7 @@ column slack_app_registrations.credential_revision bigint not null default 0
 column slack_app_registrations.id uuid not null
 column slack_app_registrations.org_id uuid not null
 column slack_app_registrations.retired_at timestamp with time zone
+column slack_app_registrations.transport text not null
 column slack_channel_bindings.connection_id uuid not null
 column slack_channel_bindings.created_at timestamp with time zone not null default clock_timestamp()
 column slack_channel_bindings.environment_id uuid not null
@@ -831,7 +832,7 @@ column slack_posts.source_start_offset bigint
 column slack_posts.source_start_seq bigint
 column slack_posts.source_thread_id uuid
 column slack_posts.status text not null default 'pending'::text
-column slack_posts.stream_state text not null default 'none'::text
+column slack_posts.stream_status text not null default 'none'::text
 column slack_posts.suppressed_revision bigint not null default 0
 column slack_posts.thread_id uuid not null
 column slack_posts.thread_source_id uuid not null
@@ -862,6 +863,17 @@ column slack_requests.thread_id uuid
 column slack_requests.thread_source_id uuid
 column slack_requests.turn_id uuid
 column slack_requests.user_id uuid
+column slack_socket_connections.app_registration_id uuid not null
+column slack_socket_connections.claim_id uuid
+column slack_socket_connections.credential_revision bigint not null
+column slack_socket_connections.expires_at timestamp with time zone
+column slack_socket_connections.installation_id uuid not null
+column slack_socket_connections.last_connected_at timestamp with time zone
+column slack_socket_connections.last_received_at timestamp with time zone
+column slack_socket_connections.reason text
+column slack_socket_connections.replica_id uuid
+column slack_socket_connections.retry_at timestamp with time zone not null default clock_timestamp()
+column slack_socket_connections.status text not null
 column slack_thread_sources.created_at timestamp with time zone not null default clock_timestamp()
 column slack_thread_sources.environment_id uuid not null
 column slack_thread_sources.id uuid not null
@@ -1746,6 +1758,7 @@ constraint slack_app_registrations c CHECK (client_id <> ''::text)
 constraint slack_app_registrations c CHECK (credential_ciphertext IS NULL OR octet_length(credential_ciphertext) >= 16)
 constraint slack_app_registrations c CHECK (credential_nonce IS NULL OR octet_length(credential_nonce) = 12)
 constraint slack_app_registrations c CHECK (credential_revision >= 0)
+constraint slack_app_registrations c CHECK (transport = ANY (ARRAY['http'::text, 'socket'::text]))
 constraint slack_app_registrations f FOREIGN KEY (created_by_user_id) REFERENCES users(id)
 constraint slack_app_registrations f FOREIGN KEY (org_id) REFERENCES organizations(id)
 constraint slack_app_registrations p PRIMARY KEY (id)
@@ -1810,7 +1823,7 @@ constraint slack_posts c CHECK (octet_length(reconciliation_cursor) <= 4096)
 constraint slack_posts c CHECK (octet_length(source_digest) = 32)
 constraint slack_posts c CHECK (payload_expired_at IS NULL OR (status = ANY (ARRAY['posted'::text, 'failed'::text, 'suppressed'::text])) AND inflight_attempt_id IS NULL AND closed_at IS NOT NULL AND (status <> 'posted'::text OR desired_revision = confirmed_revision))
 constraint slack_posts c CHECK (post_key <> ''::text)
-constraint slack_posts c CHECK (presentation_path <> 'post'::text OR stream_state = 'none'::text)
+constraint slack_posts c CHECK (presentation_path <> 'post'::text OR stream_status = 'none'::text)
 constraint slack_posts c CHECK (presentation_path <> 'stream'::text OR recipient_user_id IS NOT NULL)
 constraint slack_posts c CHECK (presentation_path = ANY (ARRAY['post'::text, 'stream'::text]))
 constraint slack_posts c CHECK (reconciliation_pages >= 0)
@@ -1825,7 +1838,7 @@ constraint slack_posts c CHECK (source_start_seq <> source_end_seq OR source_end
 constraint slack_posts c CHECK (source_start_seq > 0)
 constraint slack_posts c CHECK (status <> 'posted'::text OR message_ts IS NOT NULL AND posted_at IS NOT NULL)
 constraint slack_posts c CHECK (status = ANY (ARRAY['pending'::text, 'sending'::text, 'posted'::text, 'uncertain'::text, 'failed'::text, 'suppressed'::text]))
-constraint slack_posts c CHECK (stream_state = ANY (ARRAY['none'::text, 'open'::text, 'stopped'::text, 'uncertain'::text]))
+constraint slack_posts c CHECK (stream_status = ANY (ARRAY['none'::text, 'open'::text, 'stopped'::text, 'uncertain'::text]))
 constraint slack_posts c CHECK (suppressed_revision >= 0 AND suppressed_revision <= desired_revision)
 constraint slack_posts f FOREIGN KEY (delivery_disposed_by) REFERENCES users(id)
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, request_id) REFERENCES slack_requests(environment_id, session_id, id)
@@ -1862,6 +1875,14 @@ constraint slack_requests f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint slack_requests p PRIMARY KEY (id)
 constraint slack_requests u UNIQUE (environment_id, session_id, id)
 constraint slack_requests u UNIQUE (installation_id, request_key)
+constraint slack_socket_connections c CHECK ((claim_id IS NULL) = (expires_at IS NULL))
+constraint slack_socket_connections c CHECK ((claim_id IS NULL) = (replica_id IS NULL))
+constraint slack_socket_connections c CHECK (credential_revision > 0)
+constraint slack_socket_connections c CHECK (reason IS NULL OR (reason = ANY (ARRAY['connection_failed'::text, 'api_rejected'::text, 'endpoint_not_allowed'::text, 'app_mismatch'::text, 'link_disabled'::text, 'protocol_error'::text, 'credential_unavailable'::text])))
+constraint slack_socket_connections c CHECK (status = ANY (ARRAY['connecting'::text, 'connected'::text, 'reconnecting'::text, 'action_required'::text, 'disconnected'::text]))
+constraint slack_socket_connections f FOREIGN KEY (app_registration_id) REFERENCES slack_app_registrations(id) ON DELETE CASCADE
+constraint slack_socket_connections f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
+constraint slack_socket_connections p PRIMARY KEY (app_registration_id)
 constraint slack_thread_sources c CHECK (projected_event_seq >= 0)
 constraint slack_thread_sources f FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id)
 constraint slack_thread_sources f FOREIGN KEY (thread_id, environment_id) REFERENCES slack_threads(id, environment_id)

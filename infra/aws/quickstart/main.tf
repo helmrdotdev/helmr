@@ -145,6 +145,8 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  ingress_mode               = "public"
+  slack_transport            = var.slack_transport
   capacity_token_secret_arn  = var.capacity_token_secret_arn
   capacity_token_kms_key_arn = var.capacity_token_kms_key_arn
   enable_deployment_rollback = var.enable_deployment_rollback
@@ -155,7 +157,7 @@ module "controlplane" {
   vpc_id                                     = module.controlplane_network.vpc_id
   public_subnet_ids                          = module.controlplane_network.public_subnet_ids
   private_subnet_ids                         = module.controlplane_network.private_subnet_ids
-  public_url                                 = var.public_url
+  app_origin                                 = var.app_origin
   deployment_mode                            = var.deployment_mode
   computer_wrapping_key_id                   = var.computer_wrapping_key_id
   bootstrap_worker_group_name                = var.worker_group_name
@@ -271,7 +273,7 @@ resource "terraform_data" "quickstart_preconditions" {
     cloudfront_origin             = var.cloudfront_origin_domain_name
     enable_cloudfront             = var.enable_cloudfront
     enable_nat_gateway            = var.enable_nat_gateway
-    public_url                    = var.public_url
+    app_origin                    = var.app_origin
     worker_ami_id                 = module.release_artifacts.worker_ami_id
     worker_count                  = var.worker_count
   }
@@ -283,8 +285,8 @@ resource "terraform_data" "quickstart_preconditions" {
     }
 
     precondition {
-      condition     = var.enable_cloudfront || var.public_url != null
-      error_message = "public_url is required when enable_cloudfront is false."
+      condition     = var.enable_cloudfront || var.app_origin != null
+      error_message = "app_origin is required when enable_cloudfront is false."
     }
 
     precondition {

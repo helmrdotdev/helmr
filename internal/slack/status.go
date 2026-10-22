@@ -120,7 +120,7 @@ func aggregateStatus(ctx context.Context, tx pgx.Tx, thread, env uuid.UUID) (str
  WHEN EXISTS(SELECT 1 FROM visible) AND NOT EXISTS(SELECT 1 FROM visible WHERE status NOT IN ('closed','cancelled')) THEN
  CASE WHEN EXISTS(SELECT 1 FROM slack_thread_sources src JOIN session_events e ON (e.environment_id,e.session_id)=(src.environment_id,src.session_id) WHERE src.thread_id=$1 AND e.seq>src.projected_event_seq)
  OR EXISTS(SELECT 1 FROM slack_thread_sources src JOIN session_processes process ON (process.environment_id,process.session_id)=(src.environment_id,src.session_id) WHERE src.thread_id=$1 AND GREATEST(process.control_acknowledged_at,process.fenced_at,process.failure_recorded_at)>COALESCE(src.projected_control_at,'-infinity'::timestamptz))
- OR EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=$1 AND post.role<>'controls' AND post.delivery_disposed_at IS NULL AND (post.status IN ('pending','sending','uncertain') OR post.stream_state IN ('open','uncertain')))
+ OR EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=$1 AND post.role<>'controls' AND post.delivery_disposed_at IS NULL AND (post.status IN ('pending','sending','uncertain') OR post.stream_status IN ('open','uncertain')))
  THEN 'processing' ELSE 'closed' END ELSE 'active' END`, thread, env).Scan(&status)
 	return status, err
 }

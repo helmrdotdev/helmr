@@ -1,0 +1,25 @@
+# CONNECT only. TLS remains end-to-end between the application and provider.
+http_port 3128
+visible_hostname helmr-platform-exit
+pid_filename /var/spool/squid/squid.pid
+coredump_dir /var/spool/squid
+cache_effective_user proxy
+cache_effective_group proxy
+cache deny all
+cache_dir null /var/spool/squid
+cache_log /dev/null
+logformat decisions %ts.%03tu %>a %rm %>Hs %<st %#>rd %>rP
+access_log stdio:/dev/stdout decisions
+shutdown_lifetime 1 seconds
+acl connect method CONNECT
+acl tls_port port 443
+acl approved dstdomain -n ${join(" ", domains)}
+acl numeric dstdom_regex -n ^[0-9.]+$ ^\[
+acl private_address dst 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.168.0.0/16 198.18.0.0/15 224.0.0.0/4 240.0.0.0/4 ::/0
+http_access deny !connect
+http_access deny !tls_port
+http_access deny numeric
+http_access deny !approved
+http_access deny private_address
+http_access allow approved
+http_access deny all

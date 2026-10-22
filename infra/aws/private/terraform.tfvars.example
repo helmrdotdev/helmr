@@ -1,0 +1,102 @@
+aws_region = "us-east-1"
+name       = "helmr-private"
+app_hostname = "helmr.example.com"
+company_client_ipv4_cidrs = ["10.92.0.0/16"]
+slack_transport = "socket"
+region_id  = "us-east-1"
+
+platform_store_uri         = "s3://replace-with-bootstrap-platform-store/objects"
+platform_store_bucket_arn  = "arn:aws:s3:::replace-with-bootstrap-platform-store"
+platform_store_kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/replace-me"
+
+helmr_version = "replace-with-helmr-release-version"
+
+certificate_arn = "<acm-certificate-arn>"
+
+# Set verified operator emails before their first login for Pool retirement.
+controlplane_environment = {
+  # ADMIN_EMAILS = "operator@example.com"
+}
+# capacity_token_secret_arn = "<existing-deployment-capacity-secret-arn>"
+
+github_oauth_client_id = "<github-oauth-client-id>"
+
+clickhouse_url  = "https://clickhouse.internal.example.com:8443"
+clickhouse_access_mode = "external"
+clickhouse_reader_user = "helmr_telemetry_reader"
+clickhouse_reader_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:telemetry-reader"
+clickhouse_ingester_user = "helmr_telemetry_ingester"
+clickhouse_ingester_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:telemetry-ingester"
+clickhouse_migration_user = "helmr_telemetry_migration"
+clickhouse_migration_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:telemetry-migration"
+# When the ClickHouse password secret uses a customer-managed key outside this
+# stack, allow the control and dispatcher execution roles to decrypt it.
+# clickhouse_reader_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
+# clickhouse_ingester_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
+# clickhouse_migration_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
+# Private ClickHouse access is explicit. Its owner permits the emitted platform
+# security group and supplies routing/DNS; arbitrary extra task groups are not attached.
+clickhouse_security_group_id = "sg-replace-me"
+clickhouse_port = 8443
+
+proxy_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c"
+proxy_image_repository_arn = "arn:aws:ecr:us-east-1:123456789012:repository/squid"
+
+# Keep create_controlplane_service=false for the first apply. Populate the emitted
+# Secrets Manager secrets, run migrations, then set it true.
+create_controlplane_service = false
+controlplane_desired_count    = 2
+dispatcher_desired_count = 1
+
+# Email delivery is disabled by default. For Resend, uncomment these values,
+# apply, then populate the emitted secret_arns.resend_api_key secret.
+# email_provider = "resend"
+# email_from     = "Helmr <noreply@example.com>"
+
+
+database_multi_az              = true
+database_deletion_protection   = true
+database_backup_retention_days = 14
+database_skip_final_snapshot   = false
+
+# Supply the digest-pinned image from the verified common release index and
+# an AMI prepared from its exact host/runtime bundles before enabling workers.
+# Common releases do not publish the resolver's default AWS manifest.
+controlplane_image = "123456789012.dkr.ecr.us-east-1.amazonaws.com/helmr@sha256:REPLACE_WITH_VERIFIED_RELEASE_DIGEST"
+controlplane_image_repository_arn = "arn:aws:ecr:us-east-1:123456789012:repository/helmr"
+worker_ami_id = null
+worker_network_blocked_ipv4_cidrs = [
+  "10.90.0.0/16",
+  "10.91.0.0/16",
+  "10.92.0.0/16",
+  "169.254.0.0/16",
+]
+
+create_worker = false
+# Copy prior entries from `tofu output -json worker_generation_definitions`
+# here unchanged, including count, before an immutable generation change.
+# Reduce source count only after the full-stop gate; delete only after Pool disable.
+retained_worker_generations = {}
+worker_count            = 1
+worker_root_volume_size_gb    = 500
+worker_root_volume_iops       = 12000
+worker_root_volume_throughput = 500
+worker_disk_mib               = null
+worker_vm_vcpus               = 2
+worker_vm_memory_mib          = 4096
+worker_vm_scratch_disk_mib    = 32768
+
+# Initial evaluation values; tune using workload measurements.
+worker_computer_devices = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
+
+# Required: set the following keys in controlplane_environment to operator-approved
+# positive integers. No production quota values are inferred by the module.
+# ENVIRONMENT_MAX_RESIDENT_COMPUTERS
+# ENVIRONMENT_MAX_CPU_MILLIS
+# ENVIRONMENT_MAX_MEMORY_BYTES
+# ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES
+# ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS
+# ENVIRONMENT_MAX_CAUSAL_DEPTH
+# ENVIRONMENT_ADMISSION_RATE_PER_SECOND
+# ENVIRONMENT_ADMISSION_BURST
+# ENVIRONMENT_PREPARATION_TIMEOUT_MS

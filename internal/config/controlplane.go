@@ -11,7 +11,7 @@ func LoadControlPlane() (ControlPlane, error) {
 	if err != nil {
 		return ControlPlane{}, err
 	}
-	publicURL, err := normalizeOrigin("PUBLIC_URL", env("PUBLIC_URL", DefaultPublicURL))
+	appOrigin, err := normalizeOrigin("APP_ORIGIN", env("APP_ORIGIN", DefaultAppOrigin))
 	if err != nil {
 		return ControlPlane{}, err
 	}
@@ -20,6 +20,8 @@ func LoadControlPlane() (ControlPlane, error) {
 		return ControlPlane{}, err
 	}
 	cfg := ControlPlane{
+		SlackTransport:                  env("SLACK_TRANSPORT", "http"),
+		OutboundProxyURL:                envText("OUTBOUND_PROXY_URL"),
 		Addr:                            env("CONTROL_PLANE_ADDR", ":8080"),
 		DeploymentMode:                  env("DEPLOYMENT_MODE", DeploymentModeSelfHosted),
 		DatabaseURL:                     envText("DATABASE_URL"),
@@ -32,7 +34,7 @@ func LoadControlPlane() (ControlPlane, error) {
 		Bootstrap:                       bootstrapConfig,
 		CapacityToken:                   envSecret("CAPACITY_TOKEN"),
 		SetupToken:                      envSecret("SETUP_TOKEN"),
-		PublicURL:                       publicURL,
+		AppOrigin:                       appOrigin,
 		MagicLinkDebugURLs:              magicLinkDebugURLs,
 		AdminEmails:                     splitNormalizedList(envText("ADMIN_EMAILS")),
 		EmailProvider:                   envLower("EMAIL_PROVIDER"),
@@ -43,6 +45,9 @@ func LoadControlPlane() (ControlPlane, error) {
 		EmailFrom:                       envText("EMAIL_FROM"),
 		GitHubOAuthClientID:             envText("GITHUB_OAUTH_CLIENT_ID"),
 		GitHubOAuthClientSecret:         envSecret("GITHUB_OAUTH_CLIENT_SECRET"),
+	}
+	if err := validatePlatformConnections(cfg.SlackTransport, cfg.OutboundProxyURL); err != nil {
+		return cfg, err
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("DATABASE_URL is required")

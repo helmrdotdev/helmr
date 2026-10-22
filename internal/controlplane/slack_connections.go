@@ -46,7 +46,7 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method == http.MethodPost && connection == uuid.Nil() {
-		_, err = slack.BeginConnection(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent)
+		_, err = slack.BeginConnection(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent, s.slackConfig.Credentials.DeliveryTransport())
 		if err != nil {
 			s.writeSlackError(w, err)
 			return
@@ -112,9 +112,12 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	result := map[string]any{"connection": view}
+	if view != nil && view.Transport != s.slackConfig.Credentials.DeliveryTransport() {
+		view.Status = "configuration_mismatch"
+	}
+	result := map[string]any{"connection": view, "transport": s.slackConfig.Credentials.DeliveryTransport()}
 	if view != nil {
-		manifest := slack.AppManifest(s.publicURL, view.RegistrationID, name)
+		manifest := slack.AppManifest(s.appOrigin, view.RegistrationID, name, s.slackConfig.Credentials.DeliveryTransport())
 		result["manifest"] = manifest
 		result["create_app_url"] = "https://api.slack.com/apps?" + url.Values{"new_app": {"1"}, "manifest": {string(manifest)}}.Encode()
 	}

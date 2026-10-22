@@ -68,7 +68,7 @@ func TestLoadBootstrapIgnoresSeedInputsWhenDisabled(t *testing.T) {
 }
 
 func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
-	t.Setenv("PUBLIC_URL", "https://console.example.test")
+	t.Setenv("APP_ORIGIN", "https://console.example.test")
 	setDispatcherFencing(t)
 	t.Setenv("DATABASE_URL", " postgres://example ")
 	t.Setenv("CLICKHOUSE_URL", " https://clickhouse.example.test ")
@@ -78,7 +78,7 @@ func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.ControlPlaneURL != "https://api.example.test" || cfg.DatabaseURL != "postgres://example" ||
-		cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.PublicURL != "https://console.example.test" {
+		cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.AppOrigin != "https://console.example.test" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -120,7 +120,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
-	t.Setenv("PUBLIC_URL", " https://helmr.example.test ")
+	t.Setenv("APP_ORIGIN", " https://helmr.example.test ")
 	t.Setenv("MAGIC_LINK_DEBUG_URLS", " true ")
 	t.Setenv("SMTP_ADDR", " smtp.example.test:587 ")
 	t.Setenv("SMTP_USERNAME", " smtp-user ")
@@ -133,7 +133,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || cfg.AppOrigin != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -273,7 +273,7 @@ func TestLoadControlPlaneRejectsInvalidAuthKey(t *testing.T) {
 	}
 }
 
-func TestLoadControlPlaneAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
+func TestLoadControlPlaneAllowsHTTPOnlyForLoopbackAppOrigin(t *testing.T) {
 	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
@@ -282,7 +282,7 @@ func TestLoadControlPlaneAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
 	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("PUBLIC_URL", "http://127.0.0.1:8080")
+	t.Setenv("APP_ORIGIN", "http://127.0.0.1:8080")
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
@@ -290,17 +290,17 @@ func TestLoadControlPlaneAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("PUBLIC_URL", "http://helmr.example.test")
+	t.Setenv("APP_ORIGIN", "http://helmr.example.test")
 	_, err := LoadControlPlane()
 	if err == nil {
 		t.Fatal("expected public HTTP URL error")
 	}
-	if got, want := err.Error(), "PUBLIC_URL must use https"; !strings.HasPrefix(got, want) {
+	if got, want := err.Error(), "APP_ORIGIN must use https"; !strings.HasPrefix(got, want) {
 		t.Fatalf("error = %q", got)
 	}
 }
 
-func TestLoadControlPlaneDefaultsPublicURL(t *testing.T) {
+func TestLoadControlPlaneDefaultsAppOrigin(t *testing.T) {
 	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
@@ -316,18 +316,18 @@ func TestLoadControlPlaneDefaultsPublicURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.PublicURL != DefaultPublicURL {
-		t.Fatalf("public URL = %q", cfg.PublicURL)
+	if cfg.AppOrigin != DefaultAppOrigin {
+		t.Fatalf("public URL = %q", cfg.AppOrigin)
 	}
 }
 
-func TestLoadControlPlaneRejectsNonOriginPublicURLs(t *testing.T) {
+func TestLoadControlPlaneRejectsNonOriginAppOrigins(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		value string
 	}{
-		{"PUBLIC_URL", "https://helmr.example.test/console"},
-		{"PUBLIC_URL", "https://user@helmr.example.test"},
+		{"APP_ORIGIN", "https://helmr.example.test/console"},
+		{"APP_ORIGIN", "https://user@helmr.example.test"},
 	} {
 		t.Run(test.name+"="+test.value, func(t *testing.T) {
 			setControlPlaneRequiredEnv(t)

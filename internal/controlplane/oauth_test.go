@@ -8,11 +8,11 @@ import (
 )
 
 func TestGitHubOAuthProviderUsesGitHubAuthCallback(t *testing.T) {
-	publicURL, err := url.Parse("https://helmr.example.com")
+	appOrigin, err := url.Parse("https://helmr.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", publicURL)
+	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", appOrigin, nil)
 
 	redirectURL, err := url.Parse(provider.RedirectURL("state", "verifier"))
 	if err != nil {
@@ -55,11 +55,11 @@ func TestGitHubOAuthProviderFallsBackToPrimaryVerifiedEmail(t *testing.T) {
 	defer server.Close()
 	serverURL = server.URL
 
-	publicURL, err := url.Parse("https://helmr.example.com")
+	appOrigin, err := url.Parse("https://helmr.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", publicURL).(*githubOAuthProvider)
+	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", appOrigin, nil).(*githubOAuthProvider)
 	provider.config.Endpoint.TokenURL = server.URL + "/token"
 	provider.userURL = server.URL + "/user"
 	provider.userEmailsURL = server.URL + "/user/emails"
@@ -108,11 +108,11 @@ func TestGitHubOAuthProviderAllowsMissingPrivateEmail(t *testing.T) {
 	}))
 	defer server.Close()
 
-	publicURL, err := url.Parse("https://helmr.example.com")
+	appOrigin, err := url.Parse("https://helmr.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", publicURL).(*githubOAuthProvider)
+	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", appOrigin, nil).(*githubOAuthProvider)
 	provider.config.Endpoint.TokenURL = server.URL + "/token"
 	provider.userURL = server.URL + "/user"
 	provider.userEmailsURL = server.URL + "/user/emails"
@@ -154,11 +154,11 @@ func TestGitHubOAuthProviderUsesPrimaryVerifiedEmailOverPublicEmail(t *testing.T
 	}))
 	defer server.Close()
 
-	publicURL, err := url.Parse("https://helmr.example.com")
+	appOrigin, err := url.Parse("https://helmr.example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", publicURL).(*githubOAuthProvider)
+	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", appOrigin, nil).(*githubOAuthProvider)
 	provider.config.Endpoint.TokenURL = server.URL + "/token"
 	provider.userURL = server.URL + "/user"
 	provider.userEmailsURL = server.URL + "/user/emails"

@@ -9,7 +9,7 @@ import (
 
 func TestSlackIdentityCallbackBridgesQueryAndFormWithoutAuthentication(t *testing.T) {
 	cfg := completeServerConfig(t)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	handler, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)

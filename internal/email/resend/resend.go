@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/platformhttp"
 	resendapi "github.com/resend/resend-go/v4"
 )
 
@@ -32,8 +33,11 @@ type Sender struct {
 	batch  batchService
 }
 
-func New(apiKey string, from string) Sender {
-	client := resendapi.NewCustomClient(&http.Client{Timeout: httpTimeout}, apiKey)
+func New(apiKey string, from string, transport http.RoundTripper) Sender {
+	if transport == nil {
+		transport = platformhttp.Direct()
+	}
+	client := resendapi.NewCustomClient(&http.Client{Transport: transport, Timeout: httpTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, apiKey)
 	return Sender{from: from, emails: client.Emails, batch: client.Batch}
 }
 

@@ -37,7 +37,7 @@ func (f statusFixture) outputWriter(t *testing.T) func(string) int64 {
 func (f statusFixture) projectAll(t *testing.T) {
 	t.Helper()
 	for range 100 {
-		progressed, err := projectParticipant(t.Context(), f.Pool, f.participant, ProjectionConfig{PublicURL: &url.URL{Scheme: "https", Host: "console.example.test"}, ControlKey: bytes.Repeat([]byte{4}, 32)})
+		progressed, err := projectParticipant(t.Context(), f.Pool, f.participant, ProjectionConfig{AppOrigin: &url.URL{Scheme: "https", Host: "console.example.test"}, ControlKey: bytes.Repeat([]byte{4}, 32)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,7 +140,7 @@ func TestSlackProjectionWorkerResumesOrderedCursorWithoutDuplicateIntents(t *tes
 	write := f.outputWriter(t)
 	write("one")
 	write(" two")
-	config := ProjectionConfig{PublicURL: &url.URL{Scheme: "https", Host: "console.example.test"}, ControlKey: bytes.Repeat([]byte{4}, 32)}
+	config := ProjectionConfig{AppOrigin: &url.URL{Scheme: "https", Host: "console.example.test"}, ControlKey: bytes.Repeat([]byte{4}, 32)}
 	for range 100 {
 		n, err := ReconcileProjection(t.Context(), f.Pool, config, 64)
 		if err != nil {
@@ -222,7 +222,7 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 }
 
 func TestProjectionConsoleLinkUsesPublicScope(t *testing.T) {
-	owner := projectionOwner{project: "operations", environmentRef: "staging", environment: uuid.NewV7(), session: uuid.NewV7(), config: ProjectionConfig{PublicURL: &url.URL{Scheme: "https", Host: "console.example.test"}}}
+	owner := projectionOwner{project: "operations", environmentRef: "staging", environment: uuid.NewV7(), session: uuid.NewV7(), config: ProjectionConfig{AppOrigin: &url.URL{Scheme: "https", Host: "console.example.test"}}}
 	link, err := url.Parse(owner.consoleLink())
 	if err != nil {
 		t.Fatal(err)

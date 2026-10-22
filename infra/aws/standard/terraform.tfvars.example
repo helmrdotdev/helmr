@@ -1,6 +1,6 @@
 aws_region = "us-east-1"
 name       = "helmr-standard"
-public_url = "https://helmr.example.com"
+app_origin = "https://helmr.example.com"
 region_id  = "us-east-1"
 
 platform_store_uri         = "s3://replace-with-bootstrap-platform-store/objects"

@@ -24,7 +24,7 @@ func TestConsoleUpdateStreamRequiresCurrentSessionAuthority(t *testing.T) {
 	f := sessiontest.New(t)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
-	cfg.PublicURL = &url.URL{Scheme: "http", Host: "127.0.0.1"}
+	cfg.AppOrigin = &url.URL{Scheme: "http", Host: "127.0.0.1"}
 	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
 	handler, err := NewServer(cfg)
 	if err != nil {

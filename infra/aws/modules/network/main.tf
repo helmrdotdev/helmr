@@ -98,7 +98,7 @@ resource "aws_vpc_endpoint" "s3" {
   service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = [aws_route_table.private.id]
-  policy = jsonencode({
+  policy = var.s3_endpoint_policy != null ? var.s3_endpoint_policy : jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"

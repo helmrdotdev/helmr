@@ -82,7 +82,7 @@ variables {
   helmr_version                            = "v0.0.0-test"
   github_oauth_client_id                   = "github-client"
   worker_network_blocked_ipv4_cidrs        = ["10.0.0.0/8", "10.91.0.0/16", "169.254.0.0/16"]
-  public_url                               = "https://helmr.example.test"
+  app_origin                               = "https://helmr.example.test"
   certificate_arn                          = "arn:aws:acm:us-east-1:111122223333:certificate/00000000-0000-0000-0000-000000000000"
   controlplane_image                       = "111122223333.dkr.ecr.us-east-1.amazonaws.com/helmr@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   worker_ami_id                            = "ami-00000000000000000"

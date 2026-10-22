@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/platformhttp"
 
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -59,6 +60,11 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	external, err := platformhttp.External(cfg.OutboundProxyURL)
+	if err != nil {
+		return err
+	}
+	defer external.CloseIdleConnections()
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	pool, err := newDispatchPool(ctx, cfg.DatabaseURL, baseMaxConns)
@@ -106,13 +112,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "diagnostic exporter", run: diagnosticIngester.Run},
 	}
-	{
-		credentials, err := slack.NewCredentialStore(pool, cfg.EncryptionKey)
+	if cfg.SlackTransport != "disabled" {
+		credentials, err := slack.NewCredentialStore(pool, cfg.EncryptionKey, slack.Transport(cfg.SlackTransport))
 		if err != nil {
 			return fmt.Errorf("configure Slack credentials: %w", err)
 		}
-		client := slack.NewWebClient(credentials, nil)
-		publicURL, err := url.Parse(cfg.PublicURL)
+		client := slack.NewWebClient(credentials, external)
+		appOrigin, err := url.Parse(cfg.AppOrigin)
 		if err != nil {
 			return fmt.Errorf("configure Slack Console URL: %w", err)
 		}
@@ -120,13 +126,20 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("configure Slack controls: %w", err)
 		}
-		projection := slack.ProjectionConfig{PublicURL: publicURL, ControlKey: controlKey}
+		if cfg.SlackTransport == "socket" {
+			sockets, err := slack.NewSocketSupervisor(slack.SocketConfig{Credentials: credentials, Client: client, AppOrigin: appOrigin, ControlKey: controlKey, Transport: external, Log: log})
+			if err != nil {
+				return err
+			}
+			runners = append(runners, dispatcherRunner{name: "Slack sockets", run: sockets.Run})
+		}
+		projection := slack.ProjectionConfig{AppOrigin: appOrigin, ControlKey: controlKey}
 		runners = append(runners,
 			dispatcherRunner{name: "Slack requests", run: func(ctx context.Context) error {
 				return slack.RunRequests(ctx, pool, secretStore, projection, client, log, changes)
 			}},
 			dispatcherRunner{name: "Slack projection", run: func(ctx context.Context) error { return slack.RunProjection(ctx, pool, projection, log, changes) }},
-			dispatcherRunner{name: "Slack credentials", run: func(ctx context.Context) error { return credentials.RunCredentials(ctx, nil, log) }},
+			dispatcherRunner{name: "Slack credentials", run: func(ctx context.Context) error { return credentials.RunCredentials(ctx, external, log) }},
 			dispatcherRunner{name: "Slack delivery", run: func(ctx context.Context) error { return slack.RunDelivery(ctx, pool, client, log, changes) }},
 		)
 	}

@@ -49,7 +49,7 @@ Reports which credentials the CLI would use.
 | Output | Description |
 | --- | --- |
 | Text | `AUTH_SOURCE ORIGIN`, where `AUTH_SOURCE` is `api_key` or `login`. |
-| `--json` | One object with `auth_source` and `api_url`. For a saved login it also includes the account fields: `user_id`, `display_name`, `profile_image_url`, `public_url`, `org_id`, `org_name`, `org_slug`, `role`, `admin`, `permissions`, `organization_required` and `project_required`, when present. |
+| `--json` | One object with `auth_source` and `api_url`. For a saved login it also includes the account fields: `user_id`, `display_name`, `profile_image_url`, `app_origin`, `org_id`, `org_name`, `org_slug`, `role`, `admin`, `permissions`, `organization_required` and `project_required`, when present. |
 
 ## Credential selection
 

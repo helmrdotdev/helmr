@@ -141,7 +141,7 @@ func TestAuthContinuationUsesEffectiveOrganization(t *testing.T) {
 
 func TestAuthContinuationProvidersReturnStoredDestination(t *testing.T) {
 	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-		cfg.PublicURL = &url.URL{Scheme: "https", Host: "helmr.example.test"}
+		cfg.AppOrigin = &url.URL{Scheme: "https", Host: "helmr.example.test"}
 		cfg.AuthProvider = continuationAuthProvider{}
 	})
 	const next = "/auth/device?code=ABCD-EFGH#confirm"

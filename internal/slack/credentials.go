@@ -32,10 +32,11 @@ func (b credentialBundle) valid() bool {
 type CredentialStore struct {
 	pool       db.TxBeginner
 	encryption cipher.AEAD
+	mode       Transport
 }
 
-func NewCredentialStore(pool db.TxBeginner, key []byte) (*CredentialStore, error) {
-	if pool == nil || len(key) != 32 {
+func NewCredentialStore(pool db.TxBeginner, key []byte, mode Transport) (*CredentialStore, error) {
+	if pool == nil || len(key) != 32 || !mode.enabled() {
 		return nil, errors.New("the Slack credential database and 32-byte encryption key are required")
 	}
 	block, err := aes.NewCipher(key)
@@ -46,7 +47,7 @@ func NewCredentialStore(pool db.TxBeginner, key []byte) (*CredentialStore, error
 	if err != nil {
 		return nil, err
 	}
-	return &CredentialStore{pool: pool, encryption: encryption}, nil
+	return &CredentialStore{pool: pool, encryption: encryption, mode: mode}, nil
 }
 
 func credentialAAD(org, installation uuid.UUID, revision int64) []byte {
@@ -93,9 +94,9 @@ func (s *CredentialStore) BotToken(ctx context.Context, installation uuid.UUID, 
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
 		var org uuid.UUID
 		var ciphertext, nonce []byte
-		err := tx.QueryRow(ctx, `SELECT org_id,credential_ciphertext,credential_nonce FROM slack_installations
- WHERE id=$1 AND credential_revision=$2 AND disconnected_at IS NULL AND authorization_lost_at IS NULL
- AND refresh_attempt_id IS NULL AND (credential_expires_at IS NULL OR credential_expires_at>clock_timestamp()) FOR SHARE`, installation, revision).Scan(&org, &ciphertext, &nonce)
+		err := tx.QueryRow(ctx, `SELECT i.org_id,i.credential_ciphertext,i.credential_nonce FROM slack_installations i
+ WHERE i.id=$1 AND credential_revision=$2 AND disconnected_at IS NULL AND authorization_lost_at IS NULL
+ AND refresh_attempt_id IS NULL AND (credential_expires_at IS NULL OR credential_expires_at>clock_timestamp()) AND EXISTS (SELECT 1 FROM slack_app_registrations r WHERE r.id=i.app_registration_id AND r.transport=$3 AND r.retired_at IS NULL) FOR SHARE`, installation, revision, s.mode).Scan(&org, &ciphertext, &nonce)
 		if err != nil {
 			return errCredentialUnavailable
 		}

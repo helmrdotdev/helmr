@@ -1,7 +1,7 @@
 , target AS (
  SELECT p.* FROM slack_thread_sources p,input WHERE p.session_id=(args->>'session_id')::uuid
 ), posts AS (
- SELECT p.id,p.turn_id,p.role,p.seq,p.status,p.presentation_path,p.stream_state,
+ SELECT p.id,p.turn_id,p.role,p.seq,p.status,p.presentation_path,p.stream_status,
  p.desired_revision,p.confirmed_revision,p.suppressed_revision,p.payload_expired_at IS NOT NULL AS payload_expired,
  p.created_at,p.posted_at,p.confirmed_at,p.closed_at,p.inflight_method,p.attempt_count,
  p.next_attempt_at,p.claimed_until,p.message_ts,p.error,p.delivery_disposed_at,p.reconciliation_paused_at

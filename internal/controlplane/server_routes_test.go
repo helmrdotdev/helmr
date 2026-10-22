@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,13 +14,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/slack"
 )
 
 type routeWorkerAuthStore struct{ db.Querier }
+type routeSlackStore struct{ db.TxBeginner }
 
 func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	router := chi.NewRouter()
-	server := &Server{}
+	store, err := slack.NewCredentialStore(&routeSlackStore{}, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{slackConfig: &SlackConfig{Credentials: store}}
 	server.mountRoutes(router)
 	var routes chi.Routes = router
 
@@ -472,5 +479,30 @@ func TestProcessDiagnosticsRemainInternal(t *testing.T) {
 		if !registered[route] {
 			t.Fatalf("required diagnostic ingestion or command output removed: %s", route)
 		}
+	}
+}
+
+func TestSocketAndDisabledDoNotMountSlackHTTPReceivers(t *testing.T) {
+	for _, mode := range []slack.Transport{slack.TransportSocket, slack.TransportDisabled} {
+		t.Run(string(mode), func(t *testing.T) {
+			server := &Server{}
+			if mode == slack.TransportSocket {
+				store, err := slack.NewCredentialStore(&routeSlackStore{}, bytes.Repeat([]byte{1}, 32), mode)
+				if err != nil {
+					t.Fatal(err)
+				}
+				server.slackConfig = &SlackConfig{Credentials: store}
+			}
+			router := chi.NewRouter()
+			server.mountRoutes(router)
+			if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+				if strings.HasPrefix(route, "/integrations/slack/") {
+					t.Errorf("%s mounted %s %s", mode, method, route)
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

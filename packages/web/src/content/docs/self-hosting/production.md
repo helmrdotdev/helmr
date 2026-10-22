@@ -21,10 +21,10 @@ cd infra/aws/standard
 cp terraform.tfvars.example standard.tfvars
 ```
 
-Fill every required value in [requirements](/docs/self-hosting/requirements). Set `public_url` to your customer HTTPS origin and provide an ACM certificate in the same region as the ALB:
+Fill every required value in [requirements](/docs/self-hosting/requirements). Set `app_origin` to your customer HTTPS origin and provide an ACM certificate in the same region as the ALB:
 
 ```hcl
-public_url     = "https://helmr.example.com"
+app_origin     = "https://helmr.example.com"
 certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/example"
 
 create_controlplane_service = false
@@ -40,7 +40,7 @@ tofu apply -var-file=standard.tfvars
 
 The example has no backend block and does not commit a provider lock file. Add your deployment's backend and commit the generated lock file in that deployment repository.
 
-Point `public_url` DNS at `controlplane_load_balancer_dns_name`. If CloudFront is enabled, use a distinct ALB origin DNS name covered by the certificate and keep browser and CLI traffic on the emitted `controlplane_url`.
+Point `app_origin` DNS at `controlplane_load_balancer_dns_name`. If CloudFront is enabled, use a distinct ALB origin DNS name covered by the certificate and keep browser and CLI traffic on the emitted `controlplane_url`.
 
 ## Production readiness work
 

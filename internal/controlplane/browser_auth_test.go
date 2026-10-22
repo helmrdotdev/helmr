@@ -63,7 +63,7 @@ func (continuationAuthProvider) Resolve(context.Context, string, string) (identi
 
 func TestBrowserAuthSupersededCallbackKeepsNewerFlow(t *testing.T) {
 	cfg := completeServerConfig(t)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "helmr.example.test"}
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "helmr.example.test"}
 	cfg.AuthProvider = continuationAuthProvider{}
 	handler, err := NewServer(cfg)
 	if err != nil {
@@ -124,7 +124,7 @@ func TestBrowserAuthReturnDestinationValidation(t *testing.T) {
 
 func TestInvitationStartRejectsEmptyToken(t *testing.T) {
 	cfg := completeServerConfig(t)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "helmr.example.test"}
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "helmr.example.test"}
 	cfg.AuthProvider = continuationAuthProvider{}
 	cfg.MagicLinkDebugURLs = true
 	cfg.MagicLinkDelivery = NewMagicLinkDelivery(discardTestLogger(), time.Second)

@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
 	github.com/aws/smithy-go v1.28.1
 	github.com/cilium/ebpf v0.22.0
+	github.com/coder/websocket v1.8.15
 	github.com/containernetworking/plugins v1.9.1
 	github.com/distribution/reference v0.6.0
 	github.com/felixge/httpsnoop v1.1.0

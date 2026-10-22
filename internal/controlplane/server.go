@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/slack"
 	"io"
 	"log/slog"
 	"net/http"
@@ -89,7 +90,7 @@ type Server struct {
 	capacityTokenHash          []byte
 	setupToken                 string
 	authKeys                   auth.Keys
-	publicURL                  *url.URL
+	appOrigin                  *url.URL
 	authProvider               AuthProvider
 	mailer                     email.Sender
 	magicLinkDelivery          *MagicLinkDelivery
@@ -135,7 +136,7 @@ type ServerConfig struct {
 	CapacityToken                  string
 	SetupToken                     string
 	AuthKey                        []byte
-	PublicURL                      *url.URL
+	AppOrigin                      *url.URL
 
 	MagicLinkDebugURLs bool
 	AdminEmails        []string
@@ -146,7 +147,7 @@ type ServerConfig struct {
 }
 
 func NewServer(cfg ServerConfig) (http.Handler, error) {
-	if cfg.Slack != nil && (len(cfg.Slack.ControlKey) != 32 || cfg.Slack.Credentials == nil || cfg.Slack.Client == nil || cfg.PublicURL == nil || len(cfg.AuthKey) != 32) {
+	if cfg.Slack != nil && (len(cfg.Slack.ControlKey) != 32 || cfg.Slack.Credentials == nil || cfg.Slack.Client == nil || cfg.AppOrigin == nil || len(cfg.AuthKey) != 32) {
 		return nil, errors.New("complete Slack adapter configuration is required")
 	}
 	if err := cfg.EnvironmentExecutionLimits.Validate(); err != nil {
@@ -279,7 +280,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		capacityTokenHash:          capacityTokenHash,
 		setupToken:                 cfg.SetupToken,
 		authKeys:                   authKeys,
-		publicURL:                  cfg.PublicURL,
+		appOrigin:                  cfg.AppOrigin,
 		authProvider:               cfg.AuthProvider,
 		mailer:                     mailer,
 		magicLinkDelivery:          cfg.MagicLinkDelivery,
@@ -330,8 +331,10 @@ func (s *Server) mountRoutes(router chi.Router) {
 	router.Get("/healthz", s.healthz)
 	router.Get("/readyz", s.readyz)
 	router.Route("/api", s.mountManagementRoutes)
-	router.Post("/integrations/slack/apps/{registrationID}/events", s.slackAppEvents)
-	router.Post("/integrations/slack/apps/{registrationID}/interactions", s.slackAppInteractions)
+	if s.slackConfig != nil && s.slackConfig.Credentials.DeliveryTransport() == slack.TransportHTTP {
+		router.Post("/integrations/slack/apps/{registrationID}/events", s.slackAppEvents)
+		router.Post("/integrations/slack/apps/{registrationID}/interactions", s.slackAppInteractions)
+	}
 	router.Group(func(r chi.Router) {
 		r.Use(limitAPIRequestBody)
 		s.mountCapacityRoutes(r)
@@ -770,7 +773,7 @@ func (s *Server) userAuthConfigured() error {
 	if !s.authKeys.Valid() {
 		return errors.New("user authentication is not configured")
 	}
-	if s.publicURL == nil {
+	if s.appOrigin == nil {
 		return errors.New("public URL is not configured")
 	}
 	return nil

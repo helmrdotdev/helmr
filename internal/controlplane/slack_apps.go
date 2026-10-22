@@ -28,7 +28,7 @@ func (s *Server) slackAppCallback(w http.ResponseWriter, r *http.Request, intera
 	events := slack.EventHandler{Database: s.tx, Client: s.slackConfig.Client, Log: s.log}
 	var interactions *slack.InteractionHandler
 	if interactive {
-		interactions = &slack.InteractionHandler{PublicURL: s.publicURL, Database: s.tx, ControlKey: s.slackConfig.ControlKey, Client: s.slackConfig.Client}
+		interactions = &slack.InteractionHandler{AppOrigin: s.appOrigin, Database: s.tx, ControlKey: s.slackConfig.ControlKey, Client: s.slackConfig.Client}
 	}
 	s.slackConfig.Credentials.CallbackHandler(registration, events, interactions).ServeHTTP(w, r)
 }

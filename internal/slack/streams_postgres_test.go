@@ -105,7 +105,7 @@ func TestSlackStreamStartAppendStopRepairsAggregateAndKeepsQuestionsIndependent(
 		t.Fatal(err)
 	}
 	var stopped bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT stream_state='stopped' AND status='posted' AND confirmed_revision=2 AND confirmed_stream_text='first second' FROM slack_posts WHERE id=$1`, post).Scan(&stopped); err != nil || !stopped {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT stream_status='stopped' AND status='posted' AND confirmed_revision=2 AND confirmed_stream_text='first second' FROM slack_posts WHERE id=$1`, post).Scan(&stopped); err != nil || !stopped {
 		t.Fatal("stream not settled", err)
 	}
 	f.due(t)
@@ -252,7 +252,7 @@ func TestSlackStreamPositiveReconciliationNeverReplaysUnknownContent(t *testing.
 		t.Fatal("exact append not confirmed", ok, err)
 	}
 	var partial bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND stream_state='stopped' AND confirmed_revision=2 AND desired_revision=3 AND error='stream_ended_before_delivery' FROM slack_posts WHERE id=$1`, post).Scan(&partial); err != nil || !partial {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND stream_status='stopped' AND confirmed_revision=2 AND desired_revision=3 AND error='stream_ended_before_delivery' FROM slack_posts WHERE id=$1`, post).Scan(&partial); err != nil || !partial {
 		t.Fatal("partial completion not visible", err)
 	}
 	f.due(t)
@@ -290,7 +290,7 @@ func TestSlackStreamRejectionStopsWithoutRepublishingRejectedAppend(t *testing.T
 				}
 			}
 			var failed bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND stream_state='stopped' AND error IS NOT NULL AND confirmed_revision=1 AND confirmed_stream_text='first' FROM slack_posts WHERE id=$1`, post).Scan(&failed); err != nil || !failed {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND stream_status='stopped' AND error IS NOT NULL AND confirmed_revision=1 AND confirmed_stream_text='first' FROM slack_posts WHERE id=$1`, post).Scan(&failed); err != nil || !failed {
 				t.Fatal("rejected delivery lost", err)
 			}
 			f.due(t)
@@ -328,7 +328,7 @@ func TestSlackStreamSuppressedRevisionCanReconcileAndStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	var settled bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='suppressed' AND stream_state='stopped' AND error='publication_authority_unavailable' AND confirmed_stream_text='published' FROM slack_posts WHERE id=$1`, post).Scan(&settled); err != nil || !settled {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='suppressed' AND stream_status='stopped' AND error='publication_authority_unavailable' AND confirmed_stream_text='published' FROM slack_posts WHERE id=$1`, post).Scan(&settled); err != nil || !settled {
 		t.Fatal("cutoff stop", err)
 	}
 }
@@ -373,7 +373,7 @@ func TestSlackDeletedStreamKeepsIndependentResponseWithoutRetry(t *testing.T) {
 				}
 			}
 			var failed bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND stream_state='stopped' AND error IN ('message_deleted','message_not_found') FROM slack_posts WHERE id=$1`, post).Scan(&failed); err != nil || !failed {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND stream_status='stopped' AND error IN ('message_deleted','message_not_found') FROM slack_posts WHERE id=$1`, post).Scan(&failed); err != nil || !failed {
 				t.Fatal("disappearance not terminal", err)
 			}
 			f.due(t)
@@ -433,7 +433,7 @@ func TestSlackDeletedRootConvergesKnownStreamsWithContentFreeStop(t *testing.T) 
 					t.Fatal(err)
 				}
 				var settled bool
-				if err := f.Pool.QueryRow(t.Context(), `SELECT stream_state='stopped' AND status IN ('posted','suppressed','failed') AND inflight_attempt_id IS NULL AND (status<>'posted' OR desired_revision=confirmed_revision) FROM slack_posts WHERE id=$1`, post).Scan(&settled); err != nil || !settled || calls != 1 {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT stream_status='stopped' AND status IN ('posted','suppressed','failed') AND inflight_attempt_id IS NULL AND (status<>'posted' OR desired_revision=confirmed_revision) FROM slack_posts WHERE id=$1`, post).Scan(&settled); err != nil || !settled || calls != 1 {
 					t.Fatal("stream retirement outstanding", settled, calls, err)
 				}
 			})

@@ -15,13 +15,13 @@ import (
 )
 
 func TestCredentialEnvelopeBindsOwnerInstallationAndRevision(t *testing.T) {
-	store, err := NewCredentialStore(nil, make([]byte, 32))
+	store, err := NewCredentialStore(nil, make([]byte, 32), TransportHTTP)
 	if err == nil || store != nil {
 		t.Fatal("missing database accepted")
 	}
 	// Encryption does not access the database; a typed test transaction owner is
 	// sufficient to exercise the independent authenticated envelope boundary.
-	store, err = NewCredentialStore(&unusedTransactions{}, bytes.Repeat([]byte{1}, 32))
+	store, err = NewCredentialStore(&unusedTransactions{}, bytes.Repeat([]byte{1}, 32), TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1312,6 +1312,7 @@ CREATE TABLE slack_app_registrations (
     org_id uuid NOT NULL REFERENCES organizations(id),
     app_id text CHECK (app_id<>''),
     client_id text CHECK (client_id<>''),
+    transport text NOT NULL CHECK (transport IN ('http','socket')),
     credential_revision bigint NOT NULL DEFAULT 0 CHECK (credential_revision>=0),
     credential_ciphertext bytea,
     credential_nonce bytea,
@@ -1365,6 +1366,24 @@ CREATE TABLE slack_installations (
 );
 
 CREATE UNIQUE INDEX slack_installations_active ON slack_installations(app_id, team_id) WHERE disconnected_at IS NULL;
+
+-- Connection ownership is fenced independently of installation/user authority.
+-- Observed socket health is not proof of installation authorization.
+CREATE TABLE slack_socket_connections (
+    app_registration_id uuid PRIMARY KEY REFERENCES slack_app_registrations(id) ON DELETE CASCADE,
+    installation_id uuid NOT NULL REFERENCES slack_installations(id),
+    claim_id uuid,
+    replica_id uuid,
+    expires_at timestamptz,
+    credential_revision bigint NOT NULL CHECK (credential_revision>0),
+    status text NOT NULL CHECK (status IN ('connecting','connected','reconnecting','action_required','disconnected')),
+    reason text CHECK (reason IS NULL OR reason IN ('connection_failed','api_rejected','endpoint_not_allowed','app_mismatch','link_disabled','protocol_error','credential_unavailable')),
+    retry_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    last_connected_at timestamptz,
+    last_received_at timestamptz,
+    CHECK ((claim_id IS NULL)=(replica_id IS NULL)),
+    CHECK ((claim_id IS NULL)=(expires_at IS NULL))
+);
 
 CREATE TABLE slack_connections (
     id uuid NOT NULL UNIQUE,
@@ -2180,7 +2199,7 @@ CREATE TABLE slack_posts (
     presentation_path text NOT NULL CHECK (presentation_path IN ('post', 'stream')),
     recipient_team_id text,
     recipient_user_id text,
-    stream_state text NOT NULL DEFAULT 'none' CHECK (stream_state IN ('none', 'open', 'stopped', 'uncertain')),
+    stream_status text NOT NULL DEFAULT 'none' CHECK (stream_status IN ('none', 'open', 'stopped', 'uncertain')),
     confirmed_stream_text text NOT NULL DEFAULT '' CHECK (octet_length(confirmed_stream_text)<=65536),
     inflight_stream_text text CHECK (octet_length(inflight_stream_text)<=65536),
     inflight_method text,
@@ -2222,7 +2241,7 @@ CREATE TABLE slack_posts (
     CHECK (source_start_seq<>source_end_seq OR source_end_offset>=source_start_offset),
     CHECK ((recipient_team_id IS NULL)=(recipient_user_id IS NULL)),
     CHECK (presentation_path<>'stream' OR recipient_user_id IS NOT NULL),
-    CHECK (presentation_path<>'post' OR stream_state='none'),
+    CHECK (presentation_path<>'post' OR stream_status='none'),
     CHECK (num_nonnulls(inflight_method, inflight_payload, inflight_digest, inflight_revision, inflight_attempt_id) IN (0, 5)),
     CHECK (status NOT IN ('sending', 'uncertain') OR inflight_attempt_id IS NOT NULL),
     CHECK ((status='sending')=(claimed_until IS NOT NULL)),

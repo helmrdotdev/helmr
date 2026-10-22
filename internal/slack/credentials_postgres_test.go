@@ -26,7 +26,7 @@ func credentialFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id FROM slack_installations WHERE id=$1`, f.installation).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32))
+	store, err := NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 		t.Fatal("retired generation resurrected", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
-	setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+	setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}

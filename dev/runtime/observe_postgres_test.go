@@ -326,7 +326,7 @@ func TestSlackDeliveryObservationExcludesPrivatePayloads(t *testing.T) {
 	f := sessiontest.New(t)
 	installation, channel, publication, thread, participant, registration := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `
- INSERT INTO slack_app_registrations(id,org_id,created_by_user_id) SELECT $11,org_id,$3 FROM environments WHERE id=$1;
+ INSERT INTO slack_app_registrations(transport,id,org_id,created_by_user_id) SELECT 'http',$11,org_id,$3 FROM environments WHERE id=$1;
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $2,$11,org_id,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$3 FROM environments WHERE id=$1;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$6,$11,$2,$3);

@@ -34,7 +34,7 @@ type DeliveryView struct {
 	MessageTimestamp    *string    `json:"message_ts"`
 	RootKnown           bool       `json:"root_known"`
 	Opening             bool       `json:"opening"`
-	StreamState         string     `json:"stream_state"`
+	StreamStatus        string     `json:"stream_status"`
 	CheckPausedAt       *time.Time `json:"check_paused_at"`
 	DisposedAt          *time.Time `json:"disposed_at"`
 	DisposedBy          *uuid.UUID `json:"disposed_by"`
@@ -70,7 +70,7 @@ func ListSessionDelivery(ctx context.Context, pool db.TxBeginner, org, user, env
  (SELECT sum(v.desired_revision)::bigint FROM slack_posts v WHERE v.thread_source_id=p.thread_source_id AND v.post_key=p.post_key),
  p.inflight_method,p.inflight_attempt_id,p.message_ts,t.thread_ts IS NOT NULL,
  p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key AND p.continuation_ordinal=0,
- p.stream_state,p.reconciliation_paused_at,p.delivery_disposed_at,p.delivery_disposed_by,p.error
+ p.stream_status,p.reconciliation_paused_at,p.delivery_disposed_at,p.delivery_disposed_by,p.error
  FROM slack_posts p JOIN slack_thread_sources s ON s.id=p.thread_source_id JOIN slack_threads t ON t.id=s.thread_id
  WHERE p.environment_id=$1 AND p.session_id=$2 AND p.seq>$3 AND (p.status IN ('uncertain','failed','suppressed') OR p.delivery_disposed_at IS NOT NULL)
  ORDER BY p.seq LIMIT $4`, environment, session, after, limit)
@@ -81,7 +81,7 @@ func ListSessionDelivery(ctx context.Context, pool db.TxBeginner, org, user, env
 		for rows.Next() {
 			var v DeliveryView
 			var raw []byte
-			if err = rows.Scan(&v.ID, &v.TurnID, &v.Sequence, &v.Role, &v.Continuation, &v.Status, &raw, &v.PayloadExpiredAt, &v.CreatedAt, &v.DesiredRevision, &v.ConfirmedRevision, &v.PublicationRevision, &v.Method, &v.AttemptID, &v.MessageTimestamp, &v.RootKnown, &v.Opening, &v.StreamState, &v.CheckPausedAt, &v.DisposedAt, &v.DisposedBy, &v.Error); err != nil {
+			if err = rows.Scan(&v.ID, &v.TurnID, &v.Sequence, &v.Role, &v.Continuation, &v.Status, &raw, &v.PayloadExpiredAt, &v.CreatedAt, &v.DesiredRevision, &v.ConfirmedRevision, &v.PublicationRevision, &v.Method, &v.AttemptID, &v.MessageTimestamp, &v.RootKnown, &v.Opening, &v.StreamStatus, &v.CheckPausedAt, &v.DisposedAt, &v.DisposedBy, &v.Error); err != nil {
 				return err
 			}
 			if raw != nil {

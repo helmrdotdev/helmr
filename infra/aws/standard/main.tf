@@ -145,6 +145,8 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  ingress_mode               = "public"
+  slack_transport            = var.slack_transport
   controlplane_environment   = var.controlplane_environment
   capacity_token_secret_arn  = var.capacity_token_secret_arn
   capacity_token_kms_key_arn = var.capacity_token_kms_key_arn
@@ -155,7 +157,7 @@ module "controlplane" {
   vpc_id                                     = module.controlplane_network.vpc_id
   public_subnet_ids                          = module.controlplane_network.public_subnet_ids
   private_subnet_ids                         = module.controlplane_network.private_subnet_ids
-  public_url                                 = var.public_url
+  app_origin                                 = var.app_origin
   deployment_mode                            = var.deployment_mode
   computer_wrapping_key_id                   = var.computer_wrapping_key_id
   bootstrap_worker_group_name                = var.worker_group_name
@@ -278,8 +280,8 @@ resource "terraform_data" "worker_preconditions" {
     }
 
     precondition {
-      condition     = var.enable_cloudfront || var.public_url != null
-      error_message = "public_url is required when enable_cloudfront is false."
+      condition     = var.enable_cloudfront || var.app_origin != null
+      error_message = "app_origin is required when enable_cloudfront is false."
     }
 
     precondition {

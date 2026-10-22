@@ -91,7 +91,7 @@ func (s *Server) finishSlackAuthorization(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) slackRedirectURL() string {
-	return s.publicURL.JoinPath("auth/slack/callback").String()
+	return s.appOrigin.JoinPath("auth/slack/callback").String()
 }
 
 func (s *Server) writeSlackError(w http.ResponseWriter, err error) {

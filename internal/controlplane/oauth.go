@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/platformhttp"
 	"golang.org/x/oauth2"
 )
 
@@ -18,12 +20,17 @@ type githubOAuthProvider struct {
 	config        oauth2.Config
 	userURL       string
 	userEmailsURL string
+	httpClient    *http.Client
 }
 
-func NewGitHubOAuthProvider(log *slog.Logger, clientID string, clientSecret string, publicURL *url.URL) AuthProvider {
-	redirect := publicURL.ResolveReference(&url.URL{Path: "/auth/github/callback"}).String()
+func NewGitHubOAuthProvider(log *slog.Logger, clientID string, clientSecret string, appOrigin *url.URL, transport http.RoundTripper) AuthProvider {
+	if transport == nil {
+		transport = platformhttp.Direct()
+	}
+	redirect := appOrigin.ResolveReference(&url.URL{Path: "/auth/github/callback"}).String()
 	return &githubOAuthProvider{
-		log: log,
+		log:        log,
+		httpClient: &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		config: oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
@@ -50,6 +57,7 @@ func (p *githubOAuthProvider) RedirectURL(state string, verifier string) string 
 // addresses GitHub verified for it. A failed address lookup leaves the
 // identity without verified addresses.
 func (p *githubOAuthProvider) Resolve(ctx context.Context, code string, verifier string) (identity.ExternalIdentity, error) {
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, p.httpClient)
 	token, err := p.config.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return identity.ExternalIdentity{}, fmt.Errorf("exchange github oauth code: %w", err)

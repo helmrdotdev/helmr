@@ -212,5 +212,5 @@ func (s *Server) magicLinkFinish(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) magicLinkURL(token string) string {
 	values := url.Values{"token": []string{token}}
-	return s.publicURL.ResolveReference(&url.URL{Path: "/auth/magic-link/callback", RawQuery: values.Encode()}).String()
+	return s.appOrigin.ResolveReference(&url.URL{Path: "/auth/magic-link/callback", RawQuery: values.Encode()}).String()
 }

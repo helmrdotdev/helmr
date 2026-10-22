@@ -20,7 +20,7 @@ import (
 // InteractionHandler verifies transport and the signed target, then commits a
 // gesture receipt before ACK. It does not treat ACK as core operation success.
 type InteractionHandler struct {
-	PublicURL     *url.URL
+	AppOrigin     *url.URL
 	Client        Caller
 	Database      db.TxBeginner
 	AppID         string
@@ -97,62 +97,53 @@ func (h InteractionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	payload, err := jsoncanon.Transform([]byte(values.Get("payload")))
+	h.receiveInteractionPayload(r.Context(), []byte(values.Get("payload"))).writeHTTP(w)
+}
+
+func (h InteractionHandler) receiveInteractionPayload(parent context.Context, body []byte) receiptResult {
+	ctx, cancel := context.WithTimeout(parent, receiptTimeout)
+	defer cancel()
+	payload, err := jsoncanon.Transform(body)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	var envelope interactionEnvelope
 	if json.Unmarshal(payload, &envelope) != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
-	if envelope.AppID != h.AppID {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
+	if h.AppID == "" || envelope.AppID != h.AppID {
+		return receiptResult{disposition: receiptUnauthorized}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2500*time.Millisecond)
-	defer cancel()
-	r = r.WithContext(ctx)
 	if envelope.Type == "view_submission" && envelope.View.CallbackID == "helmr.answer" {
-		h.serveFormSubmission(w, r, envelope)
-		return
+		return h.receiveFormSubmission(ctx, envelope)
 	}
 	if envelope.Type != "block_actions" {
-		w.WriteHeader(http.StatusOK)
-		return
+		return receiptResult{disposition: receiptAccepted}
 	}
 	if len(envelope.Actions) != 1 || envelope.User.ID == "" || envelope.Team.ID == "" || envelope.User.IsBot {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	if envelope.Actions[0].ID == "helmr.console" {
-		w.WriteHeader(http.StatusOK)
-		return
+		return receiptResult{disposition: receiptAccepted}
 	}
 	action := envelope.Actions[0]
 	if action.Type == "button" && action.ID == "helmr.open_answer" {
-		h.serveAnswerOpening(w, r, envelope)
-		return
+		return h.receiveAnswerOpening(ctx, envelope)
 	}
 	if action.Type != "button" || (!strings.HasPrefix(action.ID, "helmr.choose.") && action.ID != "helmr.submit_choices" && !strings.HasPrefix(action.ID, "helmr.lifecycle.")) {
-		w.WriteHeader(http.StatusOK)
-		return
+		return receiptResult{disposition: receiptAccepted}
 	}
 	claims, err := decodeControl(h.ControlKey, action.Value, time.Now())
 	if (err != nil && !errors.Is(err, errControlExpired)) || (strings.HasPrefix(action.ID, "helmr.choose.") && claims.Action != "choose") || (action.ID == "helmr.submit_choices" && claims.Action != "submit_choices") || (strings.HasPrefix(action.ID, "helmr.lifecycle.") && (!lifecycleAction(claims.Action) || action.ID != "helmr.lifecycle."+claims.Action)) {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	key, err := controlRequestKey(claims, envelope.User.ID, action.Timestamp)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	occurred, err := slackMessageTime(action.Timestamp)
 	if err != nil || occurred.After(time.Now().Add(5*time.Minute)) {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	expires := occurred.Add(5 * time.Minute)
 	if tokenExpiry := time.Unix(claims.ExpiresAt, 0); claims.ExpiresAt != 0 && tokenExpiry.Before(expires) {
@@ -194,17 +185,5 @@ func (h InteractionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, err = receiveGesture(ctx, tx, inboundGesture{Installation: installation, Key: key, Actor: envelope.User.ID, OccurredAt: occurred, ExpiresAt: expires, Payload: normalized})
 		return err
 	})
-	if err != nil {
-		switch {
-		case errors.Is(err, errGestureConflict):
-			w.WriteHeader(http.StatusConflict)
-		case errors.Is(err, errControlInvalid), errors.Is(err, errGestureInvalid):
-			w.WriteHeader(http.StatusBadRequest)
-		default:
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
+	return receiptOutcome(err)
 }

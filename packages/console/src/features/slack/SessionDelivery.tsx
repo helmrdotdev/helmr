@@ -61,7 +61,7 @@ function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; onToggle: 
         <Show when={!post().root_known}><p class={ui.muted}>The thread’s first message is unconfirmed. Later messages remain blocked until Slack confirms that original message.</p></Show>
         <Show when={post().disposed_at}>
           <p class={ui.muted}>Remaining parts of this message will not be sent. Agent work continues.</p>
-          <Show when={post().stream_state === "uncertain" || post().stream_state === "open"}><p class={ui.muted}>Slack stream termination remains unconfirmed. Evidence is retained until it can be resolved.</p></Show>
+          <Show when={post().stream_status === "uncertain" || post().stream_status === "open"}><p class={ui.muted}>Slack stream termination remains unconfirmed. Evidence is retained until it can be resolved.</p></Show>
         </Show>
         <Show when={post().message_ts && post().confirmed_revision > 0}><p class={ui.muted}>{post().confirmed_revision === post().desired_revision ? "Slack confirmed this message." : "Slack confirmed an earlier version of this message."}</p></Show>
       </div>
@@ -123,7 +123,7 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
         <p class="m-0">Stop sending the rest of this message, including its continuation parts. Some content may already be in Slack. This does not stop the agent.</p>
         <CodeBlock code={post.text} label="Message content" />
         <Show when={!post.root_known}><p class="m-0">The original thread must still be confirmed before later messages can be sent. This action will not create a replacement thread.</p></Show>
-        <Show when={post.stream_state === "uncertain" || post.stream_state === "open"}><p class="m-0">Evidence remains while Slack stream termination is unconfirmed; this action does not guarantee content expiry.</p></Show>
+        <Show when={post.stream_status === "uncertain" || post.stream_status === "open"}><p class="m-0">Evidence remains while Slack stream termination is unconfirmed; this action does not guarantee content expiry.</p></Show>
       </div>
     </ConfirmDialog>}</Show>
   </Panel>;

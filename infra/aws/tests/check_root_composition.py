@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-assert len(sys.argv) == 4, "quickstart, standard and worker-image plans are required"
+assert len(sys.argv) == 5, "quickstart, standard, worker-image and private plans are required"
 
 for filename in sys.argv[1:3]:
     found = set()
@@ -50,7 +50,7 @@ for filename in sys.argv[1:3]:
                    for r in plans['slack_no_global_credentials']['resource_changes']
                    if r['type'] == 'aws_ecs_task_definition'}
     for name in ('controlplane', 'dispatcher'):
-        assert all(not item['name'].startswith('SLACK_')
+        assert all(not item['name'].startswith('SLACK_') or item['name'] == 'SLACK_TRANSPORT'
                    for item in slack_tasks[name]['environment'] + slack_tasks[name]['secrets']), (filename, name)
     print(f'ok - {filename}: dedicated Slack credentials are absent from process configuration')
     baseline = next(event['test_state']['values']['outputs']['worker_generation_definitions']['value']
@@ -104,3 +104,43 @@ for filename in sys.argv[1:3]:
     assert sum('WORKER_COMPUTER_STAGING_MIB=65536' in env for env in environments) == 1, filename
     assert sum('WORKER_COMPUTER_STAGING_MIB=32768' in env for env in environments) == 1, filename
     print(f'ok - {filename}: new and retained Computer staging reach actual launch templates')
+
+# Inspect the actual private root and nested modules, not only template locals.
+private_events = [json.loads(line) for line in Path(sys.argv[4]).read_text().splitlines()]
+private_state = next(event['test_state'] for event in private_events
+                     if event.get('type') == 'test_state' and event['@testrun'] == 'private_baseline')
+def flatten(module):
+    yield from module.get('resources', [])
+    for child in module.get('child_modules', []):
+        yield from flatten(child)
+private_resources = list(flatten(private_state['values']['root_module']))
+resources = {r['address']: r['values'] for r in private_resources}
+assert resources['module.controlplane.aws_lb.controlplane']['internal'] is True
+assert not any(r['type'] == 'aws_cloudfront_distribution' for r in private_resources)
+assert not any(address.startswith(('module.controlplane.aws_lb_listener.http[', 'module.controlplane.aws_lb_listener.http_redirect[')) for address in resources)
+assert 'module.controlplane.aws_vpc_security_group_egress_rule.controlplane[0]' not in resources
+for service in ('controlplane', 'dispatcher'):
+    task = resources[f'module.controlplane.aws_ecs_task_definition.{service}']
+    env = {item['name']: item['value'] for item in json.loads(task['container_definitions'])[0]['environment']}
+    assert env['APP_ORIGIN'] == 'https://helmr.example.test'
+    assert env['SLACK_TRANSPORT'] == 'socket'
+    assert env['OUTBOUND_PROXY_URL'].startswith('http://proxy.')
+    if service == 'dispatcher':
+        assert env['CONTROL_PLANE_URL'] == env['APP_ORIGIN']
+    network = resources[f'module.controlplane.aws_ecs_service.{service}[0]']['network_configuration'][0]
+    assert network['assign_public_ip'] is False
+for address, value in resources.items():
+    if address.startswith('aws_vpc_security_group_egress_rule.platform_'):
+        assert value.get('cidr_ipv4') != '0.0.0.0/0', (address, value)
+        assert value['ip_protocol'] == 'tcp'
+        assert value['from_port'] == value['to_port']
+assert resources['aws_route53_resolver_firewall_config.platform']['firewall_fail_open'] == 'DISABLED'
+assert resources['aws_route53_resolver_firewall_rule.block']['action'] == 'BLOCK'
+assert resources['aws_route53_resolver_firewall_domain_list.all']['domains'] == ['*']
+assert resources['aws_route.execution_to_platform']['destination_cidr_block'] == '10.90.0.0/16'
+for address, value in resources.items():
+    if value.get('user_data') and 'aws_launch_template.' in address:
+        script = base64.b64decode(value['user_data']).decode()
+        for cidr in ('10.90.0.0/16', '10.91.0.0/16', '10.92.0.0/16'):
+            assert cidr in script, (address, cidr)
+print('ok - private root: internal ingress, explicit task egress, DNS restriction and guest management denies')

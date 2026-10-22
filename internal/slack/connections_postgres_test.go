@@ -26,7 +26,7 @@ func TestConnectionPendingSlotAndCredentialCustody(t *testing.T) {
 	failures := make(chan error, 8)
 	for range 8 {
 		wg.Go(func() {
-			setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+			setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, TransportHTTP)
 			if err != nil {
 				failures <- err
 			} else {
@@ -99,7 +99,7 @@ func TestConnectionPendingSlotAndCredentialCustody(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT retired_at IS NOT NULL AND credential_ciphertext IS NULL AND credential_nonce IS NULL AND credential_revision>0 AND client_id='client' FROM slack_app_registrations WHERE id=$1`, setup.RegistrationID).Scan(&erased); err != nil || !erased {
 		t.Fatal("pending disconnect retained secrets or erased identity", err)
 	}
-	next, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+	next, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, TransportHTTP)
 	if err != nil || next.ID == setup.ID || next.RegistrationID == setup.RegistrationID {
 		t.Fatal("discard revived generation", err)
 	}
@@ -115,7 +115,7 @@ func TestConnectionGrantPinsIdentityAndRejectsStaleSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
-	setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+	setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,11 +170,11 @@ func TestStructuredAgentCannotConfigureSlackConnection(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_definitions SET input_kind='json',input_schema='{"status":"unavailable","reason":"missing_converter"}' WHERE environment_id=$1 AND agent_id=$2`, f.Environment, f.Agent)
-	if _, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent); !errors.Is(err, ErrConnectionUnavailable) {
+	if _, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, TransportHTTP); !errors.Is(err, ErrConnectionUnavailable) {
 		t.Fatalf("structured connection admitted: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_definitions SET input_kind='text',input_schema=NULL WHERE environment_id=$1 AND agent_id=$2`, f.Environment, f.Agent)
-	if _, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent); err != nil {
+	if _, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, TransportHTTP); err != nil {
 		t.Fatalf("conversational agent unavailable: %v", err)
 	}
 }

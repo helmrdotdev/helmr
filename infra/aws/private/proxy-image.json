@@ -1,0 +1,7 @@
+{
+  "image": "ubuntu/squid@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c",
+  "digest": "sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c",
+  "squid_version": "6.14",
+  "source_tag": "6.6-24.04_edge",
+  "source": "https://hub.docker.com/r/ubuntu/squid"
+}

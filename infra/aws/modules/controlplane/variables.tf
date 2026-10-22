@@ -49,7 +49,7 @@ variable "public_subnet_ids" {
   type        = list(string)
 }
 
-variable "public_url" {
+variable "app_origin" {
   description = "External HTTPS URL for the direct ALB Control Plane when enable_cloudfront is false."
   type        = string
   default     = null
@@ -400,7 +400,7 @@ variable "capacity_token_kms_key_arn" {
 }
 
 variable "controlplane_environment" {
-  description = "Additional non-secret environment variables for helmr-controlplane. Managed Helmr variables such as PUBLIC_URL are owned by this module."
+  description = "Additional non-secret environment variables for helmr-controlplane. Managed Helmr variables such as APP_ORIGIN are owned by this module."
   type        = map(string)
   default     = {}
   validation {
@@ -582,4 +582,56 @@ variable "tags" {
   description = "Tags applied to all resources."
   type        = map(string)
   default     = {}
+}
+
+variable "ingress_mode" {
+  description = "Application load balancer exposure; private requires explicit client sources and HTTPS."
+  type        = string
+  default     = "public"
+  validation {
+    condition     = contains(["public", "private"], var.ingress_mode)
+    error_message = "ingress_mode must be public or private."
+  }
+}
+
+variable "private_client_ipv4_cidrs" {
+  description = "Routed company client CIDRs allowed to the internal HTTPS listener."
+  type        = set(string)
+  default     = []
+  validation {
+    condition     = alltrue([for cidr in var.private_client_ipv4_cidrs : can(cidrnetmask(cidr)) && try(tonumber(split("/", cidr)[1]) > 0, false)])
+    error_message = "Private client sources must be valid IPv4 CIDRs narrower than the default route."
+  }
+}
+
+variable "private_client_security_group_ids" {
+  description = "Security groups allowed to the internal HTTPS listener, including worker hosts and platform callers."
+  type        = map(string)
+  default     = {}
+}
+
+variable "restrict_platform_egress" {
+  description = "Omit general task egress. Caller must attach exact service/proxy rules to the exported task security group."
+  type        = bool
+  default     = false
+}
+
+variable "slack_transport" {
+  description = "Deployment-selected Slack delivery; organization admins cannot change it."
+  type        = string
+  default     = "http"
+  validation {
+    condition     = contains(["disabled", "http", "socket"], var.slack_transport)
+    error_message = "slack_transport must be disabled, http or socket."
+  }
+}
+
+variable "outbound_proxy_url" {
+  description = "Optional HTTP CONNECT proxy origin used by external platform integrations. Keep authentication in the network boundary, not this non-secret input."
+  type        = string
+  default     = ""
+  validation {
+    condition     = var.outbound_proxy_url == "" || can(regex("^https?://[A-Za-z0-9.-]+(:[0-9]+)?$", var.outbound_proxy_url))
+    error_message = "outbound_proxy_url must be empty or an HTTP(S) origin without credentials, path, query or fragment."
+  }
 }

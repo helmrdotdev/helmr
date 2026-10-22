@@ -141,3 +141,13 @@ output "clickhouse_bootstrap_task_definition_arn" {
   description = "Task definition for provisioning ClickHouse application users, present only in bootstrap mode."
   value       = one(aws_ecs_task_definition.clickhouse_bootstrap[*].arn)
 }
+
+output "load_balancer_security_group_id" {
+  description = "Application load balancer security group for narrow private caller egress."
+  value       = aws_security_group.alb.id
+}
+
+output "postgres_hostname" {
+  description = "RDS hostname without port for explicit private resolver policy."
+  value       = aws_db_instance.postgres.address
+}

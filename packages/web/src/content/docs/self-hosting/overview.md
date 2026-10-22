@@ -6,7 +6,7 @@ sidebarLabel: Overview
 
 # Self-hosting overview
 
-Self-hosted Helmr runs in your AWS account. The public repository supplies reusable Terraform/OpenTofu modules, two example compositions, and release-artifact resolution. You operate the environment around them.
+Self-hosted Helmr runs in your AWS account. The public repository supplies reusable Terraform/OpenTofu modules, three example compositions, and release-artifact resolution. You operate the environment around them.
 
 The runtime has three main parts:
 
@@ -23,6 +23,8 @@ The AWS examples compose RDS PostgreSQL, S3, KMS, Secrets Manager, ECS Fargate, 
 Use [AWS evaluation](/docs/self-hosting/evaluation) for a disposable evaluation or proof of concept. Its defaults deliberately trade resilience and retention for lower cost.
 
 Use [AWS production](/docs/self-hosting/production) as the starting baseline for a customer environment. It strengthens the defaults, but it is not a complete production operating model: remote state, ClickHouse provisioning and networking, credentials, capacity policy, monitoring, backup testing, drift management, and multi-region design remain yours.
+
+Use [private deployments](/docs/self-hosting/private) when Console/API ingress must stay on your company network. Its restricted platform exit is separate from guest/build networking.
 
 Do not promote an evaluation stack in place. Build a production environment from the production baseline and migrate deliberately.
 

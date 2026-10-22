@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"syscall"
@@ -183,6 +184,7 @@ func optionsFromConfig(cfg Config) (*ch.Options, error) {
 	}
 	options := &ch.Options{
 		Protocol:        ch.HTTP,
+		TransportFunc:   func(t *http.Transport) (http.RoundTripper, error) { t.Proxy = nil; return t, nil },
 		Compression:     &ch.Compression{Method: ch.CompressionLZ4},
 		Addr:            []string{base.Host},
 		Auth:            ch.Auth{Username: user, Password: cfg.Password},

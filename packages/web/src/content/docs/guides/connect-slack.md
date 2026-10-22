@@ -16,11 +16,12 @@ how Slack conversations map to Sessions, see [Slack](/docs/concepts/slack).
   [Deploy](/docs/guides/deploy).
 - You are an owner or admin of the organization. Connecting an Agent is done in
   the Console; there is no CLI command or `/v1` API for it.
-- Slack can reach your control plane. The Slack app sends events and
-  interactions to `PUBLIC_URL/integrations/slack/apps/…` and redirects sign-ins
-  to `PUBLIC_URL/auth/slack/callback`, so the control plane's
-  [`PUBLIC_URL`](/docs/reference/env) must be a public HTTPS origin. No other
-  Slack settings are needed on the control plane.
+- The deployment operator has enabled Slack. The Console shows the delivery
+  mode selected for the deployment: **HTTP callbacks** or **Socket Mode**.
+  HTTP needs a public HTTPS callback origin. Socket Mode needs outbound HTTPS
+  and WebSocket access to Slack, and can use a private Console origin.
+  Your browser must reach both Slack and the Console for installation and
+  identity linking; join your company network first when the origin is private.
 - You can create apps in the Slack workspace.
 
 ## Create the Agent's Slack app
@@ -31,22 +32,27 @@ how Slack conversations map to Sessions, see [Slack](/docs/concepts/slack).
 2. Choose **Connect Slack**. Each Agent has one Slack connection per
    Environment.
 3. Choose **Create app in Slack**. Slack opens with an app manifest already
-   filled in: the app name, bot user, the scopes Helmr needs, and the event and
-   interactivity URLs for this connection. The manifest is also shown in the
+   filled in: the app name, bot user, the scopes Helmr needs, and the delivery settings for this connection. The manifest is also shown in the
    Console if you prefer to paste it.
 4. Create the app, then choose **I created the app** in the Console. From the
    app's **Basic Information** page in Slack, copy the **Client ID**,
-   **Client Secret** and **Signing Secret**.
+   **Client Secret**. For HTTP callbacks, also copy the **Signing Secret**.
+   For Socket Mode, generate an **App-Level Token** with `connections:write`
+   in that same app’s Basic Information page.
 5. In the Console, enter the three values and choose **Save app credentials**.
-   If Slack reported that the event URL could not be verified, retry the
-   verification in Slack now.
+   For HTTP callbacks, retry event URL verification in Slack if it previously failed.
 6. Choose **Install app in Slack** and approve the installation.
 
 Slack may show a token-rotation setup notice while creating the app. Keep token
 rotation enabled; Helmr refreshes expiring installation tokens. The app is
 configured to appear online in Slack. This indicator is not a server-health check.
 
-The Slack tab shows the app and workspace once it is connected. From the same
+The Slack tab shows the app and workspace once it is authorized. Socket Mode
+also shows the event connection separately. An authorized app can have a
+reconnecting or unavailable event connection. If it asks for action, verify
+that the app-level token belongs to this app and has `connections:write`, or ask
+the deployment operator to check network access. Secrets are never returned by
+the Console/API. From the same
 tab you can update the app credentials, reauthorize the app, or disconnect it.
 Before installation, **Discard setup** releases the Agent's connection without
 deleting the app in Slack.
@@ -138,3 +144,18 @@ Sessions continue and remain available through the CLI and API. Reconnecting
 creates a new connection: earlier threads stay disconnected, and triggers that
 post to Slack take effect again only after a Deployment is promoted. Disconnecting
 does not delete the app in Slack.
+
+## Deployment settings
+
+The operator sets `APP_ORIGIN`, `SLACK_TRANSPORT=disabled|http|socket` and, when
+needed, `OUTBOUND_PROXY_URL`. These are deployment configuration, not organization
+settings. Organization owners/admins manage only their Agent’s dedicated Slack
+app and its credentials. HTTP delivery registers
+`/integrations/slack/apps/{registrationID}/events` and `/interactions`; Socket and
+disabled deployments do not mount those receivers. Both enabled modes use browser
+callbacks at `/auth/slack/callback` and `/api/slack/user-links/callback`.
+
+Changing the deployment transport does not convert existing registrations.
+Disconnect and set up the connection under the new mode. There is no automatic
+fallback between transports. Socket Mode apps cannot be distributed through the
+Slack Marketplace; this workflow uses dedicated workspace apps.

@@ -60,19 +60,19 @@ def merge_owned(supplied, owned):
 
 def compile_config(raw):
     """Generate stable per-scope credentials once, without accessing a host."""
-    if set(raw) - {'capture_reply_faults', 'public_url'} != {'binaries', 'control_plane', 'worker', 'services_candidate', 'worker_host_receipt', 'worker_runtime_receipt'}:
+    if set(raw) - {'capture_reply_faults', 'app_origin'} != {'binaries', 'control_plane', 'worker', 'services_candidate', 'worker_host_receipt', 'worker_runtime_receipt'}:
         raise ValueError('expected binaries, control_plane, worker, services_candidate, worker_host_receipt, worker_runtime_receipt')
-    public_url = 'http://127.0.0.1:58080'
-    if 'public_url' in raw:
-        value = raw['public_url']
+    app_origin = 'http://127.0.0.1:58080'
+    if 'app_origin' in raw:
+        value = raw['app_origin']
         if not isinstance(value, str) or any(c.isspace() or ord(c) < 32 for c in value):
-            raise ValueError('public_url must be an HTTPS origin')
+            raise ValueError('app_origin must be an HTTPS origin')
         parsed = urllib.parse.urlsplit(value)
         if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
                 or parsed.password is not None or parsed.path not in ['', '/'] or parsed.query or parsed.fragment
                 or (parsed.port is not None and parsed.port == 0)):
-            raise ValueError('public_url must be an HTTPS origin without credentials, path, query or fragment')
-        public_url = urllib.parse.urlunsplit(('https', parsed.netloc.lower(), '', '', ''))
+            raise ValueError('app_origin must be an HTTPS origin without credentials, path, query or fragment')
+        app_origin = urllib.parse.urlunsplit(('https', parsed.netloc.lower(), '', '', ''))
     reply_faults = raw.get('capture_reply_faults', False)
     if type(reply_faults) is not bool:
         raise ValueError('capture_reply_faults must be a boolean')
@@ -102,7 +102,7 @@ def compile_config(raw):
     owned = {
         'DEPLOYMENT_MODE': 'self-hosted', 'DATABASE_URL': f'postgres://helmr:{db_password}@127.0.0.1:55432/helmr?sslmode=disable',
         'CLICKHOUSE_URL': 'http://127.0.0.1:58123',
-        'CONTROL_PLANE_ADDR': '127.0.0.1:58080', 'PUBLIC_URL': public_url,
+        'CONTROL_PLANE_ADDR': '127.0.0.1:58080', 'APP_ORIGIN': app_origin,
         'BOOTSTRAP_ENABLED': 'true',
         'BOOTSTRAP_REGION_ID': 'default', 'BOOTSTRAP_WORKER_GROUP_NAME': 'default',
         'SETUP_TOKEN': secrets.token_urlsafe(32), 'COMPUTER_WRAPPING_KEY_ID': 'verification',
@@ -135,8 +135,8 @@ def compile_config(raw):
         'CPU_TEMPLATE_HELPER_PATH': '/usr/local/bin/cpu-template-helper',
         'CHECKPOINT_ENCRYPTION_KEY': base64.b64encode(secrets.token_bytes(32)).decode(),
     })
-    dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY', 'PUBLIC_URL']}
-    for key in ['DIAGNOSTIC_EXPORT_BATCH_BYTES', 'DIAGNOSTIC_EXPORT_BATCH_RECORDS', 'DIAGNOSTIC_CHUNK_BYTES', 'DIAGNOSTIC_SOURCE_BYTES', 'DIAGNOSTIC_SOURCE_RECORDS', 'DIAGNOSTIC_ENVIRONMENT_BYTES', 'DIAGNOSTIC_ENVIRONMENT_RECORDS', 'DIAGNOSTIC_QUEUE_BYTES', 'DIAGNOSTIC_QUEUE_RECORDS', 'DIAGNOSTIC_DB_MAX_CONNECTIONS']:
+    dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY', 'APP_ORIGIN']}
+    for key in ['SLACK_TRANSPORT', 'OUTBOUND_PROXY_URL', 'DIAGNOSTIC_EXPORT_BATCH_BYTES', 'DIAGNOSTIC_EXPORT_BATCH_RECORDS', 'DIAGNOSTIC_CHUNK_BYTES', 'DIAGNOSTIC_SOURCE_BYTES', 'DIAGNOSTIC_SOURCE_RECORDS', 'DIAGNOSTIC_ENVIRONMENT_BYTES', 'DIAGNOSTIC_ENVIRONMENT_RECORDS', 'DIAGNOSTIC_QUEUE_BYTES', 'DIAGNOSTIC_QUEUE_RECORDS', 'DIAGNOSTIC_DB_MAX_CONNECTIONS']:
         if key in cp:
             dispatcher[key] = cp[key]
     dispatcher['CONTROL_PLANE_URL'] = 'http://127.0.0.1:58080'

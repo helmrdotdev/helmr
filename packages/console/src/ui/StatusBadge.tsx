@@ -27,7 +27,7 @@ const TONES = {
   member: { active: "succeeded", disabled: "revoked", invited: "waiting" },
   worker_group: { active: "active", paused: "waiting", draining: "waiting", disabled: "revoked" },
   agent: { defined: "active", not_defined: "expired" },
-  slack_connection: { setup_incomplete: "waiting", connected: "succeeded", reauthorization_required: "waiting", disconnected: "revoked" },
+  slack_connection: { configuration_mismatch: "waiting", setup_incomplete: "waiting", connected: "succeeded", reauthorization_required: "waiting", disconnected: "revoked" },
   computer_usage: { admitted: "expired", running: "active", waiting: "waiting", parked: "expired", draining: "waiting", unreconciled: "revoked" },
   process: { starting: "waiting", ready: "active", stopping: "waiting", stopped: "expired", lost: "revoked", recovery_required: "revoked" },
   process_stop: { requested: "waiting", stopping: "waiting", stopped: "succeeded" },

@@ -24,7 +24,7 @@ import { SlackFailureNotice, SlackNotSetUp } from "./SlackFailure";
 // The manifest parts people check against Slack: the scopes and the event URL.
 const MANIFEST_OPEN: ReadonlySet<string> = new Set(["oauth_config", "oauth_config.scopes", "settings", "settings.event_subscriptions"]);
 
-type Credentials = { client_id: string; client_secret: string; signing_secret: string };
+type Credentials = import("../../lib/slack").SlackAppCredentials;
 
 const MANAGERS = "Organization owners and admins";
 
@@ -72,7 +72,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
   const scope = useScope();
   const address = (): AgentSlackAddress => ({ projectID: props.projectID, environmentID: props.environmentID, agentName: props.agentName });
   const iconSeed = () => `${props.projectID}/${props.environmentID}/${props.agentName}`;
-  const state = createQuery(() => ({ queryKey: ["agent-slack", props.projectID, props.environmentID, props.agentName], queryFn: () => getAgentSlackConnection(address()), retry: false, gcTime: 0, refetchOnWindowFocus: false }));
+  const state = createQuery(() => ({ queryKey: ["agent-slack", props.projectID, props.environmentID, props.agentName], queryFn: () => getAgentSlackConnection(address()), retry: false, gcTime: 0, refetchOnWindowFocus: false, refetchInterval: 15000 }));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<Failure>();
   const [removing, setRemoving] = createSignal<Connection | null>(null);
@@ -99,9 +99,11 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
         <DetailLayout rail={
           <div class="flex flex-col gap-4">
             <ConnectionFacts environmentName={props.environmentName} installed={!!data().connection?.installation_id}>
-              <KeyValue label="Status">
+              <KeyValue label="Delivery">{data().transport === "socket" ? "Socket Mode" : "HTTP callbacks"} · Selected by the deployment operator</KeyValue>
+              <KeyValue label="Authorization">
                 <Show when={data().connection} fallback="Not connected">{(connection) => <StatusBadge resource="slack_connection" status={connection().status} />}</Show>
               </KeyValue>
+              <Show when={data().connection?.socket}>{(health) => <KeyValue label="Event connection">{statusLabel(health().status)}</KeyValue>}</Show>
               <Show when={data().connection?.app_name}>{(name) => <KeyValue label="App">{name()}</KeyValue>}</Show>
               <Show when={data().connection?.workspace_name}>{(name) => <KeyValue label="Workspace">{name()}</KeyValue>}</Show>
               <Show when={data().connection?.app_id}>{(id) => <KeyValue label="App ID"><span class="font-mono">{id()}</span></KeyValue>}</Show>
@@ -199,7 +201,7 @@ function setupSteps(states: { create: StepState; credentials?: StepState | undef
   const upcoming: StepState = { state: "upcoming" };
   return [
     { title: "Create the Slack app", description: "From the manifest, with this agent’s name and icon.", ...states.create },
-    { title: "Save app credentials", description: "From Basic Information in the Slack app. Secrets are never shown again.", ...(states.credentials ?? upcoming) },
+    { title: "Save app credentials", description: "From the Slack app settings. Secrets are never shown again.", ...(states.credentials ?? upcoming) },
     { title: "Install in your workspace", description: "Opens Slack to authorize, then returns here.", ...(states.install ?? upcoming) },
     { title: "Invite the app to a channel", description: "Mention it to start a session.", ...upcoming },
   ];
@@ -266,8 +268,10 @@ function InstalledConnection(props: {
 }) {
   const reauthorize = () => <button type="button" class={ui.button} disabled={props.busy} onClick={() => props.authorize()}>Reauthorize in Slack</button>;
   return (
-    <SetupPanel status={statusLabel(props.connection.status)}>
-      <Show when={props.connection.status === "connected"}>
+    <SetupPanel status={props.connection.transport === "socket" && props.connection.status === "connected" ? "Authorized" : statusLabel(props.connection.status)}>
+      <Show when={props.connection.status === "configuration_mismatch"}><Notice tone="warning">The deployment’s Slack delivery mode changed. Disconnect this connection and set it up again using the current configuration.</Notice></Show>
+      <Show when={props.connection.socket && props.connection.status === "connected" && props.connection.socket.status !== "connected"}><Notice tone="warning">Slack is authorized, but event delivery {props.connection.socket?.status === "action_required" ? "needs attention" : `is ${statusLabel(props.connection.socket?.status ?? "disconnected").toLowerCase()}`}. {props.connection.socket?.status === "action_required" ? "Check the app-level token and its connections:write scope, or ask the deployment operator to check connectivity." : "The deployment will retry automatically. Ask the deployment operator if this persists."}</Notice></Show>
+      <Show when={props.connection.status === "connected" && (!props.connection.socket || props.connection.socket.status === "connected")}>
         <Notice tone="success">Connected to {props.connection.workspace_name || "the workspace"} as {props.connection.app_name || props.agentName}. Invite this app to a channel and mention it to start a session.<Show when={props.connection.direct_messages_authorized}> With the current app manifest applied, you can also message it directly without a mention. Start a new message for a new session; reply in its thread to continue.</Show></Notice>
       </Show>
       <Show when={props.connection.status === "connected" && !props.connection.direct_messages_authorized}>
@@ -283,7 +287,7 @@ function InstalledConnection(props: {
       <Show when={props.connection.status === "connected"}>
         <div class={ui.buttonGroup}>{reauthorize()}</div>
       </Show>
-      <Show when={props.connection.status !== "disconnected"}>
+      <Show when={props.connection.status !== "disconnected" && props.connection.status !== "configuration_mismatch"}>
         <Disclosure summary="Update app credentials"><CredentialForm connection={props.connection} busy={props.busy} save={props.save} /></Disclosure>
       </Show>
       <Disclosure summary="Update app manifest">
@@ -312,16 +316,16 @@ function CredentialForm(props: { connection: Connection; busy: boolean; save: (c
   return (
     <form onSubmit={(event) => {
       event.preventDefault();
-      void props.save({ client_id: client().trim(), client_secret: secret().trim(), signing_secret: signing().trim() }).then(clear, () => undefined);
+      void props.save({ client_id: client().trim(), client_secret: secret().trim(), ...(props.connection.transport === "socket" ? { app_token: signing().trim() } : { signing_secret: signing().trim() }) }).then(clear, () => undefined);
     }}>
-      <div class="grid grid-cols-3 gap-x-3 max-[960px]:grid-cols-1">
+      <div class="grid grid-cols-3 items-start gap-x-3 max-[960px]:grid-cols-1">
         <Field label="Client ID" hint={props.connection.credentials_configured ? "Fixed for this app." : undefined}>
           <TextInput class="font-mono" required value={client()} readOnly={props.connection.credentials_configured} disabled={props.busy} autocomplete="off" spellcheck={false} onInput={(event) => setClient(event.currentTarget.value)} />
         </Field>
         <Field label="Client secret">
           <SecretInput required value={secret()} disabled={props.busy} onInput={(event) => setSecret(event.currentTarget.value)} />
         </Field>
-        <Field label="Signing secret">
+        <Field label={props.connection.transport === "socket" ? "App-level token" : "Signing secret"} hint={props.connection.transport === "socket" ? "In Basic Information → App-Level Tokens, generate a token with connections:write. Use the same Slack app." : undefined}>
           <SecretInput required value={signing()} disabled={props.busy} onInput={(event) => setSigning(event.currentTarget.value)} />
         </Field>
       </div>

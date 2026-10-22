@@ -26,7 +26,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		UserID:          principal.UserID.String(),
 		DisplayName:     account.DisplayName,
 		ProfileImageURL: account.ProfileImageURL,
-		PublicURL:       s.publicURL.String(),
+		AppOrigin:       s.appOrigin.String(),
 		Admin:           principal.Admin,
 		Permissions:     []string{},
 		ProjectRequired: hasOrg && !account.HasProjects,

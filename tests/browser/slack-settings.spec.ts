@@ -18,6 +18,7 @@ async function openAgent(page: Page) {
   return page.getByRole("tabpanel", { name: "Slack" });
 }
 const connection = (status: string, configured = true) => ({
+  transport: "http",
   id: "connection-A", registration_id: "registration-A", installation_id: status === "setup_incomplete" ? null : "installation-A",
   status, direct_messages_authorized: true, credentials_configured: configured, client_id: configured ? "client-A" : null,
   app_id: "app-A", team_id: "team-A", workspace_name: "Workspace A", app_name: "Dedicated Agent", app_icon_url: null,
@@ -35,7 +36,7 @@ test("Agent Slack setup walks the steps on the page and authorizes only its exac
       else if (path.endsWith("/credentials")) { current = connection("setup_incomplete"); await route.fulfill({ status: 204 }); return; }
       else if (path.endsWith("/authorize")) { await route.fulfill({ json: { redirect_url: "https://slack.com/oauth/v2/authorize?state=fixture" } }); return; }
     }
-    await route.fulfill({ json: { connection: current, manifest: { settings: { event_subscriptions: { request_url: "https://example.test/integrations/slack/apps/registration-A/events" } } }, create_app_url: "https://api.slack.com/apps?new_app=1" } });
+    await route.fulfill({ json: { transport: "http", connection: current, manifest: { settings: { event_subscriptions: { request_url: "https://example.test/integrations/slack/apps/registration-A/events" } } }, create_app_url: "https://api.slack.com/apps?new_app=1" } });
   });
   await page.route("https://slack.com/oauth/v2/authorize?**", route => route.fulfill({ contentType: "text/html", body: "<p>OAuth destination fixture</p>" }));
   const panel = await openAgent(page);
@@ -98,7 +99,7 @@ test("Agent Slack setup can be discarded only after confirming", async ({ page }
   const deletions: string[] = [];
   await page.route(`**${endpoint}**`, async route => {
     if (route.request().method() === "DELETE") { deletions.push(new URL(route.request().url()).pathname); current = null; await route.fulfill({ status: 204 }); return; }
-    await route.fulfill({ json: { connection: current, manifest: {}, create_app_url: "https://api.slack.com/apps?new_app=1" } });
+    await route.fulfill({ json: { transport: "http", connection: current, manifest: {}, create_app_url: "https://api.slack.com/apps?new_app=1" } });
   });
   const panel = await openAgent(page);
   await expect(currentStep(panel)).toContainText("Install in your workspace");
@@ -121,7 +122,7 @@ test("Agent disconnect describes the existing-thread boundary and requires confi
   const deletions: string[] = [];
   await page.route(`**${endpoint}**`, async route => {
     if (route.request().method() === "DELETE") { deletions.push(new URL(route.request().url()).pathname); connected = false; await route.fulfill({ status: 204 }); return; }
-    await route.fulfill({ json: { connection: connected ? connection("connected") : null } });
+    await route.fulfill({ json: { transport: "http", connection: connected ? connection("connected") : null } });
   });
   const panel = await openAgent(page);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -151,7 +152,7 @@ test("Agent reauthorization keeps its app and workspace identity", async ({ page
   const starts: unknown[] = [];
   await page.route(`**${endpoint}**`, async route => {
     if (route.request().method() === "POST") { starts.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() }); await route.fulfill({ json: { redirect_url: "https://slack.com/oauth/v2/authorize?state=repair" } }); }
-    else await route.fulfill({ json: { connection: connection("reauthorization_required") } });
+    else await route.fulfill({ json: { transport: "http", connection: connection("reauthorization_required") } });
   });
   await page.route("https://slack.com/oauth/v2/authorize?**", route => route.fulfill({ contentType: "text/html", body: "<p>OAuth destination fixture</p>" }));
   const panel = await openAgent(page);
@@ -165,7 +166,7 @@ test("Agent reauthorization keeps its app and workspace identity", async ({ page
 });
 
 test("a connection Slack disconnected can only be removed", async ({ page }) => {
-  await page.route(`**${endpoint}**`, route => route.fulfill({ json: { connection: connection("disconnected") } }));
+  await page.route(`**${endpoint}**`, route => route.fulfill({ json: { transport: "http", connection: connection("disconnected") } }));
   const panel = await openAgent(page);
   await expect(panel.getByRole("status").filter({ hasText: "Slack no longer accepts this app’s installation." })).toBeVisible();
   await expect(panel.getByRole("button", { name: /Reauthorize|Install app/ })).toHaveCount(0);
@@ -299,3 +300,54 @@ for (const authorized of [false, true]) {
     await page.screenshot({ path: testInfo.outputPath("slack-dm-readiness.png"), fullPage: true });
   });
 }
+
+
+test("Socket setup follows the operator mode and keeps app tokens write-only", async ({ page }, testInfo) => {
+  let configured = false;
+  const writes: unknown[] = [];
+  await page.route(`**${endpoint}**`, async route => {
+    if (route.request().method() === "PUT") {
+      writes.push(route.request().postDataJSON()); configured = true;
+      await route.fulfill({ status: 204 }); return;
+    }
+    await route.fulfill({ json: {
+      transport: "socket", connection: { ...connection("setup_incomplete", configured), transport: "socket" },
+      manifest: { settings: { socket_mode_enabled: true } }, create_app_url: "https://api.slack.com/apps?new_app=1",
+    } });
+  });
+  const panel = await openAgent(page);
+  await expect(panel).toContainText("Socket Mode");
+  await expect(panel).toContainText("Selected by the deployment operator");
+  await panel.getByRole("button", { name: "I created the app" }).click();
+  await expect(panel.getByLabel("Signing secret", { exact: true })).toHaveCount(0);
+  await expect(panel).toContainText("connections:write");
+  await panel.getByLabel("Client ID", { exact: true }).fill("client-A");
+  await panel.getByLabel("Client secret", { exact: true }).fill("synthetic-client-secret");
+  await panel.getByLabel("App-level token", { exact: true }).fill("xapp-synthetic");
+  await panel.getByRole("button", { name: "Save app credentials" }).click();
+  await expect(panel).toContainText("Slack setup 3 of 4");
+  expect(writes).toEqual([{ client_id: "client-A", client_secret: "synthetic-client-secret", app_token: "xapp-synthetic" }]);
+  await panel.getByText("Replace app credentials", { exact: true }).click();
+  await expect(panel.getByLabel("App-level token", { exact: true })).toHaveValue("");
+  await expect(panel.getByLabel("Client secret", { exact: true })).toHaveValue("");
+  await page.screenshot({ path: testInfo.outputPath("socket-credentials.png"), fullPage: true });
+});
+
+test("Socket health is separate from authorization and mode mismatch cannot reauthorize", async ({ page }, testInfo) => {
+  let mismatch = false;
+  await page.route(`**${endpoint}**`, route => route.fulfill({ json: {
+    transport: "socket", connection: { ...connection(mismatch ? "configuration_mismatch" : "connected"), transport: "socket",
+      socket: { status: "action_required", reason: "app_mismatch", last_connected_at: null, last_received_at: null } },
+  } }));
+  const panel = await openAgent(page);
+  await expect(panel).toContainText("Slack is authorized, but event delivery");
+  await expect(panel).toContainText("Check the app-level token");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("socket-health-mobile.png"), fullPage: true });
+  mismatch = true;
+  await page.reload();
+  await expect(panel).toContainText("The deployment’s Slack delivery mode changed");
+  await expect(panel.getByRole("button", { name: "Reauthorize in Slack" })).toHaveCount(0);
+  await expect(panel.getByText("Update app credentials", { exact: true })).toHaveCount(0);
+});

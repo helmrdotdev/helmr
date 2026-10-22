@@ -140,7 +140,7 @@ func TestTriggerHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	}
 	q := db.New(f.Pool)
 	cfg := completeServerConfig(t)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	cfg.DB = q
 	cfg.TX = f.Pool
 	cfg.Auth = identity.NewAPIKeyAuthenticator(q)

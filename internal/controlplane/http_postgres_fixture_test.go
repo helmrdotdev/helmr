@@ -42,7 +42,7 @@ func newHTTPPostgresFixture(t *testing.T, configure ...func(*ServerConfig)) http
 	cfg.TX = database.Pool
 	cfg.DiagnosticDB = database.Pool
 	cfg.Auth = identity.NewAPIKeyAuthenticator(queries)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	for _, apply := range configure {
 		apply(&cfg)
 	}

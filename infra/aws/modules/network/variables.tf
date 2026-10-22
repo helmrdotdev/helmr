@@ -43,3 +43,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "s3_endpoint_policy" {
+  description = "Optional explicit S3 gateway endpoint policy. IAM permissions remain required."
+  type        = string
+  default     = null
+}

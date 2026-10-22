@@ -211,13 +211,13 @@ let
           done
           root_plans="$(mktemp -d)"
           trap 'rm -rf "$root_plans"' EXIT
-          for stack in quickstart stacks/release-build stacks/worker-image standard; do
+          for stack in quickstart stacks/release-build stacks/worker-image standard private; do
             (
               cd "infra/aws/$stack"
               tofu init -backend=false -input=false
               tofu fmt -check -recursive
               case "$stack" in
-                quickstart|standard|stacks/worker-image)
+                quickstart|standard|private|stacks/worker-image)
                   if ! tofu test -json -verbose >"$root_plans/$(basename "$stack").jsonl"; then
                     cat "$root_plans/$(basename "$stack").jsonl"
                     exit 1
@@ -227,7 +227,7 @@ let
               esac
             )
           done
-          python3 infra/aws/tests/check_root_composition.py "$root_plans/quickstart.jsonl" "$root_plans/standard.jsonl" "$root_plans/worker-image.jsonl"
+          python3 infra/aws/tests/check_root_composition.py "$root_plans/quickstart.jsonl" "$root_plans/standard.jsonl" "$root_plans/worker-image.jsonl" "$root_plans/private.jsonl"
         '';
     ci-clickhouse =
       let

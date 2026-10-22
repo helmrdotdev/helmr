@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const DefaultPublicURL = "https://helmr.dev"
+const DefaultAppOrigin = "https://helmr.dev"
 
 const (
 	DeploymentModeSelfHosted   = "self-hosted"
@@ -27,6 +27,8 @@ const (
 )
 
 type ControlPlane struct {
+	SlackTransport                  string
+	OutboundProxyURL                string
 	DiagnosticAdmission             DiagnosticAdmission
 	EnvironmentExecutionLimits      EnvironmentExecutionLimits
 	Addr                            string
@@ -48,7 +50,7 @@ type ControlPlane struct {
 	ComputerWrappingKeyID           string
 	ComputerKMSKeyARN               string
 	ComputerFencingKey              []byte
-	PublicURL                       string
+	AppOrigin                       string
 	MagicLinkDebugURLs              bool
 	AdminEmails                     []string
 	EmailProvider                   string
@@ -71,7 +73,9 @@ type Bootstrap struct {
 }
 
 type Dispatcher struct {
-	PublicURL          string
+	SlackTransport     string
+	OutboundProxyURL   string
+	AppOrigin          string
 	DiagnosticExporter DiagnosticExporter
 	ControlPlaneURL    string
 	EncryptionKey      []byte

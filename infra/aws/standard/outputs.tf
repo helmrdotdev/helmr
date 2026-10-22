@@ -8,9 +8,9 @@ output "worker_controlplane_url" {
   value       = local.worker_controlplane_url
 }
 
-output "public_url" {
+output "app_origin" {
   description = "Customer-managed control-plane URL."
-  value       = var.enable_cloudfront ? null : var.public_url
+  value       = var.enable_cloudfront ? null : var.app_origin
 }
 
 output "controlplane_cloudfront_domain_name" {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/platformhttp"
 
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -123,6 +124,11 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	external, err := platformhttp.External(cfg.OutboundProxyURL)
+	if err != nil {
+		return err
+	}
+	defer external.CloseIdleConnections()
 	clickHouseConfig := clickhouse.Config{
 		URL:      cfg.ClickHouseURL,
 		User:     cfg.ClickHouseUser,
@@ -134,9 +140,9 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err := cass3.ValidateDistinctS3Stores(cfg.CASURI, cfg.PlatformStoreURI); err != nil {
 		return fmt.Errorf("validate platform artifact store: %w", err)
 	}
-	publicURL, err := url.Parse(cfg.PublicURL)
+	appOrigin, err := url.Parse(cfg.AppOrigin)
 	if err != nil {
-		return fmt.Errorf("parse public URL: %w", err)
+		return fmt.Errorf("parse application origin: %w", err)
 	}
 	runtimeRaw, err := os.ReadFile(cfg.DeploymentRuntimeDescriptorPath)
 	if err != nil {
@@ -183,7 +189,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	}
 	defer clickHouseClient.Close()
 	telemetryReader := clickhouse.NewReader(clickHouseClient)
-	mailer := configuredEmailSender(log, cfg)
+	mailer := configuredEmailSender(log, cfg, external)
 	shutdownTimeout := 10 * time.Second
 	magicLinkDelivery := controlplane.NewMagicLinkDelivery(log, shutdownTimeout)
 	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
@@ -200,7 +206,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	}
 	var authProvider controlplane.AuthProvider
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
-		authProvider = controlplane.NewGitHubOAuthProvider(log, cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
+		authProvider = controlplane.NewGitHubOAuthProvider(log, cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, appOrigin, external)
 	}
 	computerKeys, err := configuredComputerKeys(ctx, cfg)
 	if err != nil {
@@ -211,8 +217,8 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
 	var slackConfig *controlplane.SlackConfig
-	{
-		credentials, err := slack.NewCredentialStore(pool, cfg.EncryptionKey)
+	if cfg.SlackTransport != "disabled" {
+		credentials, err := slack.NewCredentialStore(pool, cfg.EncryptionKey, slack.Transport(cfg.SlackTransport))
 		if err != nil {
 			return fmt.Errorf("configure Slack credentials: %w", err)
 		}
@@ -220,7 +226,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("configure Slack controls: %w", err)
 		}
-		slackConfig = &controlplane.SlackConfig{ControlKey: controlKey, Credentials: credentials, Client: slack.NewWebClient(credentials, nil)}
+		slackConfig = &controlplane.SlackConfig{ControlKey: controlKey, Credentials: credentials, Transport: external, Client: slack.NewWebClient(credentials, external)}
 	}
 	changes := dbnotify.New()
 	allocationWake, stopAllocationWake := changes.Subscribe("dispatch")
@@ -253,7 +259,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		CapacityToken:                  cfg.CapacityToken,
 		SetupToken:                     cfg.SetupToken,
 		AuthKey:                        cfg.AuthKey,
-		PublicURL:                      publicURL,
+		AppOrigin:                      appOrigin,
 		MagicLinkDebugURLs:             cfg.MagicLinkDebugURLs,
 		AdminEmails:                    cfg.AdminEmails,
 	})
@@ -373,12 +379,12 @@ func serveControlPlane(
 	return runErr
 }
 
-func configuredEmailSender(log *slog.Logger, cfg config.ControlPlane) email.Sender {
+func configuredEmailSender(log *slog.Logger, cfg config.ControlPlane, transport http.RoundTripper) email.Sender {
 	switch cfg.EmailProvider {
 	case config.EmailProviderSMTP:
 		return email.NewSMTPSender(cfg.SMTPAddr, cfg.SMTPUsername, cfg.SMTPPassword, cfg.EmailFrom)
 	case config.EmailProviderResend:
-		return emailresend.New(cfg.ResendAPIKey, cfg.EmailFrom)
+		return emailresend.New(cfg.ResendAPIKey, cfg.EmailFrom, transport)
 	case config.EmailProviderLog:
 		return email.LogSender{Log: log}
 	default:
@@ -425,7 +431,7 @@ func configuredComputerKeys(ctx context.Context, cfg config.ControlPlane) (compu
 		if err != nil || key.Service != "kms" || key.Region == "" {
 			return nil, errors.New("invalid computer KMS key ARN")
 		}
-		provider, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(key.Region))
+		provider, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(key.Region), awsconfig.WithHTTPClient(&http.Client{Transport: platformhttp.Direct()}))
 		if err != nil {
 			return nil, errors.New("load computer KMS configuration")
 		}

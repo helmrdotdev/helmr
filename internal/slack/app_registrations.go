@@ -20,16 +20,29 @@ import (
 type AppCredentials struct {
 	ClientID      string `json:"client_id"`
 	ClientSecret  string `json:"client_secret"`
-	SigningSecret string `json:"signing_secret"`
+	SigningSecret string `json:"signing_secret,omitempty"`
+	AppToken      string `json:"app_token,omitempty"`
 }
 
-func (v AppCredentials) valid() bool {
-	for _, value := range []string{v.ClientID, v.ClientSecret, v.SigningSecret} {
+func (v AppCredentials) valid(mode Transport) bool {
+	switch mode {
+	case TransportHTTP:
+		if v.SigningSecret == "" || v.AppToken != "" {
+			return false
+		}
+	case TransportSocket:
+		if !strings.HasPrefix(v.AppToken, "xapp-") || len(v.AppToken) <= 5 || v.SigningSecret != "" {
+			return false
+		}
+	default:
+		return false
+	}
+	for _, value := range []string{v.ClientID, v.ClientSecret} {
 		if value == "" || len(value) > 4096 || strings.TrimSpace(value) != value {
 			return false
 		}
 	}
-	return true
+	return len(v.AppToken) <= 4096 && strings.TrimSpace(v.AppToken) == v.AppToken && len(v.SigningSecret) <= 4096 && strings.TrimSpace(v.SigningSecret) == v.SigningSecret
 }
 
 func appCredentialAAD(org, registration uuid.UUID, revision int64) []byte {
@@ -40,7 +53,7 @@ func appCredentialAAD(org, registration uuid.UUID, revision int64) []byte {
 }
 
 func (s *CredentialStore) sealApp(org, registration uuid.UUID, revision int64, credentials AppCredentials) ([]byte, []byte, error) {
-	if revision < 1 || !credentials.valid() {
+	if revision < 1 || !credentials.valid(s.mode) {
 		return nil, nil, errCredentialUnavailable
 	}
 	plaintext, err := json.Marshal(credentials)
@@ -60,7 +73,7 @@ func (s *CredentialStore) openApp(org, registration uuid.UUID, revision int64, c
 		return credentials, errCredentialUnavailable
 	}
 	plaintext, err := s.encryption.Open(nil, nonce, ciphertext, appCredentialAAD(org, registration, revision))
-	if err != nil || json.Unmarshal(plaintext, &credentials) != nil || !credentials.valid() {
+	if err != nil || json.Unmarshal(plaintext, &credentials) != nil || !credentials.valid(s.mode) {
 		return AppCredentials{}, errCredentialUnavailable
 	}
 	return credentials, nil
@@ -69,7 +82,7 @@ func (s *CredentialStore) openApp(org, registration uuid.UUID, revision int64, c
 // StoreAppCredentials rotates secrets for one registration. Once enrolled, the
 // OAuth client is immutable: changing app identity requires new setup.
 func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.Actor, org, user, registration uuid.UUID, credentials AppCredentials) error {
-	if !credentials.valid() {
+	if !credentials.valid(s.mode) {
 		return errCredentialUnavailable
 	}
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
@@ -78,7 +91,7 @@ func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.A
 		}
 		var client *string
 		var revision int64
-		err := tx.QueryRow(ctx, `SELECT client_id,credential_revision FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND retired_at IS NULL FOR NO KEY UPDATE`, registration, org).Scan(&client, &revision)
+		err := tx.QueryRow(ctx, `SELECT client_id,credential_revision FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND transport=$3 AND retired_at IS NULL FOR NO KEY UPDATE`, registration, org, s.mode).Scan(&client, &revision)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errInstallationAuthority
 		}
@@ -109,7 +122,7 @@ func (s *CredentialStore) appCredentials(ctx context.Context, registration uuid.
 		var org uuid.UUID
 		var revision int64
 		var ciphertext, nonce []byte
-		err := tx.QueryRow(ctx, `SELECT org_id,credential_revision,credential_ciphertext,credential_nonce FROM slack_app_registrations WHERE id=$1 AND retired_at IS NULL FOR SHARE`, registration).Scan(&org, &revision, &ciphertext, &nonce)
+		err := tx.QueryRow(ctx, `SELECT org_id,credential_revision,credential_ciphertext,credential_nonce FROM slack_app_registrations WHERE id=$1 AND transport=$2 AND retired_at IS NULL FOR SHARE`, registration, s.mode).Scan(&org, &revision, &ciphertext, &nonce)
 		if err != nil {
 			return errCredentialUnavailable
 		}
@@ -133,6 +146,9 @@ func (s *CredentialStore) RegistrationOAuth(ctx context.Context, registration uu
 }
 
 func (s *CredentialStore) callbackCredentials(ctx context.Context, registration uuid.UUID) (string, []byte, error) {
+	if s.mode != TransportHTTP {
+		return "", nil, errCredentialUnavailable
+	}
 	var appID string
 	var secret []byte
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
@@ -140,7 +156,7 @@ func (s *CredentialStore) callbackCredentials(ctx context.Context, registration 
 		var app *string
 		var revision int64
 		var ciphertext, nonce []byte
-		err := tx.QueryRow(ctx, `SELECT org_id,app_id,credential_revision,credential_ciphertext,credential_nonce FROM slack_app_registrations WHERE id=$1 AND retired_at IS NULL FOR SHARE`, registration).Scan(&org, &app, &revision, &ciphertext, &nonce)
+		err := tx.QueryRow(ctx, `SELECT org_id,app_id,credential_revision,credential_ciphertext,credential_nonce FROM slack_app_registrations WHERE id=$1 AND transport=$2 AND retired_at IS NULL FOR SHARE`, registration, s.mode).Scan(&org, &app, &revision, &ciphertext, &nonce)
 		if err != nil {
 			return errCredentialUnavailable
 		}

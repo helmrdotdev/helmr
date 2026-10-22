@@ -110,7 +110,7 @@ Resend API key before starting the Control Plane service.
 
 ## DNS and HTTPS
 
-Create or validate an ACM certificate for `public_url` in the same region as the ALB. Point the
+Create or validate an ACM certificate for `app_origin` in the same region as the ALB. Point the
 customer DNS name at `controlplane_load_balancer_dns_name`, then enable the Control Plane and dispatcher
 services after
 secrets and migrations are ready.

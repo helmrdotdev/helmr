@@ -114,7 +114,7 @@ export function Device() {
                 <AuthFacts label="Request">
                   <AuthFact label="Account">{me.data?.display_name || me.data?.user_id}</AuthFact>
                   <AuthFact label="Organization">{me.data?.org_name || me.data?.org_id}</AuthFact>
-                  <AuthFact label="Server">{me.data?.public_url || window.location.origin}</AuthFact>
+                  <AuthFact label="Server">{me.data?.app_origin || window.location.origin}</AuthFact>
                   <AuthFact label="Expires"><RelativeTime value={device().expires_at} /></AuthFact>
                 </AuthFacts>
                 <Show when={actionError()}>{(failure) => <AuthError {...failure()} />}</Show>
