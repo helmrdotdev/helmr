@@ -72,7 +72,7 @@ const API_KEY_PERMISSION_GROUPS: { label: string; options: { value: ApiKeyScope;
     options: [
       { value: "computers:read", label: "Read computers", description: "Read computers and their settings." },
       { value: "computers:create", label: "Create computers", description: "Create computers from the deployment's templates." },
-      { value: "computers:update", label: "Change computer retention", description: "Change how long computers are kept." },
+      { value: "computers:update", label: "Hibernate, wake, and change retention", description: "Pause or resume execution for the whole computer, and change how long it is kept." },
       { value: "computers:delete", label: "Delete computers", description: "Delete computers and their disks." },
       { value: "computer-exec:create", label: "Run commands on computers", description: "Start commands on computers." },
     ],
