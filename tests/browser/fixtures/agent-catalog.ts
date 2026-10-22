@@ -3,7 +3,7 @@ import { expect, type Page } from "@playwright/test";
 
 export const projectID = "console-demo";
 
-// Seed catalog definitions only. All admission and control mutations use HTTP.
+// Seed catalog definitions and synthetic capacity. Admission and controls use HTTP.
 // No Worker, executable bundle, VM or object-store behavior is represented.
 export async function createAgentCatalog(page: Page) {
   if (process.env.HELMR_E2E_BASE_URL || process.env.DATABASE_URL) {

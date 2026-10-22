@@ -29,6 +29,8 @@ actual_data_dir="$(psql -X -At -h "${HELMR_DEV_PGSOCKET}" -p "${HELMR_DEV_POSTGR
 psql -X -v ON_ERROR_STOP=1 -h "${HELMR_DEV_PGSOCKET}" -p "${HELMR_DEV_POSTGRES_PORT}" -d postgres \
   -v environment_id="$1" -v session_id="$2" -v turn_id="$3" -v reference_id="$4" -v mode="$5" <<'SQL'
 BEGIN;
+-- Refresh the synthetic admission host before the next real API mutation.
+UPDATE worker_hosts SET observed_at=clock_timestamp(),resource_observed_at=clock_timestamp() WHERE resource_id='browser-admission';
 CREATE TEMP TABLE fixture ON COMMIT DROP AS
 SELECT e.id AS environment_id,e.org_id,s.id AS session_id,s.computer_id,t.id AS turn_id,t.caller_id AS user_id
 FROM environments e JOIN sessions s ON s.environment_id=e.id JOIN turns t ON t.environment_id=e.id AND t.session_id=s.id
