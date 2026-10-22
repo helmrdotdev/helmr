@@ -17,7 +17,8 @@ await verify("prepared-startup", async ({ client, marker, cleanup, objects, star
   assert(mode !== "warm" || preparedBuild, "Warm runs require the exact preparation build ID")
   const samples: unknown[] = []
   const nonces = new Set<string>()
-  let minimumObservation = 0
+  // A preceding run may have consumed the leaf in the last heartbeat.
+  let minimumObservation = Date.now()
   for (let ordinal = 0; ordinal < 2; ordinal++) {
     const signal = deadline(15 * 60_000)
     let before: any
