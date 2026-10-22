@@ -27,7 +27,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	}
 	installation, channel, publication, thread, participant, registration := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE user_id=$1;
- INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES($11,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
+ INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$11,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($2,$11,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($6,$5,$7,$11,$2,$1);
  INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) VALUES($4,$5,$6,$2,$3,'team','C1');
@@ -54,9 +54,9 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	}
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
-	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32))
+	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}

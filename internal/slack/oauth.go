@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/platformhttp"
 )
 
 type OAuthClient struct {
@@ -20,6 +21,9 @@ type OAuthClient struct {
 }
 
 func NewOAuthClient(clientID, clientSecret string, transport http.RoundTripper) (*OAuthClient, error) {
+	if transport == nil {
+		transport = platformhttp.Direct()
+	}
 	if clientID == "" || clientSecret == "" {
 		return nil, errors.New("the Slack OAuth client credentials are required")
 	}

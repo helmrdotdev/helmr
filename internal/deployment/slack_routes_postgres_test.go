@@ -37,7 +37,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 			}
 			installation, registration, publication, user := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Owner');
- INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES($2,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
+ INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$2,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($4,$2,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) SELECT $5,$6,id,$2,$4,$1 FROM agents WHERE environment_id=$6 AND key=$7`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, installation, publication, f.request.environmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID)
 			calls := 0

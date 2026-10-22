@@ -15,16 +15,16 @@ import (
 )
 
 type ProjectionConfig struct {
-	PublicURL  *url.URL
+	AppOrigin  *url.URL
 	ControlKey []byte
 }
 
 func (c ProjectionConfig) valid() bool {
-	return c.PublicURL != nil && c.PublicURL.Host != "" && (c.PublicURL.Scheme == "https" || c.PublicURL.Scheme == "http") && c.PublicURL.User == nil && c.PublicURL.RawQuery == "" && c.PublicURL.Fragment == "" && len(c.ControlKey) >= 32
+	return c.AppOrigin != nil && c.AppOrigin.Host != "" && (c.AppOrigin.Scheme == "https" || c.AppOrigin.Scheme == "http") && c.AppOrigin.User == nil && c.AppOrigin.RawQuery == "" && c.AppOrigin.Fragment == "" && len(c.ControlKey) >= 32
 }
 
 func (o projectionOwner) consoleLink() string {
-	target := o.config.PublicURL.JoinPath("sessions", o.session.String())
+	target := o.config.AppOrigin.JoinPath("sessions", o.session.String())
 	target.RawQuery = url.Values{"project": {o.project}, "environment": {o.environmentRef}}.Encode()
 	return target.String()
 }
@@ -160,7 +160,7 @@ func presentationBlocks(o projectionOwner, e projectionEvent, role string, ask *
 	if len(buttons) > 0 {
 		blocks = append(blocks, map[string]any{"type": "actions", "elements": buttons})
 	}
-	target := o.config.PublicURL.JoinPath("sessions", o.session.String(), "turns", e.turn.String(), "asks", ask.String())
+	target := o.config.AppOrigin.JoinPath("sessions", o.session.String(), "turns", e.turn.String(), "asks", ask.String())
 	target.RawQuery = url.Values{"project": {o.project}, "environment": {o.environmentRef}}.Encode()
 	blocks = append(blocks, consoleContext(target.String(), "View question and CLI instructions"))
 	return blocks, nil

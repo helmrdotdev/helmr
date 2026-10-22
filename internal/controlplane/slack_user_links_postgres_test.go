@@ -40,7 +40,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				t.Fatal(err)
 			}
 			installation, registration := uuid.NewV7(), uuid.NewV7()
-			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(id,org_id,app_id,created_by_user_id) VALUES($1,$2,'app',$3)`, registration, org, f.User)
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(transport,id,org_id,app_id,created_by_user_id) VALUES('http',$1,$2,'app',$3)`, registration, org, f.User)
 			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($1,$6,$2,'app','team','bot','Workspace',1,$3,$4,'{chat:write}',$5)`, installation, org, bytes.Repeat([]byte{1}, 16), bytes.Repeat([]byte{1}, 12), f.User, registration)
 			key, err := rsa.GenerateKey(rand.Reader, 2048)
 			if err != nil {
@@ -72,7 +72,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				raw, _ := json.Marshal(value)
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(raw))}, nil
 			})
-			store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32))
+			store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,7 +83,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='developer' WHERE org_id=$1 AND user_id=$2`, org, f.User)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET app_registration_id=$2 WHERE id=$1`, installation, registration)
 			cfg := completeServerConfig(t)
-			cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+			cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 			queries := db.New(f.Pool)
 			cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
 			cfg.Slack = &SlackConfig{ControlKey: bytes.Repeat([]byte{2}, 32), Credentials: store, Transport: transport, Client: slack.NewWebClient(store, nil)}

@@ -15,7 +15,7 @@ import (
 func TestDedicatedCallbackAuthenticatesSelectedRegistrationBeforeInstallation(t *testing.T) {
 	f, store, org := credentialFixture(t)
 	registration := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id) VALUES($1,$2,$3)`, registration, org, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(transport,id,org_id,created_by_user_id) VALUES('http',$1,$2,$3)`, registration, org, f.User)
 	credentials := AppCredentials{ClientID: "client", ClientSecret: "private-client", SigningSecret: "selected-signing-secret"}
 	if err := store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, registration, credentials); err != nil {
 		t.Fatal(err)

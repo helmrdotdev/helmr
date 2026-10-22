@@ -79,13 +79,13 @@ Helmr dev console stack is running.
 
   State:    ${HELMR_DEV_DIR}
   Sockets:  ${HELMR_DEV_RUNTIME_DIR}
-  Console:  ${PUBLIC_URL}
+  Console:  ${APP_ORIGIN}
   Backend:  ${HELMR_DEV_BACKEND_URL}
   Postgres: $([ "${HELMR_DEV_OWNED_POSTGRES}" = "1" ] && echo "${HELMR_DEV_PGDATA}" || echo "external")
   ClickHouse: $([ -n "${HELMR_DEV_CLICKHOUSE_PID}" ] && echo "${HELMR_DEV_DIR}/clickhouse" || echo "external")
   CAS:      ${CAS_URI}
   Platform: ${PLATFORM_STORE_URI}
-  Login:    ${PUBLIC_URL}/dev/login
+  Login:    ${APP_ORIGIN}/dev/login
 
 Ports (override with HELMR_DEV_* env vars):
   console=${HELMR_DEV_CONSOLE_PORT} control_plane=${HELMR_DEV_CONTROL_PLANE_PORT} postgres=${HELMR_DEV_POSTGRES_PORT} clickhouse_http=${HELMR_DEV_CLICKHOUSE_HTTP_PORT}

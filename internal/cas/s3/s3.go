@@ -23,6 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/platformhttp"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -94,7 +95,7 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 	if uri.Scheme != "s3" {
 		return nil, fmt.Errorf("unsupported CAS URI scheme %q", uri.Scheme)
 	}
-	cfg, err := config.LoadDefaultConfig(ctx)
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithHTTPClient(&http.Client{Transport: platformhttp.Direct()}))
 	if err != nil {
 		return nil, err
 	}

@@ -46,19 +46,19 @@ def config():
 class ProfileTests(unittest.TestCase):
 
     def test_https_origin_changes_public_links_without_exposing_private_services(self):
-        cfg = host.compile_config(config() | {'public_url': 'https://Verification.example.test:8443/'})
-        self.assertEqual(cfg['control_plane']['PUBLIC_URL'], 'https://verification.example.test:8443')
-        self.assertEqual(cfg['dispatcher']['PUBLIC_URL'], cfg['control_plane']['PUBLIC_URL'])
+        cfg = host.compile_config(config() | {'app_origin': 'https://Verification.example.test:8443/'})
+        self.assertEqual(cfg['control_plane']['APP_ORIGIN'], 'https://verification.example.test:8443')
+        self.assertEqual(cfg['dispatcher']['APP_ORIGIN'], cfg['control_plane']['APP_ORIGIN'])
         self.assertEqual(cfg['control_plane']['CONTROL_PLANE_ADDR'], '127.0.0.1:58080')
         self.assertEqual(cfg['worker']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58080')
         self.assertEqual(cfg['dispatcher']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58080')
-        self.assertEqual(host.compile_config(config())['control_plane']['PUBLIC_URL'], 'http://127.0.0.1:58080')
+        self.assertEqual(host.compile_config(config())['control_plane']['APP_ORIGIN'], 'http://127.0.0.1:58080')
         for value in [None, '', 'http://example.test', 'https://', 'https://user:password@example.test',
                       'https://example.test/path', 'https://example.test?q=x', 'https://example.test#x',
                       ' https://example.test', 'https://example.test\n', 'https://example.test:0',
                       'https://example.test:65536', 'https://example.test:invalid']:
             with self.subTest(value=value), self.assertRaises(ValueError):
-                host.compile_config(config() | {'public_url': value})
+                host.compile_config(config() | {'app_origin': value})
 
     def test_sample_diagnostic_policy_reaches_both_services(self):
         raw = json.loads((ROOT / 'dev/runtime/config.example.json').read_text())
@@ -107,7 +107,7 @@ class ProfileTests(unittest.TestCase):
         cfg = host.compile_config(config() | {'capture_reply_faults': True})
         self.assertEqual(cfg['worker']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58088')
         self.assertEqual(cfg['dispatcher']['CONTROL_PLANE_URL'], 'http://127.0.0.1:58080')
-        self.assertEqual(cfg['dispatcher']['PUBLIC_URL'], cfg['control_plane']['PUBLIC_URL'])
+        self.assertEqual(cfg['dispatcher']['APP_ORIGIN'], cfg['control_plane']['APP_ORIGIN'])
         for invalid in ['true', 1, None, 'http://elsewhere']:
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 host.compile_config(config() | {'capture_reply_faults': invalid})

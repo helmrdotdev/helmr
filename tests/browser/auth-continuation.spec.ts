@@ -22,7 +22,7 @@ async function fixture(context: BrowserContext, options: { loggedIn?: boolean; n
       case "/api/me":
         if (state.meError) return json({ error: { code: "internal_error", message: "unavailable" } }, state.meError);
         if (!state.loggedIn) return json({ error: { code: "unauthorized", message: "Sign in" } }, 401);
-        return json({ user_id: "user-1", display_name: "Developer", permissions: [], admin: false, org_id: state.orgRequired ? null : "org-1", org_name: "Example org", organization_required: state.orgRequired, project_required: state.projectRequired, public_url: url.origin });
+        return json({ user_id: "user-1", display_name: "Developer", permissions: [], admin: false, org_id: state.orgRequired ? null : "org-1", org_name: "Example org", organization_required: state.orgRequired, project_required: state.projectRequired, app_origin: url.origin });
       case "/api/auth/github/start": {
         const id = String(state.next.size + 1); state.next.set(id, body.next);
         return json({ redirect_url: `${url.origin}/auth/github/callback?code=fixture&state=${id}` });

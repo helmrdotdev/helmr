@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -21,7 +22,10 @@ type ConnectionSetup struct {
 
 // BeginConnection reserves the Agent's sole connection slot, including pending
 // setup. A failed setup must be discarded before another can be created.
-func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID) (ConnectionSetup, error) {
+func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID, mode Transport) (ConnectionSetup, error) {
+	if !mode.enabled() {
+		return ConnectionSetup{}, ErrConnectionUnavailable
+	}
 	setup := ConnectionSetup{ID: uuid.NewV7(), RegistrationID: uuid.NewV7()}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
@@ -43,7 +47,7 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environ
 		if !eligible {
 			return ErrConnectionUnavailable
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id) VALUES($1,$2,$3)`, setup.RegistrationID, org, user)
+		_, err = tx.Exec(ctx, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id,transport) VALUES($1,$2,$3,$4)`, setup.RegistrationID, org, user, mode)
 		if err != nil {
 			return err
 		}
@@ -55,19 +59,28 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environ
 	return setup, nil
 }
 
+type SocketHealth struct {
+	State           string     `json:"state"`
+	Reason          *string    `json:"reason"`
+	LastConnectedAt *time.Time `json:"last_connected_at"`
+	LastReceivedAt  *time.Time `json:"last_received_at"`
+}
+
 type ConnectionView struct {
-	ID                       uuid.UUID  `json:"id"`
-	RegistrationID           uuid.UUID  `json:"registration_id"`
-	InstallationID           *uuid.UUID `json:"installation_id"`
-	Status                   string     `json:"status"`
-	ClientID                 *string    `json:"client_id"`
-	DirectMessagesAuthorized bool       `json:"direct_messages_authorized"`
-	CredentialsConfigured    bool       `json:"credentials_configured"`
-	AppID                    *string    `json:"app_id"`
-	TeamID                   *string    `json:"team_id"`
-	WorkspaceName            *string    `json:"workspace_name"`
-	AppName                  *string    `json:"app_name"`
-	AppIconURL               *string    `json:"app_icon_url"`
+	Socket                   *SocketHealth `json:"socket,omitempty"`
+	Transport                Transport     `json:"transport"`
+	ID                       uuid.UUID     `json:"id"`
+	RegistrationID           uuid.UUID     `json:"registration_id"`
+	InstallationID           *uuid.UUID    `json:"installation_id"`
+	Status                   string        `json:"status"`
+	ClientID                 *string       `json:"client_id"`
+	DirectMessagesAuthorized bool          `json:"direct_messages_authorized"`
+	CredentialsConfigured    bool          `json:"credentials_configured"`
+	AppID                    *string       `json:"app_id"`
+	TeamID                   *string       `json:"team_id"`
+	WorkspaceName            *string       `json:"workspace_name"`
+	AppName                  *string       `json:"app_name"`
+	AppIconURL               *string       `json:"app_icon_url"`
 }
 
 func ConnectionAgent(ctx context.Context, pool db.TxBeginner, org, user, environment uuid.UUID, name string) (uuid.UUID, error) {
@@ -94,14 +107,33 @@ func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environme
 		var value ConnectionView
 		err := tx.QueryRow(ctx, `SELECT p.id,r.id,p.slack_installation_id,
  CASE WHEN i.id IS NULL THEN 'setup_incomplete' WHEN i.disconnected_at IS NOT NULL OR r.retired_at IS NOT NULL THEN 'disconnected' WHEN i.authorization_lost_at IS NOT NULL THEN 'reauthorization_required' ELSE 'connected' END,
- r.client_id,r.credential_revision>0,r.app_id,i.team_id,i.workspace_name,r.app_name,r.app_icon_url,COALESCE(i.granted_scopes @> $4::text[],false)
+ r.transport,r.client_id,r.credential_revision>0,r.app_id,i.team_id,i.workspace_name,r.app_name,r.app_icon_url,COALESCE(i.granted_scopes @> $4::text[],false)
  FROM slack_connections p JOIN environments e ON e.id=p.environment_id JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id LEFT JOIN slack_installations i ON i.id=p.slack_installation_id
- WHERE p.environment_id=$1 AND p.agent_id=$2 AND e.org_id=$3 AND r.org_id=$3 AND p.revoked_at IS NULL`, environment, agent, org, slackroute.DirectMessageScopes()).Scan(&value.ID, &value.RegistrationID, &value.InstallationID, &value.Status, &value.ClientID, &value.CredentialsConfigured, &value.AppID, &value.TeamID, &value.WorkspaceName, &value.AppName, &value.AppIconURL, &value.DirectMessagesAuthorized)
+ WHERE p.environment_id=$1 AND p.agent_id=$2 AND e.org_id=$3 AND r.org_id=$3 AND p.revoked_at IS NULL`, environment, agent, org, slackroute.DirectMessageScopes()).Scan(&value.ID, &value.RegistrationID, &value.InstallationID, &value.Status, &value.Transport, &value.ClientID, &value.CredentialsConfigured, &value.AppID, &value.TeamID, &value.WorkspaceName, &value.AppName, &value.AppIconURL, &value.DirectMessagesAuthorized)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
+		}
+		if value.Transport == TransportSocket {
+			health := SocketHealth{State: "disconnected"}
+			err := tx.QueryRow(ctx, `SELECT
+ CASE WHEN sc.credential_revision<>r.credential_revision THEN 'reconnecting'
+ WHEN sc.state IN ('connecting','connected') AND sc.expires_at<=clock_timestamp() THEN 'reconnecting'
+ ELSE sc.state END,
+ CASE WHEN sc.credential_revision=r.credential_revision THEN sc.reason ELSE NULL END,
+ sc.last_connected_at,sc.last_received_at
+ FROM slack_socket_connections sc JOIN slack_app_registrations r ON r.id=sc.app_registration_id
+ WHERE sc.app_registration_id=$1 AND sc.installation_id=$2`, value.RegistrationID, value.InstallationID).Scan(&health.State, &health.Reason, &health.LastConnectedAt, &health.LastReceivedAt)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			if value.Status != "connected" {
+				health.State = "disconnected"
+				health.Reason = nil
+			}
+			value.Socket = &health
 		}
 		view = &value
 		return nil

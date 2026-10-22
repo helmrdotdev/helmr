@@ -26,7 +26,7 @@ cp terraform.tfvars.example terraform.tfvars
 ```
 
 Fill `terraform.tfvars` with non-secret values for your AWS region, deployment name,
-`helmr_version`, GitHub OAuth client ID, `public_url`, and `certificate_arn`.
+`helmr_version`, GitHub OAuth client ID, `app_origin`, and `certificate_arn`.
 Do not put OAuth client secrets, database URLs,
 Resend API keys, SMTP passwords, or Helmr signing keys in tfvars.
 
@@ -157,7 +157,7 @@ files can make an otherwise sufficient configured disk fail startup. Keep the
 ceiling below actual filesystem capacity and fund every configured slot.
 
 When workers are enabled, `certificate_arn` and a Worker Control Plane DNS name are required. The stack
-derives the worker Control Plane URL from `public_url` for direct ALB mode or from
+derives the worker Control Plane URL from `app_origin` for direct ALB mode or from
 `cloudfront_origin_domain_name` for CloudFront mode, then resolves that hostname to an internal ALB
 inside the VPC.
 
@@ -222,7 +222,7 @@ For a direct ALB HTTPS endpoint instead of CloudFront, set:
 
 ```hcl
 enable_cloudfront = false
-public_url        = "https://helmr.example.com"
+app_origin        = "https://helmr.example.com"
 certificate_arn   = "arn:aws:acm:..."
 ```
 

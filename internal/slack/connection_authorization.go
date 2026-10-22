@@ -28,7 +28,7 @@ func (s *CredentialStore) connectionAuthorization(ctx context.Context, org, user
 		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.org_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0`, connection, org).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
+		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.org_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0 AND r.transport=$3`, connection, org, s.mode).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConnectionUnavailable
 		}
@@ -87,7 +87,7 @@ func (s *CredentialStore) attachConnectionGrant(ctx context.Context, actor audit
 		}
 		var revision int64
 		var app *string
-		err := tx.QueryRow(ctx, `SELECT credential_revision,app_id FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND retired_at IS NULL FOR NO KEY UPDATE`, observed.registration, org).Scan(&revision, &app)
+		err := tx.QueryRow(ctx, `SELECT credential_revision,app_id FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND retired_at IS NULL AND transport=$3 FOR NO KEY UPDATE`, observed.registration, org, s.mode).Scan(&revision, &app)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConnectionUnavailable
 		}

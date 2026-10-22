@@ -85,7 +85,7 @@ variables {
   vpc_id                                   = "vpc-0123456789abcdef0"
   private_subnet_ids                       = ["subnet-0123456789abcdef0", "subnet-1123456789abcdef0"]
   public_subnet_ids                        = ["subnet-2123456789abcdef0", "subnet-3123456789abcdef0"]
-  public_url                               = "http://controlplane.example.test"
+  app_origin                               = "http://controlplane.example.test"
   allow_insecure_http                      = true
   bootstrap_worker_group_name              = "default"
   bootstrap_region_id                      = "helmr-us-east"
@@ -115,7 +115,7 @@ run "controlplane_uses_execution_only_runtime_authority" {
   }
 
   assert {
-    condition     = { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.PUBLIC_URL == output.controlplane_url
+    condition     = { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.APP_ORIGIN == output.controlplane_url
     error_message = "Slack publications must link to this installation's Console origin."
   }
 
@@ -138,7 +138,7 @@ run "controlplane_uses_execution_only_runtime_authority" {
       jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].name == "controlplane" &&
       jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].entryPoint == ["/usr/local/bin/control-plane"] &&
       jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].entryPoint == ["dispatcher"] &&
-      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : item.name => item.value }.PUBLIC_URL == "http://controlplane.example.test" &&
+      { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : item.name => item.value }.APP_ORIGIN == "http://controlplane.example.test" &&
       { for item in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : item.name => item.value }.PLATFORM_STORE_URI == var.platform_store_uri &&
       aws_lb_target_group.controlplane.health_check[0].path == "/readyz"
     )
@@ -455,7 +455,49 @@ run "slack_credentials_are_database_owned" {
     condition = alltrue([for container in concat(
       jsondecode(aws_ecs_task_definition.controlplane.container_definitions),
       jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)
-    ) : alltrue([for item in concat(container.environment, container.secrets) : !startswith(item.name, "SLACK_")])])
+    ) : alltrue([for item in concat(container.environment, container.secrets) : !startswith(item.name, "SLACK_") || item.name == "SLACK_TRANSPORT"])])
     error_message = "Dedicated Slack app credentials belong to protected registrations, not process configuration."
   }
+}
+
+run "private_ingress" {
+  command = apply
+  variables {
+    allow_insecure_http       = false
+    ingress_mode              = "private"
+    app_origin                = "https://helmr.internal"
+    certificate_arn           = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+    private_client_ipv4_cidrs = ["10.20.0.0/16"]
+    restrict_platform_egress  = true
+    slack_transport           = "socket"
+    outbound_proxy_url        = "http://proxy.internal:3128"
+  }
+  assert {
+    condition     = aws_lb.controlplane.internal && toset(aws_lb.controlplane.subnets) == toset(var.private_subnet_ids) && length(aws_lb_listener.http) == 0 && length(aws_lb_listener.http_redirect) == 0 && length(aws_cloudfront_distribution.controlplane) == 0
+    error_message = "Private ingress must have only an internal HTTPS listener."
+  }
+  assert {
+    condition     = length(aws_vpc_security_group_ingress_rule.alb_http_public) == 0 && length(aws_vpc_security_group_ingress_rule.alb_https) == 0 && length(aws_vpc_security_group_egress_rule.controlplane) == 0 && aws_vpc_security_group_egress_rule.alb.to_port == 8080
+    error_message = "Private ingress or restricted egress widened unexpectedly."
+  }
+  assert {
+    condition     = alltrue([for task in [aws_ecs_task_definition.controlplane, aws_ecs_task_definition.dispatcher] : { for item in jsondecode(task.container_definitions)[0].environment : item.name => item.value }.SLACK_TRANSPORT == "socket" && { for item in jsondecode(task.container_definitions)[0].environment : item.name => item.value }.OUTBOUND_PROXY_URL == "http://proxy.internal:3128"])
+    error_message = "API and Dispatcher must receive the same operator-selected integration path."
+  }
+}
+
+run "private_rejects_public_task_addresses" {
+  command = plan
+  variables {
+    ingress_mode                  = "private"
+    private_client_ipv4_cidrs     = ["10.20.0.0/16"]
+    controlplane_assign_public_ip = true
+  }
+  expect_failures = [terraform_data.ingress_contract]
+}
+
+run "private_rejects_implicit_sources" {
+  command = plan
+  variables { ingress_mode = "private" }
+  expect_failures = [terraform_data.ingress_contract]
 }

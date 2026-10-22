@@ -1,0 +1,827 @@
+variable "enable_deployment_rollback" {
+  description = "Allow ECS to restore the previous task definition on deployment failure. Disable before migrations incompatible with predecessor code; this does not restore the database."
+  type        = bool
+  default     = true
+  nullable    = false
+}
+
+variable "aws_region" {
+  description = "AWS region."
+  type        = string
+}
+
+variable "name" {
+  description = "Name prefix for Helmr resources. Keep this short because several AWS resources add suffixes."
+  type        = string
+  default     = "helmr-standard"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{1,17}[a-z0-9]$", var.name))
+    error_message = "name must be 3-19 characters, start with a lowercase letter, end with a lowercase letter or number, and contain only lowercase letters, numbers, and hyphens."
+  }
+}
+
+variable "environment" {
+  description = "Environment tag value."
+  type        = string
+  default     = "production"
+}
+
+variable "tags" {
+  description = "Additional tags applied to all resources."
+  type        = map(string)
+  default     = {}
+}
+
+variable "controlplane_vpc_cidr" {
+  description = "CIDR block for the privately routed Control Plane VPC."
+  type        = string
+  default     = "10.90.0.0/16"
+}
+
+variable "execution_vpc_cidr" {
+  description = "CIDR block for the privately routed Execution VPC. The exact prefix must appear in the deployment-supplied Worker deny set."
+  type        = string
+  default     = "10.91.0.0/16"
+
+  validation {
+    condition     = can(cidrnetmask(var.execution_vpc_cidr)) && contains(var.worker_network_blocked_ipv4_cidrs, var.execution_vpc_cidr)
+    error_message = "execution_vpc_cidr must appear exactly in worker_network_blocked_ipv4_cidrs."
+  }
+}
+
+variable "availability_zone_count" {
+  description = "Number of Availability Zones to use. The private template uses two AZs."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.availability_zone_count == 2
+    error_message = "availability_zone_count must be 2 for the standard example."
+  }
+}
+
+
+
+
+variable "deployment_mode" {
+  description = "Helmr deployment mode passed to control-plane tasks."
+  type        = string
+  default     = "self-hosted"
+}
+
+variable "worker_group_name" {
+  description = "Name of the initial Worker Group."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$", var.worker_group_name))
+    error_message = "worker_group_name must be a lowercase URL-safe identifier of 1-128 characters."
+  }
+}
+
+variable "region_id" {
+  description = "Explicit Helmr region primitive for this stack."
+  type        = string
+
+  validation {
+    condition = (
+      var.region_id != "" &&
+      var.region_id == trimspace(var.region_id) &&
+      length(base64encode(var.region_id)) <= 340 &&
+      length(regexall("[[:cntrl:]]", var.region_id)) == 0
+    )
+    error_message = "region_id must be normalized control-free UTF-8 of 1-255 bytes."
+  }
+}
+
+variable "platform_store_uri" {
+  description = "Dedicated immutable Platform Artifact store URI exported by the bootstrap module."
+  type        = string
+}
+
+variable "platform_store_bucket_arn" {
+  description = "Platform Artifact store bucket ARN exported by the bootstrap module."
+  type        = string
+}
+
+variable "platform_store_kms_key_arn" {
+  description = "Platform Artifact store KMS key ARN exported by the bootstrap module."
+  type        = string
+}
+
+variable "clickhouse_url" {
+  description = "ClickHouse HTTP endpoint for historical telemetry."
+  type        = string
+
+  validation {
+    condition     = can(regex("^https://[^<>[:space:]]+(:[0-9]+)?/?$", trimspace(var.clickhouse_url)))
+    error_message = "clickhouse_url must be an https URL without placeholder characters."
+  }
+}
+
+variable "clickhouse_access_mode" {
+  description = "Use bootstrap to provision dedicated ClickHouse users, or external for users provisioned separately."
+  type        = string
+  validation {
+    condition     = contains(["bootstrap", "external"], var.clickhouse_access_mode)
+    error_message = "clickhouse_access_mode must be bootstrap or external."
+  }
+}
+
+variable "clickhouse_reader_user" {
+  description = "Explicit ClickHouse reader username."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_reader_user))
+    error_message = "clickhouse_reader_user must be a simple non-empty SQL identifier."
+  }
+}
+
+variable "clickhouse_reader_password_secret_arn" {
+  description = "Secrets Manager ARN containing the ClickHouse reader password."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_reader_password_secret_arn))
+    error_message = "clickhouse_reader_password_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_reader_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs for the ClickHouse reader secret."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_reader_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_reader_password_kms_key_arns entries must be non-empty."
+  }
+}
+
+variable "clickhouse_ingester_user" {
+  description = "Explicit ClickHouse ingester username."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_ingester_user))
+    error_message = "clickhouse_ingester_user must be a simple non-empty SQL identifier."
+  }
+}
+
+variable "clickhouse_ingester_password_secret_arn" {
+  description = "Secrets Manager ARN containing the ClickHouse ingester password."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_ingester_password_secret_arn))
+    error_message = "clickhouse_ingester_password_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_ingester_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs for the ClickHouse ingester secret."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_ingester_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_ingester_password_kms_key_arns entries must be non-empty."
+  }
+}
+
+variable "clickhouse_migration_user" {
+  description = "Explicit ClickHouse migration username."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_migration_user))
+    error_message = "clickhouse_migration_user must be a simple non-empty SQL identifier."
+  }
+}
+
+variable "clickhouse_migration_password_secret_arn" {
+  description = "Secrets Manager ARN containing the ClickHouse migration password."
+  type        = string
+  nullable    = false
+  validation {
+    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_migration_password_secret_arn))
+    error_message = "clickhouse_migration_password_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_migration_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs for the ClickHouse migration secret."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_migration_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_migration_password_kms_key_arns entries must be non-empty."
+  }
+}
+
+variable "clickhouse_bootstrap_user" {
+  description = "Explicit ClickHouse bootstrap username."
+  type        = string
+  default     = null
+  nullable    = true
+  validation {
+    condition     = var.clickhouse_bootstrap_user == null || can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_bootstrap_user))
+    error_message = "clickhouse_bootstrap_user must be a simple non-empty SQL identifier."
+  }
+}
+
+variable "clickhouse_bootstrap_password_secret_arn" {
+  description = "Secrets Manager ARN containing the ClickHouse bootstrap password."
+  type        = string
+  default     = null
+  nullable    = true
+  validation {
+    condition     = var.clickhouse_bootstrap_password_secret_arn == null || can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_bootstrap_password_secret_arn))
+    error_message = "clickhouse_bootstrap_password_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "clickhouse_bootstrap_password_kms_key_arns" {
+  description = "Optional customer-managed KMS key ARNs for the ClickHouse bootstrap secret."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for arn in var.clickhouse_bootstrap_password_kms_key_arns : trimspace(arn) != ""])
+    error_message = "clickhouse_bootstrap_password_kms_key_arns entries must be non-empty."
+  }
+}
+
+
+
+
+
+variable "helmr_version" {
+  description = "Exact Helmr release tag to deploy, vX.Y.Z or vX.Y.Z-prerelease. Used to resolve official controlplane and worker artifacts."
+  type        = string
+
+  validation {
+    condition     = can(regex("^v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)([.]((0|[1-9][0-9]*)|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?$", var.helmr_version))
+    error_message = "helmr_version must be an exact vX.Y.Z or vX.Y.Z-prerelease tag."
+  }
+}
+
+variable "release_artifacts_manifest_base_url" {
+  description = "HTTPS base URL containing per-version aws-artifacts.json files."
+  type        = string
+  default     = "https://github.com/helmrdotdev/helmr/releases/download"
+  nullable    = true
+}
+
+variable "release_artifacts_manifest_url" {
+  description = "Full HTTPS URL for the release artifact manifest. Overrides release_artifacts_manifest_base_url when set."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "controlplane_image" {
+  description = "Optional digest-pinned controlplane image URI override for custom builds. When null, the release artifact manifest is used."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "controlplane_image_repository_arn" {
+  description = "Exact private ECR repository ARN needed by the ECS execution roles. Leave null for public or non-ECR images."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.controlplane_image_repository_arn == null ||
+      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.controlplane_image_repository_arn))
+    )
+    error_message = "controlplane_image_repository_arn must be null or an ECR repository ARN."
+  }
+}
+
+variable "create_controlplane_service" {
+  description = "Create the ECS service after image, secrets, and migrations are ready."
+  type        = bool
+  default     = false
+}
+
+variable "controlplane_desired_count" {
+  description = "Desired ECS task count for the controlplane service."
+  type        = number
+  default     = 2
+}
+
+variable "dispatcher_desired_count" {
+  description = "Desired ECS task count for helmr-dispatcher."
+  type        = number
+  default     = 1
+}
+
+variable "email_provider" {
+  description = "Email delivery provider for magic links and run wait notifications."
+  type        = string
+  default     = "none"
+}
+
+variable "email_from" {
+  description = "Sender address for email delivery."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "smtp_addr" {
+  description = "SMTP host:port when email_provider is smtp."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "smtp_username" {
+  description = "SMTP username when email_provider is smtp."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "smtp_password_enabled" {
+  description = "Create and inject an SMTP password secret when email_provider is smtp."
+  type        = bool
+  default     = false
+}
+
+variable "certificate_arn" {
+  description = "ACM certificate ARN for the control-plane HTTPS listener."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+
+
+variable "github_oauth_client_id" {
+  description = "GitHub OAuth application client ID."
+  type        = string
+}
+
+variable "database_instance_class" {
+  description = "RDS Postgres instance class."
+  type        = string
+  default     = "db.t4g.small"
+}
+
+variable "database_allocated_storage_gb" {
+  description = "RDS allocated storage in GiB."
+  type        = number
+  default     = 20
+}
+
+variable "database_multi_az" {
+  description = "Create a standby RDS instance in another Availability Zone."
+  type        = bool
+  default     = true
+}
+
+variable "database_deletion_protection" {
+  description = "Protect the RDS instance from accidental deletion."
+  type        = bool
+  default     = true
+}
+
+variable "database_backup_retention_days" {
+  description = "RDS automated backup retention in days."
+  type        = number
+  default     = 14
+}
+
+variable "database_skip_final_snapshot" {
+  description = "Skip the final RDS snapshot on destroy."
+  type        = bool
+  default     = false
+}
+
+variable "database_performance_insights_enabled" {
+  description = "Enable RDS Performance Insights when supported by the chosen instance class."
+  type        = bool
+  default     = true
+}
+
+variable "controlplane_log_retention_days" {
+  description = "CloudWatch Logs retention in days for controlplane and migration tasks."
+  type        = number
+  default     = 30
+}
+
+variable "kms_deletion_window_in_days" {
+  description = "KMS key deletion window in days."
+  type        = number
+  default     = 30
+}
+
+variable "secret_recovery_window_in_days" {
+  description = "Secrets Manager recovery window in days."
+  type        = number
+  default     = 30
+}
+
+variable "worker_ami_id" {
+  description = "Optional worker AMI override for custom builds. When null and create_worker is true, the release artifact manifest is used."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "create_worker" {
+  description = "Create worker EC2 Auto Scaling resources."
+  type        = bool
+  default     = false
+}
+
+variable "worker_generation_key" {
+  description = "Operator-selected immutable generation key. Change only to create a fresh same-build Pool/provider binding for an explicitly qualified recovery; retain the old definition first."
+  type        = string
+  default     = "initial"
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9-]{0,63}$", var.worker_generation_key))
+    error_message = "worker_generation_key must be 1-64 lowercase letters, digits or hyphens, starting with a letter or digit."
+  }
+}
+
+variable "retained_worker_generations" {
+  description = "Immutable prior execution Worker Pool generations retained with explicit capacity and their exact ASG/LT/AMI definition for exact checkpoint restore. Keys must equal execution-sha256(jsonencode(generation_inputs))."
+  type = map(object({
+    generation_inputs = object({
+      generation_key        = string
+      ami_id                = string
+      instance_type         = string
+      nested_virtualization = bool
+      supply = object({
+        computer = object({
+          devices = list(string)
+        })
+        contract_digest = string
+        enable_ssm      = bool
+        network = object({
+          blocked_ipv4_cidrs = list(string)
+          link_pool          = string
+          resolver_ipv4      = string
+          translation_pool   = string
+        })
+        platform_store = object({
+          uri         = string
+          bucket_arn  = string
+          kms_key_arn = string
+        })
+        root_volume = object({
+          size_gb    = number
+          iops       = number
+          throughput = number
+        })
+        disk = object({
+          total_mib            = number
+          reserve_mib          = number
+          computer_staging_mib = number
+        })
+        lifecycle = object({
+          health_check_grace_period_seconds               = number
+          launch_lifecycle_heartbeat_timeout_seconds      = number
+          termination_lifecycle_heartbeat_timeout_seconds = number
+          termination_wait_timeout_seconds                = number
+          lifecycle_heartbeat_interval_seconds            = number
+          termination_policies                            = list(string)
+          protect_from_scale_in                           = bool
+          health_check_type                               = string
+          launch_lifecycle_transition                     = string
+          launch_lifecycle_default_result                 = string
+          termination_lifecycle_transition                = string
+          termination_lifecycle_default_result            = string
+        })
+      })
+      capacity = object({
+        cpu_millis               = number
+        memory_mib               = number
+        guest_ephemeral_disk_mib = number
+        vm_slots                 = number
+      })
+      per_vm = object({
+        cpu_millis               = number
+        memory_mib               = number
+        guest_ephemeral_disk_mib = number
+      })
+    })
+    count = number
+    sealed_provider_definition = object({
+      user_data_base64                                = string
+      permission_policy_json                          = string
+      boundary_policy_arn                             = string
+      boundary_policy_json                            = string
+      enable_ssm                                      = bool
+      launch_template_version                         = string
+      health_check_grace_period_seconds               = number
+      launch_lifecycle_heartbeat_timeout_seconds      = number
+      termination_lifecycle_heartbeat_timeout_seconds = number
+      termination_wait_timeout_seconds                = number
+      lifecycle_heartbeat_interval_seconds            = number
+      termination_policies                            = list(string)
+      protect_from_scale_in                           = bool
+      health_check_type                               = string
+      launch_lifecycle_transition                     = string
+      launch_lifecycle_default_result                 = string
+      termination_lifecycle_transition                = string
+      termination_lifecycle_default_result            = string
+    })
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for pool_name, generation in var.retained_worker_generations :
+      pool_name == "execution-${sha256(jsonencode(generation.generation_inputs))}" &&
+      generation.count >= 0 && floor(generation.count) == generation.count &&
+      generation.generation_inputs.supply.disk.total_mib > generation.generation_inputs.supply.disk.reserve_mib &&
+      generation.generation_inputs.capacity.cpu_millis > 0 &&
+      generation.generation_inputs.capacity.cpu_millis % 1000 == 0 &&
+      generation.generation_inputs.capacity.memory_mib > 0 &&
+      generation.generation_inputs.capacity.vm_slots > 0 &&
+      generation.generation_inputs.per_vm.cpu_millis > 0 &&
+      generation.generation_inputs.per_vm.cpu_millis % 1000 == 0 &&
+      generation.generation_inputs.per_vm.memory_mib > 0 &&
+      generation.generation_inputs.per_vm.guest_ephemeral_disk_mib > 0 &&
+      generation.generation_inputs.supply.disk.computer_staging_mib > 0 &&
+      generation.generation_inputs.capacity.guest_ephemeral_disk_mib == generation.generation_inputs.capacity.vm_slots * generation.generation_inputs.per_vm.guest_ephemeral_disk_mib &&
+      can(base64decode(generation.sealed_provider_definition.user_data_base64)) &&
+      can(jsondecode(generation.sealed_provider_definition.permission_policy_json)) &&
+      can(jsondecode(generation.sealed_provider_definition.boundary_policy_json)) &&
+      can(regex("^[1-9][0-9]*$", generation.sealed_provider_definition.launch_template_version)) &&
+      generation.sealed_provider_definition.enable_ssm == generation.generation_inputs.supply.enable_ssm &&
+      generation.sealed_provider_definition.health_check_grace_period_seconds == generation.generation_inputs.supply.lifecycle.health_check_grace_period_seconds &&
+      generation.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds == generation.generation_inputs.supply.lifecycle.launch_lifecycle_heartbeat_timeout_seconds &&
+      generation.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds == generation.generation_inputs.supply.lifecycle.termination_lifecycle_heartbeat_timeout_seconds &&
+      generation.sealed_provider_definition.termination_wait_timeout_seconds == generation.generation_inputs.supply.lifecycle.termination_wait_timeout_seconds &&
+      generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds == generation.generation_inputs.supply.lifecycle.lifecycle_heartbeat_interval_seconds &&
+      generation.sealed_provider_definition.termination_policies == generation.generation_inputs.supply.lifecycle.termination_policies &&
+      generation.sealed_provider_definition.protect_from_scale_in == generation.generation_inputs.supply.lifecycle.protect_from_scale_in &&
+      generation.sealed_provider_definition.health_check_type == generation.generation_inputs.supply.lifecycle.health_check_type &&
+      generation.sealed_provider_definition.launch_lifecycle_transition == generation.generation_inputs.supply.lifecycle.launch_lifecycle_transition &&
+      generation.sealed_provider_definition.launch_lifecycle_default_result == generation.generation_inputs.supply.lifecycle.launch_lifecycle_default_result &&
+      generation.sealed_provider_definition.termination_lifecycle_transition == generation.generation_inputs.supply.lifecycle.termination_lifecycle_transition &&
+      generation.sealed_provider_definition.termination_lifecycle_default_result == generation.generation_inputs.supply.lifecycle.termination_lifecycle_default_result &&
+      generation.sealed_provider_definition.health_check_grace_period_seconds > 0 &&
+      generation.sealed_provider_definition.launch_lifecycle_heartbeat_timeout_seconds > generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds &&
+      generation.sealed_provider_definition.termination_lifecycle_heartbeat_timeout_seconds >= generation.sealed_provider_definition.lifecycle_heartbeat_interval_seconds * 3 &&
+      generation.sealed_provider_definition.termination_wait_timeout_seconds > 0 &&
+      length(generation.sealed_provider_definition.termination_policies) > 0
+    ])
+    error_message = "retained_worker_generations must bind each canonical execution Pool key to one complete generation input with a non-negative whole count and sealed provider definition."
+  }
+}
+
+variable "worker_launch_timeout_seconds" {
+  description = "Deployment-owned ASG launch-hook timeout while a Worker reaches Control Plane readiness."
+  type        = number
+  default     = 900
+
+  validation {
+    condition     = var.worker_launch_timeout_seconds > 30
+    error_message = "worker_launch_timeout_seconds must exceed the Worker lifecycle heartbeat interval."
+  }
+}
+
+variable "worker_host_type" {
+  description = "EC2 instance type for workers."
+  type        = string
+  default     = "m7i.metal-24xl"
+}
+
+variable "worker_enable_nested_virtualization" {
+  description = "Enable EC2 nested virtualization for supported worker instance families."
+  type        = bool
+  default     = false
+}
+
+variable "worker_enable_ssm" {
+  description = "Enable SSM Session Manager access for worker instances."
+  type        = bool
+  default     = true
+}
+
+variable "worker_network_blocked_ipv4_cidrs" {
+  description = "Canonical ordered IPv4 CIDRs blocked for all guest egress. Supply [] only when the deployment intentionally has no additional destination deny."
+  type        = list(string)
+
+  validation {
+    condition = length(distinct(var.worker_network_blocked_ipv4_cidrs)) == length(var.worker_network_blocked_ipv4_cidrs) && alltrue([
+      for cidr in var.worker_network_blocked_ipv4_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false)
+    ])
+    error_message = "worker_network_blocked_ipv4_cidrs must contain unique canonical IPv4 CIDRs."
+  }
+}
+
+variable "worker_network_link_pool" {
+  description = "Worker-local IPv4 pool used for routed veth links."
+  type        = string
+  default     = "169.254.64.0/18"
+}
+
+variable "worker_network_translation_pool" {
+  description = "Worker-local IPv4 pool used for routed guest translation identities."
+  type        = string
+  default     = "100.96.0.0/16"
+}
+
+variable "worker_network_resolver_ipv4" {
+  description = "Exact IPv4 resolver exposed to guests. Null selects the VPC resolver."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "worker_count" {
+  description = "Explicit fixed count for the current Worker generation; required when create_worker is true. Use zero to prepare an inert target or deliberately stop capacity after draining."
+  type        = number
+  default     = null
+  validation {
+    condition     = var.worker_count == null ? !var.create_worker : var.worker_count >= 0 && floor(var.worker_count) == var.worker_count
+    error_message = "Set worker_count to a non-negative whole number when creating Worker resources."
+  }
+}
+
+variable "worker_capacity_vcpus" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "worker_capacity_memory_mib" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "worker_execution_slots" {
+  type     = number
+  default  = null
+  nullable = true
+}
+
+
+variable "worker_root_volume_size_gb" {
+  description = "Worker root EBS volume size in GiB."
+  type        = number
+  default     = 500
+}
+
+variable "worker_root_volume_iops" {
+  description = "Worker root EBS volume IOPS."
+  type        = number
+  default     = 12000
+}
+
+variable "worker_root_volume_throughput" {
+  description = "Worker root EBS volume throughput in MiB/s."
+  type        = number
+  default     = 500
+}
+
+variable "worker_disk_mib" {
+  description = "Optional filesystem capacity ceiling in MiB before the worker reserve is withheld. Leave null to auto-detect."
+  type        = number
+  default     = null
+  nullable    = true
+}
+
+variable "worker_disk_reserve_mib" {
+  description = "Filesystem capacity in MiB withheld from advertised worker capacity."
+  type        = number
+  default     = 1024
+
+  validation {
+    condition     = var.worker_disk_reserve_mib > 0
+    error_message = "worker_disk_reserve_mib must be positive."
+  }
+}
+
+variable "worker_vm_vcpus" {
+  description = "vCPU count assigned to each worker Firecracker task VM."
+  type        = number
+  default     = 2
+}
+
+variable "worker_vm_memory_mib" {
+  description = "Memory in MiB assigned to each worker Firecracker task VM."
+  type        = number
+  default     = 4096
+}
+
+variable "worker_vm_scratch_disk_mib" {
+  description = "Writable disk in MiB assigned to each worker Firecracker task VM."
+  type        = number
+  default     = 32768
+}
+
+variable "worker_computer_devices" {
+  description = "Exclusive Worker NBD device allowlist."
+  type        = list(string)
+}
+
+variable "computer_wrapping_key_id" {
+  description = "Stable self-hosted Computer root key identity. Preserve with the root key value and database backups."
+  type        = string
+  default     = "computer-root-v1"
+  nullable    = false
+}
+
+variable "capacity_token_secret_arn" {
+  description = "Optional externally owned Secrets Manager ARN containing the provider-neutral capacity credential."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.capacity_token_secret_arn == null || can(regex("^arn:[^:]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.capacity_token_secret_arn))
+    error_message = "capacity_token_secret_arn must be a Secrets Manager secret ARN."
+  }
+}
+
+variable "capacity_token_kms_key_arn" {
+  description = "Optional KMS key ARN required to decrypt capacity_token_secret_arn."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.capacity_token_kms_key_arn == null || can(regex("^arn:[^:]+:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$", var.capacity_token_kms_key_arn))
+    error_message = "capacity_token_kms_key_arn must be a KMS key ARN."
+  }
+}
+
+variable "controlplane_environment" {
+  description = "Additional non-secret environment variables for helmr-controlplane, including ADMIN_EMAILS for first-login deployment administrator setup. Managed variables cannot be overridden."
+  type        = map(string)
+  default     = {}
+}
+
+variable "worker_computer_staging_mib" {
+  description = "Per-Instance Computer storage staging budget in MiB. Changing it creates a new Worker generation."
+  type        = number
+  default     = 65536
+  validation {
+    condition     = var.worker_computer_staging_mib > 0 && floor(var.worker_computer_staging_mib) == var.worker_computer_staging_mib && var.worker_computer_staging_mib <= 8796093022207
+    error_message = "worker_computer_staging_mib must be positive whole MiB representable in int64 bytes."
+  }
+}
+
+variable "slack_transport" {
+  description = "Slack delivery mode for private deployment. Socket requires no public callback."
+  type        = string
+  default     = "socket"
+  validation {
+    condition     = contains(["disabled", "socket"], var.slack_transport)
+    error_message = "Private Slack transport must be disabled or socket."
+  }
+}
+
+variable "app_hostname" {
+  description = "Canonical private DNS hostname covered by certificate_arn. Company DNS must forward this zone to the VPC resolver."
+  type        = string
+  validation {
+    condition     = can(regex("^[a-z0-9][a-z0-9.-]+\\.[a-z]{2,}$", var.app_hostname))
+    error_message = "app_hostname must be a DNS name without scheme, port or path."
+  }
+}
+
+variable "company_client_ipv4_cidrs" {
+  description = "Company client CIDRs routed through existing customer VPN/transit connectivity. The template does not provision that connectivity."
+  type        = set(string)
+  validation {
+    condition     = length(var.company_client_ipv4_cidrs) > 0 && alltrue([for cidr in var.company_client_ipv4_cidrs : can(cidrnetmask(cidr)) && try(tonumber(split("/", cidr)[1]) > 0, false)])
+    error_message = "At least one explicit IPv4 company source narrower than the default route is required."
+  }
+}
+
+variable "clickhouse_security_group_id" {
+  description = "Private ClickHouse endpoint security group in this VPC or a connected VPC. Its owner must allow the exported platform task group."
+  type        = string
+}
+variable "clickhouse_port" {
+  description = "Private ClickHouse HTTPS port; must match clickhouse_url."
+  type        = number
+  default     = 443
+  validation {
+    condition     = var.clickhouse_port >= 1 && var.clickhouse_port <= 65535 && floor(var.clickhouse_port) == var.clickhouse_port
+    error_message = "clickhouse_port must be a TCP port."
+  }
+}
+
+variable "proxy_image" {
+  description = "ECR mirror of the pinned Squid image documented in proxy-image.json. Mirror without altering its platform image digest."
+  type        = string
+  validation {
+    condition     = can(regex("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[^@]+@sha256:[0-9a-f]{64}$", var.proxy_image))
+    error_message = "proxy_image must be a digest-pinned regional ECR image."
+  }
+}
+variable "proxy_image_repository_arn" {
+  description = "Exact ECR repository ARN from which the proxy execution role may pull."
+  type        = string
+}

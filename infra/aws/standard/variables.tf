@@ -61,7 +61,7 @@ variable "availability_zone_count" {
   }
 }
 
-variable "public_url" {
+variable "app_origin" {
   description = "External URL for the Control Plane when enable_cloudfront is false."
   type        = string
   default     = null
@@ -786,5 +786,15 @@ variable "worker_computer_staging_mib" {
   validation {
     condition     = var.worker_computer_staging_mib > 0 && floor(var.worker_computer_staging_mib) == var.worker_computer_staging_mib && var.worker_computer_staging_mib <= 8796093022207
     error_message = "worker_computer_staging_mib must be positive whole MiB representable in int64 bytes."
+  }
+}
+
+variable "slack_transport" {
+  description = "Slack delivery mode; HTTP is the public deployment default."
+  type        = string
+  default     = "http"
+  validation {
+    condition     = contains(["disabled", "http", "socket"], var.slack_transport)
+    error_message = "slack_transport must be disabled, http or socket."
   }
 }

@@ -12,6 +12,7 @@ DROP TABLE IF EXISTS
     slack_threads,
     slack_channel_bindings,
     slack_user_links,
+    slack_socket_connections,
     slack_connections,
     slack_installations,
     slack_app_registrations,

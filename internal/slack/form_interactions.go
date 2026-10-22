@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"time"
 	"uuid"
 
@@ -12,20 +11,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (h InteractionHandler) serveAnswerOpening(w http.ResponseWriter, r *http.Request, envelope interactionEnvelope) {
+func (h InteractionHandler) receiveAnswerOpening(ctx context.Context, envelope interactionEnvelope) receiptResult {
 	action := envelope.Actions[0]
 	claims, err := decodeControl(h.ControlKey, action.Value, time.Now())
 	source, sourceErr := slackMessageTime(action.Timestamp)
 	if err != nil || sourceErr != nil || claims.Action != "open_answer" || envelope.TriggerID == "" || len(envelope.TriggerID) > 4096 || source.After(time.Now().Add(5*time.Minute)) {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	if h.Client == nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		return
+		return receiptResult{disposition: receiptRetryable}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2500*time.Millisecond)
-	defer cancel()
 	var view json.RawMessage
 	var credential int64
 	var rejected bool
@@ -69,37 +64,31 @@ func (h InteractionHandler) serveAnswerOpening(w http.ResponseWriter, r *http.Re
 		return err
 	})
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptOutcome(err)
 	}
 	if rejected {
-		w.WriteHeader(http.StatusOK)
-		return
+		return receiptResult{disposition: receiptAccepted}
 	}
 	payload, _ := json.Marshal(map[string]any{"trigger_id": envelope.TriggerID, "view": view})
 	result := h.Client.Call(ctx, claims.Target.Installation, credential, "views.open", payload)
 	if result.Disposition != Acknowledged {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		return
+		return receiptResult{disposition: receiptRetryable}
 	}
-	w.WriteHeader(http.StatusOK)
+	return receiptResult{disposition: receiptAccepted}
 }
 
-func (h InteractionHandler) serveFormSubmission(w http.ResponseWriter, r *http.Request, envelope interactionEnvelope) {
+func (h InteractionHandler) receiveFormSubmission(ctx context.Context, envelope interactionEnvelope) receiptResult {
 	claims, err := decodeControl(h.ControlKey, envelope.View.Metadata, time.Now())
 	if (err != nil && !errors.Is(err, errControlExpired)) || !(envelope.View.CallbackID == "helmr.answer" && claims.Action == "answer") || envelope.User.IsBot || envelope.User.ID == "" || envelope.Team.ID == "" || claims.Actor != envelope.User.ID {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	source, err := slackMessageTime(claims.SourceTimestamp)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	key, err := controlRequestKey(claims, envelope.User.ID, "")
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	// The first authenticated submission freezes the actual submitted state. Core
 	// translation and live human authorization belong to the durable consumer, so
@@ -109,8 +98,6 @@ func (h InteractionHandler) serveFormSubmission(w http.ResponseWriter, r *http.R
 		state = formState{}
 	}
 	payload, _ := json.Marshal(controlGesture{Control: claims, Form: state})
-	ctx, cancel := context.WithTimeout(r.Context(), 2500*time.Millisecond)
-	defer cancel()
 	err = db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
 		var bot string
 		err := tx.QueryRow(ctx, `SELECT bot_user_id FROM slack_installations WHERE id=$1 AND app_id=$2 AND team_id=$3 FOR SHARE`, claims.Target.Installation, h.AppID, envelope.Team.ID).Scan(&bot)
@@ -126,16 +113,5 @@ func (h InteractionHandler) serveFormSubmission(w http.ResponseWriter, r *http.R
 		_, err = receiveGesture(ctx, tx, inboundGesture{Installation: claims.Target.Installation, Key: key, Actor: envelope.User.ID, OccurredAt: source, ExpiresAt: time.Unix(claims.ExpiresAt, 0), Payload: payload})
 		return err
 	})
-	if err != nil {
-		switch {
-		case errors.Is(err, errGestureConflict):
-			w.WriteHeader(http.StatusConflict)
-		case errors.Is(err, errControlInvalid), errors.Is(err, errGestureInvalid):
-			w.WriteHeader(http.StatusBadRequest)
-		default:
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}
-		return
-	}
-	w.WriteHeader(http.StatusOK)
+	return receiptOutcome(err)
 }

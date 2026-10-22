@@ -29,7 +29,7 @@ func firstUseURL(config ProjectionConfig, request uuid.UUID, channel string) (st
 	if err != nil {
 		return "", err
 	}
-	target := config.PublicURL.JoinPath("auth/slack/connect")
+	target := config.AppOrigin.JoinPath("auth/slack/connect")
 	target.RawQuery = url.Values{"link": {payload + "." + base64.RawURLEncoding.EncodeToString(mac)}}.Encode()
 	return target.String(), nil
 }

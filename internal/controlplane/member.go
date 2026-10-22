@@ -292,7 +292,7 @@ func managingMember(principal auth.Principal) org.ManagingMember {
 
 func (s *Server) inviteURL(token string) string {
 	values := url.Values{"token": []string{token}}
-	return s.publicURL.ResolveReference(&url.URL{Path: "/invite", RawQuery: values.Encode()}).String()
+	return s.appOrigin.ResolveReference(&url.URL{Path: "/invite", RawQuery: values.Encode()}).String()
 }
 
 func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, error) {

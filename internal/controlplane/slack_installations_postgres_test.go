@@ -36,7 +36,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE org_id=$1 AND user_id=$2`, org, f.User)
-	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{3}, 32))
+	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{3}, 32), slack.TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,10 +46,10 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 		if err := r.ParseForm(); err != nil || r.Form.Get("redirect_uri") != "https://console.example.test/auth/slack/callback" || r.Form.Get("code") != "verified-code" {
 			t.Fatal("wrong OAuth exchange")
 		}
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"app_id":"app","team":{"id":"team","name":"Workspace"},"bot_user_id":"bot","token_type":"bot","access_token":"private-access","scope":"app_mentions:read,channels:read,channels:history,groups:read,groups:history,chat:write,assistant:write"}`))}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"app_id":"app","team":{"id":"team","name":"Workspace"},"bot_user_id":"bot","token_type":"bot","access_token":"private-access","scope":"app_mentions:read,channels:read,channels:history,groups:read,groups:history,chat:write,assistant:write,im:history,im:read"}`))}, nil
 	})
 	cfg := completeServerConfig(t)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	queries := db.New(f.Pool)
 	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
 	cfg.Slack = &SlackConfig{ControlKey: bytes.Repeat([]byte{4}, 32), Credentials: store, Transport: transport, Client: slack.NewWebClient(store, nil)}

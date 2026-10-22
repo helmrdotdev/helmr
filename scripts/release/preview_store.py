@@ -42,7 +42,7 @@ def object_key(version, name):
     return f'previews/{version}/{name}'
 
 
-def public_url(version, name):
+def app_origin(version, name):
     base, _ = config()
     return f'{base}/{object_key(version, name)}'
 
@@ -248,7 +248,7 @@ def fetch_assets(selection, directory):
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     version = selection['version']
     for name in ASSETS:
-        url = public_url(version, name)
+        url = app_origin(version, name)
         require(public_fetch(url, directory / name) is True, 'missing public preview asset: ' + name)
     return build_index(selection, directory)
 
@@ -302,9 +302,9 @@ def complete(selection, directory):
     version = selection['version']
     index_path = directory / COMPLETION_INDEX
     sig_path = directory / COMPLETION_SIG
-    if public_fetch(public_url(version, COMPLETION_INDEX), index_path) is not True:
+    if public_fetch(app_origin(version, COMPLETION_INDEX), index_path) is not True:
         return None
-    if public_fetch(public_url(version, COMPLETION_SIG), sig_path) is not True:
+    if public_fetch(app_origin(version, COMPLETION_SIG), sig_path) is not True:
         return None
     from publish import verify_signature
     verify_signature(index_path, sig_path, version)
@@ -312,7 +312,7 @@ def complete(selection, directory):
     from transport import same_selection
     same_selection({k: index[k] for k in selection}, selection)
     for name in ASSETS:
-        require(public_fetch(public_url(version, name), directory / name) is True,
+        require(public_fetch(app_origin(version, name), directory / name) is True,
                 'missing public completed preview asset: ' + name)
         require(descriptor(directory / name) == index['assets'][name], 'public completed asset differs')
     verify_files(index, directory)

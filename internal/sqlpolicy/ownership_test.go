@@ -66,7 +66,7 @@ var tableOwners = map[string]string{
 	// secrets
 	"secrets": "internal/secret", "secret_versions": "internal/secret",
 	// Slack
-	"slack_app_registrations": "internal/slack", "slack_installations": "internal/slack", "slack_posts": "internal/slack", "slack_work_items": "internal/slack",
+	"slack_socket_connections": "internal/slack", "slack_app_registrations": "internal/slack", "slack_installations": "internal/slack", "slack_posts": "internal/slack", "slack_work_items": "internal/slack",
 	"slack_delivery_limits": "internal/slack", "slack_method_limits": "internal/slack",
 	"slack_requests": "internal/slack", "slack_threads": "internal/slack", "slack_user_links": "internal/slack",
 	// Slack route authority

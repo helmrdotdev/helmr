@@ -66,7 +66,7 @@ manifest and store its App credentials through the setup form. App credentials a
 held by the Control Plane; no global `SLACK_*` settings belong in this profile.
 
 For an explicitly authorized external HTTPS route, set the optional top-level
-`public_url` to its origin, such as `https://verification.example.test`. It must
+`app_origin` to its origin, such as `https://verification.example.test`. It must
 have no credentials, path, query or fragment. Control Plane and Dispatcher use
 this origin for normal authentication callbacks and public links. Their internal
 transport and all backing-service listeners remain on loopback. Omitting the field

@@ -301,7 +301,7 @@ func TestPromoteRejectsStructuredContractForConnectedFront(t *testing.T) {
 		t.Fatal(err)
 	}
 	user, registration, connection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Schema'); INSERT INTO slack_app_registrations(id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES($2,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1); INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) SELECT $4,$5,id,$2,$1 FROM agents WHERE environment_id=$5 AND key=$6`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, connection, first.EnvironmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Schema'); INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$2,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1); INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) SELECT $4,$5,id,$2,$1 FROM agents WHERE environment_id=$5 AND key=$6`, pgx.QueryExecModeSimpleProtocol, user, registration, f.request.orgID, connection, first.EnvironmentID, f.request.bundle.bundle.Program.Metadata.Definitions[0].DeclaredID)
 	f.request.idempotencyKey = "structured"
 	f.request.bundle.root.Digest = artifacttest.Digest("structured-bundle")
 	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.InputKind = "json"

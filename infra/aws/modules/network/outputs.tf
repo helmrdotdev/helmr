@@ -22,3 +22,13 @@ output "s3_gateway_endpoint_id" {
   description = "S3 gateway endpoint ID when enabled."
   value       = try(aws_vpc_endpoint.s3[0].id, null)
 }
+
+output "private_route_table_id" {
+  description = "Private subnet route table for explicitly routed private connectivity."
+  value       = aws_route_table.private.id
+}
+
+output "s3_prefix_list_id" {
+  description = "Regional S3 gateway endpoint prefix list when enabled."
+  value       = try(aws_vpc_endpoint.s3[0].prefix_list_id, null)
+}

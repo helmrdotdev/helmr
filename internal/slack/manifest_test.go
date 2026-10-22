@@ -50,7 +50,7 @@ func TestDedicatedAppManifestSeparatesBotInstallationAndIdentityConsent(t *testi
 				} `json:"event_subscriptions"`
 			} `json:"settings"`
 		}
-		if err := json.Unmarshal(AppManifest(origin, registration, name), &manifest); err != nil {
+		if err := json.Unmarshal(AppManifest(origin, registration, name, TransportHTTP), &manifest); err != nil {
 			t.Fatal(err)
 		}
 		if !manifest.Features.Bot.AlwaysOnline || !manifest.Features.Home.Messages || manifest.Features.Home.ReadOnly || !strings.Contains(manifest.Features.Agent.Description, "Organization members") {
@@ -73,5 +73,31 @@ func TestDedicatedAppManifestSeparatesBotInstallationAndIdentityConsent(t *testi
 		if len(manifest.OAuth.Redirects) != 2 || manifest.OAuth.Redirects[1] != "https://helmr.example/api/slack/user-links/callback" || !strings.Contains(manifest.Settings.Events.URL, registration.String()) {
 			t.Fatal("callback scope drift", manifest)
 		}
+	}
+}
+
+func TestSocketManifestHasOnlyBrowserCallbacks(t *testing.T) {
+	origin, _ := url.Parse("https://helmr.internal")
+	var manifest struct {
+		Settings struct {
+			Socket        bool                       `json:"socket_mode_enabled"`
+			Events        map[string]json.RawMessage `json:"event_subscriptions"`
+			Interactivity map[string]json.RawMessage `json:"interactivity"`
+		} `json:"settings"`
+		OAuth struct {
+			Redirects []string `json:"redirect_urls"`
+		} `json:"oauth_config"`
+	}
+	if err := json.Unmarshal(AppManifest(origin, uuid.NewV7(), "Agent", TransportSocket), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.Settings.Socket || len(manifest.OAuth.Redirects) != 2 {
+		t.Fatal("missing socket/browser OAuth configuration")
+	}
+	if _, ok := manifest.Settings.Events["request_url"]; ok {
+		t.Fatal("socket app exposes event callback")
+	}
+	if _, ok := manifest.Settings.Interactivity["request_url"]; ok {
+		t.Fatal("socket app exposes interaction callback")
 	}
 }

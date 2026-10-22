@@ -6,7 +6,8 @@ export type Me = {
   profile_image_url: string | null;
   org_id?: string | null;
   org_name?: string;
-  public_url?: string;
+  app_origin?: string;
+  slack_transport?: "disabled" | "http" | "socket";
   role?: string | null;
   permissions: string[];
   admin: boolean;

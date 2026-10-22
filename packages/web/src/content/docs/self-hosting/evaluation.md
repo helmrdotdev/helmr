@@ -23,7 +23,7 @@ Fill every required value described in [requirements](/docs/self-hosting/require
 
 ```hcl
 enable_cloudfront = false
-public_url        = "https://helmr.example.com"
+app_origin        = "https://helmr.example.com"
 certificate_arn   = "arn:aws:acm:us-east-1:123456789012:certificate/example"
 ```
 

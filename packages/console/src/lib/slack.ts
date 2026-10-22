@@ -3,13 +3,15 @@ import { postJson, request } from "./api";
 
 export type AgentSlackAddress = { projectID: string; environmentID: string; agentName: string };
 export type AgentSlackConnection = {
+  transport: "http" | "socket";
+  socket?: { state: "connecting" | "connected" | "reconnecting" | "action_required" | "disconnected"; reason: string | null; last_connected_at: string | null; last_received_at: string | null };
   id: string; registration_id: string; installation_id: string | null;
-  status: "setup_incomplete" | "connected" | "reauthorization_required" | "disconnected";
+  status: "setup_incomplete" | "connected" | "reauthorization_required" | "disconnected" | "configuration_mismatch";
   direct_messages_authorized: boolean; credentials_configured: boolean; client_id: string | null; app_id: string | null;
   team_id: string | null; workspace_name: string | null; app_name: string | null; app_icon_url: string | null;
 };
-type AgentSlackConnectionState = { connection: AgentSlackConnection | null; manifest?: JsonValue; create_app_url?: string };
-type SlackAppCredentials = { client_id: string; client_secret: string; signing_secret: string };
+type AgentSlackConnectionState = { transport: "http" | "socket"; connection: AgentSlackConnection | null; manifest?: JsonValue; create_app_url?: string };
+export type SlackAppCredentials = { client_id: string; client_secret: string; signing_secret?: string; app_token?: string };
 function connectionPath(address: AgentSlackAddress): string {
   return `/api/projects/${encodeURIComponent(address.projectID)}/environments/${encodeURIComponent(address.environmentID)}/agents/${encodeURIComponent(address.agentName)}/slack`;
 }

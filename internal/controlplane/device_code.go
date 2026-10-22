@@ -24,8 +24,8 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	verificationURI := s.publicURL.ResolveReference(&url.URL{Path: "/auth/device"}).String()
-	complete := s.publicURL.ResolveReference(&url.URL{Path: "/auth/device", RawQuery: "code=" + url.QueryEscape(authorization.UserCode)}).String()
+	verificationURI := s.appOrigin.ResolveReference(&url.URL{Path: "/auth/device"}).String()
+	complete := s.appOrigin.ResolveReference(&url.URL{Path: "/auth/device", RawQuery: "code=" + url.QueryEscape(authorization.UserCode)}).String()
 	writeJSON(w, http.StatusCreated, api.DeviceStartResponse{
 		DeviceCode:              authorization.DeviceCode,
 		UserCode:                authorization.UserCode,

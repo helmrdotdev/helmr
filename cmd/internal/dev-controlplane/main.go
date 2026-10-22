@@ -54,7 +54,7 @@ import (
 
 const (
 	defaultAddr                    = ":8080"
-	defaultPublicURL               = "http://127.0.0.1:3000"
+	defaultAppOrigin               = "http://127.0.0.1:3000"
 	defaultAuthKey                 = "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
 	defaultSetupToken              = "dev-setup-token"
 	defaultWorkerHostCredentialKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
@@ -163,7 +163,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
-	publicURL, err := url.Parse(cfg.publicURL)
+	appOrigin, err := url.Parse(cfg.appOrigin)
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
 	}
@@ -203,7 +203,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		WorkerHostCredentialSigningKey: cfg.workerHostCredentialKey,
 		SetupToken:                     cfg.setupToken,
 		AuthKey:                        cfg.authKey,
-		PublicURL:                      publicURL,
+		AppOrigin:                      appOrigin,
 		TelemetryReader:                telemetryReader,
 		Mailer:                         mailer,
 		MagicLinkDelivery:              magicLinkDelivery,
@@ -237,7 +237,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "magic link delivery", run: magicLinkDelivery.Run},
 	}
-	loginURL := strings.TrimRight(cfg.publicURL, "/") + "/dev/login"
+	loginURL := strings.TrimRight(cfg.appOrigin, "/") + "/dev/login"
 	// Deferred ClickHouse and PostgreSQL closes run only after serveDev
 	// has drained or force-closed HTTP and joined every background loop.
 	return serveDev(ctx, log, httpServer, loginURL, loops, 10*time.Second)
@@ -329,7 +329,7 @@ type devConfig struct {
 	casURI                          string
 	platformStoreURI                string
 	deploymentRuntimeDescriptorPath string
-	publicURL                       string
+	appOrigin                       string
 	authKey                         []byte
 	setupToken                      string
 	workerHostCredentialKey         []byte
@@ -355,7 +355,7 @@ func loadConfig() (devConfig, error) {
 		casURI:                          textEnv("CAS_URI", ""),
 		platformStoreURI:                textEnv("PLATFORM_STORE_URI", ""),
 		deploymentRuntimeDescriptorPath: textEnv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", ""),
-		publicURL:                       textEnv("PUBLIC_URL", defaultPublicURL),
+		appOrigin:                       textEnv("APP_ORIGIN", defaultAppOrigin),
 		setupToken:                      secretEnv("SETUP_TOKEN", defaultSetupToken),
 	}
 	if cfg.seedData, err = boolEnv("HELMR_DEV_SEED_DATA", true); err != nil {

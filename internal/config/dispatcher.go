@@ -6,12 +6,14 @@ import (
 
 func LoadDispatcher() (Dispatcher, error) {
 	var err error
-	publicURL, err := normalizeOrigin("PUBLIC_URL", env("PUBLIC_URL", DefaultPublicURL))
+	appOrigin, err := normalizeOrigin("APP_ORIGIN", env("APP_ORIGIN", DefaultAppOrigin))
 	if err != nil {
 		return Dispatcher{}, err
 	}
 	cfg := Dispatcher{
-		PublicURL:          publicURL,
+		SlackTransport:     env("SLACK_TRANSPORT", "http"),
+		OutboundProxyURL:   envText("OUTBOUND_PROXY_URL"),
+		AppOrigin:          appOrigin,
 		ControlPlaneURL:    envText("CONTROL_PLANE_URL"),
 		DatabaseURL:        envText("DATABASE_URL"),
 		ClickHouseURL:      envText("CLICKHOUSE_URL"),
@@ -20,6 +22,9 @@ func LoadDispatcher() (Dispatcher, error) {
 	}
 	if cfg.ControlPlaneURL == "" {
 		return cfg, errors.New("CONTROL_PLANE_URL is required")
+	}
+	if err := validatePlatformConnections(cfg.SlackTransport, cfg.OutboundProxyURL); err != nil {
+		return cfg, err
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("DATABASE_URL is required")

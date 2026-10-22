@@ -170,7 +170,7 @@ func (s *Server) startSlackUserLink(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"redirect_url": oauth.IdentityAuthorizationURL(state, nonce, workspace.TeamID, s.slackUserRedirectURL())})
 }
 func (s *Server) slackUserRedirectURL() string {
-	return s.publicURL.JoinPath("api/slack/user-links/callback").String()
+	return s.appOrigin.JoinPath("api/slack/user-links/callback").String()
 }
 
 // Slack can return an authorization code by query or form_post. Cross-site POSTs
@@ -212,7 +212,7 @@ func (s *Server) slackUserLinkCallback(w http.ResponseWriter, r *http.Request) {
 			values.Set(key, items[0])
 		}
 	}
-	target := *s.publicURL.JoinPath("auth/slack/link")
+	target := *s.appOrigin.JoinPath("auth/slack/link")
 	target.Fragment = values.Encode()
 	http.Redirect(w, r, target.String(), http.StatusSeeOther)
 }

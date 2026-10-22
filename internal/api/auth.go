@@ -1,10 +1,11 @@
 package api
 
 type MeResponse struct {
+ SlackTransport string `json:"slack_transport"`
 	UserID               string   `json:"user_id"`
 	DisplayName          string   `json:"display_name"`
 	ProfileImageURL      string   `json:"profile_image_url"`
-	PublicURL            string   `json:"public_url,omitempty"`
+	AppOrigin            string   `json:"app_origin,omitempty"`
 	OrgID                string   `json:"org_id,omitempty"`
 	OrgName              string   `json:"org_name,omitempty"`
 	OrgSlug              string   `json:"org_slug,omitempty"`

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/platformhttp"
 )
 
 const servingProbeTimeout = 5 * time.Second
@@ -17,7 +18,7 @@ const servingProbeTimeout = 5 * time.Second
 var errServingEvidenceExpired = errors.New("control plane serving evidence expired")
 
 func controlPlaneServingProbe(baseURL string) (func(context.Context) error, error) {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := platformhttp.Direct()
 	// Each sample exercises the current DNS/TLS path instead of a retained connection.
 	transport.DisableKeepAlives = true
 	client := &http.Client{Transport: transport, Timeout: servingProbeTimeout,

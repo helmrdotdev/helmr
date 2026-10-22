@@ -13,7 +13,8 @@ tooling for Helmr.
 - `modules/release-artifacts` resolves public Control Plane images and Worker AMIs.
 - `modules/worker` creates a generic Firecracker Worker host group.
 - `modules/worker-image` defines the public Worker AMI build.
-- `quickstart` and `standard` are self-hosted compositions.
+- `quickstart` and `standard` are public self-hosted compositions.
+- [`private`](private/README.md) is a private-ingress deployment reference with restricted platform egress.
 - `stacks/release-build` is the standalone OSS release artifact foundation.
 - `stacks/worker-image` is the public Worker AMI build pipeline.
 
@@ -41,22 +42,24 @@ traffic readiness after the schema is current.
 
 ## Optional Slack integration
 
-The Control Plane module and both self-hosted roots accept `slack = null` by
-default. To enable Slack, supply the app's `app_id` and `client_id`, plus
-`client_secret_arn` and `signing_secret_arn` referring to populated Secrets Manager
-secrets. Supply `client_secret_kms_key_arns` and `signing_secret_kms_key_arns` when
-those secrets use customer-managed encryption keys. The app/client IDs reach both
-processes; the client secret reaches Control Plane and Dispatcher, while the
-signing secret reaches only Control Plane. Secret values remain outside Terraform.
-Reserved Slack environment names cannot bypass this input.
+The deployment operator sets `slack_transport` (`http`, `socket` or `disabled`).
+Quickstart and standard default to HTTP; the private reference uses Socket Mode.
+The same Product image supports all modes. Organization owners/admins create a
+dedicated app per Agent/Environment and save credentials through Console; app
+secrets and installation tokens are encrypted in PostgreSQL, not Terraform.
 
-Use the deployment's reachable HTTPS origin for installation consent at
-`/auth/slack/callback`, identity linking at `/api/slack/user-links/callback`, Events
-API delivery at `/api/slack/events` and interactions at `/api/slack/interactions`.
-Configure the app, its scopes and the HTTPS callbacks before connecting it in
-Console. Deployment configuration alone neither installs the app nor approves a
-channel. Existing connections use encrypted installation credentials; app secrets
-are distinct from those per-workspace grants.
+`APP_ORIGIN` is the canonical browser/API origin. HTTP callbacks use
+`/integrations/slack/apps/{registrationID}/events` and `/interactions` and need
+Slack-reachable HTTPS. Socket Mode opens an outbound WSS connection and mounts
+neither receiver. Browser installation and identity linking still return to
+`/auth/slack/callback` and `/api/slack/user-links/callback`; users must be on the
+company network for a private origin. See the Product [Slack setup guide](../../packages/web/src/content/docs/guides/connect-slack.md).
+
+The optional `outbound_proxy_url` input is an explicit HTTP CONNECT path for
+GitHub, Slack and Resend clients. Private service/AWS clients use direct paths.
+A proxy failure never falls back to direct internet access. Restricting the
+network remains the operator's responsibility; see the private reference for
+service endpoints, DNS policy and startup dependencies.
 
 ## IAM ceilings and deployment recovery
 

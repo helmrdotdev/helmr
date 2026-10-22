@@ -27,7 +27,7 @@ import (
 func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	f := sessiontest.New(t)
 	var cfg ServerConfig
-	handler := newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}; cfg = *c })
+	handler := newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}; cfg = *c })
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)

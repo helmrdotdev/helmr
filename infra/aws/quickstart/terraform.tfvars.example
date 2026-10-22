@@ -11,7 +11,7 @@ helmr_version = "replace-with-helmr-release-version"
 # Direct ALB quickstart. To enable CloudFront, also set
 # cloudfront_origin_domain_name to a DNS name that resolves to the public ALB.
 enable_cloudfront = false
-public_url        = "https://helmr.example.com"
+app_origin        = "https://helmr.example.com"
 certificate_arn   = "arn:aws:acm:us-east-1:123456789012:certificate/replace-me"
 
 enable_nat_gateway       = false

@@ -15,7 +15,8 @@ Helmr names environment variables according to the environment that owns them:
   into an environment Helmr does not exclusively own, such as a user's shell
   or a Computer guest. The CLI variables below are examples.
 - Established ecosystem variables such as `AWS_*`, `HTTP_PROXY`, and
-  `NO_PROXY` keep their standard names.
+  `NO_PROXY` keep their standard names where supported by the owning tool.
+  Platform integration clients use the explicit `OUTBOUND_PROXY_URL` contract below.
 
 Environment variable names are an exact, case-sensitive contract. Helmr does
 not read legacy aliases. Text, numeric, boolean, and duration settings ignore
@@ -130,8 +131,26 @@ addresses that receive the platform-wide Admin flag when their user record is
 created. Admin differs from organization membership roles and controls the
 `/admin` Console and `/admin/api/v1` API surfaces.
 
-Optional: `CONTROL_PLANE_ADDR`, `PUBLIC_URL`, and `MAGIC_LINK_DEBUG_URLS`.
-`PUBLIC_URL` is used for browser-facing links.
+Optional: `CONTROL_PLANE_ADDR`, `APP_ORIGIN`, and `MAGIC_LINK_DEBUG_URLS`.
+`APP_ORIGIN` is the canonical browser/API origin used for login callbacks, Console
+links and Slack setup. It can be private HTTPS if users' browsers can reach it.
+
+`SLACK_TRANSPORT` selects `http` (default), `socket` or `disabled` for both Control
+Plane and Dispatcher. It is deployment-wide and is read-only in Console. Socket
+Mode receives events through outbound WSS; HTTP mounts per-registration event
+and interaction callbacks. Disabled rejects setup and starts no Slack delivery
+workers. Dedicated app credentials are organization-managed encrypted database
+records, not process environment variables.
+
+`OUTBOUND_PROXY_URL` is an optional absolute HTTP(S) proxy origin for platform
+GitHub OAuth, Slack OAuth/API/Socket and Resend traffic. An empty value means
+explicit direct access. There is no automatic direct fallback or `NO_PROXY`
+bypass. The proxy must support CONNECT to HTTPS/WSS targets. These clients do
+not inherit ambient `HTTP_PROXY` or `HTTPS_PROXY`. PostgreSQL, configured
+ClickHouse, S3/KMS and internal readiness/control-plane clients use direct service
+paths; this setting is not a guest or worker-build egress policy. In the private
+reference, ClickHouse must have a private route and narrowly scoped security
+rules. See [private deployments](/docs/self-hosting/private).
 
 `CAPACITY_TOKEN` enables and authenticates the capacity API used by trusted
 deployment automation, including an operator-supplied scaler. It must be

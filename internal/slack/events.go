@@ -88,47 +88,34 @@ func (h EventHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	body, err = jsoncanon.Transform(body)
+	h.receiveEventPayload(r.Context(), body).writeHTTP(w)
+}
+
+func (h EventHandler) receiveEventPayload(parent context.Context, body []byte) receiptResult {
+	ctx, cancel := context.WithTimeout(parent, receiptTimeout)
+	defer cancel()
+	body, err := jsoncanon.Transform(body)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	var envelope eventEnvelope
 	if json.Unmarshal(body, &envelope) != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return
+		return receiptResult{disposition: receiptInvalid}
 	}
 	if envelope.Type == "url_verification" {
 		if envelope.Challenge == "" || len(envelope.Challenge) > 4096 || (h.AppID != "" && envelope.AppID != "" && envelope.AppID != h.AppID) {
-			w.WriteHeader(http.StatusBadRequest)
-			return
+			return receiptResult{disposition: receiptInvalid}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"challenge": envelope.Challenge})
-		return
+		payload, _ := json.Marshal(map[string]string{"challenge": envelope.Challenge})
+		return receiptResult{disposition: receiptAccepted, payload: payload}
 	}
 	if h.AppID == "" || envelope.AppID != h.AppID {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
+		return receiptResult{disposition: receiptUnauthorized}
 	}
 	if envelope.Type != "event_callback" {
-		w.WriteHeader(http.StatusOK)
-		return
+		return receiptResult{disposition: receiptAccepted}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2500*time.Millisecond)
-	defer cancel()
-	if err = h.receiveEvent(ctx, envelope); err != nil {
-		switch {
-		case errors.Is(err, errGestureInvalid):
-			w.WriteHeader(http.StatusBadRequest)
-		case errors.Is(err, errGestureConflict):
-			w.WriteHeader(http.StatusConflict)
-		default:
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}
-		return
-	}
-	w.WriteHeader(http.StatusOK)
+	return receiptOutcome(h.receiveEvent(ctx, envelope))
 }
 
 func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) error {

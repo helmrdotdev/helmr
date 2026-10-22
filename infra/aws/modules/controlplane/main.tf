@@ -2,7 +2,7 @@ locals {
   name                          = lower(var.name)
   controlplane_port             = 8080
   bucket_prefix                 = lower(coalesce(var.bucket_name_prefix, "${local.name}-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"))
-  controlplane_url              = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.controlplane[0].domain_name}" : var.public_url
+  controlplane_url              = var.enable_cloudfront ? "https://${aws_cloudfront_distribution.controlplane[0].domain_name}" : var.app_origin
   controlplane_subnet_ids       = var.controlplane_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
   email_from                    = var.email_from == null ? "" : var.email_from
   smtp_addr                     = var.smtp_addr == null ? "" : var.smtp_addr
@@ -114,7 +114,9 @@ locals {
     CAS_URI                            = "s3://${aws_s3_bucket.cas.bucket}"
     DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH = "/usr/local/share/helmr/runtime.descriptor.json"
     PLATFORM_STORE_URI                 = var.platform_store_uri
-    PUBLIC_URL                         = local.controlplane_url
+    APP_ORIGIN                         = local.controlplane_url
+    SLACK_TRANSPORT                    = var.slack_transport
+    OUTBOUND_PROXY_URL                 = var.outbound_proxy_url
     GITHUB_OAUTH_CLIENT_ID             = var.github_oauth_client_id
     }, var.deployment_mode == "managed-cloud" ? {
     COMPUTER_KMS_KEY_ARN = aws_kms_key.helmr.arn
@@ -176,8 +178,10 @@ locals {
   controlplane_secrets               = local.controlplane_secret_defaults
 
   dispatcher_environment_defaults = merge(local.clickhouse_ingester_environment, {
-    CONTROL_PLANE_URL = local.controlplane_url
-    PUBLIC_URL        = local.controlplane_url
+    CONTROL_PLANE_URL  = local.controlplane_url
+    APP_ORIGIN         = local.controlplane_url
+    SLACK_TRANSPORT    = var.slack_transport
+    OUTBOUND_PROXY_URL = var.outbound_proxy_url
   })
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
@@ -195,7 +199,7 @@ resource "terraform_data" "bootstrap_preconditions" {
     certificate_arn                   = var.certificate_arn
     cloudfront_origin                 = var.cloudfront_origin_domain_name
     enable_cloudfront                 = var.enable_cloudfront
-    public_url                        = var.public_url
+    app_origin                        = var.app_origin
     reserved_env_conflicts            = local.controlplane_environment_conflicts
     reserved_dispatcher_env_conflicts = local.dispatcher_environment_conflicts
     email_provider                    = var.email_provider
@@ -250,8 +254,8 @@ resource "terraform_data" "bootstrap_preconditions" {
     }
 
     precondition {
-      condition     = var.enable_cloudfront || (var.public_url != null && (startswith(var.public_url, "https://") || (var.allow_insecure_http && startswith(var.public_url, "http://"))))
-      error_message = "public_url must be HTTPS when enable_cloudfront is false, unless allow_insecure_http is explicitly enabled for development."
+      condition     = var.enable_cloudfront || (var.app_origin != null && (startswith(var.app_origin, "https://") || (var.allow_insecure_http && startswith(var.app_origin, "http://"))))
+      error_message = "app_origin must be HTTPS when enable_cloudfront is false, unless allow_insecure_http is explicitly enabled for development."
     }
 
     precondition {
@@ -429,7 +433,7 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_http_public" {
-  count             = !var.enable_cloudfront && (var.certificate_arn != null || var.allow_insecure_http) ? 1 : 0
+  count             = var.ingress_mode == "public" && !var.enable_cloudfront && (var.certificate_arn != null || var.allow_insecure_http) ? 1 : 0
   security_group_id = aws_security_group.alb.id
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 80
@@ -447,7 +451,7 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https_cloudfront" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_https" {
-  count             = var.enable_cloudfront || var.certificate_arn == null ? 0 : 1
+  count             = var.ingress_mode == "private" || var.enable_cloudfront || var.certificate_arn == null ? 0 : 1
   security_group_id = aws_security_group.alb.id
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 443
@@ -456,9 +460,11 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb" {
-  security_group_id = aws_security_group.alb.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
+  security_group_id            = aws_security_group.alb.id
+  referenced_security_group_id = aws_security_group.controlplane.id
+  ip_protocol                  = "tcp"
+  from_port                    = local.controlplane_port
+  to_port                      = local.controlplane_port
 }
 
 resource "aws_security_group" "controlplane" {
@@ -477,6 +483,7 @@ resource "aws_vpc_security_group_ingress_rule" "controlplane_alb" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "controlplane" {
+  count             = var.restrict_platform_egress ? 0 : 1
   security_group_id = aws_security_group.controlplane.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
@@ -485,9 +492,9 @@ resource "aws_vpc_security_group_egress_rule" "controlplane" {
 resource "aws_lb" "controlplane" {
   name               = "${local.name}-controlplane"
   load_balancer_type = "application"
-  internal           = false
+  internal           = var.ingress_mode == "private"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = var.public_subnet_ids
+  subnets            = var.ingress_mode == "private" ? var.private_subnet_ids : var.public_subnet_ids
   tags               = var.tags
 }
 
@@ -523,7 +530,7 @@ resource "aws_lb_listener" "http" {
 }
 
 resource "aws_lb_listener" "http_redirect" {
-  count             = var.enable_cloudfront || var.allow_insecure_http || var.certificate_arn == null ? 0 : 1
+  count             = var.ingress_mode == "private" || var.enable_cloudfront || var.allow_insecure_http || var.certificate_arn == null ? 0 : 1
   load_balancer_arn = aws_lb.controlplane.arn
   port              = 80
   protocol          = "HTTP"
@@ -1506,6 +1513,37 @@ resource "terraform_data" "clickhouse_access_preconditions" {
     precondition {
       condition     = var.clickhouse_access_mode == "bootstrap" ? (var.clickhouse_bootstrap_user != null && var.clickhouse_bootstrap_password_secret_arn != null && !contains([var.clickhouse_reader_user, var.clickhouse_ingester_user, var.clickhouse_migration_user], var.clickhouse_bootstrap_user) && !contains([var.clickhouse_reader_password_secret_arn, var.clickhouse_ingester_password_secret_arn, var.clickhouse_migration_password_secret_arn], var.clickhouse_bootstrap_password_secret_arn)) : (var.clickhouse_bootstrap_user == null && var.clickhouse_bootstrap_password_secret_arn == null && length(var.clickhouse_bootstrap_password_kms_key_arns) == 0)
       error_message = "Bootstrap mode requires a separate administrator credential; external mode must not provide bootstrap credentials."
+    }
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_private_cidr" {
+  for_each          = var.ingress_mode == "private" ? var.private_client_ipv4_cidrs : toset([])
+  security_group_id = aws_security_group.alb.id
+  cidr_ipv4         = each.value
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_private_group" {
+  for_each                     = var.ingress_mode == "private" ? var.private_client_security_group_ids : {}
+  security_group_id            = aws_security_group.alb.id
+  referenced_security_group_id = each.value
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+}
+
+resource "terraform_data" "ingress_contract" {
+  lifecycle {
+    precondition {
+      condition     = var.ingress_mode != "private" || (!var.enable_cloudfront && !var.allow_insecure_http && !var.controlplane_assign_public_ip && var.certificate_arn != null && length(var.private_subnet_ids) >= 2)
+      error_message = "Private ingress requires HTTPS and private subnets; CloudFront, plaintext forwarding and public task addresses are forbidden."
+    }
+    precondition {
+      condition     = var.ingress_mode != "private" || length(var.private_client_ipv4_cidrs) + length(var.private_client_security_group_ids) > 0
+      error_message = "Private ingress requires explicit company client CIDRs or security groups."
     }
   }
 }

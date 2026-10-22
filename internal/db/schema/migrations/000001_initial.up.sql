@@ -1230,6 +1230,7 @@ CREATE INDEX idempotency_receipts_receipt_expiry ON idempotency_receipts(accepte
 
 -- Slack configuration generations never own execution state.
 CREATE TABLE slack_app_registrations (
+    transport text NOT NULL CHECK (transport IN ('http','socket')),
     id uuid PRIMARY KEY,
     org_id uuid NOT NULL REFERENCES organizations(id),
     app_id text CHECK (app_id<>''),
@@ -1287,6 +1288,24 @@ CREATE TABLE slack_installations (
 );
 
 CREATE UNIQUE INDEX slack_installations_active ON slack_installations(app_id, team_id) WHERE disconnected_at IS NULL;
+
+-- Connection ownership is fenced independently of installation/user authority.
+-- Observed socket health is not proof of installation authorization.
+CREATE TABLE slack_socket_connections (
+    app_registration_id uuid PRIMARY KEY REFERENCES slack_app_registrations(id) ON DELETE CASCADE,
+    installation_id uuid NOT NULL REFERENCES slack_installations(id),
+    claim_id uuid,
+    replica_id uuid,
+    expires_at timestamptz,
+    credential_revision bigint NOT NULL CHECK (credential_revision>0),
+    state text NOT NULL CHECK (state IN ('connecting','connected','reconnecting','action_required','disconnected')),
+    reason text CHECK (reason IS NULL OR reason IN ('connection_failed','api_rejected','endpoint_not_allowed','app_mismatch','link_disabled','protocol_error','credential_unavailable')),
+    retry_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    last_connected_at timestamptz,
+    last_received_at timestamptz,
+    CHECK ((claim_id IS NULL)=(replica_id IS NULL)),
+    CHECK ((claim_id IS NULL)=(expires_at IS NULL))
+);
 
 CREATE TABLE slack_connections (
     environment_id uuid NOT NULL,

@@ -11,7 +11,7 @@ import (
 )
 
 func testProjectionConfig() ProjectionConfig {
-	return ProjectionConfig{PublicURL: &url.URL{Scheme: "https", Host: "console.example.test"}, ControlKey: bytes.Repeat([]byte{4}, 32)}
+	return ProjectionConfig{AppOrigin: &url.URL{Scheme: "https", Host: "console.example.test"}, ControlKey: bytes.Repeat([]byte{4}, 32)}
 }
 
 func TestSlackAdmissionKeepsReceiptsWithoutPublicAcceptancePosts(t *testing.T) {

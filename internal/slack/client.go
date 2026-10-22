@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/platformhttp"
 )
 
 type Credentials interface {
@@ -46,6 +47,9 @@ type WebClient struct {
 }
 
 func NewWebClient(credentials Credentials, transport http.RoundTripper) *WebClient {
+	if transport == nil {
+		transport = platformhttp.Direct()
+	}
 	return &WebClient{credentials: credentials, http: &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 

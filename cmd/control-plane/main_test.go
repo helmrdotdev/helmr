@@ -42,7 +42,7 @@ import (
 func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	store := &emptyStore{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	publicURL, err := url.Parse("https://helmr.example.test")
+	appOrigin, err := url.Parse("https://helmr.example.test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,10 +71,10 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		SecretDelivery:                 controlplanetestSecretDeliveryOpener{},
 		AuthKey:                        make([]byte, auth.RootKeySize),
 		WorkerHostCredentialSigningKey: make([]byte, workergroup.HostCredentialSigningKeySize),
-		PublicURL:                      publicURL,
+		AppOrigin:                      appOrigin,
 		TelemetryReader:                controlplanetestTelemetryReader{store: store},
 		MagicLinkDebugURLs:             true,
-		Mailer:                         configuredEmailSender(log, config.ControlPlane{EmailProvider: config.EmailProviderNone}),
+		Mailer:                         configuredEmailSender(log, config.ControlPlane{EmailProvider: config.EmailProviderNone}, nil),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("COMPUTER_WRAPPING_KEY_ID", "test-computer-root")
 	t.Setenv("COMPUTER_WRAPPING_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
-	t.Setenv("PUBLIC_URL", "http://"+addr)
+	t.Setenv("APP_ORIGIN", "http://"+addr)
 	t.Setenv("EMAIL_PROVIDER", "none")
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "client-secret")

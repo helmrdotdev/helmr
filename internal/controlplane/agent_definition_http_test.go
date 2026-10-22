@@ -36,7 +36,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
  `, pgx.QueryExecModeSimpleProtocol, f.User, f.Environment, uuid.NewV7(), f.Deployment)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
 	store, err := secret.New(queries, f.Pool, bytes.Repeat([]byte{17}, 32))
 	if err != nil {
