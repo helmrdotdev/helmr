@@ -181,6 +181,16 @@ optional resources; failed cleanup retains the charge and prevents reuse until
 physical release is verified. Prepared counts are observations, not execution
 authority or a guarantee of startup latency.
 
+A Worker crash can leave an unclaimed prepared VM's attachment arena behind.
+Startup quarantines retained attachment state and requires operator reconciliation,
+including when no customer Computer was running. Before relocating the exact
+arena, stop the Worker and verify that its processes and VM cgroups are gone and
+its backing devices are exclusively available and idle. Preserve the arena for
+inspection, then restart the Worker. Do not delete attachment markers or treat a
+stale host observation as proof of physical release. Enabling prepared VMs therefore
+requires an operator recovery procedure; automatic recovery of these arenas is
+not provided.
+
 Checkpoint capture uses a separate host queue before sealing dispatch. Waiting
 for that queue leaves normal save processing available, and a zero optional
 policy does not disable required checkpoint publication.
@@ -191,6 +201,10 @@ fund only the local artifact cache, set nonzero `disk_bytes`, `max_tasks` and
 `io_bytes_per_second` in the optional policy while leaving optional CPU, memory
 and VM slots at zero. The network rate covers optional fetches and uploads;
 copying an already verified local file uses the cache's disk and task allowance.
+Cache fills occur during image preparation and seed construction; ordinary
+Computer starts do not populate the cache. A seed construction task and its cache
+fill each consume a task allowance, so caching alongside seed construction needs
+`max_tasks` of at least 2.
 
 Each pool plan reports `policy_revision`, `placements.immediate`,
 `placements.after_optional_reclaim`, `optional_occupancy`, `reclaiming_workers`,
