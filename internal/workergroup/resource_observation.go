@@ -2,10 +2,9 @@ package workergroup
 
 import (
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func validateResourceObservation(r workerapi.ResourceObservation) error {
+func validateResourceObservation(r ResourceObservation) error {
 	if r.Sequence <= 0 || r.Sequence > maxJSONInteger || r.PolicyRevision <= 0 || r.PolicyRevision > maxJSONInteger {
 		return invalidInput("resource sequence and policy revision must be positive safe integers")
 	}
@@ -17,7 +16,7 @@ func validateResourceObservation(r workerapi.ResourceObservation) error {
 	if len(r.ReadyLeafKeys) > 32 {
 		return invalidInput("too many ready leaf hints")
 	}
-	seen := map[workerapi.ReadyLeafKey]bool{}
+	seen := map[ReadyLeafKey]bool{}
 	for _, key := range r.ReadyLeafKeys {
 		if _, err := ids.Parse(key.EnvironmentID); err != nil {
 			return invalidInput("ready leaf environment must be a canonical UUIDv7")
@@ -31,4 +30,26 @@ func validateResourceObservation(r workerapi.ResourceObservation) error {
 		seen[key] = true
 	}
 	return nil
+}
+
+type LocalOptionalResources struct {
+	CPUMillis   int64 `json:"cpu_millis"`
+	MemoryBytes int64 `json:"memory_bytes"`
+	VMSlots     int32 `json:"vm_slots"`
+	Tasks       int32 `json:"tasks"`
+}
+
+type ReadyLeafKey struct {
+	EnvironmentID string `json:"environment_id"`
+	BuildID       string `json:"build_id"`
+}
+
+type ResourceObservation struct {
+	Sequence             int64                  `json:"sequence"`
+	PolicyRevision       int64                  `json:"policy_revision"`
+	LocalOptional        LocalOptionalResources `json:"local_optional"`
+	OptionalDiskBytes    int64                  `json:"optional_disk_bytes"`
+	DiskSlotsForRealWork int32                  `json:"disk_slots_for_real_work"`
+	ReclaimPending       bool                   `json:"reclaim_pending"`
+	ReadyLeafKeys        []ReadyLeafKey         `json:"ready_leaf_keys"`
 }

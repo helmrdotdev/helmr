@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"strings"
 	"uuid"
 
@@ -301,7 +300,7 @@ func RecordStartupRecovery(ctx context.Context, q db.Querier, principal HostPrin
 // HostObservation is a worker host's report of why it pauses run or VM
 // work; an empty reason reports that the role is not paused.
 type HostObservation struct {
-	Resources             workerapi.ResourceObservation
+	Resources             ResourceObservation
 	AdmissionPausedReason string
 }
 

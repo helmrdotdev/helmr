@@ -182,9 +182,19 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
+	resources := request.Observation.Resources
+	ready := make([]workergroup.ReadyLeafKey, len(resources.ReadyLeafKeys))
+	for i, key := range resources.ReadyLeafKeys {
+		ready[i] = workergroup.ReadyLeafKey{EnvironmentID: key.EnvironmentID, BuildID: key.BuildID}
+	}
 	if err := workergroup.RecordObservation(r.Context(), s.db, worker, workergroup.HostObservation{
 		AdmissionPausedReason: request.Observation.AdmissionPausedReason,
-		Resources:             request.Observation.Resources,
+		Resources: workergroup.ResourceObservation{
+			Sequence: resources.Sequence, PolicyRevision: resources.PolicyRevision,
+			LocalOptional:     workergroup.LocalOptionalResources(resources.LocalOptional),
+			OptionalDiskBytes: resources.OptionalDiskBytes, DiskSlotsForRealWork: resources.DiskSlotsForRealWork,
+			ReclaimPending: resources.ReclaimPending, ReadyLeafKeys: ready,
+		},
 	}); err != nil {
 		s.writeWorkerHostError(w, "record worker observation", err)
 		return

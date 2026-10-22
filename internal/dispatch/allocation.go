@@ -130,7 +130,7 @@ func qualifyAllocationShape(ctx context.Context, tx pgx.Tx, supply allocationSup
 
 func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, supply allocationSupply, shape computer.AllocationShape, computerID bool) error {
 	var host allocationCapacity
-	budget, err := org.ReadExecutionBudget(ctx, tx, env)
+	budget, err := db.ReadExecutionBudget(ctx, tx, env)
 	if err != nil {
 		return err
 	}

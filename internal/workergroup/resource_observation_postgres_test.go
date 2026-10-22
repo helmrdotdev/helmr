@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestResourceObservationPostgresSequenceAndEpoch(t *testing.T) {
@@ -13,7 +12,7 @@ func TestResourceObservationPostgresSequenceAndEpoch(t *testing.T) {
 	pool := f.activePool(t, "observe")
 	host := f.activeHost(t, pool, "host")
 	principal := HostPrincipal{HostID: host, GroupID: f.groupID(), Epoch: 1}
-	observation := HostObservation{Resources: workerapi.ResourceObservation{Sequence: 2, PolicyRevision: 1, OptionalDiskBytes: 4096, DiskSlotsForRealWork: 1}}
+	observation := HostObservation{Resources: ResourceObservation{Sequence: 2, PolicyRevision: 1, OptionalDiskBytes: 4096, DiskSlotsForRealWork: 1}}
 	if err := RecordObservation(t.Context(), f.q, principal, observation); err != nil {
 		t.Fatal(err)
 	}

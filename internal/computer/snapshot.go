@@ -8,7 +8,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 )
@@ -208,7 +207,7 @@ func List(ctx context.Context, database db.DBTX, scope Scope, page ListPage) (Li
 }
 
 func projectExecutionWait(ctx context.Context, database db.DBTX, env uuid.UUID, items []ListItem) error {
-	var budget *org.ExecutionBudget
+	var budget *db.ExecutionBudget
 	for i := range items {
 		item := &items[i]
 		switch item.waitCandidate {
@@ -216,7 +215,7 @@ func projectExecutionWait(ctx context.Context, database db.DBTX, env uuid.UUID, 
 			item.ExecutionWait = &ExecutionWait{Reason: "saving"}
 		case "scheduling":
 			if budget == nil {
-				b, err := org.ReadExecutionBudget(ctx, database, env)
+				b, err := db.ReadExecutionBudget(ctx, database, env)
 				if err != nil {
 					return err
 				}
