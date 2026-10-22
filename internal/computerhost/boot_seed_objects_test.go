@@ -100,8 +100,7 @@ func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := *p
-	other.CheckpointCipher = rotated
+	other := &PreparedMachines{ComputerObjects: p.ComputerObjects, ComputerRanges: p.ComputerRanges, CheckpointCipher: rotated}
 	if _, err := other.openBootSeed(t.Context(), t.TempDir(), m, m.MemoryBytes, m.ScratchBytes); !errors.Is(err, ErrCheckpointKeyUnavailable) {
 		t.Fatalf("parallel seed staging lost key mismatch: %v", err)
 	}
