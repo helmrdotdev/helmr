@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seed only an Agent catalog in the disposable managed browser database.
+# Seed an Agent catalog and synthetic admission capacity in the disposable browser database.
 # Session admission and controls are exercised through the real HTTP API.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -42,6 +42,25 @@ INSERT INTO agents(environment_id,id,key) VALUES(:'environment_id',:'agent_id','
 INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init)
 VALUES(:'environment_id',:'agent_id',:'deployment_id',:'deployment_id',false);
 UPDATE environments SET current_deployment_id=:'deployment_id' WHERE id=:'environment_id';
+-- Admission checks physical placement even though browser tests do not run a
+-- Worker. One shared synthetic host supplies bounded capacity for these fixtures.
+SELECT g.id AS capacity_id FROM worker_groups g JOIN projects p ON p.default_region_id=g.region_id WHERE p.slug='console-demo' AND g.status='active' \gset
+INSERT INTO vm_platforms(id,descriptor_digest,firecracker_digest,firecracker_version,snapshot_format_version,host_kernel_release,kernel_digest,initramfs_digest,rootfs_digest)
+VALUES('sha256:'||repeat('c',64),'sha256:'||repeat('c',64),'sha256:'||repeat('c',64),'1.16.1','6.0.0','fixture','sha256:'||repeat('c',64),'sha256:'||repeat('c',64),'sha256:'||repeat('c',64)) ON CONFLICT DO NOTHING;
+INSERT INTO worker_pools(id,worker_group_id,name,status,sealed_at,vm_platform_id,capacity_cpu_millis,capacity_memory_bytes,capacity_guest_ephemeral_disk_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,max_vm_slots)
+VALUES(:'capacity_id',:'capacity_id','browser-admission','active',clock_timestamp(),'sha256:'||repeat('c',64),128000,137438953472,137438953472,1000,1073741824,1073741824,128) ON CONFLICT DO NOTHING;
+INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) VALUES(:'capacity_id',1,'sha256:'||repeat('c',64)) ON CONFLICT DO NOTHING;
+UPDATE worker_groups SET primary_pool_id=:'capacity_id' WHERE id=:'capacity_id';
+INSERT INTO worker_hosts(id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,epoch_started_at,activated_at,epoch_cpu_millis,epoch_memory_bytes,epoch_guest_ephemeral_disk_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,vm_platform_id,max_vm_slots,max_vm_starts,cpu_environment,cpu_environment_digest,observed_at)
+VALUES(:'capacity_id','browser-admission',:'capacity_id',:'capacity_id','active',1,:'capacity_id',clock_timestamp(),clock_timestamp(),128000,137438953472,137438953472,1000,1073741824,1073741824,'sha256:'||repeat('c',64),128,128,'{}','sha256:'||repeat('c',64),clock_timestamp())
+ON CONFLICT (id) DO UPDATE SET observed_at=clock_timestamp();
+UPDATE worker_hosts h SET resource_observation_sequence=1,
+  resource_policy_revision=p.resource_policy_revision,resource_observed_at=clock_timestamp(),
+  local_optional_cpu_millis=0,local_optional_memory_bytes=0,optional_disk_bytes=0,
+  local_optional_vm_slots=0,local_optional_tasks=0,optional_reclaim_pending=false,
+  disk_slots_for_real_work=h.max_vm_slots,ready_leaf_keys='[]'::jsonb
+FROM worker_pools p WHERE h.worker_pool_id=p.id AND h.id=:'capacity_id';
+
 COMMIT;
 SELECT :'environment_id';
 SQL

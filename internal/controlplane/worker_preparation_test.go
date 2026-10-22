@@ -36,8 +36,8 @@ func preparationTransportFixture(t *testing.T) (sessiontest.Fixture, workerapi.P
 	f := sessiontest.New(t)
 	request := workerapi.PreparationExecutor{Identity: workerapi.AllocationIdentity{Kind: "preparation", EnvironmentID: f.Environment.String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 1}, ChannelCredential: bytes.Repeat([]byte{21}, 32)}
 	digest := sha256.Sum256(request.ChannelCredential)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,executor_expires_at,delivered_at,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
- SELECT $1,$2,$3,'transport','running',clock_timestamp()+interval '10 minutes',1,id,1,$4,$5,clock_timestamp()+interval '1 minute',clock_timestamp(),1000,536870912,1073741824,vm_platform_id,1,cpu_environment_digest FROM worker_hosts WHERE id=$6`, f.Environment, request.Identity.OwnerID, f.Deployment, request.Identity.AllocationID, digest[:], f.Worker)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,executor_expires_at,delivered_at,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
+ SELECT $1,$2,$3,'transport','running',clock_timestamp()+interval '10 minutes',1,id,1,$4,$5,clock_timestamp()+interval '1 minute',clock_timestamp(),536870912,1073741824,vm_platform_id,1,cpu_environment_digest FROM worker_hosts WHERE id=$6`, f.Environment, request.Identity.OwnerID, f.Deployment, request.Identity.AllocationID, digest[:], f.Worker)
 	return f, request
 }
 

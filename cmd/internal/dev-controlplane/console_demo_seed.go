@@ -200,9 +200,8 @@ VALUES($8::uuid,$10::uuid,$11::uuid,$12::uuid,1000,536870912,$13::bytea,$7::time
 		from, until time.Time
 	}{{1, now.Add(-59 * time.Hour), now.Add(-56 * time.Hour)}, {2, now.Add(-28*time.Hour - 10*time.Minute), computerDeleted}}
 	for _, l := range leases {
-		if _, err := tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,delivered_at,initialized_at,
- reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,status,fenced_at,fence_evidence)
-VALUES($1,$2,$3,$4,1,$6::timestamptz+interval '1 minute',$7,$8,$5,$5,1000,536870912,1073741824,$9,1,$9,'releasing',$6,'Computer released after its Sessions settled')`,
+		if _, err := tx.Exec(ctx, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,delivered_at,initialized_at,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,status,fenced_at,fence_evidence)
+VALUES($1,$2,$3,$4,1,$6::timestamptz+interval '1 minute',$7,$8,$5,$5,536870912,1073741824,$9,1,$9,'releasing',$6,'Computer released after its Sessions settled')`,
 			demoSeedEnvironmentID, demoSeedHistoryComputerID, l.epoch, demoSeedRetiredHostID, l.from, l.until, demoUUID(810+int(l.epoch)), demoSHA(fmt.Sprintf("lease-%d", l.epoch)), platform); err != nil {
 			return err
 		}

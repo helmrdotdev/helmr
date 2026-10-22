@@ -229,8 +229,8 @@ func TestBootSeedPublicationAndRetention(t *testing.T) {
 	// A fresh allocation for the same Computer may ordinary-boot, but must not
 	// select its failed seed again. Publication remains eligible globally.
 	next := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,delivered_at,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,status)
- SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour',$3,channel_credential_digest,clock_timestamp(),reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,'acquiring'
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,delivered_at,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,status)
+ SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,clock_timestamp()+interval '1 hour',$3,channel_credential_digest,clock_timestamp(),reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,'acquiring'
  FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
  UPDATE session_processes SET computer_lease_epoch=2 WHERE environment_id=$1 AND computer_id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, next)
 	identity.InstanceID, identity.Epoch = next, 2

@@ -123,8 +123,8 @@ func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 	// Seed only the target allocation for this transport test. Source fencing,
 	// publication and encrypted disk certification above use their real owners.
 	target := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,restored_from_save_id,delivered_at,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,status,base_root_id,write_key_id)
-      SELECT l.environment_id,l.computer_id,2,l.worker_host_id,l.worker_epoch,clock_timestamp()+interval '1 minute',$3,decode(repeat('42',32),'hex'),s.id,clock_timestamp(),l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,'acquiring',s.root_id,l.write_key_id
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,allocation_id,channel_credential_digest,restored_from_save_id,delivered_at,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,status,base_root_id,write_key_id)
+      SELECT l.environment_id,l.computer_id,2,l.worker_host_id,l.worker_epoch,clock_timestamp()+interval '1 minute',$3,decode(repeat('42',32),'hex'),s.id,clock_timestamp(),l.reserved_memory_bytes,l.reserved_scratch_bytes,l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,'acquiring',s.root_id,l.write_key_id
       FROM computer_leases l JOIN computer_saves s ON s.environment_id=l.environment_id AND s.id=$4 WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=1`, f.Environment, f.Computer, target, result.SaveID)
 	id.AllocationID = target.String()
 	id.Epoch = 2

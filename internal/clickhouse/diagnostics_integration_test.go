@@ -75,8 +75,8 @@ func TestDiagnosticHistoriesFromPostgresAcceptance(t *testing.T) {
 			switch kind {
 			case "image_build":
 				source.ID = uuid.NewV7()
-				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
-              SELECT $1,$2,$3,'diagnostics','running',clock_timestamp()+interval '1 hour',1,worker_host_id,worker_epoch,$2,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest FROM computer_leases LIMIT 1`, f.Environment, source.ID, f.Deployment)
+				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
+              SELECT $1,$2,$3,'diagnostics','running',clock_timestamp()+interval '1 hour',1,worker_host_id,worker_epoch,$2,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest FROM computer_leases LIMIT 1`, f.Environment, source.ID, f.Deployment)
 			case "computer_command":
 				source.ID = uuid.NewV7()
 				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$3,ARRAY['true'],'{}','',1000,'session',uuidv7())`, f.Environment, source.ID, f.Computer)

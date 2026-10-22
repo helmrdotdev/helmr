@@ -151,12 +151,12 @@ const usableBootSeedImageSQL = `EXISTS(SELECT 1 FROM images i
  WHERE i.environment_id=b.environment_id AND i.id=b.image_id AND i.root_id IS NOT NULL AND p.status='succeeded' AND ` + usableImageSecretsSQL + `)`
 
 func AssignBootSeedBuild(ctx context.Context, tx pgx.Tx, a Allocation, policyRevision int64) (bool, error) {
-	tag, err := tx.Exec(ctx, `UPDATE boot_seed_builds b SET status='running',executor_epoch=$13,resource_policy_revision=$14,retry_after=NULL,worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
- reserved_cpu_millis=$7,reserved_memory_bytes=$8,reserved_scratch_bytes=$9,vm_platform_id=$10,vm_vcpu_count=$11,cpu_config_digest=$12,
+	tag, err := tx.Exec(ctx, `UPDATE boot_seed_builds b SET status='running',executor_epoch=$12,resource_policy_revision=$13,retry_after=NULL,worker_host_id=$3,worker_epoch=$4,allocation_id=$5,channel_credential_digest=$6,
+ reserved_memory_bytes=$7,reserved_scratch_bytes=$8,vm_platform_id=$9,vm_vcpu_count=$10,cpu_config_digest=$11,
  deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond'
- WHERE environment_id=$1 AND id=$2 AND status='queued' AND executor_epoch=$13::bigint-1
+ WHERE environment_id=$1 AND id=$2 AND status='queued' AND executor_epoch=$12::bigint-1
  AND (retry_after IS NULL OR retry_after<=clock_timestamp()) AND payload_retired_at IS NULL AND NOT `+obsoleteBootSeed+` AND `+usableBootSeedImageSQL,
-		a.EnvironmentID, a.OwnerID, a.HostID, a.HostEpoch, a.InstanceID, a.CredentialDigest, a.Shape.CPUMillis, a.Shape.MemoryBytes, a.Shape.ScratchBytes, a.Shape.VMPlatformID, a.Shape.VCPUCount, a.Shape.CPUConfigDigest, a.Epoch, policyRevision)
+		a.EnvironmentID, a.OwnerID, a.HostID, a.HostEpoch, a.InstanceID, a.CredentialDigest, a.Shape.MemoryBytes, a.Shape.ScratchBytes, a.Shape.VMPlatformID, a.Shape.VCPUCount, a.Shape.CPUConfigDigest, a.Epoch, policyRevision)
 	if err != nil || tag.RowsAffected() == 0 {
 		return false, err
 	}
@@ -324,7 +324,7 @@ func RecordBootSeedStopped(ctx context.Context, tx pgx.Tx, a Allocation, evidenc
 	_, err = tx.Exec(ctx, `UPDATE boot_seed_builds b SET status='queued',error_code=NULL,
  worker_host_id=NULL,worker_epoch=NULL,allocation_id=NULL,channel_credential_digest=NULL,
  delivered_at=NULL,started_at=NULL,executor_expires_at=NULL,deadline_at=NULL,
- reserved_cpu_millis=NULL,reserved_memory_bytes=NULL,reserved_scratch_bytes=NULL,
+ reserved_memory_bytes=NULL,reserved_scratch_bytes=NULL,
  vm_platform_id=NULL,vm_vcpu_count=NULL,cpu_config_digest=NULL,resource_policy_revision=NULL,
  fenced_at=NULL,fence_evidence=NULL,
  retry_after=clock_timestamp()+(LEAST(60,power(2,LEAST(executor_epoch,6))) * (0.5+random()/2)) * interval '1 second'

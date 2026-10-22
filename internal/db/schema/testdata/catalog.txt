@@ -80,7 +80,7 @@ column boot_seed_builds.manifest bytea
 column boot_seed_builds.memory_bytes bigint not null
 column boot_seed_builds.payload_retired_at timestamp with time zone
 column boot_seed_builds.qualification_evidence text
-column boot_seed_builds.reserved_cpu_millis bigint
+column boot_seed_builds.reserved_cpu_millis bigint generated stored ((vm_vcpu_count)::bigint * 1000)
 column boot_seed_builds.reserved_memory_bytes bigint
 column boot_seed_builds.reserved_scratch_bytes bigint
 column boot_seed_builds.resource_policy_revision bigint
@@ -225,7 +225,7 @@ column computer_leases.expires_at timestamp with time zone
 column computer_leases.fence_evidence text
 column computer_leases.fenced_at timestamp with time zone
 column computer_leases.initialized_at timestamp with time zone
-column computer_leases.reserved_cpu_millis bigint not null
+column computer_leases.reserved_cpu_millis bigint not null generated stored ((vm_vcpu_count)::bigint * 1000)
 column computer_leases.reserved_memory_bytes bigint not null
 column computer_leases.reserved_scratch_bytes bigint not null
 column computer_leases.restored_from_save_id uuid
@@ -483,7 +483,7 @@ column image_builds.proxy_ca_certificate bytea
 column image_builds.proxy_ca_not_after timestamp with time zone
 column image_builds.proxy_ca_private_key_ciphertext bytea
 column image_builds.proxy_ca_private_key_nonce bytea
-column image_builds.reserved_cpu_millis bigint
+column image_builds.reserved_cpu_millis bigint generated stored ((vm_vcpu_count)::bigint * 1000)
 column image_builds.reserved_memory_bytes bigint
 column image_builds.reserved_scratch_bytes bigint
 column image_builds.started_at timestamp with time zone
@@ -1193,7 +1193,6 @@ constraint boot_seed_builds c CHECK (manifest IS NULL OR octet_length(manifest) 
 constraint boot_seed_builds c CHECK (memory_bytes > 0 AND (memory_bytes % 1048576::bigint) = 0)
 constraint boot_seed_builds c CHECK (octet_length(channel_credential_digest) = 32)
 constraint boot_seed_builds c CHECK (octet_length(qualification_evidence) >= 1 AND octet_length(qualification_evidence) <= 4096)
-constraint boot_seed_builds c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_millis % 1000::bigint) = 0)
 constraint boot_seed_builds c CHECK (reserved_memory_bytes > 0)
 constraint boot_seed_builds c CHECK (reserved_scratch_bytes > 0)
 constraint boot_seed_builds c CHECK (resource_policy_revision > 0)
@@ -1203,7 +1202,7 @@ constraint boot_seed_builds c CHECK (status <> 'waiting'::text OR image_id IS NU
 constraint boot_seed_builds c CHECK (status = ANY (ARRAY['waiting'::text, 'queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text]))
 constraint boot_seed_builds c CHECK (vm_vcpu_count > 0)
 constraint boot_seed_builds c CHECK (worker_epoch > 0)
-constraint boot_seed_builds c CHECK (worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL OR worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_cpu_millis = (vm_vcpu_count::bigint * 1000) AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes = memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL)
+constraint boot_seed_builds c CHECK (worker_host_id IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL OR worker_host_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes = memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL)
 constraint boot_seed_builds c CHECK (worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND resource_policy_revision IS NULL AND channel_credential_digest IS NULL AND deadline_at IS NULL OR worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch > 0 AND resource_policy_revision IS NOT NULL AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)
 constraint boot_seed_builds f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
 constraint boot_seed_builds f FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id)
@@ -1320,8 +1319,6 @@ constraint computer_leases c CHECK (disk_released_at IS NULL OR fenced_at IS NOT
 constraint computer_leases c CHECK (epoch > 0)
 constraint computer_leases c CHECK (initialized_at IS NULL OR delivered_at IS NOT NULL)
 constraint computer_leases c CHECK (octet_length(channel_credential_digest) = 32)
-constraint computer_leases c CHECK (reserved_cpu_millis = (vm_vcpu_count::bigint * 1000))
-constraint computer_leases c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_millis % 1000::bigint) = 0)
 constraint computer_leases c CHECK (reserved_memory_bytes > 0)
 constraint computer_leases c CHECK (reserved_scratch_bytes > 0)
 constraint computer_leases c CHECK (save_retirement_seq > 0)
@@ -1525,7 +1522,6 @@ constraint image_builds c CHECK (octet_length(capture_evidence) >= 1 AND octet_l
 constraint image_builds c CHECK (octet_length(channel_credential_digest) = 32)
 constraint image_builds c CHECK (octet_length(idempotency_key) >= 1 AND octet_length(idempotency_key) <= 512)
 constraint image_builds c CHECK (proxy_ca_certificate IS NULL OR status = 'running'::text AND octet_length(proxy_ca_certificate) >= 1 AND octet_length(proxy_ca_certificate) <= 16384 AND octet_length(proxy_ca_private_key_nonce) = 12 AND octet_length(proxy_ca_private_key_ciphertext) > 0)
-constraint image_builds c CHECK (reserved_cpu_millis > 0 AND (reserved_cpu_millis % 1000::bigint) = 0)
 constraint image_builds c CHECK (reserved_memory_bytes > 0)
 constraint image_builds c CHECK (reserved_scratch_bytes > 0)
 constraint image_builds c CHECK (started_at IS NULL OR delivered_at IS NOT NULL)
@@ -1547,7 +1543,7 @@ constraint image_builds c CHECK (successor_of IS NULL OR successor_of <> id)
 constraint image_builds c CHECK (vm_vcpu_count > 0)
 constraint image_builds c CHECK (worker_epoch > 0)
 constraint image_builds c CHECK (worker_host_id IS NULL AND executor_epoch = 0 AND worker_epoch IS NULL AND allocation_id IS NULL AND channel_credential_digest IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL OR worker_host_id IS NOT NULL AND executor_epoch > 0 AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND channel_credential_digest IS NOT NULL)
-constraint image_builds c CHECK (worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL OR worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL AND reserved_cpu_millis = (vm_vcpu_count::bigint * 1000))
+constraint image_builds c CHECK (worker_host_id IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL OR worker_host_id IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL)
 constraint image_builds f FOREIGN KEY (environment_id, id, write_key_id) REFERENCES disk_encryption_keys(environment_id, writer_image_build_id, id)
 constraint image_builds f FOREIGN KEY (environment_id, id, write_key_id, write_key_required) REFERENCES disk_encryption_keys(environment_id, writer_image_build_id, id, available)
 constraint image_builds f FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id)

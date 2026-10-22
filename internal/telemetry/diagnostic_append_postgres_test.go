@@ -42,8 +42,8 @@ func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uui
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) SELECT environment_id,$1,1,computer_id,computer_lease_epoch,'ready' FROM session_processes WHERE environment_id=$2 LIMIT 1`, s.ID, env)
 	case "image_build":
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')`, env, s.ID)
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
-   SELECT $1::uuid,$2::uuid,$2::uuid,$2::text,'running',clock_timestamp()+interval '1 hour',1,worker_host_id,worker_epoch,$2,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest FROM computer_leases LIMIT 1`, env, s.ID)
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
+   SELECT $1::uuid,$2::uuid,$2::uuid,$2::text,'running',clock_timestamp()+interval '1 hour',1,worker_host_id,worker_epoch,$2,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest FROM computer_leases LIMIT 1`, env, s.ID)
 	case "computer_command":
 		dbtest.MustExec(t, t.Context(), pool, `WITH spec AS (INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')),
  deployment AS (INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,'sha256:'||repeat(replace($2::text,'-',''),2))),

@@ -56,7 +56,7 @@ func claimPreparationFixture(ctx context.Context, pool db.TxBeginner, host worke
 		}
 		digest := sha256.Sum256(ref.ChannelCredential)
 		return tx.QueryRow(ctx, `UPDATE image_builds SET status='running',executor_epoch=$3,worker_host_id=$4,worker_epoch=$5,allocation_id=$6,channel_credential_digest=$7,
-    delivered_at=clock_timestamp(),reserved_cpu_millis=1000,reserved_memory_bytes=536870912,
+    delivered_at=clock_timestamp(),reserved_memory_bytes=536870912,
     reserved_scratch_bytes=(SELECT per_vm_guest_ephemeral_disk_bytes FROM worker_hosts WHERE id=$4),
     vm_platform_id=(SELECT vm_platform_id FROM worker_hosts WHERE id=$4),vm_vcpu_count=1,
     cpu_config_digest=(SELECT cpu_environment_digest FROM worker_hosts WHERE id=$4),

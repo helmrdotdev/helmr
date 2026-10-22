@@ -18,8 +18,8 @@ import (
 func retainedPreparation(t *testing.T, f sessiontest.Fixture) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,error_code,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
- SELECT $1,$2,$3,'failed-but-owned','failed',clock_timestamp()-interval '1 hour','fixture_failure',1,id,1,$4,decode(repeat('00',32),'hex'),1000,536870912,1073741824,vm_platform_id,1,cpu_environment_digest FROM worker_hosts WHERE id=$5`, f.Environment, id, f.Deployment, uuid.NewV7(), f.Worker)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at,error_code,executor_epoch,worker_host_id,worker_epoch,allocation_id,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest)
+ SELECT $1,$2,$3,'failed-but-owned','failed',clock_timestamp()-interval '1 hour','fixture_failure',1,id,1,$4,decode(repeat('00',32),'hex'),536870912,1073741824,vm_platform_id,1,cpu_environment_digest FROM worker_hosts WHERE id=$5`, f.Environment, id, f.Deployment, uuid.NewV7(), f.Worker)
 	return id
 }
 func hostSecret(t *testing.T, f sessiontest.Fixture) {
