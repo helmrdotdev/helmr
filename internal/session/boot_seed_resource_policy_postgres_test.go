@@ -93,7 +93,7 @@ func TestBootSeedPolicyChangeStopsAuthorityAndFencesRetry(t *testing.T) {
 	if err := dispatch.ObserveBootSeedStopped(t.Context(), f.pool, *f.host(), bootSeedReceipt(r)); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND worker_host_id IS NULL AND executor_epoch=$3 AND retry_after>clock_timestamp() FROM boot_seed_builds WHERE environment_id=$1 AND id=$2`, f.env, id, r.Epoch).Scan(&retained); err != nil || !retained {
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND executor_epoch=$3 AND retry_after>clock_timestamp() FROM boot_seed_builds WHERE environment_id=$1 AND id=$2`, f.env, id, r.Epoch).Scan(&retained); err != nil || !retained {
 		t.Fatalf("retry state: %v %v", retained, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE boot_seed_builds SET retry_after=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, id)
@@ -104,6 +104,9 @@ func TestBootSeedPolicyChangeStopsAuthorityAndFencesRetry(t *testing.T) {
 	retry, err := a.AllocateBootSeed(t.Context(), f.env, id, f.worker)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if retry.Shape != r.Shape {
+		t.Fatalf("retry changed physical reservation: before=%+v after=%+v", r.Shape, retry.Shape)
 	}
 	// Delayed startup recovery holds the identity discovered before the reset.
 	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {

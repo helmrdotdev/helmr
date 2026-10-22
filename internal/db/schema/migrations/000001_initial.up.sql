@@ -723,7 +723,7 @@ CREATE TABLE image_builds (
     executor_expires_at timestamptz,
     delivered_at timestamptz,
     started_at timestamptz,
-    reserved_cpu_millis bigint CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
+    reserved_cpu_millis bigint GENERATED ALWAYS AS (vm_vcpu_count::bigint*1000) STORED,
     reserved_memory_bytes bigint CHECK (reserved_memory_bytes>0),
     reserved_scratch_bytes bigint CHECK (reserved_scratch_bytes>0),
     vm_platform_id text REFERENCES vm_platforms(id),
@@ -783,8 +783,8 @@ CREATE TABLE image_builds (
         OR (worker_host_id IS NOT NULL AND executor_epoch>0 AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND channel_credential_digest IS NOT NULL)),
     CHECK ((delivered_at IS NULL)=(executor_expires_at IS NULL)),
     CHECK (started_at IS NULL OR delivered_at IS NOT NULL),
-    CHECK ((worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
-        OR (worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL AND reserved_cpu_millis=vm_vcpu_count::bigint*1000)),
+    CHECK ((worker_host_id IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
+        OR (worker_host_id IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND cpu_config_digest IS NOT NULL)),
     CHECK (status<>'running' OR worker_host_id IS NOT NULL),
     CHECK (status<>'queued' OR worker_host_id IS NULL),
     CHECK (fenced_at IS NULL OR status IN ('succeeded', 'failed')),
@@ -939,7 +939,7 @@ CREATE TABLE boot_seed_builds (
     delivered_at timestamptz,
     started_at timestamptz,
     executor_expires_at timestamptz,
-    reserved_cpu_millis bigint CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
+    reserved_cpu_millis bigint GENERATED ALWAYS AS (vm_vcpu_count::bigint*1000) STORED,
     reserved_memory_bytes bigint CHECK (reserved_memory_bytes>0),
     reserved_scratch_bytes bigint CHECK (reserved_scratch_bytes>0),
     vm_platform_id text REFERENCES vm_platforms(id),
@@ -968,8 +968,8 @@ CREATE TABLE boot_seed_builds (
     CHECK (manifest IS NULL OR octet_length(manifest)<=1048576),
     CHECK ((worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND resource_policy_revision IS NULL AND channel_credential_digest IS NULL AND deadline_at IS NULL)
         OR (worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch>0 AND resource_policy_revision IS NOT NULL AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)),
-    CHECK ((worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
-        OR (worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_cpu_millis=vm_vcpu_count::bigint*1000 AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes=memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL))
+    CHECK ((worker_host_id IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
+        OR (worker_host_id IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes=memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL))
 );
 
 CREATE INDEX boot_seed_builds_host ON boot_seed_builds(worker_host_id,worker_epoch) WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL;
@@ -1124,7 +1124,7 @@ CREATE TABLE computer_leases (
     storage_pressure_since timestamptz,
     delivered_at timestamptz,
     initialized_at timestamptz,
-    reserved_cpu_millis bigint NOT NULL CHECK (reserved_cpu_millis>0 AND reserved_cpu_millis%1000=0),
+    reserved_cpu_millis bigint GENERATED ALWAYS AS (vm_vcpu_count::bigint*1000) STORED NOT NULL,
     reserved_memory_bytes bigint NOT NULL CHECK (reserved_memory_bytes>0),
     reserved_scratch_bytes bigint NOT NULL CHECK (reserved_scratch_bytes>0),
     vm_platform_id text NOT NULL REFERENCES vm_platforms(id),
@@ -1146,7 +1146,6 @@ CREATE TABLE computer_leases (
     FOREIGN KEY (environment_id, boot_seed_build_id) REFERENCES boot_seed_builds(environment_id, id),
     CHECK (boot_seed_failed_at IS NULL OR boot_seed_build_id IS NOT NULL),
     CHECK ((delivered_at IS NULL)=(expires_at IS NULL)),
-    CHECK (reserved_cpu_millis=vm_vcpu_count::bigint*1000),
     CHECK (initialized_at IS NULL OR delivered_at IS NOT NULL),
     CHECK (status<>'active' OR initialized_at IS NOT NULL),
     CHECK ((fenced_at IS NULL) = (fence_evidence IS NULL)),

@@ -70,8 +70,8 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 			}
 			if state == "restoring" {
 				// Target allocation is fenced too: the source-owned checkpoint must protect the Group on its own.
-				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,delivered_at,status,allocation_id,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence)
- SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,expires_at,delivered_at,status,$3,channel_credential_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
+				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,delivered_at,status,allocation_id,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence)
+ SELECT environment_id,computer_id,2,worker_host_id,worker_epoch,expires_at,delivered_at,status,$3,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,fenced_at,fence_evidence FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1;
  UPDATE checkpoints SET target_lease_epoch=2,restore_control_version=2 WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer, uuid.NewV7())
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status=$2 WHERE environment_id=$1`, f.env, state)
