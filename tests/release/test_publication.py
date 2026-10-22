@@ -271,6 +271,19 @@ class Publication(unittest.TestCase):
                     publish.npm_readback(Path('unused'),'@helmr/sdk','0.1.0')
                 sleep.assert_not_called()
 
+    def test_npm_readback_rejects_foreign_package_or_tarball(self):
+        for change in (dict(name='@other/sdk'),dict(version='0.2.0'),
+                       dict(dist=dict(tarball='https://foreign.example/sdk.tgz'))):
+            with self.subTest(change=change):
+                package=dict(name='@helmr/sdk',version='0.1.0',dist=dict(tarball='https://registry.npmjs.org/sdk.tgz'))
+                package.update(change)
+                metadata=json.dumps(dict(versions={'0.1.0':package})).encode()
+                with patch.object(publish.urllib.request,'urlopen',return_value=io.BytesIO(metadata)) as fetch, \
+                        patch.object(publish.time,'sleep') as sleep:
+                    with self.assertRaises(ValueError):publish.npm_readback(Path('unused'),'@helmr/sdk','0.1.0')
+                    fetch.assert_called_once()
+                    sleep.assert_not_called()
+
     def test_native_artifact_retry_and_corruption(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);built=root/'built';built.mkdir();(built/'sdk.tgz').write_bytes(b'sdk');(built/'proto.tgz').write_bytes(b'proto')
