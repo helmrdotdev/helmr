@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -31,19 +32,24 @@ type Config struct {
 }
 
 type Attachment struct {
-	owned          *os.File
-	ready, closing bool
-	decoder        *json.Decoder
-	mu             sync.Mutex
-	conn           net.Conn
-	cmd            *exec.Cmd
-	done           chan struct{}
-	waitErr        error
-	seq            uint64
-	released       bool
-	consumerExit   <-chan struct{}
-	device         string // diagnostic identity, never authority to reclaim a device
-	Arena          string
+	owned               *os.File
+	ready, closing      bool
+	decoder             *json.Decoder
+	mu                  sync.Mutex
+	conn                net.Conn
+	cmd                 *exec.Cmd
+	done                chan struct{}
+	waitErr             error
+	seq                 uint64
+	readyRequest        uint64
+	descriptorPending   bool
+	releaseRequest      uint64
+	releaseAcknowledged bool
+	protocolErr         error
+	released            bool
+	consumerExit        <-chan struct{}
+	device              string // diagnostic identity, never authority to reclaim a device
+	Arena               string
 }
 
 type request struct {
@@ -114,21 +120,17 @@ func Claim(ctx context.Context, cfg Config) (*Attachment, error) {
 	go func() { a.waitErr = cmd.Wait(); close(a.done) }()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	r, err := a.call(ctx, request{Op: "ready"})
-	a.device = r.Device
+	_, err = a.call(ctx, request{Op: "ready"})
 	if err != nil {
 		return a, fmt.Errorf("NBD claim uncertain; retain %s: %w", cfg.Arena, err)
 	}
-	if a.owned == nil {
-		return a, errors.New("helper omitted exclusive claim descriptor")
-	}
-	a.ready = true
 	return a, nil
 }
 
 func (a *Attachment) call(ctx context.Context, r request) (response, error) {
-	a.seq++
-	r.ID = a.seq
+	if a.protocolErr != nil {
+		return response{}, a.protocolErr
+	}
 	deadline := time.Now().Add(15 * time.Second)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d
@@ -146,58 +148,144 @@ func (a *Attachment) call(ctx context.Context, r request) (response, error) {
 			<-cancelDone
 		}
 	}()
-	if err := json.NewEncoder(a.conn).Encode(r); err != nil {
-		return response{}, err
+	if r.Op == "release" {
+		// A cancelled ready exchange still owns its descriptor and JSON reply.
+		// Join that receive before sending release on the same stream.
+		if a.readyRequest != 0 {
+			if _, err := a.receive(a.readyRequest); err != nil {
+				return response{}, err
+			}
+		}
+		if a.releaseAcknowledged {
+			return response{}, nil
+		}
+		r.ID = a.releaseRequest
 	}
-	if r.Op == "ready" {
-		byteBuf, oob := make([]byte, 1), make([]byte, unix.CmsgSpace(4))
-		n, oobn, flags, _, err := a.conn.(*net.UnixConn).ReadMsgUnix(byteBuf, oob)
+	if r.ID == 0 {
+		a.seq++
+		r.ID = a.seq
+		body, err := json.Marshal(r)
 		if err != nil {
 			return response{}, err
 		}
-		if n != 1 || flags&unix.MSG_CTRUNC != 0 {
-			return response{}, errors.New("invalid claim descriptor transfer")
+		body = append(body, '\n')
+		n, err := a.conn.Write(body)
+		if err == nil && n != len(body) {
+			err = io.ErrShortWrite
 		}
-		messages, err := unix.ParseSocketControlMessage(oob[:oobn])
 		if err != nil {
+			// Only a zero-byte timeout proves the helper received nothing.
+			// A partial request cannot safely be appended to or replayed.
+			var timeout net.Error
+			if n != 0 || !errors.As(err, &timeout) || !timeout.Timeout() {
+				a.protocolErr = err
+			}
 			return response{}, err
 		}
-		var fds []int
-		for _, m := range messages {
-			rights, e := unix.ParseUnixRights(&m)
-			if e != nil {
-				return response{}, e
-			}
-			fds = append(fds, rights...)
+		if r.Op == "ready" {
+			a.readyRequest, a.descriptorPending = r.ID, true
 		}
-		if len(fds) > 1 {
-			for _, fd := range fds {
-				unix.Close(fd)
-			}
-			return response{}, errors.New("unexpected claim descriptors")
-		}
-		if len(fds) == 1 {
-			unix.CloseOnExec(fds[0])
-			a.owned = os.NewFile(uintptr(fds[0]), "owned-nbd")
+		if r.Op == "release" {
+			a.releaseRequest = r.ID
 		}
 	}
-	dec := a.decoder
+	out, err := a.receive(r.ID)
+	if err != nil {
+		return out, err
+	}
+	if out.Error != "" {
+		if r.Op == "release" {
+			a.releaseRequest = 0 // A definite rejection permits a new attempt.
+		}
+		return out, errors.New(out.Error)
+	}
+	if r.Op == "release" {
+		a.releaseAcknowledged = true
+	}
+	return out, nil
+}
+
+func (a *Attachment) receive(id uint64) (response, error) {
+	if a.descriptorPending {
+		if err := a.receiveDescriptor(); err != nil {
+			return response{}, err
+		}
+	}
 	for {
 		var out response
-		if err := dec.Decode(&out); err != nil {
+		if err := a.decoder.Decode(&out); err != nil {
+			var timeout net.Error
+			if errors.As(err, &timeout) && timeout.Timeout() {
+				// Decoder errors are sticky. Retain any partially received value
+				// when resuming after cancellation or a read deadline.
+				a.decoder = json.NewDecoder(io.MultiReader(a.decoder.Buffered(), a.conn))
+			} else {
+				a.protocolErr = err
+			}
 			return out, err
 		}
-		if out.ID < r.ID {
+		if a.readyRequest != 0 && out.ID == a.readyRequest {
+			if (out.Error == "" && (a.owned == nil || !validDevice(out.Device))) || (out.Error != "" && a.owned != nil) {
+				a.protocolErr = errors.New("invalid claim readiness evidence")
+				return out, a.protocolErr
+			}
+			a.device, a.ready = out.Device, out.Error == ""
+			a.readyRequest = 0
+		}
+		if out.ID < id {
 			continue
 		}
-		if out.ID != r.ID {
-			return out, errors.New("control identity mismatch")
-		}
-		if out.Error != "" {
-			return out, errors.New(out.Error)
+		if out.ID != id {
+			a.protocolErr = errors.New("control identity mismatch")
+			return out, a.protocolErr
 		}
 		return out, nil
 	}
+}
+
+func (a *Attachment) receiveDescriptor() (retErr error) {
+	defer func() {
+		var timeout net.Error
+		if retErr != nil && !(errors.As(retErr, &timeout) && timeout.Timeout()) {
+			a.protocolErr = retErr
+		}
+	}()
+	// Receive all rights before rejecting extras. A small buffer can truncate
+	// the descriptor list on Darwin without closing the omitted descriptors.
+	// 512 covers Darwin's UIPC_MAX_CMSG_FD and Linux's smaller SCM_MAX_FD.
+	byteBuf, oob := make([]byte, 1), make([]byte, unix.CmsgSpace(512*4))
+	n, oobn, flags, _, err := a.conn.(*net.UnixConn).ReadMsgUnix(byteBuf, oob)
+	messages, parseErr := unix.ParseSocketControlMessage(oob[:oobn])
+	var fds []int
+	defer func() {
+		for _, fd := range fds {
+			unix.Close(fd)
+		}
+	}()
+	for _, m := range messages {
+		rights, e := unix.ParseUnixRights(&m)
+		if e != nil {
+			parseErr = errors.Join(parseErr, e)
+			continue
+		}
+		fds = append(fds, rights...)
+	}
+	if err != nil || parseErr != nil {
+		return errors.Join(err, parseErr)
+	}
+	if n != 1 || byteBuf[0] != 0 || flags&unix.MSG_CTRUNC != 0 {
+		return errors.New("invalid claim descriptor transfer")
+	}
+	if len(fds) > 1 {
+		return errors.New("unexpected claim descriptors")
+	}
+	if len(fds) == 1 {
+		unix.CloseOnExec(fds[0])
+		a.owned = os.NewFile(uintptr(fds[0]), "owned-nbd")
+		fds = nil
+	}
+	a.descriptorPending = false
+	return nil
 }
 
 // ExposeInto creates only computer.nbd beneath the private arena's jail. It
