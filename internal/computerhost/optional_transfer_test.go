@@ -127,22 +127,3 @@ func TestOptionalAsyncReadFenceSurvivesFreshnessRecovery(t *testing.T) {
 		t.Fatal("freshness recovery erased asynchronous reclamation")
 	}
 }
-
-func TestOptionalCacheCopyDeclinesPacingWait(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		p, _, _ := optionalMachines(t)
-		started := time.Now()
-		if p.tryOptionalTransfer(t.Context(), 100<<20) {
-			t.Fatal("large cache copy consumed unavailable immediate budget")
-		}
-		if !p.tryOptionalTransfer(t.Context(), 10) {
-			t.Fatal("small immediate copy refused")
-		}
-		if p.tryOptionalTransfer(t.Context(), 10) {
-			t.Fatal("concurrent cache fill exceeded shared immediate budget")
-		}
-		if !time.Now().Equal(started) {
-			t.Fatal("required work waited for optional cache pacing")
-		}
-	})
-}

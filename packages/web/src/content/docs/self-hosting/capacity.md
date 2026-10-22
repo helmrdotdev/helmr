@@ -185,6 +185,13 @@ Checkpoint capture uses a separate host queue before sealing dispatch. Waiting
 for that queue leaves normal save processing available, and a zero optional
 policy does not disable required checkpoint publication.
 
+All optional limits default to zero, which disables new artifact-cache fills as
+well as prepared VMs. Repeated starts can therefore fetch artifacts again. To
+fund only the local artifact cache, set nonzero `disk_bytes`, `max_tasks` and
+`io_bytes_per_second` in the optional policy while leaving optional CPU, memory
+and VM slots at zero. The network rate covers optional fetches and uploads;
+copying an already verified local file uses the cache's disk and task allowance.
+
 Each pool plan reports `policy_revision`, `placements.immediate`,
 `placements.after_optional_reclaim`, `optional_occupancy`, `reclaiming_workers`,
 `local_headroom_slots_in_use` and `credited_hosts` (host IDs and Worker epochs).

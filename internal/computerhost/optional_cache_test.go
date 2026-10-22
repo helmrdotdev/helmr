@@ -3,6 +3,7 @@ package computerhost
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"testing/synctest"
@@ -220,5 +221,33 @@ func TestOptionalVMAdmissionPreservesCacheUntilDiskNeedsReclaim(t *testing.T) {
 	}
 	if got := p.Reservations.Snapshot().Optional[optionalCacheKey()].HostDiskBytes; got != 80<<20 {
 		t.Fatalf("cache did not shrink only by deficit: %d", got)
+	}
+}
+
+func TestOptionalCacheCopiesLocalArtifactsWithoutNetworkBurstLimit(t *testing.T) {
+	p := optionalCacheMachines(t)
+	resizeTestCache(t, p, cacheFilesystemHeadroom+(1<<20))
+	data := bytes.Repeat([]byte("verified local artifact"), 4096)
+	d := cas.Descriptor{Digest: sha256sum.DigestBytes(data), SizeBytes: int64(len(data)), MediaType: "application/octet-stream"}
+	file, err := os.CreateTemp(t.TempDir(), "artifact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := file.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	// The object exceeds one second of this network budget. It is already on
+	// disk, so its size must not silently prevent an otherwise funded cache fill.
+	p.seedObject(t.Context(), "test", d, file)
+	lease := p.ObjectCache.Lease(t.Context(), "test", d)
+	if lease == nil {
+		t.Fatal("local artifact did not populate cache")
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !p.optional.transferNext.IsZero() {
+		t.Fatal("local copy consumed network budget")
 	}
 }
