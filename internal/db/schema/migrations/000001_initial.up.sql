@@ -1308,11 +1308,11 @@ CREATE INDEX idempotency_receipts_receipt_expiry ON idempotency_receipts(accepte
 
 -- Slack configuration generations never own execution state.
 CREATE TABLE slack_app_registrations (
-    transport text NOT NULL CHECK (transport IN ('http','socket')),
     id uuid PRIMARY KEY,
     org_id uuid NOT NULL REFERENCES organizations(id),
     app_id text CHECK (app_id<>''),
     client_id text CHECK (client_id<>''),
+    transport text NOT NULL CHECK (transport IN ('http','socket')),
     credential_revision bigint NOT NULL DEFAULT 0 CHECK (credential_revision>=0),
     credential_ciphertext bytea,
     credential_nonce bytea,

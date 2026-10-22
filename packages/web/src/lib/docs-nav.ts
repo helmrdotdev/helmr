@@ -110,6 +110,7 @@ export const docsNav = [
           "self-hosting/requirements",
           "self-hosting/evaluation",
           "self-hosting/production",
+          "self-hosting/private",
           "self-hosting/control-plane",
           "self-hosting/workers",
           "self-hosting/capacity",
