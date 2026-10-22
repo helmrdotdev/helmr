@@ -103,7 +103,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
  OR (EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing'))
  AND NOT EXISTS(SELECT 1 FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 AND kind='wake' AND status='accepted')
  AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing')
- AND (s.suspension<>'after_turn' OR NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.seq>s.suspension_after_seq AND t.started_at IS NOT NULL AND t.terminal_at IS NOT NULL))))`, req.EnvironmentID, req.ComputerID).Scan(&permitted); err != nil {
+ AND ((SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id))<>'after_turn' OR NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.seq>s.suspension_after_seq AND t.started_at IS NOT NULL AND t.terminal_at IS NOT NULL))))`, req.EnvironmentID, req.ComputerID).Scan(&permitted); err != nil {
 			return err
 		}
 		if !permitted {

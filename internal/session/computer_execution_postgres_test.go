@@ -60,7 +60,7 @@ func TestComputerHibernateRequiresNoForegroundAndNewInputCancelsIntent(t *testin
 
 func TestComputerAfterTurnRequiresEveryMemberAndWakeRearms(t *testing.T) {
 	f := newFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET suspension='after_turn' WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET suspension='after_turn' WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, f.env, f.agent, f.deployment)
 	if _, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("no completed turn: %v", err)
 	}
@@ -70,6 +70,10 @@ func TestComputerAfterTurnRequiresEveryMemberAndWakeRearms(t *testing.T) {
 		t.Fatal(err)
 	}
 	peer := f.peer(t)
+	manualAgent := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$4,'manual-peer');
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension) SELECT environment_id,$4,deployment_id,template_id,has_init,'manual' FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3;
+ UPDATE sessions SET agent_id=$4 WHERE environment_id=$1 AND id=$5`, pgx.QueryExecModeSimpleProtocol, f.env, f.agent, f.deployment, manualAgent, peer.session)
 	if _, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("manual peer: %v", err)
 	}

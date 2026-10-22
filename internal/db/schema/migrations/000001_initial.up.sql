@@ -1458,7 +1458,6 @@ CREATE INDEX trigger_activations_due ON trigger_activations(next_fire_at, enviro
 CREATE TABLE sessions (
     id uuid NOT NULL,
     environment_id uuid NOT NULL,
-    suspension text NOT NULL DEFAULT 'manual' CHECK (suspension IN ('manual','after_turn')),
     suspension_after_seq bigint NOT NULL DEFAULT 0 CHECK (suspension_after_seq>=0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     idle_since timestamptz,

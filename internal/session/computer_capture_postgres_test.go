@@ -384,7 +384,7 @@ func TestPublishedCaptureCloseReleasesSourceWithoutWakingPeer(t *testing.T) {
 		t.Fatalf("terminal cleanup woke shared Computer: %+v %v", observed, err)
 	}
 	var preserved bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT cp.status='ready' AND s.status='open' AND s.suspension='manual' AND c.execution_deadline_at IS NULL FROM checkpoints cp JOIN computers c ON (c.environment_id,c.id)=(cp.environment_id,cp.computer_id) JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id WHERE cp.id=$1 AND s.id=$2`, request.CheckpointID, peer.session).Scan(&preserved); err != nil || !preserved {
+	if err := f.pool.QueryRow(t.Context(), `SELECT cp.status='ready' AND s.status='open' AND d.suspension='manual' AND c.execution_deadline_at IS NULL FROM checkpoints cp JOIN computers c ON (c.environment_id,c.id)=(cp.environment_id,cp.computer_id) JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id) WHERE cp.id=$1 AND s.id=$2`, request.CheckpointID, peer.session).Scan(&preserved); err != nil || !preserved {
 		t.Fatalf("peer checkpoint or sleep changed: %v %v", preserved, err)
 	}
 	if _, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, request.CheckpointID, 1, sessiontest.ChannelCredential, &agentv1.ComputerSessionReceipt{CheckpointId: request.CheckpointID.String(), DesiredVersion: capture.DesiredVersion}); !errors.Is(err, session.ErrNotReady) {
