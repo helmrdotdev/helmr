@@ -90,7 +90,7 @@ func TestCapacityHTTPResolveAndPlan(t *testing.T) {
 		t.Fatalf("plan pools = %#v", plan["pools"])
 	}
 	poolPlan := capacityJSONObject(t, pools[0])
-	assertCapacityJSONKeys(t, poolPlan, "active_workers", "complete", "compatible_queued_items", "pool_id", "pool_name", "recommended_additional_workers", "registering_workers", "saturated", "scale_in_blocked", "spare_slots_shortfall")
+	assertCapacityJSONKeys(t, poolPlan, "active_workers", "complete", "compatible_queued_items", "pool_id", "pool_name", "recommended_additional_workers", "registering_workers", "saturated", "scale_in_blocked", "policy_revision", "placements", "optional_occupancy", "reclaiming_workers", "local_headroom_slots_in_use", "credited_hosts")
 	if plan["worker_group_id"] != group.ID || plan["complete"] != true || poolPlan["recommended_additional_workers"] != float64(0) {
 		t.Fatalf("plan = %#v", plan)
 	}

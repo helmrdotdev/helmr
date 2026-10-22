@@ -207,6 +207,7 @@ Session/Command lifecycle statuses. Each collection has a separate cursor.
 | `key` | `string`, optional |
 | `status` | `"available" \| "deleting" \| "deleted"` |
 | `residency` | `"cold" \| "starting" \| "running" \| "parking" \| "parked" \| "restoring" \| "unavailable"` |
+| `executionWait` | `{ reason: "scheduling" \| "environment_limit" \| "saving" }` or `null` |
 | `error` | `{ code, message }`, present when `residency` is `unavailable` |
 | `deleteAfterUnused` | `Duration` (`"never"` when disabled) |
 | `unusedSince` | `string \| null` |
@@ -290,3 +291,10 @@ const outcome = await command.wait()
 
 Agent code that needs to run local processes uses ordinary child processes; a
 `HelmrClient` inside Agent code acts with its own API key.
+
+`executionWait` describes an observed wait for accepted runnable work. `scheduling`
+means placement is pending, `environment_limit` means the Environment's execution
+limit prevents admission, and `saving` means work is waiting for a save or
+checkpoint transition. Held or revoked work is not reported as waiting for
+capacity. `null` does not promise guest readiness; use residency and errors too.
+The HTTP field is `execution_wait`. Existing polling refreshes this observation.

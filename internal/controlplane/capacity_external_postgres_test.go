@@ -22,11 +22,12 @@ func TestCapacityExternalConsumer(t *testing.T) {
 	}
 	f := sessiontest.New(t)
 	var poolID uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), "SELECT worker_pool_id FROM worker_hosts WHERE id=$1", f.Worker).Scan(&poolID); err != nil {
+	var poolName string
+	if err := f.Pool.QueryRow(t.Context(), "SELECT p.id,p.name FROM worker_hosts h JOIN worker_pools p ON p.id=h.worker_pool_id WHERE h.id=$1", f.Worker).Scan(&poolID, &poolName); err != nil {
 		t.Fatal(err)
 	}
 	// A capacity consumer selects only hosts with a fresh observation.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1`, f.Worker)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp(),resource_id=id::text WHERE id=$1`, f.Worker)
 	emptyHost := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_hosts (
  id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,vm_platform_id,
@@ -38,6 +39,7 @@ func TestCapacityExternalConsumer(t *testing.T) {
  per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,
  max_vm_slots,max_vm_starts,cpu_environment,cpu_environment_digest,observed_at,epoch_started_at,activated_at
  FROM worker_hosts WHERE id=$1`, f.Worker, emptyHost, emptyHost.String(), uuid.NewV7())
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET resource_observation_sequence=1,resource_policy_revision=1,resource_observed_at=clock_timestamp(),local_optional_cpu_millis=0,local_optional_memory_bytes=0,optional_disk_bytes=0,local_optional_vm_slots=0,local_optional_tasks=0,optional_reclaim_pending=false,disk_slots_for_real_work=max_vm_slots,ready_leaf_keys='[]' WHERE worker_group_id=$1`, f.Group)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool, func(c *ServerConfig) { c.CapacityToken = capacityTestToken() }))
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
@@ -50,6 +52,7 @@ func TestCapacityExternalConsumer(t *testing.T) {
 		"CAPACITY_TEST_GROUP="+"group",
 		"CAPACITY_TEST_GROUP_ID="+f.Group.String(),
 		"CAPACITY_TEST_POOL_ID="+poolID.String(),
+		"CAPACITY_TEST_POOL_NAME="+poolName,
 		"CAPACITY_TEST_HOST_ID="+f.Worker.String(),
 		"CAPACITY_TEST_EMPTY_HOST_ID="+emptyHost.String())
 	if output, err := cmd.CombinedOutput(); err != nil {

@@ -26,7 +26,12 @@ const (
 
 type ComputerResidency string
 
+type ComputerExecutionWait struct {
+	Reason string `json:"reason"`
+}
+
 type ComputerSnapshot struct {
+	ExecutionWait       *ComputerExecutionWait    `json:"execution_wait"`
 	DeleteAfterUnusedMs *int64                    `json:"delete_after_unused_ms"`
 	UnusedSince         *time.Time                `json:"unused_since"`
 	Residency           ComputerResidency         `json:"residency"`
@@ -43,18 +48,19 @@ type ComputerSnapshot struct {
 }
 
 type ComputerListItem struct {
-	DeleteAfterUnusedMs *int64            `json:"delete_after_unused_ms"`
-	UnusedSince         *time.Time        `json:"unused_since"`
-	Residency           ComputerResidency `json:"residency"`
-	Error               json.RawMessage   `json:"error,omitempty"`
-	ID                  string            `json:"id"`
-	Key                 *string           `json:"key,omitempty"`
-	DefinitionID        string            `json:"template"`
-	DeploymentID        string            `json:"deployment_id"`
-	Status              ComputerStatus    `json:"status"`
-	LastActivityAt      time.Time         `json:"last_activity_at"`
-	CreatedAt           time.Time         `json:"created_at"`
-	UpdatedAt           time.Time         `json:"updated_at"`
+	ExecutionWait       *ComputerExecutionWait `json:"execution_wait"`
+	DeleteAfterUnusedMs *int64                 `json:"delete_after_unused_ms"`
+	UnusedSince         *time.Time             `json:"unused_since"`
+	Residency           ComputerResidency      `json:"residency"`
+	Error               json.RawMessage        `json:"error,omitempty"`
+	ID                  string                 `json:"id"`
+	Key                 *string                `json:"key,omitempty"`
+	DefinitionID        string                 `json:"template"`
+	DeploymentID        string                 `json:"deployment_id"`
+	Status              ComputerStatus         `json:"status"`
+	LastActivityAt      time.Time              `json:"last_activity_at"`
+	CreatedAt           time.Time              `json:"created_at"`
+	UpdatedAt           time.Time              `json:"updated_at"`
 }
 
 type ListComputersResponse struct {

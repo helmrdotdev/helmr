@@ -69,6 +69,11 @@ func (s *Server) mountCapacityRoutes(r chi.Router) {
 				Put("/worker-groups/{workerGroupID}/primary-pool", s.capacitySelectWorkerGroupPrimaryPool)
 			r.With(limitRequestBody(capacityRequestBodyLimit)).
 				Post("/worker-groups/{workerGroupID}/plan", s.capacityPlan)
+			r.Get("/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy", s.capacityGetResourcePolicy)
+			r.With(limitRequestBody(capacityRequestBodyLimit)).Put("/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy", s.capacityPutResourcePolicy)
+			r.With(limitRequestBody(capacityRequestBodyLimit)).Post("/worker-groups/{workerGroupID}/pools/{workerPoolID}/scale-in", s.capacityScaleIn)
+			r.Get("/worker-groups/{workerGroupID}/scale-in-operations/pending", s.capacityPendingScaleIn)
+			r.Get("/worker-groups/{workerGroupID}/scale-in-operations/{operationKey}", s.capacityGetScaleIn)
 			r.Get("/worker-hosts", s.capacityListWorkerHosts)
 			r.Get("/worker-hosts/{workerHostID}", s.capacityGetWorkerHost)
 			r.Post("/worker-hosts/{workerHostID}/lost", s.capacityConfirmWorkerHostProviderAbsent)

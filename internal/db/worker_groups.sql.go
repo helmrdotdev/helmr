@@ -48,7 +48,7 @@ SELECT $1, worker_groups.id, $2,
  WHERE worker_groups.id = $3
    AND worker_groups.claim_version = $4
    AND worker_groups.status IN ('active', 'paused')
-RETURNING worker_pools.id, worker_pools.worker_group_id, worker_pools.name, worker_pools.status, worker_pools.claim_version, worker_pools.vm_platform_id, worker_pools.capacity_cpu_millis, worker_pools.capacity_memory_bytes, worker_pools.capacity_guest_ephemeral_disk_bytes, worker_pools.per_vm_cpu_millis, worker_pools.per_vm_memory_bytes, worker_pools.per_vm_guest_ephemeral_disk_bytes, worker_pools.max_vm_slots, worker_pools.sealed_at, worker_pools.created_at, worker_pools.updated_at
+RETURNING worker_pools.id, worker_pools.worker_group_id, worker_pools.name, worker_pools.status, worker_pools.claim_version, worker_pools.resource_policy_revision, worker_pools.optional_cpu_millis, worker_pools.optional_memory_bytes, worker_pools.optional_disk_bytes, worker_pools.optional_vm_slots, worker_pools.optional_max_tasks, worker_pools.optional_io_bytes_per_second, worker_pools.local_headroom_slots, worker_pools.vm_platform_id, worker_pools.capacity_cpu_millis, worker_pools.capacity_memory_bytes, worker_pools.capacity_guest_ephemeral_disk_bytes, worker_pools.per_vm_cpu_millis, worker_pools.per_vm_memory_bytes, worker_pools.per_vm_guest_ephemeral_disk_bytes, worker_pools.max_vm_slots, worker_pools.sealed_at, worker_pools.created_at, worker_pools.updated_at
 `
 
 type CreatePendingWorkerPoolParams struct {
@@ -72,6 +72,14 @@ func (q *Queries) CreatePendingWorkerPool(ctx context.Context, arg CreatePending
 		&i.Name,
 		&i.Status,
 		&i.ClaimVersion,
+		&i.ResourcePolicyRevision,
+		&i.OptionalCpuMillis,
+		&i.OptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.OptionalVmSlots,
+		&i.OptionalMaxTasks,
+		&i.OptionalIoBytesPerSecond,
+		&i.LocalHeadroomSlots,
 		&i.VMPlatformID,
 		&i.CapacityCPUMillis,
 		&i.CapacityMemoryBytes,
@@ -265,8 +273,50 @@ func (q *Queries) GetWorkerHostStatusByResource(ctx context.Context, arg GetWork
 	return i, err
 }
 
+const getWorkerPool = `-- name: GetWorkerPool :one
+SELECT id, worker_group_id, name, status, claim_version, resource_policy_revision, optional_cpu_millis, optional_memory_bytes, optional_disk_bytes, optional_vm_slots, optional_max_tasks, optional_io_bytes_per_second, local_headroom_slots, vm_platform_id, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at FROM worker_pools
+ WHERE worker_group_id=$1 AND id=$2
+`
+
+type GetWorkerPoolParams struct {
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	WorkerPoolID  pgtype.UUID `json:"worker_pool_id"`
+}
+
+func (q *Queries) GetWorkerPool(ctx context.Context, arg GetWorkerPoolParams) (WorkerPool, error) {
+	row := q.db.QueryRow(ctx, getWorkerPool, arg.WorkerGroupID, arg.WorkerPoolID)
+	var i WorkerPool
+	err := row.Scan(
+		&i.ID,
+		&i.WorkerGroupID,
+		&i.Name,
+		&i.Status,
+		&i.ClaimVersion,
+		&i.ResourcePolicyRevision,
+		&i.OptionalCpuMillis,
+		&i.OptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.OptionalVmSlots,
+		&i.OptionalMaxTasks,
+		&i.OptionalIoBytesPerSecond,
+		&i.LocalHeadroomSlots,
+		&i.VMPlatformID,
+		&i.CapacityCPUMillis,
+		&i.CapacityMemoryBytes,
+		&i.CapacityGuestEphemeralDiskBytes,
+		&i.PerVMCPUMillis,
+		&i.PerVMMemoryBytes,
+		&i.PerVMGuestEphemeralDiskBytes,
+		&i.MaxVMSlots,
+		&i.SealedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getWorkerPoolByGroupName = `-- name: GetWorkerPoolByGroupName :one
-SELECT id, worker_group_id, name, status, claim_version, vm_platform_id, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
+SELECT id, worker_group_id, name, status, claim_version, resource_policy_revision, optional_cpu_millis, optional_memory_bytes, optional_disk_bytes, optional_vm_slots, optional_max_tasks, optional_io_bytes_per_second, local_headroom_slots, vm_platform_id, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
   FROM worker_pools
  WHERE worker_group_id = $1
    AND name = $2
@@ -286,6 +336,14 @@ func (q *Queries) GetWorkerPoolByGroupName(ctx context.Context, arg GetWorkerPoo
 		&i.Name,
 		&i.Status,
 		&i.ClaimVersion,
+		&i.ResourcePolicyRevision,
+		&i.OptionalCpuMillis,
+		&i.OptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.OptionalVmSlots,
+		&i.OptionalMaxTasks,
+		&i.OptionalIoBytesPerSecond,
+		&i.LocalHeadroomSlots,
 		&i.VMPlatformID,
 		&i.CapacityCPUMillis,
 		&i.CapacityMemoryBytes,
@@ -327,6 +385,7 @@ const listCapacityWorkerPools = `-- name: ListCapacityWorkerPools :many
 SELECT worker_pools.id,
        worker_pools.worker_group_id,
        worker_pools.name,
+       worker_pools.resource_policy_revision,
        worker_pools.vm_platform_id,
        worker_pools.capacity_cpu_millis,
        worker_pools.capacity_memory_bytes,
@@ -375,6 +434,7 @@ type ListCapacityWorkerPoolsRow struct {
 	ID                              pgtype.UUID `json:"id"`
 	WorkerGroupID                   pgtype.UUID `json:"worker_group_id"`
 	Name                            string      `json:"name"`
+	ResourcePolicyRevision          int64       `json:"resource_policy_revision"`
 	VMPlatformID                    pgtype.Text `json:"vm_platform_id"`
 	CapacityCPUMillis               pgtype.Int8 `json:"capacity_cpu_millis"`
 	CapacityMemoryBytes             pgtype.Int8 `json:"capacity_memory_bytes"`
@@ -402,6 +462,7 @@ func (q *Queries) ListCapacityWorkerPools(ctx context.Context, arg ListCapacityW
 			&i.ID,
 			&i.WorkerGroupID,
 			&i.Name,
+			&i.ResourcePolicyRevision,
 			&i.VMPlatformID,
 			&i.CapacityCPUMillis,
 			&i.CapacityMemoryBytes,
@@ -441,7 +502,17 @@ WITH live_workers AS (
            worker_hosts.admission_paused_reason,
            worker_hosts.epoch_cpu_millis,
            worker_hosts.epoch_memory_bytes,
-           worker_hosts.epoch_guest_ephemeral_disk_bytes
+           worker_hosts.epoch_guest_ephemeral_disk_bytes,
+           worker_pools.local_headroom_slots,
+           worker_hosts.optional_disk_bytes,
+           worker_hosts.optional_reclaim_pending,
+           worker_hosts.disk_slots_for_real_work,
+           worker_hosts.local_optional_cpu_millis,
+           worker_hosts.local_optional_memory_bytes,
+           worker_hosts.local_optional_vm_slots,
+           worker_hosts.local_optional_tasks,
+           COALESCE(worker_hosts.resource_observed_at>=clock_timestamp()-$1::bigint*interval '1 second'
+             AND worker_hosts.resource_policy_revision=worker_pools.resource_policy_revision,false)::boolean AS resource_observation_current
       FROM worker_groups
       JOIN worker_hosts
         ON worker_hosts.worker_group_id = worker_groups.id
@@ -451,20 +522,25 @@ WITH live_workers AS (
         ON worker_pools.id = worker_hosts.worker_pool_id
        AND worker_pools.worker_group_id = worker_hosts.worker_group_id
        AND worker_pools.status = 'active'
-     WHERE ($1::uuid IS NULL OR worker_groups.id = $1)
-       AND ($2::text = '' OR worker_groups.region_id = $2)
+     WHERE ($2::uuid IS NULL OR worker_groups.id = $2)
+       AND ($3::text = '' OR worker_groups.region_id = $3)
        AND worker_groups.status = 'active'
        AND worker_hosts.observed_at >= transaction_timestamp()
-           - $3::bigint * interval '1 second'
+           - $1::bigint * interval '1 second'
      ORDER BY worker_hosts.id
      LIMIT $4
 ), usage AS (
  SELECT h.worker_host_id,
-   COALESCE(sum(allocation_usage.reserved_cpu_millis),0)::bigint cpu_millis,
-   COALESCE(sum(allocation_usage.reserved_memory_bytes),0)::bigint memory_bytes,
-   COALESCE(sum(allocation_usage.reserved_scratch_bytes),0)::bigint guest_ephemeral_disk_bytes,
-   count(allocation_usage.worker_host_id)::bigint vm_slots,
-   count(allocation_usage.worker_host_id) FILTER (WHERE allocation_usage.starting)::bigint instance_starts
+   COALESCE(sum(allocation_usage.reserved_cpu_millis) FILTER (WHERE kind<>'seed'),0)::bigint cpu_millis,
+   COALESCE(sum(allocation_usage.reserved_memory_bytes) FILTER (WHERE kind<>'seed'),0)::bigint memory_bytes,
+   COALESCE(sum(allocation_usage.reserved_scratch_bytes) FILTER (WHERE kind<>'seed'),0)::bigint guest_ephemeral_disk_bytes,
+   count(allocation_usage.worker_host_id) FILTER (WHERE kind<>'seed')::bigint vm_slots,
+   count(allocation_usage.worker_host_id) FILTER (WHERE allocation_usage.starting AND kind<>'seed')::bigint instance_starts,
+   COALESCE(sum(reserved_cpu_millis) FILTER (WHERE kind='seed'),0)::bigint seed_cpu,
+   COALESCE(sum(reserved_memory_bytes) FILTER (WHERE kind='seed'),0)::bigint seed_memory,
+   COALESCE(sum(reserved_scratch_bytes) FILTER (WHERE kind='seed'),0)::bigint seed_scratch,
+   count(*) FILTER (WHERE kind='seed')::bigint seed_slots,
+   count(*) FILTER (WHERE kind='seed' AND starting)::bigint seed_starts
  FROM live_workers h LEFT JOIN (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
@@ -487,6 +563,19 @@ SELECT live_workers.worker_group_id,
        live_workers.worker_host_id,
        live_workers.worker_epoch,
        live_workers.vm_platform_id,
+       live_workers.resource_observation_current,
+       live_workers.optional_disk_bytes,live_workers.optional_reclaim_pending,
+       live_workers.local_headroom_slots,live_workers.max_vm_slots,
+       usage.vm_slots AS mandatory_slots,
+       (usage.seed_cpu+COALESCE(live_workers.local_optional_cpu_millis,0))::bigint optional_cpu_millis,
+       (usage.seed_memory+COALESCE(live_workers.local_optional_memory_bytes,0))::bigint optional_memory_bytes,
+       (usage.seed_slots+COALESCE(live_workers.local_optional_vm_slots,0))::bigint optional_vm_slots,
+       (usage.seed_slots+COALESCE(live_workers.local_optional_tasks,0))::bigint optional_tasks,
+       GREATEST(live_workers.epoch_cpu_millis-usage.cpu_millis-usage.seed_cpu-COALESCE(live_workers.local_optional_cpu_millis,0),0)::bigint immediate_cpu_millis,
+       GREATEST(live_workers.epoch_memory_bytes-usage.memory_bytes-usage.seed_memory-COALESCE(live_workers.local_optional_memory_bytes,0),0)::bigint immediate_memory_bytes,
+       GREATEST(live_workers.epoch_guest_ephemeral_disk_bytes-usage.guest_ephemeral_disk_bytes-usage.seed_scratch-COALESCE(live_workers.local_optional_vm_slots,0)*live_workers.per_vm_guest_ephemeral_disk_bytes,0)::bigint immediate_guest_disk_bytes,
+       GREATEST(LEAST(live_workers.max_vm_slots-usage.vm_slots-usage.seed_slots-COALESCE(live_workers.local_optional_vm_slots,0),COALESCE(live_workers.disk_slots_for_real_work,0)-usage.vm_slots),0)::bigint immediate_vm_slots,
+       GREATEST(live_workers.max_vm_starts-usage.instance_starts-usage.seed_starts,0)::bigint immediate_starts,
        live_workers.per_vm_cpu_millis,
        live_workers.per_vm_memory_bytes,
        live_workers.per_vm_guest_ephemeral_disk_bytes,
@@ -512,9 +601,9 @@ SELECT live_workers.worker_group_id,
 `
 
 type ListWorkerCapacityBinsParams struct {
+	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
 	WorkerGroupID               pgtype.UUID `json:"worker_group_id"`
 	RegionID                    string      `json:"region_id"`
-	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
 	RowLimit                    int32       `json:"row_limit"`
 }
 
@@ -525,6 +614,21 @@ type ListWorkerCapacityBinsRow struct {
 	WorkerHostID                     pgtype.UUID `json:"worker_host_id"`
 	WorkerEpoch                      pgtype.Int8 `json:"worker_epoch"`
 	VMPlatformID                     pgtype.Text `json:"vm_platform_id"`
+	ResourceObservationCurrent       bool        `json:"resource_observation_current"`
+	OptionalDiskBytes                pgtype.Int8 `json:"optional_disk_bytes"`
+	OptionalReclaimPending           pgtype.Bool `json:"optional_reclaim_pending"`
+	LocalHeadroomSlots               int32       `json:"local_headroom_slots"`
+	MaxVMSlots                       int32       `json:"max_vm_slots"`
+	MandatorySlots                   int64       `json:"mandatory_slots"`
+	OptionalCpuMillis                int64       `json:"optional_cpu_millis"`
+	OptionalMemoryBytes              int64       `json:"optional_memory_bytes"`
+	OptionalVmSlots                  int64       `json:"optional_vm_slots"`
+	OptionalTasks                    int64       `json:"optional_tasks"`
+	ImmediateCpuMillis               int64       `json:"immediate_cpu_millis"`
+	ImmediateMemoryBytes             int64       `json:"immediate_memory_bytes"`
+	ImmediateGuestDiskBytes          int64       `json:"immediate_guest_disk_bytes"`
+	ImmediateVmSlots                 int64       `json:"immediate_vm_slots"`
+	ImmediateStarts                  int64       `json:"immediate_starts"`
 	PerVMCPUMillis                   int64       `json:"per_vm_cpu_millis"`
 	PerVMMemoryBytes                 int64       `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes     int64       `json:"per_vm_guest_ephemeral_disk_bytes"`
@@ -540,9 +644,9 @@ type ListWorkerCapacityBinsRow struct {
 
 func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error) {
 	rows, err := q.db.Query(ctx, listWorkerCapacityBins,
+		arg.ObservationFreshnessSeconds,
 		arg.WorkerGroupID,
 		arg.RegionID,
-		arg.ObservationFreshnessSeconds,
 		arg.RowLimit,
 	)
 	if err != nil {
@@ -559,6 +663,21 @@ func (q *Queries) ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapa
 			&i.WorkerHostID,
 			&i.WorkerEpoch,
 			&i.VMPlatformID,
+			&i.ResourceObservationCurrent,
+			&i.OptionalDiskBytes,
+			&i.OptionalReclaimPending,
+			&i.LocalHeadroomSlots,
+			&i.MaxVMSlots,
+			&i.MandatorySlots,
+			&i.OptionalCpuMillis,
+			&i.OptionalMemoryBytes,
+			&i.OptionalVmSlots,
+			&i.OptionalTasks,
+			&i.ImmediateCpuMillis,
+			&i.ImmediateMemoryBytes,
+			&i.ImmediateGuestDiskBytes,
+			&i.ImmediateVmSlots,
+			&i.ImmediateStarts,
 			&i.PerVMCPUMillis,
 			&i.PerVMMemoryBytes,
 			&i.PerVMGuestEphemeralDiskBytes,
@@ -653,7 +772,7 @@ func (q *Queries) ListWorkerPoolCPUShapes(ctx context.Context, workerPoolID pgty
 }
 
 const listWorkerPools = `-- name: ListWorkerPools :many
-SELECT id, worker_group_id, name, status, claim_version, vm_platform_id, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
+SELECT id, worker_group_id, name, status, claim_version, resource_policy_revision, optional_cpu_millis, optional_memory_bytes, optional_disk_bytes, optional_vm_slots, optional_max_tasks, optional_io_bytes_per_second, local_headroom_slots, vm_platform_id, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
   FROM worker_pools
  WHERE worker_group_id = $1
  ORDER BY name, id
@@ -674,6 +793,14 @@ func (q *Queries) ListWorkerPools(ctx context.Context, workerGroupID pgtype.UUID
 			&i.Name,
 			&i.Status,
 			&i.ClaimVersion,
+			&i.ResourcePolicyRevision,
+			&i.OptionalCpuMillis,
+			&i.OptionalMemoryBytes,
+			&i.OptionalDiskBytes,
+			&i.OptionalVmSlots,
+			&i.OptionalMaxTasks,
+			&i.OptionalIoBytesPerSecond,
+			&i.LocalHeadroomSlots,
 			&i.VMPlatformID,
 			&i.CapacityCPUMillis,
 			&i.CapacityMemoryBytes,
@@ -740,7 +867,7 @@ func (q *Queries) LockWorkerGroupMutation(ctx context.Context, lockKey int64) er
 }
 
 const lockWorkerHostForActivation = `-- name: LockWorkerHostForActivation :one
-SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at
   FROM worker_hosts
  WHERE id = $1
    AND worker_group_id = $2
@@ -784,6 +911,17 @@ func (q *Queries) LockWorkerHostForActivation(ctx context.Context, arg LockWorke
 		&i.MaxVMStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
+		&i.ResourceObservationSequence,
+		&i.ResourcePolicyRevision,
+		&i.ResourceObservedAt,
+		&i.LocalOptionalCpuMillis,
+		&i.LocalOptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.LocalOptionalVmSlots,
+		&i.LocalOptionalTasks,
+		&i.OptionalReclaimPending,
+		&i.DiskSlotsForRealWork,
+		&i.ReadyLeafKeys,
 		&i.ObservedAt,
 		&i.AdmissionPausedReason,
 		&i.EpochStartedAt,
@@ -799,7 +937,7 @@ func (q *Queries) LockWorkerHostForActivation(ctx context.Context, arg LockWorke
 }
 
 const lockWorkerPool = `-- name: LockWorkerPool :one
-SELECT id, worker_group_id, name, status, claim_version, vm_platform_id, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
+SELECT id, worker_group_id, name, status, claim_version, resource_policy_revision, optional_cpu_millis, optional_memory_bytes, optional_disk_bytes, optional_vm_slots, optional_max_tasks, optional_io_bytes_per_second, local_headroom_slots, vm_platform_id, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
   FROM worker_pools
  WHERE worker_group_id = $1
    AND id = $2
@@ -820,6 +958,14 @@ func (q *Queries) LockWorkerPool(ctx context.Context, arg LockWorkerPoolParams) 
 		&i.Name,
 		&i.Status,
 		&i.ClaimVersion,
+		&i.ResourcePolicyRevision,
+		&i.OptionalCpuMillis,
+		&i.OptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.OptionalVmSlots,
+		&i.OptionalMaxTasks,
+		&i.OptionalIoBytesPerSecond,
+		&i.LocalHeadroomSlots,
 		&i.VMPlatformID,
 		&i.CapacityCPUMillis,
 		&i.CapacityMemoryBytes,
@@ -869,32 +1015,111 @@ func (q *Queries) LockWorkerPoolActiveHosts(ctx context.Context, arg LockWorkerP
 }
 
 const recordWorkerObservation = `-- name: RecordWorkerObservation :one
+WITH updated AS (
 UPDATE worker_hosts
-   SET observed_at = transaction_timestamp(),
-       admission_paused_reason = $1,
-       updated_at = now()
- WHERE worker_hosts.id = $2
-   AND worker_hosts.worker_group_id = $3
-   AND worker_hosts.current_epoch = $4
-   AND worker_hosts.status IN ('active', 'draining')
-RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+   SET observed_at=clock_timestamp(), admission_paused_reason=$1,
+       resource_observation_sequence=$2::bigint,
+       resource_policy_revision=$3::bigint,
+       resource_observed_at=clock_timestamp(),
+       local_optional_cpu_millis=$4::bigint,
+       local_optional_memory_bytes=$5::bigint,
+       local_optional_vm_slots=$6::integer,
+       local_optional_tasks=$7::integer,
+       optional_disk_bytes=$8::bigint,
+       disk_slots_for_real_work=$9::integer,
+       optional_reclaim_pending=$10::boolean,
+       ready_leaf_keys=$11::jsonb,
+       updated_at=clock_timestamp()
+ WHERE worker_hosts.id=$12 AND worker_hosts.worker_group_id=$13
+   AND worker_hosts.current_epoch=$14 AND worker_hosts.status IN ('active','draining')
+   AND (worker_hosts.resource_observation_sequence IS NULL OR worker_hosts.resource_observation_sequence<$2)
+ RETURNING worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.resource_observation_sequence, worker_hosts.resource_policy_revision, worker_hosts.resource_observed_at, worker_hosts.local_optional_cpu_millis, worker_hosts.local_optional_memory_bytes, worker_hosts.optional_disk_bytes, worker_hosts.local_optional_vm_slots, worker_hosts.local_optional_tasks, worker_hosts.optional_reclaim_pending, worker_hosts.disk_slots_for_real_work, worker_hosts.ready_leaf_keys, worker_hosts.observed_at, worker_hosts.admission_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.drain_reason, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+)
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at FROM updated
+UNION ALL
+SELECT id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys, observed_at, admission_paused_reason, epoch_started_at, activated_at, draining_at, drain_reason, termination_ready_at, lost_at, created_at, updated_at FROM worker_hosts WHERE worker_hosts.id=$12 AND worker_hosts.worker_group_id=$13
+ AND worker_hosts.current_epoch=$14 AND worker_hosts.status IN ('active','draining')
+ AND NOT EXISTS(SELECT 1 FROM updated)
 `
 
 type RecordWorkerObservationParams struct {
 	AdmissionPausedReason pgtype.Text `json:"admission_paused_reason"`
+	Sequence              int64       `json:"sequence"`
+	PolicyRevision        int64       `json:"policy_revision"`
+	LocalCpuMillis        int64       `json:"local_cpu_millis"`
+	LocalMemoryBytes      int64       `json:"local_memory_bytes"`
+	LocalVmSlots          int32       `json:"local_vm_slots"`
+	LocalTasks            int32       `json:"local_tasks"`
+	OptionalDiskBytes     int64       `json:"optional_disk_bytes"`
+	DiskSlotsForRealWork  int32       `json:"disk_slots_for_real_work"`
+	ReclaimPending        bool        `json:"reclaim_pending"`
+	ReadyLeafKeys         []byte      `json:"ready_leaf_keys"`
 	WorkerHostID          pgtype.UUID `json:"worker_host_id"`
 	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch           pgtype.Int8 `json:"worker_epoch"`
 }
 
-func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerHost, error) {
+type RecordWorkerObservationRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	ResourceID                   string             `json:"resource_id"`
+	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
+	WorkerPoolID                 pgtype.UUID        `json:"worker_pool_id"`
+	Status                       string             `json:"status"`
+	ClaimVersion                 int64              `json:"claim_version"`
+	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
+	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
+	VMPlatformID                 pgtype.Text        `json:"vm_platform_id"`
+	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
+	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
+	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
+	PerVMCPUMillis               int64              `json:"per_vm_cpu_millis"`
+	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
+	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
+	MaxVMSlots                   int32              `json:"max_vm_slots"`
+	MaxVMStarts                  int32              `json:"max_vm_starts"`
+	CPUEnvironment               []byte             `json:"cpu_environment"`
+	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
+	ResourceObservationSequence  pgtype.Int8        `json:"resource_observation_sequence"`
+	ResourcePolicyRevision       pgtype.Int8        `json:"resource_policy_revision"`
+	ResourceObservedAt           pgtype.Timestamptz `json:"resource_observed_at"`
+	LocalOptionalCpuMillis       pgtype.Int8        `json:"local_optional_cpu_millis"`
+	LocalOptionalMemoryBytes     pgtype.Int8        `json:"local_optional_memory_bytes"`
+	OptionalDiskBytes            pgtype.Int8        `json:"optional_disk_bytes"`
+	LocalOptionalVmSlots         pgtype.Int4        `json:"local_optional_vm_slots"`
+	LocalOptionalTasks           pgtype.Int4        `json:"local_optional_tasks"`
+	OptionalReclaimPending       pgtype.Bool        `json:"optional_reclaim_pending"`
+	DiskSlotsForRealWork         pgtype.Int4        `json:"disk_slots_for_real_work"`
+	ReadyLeafKeys                []byte             `json:"ready_leaf_keys"`
+	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
+	AdmissionPausedReason        pgtype.Text        `json:"admission_paused_reason"`
+	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
+	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
+	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
+	DrainReason                  pgtype.Text        `json:"drain_reason"`
+	TerminationReadyAt           pgtype.Timestamptz `json:"termination_ready_at"`
+	LostAt                       pgtype.Timestamptz `json:"lost_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (RecordWorkerObservationRow, error) {
 	row := q.db.QueryRow(ctx, recordWorkerObservation,
 		arg.AdmissionPausedReason,
+		arg.Sequence,
+		arg.PolicyRevision,
+		arg.LocalCpuMillis,
+		arg.LocalMemoryBytes,
+		arg.LocalVmSlots,
+		arg.LocalTasks,
+		arg.OptionalDiskBytes,
+		arg.DiskSlotsForRealWork,
+		arg.ReclaimPending,
+		arg.ReadyLeafKeys,
 		arg.WorkerHostID,
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
 	)
-	var i WorkerHost
+	var i RecordWorkerObservationRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
@@ -915,6 +1140,17 @@ func (q *Queries) RecordWorkerObservation(ctx context.Context, arg RecordWorkerO
 		&i.MaxVMStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
+		&i.ResourceObservationSequence,
+		&i.ResourcePolicyRevision,
+		&i.ResourceObservedAt,
+		&i.LocalOptionalCpuMillis,
+		&i.LocalOptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.LocalOptionalVmSlots,
+		&i.LocalOptionalTasks,
+		&i.OptionalReclaimPending,
+		&i.DiskSlotsForRealWork,
+		&i.ReadyLeafKeys,
 		&i.ObservedAt,
 		&i.AdmissionPausedReason,
 		&i.EpochStartedAt,
@@ -971,7 +1207,7 @@ UPDATE worker_pools
  WHERE id = $9
    AND worker_group_id = $10
    AND status = 'pending'
-RETURNING id, worker_group_id, name, status, claim_version, vm_platform_id, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
+RETURNING id, worker_group_id, name, status, claim_version, resource_policy_revision, optional_cpu_millis, optional_memory_bytes, optional_disk_bytes, optional_vm_slots, optional_max_tasks, optional_io_bytes_per_second, local_headroom_slots, vm_platform_id, capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at, created_at, updated_at
 `
 
 type SealWorkerPoolParams struct {
@@ -1007,6 +1243,14 @@ func (q *Queries) SealWorkerPool(ctx context.Context, arg SealWorkerPoolParams) 
 		&i.Name,
 		&i.Status,
 		&i.ClaimVersion,
+		&i.ResourcePolicyRevision,
+		&i.OptionalCpuMillis,
+		&i.OptionalMemoryBytes,
+		&i.OptionalDiskBytes,
+		&i.OptionalVmSlots,
+		&i.OptionalMaxTasks,
+		&i.OptionalIoBytesPerSecond,
+		&i.LocalHeadroomSlots,
 		&i.VMPlatformID,
 		&i.CapacityCPUMillis,
 		&i.CapacityMemoryBytes,

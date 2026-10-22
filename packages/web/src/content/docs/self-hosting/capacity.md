@@ -127,23 +127,64 @@ start a drain unless all of these are true:
 The drain fence and the advisory queued-demand check for `idle_scale_in` are final safety checks. They
 do not make a partial plan or incomplete inventory safe for scale-in.
 
-### Keep ready capacity
+### Bound optional work per Worker
 
-A pool plan request can include `min_spare_slots` (0–1000; omitted means zero).
-A spare slot fits the pool's full per-VM CPU, memory, disk, platform and CPU-shape
-requirements after queued work has been placed. Only fresh, active, unpaused
-Workers count as ready; registering and proposed Workers do not.
+Read or replace a pool's policy at
+`GET /capacity/v1/worker-groups/{group}/pools/{pool}/resource-policy` and
+`PUT /capacity/v1/worker-groups/{group}/pools/{pool}/resource-policy`.
+The replacement requires every field and the revision returned by the read:
 
-`spare_slots_shortfall` reports the remaining ready-slot deficit. The additional
-Worker recommendation includes reserve replenishment within the requested
-headroom. `saturated` means that headroom cannot satisfy the plan. The provider
-owner chooses the reserve policy and ceilings; Helmr owns placement feasibility.
+```json
+{
+  "expected_revision": 1,
+  "optional": {
+    "cpu_millis": 0,
+    "memory_bytes": 0,
+    "disk_bytes": 0,
+    "vm_slots": 0,
+    "max_tasks": 0,
+    "io_bytes_per_second": 0
+  },
+  "local_headroom_slots": 0
+}
+```
 
-Send the same `min_spare_slots` with `idle_scale_in` drains. Under the admission
-lock, Helmr rejects a busy host with `worker_host_busy` or a drain that would
-violate the requested reserve with `spare_capacity_required` (HTTP 409). Concurrent
-drains cannot each count the other's departing capacity. Maintenance drains
-using `replacement` or `capacity_reduction` do not enforce this reserve.
+All limits default to zero. Optional seed generation, prepared Computers and
+cache share these per-Worker ceilings. `local_headroom_slots` keeps full VM shapes
+available to real work by restricting optional admission. It does not request
+additional hosts or guarantee fleet-wide ready capacity. Set a provider minimum
+size when physical standing capacity is required. Replacing policy requires the
+current revision; a stale revision returns HTTP 409. A successful update records
+desired policy, not proof that every Worker has finished reclaiming resources.
+
+Each pool plan reports `policy_revision`, `placements.immediate`,
+`placements.after_optional_reclaim`, `optional_occupancy`, `reclaiming_workers`,
+`local_headroom_slots_in_use` and `credited_hosts` (host IDs and Worker epochs).
+Placements count complete compatible VM shapes before queued work is packed.
+Compatible pools can credit the same Worker, so their counts must not be added.
+Missing or stale resource observations make immediate placement and optional
+occupancy `null` and the plan incomplete. Post-reclaim counts remain advisory;
+physical cleanup must finish before a granted allocation starts. Optional backlog
+and occupancy do not create additional-Worker recommendations.
+
+### Retry scale-in safely
+
+Submit `POST /capacity/v1/worker-groups/{group}/pools/{pool}/scale-in` with
+`{"operation_key":"<UUIDv7>"}`. Helmr selects an eligible host and commits its
+drain together with a durable receipt. A retry with the same key returns that
+selection; reusing it for another pool is a conflict. Only one unsettled automatic
+scale-in operation is allowed per group. Hosts occupied only by optional work may
+be selected, but cleanup must still finish before provider termination.
+
+Read `GET /capacity/v1/worker-groups/{group}/scale-in-operations/pending` before
+starting a new operation, including after controller restart. It returns
+`{"operation":null}` or the outstanding receipt. Read a particular key at
+`GET /capacity/v1/worker-groups/{group}/scale-in-operations/{operation_key}`.
+Receipts retain the selected host, provider resource and drain claim. Their phase
+is `draining`, `termination_ready`, `blocked` or `completed`. Terminate only the
+exact resource with a current `termination_ready` receipt and matching inventory;
+a blocked receipt requires reconciliation. Completion follows confirmed physical
+provider absence. Response loss is not permission to select another host.
 
 ### React to capacity changes
 

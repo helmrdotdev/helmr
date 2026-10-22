@@ -118,6 +118,7 @@ export type {
   Computer,
   ComputerStatus,
   ComputerResidency,
+  ComputerExecutionWait,
 } from "./computer"
 
 export { type CommandCancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions, type TimedCommandWaitResult } from "./command"

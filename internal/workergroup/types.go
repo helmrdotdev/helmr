@@ -117,8 +117,6 @@ type PlanRequest struct {
 }
 
 type PoolRequest struct {
-	// MinSpareSlots reserves room for this pool template's full per-VM shape.
-	MinSpareSlots        int32  `json:"min_spare_slots"`
 	PoolID               string `json:"pool_id"`
 	MaxAdditionalWorkers int32  `json:"max_additional_workers"`
 }
@@ -170,17 +168,40 @@ type PlanResponse struct {
 	ComputedAt      time.Time         `json:"computed_at"`
 }
 
+type PlacementObservation struct {
+	Immediate            *int64 `json:"immediate"`
+	AfterOptionalReclaim int64  `json:"after_optional_reclaim"`
+}
+
+type OptionalOccupancy struct {
+	CPUMillis   int64 `json:"cpu_millis"`
+	MemoryBytes int64 `json:"memory_bytes"`
+	DiskBytes   int64 `json:"disk_bytes"`
+	VMSlots     int64 `json:"vm_slots"`
+	Tasks       int64 `json:"tasks"`
+}
+
+type CreditedHost struct {
+	WorkerHostID string `json:"worker_host_id"`
+	WorkerEpoch  int64  `json:"worker_epoch"`
+}
+
 type PoolPlan struct {
-	SpareSlotsShortfall          int32  `json:"spare_slots_shortfall"`
-	PoolID                       string `json:"pool_id"`
-	PoolName                     string `json:"pool_name"`
-	RecommendedAdditionalWorkers int32  `json:"recommended_additional_workers"`
-	CompatibleQueuedItems        int64  `json:"compatible_queued_items"`
-	RegisteringWorkers           int64  `json:"registering_workers"`
-	ActiveWorkers                int64  `json:"active_workers"`
-	Complete                     bool   `json:"complete"`
-	Saturated                    bool   `json:"saturated"`
-	ScaleInBlocked               bool   `json:"scale_in_blocked"`
+	PolicyRevision               int64                `json:"policy_revision"`
+	Placements                   PlacementObservation `json:"placements"`
+	OptionalOccupancy            *OptionalOccupancy   `json:"optional_occupancy"`
+	ReclaimingWorkers            int64                `json:"reclaiming_workers"`
+	LocalHeadroomSlotsInUse      int64                `json:"local_headroom_slots_in_use"`
+	CreditedHosts                []CreditedHost       `json:"credited_hosts"`
+	PoolID                       string               `json:"pool_id"`
+	PoolName                     string               `json:"pool_name"`
+	RecommendedAdditionalWorkers int32                `json:"recommended_additional_workers"`
+	CompatibleQueuedItems        int64                `json:"compatible_queued_items"`
+	RegisteringWorkers           int64                `json:"registering_workers"`
+	ActiveWorkers                int64                `json:"active_workers"`
+	Complete                     bool                 `json:"complete"`
+	Saturated                    bool                 `json:"saturated"`
+	ScaleInBlocked               bool                 `json:"scale_in_blocked"`
 }
 
 // HostDrainBlockers counts outstanding runtime ownership; zero counts do not
@@ -220,7 +241,6 @@ const (
 )
 
 type DrainWorkerHostRequest struct {
-	MinSpareSlots        int32       `json:"min_spare_slots"`
 	ExpectedEpoch        int64       `json:"expected_epoch"`
 	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 	Reason               DrainReason `json:"reason"`

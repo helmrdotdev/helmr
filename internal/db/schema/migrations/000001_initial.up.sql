@@ -366,6 +366,14 @@ CREATE TABLE worker_pools (
     status text NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'active', 'draining', 'disabled')),
     claim_version bigint NOT NULL DEFAULT 1 CHECK (claim_version > 0),
+    resource_policy_revision bigint NOT NULL DEFAULT 1 CHECK (resource_policy_revision > 0),
+    optional_cpu_millis bigint NOT NULL DEFAULT 0 CHECK (optional_cpu_millis >= 0 AND optional_cpu_millis <= 9007199254740991),
+    optional_memory_bytes bigint NOT NULL DEFAULT 0 CHECK (optional_memory_bytes >= 0 AND optional_memory_bytes <= 9007199254740991),
+    optional_disk_bytes bigint NOT NULL DEFAULT 0 CHECK (optional_disk_bytes >= 0 AND optional_disk_bytes <= 9007199254740991),
+    optional_vm_slots integer NOT NULL DEFAULT 0 CHECK (optional_vm_slots >= 0 AND optional_vm_slots <= 9007199254740991),
+    optional_max_tasks integer NOT NULL DEFAULT 0 CHECK (optional_max_tasks >= 0 AND optional_max_tasks <= 9007199254740991),
+    optional_io_bytes_per_second bigint NOT NULL DEFAULT 0 CHECK (optional_io_bytes_per_second >= 0 AND optional_io_bytes_per_second <= 9007199254740991),
+    local_headroom_slots integer NOT NULL DEFAULT 0 CHECK (local_headroom_slots >= 0 AND local_headroom_slots <= 9007199254740991),
     vm_platform_id text,
     capacity_cpu_millis bigint CHECK (capacity_cpu_millis IS NULL OR capacity_cpu_millis > 0),
     capacity_memory_bytes bigint CHECK (capacity_memory_bytes IS NULL OR capacity_memory_bytes > 0),
@@ -402,6 +410,13 @@ CREATE TABLE worker_pools (
         AND per_vm_guest_ephemeral_disk_bytes IS NOT NULL
         AND max_vm_slots IS NOT NULL)
         ),
+    CONSTRAINT worker_pools_resource_policy_check CHECK (
+        (sealed_at IS NULL AND optional_cpu_millis=0 AND optional_memory_bytes=0
+         AND optional_disk_bytes=0 AND optional_vm_slots=0 AND optional_max_tasks=0
+         AND optional_io_bytes_per_second=0 AND local_headroom_slots=0)
+        OR (sealed_at IS NOT NULL AND optional_cpu_millis<=capacity_cpu_millis
+         AND optional_memory_bytes<=capacity_memory_bytes AND optional_vm_slots<=max_vm_slots
+         AND local_headroom_slots<=max_vm_slots)),
     CONSTRAINT worker_pools_cpu_capacity_check CHECK (sealed_at IS NULL OR per_vm_cpu_millis <= capacity_cpu_millis),
     CONSTRAINT worker_pools_memory_capacity_check CHECK (sealed_at IS NULL OR per_vm_memory_bytes <= capacity_memory_bytes),
     CONSTRAINT worker_pools_disk_capacity_check CHECK (sealed_at IS NULL OR per_vm_guest_ephemeral_disk_bytes <= capacity_guest_ephemeral_disk_bytes),
@@ -441,6 +456,17 @@ CREATE TABLE worker_hosts (
     max_vm_starts integer NOT NULL DEFAULT 0 CHECK (max_vm_starts >= 0),
     cpu_environment jsonb,
     cpu_environment_digest text CHECK (cpu_environment_digest IS NULL OR cpu_environment_digest ~ '^sha256:[0-9a-f]{64}$'),
+    resource_observation_sequence bigint CHECK (resource_observation_sequence > 0),
+    resource_policy_revision bigint CHECK (resource_policy_revision > 0),
+    resource_observed_at timestamptz,
+    local_optional_cpu_millis bigint CHECK (local_optional_cpu_millis >= 0),
+    local_optional_memory_bytes bigint CHECK (local_optional_memory_bytes >= 0),
+    optional_disk_bytes bigint CHECK (optional_disk_bytes >= 0),
+    local_optional_vm_slots integer CHECK (local_optional_vm_slots >= 0),
+    local_optional_tasks integer CHECK (local_optional_tasks >= 0),
+    optional_reclaim_pending boolean,
+    disk_slots_for_real_work integer CHECK (disk_slots_for_real_work >= 0),
+    ready_leaf_keys jsonb,
     observed_at timestamptz,
     admission_paused_reason text,
     epoch_started_at timestamptz,
@@ -455,6 +481,11 @@ CREATE TABLE worker_hosts (
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (id, worker_group_id),
+    CONSTRAINT worker_hosts_resource_observation_check CHECK (
+        num_nonnulls(resource_observation_sequence, resource_policy_revision, resource_observed_at, local_optional_cpu_millis, local_optional_memory_bytes, optional_disk_bytes, local_optional_vm_slots, local_optional_tasks, optional_reclaim_pending, disk_slots_for_real_work, ready_leaf_keys) IN (0, 11)),
+    CONSTRAINT worker_hosts_ready_leaf_keys_check CHECK (
+        ready_leaf_keys IS NULL OR CASE WHEN jsonb_typeof(ready_leaf_keys)='array'
+        THEN jsonb_array_length(ready_leaf_keys)<=32 ELSE false END),
     CONSTRAINT worker_hosts_resource_id_length_check CHECK (octet_length(resource_id) <= 512),
     CONSTRAINT worker_hosts_epoch_identity_check CHECK (
         (current_epoch IS NULL AND current_service_id IS NULL AND epoch_started_at IS NULL)
@@ -498,6 +529,23 @@ CREATE UNIQUE INDEX worker_hosts_live_resource ON worker_hosts(worker_group_id, 
 CREATE INDEX worker_hosts_resource ON worker_hosts(worker_group_id, resource_id);
 
 CREATE INDEX worker_hosts_active_dispatch_idx ON worker_hosts (worker_group_id, id) WHERE status = 'active';
+
+CREATE TABLE worker_scale_in_operations (
+    worker_group_id uuid NOT NULL,
+    operation_key uuid NOT NULL,
+    worker_pool_id uuid NOT NULL,
+    worker_host_id uuid NOT NULL,
+    drain_claim_version bigint NOT NULL CHECK (drain_claim_version > 0),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    completed_at timestamptz,
+    PRIMARY KEY (worker_group_id, operation_key),
+    FOREIGN KEY (worker_group_id, worker_pool_id)
+        REFERENCES worker_pools(worker_group_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (worker_host_id, worker_group_id)
+        REFERENCES worker_hosts(id, worker_group_id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX worker_scale_in_operations_one_pending
+    ON worker_scale_in_operations(worker_group_id) WHERE completed_at IS NULL;
 
 CREATE TABLE worker_host_secrets (
     id uuid PRIMARY KEY,
@@ -879,6 +927,8 @@ CREATE TABLE boot_seed_builds (
     worker_host_id uuid REFERENCES worker_hosts(id),
     worker_epoch bigint CHECK (worker_epoch>0),
     allocation_id uuid UNIQUE,
+    resource_policy_revision bigint CHECK (resource_policy_revision>0),
+    retry_after timestamptz,
     executor_epoch bigint NOT NULL DEFAULT 0 CHECK (executor_epoch>=0),
     channel_credential_digest bytea CHECK (octet_length(channel_credential_digest)=32),
     delivered_at timestamptz,
@@ -911,8 +961,8 @@ CREATE TABLE boot_seed_builds (
     CHECK (fenced_at IS NULL OR status IN ('succeeded','failed')),
     CHECK ((status='succeeded')=(manifest IS NOT NULL AND qualification_evidence IS NOT NULL)),
     CHECK (manifest IS NULL OR octet_length(manifest)<=1048576),
-    CHECK ((worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND executor_epoch=0 AND channel_credential_digest IS NULL AND deadline_at IS NULL)
-        OR (worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch=1 AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)),
+    CHECK ((worker_host_id IS NULL AND worker_epoch IS NULL AND allocation_id IS NULL AND resource_policy_revision IS NULL AND channel_credential_digest IS NULL AND deadline_at IS NULL)
+        OR (worker_host_id IS NOT NULL AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND executor_epoch>0 AND resource_policy_revision IS NOT NULL AND channel_credential_digest IS NOT NULL AND deadline_at IS NOT NULL)),
     CHECK ((worker_host_id IS NULL AND reserved_cpu_millis IS NULL AND reserved_memory_bytes IS NULL AND reserved_scratch_bytes IS NULL AND vm_platform_id IS NULL AND vm_vcpu_count IS NULL AND cpu_config_digest IS NULL)
         OR (worker_host_id IS NOT NULL AND reserved_cpu_millis IS NOT NULL AND vm_vcpu_count IS NOT NULL AND reserved_cpu_millis=vm_vcpu_count::bigint*1000 AND reserved_memory_bytes IS NOT NULL AND reserved_memory_bytes=memory_bytes AND reserved_scratch_bytes IS NOT NULL AND vm_platform_id IS NOT NULL AND cpu_config_digest IS NOT NULL))
 );

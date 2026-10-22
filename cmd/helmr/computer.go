@@ -122,7 +122,7 @@ func computerGetCommand() *cobra.Command {
 			if jsonOutput {
 				return writeJSON(command.OutOrStdout(), snapshot)
 			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\n", snapshot.ID, snapshot.DefinitionID, snapshot.Status)
+			_, err = fmt.Fprintf(command.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", snapshot.ID, snapshot.DefinitionID, snapshot.Status, snapshot.Residency, computerWaitReason(snapshot.ExecutionWait))
 			return err
 		},
 	}
@@ -356,7 +356,7 @@ func computerListCommand() *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), page)
 		}
 		for _, item := range page.Computers {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", item.ID, item.DefinitionID, item.Status)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", item.ID, item.DefinitionID, item.Status, item.Residency, computerWaitReason(item.ExecutionWait))
 		}
 		if page.NextCursor != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", page.NextCursor)
@@ -464,4 +464,11 @@ func computerUpdateCommand() *cobra.Command {
 	_ = cmd.MarkFlagRequired("delete-after-unused")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON.")
 	return cmd
+}
+
+func computerWaitReason(wait *api.ComputerExecutionWait) string {
+	if wait == nil {
+		return "-"
+	}
+	return wait.Reason
 }

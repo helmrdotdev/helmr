@@ -188,3 +188,10 @@ Inside Agent code, run local work as ordinary child processes. See
 - [Durability](/docs/concepts/durability)
 - [Computer reference](/docs/reference/sdk/computer) and
   [CLI reference](/docs/reference/cli/computer)
+
+A Computer can also report an `execution_wait` reason for accepted runnable work:
+`scheduling` while compatible placement is pending, `environment_limit` while the
+Environment's execution limits prevent admission, or `saving` while a save or
+checkpoint transition blocks follow-up work. The SDK exposes this as
+`executionWait`. An idle Computer reports `null`; this field does not give an ETA
+or replace residency, errors, or Session holds.

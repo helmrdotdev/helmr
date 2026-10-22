@@ -54,6 +54,7 @@ DROP TABLE IF EXISTS
     deployment_objects,
     deployments,
     worker_host_secrets,
+    worker_scale_in_operations,
     worker_hosts,
     worker_pool_cpu_shapes,
     worker_pools,

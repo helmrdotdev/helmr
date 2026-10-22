@@ -73,7 +73,7 @@ func AssignProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch
  AND (($6::bigint=0 AND l.status='active' AND l.expires_at>clock_timestamp())
  OR ($6::bigint>0 AND l.epoch=$6 AND l.status='acquiring' AND l.delivered_at IS NULL AND l.initialized_at IS NULL AND (l.restored_from_save_id IS NULL OR l.disk_only_recovery)))
  AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL
- AND `+NoSessionHoldsSQL+`
+ AND `+db.NoSessionHoldsSQL+`
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.fenced_at IS NULL)
  AND (SELECT COALESCE(max(p.epoch),0) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id)=$3::bigint-1
  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')

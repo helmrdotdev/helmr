@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgtype"
 	"math"
 	"net/http"
 	"strings"
@@ -181,8 +182,19 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
+	resources := request.Observation.Resources
+	ready := make([]workergroup.ReadyLeafKey, len(resources.ReadyLeafKeys))
+	for i, key := range resources.ReadyLeafKeys {
+		ready[i] = workergroup.ReadyLeafKey{EnvironmentID: key.EnvironmentID, BuildID: key.BuildID}
+	}
 	if err := workergroup.RecordObservation(r.Context(), s.db, worker, workergroup.HostObservation{
 		AdmissionPausedReason: request.Observation.AdmissionPausedReason,
+		Resources: workergroup.ResourceObservation{
+			Sequence: resources.Sequence, PolicyRevision: resources.PolicyRevision,
+			LocalOptional:     workergroup.LocalOptionalResources(resources.LocalOptional),
+			OptionalDiskBytes: resources.OptionalDiskBytes, DiskSlotsForRealWork: resources.DiskSlotsForRealWork,
+			ReclaimPending: resources.ReclaimPending, ReadyLeafKeys: ready,
+		},
 	}); err != nil {
 		s.writeWorkerHostError(w, "record worker observation", err)
 		return
@@ -242,6 +254,16 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		s.writeWorkerHostError(w, "get worker status", err)
 		return
 	}
+	poolID, err := s.db.GetWorkerHostPoolID(r.Context(), db.GetWorkerHostPoolIDParams{WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: pgtype.Int8{Int64: worker.Epoch, Valid: true}})
+	if err != nil {
+		s.writeWorkerHostError(w, "read worker policy pool", err)
+		return
+	}
+	policy, err := workergroup.GetResourcePolicy(r.Context(), s.db, worker.GroupID, pgvalue.MustUUIDValue(poolID))
+	if err != nil {
+		s.writeWorkerHostError(w, "read worker policy", err)
+		return
+	}
 	readiness := workerAdmissionReadiness(state)
 	status, err := workerPublicStatus(state.Status)
 	if err != nil {
@@ -250,6 +272,8 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.StatusResponse{
+		ResourcePolicy: workerapi.ResourcePolicy{Revision: policy.Revision, LocalHeadroomSlots: policy.LocalHeadroomSlots,
+			Optional: workerapi.OptionalResources(policy.Optional)},
 		WorkerHostID:    pgvalue.MustUUIDValue(state.ID).String(),
 		WorkerGroupID:   pgvalue.UUIDString(state.WorkerGroupID),
 		Status:          status,
