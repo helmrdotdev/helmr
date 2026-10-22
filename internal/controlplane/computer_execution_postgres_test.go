@@ -20,7 +20,7 @@ func TestComputerExecutionHTTPUsesCurrentAuthorityAndConfirmedScope(t *testing.T
 	f := sessiontest.New(t)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
 	handler, err := NewServer(cfg)
 	if err != nil {
