@@ -113,7 +113,7 @@ func claimStreamLane(ctx context.Context, tx pgx.Tx, claim *PostClaim, environme
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE slack_threads SET desired_revision=desired_revision+CASE WHEN desired_status<>$2 THEN 1 ELSE 0 END,desired_status=$2,
+	_, err = tx.Exec(ctx, `UPDATE slack_threads SET desired_status=$2,
  status_confirmation='unknown',stream_status_repair=true,inflight_method=$3,inflight_attempt_id=$4,
  claimed_until=$5 WHERE id=$1`, claim.ThreadID, status, claim.Method, claim.AttemptID, claim.ExpiresAt)
 	if err != nil {

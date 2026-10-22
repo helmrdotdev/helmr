@@ -207,7 +207,7 @@ func (h EventHandler) receiveEvent(ctx context.Context, envelope eventEnvelope) 
 		var bound, muted, visible, open bool
 		var unmuted *time.Time
 		if e.Thread != "" {
-			err = tx.QueryRow(ctx, `SELECT front.status='open',t.input_muted,t.input_unmuted_at,t.confirmed_revision>0 OR EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=t.id AND post.message_ts IS NOT NULL) FROM slack_threads t JOIN sessions front ON (front.environment_id,front.id)=(t.environment_id,t.front_session_id) JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
+			err = tx.QueryRow(ctx, `SELECT front.status='open',t.input_muted,t.input_unmuted_at,t.last_acknowledged_status IS NOT NULL OR EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=t.id AND post.message_ts IS NOT NULL) FROM slack_threads t JOIN sessions front ON (front.environment_id,front.id)=(t.environment_id,t.front_session_id) JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
  WHERE c.installation_id=$1 AND c.slack_channel_id=$2 AND t.thread_ts=$3 AND t.deleted_at IS NULL`, installation, e.Channel, e.Thread).Scan(&open, &muted, &unmuted, &visible)
 			bound = err == nil
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {

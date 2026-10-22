@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/jackc/pgx/v5"
 )
 
 func (f statusFixture) threadMessage(t *testing.T, key, text string, at time.Time) uuid.UUID {
@@ -168,8 +169,24 @@ func TestSlackThreadInputEventBoundaryAndMuteExclusion(t *testing.T) {
 		}
 	}
 	send("before-visible", "continue", "123.456", 0)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET confirmed_revision=desired_revision WHERE id=$1`, f.thread)
+	first := f.claim(t, "active")
+	if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
 	send("bound", "continue", "123.456", 1)
+	f.due(t)
+	refresh := f.claim(t, "active")
+	if err := FinishStatus(t.Context(), f.Pool, refresh, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+		t.Fatal(err)
+	}
+	send("bound-after-uncertainty", "continue", "123.456", 1)
+	// Equal values with an uncertain outcome still need an immediate retry when due.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp() WHERE id=$1;
+ UPDATE slack_delivery_limits SET next_status_at=clock_timestamp() WHERE installation_id=$2`, pgx.QueryExecModeSimpleProtocol, f.thread, f.installation)
+	retry := f.claim(t, "active")
+	if err := FinishStatus(t.Context(), f.Pool, retry, DeliveryResult{Disposition: Acknowledged}); err != nil {
+		t.Fatal(err)
+	}
 	send("unbound", "continue", "999.123", 0)
 	send("root", "continue", "", 0)
 	send("aside", "!aside <@bot> human discussion", "123.456", 0)

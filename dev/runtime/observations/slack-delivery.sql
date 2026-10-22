@@ -10,8 +10,8 @@
 SELECT jsonb_build_object(
  'participant', (SELECT jsonb_build_object('id',p.id,'projected_event_seq',p.projected_event_seq,'created_at',p.created_at,'next_event_seq',s.next_event_seq)
  FROM target p JOIN sessions s ON s.environment_id=p.environment_id AND s.id=p.session_id),
- 'thread', (SELECT jsonb_build_object('id',t.id,'desired_status',t.desired_status,'desired_revision',t.desired_revision,
- 'confirmed_revision',t.confirmed_revision,'status_confirmation',t.status_confirmation,'stream_status_repair',t.stream_status_repair,
+ 'thread', (SELECT jsonb_build_object('id',t.id,'desired_status',t.desired_status,'last_acknowledged_status',t.last_acknowledged_status,
+ 'status_confirmation',t.status_confirmation,'stream_status_repair',t.stream_status_repair,
  'inflight_method',t.inflight_method,'claimed_until',t.claimed_until,'next_attempt_at',t.next_attempt_at,'refresh_at',t.refresh_at,
  'delivery_error',t.delivery_error,'deleted_at',t.deleted_at) FROM slack_threads t JOIN target s ON s.thread_id=t.id),
  'installation', (SELECT jsonb_build_object('id',i.id,'credential_revision',i.credential_revision,'credential_expires_at',i.credential_expires_at,

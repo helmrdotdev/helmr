@@ -19,7 +19,7 @@ type StatusClaim struct {
 	TeamID, ChannelID, PeerID           string
 	ThreadID, InstallationID, AttemptID uuid.UUID
 	CredentialRevision                  int64
-	Revision                            int64
+	Status                              string
 	Payload                             []byte
 	ExpiresAt                           time.Time
 	AuthorizedAt                        time.Time
@@ -55,10 +55,10 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 		}
 		var ts *string
 		var oldStatus string
-		var revision, confirmed int64
+		var acknowledged *string
 		var due, refresh, deleted bool
-		if err = tx.QueryRow(ctx, `SELECT thread_ts,desired_status,desired_revision,confirmed_revision,next_attempt_at<=clock_timestamp() AND (claimed_until IS NULL OR claimed_until<=clock_timestamp()),refresh_at<=clock_timestamp() OR status_confirmation='unknown',deleted_at IS NOT NULL OR EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=slack_threads.id AND opening.role='opening' AND opening.delivery_disposed_at IS NOT NULL)
- FROM slack_threads WHERE id=$1 FOR NO KEY UPDATE`, thread).Scan(&ts, &oldStatus, &revision, &confirmed, &due, &refresh, &deleted); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT thread_ts,desired_status,last_acknowledged_status,next_attempt_at<=clock_timestamp() AND (claimed_until IS NULL OR claimed_until<=clock_timestamp()),refresh_at<=clock_timestamp() OR status_confirmation='unknown',deleted_at IS NOT NULL OR EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=slack_threads.id AND opening.role='opening' AND opening.delivery_disposed_at IS NOT NULL)
+ FROM slack_threads WHERE id=$1 FOR NO KEY UPDATE`, thread).Scan(&ts, &oldStatus, &acknowledged, &due, &refresh, &deleted); err != nil {
 			return err
 		}
 		if ts == nil || deleted {
@@ -69,15 +69,14 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 			return err
 		}
 		if oldStatus != status {
-			revision++
-			if _, err = tx.Exec(ctx, `UPDATE slack_threads SET desired_status=$2,desired_revision=$3 WHERE id=$1`, thread, status, revision); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE slack_threads SET desired_status=$2 WHERE id=$1`, thread, status); err != nil {
 				return err
 			}
 			if err = dbnotify.Notify(ctx, tx, "slack_delivery"); err != nil {
 				return err
 			}
 		}
-		if !due || (revision == confirmed && !refresh) {
+		if !due || (acknowledged != nil && *acknowledged == status && !refresh) {
 			return nil
 		}
 		allowed, err := reserveDelivery(ctx, tx, installation, slackChannel, "agents.sessions.setStatus", false)
@@ -88,7 +87,7 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 		if err != nil {
 			return err
 		}
-		c := &StatusClaim{TeamID: team, ChannelID: slackChannel, PeerID: peer, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Revision: revision, Payload: payload}
+		c := &StatusClaim{TeamID: team, ChannelID: slackChannel, PeerID: peer, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Status: status, Payload: payload}
 		if err = tx.QueryRow(ctx, `UPDATE slack_threads SET status_confirmation='unknown',inflight_method='agents.sessions.setStatus',inflight_attempt_id=$2,
  claimed_until=clock_timestamp()+interval '30 seconds'
  WHERE id=$1 RETURNING claimed_until`, thread, c.AttemptID).Scan(&c.ExpiresAt); err != nil {
@@ -143,12 +142,12 @@ func FinishStatus(ctx context.Context, pool db.TxBeginner, claim StatusClaim, re
 		if result.Disposition == RateLimited && result.RetryAfter > 0 {
 			retry = result.RetryAfter
 		}
-		tag, err := tx.Exec(ctx, `UPDATE slack_threads SET confirmed_revision=CASE WHEN $4 THEN GREATEST(confirmed_revision,$3) ELSE confirmed_revision END,
+		tag, err := tx.Exec(ctx, `UPDATE slack_threads SET last_acknowledged_status=CASE WHEN $4 THEN $3 ELSE last_acknowledged_status END,
  status_confirmation=CASE WHEN $4 THEN 'acknowledged' ELSE 'unknown' END,delivery_error=NULLIF($5,''),
  inflight_method=NULL,inflight_attempt_id=NULL,claimed_until=NULL,
  stream_status_repair=CASE WHEN $4 THEN false ELSE stream_status_repair END,
  next_attempt_at=clock_timestamp()+$6*interval '1 second',refresh_at=clock_timestamp()+interval '30 seconds'
- WHERE id=$1 AND inflight_attempt_id=$2 AND deleted_at IS NULL`, claim.ThreadID, claim.AttemptID, claim.Revision, ack, result.Code, retry.Seconds())
+ WHERE id=$1 AND inflight_attempt_id=$2 AND deleted_at IS NULL`, claim.ThreadID, claim.AttemptID, claim.Status, ack, result.Code, retry.Seconds())
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
