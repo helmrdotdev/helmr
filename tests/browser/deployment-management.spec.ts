@@ -126,7 +126,7 @@ test("a Computer's status is its residency, its lifecycle only while deleting, i
   await expect(page.getByRole("columnheader")).toHaveText(["Computer", "Status", "Key", "Template", "Last activity", "Created"]);
   await expect(page.getByRole("columnheader", { name: "Residency" })).toHaveCount(0);
   const row = (id: string) => page.getByRole("row").filter({ hasText: id.slice(-12) });
-  await expect(row(running.id).getByRole("cell").nth(1)).toHaveText("Running");
+  await expect(row(running.id).getByRole("cell").nth(1)).toHaveText("Awake");
   await expect(row(unavailable.id).getByRole("cell").nth(1)).toHaveText("Unavailable");
   await expect(row(unavailable.id).getByTitle("The image could not be prepared.")).toBeVisible();
   await expect(row(deleting.id).getByRole("cell").nth(1)).toHaveText("Deleting");
