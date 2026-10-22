@@ -204,8 +204,8 @@ copying an already verified local file uses the cache's disk and task allowance.
 Cache fills occur during image preparation and seed construction; ordinary
 Computer starts do not populate the cache. A seed construction task and its cache
 fill each consume a task allowance, so caching alongside seed construction needs
-`max_tasks` of at least 2. Reducing task or transfer limits, or retiring an
-in-flight seed after a policy change, prevents new cache work without itself
+`max_tasks` of at least 2. Setting task or transfer limits to zero, or retiring
+an in-flight seed after a policy change, prevents new cache work without itself
 evicting resident data that still fits the disk budget and headroom. Real-work
 admission and disk-limit reductions can still reclaim that data.
 
