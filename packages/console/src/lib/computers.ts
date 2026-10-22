@@ -1,4 +1,4 @@
-import { request } from "./api";
+import { request, postJson } from "./api";
 
 type ComputerSecret =
   | { secret: string; env: { name: string; mode: "raw"; allowedOrigins?: never } | { name: string; mode: "protected"; allowedOrigins: string[] }; file?: never }
@@ -12,8 +12,9 @@ export type Computer = {
   template: string;
   deployment_id: string;
   status: ComputerStatus;
+  execution_control: { id: string; kind: "hibernate" | "wake"; status: "accepted" | "completed" | "failed"; error_code?: string } | null;
   execution_wait: { reason: "scheduling" | "environment_limit" | "saving" } | null;
-  residency: "cold" | "starting" | "running" | "parking" | "restoring" | "unavailable";
+  residency: "cold" | "starting" | "running" | "parking" | "parked" | "restoring" | "unavailable";
   error?: { code: string; message: string };
   secrets: ComputerSecret[];
   last_activity_at: string;
@@ -76,4 +77,12 @@ function environmentPath(scope: ComputerScope): string {
     throw new Error("Computer project and environment are required");
   }
   return `/api/projects/${encodeURIComponent(scope.projectID)}/environments/${encodeURIComponent(scope.environmentID)}`;
+}
+
+export type ExecutionScope = { digest: string; sessions: string[]; commands: string[] };
+export function getComputerExecutionScope(id: string, scope: ComputerScope): Promise<ExecutionScope> {
+  return request(`${computerPath(id,scope)}/execution-scope`);
+}
+export function controlComputerExecution(id: string, scope: ComputerScope, action: "hibernate" | "wake", key: string, expectedScope?: string): Promise<NonNullable<Computer["execution_control"]>> {
+  return postJson(`${computerPath(id,scope)}/${action}`, { idempotency_key: key, expected_scope: expectedScope });
 }

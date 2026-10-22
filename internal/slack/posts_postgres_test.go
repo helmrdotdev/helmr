@@ -18,7 +18,7 @@ func (f statusFixture) post(t *testing.T, seq int64, key, role string, turn *uui
 	id := uuid.NewV7()
 	body := []byte(`{"text":"hello","mrkdwn":false,"parse":"none"}`)
 	digest := sha256.Sum256(body)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,post_key,role,turn_id,payload,payload_digest,presentation_path) VALUES($1,$2,$3,$4,(SELECT thread_id FROM slack_thread_sources WHERE id=$4),$5,$6,$7,$8,$9,$10,'post')`, id, f.Environment, f.Session, f.participant, seq, key, role, turn, body, digest[:])
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_source_id,thread_id,seq,post_key,role,turn_id,payload,payload_digest,presentation_path) VALUES($1,$2,$3,$4,(SELECT thread_id FROM slack_thread_sources WHERE id=$4),GREATEST($5,(SELECT COALESCE(max(seq),0)+1 FROM slack_posts WHERE thread_source_id=$4)),$6,$7,$8,$9,$10,'post')`, id, f.Environment, f.Session, f.participant, seq, key, role, turn, body, digest[:])
 	return id
 }
 func (f statusFixture) opening(t *testing.T) uuid.UUID {

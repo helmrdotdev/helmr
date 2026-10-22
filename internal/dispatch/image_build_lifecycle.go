@@ -343,6 +343,9 @@ func reconcileUnattachedComputer(ctx context.Context, database db.TxDB, env, com
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
+			return err
+		}
 		if _, err := computer.PinAdmissionImage(ctx, tx, env, computerID); err == nil {
 			return nil
 		} else if !errors.Is(err, computer.ErrNotReady) {

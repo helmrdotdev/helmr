@@ -85,19 +85,19 @@ func TestStartSnapshotsIdlePolicyAndRejectsKeyedMismatch(t *testing.T) {
 	}
 }
 
-func TestSessionIdleRestartsAfterSaveBetweenScans(t *testing.T) {
+func TestSessionIdleDoesNotRestartAfterInternalSave(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$1`, f.session)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=60000,idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
-	// A settled Save still proves that the earlier quiet interval was interrupted.
+	// Internal capture attempts are not new user work.
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,status,failure_evidence) VALUES($1,$2,$3,1,1,'failed','settled capture failure')`, f.env, uuid.NewV7(), f.computer)
 	if err := session.ReconcileSessionIdle(ctx, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
 	var renewed bool
-	if err := f.pool.QueryRow(ctx, `SELECT status='open' AND idle_since>clock_timestamp()-interval '10 seconds' FROM sessions WHERE id=$1`, f.session).Scan(&renewed); err != nil || !renewed {
-		t.Fatalf("Save did not restart quiet interval: %v %v", renewed, err)
+	if err := f.pool.QueryRow(ctx, `SELECT status='closing' FROM sessions WHERE id=$1`, f.session).Scan(&renewed); err != nil || !renewed {
+		t.Fatalf("internal Save extended the idle lifetime: %v %v", renewed, err)
 	}
 }
 
@@ -119,7 +119,7 @@ func TestSessionIdleBlocksUnacknowledgedResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	var blocked bool
-	if err := f.pool.QueryRow(ctx, `SELECT status='open' AND idle_since IS NULL FROM sessions WHERE id=$1`, f.session).Scan(&blocked); err != nil || !blocked {
+	if err := f.pool.QueryRow(ctx, `SELECT status='open' AND idle_since IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&blocked); err != nil || !blocked {
 		t.Fatalf("unfinished control aged: %v %v", blocked, err)
 	}
 	if err := session.AcknowledgeSessionDelivery(ctx, f.pool, *f.host(), f.execution(), attachment.Sequence, delivery.Sequence, delivery.Generation, delivery.Kind, "", 0); err != nil {
@@ -128,7 +128,7 @@ func TestSessionIdleBlocksUnacknowledgedResume(t *testing.T) {
 	if err := session.ReconcileSessionIdle(ctx, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(ctx, `SELECT status='open' AND idle_since IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&blocked); err != nil || !blocked {
+	if err := f.pool.QueryRow(ctx, `SELECT status='closing' AND idle_since IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&blocked); err != nil || !blocked {
 		t.Fatalf("acknowledged control not quiet: %v %v", blocked, err)
 	}
 }
@@ -149,7 +149,7 @@ func TestSessionIdleBlocksUnfinishedCheckpointTransitions(t *testing.T) {
 				t.Fatal(err)
 			}
 			var blocked bool
-			if err := f.pool.QueryRow(ctx, `SELECT status='open' AND idle_since IS NULL FROM sessions WHERE id=$1`, f.session).Scan(&blocked); err != nil || !blocked {
+			if err := f.pool.QueryRow(ctx, `SELECT status='open' AND idle_since IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&blocked); err != nil || !blocked {
 				t.Fatalf("unfinished checkpoint aged: %v %v", blocked, err)
 			}
 			if checkpointState == "aborting" {
@@ -157,7 +157,7 @@ func TestSessionIdleBlocksUnfinishedCheckpointTransitions(t *testing.T) {
 				if err := session.ReconcileSessionIdle(ctx, f.pool, f.env, f.session); err != nil {
 					t.Fatal(err)
 				}
-				if err := f.pool.QueryRow(ctx, `SELECT status='open' AND idle_since IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&blocked); err != nil || !blocked {
+				if err := f.pool.QueryRow(ctx, `SELECT status='closing' AND idle_since IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&blocked); err != nil || !blocked {
 					t.Fatalf("parked checkpoint prevented quiet clock: %v %v", blocked, err)
 				}
 			}
@@ -199,5 +199,32 @@ func TestSessionIdleScanSkipsFutureQuietClock(t *testing.T) {
 	defer cancel()
 	if _, _, err := session.ReconcileSessionLifecycle(scan, f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatalf("future quiet clock unnecessarily locked: %v", err)
+	}
+}
+
+func TestStartSnapshotsSuspensionPolicy(t *testing.T) {
+	f := newAdmissionFixture(t)
+	ctx := t.Context()
+	first, err := session.Start(ctx, f.pool, nil, f.caller(), f.startRequest("manual"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE agent_definitions SET suspension='after_turn' WHERE environment_id=$1`, f.env)
+	second, err := session.Start(ctx, f.pool, nil, f.caller(), f.startRequest("after-turn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := session.Start(ctx, f.pool, nil, f.caller(), f.startRequest("manual"))
+	if err != nil || replay.SessionID != first.SessionID {
+		t.Fatalf("replay: %+v %v", replay, err)
+	}
+	for _, want := range []struct {
+		id     uuid.UUID
+		policy string
+	}{{first.SessionID, "manual"}, {second.SessionID, "after_turn"}} {
+		var got string
+		if err := f.pool.QueryRow(ctx, `SELECT suspension FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, want.id).Scan(&got); err != nil || got != want.policy {
+			t.Fatalf("policy = %q, want %q: %v", got, want.policy, err)
+		}
 	}
 }

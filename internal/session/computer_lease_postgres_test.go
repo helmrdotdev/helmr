@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
@@ -486,6 +487,7 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 				if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != wantHolds {
 					t.Fatalf("eligible disk recovery changed independent attention holds=%d error=%v", holds, err)
 				}
+				sessiontest.ObserveProvisioning(t, sessiontest.Fixture{Pool: r.f.pool, Worker: r.f.worker, Group: r.f.group})
 				resume := controlRequest(r.f, "resume", "after-checkpoint-loss")
 				resume.HoldID = independent
 				if _, err := session.ControlSession(t.Context(), r.f.pool, r.f.caller(), resume); err != nil {

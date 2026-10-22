@@ -124,8 +124,8 @@ type CasObject struct {
 }
 
 type Command struct {
-	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	ID                    pgtype.UUID        `json:"id"`
+	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	ComputerID            pgtype.UUID        `json:"computer_id"`
 	ComputerLeaseEpoch    pgtype.Int8        `json:"computer_lease_epoch"`
 	Status                string             `json:"status"`
@@ -232,8 +232,8 @@ type Environment struct {
 }
 
 type IdempotencyReceipt struct {
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	ID                 pgtype.UUID        `json:"id"`
+	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	Operation          string             `json:"operation"`
 	SlotHash           []byte             `json:"slot_hash"`
 	RequestFingerprint []byte             `json:"request_fingerprint"`
@@ -370,16 +370,19 @@ type VMPlatform struct {
 }
 
 type WorkerGroup struct {
-	ID            pgtype.UUID        `json:"id"`
-	TokenID       pgtype.UUID        `json:"token_id"`
-	RegionID      string             `json:"region_id"`
-	Name          string             `json:"name"`
-	Description   string             `json:"description"`
-	Status        string             `json:"status"`
-	ClaimVersion  int64              `json:"claim_version"`
-	PrimaryPoolID pgtype.UUID        `json:"primary_pool_id"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	ID                        pgtype.UUID        `json:"id"`
+	CapacityObservedAt        pgtype.Timestamptz `json:"capacity_observed_at"`
+	CapacitySupplyFingerprint pgtype.Text        `json:"capacity_supply_fingerprint"`
+	CapacityPools             []byte             `json:"capacity_pools"`
+	TokenID                   pgtype.UUID        `json:"token_id"`
+	RegionID                  string             `json:"region_id"`
+	Name                      string             `json:"name"`
+	Description               string             `json:"description"`
+	Status                    string             `json:"status"`
+	ClaimVersion              int64              `json:"claim_version"`
+	PrimaryPoolID             pgtype.UUID        `json:"primary_pool_id"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkerGroupToken struct {

@@ -213,6 +213,9 @@ func (p *PreparedMachines) waitRealAllocationCapacity(ctx context.Context, admit
 					leaf.ready = false
 					leaf.cancel()
 				}
+				for _, source := range p.optional.sources {
+					source.stop = true
+				}
 				for _, seed := range p.optional.seeds {
 					seed.stop = true
 					p.optional.pressure = true

@@ -322,7 +322,7 @@ func TestSlackDeliveryAbandonmentWaitsForAcceptedProgressProjection(t *testing.T
 	f.projectAll(t)
 	var raw []byte
 	var next uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT id,payload FROM slack_posts WHERE thread_source_id=$1 AND id<>$2`, f.participant, post).Scan(&next, &raw); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT id,payload FROM slack_posts WHERE thread_source_id=$1 AND role<>'controls' AND id<>$2`, f.participant, post).Scan(&next, &raw); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(raw, []byte("new progress after abandonment")) || bytes.Contains(raw, []byte("first progress")) || bytes.Contains(raw, []byte("accepted before abandonment")) {
@@ -526,12 +526,12 @@ func TestSlackDeliveryAbandonmentPreservesEarlierFailureReasons(t *testing.T) {
 			if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
 				t.Fatal(err)
 			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status=$3,error='stream_content_rejected:invalid_blocks' WHERE thread_source_id=$1 AND id<>$2`, f.participant, post, state)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status=$3,error='stream_content_rejected:invalid_blocks' WHERE thread_source_id=$1 AND role<>'controls' AND id<>$2`, f.participant, post, state)
 			if err := RecoverDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, post, f.recoveryInput(t, org, post), "abandon"); err != nil {
 				t.Fatal(err)
 			}
 			var preserved bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT status=$3 AND error='stream_content_rejected:invalid_blocks' AND delivery_disposed_at IS NOT NULL FROM slack_posts WHERE thread_source_id=$1 AND id<>$2`, f.participant, post, state).Scan(&preserved); err != nil || !preserved {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT status=$3 AND error='stream_content_rejected:invalid_blocks' AND delivery_disposed_at IS NOT NULL FROM slack_posts WHERE thread_source_id=$1 AND role<>'controls' AND id<>$2`, f.participant, post, state).Scan(&preserved); err != nil || !preserved {
 				t.Fatal("earlier reason replaced", preserved, err)
 			}
 		})

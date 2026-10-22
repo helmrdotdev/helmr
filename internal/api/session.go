@@ -23,6 +23,7 @@ type SessionMessageReceipt struct {
 }
 
 type CloseSessionRequest struct {
+	ExpectedScope  string `json:"expected_scope,omitempty"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 type CancelSessionRequest struct {

@@ -326,6 +326,10 @@ CREATE TABLE worker_group_tokens (
 
 CREATE TABLE worker_groups (
     id uuid PRIMARY KEY,
+    capacity_observed_at timestamptz,
+    capacity_supply_fingerprint text,
+    capacity_pools jsonb,
+    CHECK (num_nonnulls(capacity_observed_at,capacity_supply_fingerprint,capacity_pools) IN (0,3)),
     token_id uuid NOT NULL UNIQUE,
     region_id text NOT NULL,
     name text NOT NULL CHECK (btrim(name) <> ''),
@@ -566,8 +570,8 @@ CREATE TABLE worker_host_secrets (
 CREATE UNIQUE INDEX worker_host_secrets_one_active_idx ON worker_host_secrets (worker_host_id) WHERE revoked_at IS NULL;
 
 CREATE TABLE deployments (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     bundle_digest text NOT NULL CHECK (bundle_digest ~ '^sha256:[0-9a-f]{64}$'),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (environment_id, id),
@@ -595,8 +599,8 @@ CREATE INDEX deployment_objects_cas ON deployment_objects(org_id, digest);
 -- Preparation input identity is immutable. Scheduling policy is derived from
 -- promoted definitions and never changes the input specification.
 CREATE TABLE image_specs (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     spec_digest text NOT NULL CHECK (spec_digest ~ '^sha256:[0-9a-f]{64}$'),
     spec jsonb NOT NULL CHECK (jsonb_typeof(spec) = 'object'),
     seed jsonb NOT NULL CHECK (jsonb_typeof(seed) = 'object'),
@@ -613,8 +617,8 @@ CREATE INDEX image_specs_due ON image_specs(next_refresh_at) WHERE next_refresh_
 CREATE INDEX image_specs_refresh ON image_specs(environment_id, id) WHERE refresh_every_ms IS NOT NULL;
 
 CREATE TABLE templates (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     key text NOT NULL CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, key)
@@ -645,8 +649,8 @@ CREATE INDEX template_definitions_deployment ON template_definitions(environment
 CREATE INDEX template_definitions_image_spec ON template_definitions(environment_id, image_spec_id);
 
 CREATE TABLE agents (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     key text NOT NULL CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, key)
@@ -662,6 +666,7 @@ CREATE TABLE agent_definitions (
     input_schema jsonb,
     CHECK ((input_kind='text' AND input_schema IS NULL) OR (input_kind='json' AND input_schema IS NOT NULL AND jsonb_typeof(input_schema)='object')),
     max_turn_duration_ms bigint CHECK (max_turn_duration_ms > 0),
+    suspension text NOT NULL DEFAULT 'manual' CHECK (suspension IN ('manual','after_turn')),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     close_after_idle_never boolean NOT NULL DEFAULT false,
     CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL),
@@ -702,8 +707,8 @@ CREATE TABLE disk_encryption_keys (
 
 -- Logical outcome never substitutes for proof that a preparation writer stopped.
 CREATE TABLE image_builds (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     image_spec_id uuid NOT NULL,
     successor_of uuid,
     idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
@@ -892,8 +897,8 @@ CREATE TABLE disk_roots (
 );
 
 CREATE TABLE images (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     image_spec_id uuid NOT NULL,
     image_build_id uuid NOT NULL,
     seq bigint NOT NULL CHECK (seq>0),
@@ -913,8 +918,8 @@ CREATE TABLE images (
 -- Derived launch work owns its private executors independently of authored
 -- preparation. Missing or failed launch artifacts do not block image readiness.
 CREATE TABLE boot_seed_builds (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
     image_spec_id uuid NOT NULL,
     image_id uuid,
@@ -984,8 +989,12 @@ CREATE TABLE boot_seed_objects (
 );
 
 CREATE TABLE computers (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    execution_pending_since timestamptz,
+    execution_deadline_at timestamptz,
+    CHECK ((execution_pending_since IS NULL)=(execution_deadline_at IS NULL)),
+    CHECK (execution_deadline_at>execution_pending_since),
+    environment_id uuid NOT NULL REFERENCES environments(id),
     delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
     unused_since timestamptz,
     key text CHECK (key IS NULL OR octet_length(key) BETWEEN 1 AND 512),
@@ -1036,6 +1045,29 @@ CREATE TABLE computers (
     FOREIGN KEY (environment_id, image_spec_id, image_id) REFERENCES images(environment_id, image_spec_id, id),
     CHECK (image_id IS NULL OR (image_spec_id IS NOT NULL AND initial_root_digest IS NOT NULL))
 );
+
+-- Accepted lifecycle operations survive retries independently of physical progress.
+CREATE TABLE computer_controls (
+    id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    computer_id uuid NOT NULL,
+    kind text NOT NULL CHECK (kind IN ('hibernate','wake')),
+    caller_kind text NOT NULL CHECK (caller_kind IN ('user','api_key')),
+    caller_id uuid NOT NULL,
+    idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
+    status text NOT NULL DEFAULT 'accepted' CHECK (status IN ('accepted','completed','failed')),
+    checkpoint_id uuid,
+    error_code text,
+    accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    deadline_at timestamptz NOT NULL,
+    settled_at timestamptz,
+    PRIMARY KEY (environment_id,id),
+    FOREIGN KEY (environment_id,computer_id) REFERENCES computers(environment_id,id),
+    UNIQUE (environment_id,computer_id,caller_kind,caller_id,kind,idempotency_key),
+    CHECK ((status='accepted')=(settled_at IS NULL)),
+    CHECK ((status='failed')=(error_code IS NOT NULL))
+);
+CREATE UNIQUE INDEX computer_controls_pending ON computer_controls(environment_id,computer_id) WHERE status='accepted';
 
 CREATE INDEX computers_unused_policy ON computers(environment_id, id) WHERE deleted_at IS NULL AND delete_after_unused_ms IS NOT NULL;
 
@@ -1136,8 +1168,8 @@ CREATE INDEX computer_leases_host_unfenced ON computer_leases(worker_host_id, wo
 
 -- Ordinary commands are pinned to one Computer lease when execution is admitted.
 CREATE TABLE commands (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     computer_lease_epoch bigint CHECK (computer_lease_epoch>0),
     status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'starting', 'running', 'stopping', 'exited', 'failed', 'cancelled', 'timed_out', 'lost')),
@@ -1219,8 +1251,8 @@ CREATE INDEX commands_unreconciled ON commands(environment_id, computer_id, comp
 -- Scoped platform mutation identity survives response expiry. Domain mutation and
 -- target binding commit together; an unfinished acquisition is never durable work.
 CREATE TABLE idempotency_receipts (
-    environment_id uuid NOT NULL REFERENCES environments(id),
     id uuid NOT NULL,
+    environment_id uuid NOT NULL REFERENCES environments(id),
     operation text NOT NULL CHECK (operation IN ('deployment.finalize', 'template.refresh', 'secret.create', 'secret.rotate', 'secret.revoke', 'computer.create', 'computer.delete', 'computer.exec', 'command.cancel')),
     slot_hash bytea NOT NULL CHECK (octet_length(slot_hash)=32),
     request_fingerprint bytea NOT NULL CHECK (octet_length(request_fingerprint)=32),
@@ -1339,8 +1371,8 @@ CREATE TABLE slack_installations (
 CREATE UNIQUE INDEX slack_installations_active ON slack_installations(app_id, team_id) WHERE disconnected_at IS NULL;
 
 CREATE TABLE slack_connections (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL UNIQUE,
+    environment_id uuid NOT NULL,
     agent_id uuid NOT NULL,
     slack_app_registration_id uuid NOT NULL REFERENCES slack_app_registrations(id),
     slack_installation_id uuid,
@@ -1402,8 +1434,8 @@ CREATE TABLE agent_triggers (
 -- The interval during which one promotion's declaration fires, with its cursor
 -- and the Slack channel binding pinned at promotion.
 CREATE TABLE trigger_activations (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     agent_id uuid NOT NULL,
     deployment_id uuid NOT NULL,
     trigger_key text NOT NULL,
@@ -1424,8 +1456,10 @@ CREATE UNIQUE INDEX trigger_activations_current ON trigger_activations(environme
 CREATE INDEX trigger_activations_due ON trigger_activations(next_fire_at, environment_id, id) WHERE active_until IS NULL OR next_fire_at<active_until;
 
 CREATE TABLE sessions (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    suspension text NOT NULL DEFAULT 'manual' CHECK (suspension IN ('manual','after_turn')),
+    suspension_after_seq bigint NOT NULL DEFAULT 0 CHECK (suspension_after_seq>=0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     idle_since timestamptz,
     history_eligible_at timestamptz,
@@ -1563,8 +1597,8 @@ CREATE UNIQUE INDEX secret_exposures_command ON secret_exposures(environment_id,
 CREATE INDEX secret_exposures_secret ON secret_exposures(environment_id, secret_id);
 
 CREATE TABLE turns (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     seq bigint NOT NULL CHECK (seq > 0),
@@ -1658,8 +1692,8 @@ CREATE INDEX trigger_occurrences_activation ON trigger_occurrences(environment_i
 CREATE INDEX trigger_occurrences_turn ON trigger_occurrences(environment_id, session_id, turn_id);
 
 CREATE TABLE session_holds (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     scope text NOT NULL CHECK (scope IN ('local', 'subtree')),
     reason text NOT NULL CHECK (octet_length(reason) <= 4096),
@@ -1691,8 +1725,8 @@ CREATE UNIQUE INDEX session_holds_one_storage_pressure ON session_holds(environm
 CREATE INDEX session_holds_active ON session_holds(environment_id, session_id) WHERE released_at IS NULL;
 
 CREATE TABLE session_controls (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     kind text NOT NULL CHECK (kind IN ('interrupt', 'turn_interrupt', 'resume', 'close', 'cancel')),
     caller_kind text NOT NULL CHECK (caller_kind IN ('user', 'api_key', 'session')),
@@ -1715,8 +1749,8 @@ CREATE TABLE session_controls (
 CREATE UNIQUE INDEX session_controls_interrupt_hold ON session_controls(environment_id, hold_id) WHERE kind='interrupt';
 
 CREATE TABLE computer_saves (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     computer_lease_epoch bigint NOT NULL,
     seq bigint NOT NULL CHECK (seq > 0),
@@ -1773,8 +1807,8 @@ CREATE TABLE disk_object_pins (
 CREATE INDEX disk_object_pins_digest ON disk_object_pins(environment_id, digest);
 
 CREATE TABLE checkpoints (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     computer_id uuid NOT NULL,
     source_lease_epoch bigint NOT NULL,
     control_version bigint NOT NULL CHECK (control_version > 0),
@@ -1860,10 +1894,10 @@ CREATE TABLE session_events (
 CREATE INDEX session_events_expired_floor ON session_events(environment_id, session_id, seq) WHERE payload_expired_at IS NOT NULL;
 
 CREATE TABLE turn_asks (
+    id uuid NOT NULL,
     environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     turn_id uuid NOT NULL,
-    id uuid NOT NULL,
     process_epoch bigint NOT NULL,
     created_event_seq bigint NOT NULL,
     question_digest bytea NOT NULL CHECK (octet_length(question_digest)=32),
@@ -1894,8 +1928,8 @@ CREATE TABLE turn_asks (
 CREATE INDEX turn_asks_pending ON turn_asks(environment_id, session_id, turn_id) WHERE status='pending';
 
 CREATE TABLE turn_messages (
-    environment_id uuid NOT NULL,
     id uuid NOT NULL,
+    environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     turn_id uuid NOT NULL,
     process_epoch bigint NOT NULL,
@@ -2014,6 +2048,7 @@ CREATE TABLE slack_threads (
     team_id text NOT NULL,
     slack_channel_id text NOT NULL,
     thread_ts text CHECK (thread_ts<>''),
+    projected_lifecycle_state jsonb,
     opening_post_key text CHECK (opening_post_key<>''),
     recipient_team_id text,
     recipient_user_id text,
@@ -2043,6 +2078,7 @@ CREATE TABLE slack_threads (
 );
 
 CREATE INDEX slack_threads_remote_root ON slack_threads(thread_ts, slack_channel_binding_id) WHERE thread_ts IS NOT NULL;
+
 
 CREATE INDEX slack_threads_status_due ON slack_threads(next_attempt_at, refresh_at, id);
 
@@ -2075,7 +2111,7 @@ CREATE TABLE slack_requests (
     environment_id uuid,
     session_id uuid,
     thread_source_id uuid,
-    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop', 'mute', 'unmute')),
+    operation text CHECK (operation IN ('start', 'enqueue', 'slack_route', 'answer', 'native_stop', 'mute', 'unmute', 'sleep', 'wake', 'close', 'help', 'hibernate', 'confirm_close')),
     message_id uuid,
     observed_authority_generation bigint,
     observed_next_turn_seq bigint,
@@ -2108,7 +2144,7 @@ CREATE TABLE slack_requests (
         OR (operation='slack_route' AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL)
         OR (operation='answer' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL)
         OR (operation='native_stop' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL)
-        OR (operation IN ('mute','unmute') AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)))
+        OR (operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close') AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)))
         OR (status<>'accepted' AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL))
 );
 
@@ -2116,7 +2152,7 @@ CREATE INDEX slack_requests_input_source ON slack_requests(environment_id, turn_
 
 CREATE INDEX slack_requests_due ON slack_requests(next_attempt_at, id) WHERE status='received';
 
-CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE (status='rejected' OR (status='accepted' AND operation IN ('mute','unmute'))) AND payload_expired_at IS NULL;
+CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE (status='rejected' OR (status='accepted' AND operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close'))) AND payload_expired_at IS NULL;
 
 CREATE INDEX slack_requests_gesture ON slack_requests(installation_id, request_digest);
 
@@ -2130,7 +2166,7 @@ CREATE TABLE slack_posts (
     seq bigint NOT NULL CHECK (seq>0),
     post_key text NOT NULL CHECK (post_key<>''),
     continuation_ordinal integer NOT NULL DEFAULT 0 CHECK (continuation_ordinal>=0),
-    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'opening')),
+    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'opening', 'controls')),
     turn_id uuid,
     ask_id uuid,
     request_id uuid,

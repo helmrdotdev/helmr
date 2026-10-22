@@ -18,7 +18,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -228,6 +230,9 @@ func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.C
 	}
 	var created db.Command
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, request.EnvironmentID); err != nil {
+			return err
+		}
 		var err error
 		created, err = create(ctx, tx, request, normalized, claimRequest)
 		return err
@@ -267,6 +272,10 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 				}
 			}
 			result = replayed
+			return idempotency.Completion{}, err
+		}
+
+		if _, err := org.LockAdmission(ctx, tx, request.EnvironmentID); err != nil {
 			return idempotency.Completion{}, err
 		}
 
@@ -322,6 +331,9 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 		}
 
 		if err = computer.MarkUsed(ctx, tx, request.EnvironmentID, request.ComputerID); err != nil {
+			return idempotency.Completion{}, err
+		}
+		if err = computer.NoteExecutionDemand(ctx, tx, request.EnvironmentID, request.ComputerID); err != nil {
 			return idempotency.Completion{}, err
 		}
 		created, err := q.CreateCommand(ctx, db.CreateCommandParams{

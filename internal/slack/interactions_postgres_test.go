@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
@@ -19,7 +20,11 @@ func interactionBody(t *testing.T, handler InteractionHandler, claims controlEnv
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, _ := json.Marshal(map[string]any{"type": "block_actions", "api_app_id": "app", "team": map[string]string{"id": "team"}, "user": map[string]string{"id": actor}, "channel": map[string]string{"id": "C1"}, "message": map[string]string{"thread_ts": "123.456"}, "actions": []any{map[string]string{"type": "button", "action_id": "helmr.choose.0", "value": value, "action_ts": actionTime}}})
+	actionID := "helmr.choose.0"
+	if lifecycleAction(claims.Action) {
+		actionID = "helmr.lifecycle." + claims.Action
+	}
+	payload, _ := json.Marshal(map[string]any{"type": "block_actions", "api_app_id": "app", "team": map[string]string{"id": "team"}, "user": map[string]string{"id": actor}, "channel": map[string]string{"id": "C1"}, "message": map[string]string{"thread_ts": "123.456"}, "actions": []any{map[string]string{"type": "button", "action_id": actionID, "value": value, "action_ts": actionTime}}})
 	return []byte(url.Values{"payload": []string{string(payload)}}.Encode())
 }
 func serveSignedInteraction(handler InteractionHandler, body []byte) *httptest.ResponseRecorder {
@@ -95,4 +100,23 @@ func TestSlackChoiceInteractionDoesNotReviveExpiredOrUnauthorizedControls(t *tes
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 FROM slack_requests WHERE status='rejected' AND error='installation_unavailable'`).Scan(&rejected); err != nil || !rejected {
 		t.Fatalf("unavailable token parked: %v %v", rejected, err)
 	}
+}
+
+func TestSlackPersistentLifecycleButtonAdmitsFreshGesture(t *testing.T) {
+	f := newStatusFixture(t)
+	f.link(t)
+	handler := InteractionHandler{Database: f.Pool, AppID: "app", SigningSecret: []byte("fixture-secret"), ControlKey: []byte(strings.Repeat("k", 32))}
+	claims := f.control("help")
+	claims.ExpiresAt = 0
+	if response := serveSignedInteraction(handler, interactionBody(t, handler, claims, "human", slackNow())); response.Code != http.StatusOK {
+		t.Fatalf("callback: %d", response.Code)
+	}
+	var id uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_requests WHERE status='received'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if err := admitControl(t.Context(), f.Pool, id); err != nil {
+		t.Fatal(err)
+	}
+	f.receiptStatus(t, id, "accepted")
 }

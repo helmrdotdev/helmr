@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
@@ -36,7 +37,7 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.slack_user_id,COALESCE(r.error,r.operation,''),i.credential_revision,i.team_id,
  i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND r.source_occurred_at>=i.authorized_at AND r.source_occurred_at>=i.connected_at
  FROM slack_requests r JOIN slack_installations i ON i.id=r.installation_id
- WHERE (r.status='rejected' OR (r.status='accepted' AND r.operation IN ('mute','unmute'))) AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &team, &active)
+ WHERE (r.status='rejected' OR (r.status='accepted' AND r.operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close'))) AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &team, &active)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -92,12 +93,55 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		text := "Helmr could not accept that action. Check your access in Console, then try again."
 		var blocks []any
 		switch code {
+		case "sleep", "close", "help":
+			var target controlTarget
+			var source time.Time
+			var root string
+			err := tx.QueryRow(ctx, `SELECT r.installation_id,r.thread_id,r.thread_source_id,r.environment_id,r.session_id,r.source_occurred_at,t.thread_ts FROM slack_requests r JOIN slack_threads t ON t.id=r.thread_id WHERE r.id=$1 AND t.deleted_at IS NULL`, id).Scan(&target.Installation, &target.Thread, &target.Participant, &target.Environment, &target.Session, &source, &root)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			_, denied, err := linkedHuman(ctx, tx, team, actor, target.Environment, source, false)
+			if err != nil {
+				return err
+			}
+			if denied != "" {
+				return nil
+			}
+			text, blocks, err = lifecyclePresentation(ctx, tx, config, target, code, actor, true)
+			if err != nil {
+				return err
+			}
+			payload.Thread = root
+		case "wake":
+			text = "Wake accepted. Check the Computer state for completion. No prompt was sent and Stop holds remain unchanged."
+		case "hibernate":
+			text = "Hibernate accepted. Background progress pauses when capture succeeds. Check the Computer state for completion."
+		case "confirm_close":
+			text = "Close accepted. The Session and its owned Sessions will close after accepted work settles. Wake cannot undo closure. Other work may still occupy the Computer."
+		case "computer_busy":
+			text = "Cannot hibernate while foreground work or another control is active. Wait for it to settle or use the existing Stop control, then try again."
+		case "execution_settling":
+			text = "The previous execution timed out and is still settling. Try again shortly."
+		case "execution_capacity_unavailable":
+			text = "Worker capacity could not be confirmed. No new work was accepted. Try again after Worker capacity becomes available."
+		case "execution_capacity_incompatible":
+			text = "No active Worker pool supports this Computer. Ask an administrator to configure a compatible Worker pool, then try again."
+		case "execution_capacity_exhausted":
+			text = "Worker capacity is full. Release an unused Computer or ask an administrator to raise the Worker maximum, then try again."
+		case "execution_limit":
+			text = "Cannot start execution: the Environment execution quota is in use. Release an unused Computer or ask an administrator to raise the quota, then try again."
+		case "response_conflict":
+			text = "The affected scope changed. Use !sleep or !close again to review the current members."
 		case "mute":
 			text = "Thread input muted. Work already accepted and Agent replies continue. Use !unmute to resume automatic input, or mention the Agent to send just one message."
 		case "unmute":
 			text = "Thread input enabled. Future replies will reach the Agent without a mention. Muted messages will not be replayed."
 		case "command_unbound":
-			text = "Use !mute or !unmute in an existing Agent Session thread."
+			text = "Use thread commands in an existing Agent Session thread."
 
 		case "identity_unlinked":
 			link, err := firstUseURL(config, id, channel)
@@ -141,7 +185,7 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			text = "Helmr could not accept that input. Check the task's supported input in Console, then try again."
 		}
 		body := map[string]any{"channel": channel, "text": text}
-		if (code == "mute" || code == "unmute") && timestampPattern.MatchString(payload.Thread) {
+		if lifecycleAction(code) && timestampPattern.MatchString(payload.Thread) {
 			body["thread_ts"] = payload.Thread
 		}
 		if direct {

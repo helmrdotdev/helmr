@@ -96,6 +96,8 @@ func threadInputCommand(text, bot string) string {
 		return "aside"
 	}
 	switch text {
+	case "!sleep", "!wake", "!close", "!help":
+		return strings.TrimPrefix(text, "!")
 	case "!mute":
 		return "mute"
 	case "!unmute":

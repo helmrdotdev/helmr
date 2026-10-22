@@ -2,9 +2,9 @@ package computerhost
 
 import "sync"
 
-// captureQueue serializes capture CPU and upload I/O before dispatch is sealed.
+// captureQueue serializes physical capture before dispatch is sealed.
 // Requests retain FIFO position while their save owner continues servicing work.
-// The active permit lasts through publication; disk remains charged to the VM.
+// Immutable publication proceeds outside the FIFO; disk remains charged to the VM.
 type captureQueue struct {
 	mu      sync.Mutex
 	active  *capturePermit

@@ -41,6 +41,11 @@ func ResolveGroup(ctx context.Context, q db.Querier, regionID string, name strin
 	if err != nil {
 		return Group{}, err
 	}
+	fingerprint, err := SupplyFingerprint(ctx, q, pgvalue.MustUUIDValue(group.ID))
+	if err != nil {
+		return Group{}, err
+	}
+	result.SupplyFingerprint = fingerprint
 	profiles, err := retainedProfiles(ctx, q, group.ID, pgtype.UUID{})
 	result.RetainedProfiles = &profiles
 	return result, err

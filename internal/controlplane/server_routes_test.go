@@ -64,6 +64,7 @@ GET /api/projects/{project}/environments/{environment}/commands/{commandID}/logs
 GET /api/projects/{project}/environments/{environment}/computers
 GET /api/projects/{project}/environments/{environment}/computers/{computerID}
 GET /api/projects/{project}/environments/{environment}/computers/{computerID}/commands
+GET /api/projects/{project}/environments/{environment}/computers/{computerID}/execution-scope
 GET /api/projects/{project}/environments/{environment}/computers/{computerID}/sessions
 GET /api/projects/{project}/environments/{environment}/deployments
 GET /api/projects/{project}/environments/{environment}/deployments/current
@@ -73,6 +74,7 @@ GET /api/projects/{project}/environments/{environment}/secrets
 GET /api/projects/{project}/environments/{environment}/secrets/{secret}
 GET /api/projects/{project}/environments/{environment}/sessions
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/close-scope
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/events
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns
@@ -109,6 +111,7 @@ GET /v1/commands/{commandID}/logs
 GET /v1/computers
 GET /v1/computers/{computerID}
 GET /v1/computers/{computerID}/commands
+GET /v1/computers/{computerID}/execution-scope
 GET /v1/computers/{computerID}/sessions
 GET /v1/deployments
 GET /v1/deployments/current
@@ -118,6 +121,7 @@ GET /v1/secrets
 GET /v1/secrets/{secret}
 GET /v1/sessions
 GET /v1/sessions/{sessionID}
+GET /v1/sessions/{sessionID}/close-scope
 GET /v1/sessions/{sessionID}/events
 GET /v1/sessions/{sessionID}/turns
 GET /v1/sessions/{sessionID}/turns/{turnID}
@@ -170,6 +174,8 @@ POST /api/projects/{project}/environments/{environment}/api-keys
 POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel
 POST /api/projects/{project}/environments/{environment}/computers
 POST /api/projects/{project}/environments/{environment}/computers/{computerID}/exec
+POST /api/projects/{project}/environments/{environment}/computers/{computerID}/hibernate
+POST /api/projects/{project}/environments/{environment}/computers/{computerID}/wake
 POST /api/projects/{project}/environments/{environment}/deployment-bundles/finalize
 POST /api/projects/{project}/environments/{environment}/deployment-bundles/upload-plan
 POST /api/projects/{project}/environments/{environment}/deployments/{deploymentID}/promote
@@ -203,6 +209,8 @@ POST /integrations/slack/apps/{registrationID}/interactions
 POST /v1/commands/{commandID}/cancel
 POST /v1/computers
 POST /v1/computers/{computerID}/exec
+POST /v1/computers/{computerID}/hibernate
+POST /v1/computers/{computerID}/wake
 POST /v1/deployment-bundles/finalize
 POST /v1/deployment-bundles/upload-plan
 POST /v1/deployments/{deploymentID}/promote

@@ -12,7 +12,7 @@ describe("Agent declaration analysis", () => {
     const worker = agent({ id: "worker", template: template({ ...machine(), prepare, refresh: { every: "1h", maxAge: "1d" }, secrets: [{ secret: "API_TOKEN", env: { name: "TOKEN", mode: "raw" } }] }), init: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
     const result = compile(entry(worker))
     expect(result.buildPlan.definitions[1]?.manifest).toMatchObject({ prepare: true })
-    expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { templateDefinitionId: "machine", hasInit: true, inputKind: "text", maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })
+    expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { suspension: "manual", templateDefinitionId: "machine", hasInit: true, inputKind: "text", maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })
     const declaration = result.buildPlan.definitions[1]!
     if (declaration.kind !== "template") throw new Error("Computer missing")
     expect(declaration.manifest.resources).toEqual({ milliCpu: 2000, memoryMiB: 4096, diskMiB: 16384 })
@@ -197,5 +197,17 @@ test("unavailable schema descriptions do not disable validation or become an emp
     const schema = { "~standard": { version: 1 as const, vendor: "test", validate: () => ({ value: 1 }), ...(convert ? { jsonSchema: { input: convert } } : {}) } }
     const worker = agent({ id: "worker", template: machine(), inputSchema: schema, turn: () => null })
     expect(compile(entry(worker)).buildPlan.definitions[0]?.manifest).toMatchObject({ inputKind: "json", inputSchema: { status: "unavailable", reason: reasons[i] } })
+  }
+})
+
+
+test("suspension is an Agent policy with an explicit manual default", () => {
+  for (const suspension of [undefined, "manual", "after_turn"] as const) {
+    const worker = agent({ id: "worker", template: machine(), turn: () => null, ...(suspension === undefined ? {} : { suspension }) })
+    expect(compile(entry(worker)).buildPlan.definitions[0]?.manifest).toMatchObject({ suspension: suspension ?? "manual" })
+  }
+  const worker = agent({ id: "worker", template: machine(), turn: () => null })
+  for (const suspension of [null, true, "idle", {}]) {
+    expect(() => compile(entry({ ...worker, suspension }))).toThrow("Agent suspension must be manual or after_turn")
   }
 })

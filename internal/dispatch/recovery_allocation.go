@@ -7,6 +7,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"uuid"
 )
@@ -28,6 +29,10 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 			return err
 		}
 		_, err = org.LockAdmission(ctx, tx, env)
+		if err != nil {
+			return err
+		}
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
 		if err != nil {
 			return err
 		}
@@ -67,7 +72,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err != nil {
 			return err
 		}
-		if err = requireAllocationCapacity(ctx, tx, env, supply, shape, true); err != nil {
+		if err = requireAllocationCapacity(ctx, tx, env, supply, shape, computerID, uuid.Nil()); err != nil {
 			return err
 		}
 		result = computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: base, RestoredFrom: save, DiskOnlyRecovery: true}
@@ -80,7 +85,10 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err = requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		return computer.RequireSecretsNotRevoked(ctx, tx, env, computerID)
+		if err := computer.RequireSecretsNotRevoked(ctx, tx, env, computerID); err != nil {
+			return err
+		}
+		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)

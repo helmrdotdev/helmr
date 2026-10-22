@@ -63,9 +63,10 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 		}
 	}
 	// Even expired, unfenced allocations consume the environment quota.
+ // Keep blocked demand visible so admission can detect incomplete placement.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET max_cpu_millis=(SELECT sum(reserved_cpu_millis) FROM computer_leases WHERE environment_id=$1 AND fenced_at IS NULL) WHERE id=$1`, f.Environment)
 	rows, err = q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 10})
-	if err != nil || len(rows) != 0 {
+	if err != nil || len(rows) != 1 || rows[0].RemainingCpuMillis!=0 {
 		t.Fatalf("quota-blocked demand=%+v %v", rows, err)
 	}
 	assertCharge()

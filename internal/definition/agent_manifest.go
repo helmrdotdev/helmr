@@ -16,6 +16,7 @@ type AgentManifest struct {
 	InputKind            string                 `json:"inputKind"`
 	InputSchema          *InputSchemaDiscovery  `json:"inputSchema,omitempty"`
 	HasInit              bool                   `json:"hasInit"`
+	Suspension           string                 `json:"suspension,omitempty"`
 	CloseAfterIdleNever  bool                   `json:"closeAfterIdleNever,omitempty"`
 	CloseAfterIdleMs     *int64                 `json:"closeAfterIdleMs,omitempty"`
 	MaxTurnDurationMs    *int64                 `json:"maxTurnDurationMs,omitempty"`
@@ -45,7 +46,17 @@ type TemplateInputManifest struct {
 	BuildSecrets           []SecretBinding   `json:"buildSecrets"`
 }
 
+func (m AgentManifest) SuspensionPolicy() string {
+	if m.Suspension == "" {
+		return "manual"
+	}
+	return m.Suspension
+}
+
 func ValidateAgentManifest(m AgentManifest) error {
+	if m.SuspensionPolicy() != "manual" && m.SuspensionPolicy() != "after_turn" {
+		return errors.New("invalid agent suspension policy")
+	}
 	if err := ValidateInputContract(m.InputKind, m.InputSchema); err != nil {
 		return err
 	}

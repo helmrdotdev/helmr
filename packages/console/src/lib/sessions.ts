@@ -20,6 +20,8 @@ export type Session = {
   initial_turn: { id: string; status: SessionTurn["status"] } | null;
   key?: string;
   status: SessionStatus;
+  suspension: "manual" | "after_turn";
+  close_after_idle_ms: number | null;
   created_at: string;
   holds: {
     id: string;
@@ -242,4 +244,11 @@ export function storagePressureNotice(event: SessionEvent): string | undefined {
     case "resolved": return "Storage recovered and queued work was allowed to continue. Stopped requests were not restarted automatically.";
     default: return undefined;
   }
+}
+
+export function getSessionCloseScope(address: SessionAddress): Promise<import("./computers").ExecutionScope> {
+  return request(`${sessionAPIPath(address)}/close-scope`);
+}
+export function closeSession(address: SessionAddress, input: { idempotency_key: string; expected_scope: string }): Promise<SessionReceipt> {
+  return postJson(`${sessionAPIPath(address)}/close`, input);
 }

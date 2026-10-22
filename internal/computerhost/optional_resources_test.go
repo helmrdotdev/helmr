@@ -116,3 +116,38 @@ func TestOptionalSeedCannotStartWithMissingStaleOrZeroPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestRetainedSourcePolicyAndPromotionKeepPhysicalReservation(t *testing.T) {
+	p, policy, shape := optionalMachines(t)
+	key := instanceReservationKey("paused", 1)
+	if _, err := p.Reservations.Reserve(key, shape); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.retainCheckpointSource(key); err != nil {
+		t.Fatal(err)
+	}
+	if p.retainedSourceReclaimRequested(key) {
+		t.Fatal("fresh source reclaimed")
+	}
+	if got := p.ResourceObservation(); got.OptionalDiskBytes != shape.HostDiskBytes || got.LocalOptional.CPUMillis != 0 {
+		t.Fatalf("source double counted: %+v", got)
+	}
+	if err := p.promoteCheckpointSource(key); err != nil {
+		t.Fatal(err)
+	}
+	if p.Reservations.Snapshot().Used != shape || len(p.Reservations.Snapshot().Optional) != 0 {
+		t.Fatal("promotion released capacity")
+	}
+	if err := p.retainCheckpointSource(key); err != nil {
+		t.Fatal(err)
+	}
+	policy.Revision++
+	policy.Optional = workerapi.OptionalResources{}
+	p.ApplyResourcePolicy(policy)
+	if !p.retainedSourceReclaimRequested(key) {
+		t.Fatal("reduced policy did not reclaim source")
+	}
+	if p.Reservations.Snapshot().Used != shape {
+		t.Fatal("reclaim released capacity before cleanup")
+	}
+}

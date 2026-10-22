@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -70,7 +71,7 @@ func TestCapacityHTTPResolveAndPlan(t *testing.T) {
 	f.sealWorkerPool(t, group.ID, pool.ID)
 
 	resolved := capacityJSON(t, f.request(t, http.MethodGet, "/capacity/v1/worker-groups/resolve?region_id=aws-us-east-1&name=default", token, ""), http.StatusOK)
-	assertCapacityJSONKeys(t, resolved, "claim_version", "id", "name", "region_id", "retained_profiles", "status")
+	assertCapacityJSONKeys(t, resolved, "claim_version", "id", "name", "region_id", "retained_profiles", "status", "supply_fingerprint")
 	if resolved["id"] != group.ID || resolved["status"] != "active" {
 		t.Fatalf("resolved group = %#v", resolved)
 	}
@@ -83,7 +84,7 @@ func TestCapacityHTTPResolveAndPlan(t *testing.T) {
 	assertAdminError(t, f.request(t, http.MethodGet, "/capacity/v1/worker-groups/"+group.ID+"/pools/resolve?name=missing", token, ""), http.StatusNotFound, "not_found")
 
 	plan := capacityJSON(t, f.request(t, http.MethodPost, "/capacity/v1/worker-groups/"+group.ID+"/plan", token,
-		fmt.Sprintf(`{"pools":[{"pool_id":%q,"max_additional_workers":2}]}`, pool.ID)), http.StatusOK)
+		fmt.Sprintf(`{"expected_supply_fingerprint":%q,"observed_at":%q,"pools":[{"pool_id":%q,"max_additional_workers":2}]}`, resolved["supply_fingerprint"], time.Now().UTC().Format(time.RFC3339Nano), pool.ID)), http.StatusOK)
 	assertCapacityJSONKeys(t, plan, "complete", "computed_at", "group_status", "pools", "region_id", "unmatched_demand", "worker_group_id", "worker_group_name")
 	pools, ok := plan["pools"].([]any)
 	if !ok || len(pools) != 1 {

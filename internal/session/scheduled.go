@@ -34,7 +34,8 @@ func AdmitScheduled(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, 
 	var key, inputKind string
 	var idle *int64
 	var never bool
-	if err := tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never,d.input_kind FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, s.environment, s.agent, s.deployment).Scan(&key, &idle, &never, &inputKind); err != nil {
+	var suspension string
+	if err := tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never,d.input_kind,d.suspension FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, s.environment, s.agent, s.deployment).Scan(&key, &idle, &never, &inputKind, &suspension); err != nil {
 		return Admission{}, err
 	}
 	input, err := content.InvocationFor(inputKind, s.input)
@@ -52,9 +53,12 @@ func AdmitScheduled(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, 
 	if err = computerAcceptsAdmission(ctx, tx, s.environment, computerID, true); err != nil {
 		return Admission{}, err
 	}
+	if err = computer.NoteExecutionDemand(ctx, tx, s.environment, computerID); err != nil {
+		return Admission{}, err
+	}
 	idle = lifetime.Resolve(lifetime.Policy{}, idle, never)
 	receipt := Admission{CloseAfterIdleMs: idle, SessionID: uuid.NewV7(), TurnID: uuid.NewV7(), Sequence: 1, Created: true}
-	if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,next_turn_seq,close_after_idle_ms) SELECT $1,$2,$3,$4,$5,$2,0,2,$6 FROM environments WHERE id=$1`, s.environment, receipt.SessionID, s.agent, s.deployment, computerID, idle); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,next_turn_seq,close_after_idle_ms,suspension) SELECT $1,$2,$3,$4,$5,$2,0,2,$6,$7 FROM environments WHERE id=$1`, s.environment, receipt.SessionID, s.agent, s.deployment, computerID, idle, suspension); err != nil {
 		return Admission{}, err
 	}
 	digest, err := digestJSON(s.input)

@@ -12,9 +12,10 @@ type AgentComputerCaptureRequest struct {
 	ChannelCredential string `json:"channel_credential"`
 }
 type AgentComputerCaptureResponse struct {
-	Capture     []byte `json:"capture"`
-	SaveID      string `json:"save_id"`
-	WorkPending bool   `json:"work_pending"`
+	Capture       []byte `json:"capture"`
+	SaveID        string `json:"save_id"`
+	WorkPending   bool   `json:"work_pending"`
+	ReleaseSource bool   `json:"release_source"`
 }
 type AgentComputerReceiptRequest struct {
 	EnvironmentID string `json:"environment_id"`

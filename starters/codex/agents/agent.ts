@@ -19,6 +19,8 @@ export const workspace = template({
 export const assistant = agent({
   id: agentName,
   template: workspace,
+  suspension: "manual",
+  closeAfterIdle: "never",
   maxTurnDuration: "15m",
   init({ session, recovery }) {
     return new CodexSession({ cwd: "/workspace", stateDirectory: "/var/lib/helmr/codex", sessionId: session.id, model, instructions: introduction, recovery: recovery.kind })

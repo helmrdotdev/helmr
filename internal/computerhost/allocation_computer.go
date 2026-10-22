@@ -509,6 +509,7 @@ func (o *ComputerAllocationOwner) cleanup() error {
 			return err
 		}
 	}
+	o.machines.forgetCheckpointSource(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch))
 	o.finished.Store(true)
 	return nil
 }

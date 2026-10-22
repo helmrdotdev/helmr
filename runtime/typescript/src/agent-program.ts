@@ -6,7 +6,6 @@ import type { InitContext, Turn } from "../../../sdk/typescript/src/agent"
 import type { JsonValue } from "../../../sdk/typescript/src/contract"
 import { requireJson } from "../../../sdk/typescript/src/agent"
 import { AgentChannel, OperationError, MAX_AGENT_FRAME_BYTES } from "./agent-channel"
-import { SessionActivity } from "./agent-activity"
 import { installSessionHttp } from "./agent-http"
 import { createAgentMcp } from "./agent-mcp"
 import { GuestSessionDriver } from "./agent-driver"
@@ -69,7 +68,6 @@ export async function runAgentProgram(definitionSource: LoadedAgentDefinition | 
   const stopped = new AbortController()
   const failureConvergenceMs = 10_000
   const uninstallHttp = installSessionHttp()
-  const activity = new SessionActivity()
   let channel: AgentChannel | undefined
   let runtime: SessionRuntime | undefined
   let initialized = false
@@ -92,7 +90,7 @@ export async function runAgentProgram(definitionSource: LoadedAgentDefinition | 
         channel = new AgentChannel(command.identity, frame => io.write(frame), error => stopped.abort(error))
         let definition: LoadedAgentDefinition
         try {
-          definition = typeof definitionSource === "function" ? await activity.authored(() => definitionSource(start.agentId)) : definitionSource
+          definition = typeof definitionSource === "function" ? await definitionSource(start.agentId) : definitionSource
           if (start.agentId !== definition.id) throw new Error("Agent bundle does not match Session start")
         } catch (error) {
           const { code, message } = failure(error)
@@ -107,7 +105,7 @@ export async function runAgentProgram(definitionSource: LoadedAgentDefinition | 
           session: { id: command.identity.sessionId, ...(start.conversationKey === undefined ? {} : { key: start.conversationKey }), ...(start.parentSessionId === undefined ? {} : { parent: Object.freeze({ id: start.parentSessionId }) }) },
           computer: { id: start.computerId }, deployment: { id: start.deploymentId }, recovery: { kind, ...(start.recoveryReason ? { reason: start.recoveryReason } : {}) }, signal: stopped.signal,
         }
-        runtime = new SessionRuntime(definition, context, driver, { failureConvergenceMs, terminalSequence: safeSequence(start.terminalSequence), activity, ...(io.timing ? { onTiming: io.timing } : {}) })
+        runtime = new SessionRuntime(definition, context, driver, { failureConvergenceMs, terminalSequence: safeSequence(start.terminalSequence), ...(io.timing ? { onTiming: io.timing } : {}) })
         const activeChannel = channel
         observe(runtime.initialize().then(async () => {
           initialized = true
@@ -124,17 +122,13 @@ export async function runAgentProgram(definitionSource: LoadedAgentDefinition | 
       if (command.command.case === "checkpoint") {
         const checkpointId = command.command.value.checkpointId
         // The supervisor has sealed admission and drained earlier local writes.
-        // Inspect asynchronous work without manufacturing a delivery receipt.
-        // The physical owner fences the entire Session process tree.
+        // A settled Helmr continuation grants protocol readiness. The physical
+        // owner freezes the entire Linux process tree, including background work.
         const activeChannel = channel
         observe((async () => {
           let outcome: agentProto.SessionCheckpointReady["outcome"]
           try {
             if (!checkpointId || !initialized || !runtime!.canCheckpoint || shutdown) throw new Error("Session is not ready for coherent capture")
-            // Handle destruction is reported on the next loop turn.
-            await new Promise<void>(resolve => setImmediate(resolve))
-            if (!runtime!.canCheckpoint) throw new Error("Session continuation is not reusable")
-            activity.assertIdle()
             outcome = { case: "ready", value: true }
           } catch (error) { outcome = { case: "error", value: failure(error) } }
           await activeChannel.event({ case: "checkpointReady", value: create(agentProto.SessionCheckpointReadySchema, { checkpointId, outcome }) })
@@ -203,7 +197,6 @@ export async function runAgentProgram(definitionSource: LoadedAgentDefinition | 
     const error = stopped.signal.reason ?? new Error("Guest pipe closed")
     stopped.abort(error)
     channel?.close(error)
-    activity.close()
     uninstallHttp()
     // Uncooperative authored tasks are fenced by the guest process owner. Never
     // report a clean shutdown merely because their JavaScript promises hung.

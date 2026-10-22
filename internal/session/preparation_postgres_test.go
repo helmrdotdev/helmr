@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"strings"
 	"sync"
 	"testing"
@@ -35,7 +36,9 @@ type preparationFixture struct {
 
 func newPreparationFixture(t *testing.T) preparationFixture {
 	t.Helper()
-	return preparationFixtureFor(t, newFixture(t))
+	f := newFixture(t)
+	sessiontest.ObserveProvisioning(t, sessiontest.Fixture{Pool: f.pool, Worker: f.worker, Group: f.group})
+	return preparationFixtureFor(t, f)
 }
 func preparationFixtureFor(t *testing.T, resident fixture) preparationFixture {
 	t.Helper()

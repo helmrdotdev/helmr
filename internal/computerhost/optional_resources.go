@@ -24,6 +24,7 @@ type optionalResources struct {
 	policy              workerapi.ResourcePolicy
 	confirmed           time.Time
 	seeds               map[reservation.Key]*optionalSeed
+	sources             map[reservation.Key]*optionalSeed
 	pressure            bool
 	transferNext        time.Time
 	cacheRefillAfter    time.Time

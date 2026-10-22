@@ -7,6 +7,8 @@ import { resourceID } from "./internal/id"
 import type { RequestOptions } from "./request"
 import {
   encodeComputerSecrets,
+  parseComputerExecutionReceipt,
+  type ComputerExecutionRequest,
   type ComputerCreateRequest,
   parseComputerDeleteReceipt,
   parseComputer,
@@ -129,8 +131,16 @@ export function createClientComputerRef(
         options.signal === undefined ? {} : { signal: options.signal }), collection)
     } })
   }
+  function control(kind: "hibernate" | "wake", request: ComputerExecutionRequest = {}, options: RequestOptions = {}) {
+    return transport.request("POST", `${path}/${kind}`, {
+      body: request.idempotencyKey === undefined ? {} : { idempotency_key: request.idempotencyKey },
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    }).then(parseComputerExecutionReceipt)
+  }
   const ref = {
     id: computerID,
+    hibernate: (request?: ComputerExecutionRequest, options?: RequestOptions) => control("hibernate", request, options),
+    wake: (request?: ComputerExecutionRequest, options?: RequestOptions) => control("wake", request, options),
     async update(request: Readonly<{ deleteAfterUnused: Retention }>, options: RequestOptions = {}): Promise<Computer> {
       return parseComputer(await transport.request("PATCH", path, { body: { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }, ...(options.signal === undefined ? {} : { signal: options.signal }) }))
     },

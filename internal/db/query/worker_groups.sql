@@ -299,17 +299,17 @@ WITH live_workers AS (
      LIMIT sqlc.arg(row_limit)
 ), usage AS (
  SELECT h.worker_host_id,
-   COALESCE(sum(allocation_usage.reserved_cpu_millis) FILTER (WHERE kind<>'seed'),0)::bigint cpu_millis,
-   COALESCE(sum(allocation_usage.reserved_memory_bytes) FILTER (WHERE kind<>'seed'),0)::bigint memory_bytes,
-   COALESCE(sum(allocation_usage.reserved_scratch_bytes) FILTER (WHERE kind<>'seed'),0)::bigint guest_ephemeral_disk_bytes,
-   count(allocation_usage.worker_host_id) FILTER (WHERE kind<>'seed')::bigint vm_slots,
-   count(allocation_usage.worker_host_id) FILTER (WHERE allocation_usage.starting AND kind<>'seed')::bigint instance_starts,
-   COALESCE(sum(reserved_cpu_millis) FILTER (WHERE kind='seed'),0)::bigint seed_cpu,
-   COALESCE(sum(reserved_memory_bytes) FILTER (WHERE kind='seed'),0)::bigint seed_memory,
-   COALESCE(sum(reserved_scratch_bytes) FILTER (WHERE kind='seed'),0)::bigint seed_scratch,
-   count(*) FILTER (WHERE kind='seed')::bigint seed_slots,
-   count(*) FILTER (WHERE kind='seed' AND starting)::bigint seed_starts
- FROM live_workers h LEFT JOIN (SELECT 'computer'::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+   COALESCE(sum(allocation_usage.reserved_cpu_millis) FILTER (WHERE kind NOT IN ('seed','retained')),0)::bigint cpu_millis,
+   COALESCE(sum(allocation_usage.reserved_memory_bytes) FILTER (WHERE kind NOT IN ('seed','retained')),0)::bigint memory_bytes,
+   COALESCE(sum(allocation_usage.reserved_scratch_bytes) FILTER (WHERE kind NOT IN ('seed','retained')),0)::bigint guest_ephemeral_disk_bytes,
+   count(allocation_usage.worker_host_id) FILTER (WHERE kind NOT IN ('seed','retained'))::bigint vm_slots,
+   count(allocation_usage.worker_host_id) FILTER (WHERE allocation_usage.starting AND kind NOT IN ('seed','retained'))::bigint instance_starts,
+   COALESCE(sum(reserved_cpu_millis) FILTER (WHERE kind IN ('seed','retained')),0)::bigint seed_cpu,
+   COALESCE(sum(reserved_memory_bytes) FILTER (WHERE kind IN ('seed','retained')),0)::bigint seed_memory,
+   COALESCE(sum(reserved_scratch_bytes) FILTER (WHERE kind IN ('seed','retained')),0)::bigint seed_scratch,
+   count(*) FILTER (WHERE kind IN ('seed','retained'))::bigint seed_slots,
+   count(*) FILTER (WHERE kind IN ('seed','retained') AND starting)::bigint seed_starts
+ FROM live_workers h LEFT JOIN (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
  worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
  initialized_at IS NULL starting
  FROM computer_leases WHERE fenced_at IS NULL
@@ -367,7 +367,12 @@ SELECT live_workers.worker_group_id,
  JOIN usage USING (worker_host_id)
  ORDER BY live_workers.worker_host_id;
 -- name: RecordWorkerObservation :one
-WITH updated AS (
+WITH eligible AS MATERIALIZED (
+ SELECT * FROM worker_hosts
+ WHERE worker_hosts.id=sqlc.arg(worker_host_id) AND worker_hosts.worker_group_id=sqlc.arg(worker_group_id)
+ AND worker_hosts.current_epoch=sqlc.arg(worker_epoch) AND worker_hosts.status IN ('active','draining')
+ FOR UPDATE
+), updated AS (
 UPDATE worker_hosts
    SET observed_at=clock_timestamp(), admission_paused_reason=sqlc.narg(admission_paused_reason),
        resource_observation_sequence=sqlc.arg(sequence)::bigint,
@@ -384,14 +389,13 @@ UPDATE worker_hosts
        updated_at=clock_timestamp()
  WHERE worker_hosts.id=sqlc.arg(worker_host_id) AND worker_hosts.worker_group_id=sqlc.arg(worker_group_id)
    AND worker_hosts.current_epoch=sqlc.arg(worker_epoch) AND worker_hosts.status IN ('active','draining')
+   AND EXISTS(SELECT 1 FROM eligible)
    AND (worker_hosts.resource_observation_sequence IS NULL OR worker_hosts.resource_observation_sequence<sqlc.arg(sequence))
  RETURNING worker_hosts.*
 )
 SELECT * FROM updated
 UNION ALL
-SELECT * FROM worker_hosts WHERE worker_hosts.id=sqlc.arg(worker_host_id) AND worker_hosts.worker_group_id=sqlc.arg(worker_group_id)
- AND worker_hosts.current_epoch=sqlc.arg(worker_epoch) AND worker_hosts.status IN ('active','draining')
- AND NOT EXISTS(SELECT 1 FROM updated);
+SELECT * FROM eligible WHERE NOT EXISTS(SELECT 1 FROM updated);
 
 -- name: GetWorkerPool :one
 SELECT * FROM worker_pools

@@ -13,6 +13,11 @@ import (
 func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.UUID) (bool, error) {
 	var present bool
 	err := database.QueryRow(ctx, `SELECT EXISTS(
+ SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id
+ JOIN projects p ON p.id=e.project_id JOIN worker_groups g ON g.region_id=p.default_region_id AND g.id=$1
+ WHERE c.execution_deadline_at>clock_timestamp() AND c.deleted_at IS NULL
+ AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
+ ) OR EXISTS(
  SELECT 1 FROM image_builds preparation
  JOIN environments e ON e.id=preparation.environment_id
  JOIN projects project ON project.id=e.project_id
@@ -40,7 +45,7 @@ func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.U
    OR (EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.id=c.recovery_save_id AND save.root_id IS NOT NULL AND save.status='published')
     AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
     AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807)))
-   OR (c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
+   OR (c.execution_deadline_at>clock_timestamp() AND c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
      AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id
        AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807))))
  ) OR EXISTS(

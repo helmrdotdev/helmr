@@ -107,7 +107,7 @@ describe("declaration discovery", () => {
     expect(result.buildPlan.definitions.filter((item) => item.kind === "agent")).toEqual([{
       declaredId: "plain",
       kind: "agent",
-      manifest: { templateDefinitionId: "plain-computer", hasInit: false, inputKind: "text", triggers: {} },
+      manifest: { templateDefinitionId: "plain-computer", hasInit: false, inputKind: "text", suspension: "manual", triggers: {} },
     }])
   })
 })

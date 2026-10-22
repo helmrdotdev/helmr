@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"slices"
 	"time"
 	"uuid"
@@ -11,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -65,6 +67,24 @@ func computerInstallationIdentity(p *agentv1.ComputerSessionInstallation, source
 // validateSourceAbort runs with supply and captured ownership locks held. No
 // public caller can supply this installation: worker authentication owns it.
 func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, r CaptureRecord, p *agentv1.ComputerSessionInstallation, fresh, initial bool) error {
+	if r.State == "ready" {
+		var runnable bool
+		if err := tx.QueryRow(ctx, `SELECT `+computer.RunnableExecutionDemandSQL+` FROM computers c WHERE environment_id=$1 AND id=$2`, env, r.Computer).Scan(&runnable); err != nil {
+			return err
+		}
+		if !runnable {
+			return ErrNotReady
+		}
+		if err := computer.RequireExecutionCapacity(ctx, tx, env, r.Computer); err != nil {
+			if errors.Is(err, computer.ErrExecutionSettling) {
+				return ErrNotReady
+			}
+			return err
+		}
+		if err := computer.RequireRetainedHostCapacity(ctx, tx, env, r.Computer, r.SourceEpoch); err != nil {
+			return err
+		}
+	}
 	if p.GetDesiredVersion() != r.Version+1 {
 		return ErrConflict
 	}
@@ -168,7 +188,13 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
+			return err
+		}
 		if err := computer.LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if _, err := org.LockAdmission(ctx, tx, env); err != nil {
 			return err
 		}
 		r, err := LockCapture(ctx, tx, env, checkpoint)
@@ -181,6 +207,10 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		}
 		if r.State != "capturing" && r.State != "sealed" && r.State != "ready" && r.State != "aborting" && r.State != "consumed" {
 			return ErrNotReady
+		}
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+		if err != nil {
+			return err
 		}
 		fresh := r.State != "aborting" && r.State != "consumed"
 		if err = validateComputerInstallationReceipt(r, p, observed, false); err != nil {
@@ -201,7 +231,10 @@ func ValidateComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 			}
 			return matchSourceAbort(ctx, tx, env, checkpoint, identity)
 		}
-		return computer.BeginSourceAbort(ctx, tx, env, r.Computer, checkpoint, p.GetDesiredVersion(), identity)
+		if err := computer.BeginSourceAbort(ctx, tx, env, r.Computer, checkpoint, p.GetDesiredVersion(), identity); err != nil {
+			return err
+		}
+		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
 	}))
 }
 
@@ -229,7 +262,13 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
 		return ErrInvalidInput
 	}
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if err := workergroup.LockExecutionSupply(ctx, tx, env); err != nil {
+			return err
+		}
 		if err := computer.LockHost(ctx, tx, host); err != nil {
+			return err
+		}
+		if _, err := org.LockAdmission(ctx, tx, env); err != nil {
 			return err
 		}
 		r, err := LockCapture(ctx, tx, env, checkpoint)
@@ -268,6 +307,9 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
 			if err = notifySessionsChanged(ctx, tx, env, m.Session); err != nil {
 				return err
 			}
+		}
+		if err = computer.CompleteExecutionAdmission(ctx, tx, env, r.Computer); err != nil {
+			return err
 		}
 		return computer.ConsumeCheckpoint(ctx, tx, env, checkpoint)
 	}))

@@ -39,7 +39,7 @@ func TestStartFractionalCPUUsesPhysicalAdmissionBound(t *testing.T) {
 	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("physical-cpu")); !errors.Is(err, computer.ErrInvalidInput) {
 		t.Fatalf("admitted a whole vCPU below physical bound: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1000 WHERE id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=2000 WHERE id=$1`, f.env)
 	admitted, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("physical-cpu"))
 	if err != nil {
 		t.Fatal(err)

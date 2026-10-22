@@ -2,6 +2,9 @@ package sessiontest
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"strings"
 	"testing"
 	"uuid"
@@ -71,6 +74,7 @@ func New(t *testing.T) Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_guest_ephemeral_disk_bytes=1073741824,resource_observation_sequence=1,resource_policy_revision=1,resource_observed_at=clock_timestamp(),local_optional_cpu_millis=0,local_optional_memory_bytes=0,optional_disk_bytes=0,local_optional_vm_slots=0,local_optional_tasks=0,optional_reclaim_pending=false,disk_slots_for_real_work=1,ready_leaf_keys='[]' WHERE id=$1`, f.Worker)
 	return f
 }
 
@@ -78,7 +82,22 @@ func New(t *testing.T) Fixture {
 // seed profile and resources that admitting a new Computer requires.
 func PrepareAdmission(t *testing.T, f Fixture) {
 	t.Helper()
+	ObserveProvisioning(t, f)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1 AND id=$2;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912,max_image_age_ms=12345 WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE computers SET image_spec_id=$2,origin_deployment_id=$2,origin_template_id=origin_deployment_id,cpu_millis=1000,memory_bytes=536870912,storage_reservation_bytes=$4 WHERE environment_id=$1;`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile, disk.SeedCapacity)
+}
+
+// ObserveProvisioning supplies provider headroom for admission tests.
+func ObserveProvisioning(t *testing.T, f Fixture) {
+	t.Helper()
+	// Admission fixtures include a provider observation authorizing bounded
+	// provisioning; physical allocation tests still set their own Host capacity.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET primary_pool_id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1) WHERE id=$2`, f.Worker, f.Group)
+	identity, err := db.New(f.Pool).ReadCapacitySupplyIdentity(t.Context(), pgvalue.UUID(f.Group))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(identity.Identity))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp(),capacity_supply_fingerprint=$2,capacity_pools=(SELECT jsonb_build_array(jsonb_build_object('pool_id',id,'max_additional_workers',1000,'active_workers',1,'registering_workers',0)) FROM worker_pools WHERE worker_group_id=$1) WHERE id=$1`, f.Group, hex.EncodeToString(digest[:]))
 }
