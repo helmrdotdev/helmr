@@ -94,9 +94,16 @@ or environment readiness. Actual publication and deployment are separate operati
 
 ## Pinned release tools
 
-Artifact construction retains `nix develop .#images`. Fresh trusted admission,
-publication, completion and discovery jobs use `nix develop .#release`, a
-compiler-free shell shared across the release lifecycle.
+Artifact construction and its local consumer fixture use `nix develop .#release-build`.
+It provides the pinned Go, Bun and Node toolchains, Python, jq, make, Ruby,
+archive/transport tools, `file`, skopeo, apko, SquashFS tools and the Docker client
+with Buildx. Repository linters/generators, database tools, a C compiler, a Docker
+daemon and publication clients (AWS CLI, cosign and gh) are excluded. The runner's
+Nix installation supplies Nix itself. The fixture builds only its native CLI;
+distribution builds still produce all four supported OS/architecture archives.
+
+Fresh trusted admission, publication, completion and discovery jobs use
+`nix develop .#release`, a compiler-free shell shared across the release lifecycle.
 
 The release shell contains only Bash/coreutils, Python, curl, Git, AWS CLI,
 cosign, skopeo and the Product-pinned Node/npm. Python handles native GitHub APIs,
@@ -117,8 +124,8 @@ tag signature verification, public OCI checks, real downloaded CLI/installed npm
 consumption, completion signing and final public readback retain their existing
 job and credential boundaries.
 
-`nix flake check` executes every required tool without a runner/stdenv PATH and
-checks that source compilers are absent from both toolsets. These checks do not
+`nix flake check` checks required tools without a runner/stdenv PATH in all three
+release toolsets and enforces their respective tool exclusions. These checks do not
 replace a native Linux consumer run or normal main-preview publication. Compare
 the realized closure and setup duration with `images` on the same runner/cache
 condition; a smaller declared toolset alone is not a measured download/time saving.

@@ -126,6 +126,26 @@ rec {
     pkgs.gnused
   ];
 
+  # Artifact construction does not run repository linters, generators or DB tests.
+  # Keep their toolchains out of each fresh release build runner.
+  releaseBuild = ciShell ++ [
+    helmrPackages.goPackage
+    helmrPackages.bun
+    helmrPackages.nodejs
+    pkgs.python3
+    pkgs.jq
+    pkgs.gnumake
+    pkgs.gnutar
+    pkgs.gzip
+    pkgs.curl
+    pkgs.file
+    (pkgs.docker_29.override { clientOnly = true; })
+    pkgs.skopeo
+    helmrPackages.apko
+    pkgs.ruby
+    helmrPackages.squashfsTools
+  ];
+
   ciPolicy = ciShell ++ [
     pkgs.python3
     helmrPackages.bun
