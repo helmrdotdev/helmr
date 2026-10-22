@@ -8,6 +8,33 @@ import (
 	"testing"
 )
 
+func TestOptionalAdoptionIsSingleAssignmentWithoutFreeCapacity(t *testing.T) {
+	shape := Vector{CPUMillis: 1, MemoryBytes: 1, HostDiskBytes: 3, VMSlots: 1}
+	l := newTestLedger(t, shape)
+	from := Key{Kind: "leaf", ID: "physical", Epoch: 1}
+	if _, err := l.ReserveOptional(from, shape, shape, Vector{}); err != nil {
+		t.Fatal(err)
+	}
+	var jobs sync.WaitGroup
+	var winners atomic.Int64
+	for i := range 50 {
+		jobs.Go(func() {
+			if err := l.AdoptOptional(from, Key{Kind: "instance", ID: fmt.Sprint(i), Epoch: 2}, Vector{CPUMillis: 1, MemoryBytes: 1, HostDiskBytes: 2, VMSlots: 1}); err == nil {
+				winners.Add(1)
+			} else if !errors.Is(err, ErrInvalidKey) {
+				t.Error(err)
+			}
+			if l.Snapshot().Used != shape {
+				t.Error("adoption released physical capacity")
+			}
+		})
+	}
+	jobs.Wait()
+	if got := l.Snapshot(); winners.Load() != 1 || len(got.Optional) != 0 || len(got.Reservations) != 1 || got.Used != shape {
+		t.Fatal(winners.Load(), got)
+	}
+}
+
 func TestOptionalReservationsPreserveHeadroomForRealWork(t *testing.T) {
 	shape := Vector{CPUMillis: 1, MemoryBytes: 1, HostDiskBytes: 1, VMSlots: 1}
 	capacity := Vector{CPUMillis: 2, MemoryBytes: 2, HostDiskBytes: 2, VMSlots: 2}

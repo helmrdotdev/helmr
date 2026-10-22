@@ -3,6 +3,7 @@ package computerhost
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/reservation"
@@ -72,14 +73,18 @@ func (p *PreparedMachines) resizeOptionalCacheLocked(want int64) error {
 // RunOptionalResources is owned and joined by the Worker supervisor. Cache
 // changes are local and disposable; failures retain charges and are observed.
 func (p *PreparedMachines) RunOptionalResources(ctx context.Context) error {
+	var jobs sync.WaitGroup
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	defer func() {
+		p.CloseOptionalAdmission()
+		jobs.Wait()
 		p.optional.mu.Lock()
 		p.optional.cacheError = p.resizeOptionalCacheLocked(0)
 		p.optional.mu.Unlock()
 	}()
 	for {
+		p.reconcilePreparedLeaves(ctx, &jobs)
 		p.optional.mu.Lock()
 		policy := p.optional.policy
 		want := int64(0)
@@ -118,7 +123,7 @@ func (p *PreparedMachines) beginCacheTask(ctx context.Context) (context.Context,
 	p.optional.mu.Lock()
 	defer p.optional.mu.Unlock()
 	policy := p.optional.policy
-	if p.ObjectCache == nil || p.ObjectCache.Snapshot().CapacityBytes == 0 || policy.Revision <= 0 || time.Since(p.optional.confirmed) >= 2*workerapi.WorkerObservationInterval || p.optional.pressure || p.optional.closed || p.optional.realWaiting > 0 || int32(len(p.optional.cacheTasks)+len(p.optional.seeds)) >= policy.Optional.MaxTasks || policy.Optional.IOBytesPerSecond <= 0 {
+	if p.ObjectCache == nil || p.ObjectCache.Snapshot().CapacityBytes == 0 || policy.Revision <= 0 || time.Since(p.optional.confirmed) >= 2*workerapi.WorkerObservationInterval || p.optional.pressure || p.optional.closed || p.optional.realWaiting > 0 || int32(len(p.optional.cacheTasks)+len(p.optional.seeds)+p.leafTasksLocked()) >= policy.Optional.MaxTasks || policy.Optional.IOBytesPerSecond <= 0 {
 		return nil, nil, false
 	}
 	if !p.optionalUsageFitsLocked() {
@@ -172,6 +177,11 @@ func (p *PreparedMachines) waitRealAllocationCapacity(ctx context.Context, admit
 			p.optional.cacheError = p.resizeOptionalCacheLocked(0)
 			remaining := p.Reservations.Snapshot()
 			if request.CPUMillis > remaining.Capacity.CPUMillis-remaining.Used.CPUMillis || request.MemoryBytes > remaining.Capacity.MemoryBytes-remaining.Used.MemoryBytes || request.HostDiskBytes > remaining.Capacity.HostDiskBytes-remaining.Used.HostDiskBytes || request.VMSlots > remaining.Capacity.VMSlots-remaining.Used.VMSlots {
+				for _, leaf := range p.optional.leaves {
+					leaf.reclaim = true
+					leaf.ready = false
+					leaf.cancel()
+				}
 				for _, seed := range p.optional.seeds {
 					seed.stop = true
 					p.optional.pressure = true

@@ -19,7 +19,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
-	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"golang.org/x/sync/errgroup"
@@ -56,6 +55,7 @@ type ComputerAllocationOwner struct {
 	observe                  func(context.Context, *agentv1.GuestSessionMessage) error
 	operation                sync.Mutex
 	machine                  vm.CheckpointableMachine
+	prepared                 *preparedLeaf
 	bootProgram              *computercheckpoint.Program
 	saves                    *agentComputerSaves
 	saveWake                 chan struct{}
@@ -178,138 +178,144 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		o.checkpoint = &manifest
 		initialProgram = manifest.BootProgram
 	}
-	request, err := instanceReservationVectorWithProjection(shape.CPUMillis, shape.MemoryBytes/mebibyte, shape.ScratchBytes/mebibyte, source.Disk.Root.LogicalBytes)
+	request, err := o.machines.computerReservation(shape, source, initialProgram)
 	if err != nil {
 		return err
-	}
-	if request.HostDiskBytes > math.MaxInt64-o.machines.ComputerStagingBytes {
-		return reservation.ErrOverflow
-	}
-	request.HostDiskBytes += o.machines.ComputerStagingBytes
-	limits, err := checkpointStagingSize(vm.SnapshotLimits{ComputerBytes: source.Disk.Root.LogicalBytes, MemoryBytes: shape.MemoryBytes, ScratchBytes: shape.ScratchBytes, StateBytes: vm.SnapshotStateLimit, ConfigBytes: vm.SnapshotConfigLimit}, o.machines.CheckpointCipher)
-	if err != nil {
-		return err
-	}
-	state, err := o.machines.CheckpointCipher.EncryptedSize(vm.SnapshotStateLimit)
-	if err != nil {
-		return err
-	}
-	for _, extra := range []int64{limits.total, shape.MemoryBytes, state, initialProgram.Size()} {
-		if request.HostDiskBytes > math.MaxInt64-extra {
-			return reservation.ErrOverflow
-		}
-		request.HostDiskBytes += extra
 	}
 
-	if err := o.machines.waitRealAllocationCapacity(ctx, o.admitStart, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), request, &o.workWake); err != nil {
-		if errors.Is(err, ErrCheckpointKeyUnavailable) {
-			o.closing = true
+	if admissionErr := o.admitStart(ctx); admissionErr == nil {
+		o.prepared, err = o.machines.claimPreparedLeaf(o.identity, o.hostEpoch, delivery, source, request)
+		if err != nil {
+			return err
 		}
-		return err
+	} else if errors.Is(admissionErr, ErrCheckpointKeyUnavailable) {
+		o.closing = true
+		return admissionErr
+	}
+	if o.prepared == nil {
+		if err := o.machines.waitRealAllocationCapacity(ctx, o.admitStart, instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), request, &o.workWake); err != nil {
+			if errors.Is(err, ErrCheckpointKeyUnavailable) {
+				o.closing = true
+			}
+			return err
+		}
 	}
 	// From this point the owner can retain filesystem/device/VM effects. Every
 	// later invocation only retries physical cleanup; this instance never boots twice.
 	o.closing = true
 	phaseStarted = time.Now()
 	var device vm.ComputerDevice
-	var images *programSnapshots
-	defer func() { resultErr = errors.Join(resultErr, images.close()) }()
-	group, stageCtx := errgroup.WithContext(ctx)
-	group.Go(func() error {
-		var attachErr error
-		device, attachErr = o.attachDevice(stageCtx, o.identity, source)
-		return attachErr
-	})
-	if source.BootProgram != nil && (delivery.RestoredFrom == "" || delivery.DiskOnlyRecovery) {
-		group.Go(func() error {
-			directory := o.machines.computerBootProgramDirectory(o.identity.AllocationID, o.identity.Epoch)
-			if err := os.MkdirAll(directory, 0700); err != nil {
-				return err
-			}
-			// A selected seed includes the exact read-only drive topology. Allow
-			// its required content to finish staging within the allocation lifetime;
-			// the optional cold-boot prefetch budget must not discard that topology.
-			prefetchCtx := stageCtx
-			prefetchCancel := func() {}
-			if source.BootSeed == nil {
-				prefetchCtx, prefetchCancel = context.WithTimeout(stageCtx, 5*time.Second)
-			}
-			defer prefetchCancel()
-			var stageErr error
-			images, stageErr = o.machines.prepareProgramArtifacts(prefetchCtx, directory, o.identity.AllocationID, source.BootProgram)
-			if stageErr != nil {
-				if stageCtx.Err() != nil {
-					return stageCtx.Err()
-				}
-				o.machines.logInfo("Computer boot Program prefetch unavailable", "computer_id", o.identity.OwnerID, "error", stageErr.Error())
-				if err := os.RemoveAll(directory); err != nil {
-					return err
-				}
-				return o.machines.Reservations.ReleaseHostDisk(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), initialProgram.Size())
-			}
-			o.bootProgram = initialProgram
-			return nil
-		})
-	}
-	err = group.Wait()
-	// The local disk takes its own key copies. Do not retain the transport's
-	// plaintext for the potentially long lifetime of this Computer.
-	source.Disk.Clear()
-	if err != nil {
-		return err
-	}
-	o.phaseCompleted("device_attach", phaseStarted)
-	phaseStarted = time.Now()
-	if delivery.RestoredFrom != "" && !delivery.DiskOnlyRecovery {
-		err = o.restore(ctx, delivery, source, device)
+	if o.prepared != nil {
+		device = o.prepared.device
+		o.bootProgram = o.prepared.program
+		o.bootSeedID = o.prepared.manifest.BuildID.String()
+		o.failedBootSeedID = o.bootSeedID
+		o.machine, err = o.machines.adoptPreparedLeaf(ctx, o.prepared, o.identity, o.hostEpoch, source)
+		source.Disk.Clear()
+		if err != nil {
+			return err
+		}
+		o.phaseCompleted("prepared_adoption", phaseStarted)
 	} else {
-		materialize := vm.MaterializeRequest{RecordPhase: func(phase vm.Phase) { o.recordVMPhase("materialize", phase) }, ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: bootProgramDrives(o.bootProgram, images), Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}}
-		if source.BootSeed != nil && delivery.RestoredFrom == "" && !delivery.DiskOnlyRecovery {
-			matches, matchErr := o.machines.Backend.BootSeedMatches(materialize, source.BootSeed.Config)
-			if matchErr != nil {
-				o.failedBootSeedID = source.BootSeed.BuildID.String()
-				return matchErr
-			}
-			if matches {
-				o.bootSeedID = source.BootSeed.BuildID.String()
-				directory := filepath.Join(o.machines.computerPreparationDirectory(o.identity.AllocationID, o.identity.Epoch), "boot-seed")
+		var images *programSnapshots
+		defer func() { resultErr = errors.Join(resultErr, images.close()) }()
+		group, stageCtx := errgroup.WithContext(ctx)
+		group.Go(func() error {
+			var attachErr error
+			device, attachErr = o.attachDevice(stageCtx, o.identity, source)
+			return attachErr
+		})
+		if source.BootProgram != nil && (delivery.RestoredFrom == "" || delivery.DiskOnlyRecovery) {
+			group.Go(func() error {
+				directory := o.machines.computerBootProgramDirectory(o.identity.AllocationID, o.identity.Epoch)
 				if err := os.MkdirAll(directory, 0700); err != nil {
 					return err
 				}
-				materialize.BootSeed, err = o.machines.openBootSeed(ctx, directory, *source.BootSeed, shape.MemoryBytes, shape.ScratchBytes)
-				if err != nil {
-					if errors.Is(err, ErrCheckpointKeyUnavailable) {
-						o.checkpointKeyUnavailable()
+				// A selected seed includes the exact read-only drive topology. Allow
+				// its required content to finish staging within the allocation lifetime;
+				// the optional cold-boot prefetch budget must not discard that topology.
+				prefetchCtx := stageCtx
+				prefetchCancel := func() {}
+				if source.BootSeed == nil {
+					prefetchCtx, prefetchCancel = context.WithTimeout(stageCtx, 5*time.Second)
+				}
+				defer prefetchCancel()
+				var stageErr error
+				images, stageErr = o.machines.prepareProgramArtifacts(prefetchCtx, directory, o.identity.AllocationID, source.BootProgram)
+				if stageErr != nil {
+					if stageCtx.Err() != nil {
+						return stageCtx.Err()
 					}
-					if bootSeedArtifactFailure(err) {
-						o.failedBootSeedID = o.bootSeedID
+					o.machines.logInfo("Computer boot Program prefetch unavailable", "computer_id", o.identity.OwnerID, "error", stageErr.Error())
+					if err := os.RemoveAll(directory); err != nil {
+						return err
 					}
-					return err
+					return o.machines.Reservations.ReleaseHostDisk(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch), initialProgram.Size())
+				}
+				o.bootProgram = initialProgram
+				return nil
+			})
+		}
+		err = group.Wait()
+		// The local disk takes its own key copies. Do not retain the transport's
+		// plaintext for the potentially long lifetime of this Computer.
+		source.Disk.Clear()
+		if err != nil {
+			return err
+		}
+		o.phaseCompleted("device_attach", phaseStarted)
+		phaseStarted = time.Now()
+		if delivery.RestoredFrom != "" && !delivery.DiskOnlyRecovery {
+			err = o.restore(ctx, delivery, source, device)
+		} else {
+			materialize := vm.MaterializeRequest{RecordPhase: func(phase vm.Phase) { o.recordVMPhase("materialize", phase) }, ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: bootProgramDrives(o.bootProgram, images), Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}}
+			if source.BootSeed != nil && delivery.RestoredFrom == "" && !delivery.DiskOnlyRecovery {
+				matches, matchErr := o.machines.Backend.BootSeedMatches(materialize, source.BootSeed.Config)
+				if matchErr != nil {
+					o.failedBootSeedID = source.BootSeed.BuildID.String()
+					return matchErr
+				}
+				if matches {
+					o.bootSeedID = source.BootSeed.BuildID.String()
+					directory := filepath.Join(o.machines.computerPreparationDirectory(o.identity.AllocationID, o.identity.Epoch), "boot-seed")
+					if err := os.MkdirAll(directory, 0700); err != nil {
+						return err
+					}
+					materialize.BootSeed, err = o.machines.openBootSeed(ctx, directory, *source.BootSeed, shape.MemoryBytes, shape.ScratchBytes)
+					if err != nil {
+						if errors.Is(err, ErrCheckpointKeyUnavailable) {
+							o.checkpointKeyUnavailable()
+						}
+						if bootSeedArtifactFailure(err) {
+							o.failedBootSeedID = o.bootSeedID
+						}
+						return err
+					}
 				}
 			}
+			if materialize.BootSeed != nil {
+				// Any unsuccessful seed startup is excluded for this Computer only.
+				// Keep the report pending until the control plane acknowledges readiness;
+				// cleanup sends it only after proving physical closure.
+				o.failedBootSeedID = o.bootSeedID
+			}
+			o.machine, err = o.machines.Backend.Materialize(ctx, materialize)
+			if err == nil && o.machine != nil && materialize.BootSeed != nil {
+				// The backend has unpacked scratch into its owned disk. Retain only the
+				// live memory source; a later capture has its own accounted packed input.
+				err = os.Remove(materialize.BootSeed.ScratchDisk)
+			}
 		}
-		if materialize.BootSeed != nil {
-			// Any unsuccessful seed startup is excluded for this Computer only.
-			// Keep the report pending until the control plane acknowledges readiness;
-			// cleanup sends it only after proving physical closure.
-			o.failedBootSeedID = o.bootSeedID
+		if err != nil {
+			return err
 		}
-		o.machine, err = o.machines.Backend.Materialize(ctx, materialize)
-		if err == nil && o.machine != nil && materialize.BootSeed != nil {
-			// The backend has unpacked scratch into its owned disk. Retain only the
-			// live memory source; a later capture has its own accounted packed input.
-			err = os.Remove(materialize.BootSeed.ScratchDisk)
+		if err := images.close(); err != nil {
+			return err
 		}
-	}
-	if err != nil {
-		return err
-	}
-	if err := images.close(); err != nil {
-		return err
-	}
-	images = nil
-	if err := os.RemoveAll(o.machines.computerBootProgramDirectory(o.identity.AllocationID, o.identity.Epoch)); err != nil {
-		return err
+		images = nil
+		if err := os.RemoveAll(o.machines.computerBootProgramDirectory(o.identity.AllocationID, o.identity.Epoch)); err != nil {
+			return err
+		}
 	}
 	if o.machine == nil {
 		return errors.New("computer backend returned no machine")
@@ -452,18 +458,30 @@ func (o *ComputerAllocationOwner) cleanup() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var closeErr error
+	physical := preparedMachineRef{id: o.identity.AllocationID, epoch: o.identity.Epoch}
+	if o.prepared != nil {
+		select {
+		case <-o.prepared.done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		physical = preparedMachineRef{id: o.prepared.identity.AllocationID, epoch: o.prepared.identity.Epoch}
+		if o.machine == nil && o.prepared.machine != nil {
+			closeErr = o.prepared.machine.Close(ctx)
+		}
+	}
 	if o.machine != nil {
 		closeErr = o.machine.Close(ctx)
 	}
 	// A machine may cache a failed Close result. Exact backend reconciliation
 	// retries physical absence independently before releasing device custody.
-	if err := o.machines.Backend.Cleanup(ctx, vm.Owner{Kind: vm.OwnerInstance, ID: o.identity.AllocationID}); err != nil {
+	if err := o.machines.Backend.Cleanup(ctx, vm.Owner{Kind: vm.OwnerInstance, ID: physical.id}); err != nil {
 		return fmt.Errorf("prove allocated Computer absent: %w", errors.Join(closeErr, err))
 	}
 	// Stop device I/O before reporting physical absence, but retain its arena and
 	// funded capacity until the CP acknowledges physical stop and save disposition.
 	// The closed arena is retained custody, not a resumable publication owner.
-	if err := o.machines.releaseComputerDevice(o.identity.AllocationID, o.identity.Epoch); err != nil {
+	if err := o.machines.releaseComputerDevice(physical.id, physical.epoch); err != nil {
 		return err
 	}
 	if err := o.client.ObserveAgentComputerStopped(ctx, workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: o.leaseRequest(), InvalidCheckpointID: o.invalidCheckpointID, FailedBootSeedID: o.failedBootSeedID}); err != nil {
@@ -476,8 +494,20 @@ func (o *ComputerAllocationOwner) cleanup() error {
 		o.checkpointCut.Release()
 		o.checkpointCut = nil
 	}
-	if err := o.machines.releaseInstanceCapacity(o.identity.AllocationID, o.identity.Epoch); err != nil {
+	if err := o.machines.releaseInstanceResources(physical.id, physical.epoch); err != nil {
 		return err
+	}
+	if physical.id != o.identity.AllocationID || physical.epoch != o.identity.Epoch {
+		// Checkpoint publication remains owned by the real allocation, while
+		// the adopted disk/VM retain their original physical staging directory.
+		if err := o.machines.releaseInstanceResources(o.identity.AllocationID, o.identity.Epoch); err != nil {
+			return err
+		}
+	}
+	if o.machines.Reservations != nil {
+		if err := o.machines.Reservations.Release(instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)); err != nil {
+			return err
+		}
 	}
 	o.finished.Store(true)
 	return nil

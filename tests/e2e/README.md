@@ -43,6 +43,7 @@ injection into an ordinary behavior case. External agent examples live in
 | `network` | `cases/network` | Guest metadata denial plus exact host packet observation |
 | `runtime`, `computer-command` | `cases/runtime` | Runtime tools/files/output and Computer idempotency/exec |
 | `runtime/program-replacement.run.ts` | `cases/runtime` | Existing Session pins its Deployment; new Session uses promoted code on the same Computer |
+| `prepared-startup` | `cases/prepared-startup` | Warm adoption versus cold/zero policy, refill, fresh secrets, no preclaim Agent init and private writes; dedicated host with exact resource/Environment IDs |
 | `computer-command/seed-reuse.run.ts` | `cases/runtime` | Shared seed root, independent writes, deletion isolation and create-to-first-work timing; dedicated host and two VM slots |
 | `questions`, `question-isolation`, `question-cancel` | `cases/questions` | Pending questions, repeat response receipts, isolation between Sessions and cancellation |
 | `slack-conversation` (human-operated) | `cases/slack-conversation` | Synthetic progress, questions, multiple speakers and settlement for [native Slack observation](cases/slack-conversation/README.md) |
@@ -248,3 +249,25 @@ rather than counting process startup or readiness polling as healthy time.
 Run this within an inspectable native systemd operation, not an untracked background
 shell. This check does not create a guest, change capacity or affect managed AWS.
 None of these source-prepared cases is live-qualified merely by passing typechecks.
+
+## Prepared Computer startup
+
+Prepare `cases/prepared-startup`; its imported runtime fixture uses a 2-vCPU,
+2-GiB Computer. Set policy through the normal Capacity HTTP API before the case.
+Run with `HELMR_EXPECT_PREPARED=warm`, `cold`, or `zero`, plus
+`HELMR_WORKER_RESOURCE_ID` and `HELMR_ENVIRONMENT_ID` for the exact dedicated
+host and fixture. The key needs Secret management and Computer execution.
+Warm runs wait for a current ready-leaf observation before creating each Computer;
+the case requires the Worker journal's actual adoption phase, not readiness alone.
+Zero runs require no optional VM or disk occupancy and no prepared adoption.
+Cold runs require ordinary startup; arrange the intended cold artifact state
+through the environment owner before invocation. The driver does not change
+policy or delete caches.
+
+The case creates each secret after the ready observation, checks that no Agent
+initialization file exists before Session admission, and then requires the fresh
+secret in initialization. Two sequential Computers verify distinct initialization
+nonces and private writes while exercising refill between them. Journal phase
+times, observations and request-to-useful-output samples are retained in the
+normal case result. Use the separate seed-reuse case for concurrent sibling
+deletion isolation and the Session persistence cases for personal continuation.

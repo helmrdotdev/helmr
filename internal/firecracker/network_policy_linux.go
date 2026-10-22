@@ -23,6 +23,10 @@ import (
 )
 
 func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, binding *installedNetworkBinding) error {
+	return c.installRoutedPolicyFor(ctx, mode, binding, binding.manifest.OwnerID, false)
+}
+
+func (c *Connector) installRoutedPolicyFor(ctx context.Context, mode launchMode, binding *installedNetworkBinding, allocationID string, replace bool) error {
 	m := binding.manifest
 	guestIP := strings.Split(GuestNetworkCIDRV0, "/")[0]
 	hostIPv4, err := hostIPv4Prefixes(netip.MustParsePrefix(GuestNetworkCIDRV0).Masked())
@@ -37,7 +41,7 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, bi
 	blocked = append(blocked, c.cfg.NetworkBlockedIPv4CIDRs...)
 	// Preparation precedes ResumeVM, but grants no credential-use authority.
 	{
-		proxy, prepareErr := c.prepareSecretTransport(ctx, mode, m.OwnerID, blocked)
+		proxy, prepareErr := c.prepareSecretTransport(ctx, mode, allocationID, blocked)
 		if prepareErr != nil {
 			return fmt.Errorf("prepare Computer Secret transport: %w", prepareErr)
 		}
@@ -66,22 +70,27 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, bi
 			}()
 		}
 	}
-	var packet *datapath.Binding
-	if err := withNetworkNamespace(binding.namespace, func() error {
-		var prepareErr error
-		guestIPv4 := netip.MustParsePrefix(GuestNetworkCIDRV0).Addr()
-		gatewayIPv4 := netip.MustParseAddr(GuestGatewayIPv4V0)
-		guestMAC, _ := net.ParseMAC(GuestMACV0)
-		packet, prepareErr = c.datapath.Prepare(datapath.Authority{
-			WorkerEpoch: binding.manifest.WorkerEpoch,
-			OwnerID:     binding.manifest.OwnerID,
-			Generation:  binding.manifest.Generation,
-		}, datapath.InterfaceFacts{TapName: m.TapName, GuestIPv4: guestIPv4, GatewayIPv4: gatewayIPv4, GuestMAC: guestMAC})
-		return prepareErr
-	}); err != nil {
-		return fmt.Errorf("prepare TAP ingress binding: %w", err)
+	packet := binding.packet
+	if !replace {
+		if err := withNetworkNamespace(binding.namespace, func() error {
+			var prepareErr error
+			guestIPv4 := netip.MustParsePrefix(GuestNetworkCIDRV0).Addr()
+			gatewayIPv4 := netip.MustParseAddr(GuestGatewayIPv4V0)
+			guestMAC, _ := net.ParseMAC(GuestMACV0)
+			packet, prepareErr = c.datapath.Prepare(datapath.Authority{
+				WorkerEpoch: binding.manifest.WorkerEpoch,
+				OwnerID:     binding.manifest.OwnerID,
+				Generation:  binding.manifest.Generation,
+			}, datapath.InterfaceFacts{TapName: m.TapName, GuestIPv4: guestIPv4, GatewayIPv4: gatewayIPv4, GuestMAC: guestMAC})
+			return prepareErr
+		}); err != nil {
+			return fmt.Errorf("prepare TAP ingress binding: %w", err)
+		}
+		binding.packet = packet
 	}
-	binding.packet = packet
+	if packet == nil {
+		return errors.New("routed packet binding is missing")
+	}
 	if binding.secretProxy != nil {
 		if err := withNetworkNamespace(binding.namespace, func() error { return installSecretRoute(m.TapName, packet.Mark()) }); err != nil {
 			return err
@@ -97,12 +106,19 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, bi
 	if err != nil {
 		return err
 	}
+	if replace {
+		// nft applies the replacement in one transaction while the guest is
+		// still at the bootstrap gate and the binding monitor is excluded.
+		script = "delete table inet " + networkPolicyTableName + "\n" + script
+	}
 	if err := c.applyNftScript(ctx, m.NamespaceName, script); err != nil {
 		return err
 	}
-	rootScript := renderRootNetworkPolicy(m)
-	if err := c.applyNftScript(ctx, "", rootScript); err != nil {
-		return err
+	if !replace {
+		rootScript := renderRootNetworkPolicy(m)
+		if err := c.applyNftScript(ctx, "", rootScript); err != nil {
+			return err
+		}
 	}
 	binding.namespacePolicyFingerprint, err = c.nftTableFingerprint(ctx, m.NamespaceName, networkPolicyTableName)
 	if err != nil {

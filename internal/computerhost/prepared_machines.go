@@ -57,6 +57,7 @@ type PreparedMachines struct {
 	OptionalPlatformStore   cas.Reader
 	OptionalComputerObjects cas.ImmutableStore
 	OptionalComputerRanges  blockformat.RangeSource
+	PreparationClient       PreparationSourceClient
 	RuntimeArchitecture     definition.RuntimeArchitecture
 	VerifierCgroupRoot      string
 	// HostSlot is the complete host lifecycle footprint, including staging.
@@ -293,6 +294,16 @@ func verifyProgramMetadataDigest(
 }
 
 func (p *PreparedMachines) releaseInstanceCapacity(computerInstanceID string, workerEpoch int64) error {
+	if err := p.releaseInstanceResources(computerInstanceID, workerEpoch); err != nil {
+		return err
+	}
+	if p == nil || p.Reservations == nil {
+		return nil
+	}
+	return p.Reservations.Release(instanceReservationKey(computerInstanceID, workerEpoch))
+}
+
+func (p *PreparedMachines) releaseInstanceResources(computerInstanceID string, workerEpoch int64) error {
 	if err := p.releaseComputerDevice(computerInstanceID, workerEpoch); err != nil {
 		return err
 	}
@@ -305,9 +316,6 @@ func (p *PreparedMachines) releaseInstanceCapacity(computerInstanceID string, wo
 				return err
 			}
 		}
-	}
-	if err := p.Reservations.Release(instanceReservationKey(computerInstanceID, workerEpoch)); err != nil {
-		return err
 	}
 	p.mu.Lock()
 	delete(p.computerDevices, preparedMachineRef{id: computerInstanceID, epoch: workerEpoch})

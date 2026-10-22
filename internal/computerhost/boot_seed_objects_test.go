@@ -100,12 +100,26 @@ func TestBootSeedEncryptedPublicationSurvivesBuilderRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other := *p
-	other.CheckpointCipher = rotated
+	other := &PreparedMachines{ComputerObjects: p.ComputerObjects, ComputerRanges: p.ComputerRanges, CheckpointCipher: rotated}
 	if _, err := other.openBootSeed(t.Context(), t.TempDir(), m, m.MemoryBytes, m.ScratchBytes); !errors.Is(err, ErrCheckpointKeyUnavailable) {
 		t.Fatalf("parallel seed staging lost key mismatch: %v", err)
 	}
 	if _, err := openCheckpointMemory(t.Context(), ranges, cipher, m.Memory, m.MemoryHeaderDigest, m.BuildID.String()+"/memory", m.MemoryBytes); err == nil {
 		t.Fatal("seed authenticated as a customer continuation")
+	}
+	p.OptionalComputerObjects = p.ComputerObjects
+	prepared, err := p.openPreparedBootSeed(t.Context(), t.TempDir(), m, m.MemoryBytes, m.ScratchBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(t.Context(), m.Memory.Digest); err != nil {
+		t.Fatal(err)
+	}
+	clear(got)
+	if _, err := prepared.MemorySource.ReadAt(t.Context(), got, memoryChunkSize); err != nil {
+		t.Fatal("prepared pager retained a remote dependency", err)
+	}
+	if !bytes.Equal(got, raw[memoryChunkSize:memoryChunkSize+4096]) {
+		t.Fatal("local prepared memory differs")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/jackc/pgx/v5/pgtype"
 	"math"
 	"net/http"
@@ -271,7 +272,17 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		writeError(w, errors.New("project worker status"))
 		return
 	}
+	keys, err := computer.ListPreparationSources(r.Context(), s.tx, worker)
+	if err != nil {
+		s.writeAllocationError(w, err)
+		return
+	}
+	hints := make([]workerapi.ReadyLeafKey, 0, len(keys))
+	for _, key := range keys {
+		hints = append(hints, workerapi.ReadyLeafKey{EnvironmentID: key.EnvironmentID.String(), BuildID: key.BuildID.String()})
+	}
 	writeJSON(w, http.StatusOK, workerapi.StatusResponse{
+		PreparationKeys: hints,
 		ResourcePolicy: workerapi.ResourcePolicy{Revision: policy.Revision, LocalHeadroomSlots: policy.LocalHeadroomSlots,
 			Optional: workerapi.OptionalResources(policy.Optional)},
 		WorkerHostID:    pgvalue.MustUUIDValue(state.ID).String(),

@@ -157,13 +157,29 @@ size when physical standing capacity is required. Replacing policy requires the
 current revision; a stale revision returns HTTP 409. A successful update records
 desired policy, not proof that every Worker has finished reclaiming resources.
 
-Workers charge seed generation and cache storage to the same physical reservation
+Workers charge seed generation, prepared Computers and cache to the same physical reservation
 ledger as real allocations. Cache limits include filesystem overhead. Policy
 reduction cancels optional fills and stops seed attempts through Control Plane;
 open readers, VM processes and files remain charged until their owners release
 them. `reclaiming_workers` can therefore remain nonzero after a policy update.
 An optional transfer rate of zero disables optional uploads and downloads. The
 rate is shared across concurrent requests, multipart transfers and retries.
+
+A prepared Computer is a private, paused VM for an exact qualified image and
+runtime shape. Preparation does not run authored initialization or receive
+Session credentials or a Computer write key. Its source access expires and must
+be renewed; policy changes, stale observations and source invalidation remove
+unused preparation. Every leaf reserves a full lifecycle slot, including local
+RAM ciphertext retained through restoration and subsequent checkpoint capture.
+
+A fresh Computer allocation can atomically take ownership of a matching prepared
+VM and its reservation. Fresh execution authority and bootstrap identity are
+installed before execution. Personal checkpoint restoration keeps its exact
+saved state and does not use a prepared image as a substitute. A miss follows the
+ordinary startup path. Pending real work suppresses refill and reclaims conflicting
+optional resources; failed cleanup retains the charge and prevents reuse until
+physical release is verified. Prepared counts are observations, not execution
+authority or a guarantee of startup latency.
 
 Checkpoint capture uses a separate host queue before sealing dispatch. Waiting
 for that queue leaves normal save processing available, and a zero optional

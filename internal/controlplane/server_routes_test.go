@@ -280,6 +280,7 @@ POST /worker/v1/instance/drain/complete
 POST /worker/v1/instance/fence
 POST /worker/v1/instance/observations
 POST /worker/v1/instance/recover
+POST /worker/v1/preparation-sources
 POST /worker/v1/run/secret-proxy/prepare
 POST /worker/v1/run/secret-proxy/resolve
 POST /worker/v1/sessions/attachment

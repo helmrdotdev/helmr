@@ -34,6 +34,7 @@ type WritableVersion struct {
 	dirty, frozen              map[uint64][]byte
 	limit                      int
 	closed                     bool
+	preparedAdopted            bool
 	generation, rootGeneration uint64
 	changedAt, lastChangedAt   time.Time
 	changeWake                 chan struct{}
