@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises"
 import { fixtureInput } from "../../support/runtime-mcp"
-import { verify, assert, assertEqual, deadline, waitOutput, completedResult, deleteComputer } from "../../support/context"
+import { verify, assert, assertEqual, deadline, waitOutput, completedResult, deleteComputer, errorCode } from "../../support/context"
 import { hostObservation } from "../../support/host-observation"
 
 // Run on the dedicated two-slot Worker with one funded prepared leaf. The
@@ -77,9 +77,25 @@ await verify("session-resource-pressure", async ({ marker, objects, computer, st
     await member.admission.session.cancel({ idempotencyKey: `cancel:${marker}:${member.target.id}` }, { signal })
     await deleteComputer(member.target, `delete:${marker}:${member.target.id}`)
   }
-  const burst = await Promise.allSettled(Array.from({ length: 3 }, async (_, ordinal) => {
+  // Fund Computer storage before timing the simultaneous Session admissions.
+  // Deletion may precede asynchronous retirement of the previous payloads.
+  const burstTargets = []
+  const burstPreparationRetries: { ordinal: number, at: number, code: string }[] = []
+  for (let ordinal = 0; ordinal < 3; ordinal++) {
+    for (;;) {
+      signal.throwIfAborted()
+      try {
+        burstTargets.push(await computer("verification", `burst-${ordinal}`))
+        break
+      } catch (error) {
+        if (errorCode(error) !== "computer_authority_unavailable") throw error
+        burstPreparationRetries.push({ ordinal, at: Date.now(), code: "computer_authority_unavailable" })
+      }
+      await delay(250, undefined, { signal })
+    }
+  }
+  const burst = await Promise.allSettled(burstTargets.map(async (target, ordinal) => {
     const startedAt = Date.now()
-    const target = await computer("verification", `burst-${ordinal}`)
     const admission = await startAgent("verification-session", { computer: target,
       input: { marker }, idempotencyKey: `burst:${marker}:${ordinal}` })
     const result = await completedResult(admission.turn)
@@ -93,5 +109,5 @@ await verify("session-resource-pressure", async ({ marker, objects, computer, st
   for (const result of burst) {
     if (result.status === "fulfilled") burstPaths.push(await hostObservation("computer-path", { computer_id: result.value.computerId }))
   }
-  return { before, pressure, waiting, queuedUsefulOutputMs, releaseToOutputMs, firstResult, survivorResult, queuedResult, paths, burst, burstPaths }
+  return { before, pressure, waiting, queuedUsefulOutputMs, releaseToOutputMs, firstResult, survivorResult, queuedResult, paths, burst, burstPaths, burstPreparationRetries }
 })
