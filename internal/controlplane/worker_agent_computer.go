@@ -31,7 +31,8 @@ func (server *Server) writeAgentComputerError(w http.ResponseWriter, err error) 
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerAuthorityUnavailable, message: "Computer continuation authority is unavailable"}))
 	case errors.Is(err, session.ErrComputerCaptureDemand):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerCaptureDemand, message: "Computer has pending execution during capture"}))
-	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, dispatch.ErrNotReady):
+	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, dispatch.ErrNotReady),
+		errors.Is(err, workergroup.ErrCapacityUnavailable), errors.Is(err, workergroup.ErrCapacityExhausted), errors.Is(err, workergroup.ErrCapacityIncompatible), errors.Is(err, computer.ErrExecutionLimit):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerNotReady, message: "Computer continuation requires reconciliation"}))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict), errors.Is(err, dispatch.ErrConflict):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerEvidenceConflict, message: "Computer continuation evidence conflicts"}))

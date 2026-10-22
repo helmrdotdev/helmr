@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 	"uuid"
 
@@ -131,56 +132,61 @@ func ObserveCapacityPlan(ctx context.Context, database db.TxBeginner, group uuid
 
 var ErrCapacityIncompatible = errors.New("no active Worker pool supports this Computer; configure a compatible Worker pool")
 
-var ErrCapacityExhausted = errors.New("Worker execution capacity is exhausted; raise the Worker maximum or release an unused Computer")
+var ErrCapacityExhausted = errors.New("worker execution capacity is exhausted; raise the Worker maximum or release an unused Computer")
 
-// RequireExecutionPlacement runs with region supply and Environment locks held.
-// The candidate's pending episode is already in this transaction. The same check
-// after allocation protects earlier accepted claims from a fragmenting placement.
-func RequireExecutionPlacement(ctx context.Context, tx pgx.Tx, env, candidate uuid.UUID) error {
-	if candidate == uuid.Nil() {
-		var pending bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id JOIN projects p ON p.id=e.project_id WHERE c.execution_deadline_at>clock_timestamp() AND p.default_region_id=(SELECT p.default_region_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1))`, env).Scan(&pending); err != nil {
-			return err
-		}
-		if !pending {
-			return nil
-		}
+// ExecutionPlacement records the complete placement result before an admission
+// or allocation changes resources. Only this transaction may compare it later.
+type ExecutionPlacement struct {
+	results   map[string]string
+	confirmed bool
+}
+
+// ReadExecutionPlacement runs under the region supply gate. An already blocked
+// claim remains visible, but does not forbid unrelated work that preserves every
+// currently feasible claim.
+func ReadExecutionPlacement(ctx context.Context, tx pgx.Tx, env uuid.UUID) (ExecutionPlacement, error) {
+	var pending bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id JOIN projects p ON p.id=e.project_id WHERE c.execution_deadline_at>clock_timestamp() AND p.default_region_id=(SELECT p.default_region_id FROM environments e JOIN projects p ON p.id=e.project_id WHERE e.id=$1))`, env).Scan(&pending); err != nil {
+		return ExecutionPlacement{}, err
+	}
+	if !pending {
+		return ExecutionPlacement{}, nil
 	}
 	var group uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT g.id FROM worker_groups g JOIN projects p ON p.default_region_id=g.region_id JOIN environments e ON e.project_id=p.id WHERE e.id=$1 AND g.status='active'`, env).Scan(&group)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrCapacityUnavailable
+		return ExecutionPlacement{}, ErrCapacityUnavailable
 	}
 	if err != nil {
-		return err
+		return ExecutionPlacement{}, err
 	}
 	q := db.New(tx)
 	fingerprint, err := SupplyFingerprint(ctx, q, group)
 	if err != nil {
-		return err
+		return ExecutionPlacement{}, err
 	}
 	var raw []byte
 	var current bool
 	err = tx.QueryRow(ctx, `SELECT capacity_pools,COALESCE(capacity_supply_fingerprint=$2 AND capacity_observed_at>=clock_timestamp()-$3*interval '1 second',false) FROM worker_groups WHERE id=$1`, group, fingerprint, int64(capacityObservationLifetime/time.Second)).Scan(&raw, &current)
 	if err != nil {
-		return err
+		return ExecutionPlacement{}, err
 	}
 	var observed []PoolRequest
 	if current {
 		if err = json.Unmarshal(raw, &observed); err != nil {
-			return err
+			return ExecutionPlacement{}, err
 		}
 	}
 	rows, err := tx.Query(ctx, `SELECT id::text FROM worker_pools WHERE worker_group_id=$1 AND status='active' ORDER BY id`, group)
 	if err != nil {
-		return err
+		return ExecutionPlacement{}, err
 	}
 	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		return err
+		return ExecutionPlacement{}, err
 	}
 	if len(ids) == 0 {
-		return ErrCapacityUnavailable
+		return ExecutionPlacement{}, ErrCapacityUnavailable
 	}
 	request := PlanRequest{Pools: make([]PoolRequest, 0, len(ids))}
 	for _, id := range ids {
@@ -195,55 +201,58 @@ func RequireExecutionPlacement(ctx context.Context, tx pgx.Tx, env, candidate uu
 	}
 	claims, err := db.ReadPendingExecutionClaims(ctx, tx, group)
 	if err != nil {
-		return err
+		return ExecutionPlacement{}, err
 	}
 	store := executionPlanStore{Queries: q, tx: tx, claims: claims}
-	// A filtered-out candidate (for example an incompatible checkpoint) cannot
-	// turn an empty successful plan into acceptance.
-	if candidate != uuid.Nil() {
-		g, err := q.GetWorkerGroup(ctx, pgvalue.UUID(group))
-		if err != nil {
-			return err
-		}
-		demand, err := store.ListAllocationPlanningDemand(ctx, db.ListAllocationPlanningDemandParams{RegionID: g.RegionID, WorkerGroupID: g.ID, RowLimit: maximumPlanningCandidates + 1})
-		if err != nil {
-			return err
-		}
-		found := false
-		for _, row := range demand {
-			if row.EnvironmentID == pgvalue.UUID(env) && row.OwnerID == pgvalue.UUID(candidate) && row.Kind == "computer" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return ErrCapacityUnavailable
-		}
-	}
 	plan, err := Plan(ctx, store, group, request, time.Now())
+	if err != nil {
+		return ExecutionPlacement{}, err
+	}
+	if !plan.Complete {
+		return ExecutionPlacement{}, ErrCapacityUnavailable
+	}
+	if current {
+		var stale bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts WHERE worker_group_id=$1 AND status='active' AND (observed_at IS NULL OR observed_at<clock_timestamp()-$2*interval '1 second'))`, group, ObservationFreshnessSeconds).Scan(&stale); err != nil {
+			return ExecutionPlacement{}, err
+		}
+		current = !stale
+	}
+	return ExecutionPlacement{results: plan.PlacementResults, confirmed: current}, nil
+}
+
+// RequireExecutionPlacement compares the same serialized supply before and after
+// mutation. A new candidate must place; already accepted feasible claims may not
+// be displaced. A claim fulfilled by physical allocation may leave pending demand.
+func RequireExecutionPlacement(ctx context.Context, tx pgx.Tx, env, candidate uuid.UUID, before ExecutionPlacement) error {
+	after, err := ReadExecutionPlacement(ctx, tx, env)
 	if err != nil {
 		return err
 	}
-	if !plan.Complete {
+	reject := func(reason string) error {
+		switch reason {
+		case reasonRuntimeCompatibility, reasonPerInstanceResources, reasonInvalidWorkload:
+			return ErrCapacityIncompatible
+		}
+		if after.confirmed {
+			return ErrCapacityExhausted
+		}
 		return ErrCapacityUnavailable
 	}
-	if plan.UnplacedItems != 0 {
-		for _, unmatched := range plan.UnmatchedDemand {
-			if unmatched.Reason == reasonRuntimeCompatibility || unmatched.Reason == reasonPerInstanceResources || unmatched.Reason == reasonInvalidWorkload {
-				return ErrCapacityIncompatible
-			}
+	if candidate != uuid.Nil() {
+		key := fmt.Sprintf("computer:%x:%x", pgvalue.UUID(env).Bytes, pgvalue.UUID(candidate).Bytes)
+		reason, found := after.results[key]
+		if !found {
+			return ErrCapacityUnavailable
 		}
-
-		if current {
-			var stale bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts WHERE worker_group_id=$1 AND status='active' AND (observed_at IS NULL OR observed_at<clock_timestamp()-$2*interval '1 second'))`, group, ObservationFreshnessSeconds).Scan(&stale); err != nil {
-				return err
-			}
-			if !stale {
-				return ErrCapacityExhausted
-			}
+		if reason != "" {
+			return reject(reason)
 		}
-		return ErrCapacityUnavailable
+	}
+	for key, prior := range before.results {
+		if reason, remains := after.results[key]; prior == "" && remains && reason != "" {
+			return reject(reason)
+		}
 	}
 	return nil
 }

@@ -887,9 +887,9 @@ column slack_threads.input_muted boolean not null default false
 column slack_threads.input_unmuted_at timestamp with time zone
 column slack_threads.last_acknowledged_status text
 column slack_threads.next_attempt_at timestamp with time zone not null default clock_timestamp()
-column slack_threads.next_lifecycle_projection_at timestamp with time zone default clock_timestamp()
 column slack_threads.opening_post_key text
 column slack_threads.org_id uuid not null
+column slack_threads.projected_lifecycle_state jsonb
 column slack_threads.recipient_team_id text
 column slack_threads.recipient_user_id text
 column slack_threads.refresh_at timestamp with time zone not null default clock_timestamp()
@@ -2170,7 +2170,6 @@ index CREATE INDEX slack_requests_due ON public.slack_requests USING btree (next
 index CREATE INDEX slack_requests_feedback_due ON public.slack_requests USING btree (finished_at, id) WHERE (((status = 'rejected'::text) OR ((status = 'accepted'::text) AND (operation = ANY (ARRAY['mute'::text, 'unmute'::text, 'sleep'::text, 'wake'::text, 'close'::text, 'help'::text, 'hibernate'::text, 'confirm_close'::text])))) AND (payload_expired_at IS NULL))
 index CREATE INDEX slack_requests_gesture ON public.slack_requests USING btree (installation_id, request_digest)
 index CREATE INDEX slack_requests_input_source ON public.slack_requests USING btree (environment_id, turn_id, message_id) WHERE ((status = 'accepted'::text) AND (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text])))
-index CREATE INDEX slack_threads_lifecycle_due ON public.slack_threads USING btree (next_lifecycle_projection_at, id) WHERE ((next_lifecycle_projection_at IS NOT NULL) AND (deleted_at IS NULL))
 index CREATE INDEX slack_threads_remote_root ON public.slack_threads USING btree (thread_ts, slack_channel_binding_id) WHERE (thread_ts IS NOT NULL)
 index CREATE INDEX slack_threads_status_due ON public.slack_threads USING btree (next_attempt_at, refresh_at, id)
 index CREATE INDEX slack_work_items_post ON public.slack_work_items USING btree (post_id)

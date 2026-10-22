@@ -32,6 +32,10 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err != nil {
 			return err
 		}
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+		if err != nil {
+			return err
+		}
 		sessions, err := session.LockInitialSessions(ctx, tx, env, computerID)
 		if err != nil {
 			return err
@@ -84,7 +88,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err := computer.RequireSecretsNotRevoked(ctx, tx, env, computerID); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil())
+		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)

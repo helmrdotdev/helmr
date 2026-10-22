@@ -2,6 +2,8 @@ package slack
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5"
 	"strings"
 	"testing"
 	"time"
@@ -125,5 +127,78 @@ func TestSlackLifecycleCardIsRetainedAndRefreshDoesNotCreateWork(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "Automatic close") {
 		t.Fatalf("missing effective policy: %s", raw)
+	}
+}
+
+func TestSlackLifecycleDiscoveryTracksStateWithoutPeriodicCardWrites(t *testing.T) {
+	f := newStatusFixture(t)
+	f.link(t)
+	drain := func() {
+		t.Helper()
+		for range 30 {
+			n, err := ReconcileProjection(t.Context(), f.Pool, testProjectionConfig(), 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n == 0 {
+				return
+			}
+		}
+		t.Fatal("projection never drained")
+	}
+	drain()
+	var before, after int64
+	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_revision FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		drain()
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_revision FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&after); err != nil || after != before {
+		t.Fatalf("idle card revised: %d -> %d %v", before, after, err)
+	}
+	// No Session event is emitted for this physical transition.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer)
+	drain()
+	var payload []byte
+	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_revision,payload FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&after, &payload); err != nil || after != before+1 || !strings.Contains(string(payload), "Computer not yet running") {
+		t.Fatalf("physical state not projected: %d -> %d %s %v", before, after, payload, err)
+	}
+}
+
+func TestSlackLifecycleRendersSampledState(t *testing.T) {
+	f := newStatusFixture(t)
+	target := controlTarget{Installation: f.installation, Thread: f.thread, Participant: f.participant, Environment: f.Environment, Session: f.Session}
+	if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
+		snapshot, _, err := readLifecycleState(t.Context(), tx, target)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(t.Context(), `UPDATE sessions SET suspension='after_turn' WHERE id=$1`, f.Session); err != nil {
+			return err
+		}
+		text, _, err := lifecyclePresentationFromState(t.Context(), tx, testProjectionConfig(), target, "help", "", false, snapshot)
+		if err == nil && !strings.Contains(text, "Automatic hibernation: off") {
+			t.Fatalf("renderer mixed live state into snapshot: %s", text)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSlackUnboundLifecycleCommandsHaveExplicitRejection(t *testing.T) {
+	for _, command := range []string{"sleep", "wake", "close", "help"} {
+		t.Run(command, func(t *testing.T) {
+			f := newStatusFixture(t)
+			id := f.threadMessage(t, "unbound-"+command, "!"+command, time.Now())
+			if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error { return admitLifecycleMessage(t.Context(), tx, id, &messageAdmission{}, command) }); err != nil {
+				t.Fatal(err)
+			}
+			var code string
+			if err := f.Pool.QueryRow(t.Context(), `SELECT error FROM slack_requests WHERE id=$1`, id).Scan(&code); err != nil || code != "command_unbound" {
+				t.Fatalf("wrong unbound feedback: %s %v", code, err)
+			}
+		})
 	}
 }

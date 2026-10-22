@@ -40,8 +40,10 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 			return errControlInvalid
 		}
 		target := gesture.Control.Target
-		if err := workergroup.LockExecutionSupply(ctx, tx, target.Environment); err != nil {
-			return err
+		if gesture.Control.Action == "wake" {
+			if err := workergroup.LockExecutionSupply(ctx, tx, target.Environment); err != nil {
+				return err
+			}
 		}
 		reject := func(code string) error {
 			_, err := tx.Exec(ctx, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp(),error=$2 WHERE id=$1 AND status='received'`, id, code)
@@ -72,7 +74,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		var source time.Time
 		var unexpired bool
 		expires := time.Unix(gesture.Control.ExpiresAt, 0).UTC()
-		if err = tx.QueryRow(ctx, `SELECT status,slack_user_id,source_occurred_at,expires_at>clock_timestamp() AND $2>clock_timestamp() FROM slack_requests WHERE id=$1 FOR UPDATE`, id, expires).Scan(&status, &actor, &source, &unexpired); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT status,slack_user_id,source_occurred_at,expires_at>clock_timestamp() AND ($3 OR $2>clock_timestamp()) FROM slack_requests WHERE id=$1 FOR UPDATE`, id, expires, gesture.Control.ExpiresAt == 0).Scan(&status, &actor, &source, &unexpired); err != nil {
 			return err
 		}
 		if status != "received" {
@@ -156,7 +158,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 			if deleted {
 				return session.ErrNotReady
 			}
-			if err := coreTx.QueryRow(ctx, `SELECT expires_at>clock_timestamp() AND $2>clock_timestamp() FROM slack_requests WHERE id=$1`, id, expires).Scan(&unexpired); err != nil {
+			if err := coreTx.QueryRow(ctx, `SELECT expires_at>clock_timestamp() AND ($3 OR $2>clock_timestamp()) FROM slack_requests WHERE id=$1`, id, expires, gesture.Control.ExpiresAt == 0).Scan(&unexpired); err != nil {
 				return err
 			}
 			if !unexpired {
@@ -168,6 +170,8 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 			switch {
 			case errors.Is(err, computer.ErrBusy):
 				return reject("computer_busy")
+			case errors.Is(err, computer.ErrExecutionSettling):
+				return reject("execution_settling")
 			case errors.Is(err, workergroup.ErrCapacityUnavailable):
 				return reject("execution_capacity_unavailable")
 			case errors.Is(err, workergroup.ErrCapacityIncompatible):

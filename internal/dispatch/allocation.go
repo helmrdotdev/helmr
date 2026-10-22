@@ -212,6 +212,10 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		if err != nil {
 			return err
 		}
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+		if err != nil {
+			return err
+		}
 		p, err := computer.ReadImageBuild(ctx, tx, env, preparation)
 		if err != nil {
 			return err
@@ -280,7 +284,7 @@ func (a *Allocator) AllocateImageBuild(ctx context.Context, env, preparation, ho
 		if !current {
 			return ErrNotReady
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil())
+		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.Allocation{}, allocationError(err)
@@ -313,6 +317,10 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 			return err
 		}
 		_, err = org.LockAdmission(ctx, tx, env)
+		if err != nil {
+			return err
+		}
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
 		if err != nil {
 			return err
 		}
@@ -358,7 +366,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err := computer.RequireSecretsNotRevoked(ctx, tx, env, computerID); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil())
+		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)
@@ -400,6 +408,10 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 			return err
 		}
 		_, err = org.LockAdmission(ctx, tx, env)
+		if err != nil {
+			return err
+		}
+		before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
 		if err != nil {
 			return err
 		}
@@ -476,7 +488,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		if err := computer.RequireSecretsNotRevoked(ctx, tx, env, computerID); err != nil {
 			return err
 		}
-		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil())
+		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)

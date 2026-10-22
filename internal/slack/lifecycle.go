@@ -27,6 +27,9 @@ func admitLifecycleMessage(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *mess
 		_, err := applyThreadInput(ctx, tx, id, p, action)
 		return err
 	}
+	if p.session == uuid.Nil() {
+		return rejectMessage(ctx, tx, id, "command_unbound")
+	}
 	target := controlTarget{Installation: p.installation, Thread: p.thread, Participant: p.source, Environment: p.route.Target.EnvironmentID, Session: p.session}
 	err := db.RunTx(ctx, tx, func(core pgx.Tx) error {
 		_, err := applyLifecycleControl(ctx, core, session.Caller{Kind: "user", ID: p.user}, target, controlEnvelope{Action: action}, id)
@@ -48,6 +51,8 @@ func admitLifecycleMessage(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *mess
 			return rejectMessage(ctx, tx, id, "gesture_expired")
 		case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied):
 			return rejectMessage(ctx, tx, id, "permission_denied")
+		case errors.Is(err, computer.ErrExecutionSettling):
+			return rejectMessage(ctx, tx, id, "execution_settling")
 		case errors.Is(err, workergroup.ErrCapacityUnavailable):
 			return rejectMessage(ctx, tx, id, "execution_capacity_unavailable")
 		case errors.Is(err, workergroup.ErrCapacityIncompatible):

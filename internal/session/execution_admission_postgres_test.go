@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -232,7 +233,7 @@ func TestExecutionFailedBootPreservesOriginalDeadline(t *testing.T) {
 		t.Fatalf("retry extended deadline: %v %v", after, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_pending_since=clock_timestamp()-interval '2 minutes',execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
-	if err := admitCapacityComputer(t.Context(), f, f.env, id); !errors.Is(err, workergroup.ErrCapacityUnavailable) {
+	if err := admitCapacityComputer(t.Context(), f, f.env, id); !errors.Is(err, computer.ErrExecutionSettling) {
 		t.Fatalf("expired acquiring lease admitted more input: %v", err)
 	}
 }
@@ -336,5 +337,69 @@ func TestExpiredInitialExecutionCannotAllocateWithoutNewInput(t *testing.T) {
 	}
 	if _, err := allocator.AllocateFreshLease(t.Context(), f.env, id, 1, f.worker); err != nil {
 		t.Fatalf("new input failed to readmit execution: %v", err)
+	}
+}
+
+func TestStaleProviderEvidenceDoesNotBlockUnrelatedExistingCapacity(t *testing.T) {
+	f, allocator, large := freshComputerAllocationFixture(t)
+	small := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_pools SET per_vm_cpu_millis=4000,capacity_cpu_millis=8000,capacity_memory_bytes=8589934592,capacity_guest_ephemeral_disk_bytes=8589934592,max_vm_slots=8 WHERE worker_group_id=$1;
+ INSERT INTO worker_pool_cpu_shapes(worker_pool_id,vcpu_count,cpu_config_digest) SELECT worker_pool_id,4,cpu_config_digest FROM worker_pool_cpu_shapes WHERE vcpu_count=1;
+ UPDATE worker_hosts SET epoch_cpu_millis=3000,epoch_memory_bytes=3221225472,epoch_guest_ephemeral_disk_bytes=3221225472,max_vm_slots=3,max_vm_starts=3,disk_slots_for_real_work=3,per_vm_cpu_millis=4000 WHERE id=$2;
+ UPDATE computers SET cpu_millis=4000,execution_pending_since=NULL,execution_deadline_at=NULL WHERE id=$3;
+ INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,image_spec_id,image_id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,storage_reservation_bytes)
+ SELECT environment_id,$4,initial_root_id,initial_root_digest,image_spec_id,image_id,origin_template_id,origin_deployment_id,1000,memory_bytes,storage_reservation_bytes FROM computers WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.group, f.worker, large, small)
+	sessiontest.ObserveProvisioning(t, sessiontest.Fixture{Pool: f.pool, Worker: f.worker, Group: f.group})
+	if err := admitCapacityComputer(t.Context(), f, f.env, large); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, f.group)
+	if err := admitCapacityComputer(t.Context(), f, f.env, small); err != nil {
+		t.Fatalf("unrelated current capacity rejected: %v", err)
+	}
+	if _, err := allocator.AllocateFreshLease(t.Context(), f.env, small, 1, f.worker); err != nil {
+		t.Fatalf("unrelated allocation blocked by prior unplaced claim: %v", err)
+	}
+	var retained bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at>clock_timestamp() FROM computers WHERE id=$1`, large).Scan(&retained); err != nil || !retained {
+		t.Fatalf("earlier claim lost: %v %v", retained, err)
+	}
+}
+
+func TestRevokedPendingClaimDoesNotBlockOtherAdmissions(t *testing.T) {
+	f, _, revoked := freshComputerAllocationFixture(t)
+	secretID, version := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($1,$2,'revoked-planning-fixture','revoked',clock_timestamp());
+ INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($3,$1,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'));
+ INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) SELECT $4,c.environment_id,i.image_build_id,$1,$3,0 FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id) WHERE c.id=$5`, pgx.QueryExecModeSimpleProtocol, secretID, f.env, version, uuid.NewV7(), revoked)
+	claims, err := db.ReadPendingExecutionClaims(t.Context(), f.pool, f.group)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, claim := range claims {
+		if claim.ComputerID == revoked {
+			t.Fatal("revoked demand still reserves pending execution")
+		}
+	}
+	other := pendingCapacityComputer(t, f, f.env)
+	if err := admitCapacityComputer(t.Context(), f, f.env, other); err != nil {
+		t.Fatalf("revoked claim blocked unrelated admission: %v", err)
+	}
+}
+
+func TestSessionCloseDoesNotWaitForRegionalPlacement(t *testing.T) {
+	f := newFixture(t)
+	gate, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Rollback(t.Context())
+	if err = workergroup.LockExecutionSupply(t.Context(), gate, f.env); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if _, err = session.ControlSession(ctx, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "independent-close"}); err != nil {
+		t.Fatal(err)
 	}
 }

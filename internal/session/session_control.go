@@ -76,8 +76,10 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 		return result, err
 	}
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := workergroup.LockExecutionSupply(ctx, tx, req.EnvironmentID); err != nil {
-			return err
+		if req.Kind == "resume" {
+			if err := workergroup.LockExecutionSupply(ctx, tx, req.EnvironmentID); err != nil {
+				return err
+			}
 		}
 		if caller.Kind == "session" {
 			if caller.Execution.EnvironmentID != req.EnvironmentID || caller.Execution.SessionID != caller.ID {

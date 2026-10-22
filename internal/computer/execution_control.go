@@ -76,7 +76,9 @@ func NoteExecutionDemand(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) erro
 	return err
 }
 
-var ErrExecutionLimit = errors.New("Environment execution limit reached; raise the limit or release an unused Computer")
+var ErrExecutionSettling = errors.New("previous execution deadline elapsed; retry after its pending work settles")
+
+var ErrExecutionLimit = errors.New("environment execution limit reached; raise the limit or release an unused Computer")
 
 // RequireExecutionCapacity checks new execution under the Environment admission
 // lock. An existing allocation already owns its entitlement, so follow-up input
@@ -101,13 +103,13 @@ func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UUID)
 			return err
 		}
 		if unsettled {
-			return workergroup.ErrCapacityUnavailable
+			return ErrExecutionSettling
 		}
 		pending = false
 	}
 	if allocated {
 		if expired {
-			return workergroup.ErrCapacityUnavailable
+			return ErrExecutionSettling
 		}
 		return nil
 	}
@@ -121,10 +123,14 @@ func RequireExecutionCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UUID)
 	if !budget.Fits(cpu, memory, true) {
 		return ErrExecutionLimit
 	}
+	before, err := workergroup.ReadExecutionPlacement(ctx, tx, env)
+	if err != nil {
+		return err
+	}
 	if _, err = tx.Exec(ctx, `UPDATE computers SET execution_pending_since=clock_timestamp(),execution_deadline_at=clock_timestamp()+(SELECT preparation_timeout_ms FROM environments WHERE id=$1)*interval '1 millisecond' WHERE environment_id=$1 AND id=$2`, env, id); err != nil {
 		return err
 	}
-	return workergroup.RequireExecutionPlacement(ctx, tx, env, id)
+	return workergroup.RequireExecutionPlacement(ctx, tx, env, id, before)
 }
 
 // RequireRetainedHostCapacity runs under the Host lock before a paused source

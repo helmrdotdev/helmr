@@ -277,6 +277,8 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 	var invalidScope environmentScopeReferenceError
 	var notInterruptible session.TurnNotInterruptibleError
 	switch {
+	case errors.Is(err, computer.ErrExecutionSettling):
+		writeError(w, conflict(codedError{code: "execution_settling", message: err.Error(), retryable: true}))
 	case errors.Is(err, workergroup.ErrCapacityUnavailable):
 		writeError(w, unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true}))
 	case errors.Is(err, workergroup.ErrCapacityIncompatible):

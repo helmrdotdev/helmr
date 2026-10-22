@@ -116,7 +116,7 @@ func InitializeLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID, ep
 	if changed.RowsAffected() == 0 {
 		return false, nil
 	}
-	if err := completeExecutionAdmission(ctx, tx, env, computer); err != nil {
+	if err := CompleteExecutionAdmission(ctx, tx, env, computer); err != nil {
 		return false, err
 	}
 	return true, notifyComputerChanged(ctx, tx, env, computer)
@@ -133,15 +133,23 @@ func ActivateRestoredLease(ctx context.Context, tx pgx.Tx, env, computer uuid.UU
 	if tag.RowsAffected() != 1 {
 		return ErrNotReady
 	}
-	if err = completeExecutionAdmission(ctx, tx, env, computer); err != nil {
+	if err = CompleteExecutionAdmission(ctx, tx, env, computer); err != nil {
 		return err
 	}
 	return notifyComputerChanged(ctx, tx, env, computer)
 }
 
-func completeExecutionAdmission(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE computers SET execution_pending_since=NULL,execution_deadline_at=NULL WHERE environment_id=$1 AND id=$2`, env, id)
-	return err
+// CompleteExecutionAdmission ends bounded preparation once execution is ready.
+// The caller holds the Computer lock and has verified its physical lease.
+func CompleteExecutionAdmission(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
+	tag, err := tx.Exec(ctx, `UPDATE computers SET execution_pending_since=NULL,execution_deadline_at=NULL WHERE environment_id=$1 AND id=$2 AND (execution_deadline_at IS NULL OR execution_deadline_at>clock_timestamp())`, env, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrNotReady
+	}
+	return nil
 }
 
 // MarkLeaseLost ends an unfenced lease whose physical owner is gone; only

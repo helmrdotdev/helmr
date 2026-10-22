@@ -21,6 +21,7 @@ const PendingExecutionClaimsSQL = `WITH candidates AS (
  AND p.fenced_at IS NULL AND p.status IN ('queued','running','succeeded')
  LEFT JOIN LATERAL (SELECT cpu_millis,memory_bytes FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.image_spec_id=p.image_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
  WHERE c.execution_deadline_at>clock_timestamp() AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM (` + RevokedComputerSecretsSQL + `) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.source_lease_epoch=l.epoch AND cp.status='ready'))
  ) SELECT environment_id,computer_id,
  CASE WHEN ordinal=1 THEN build_id END build_id,

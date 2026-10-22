@@ -2048,7 +2048,7 @@ CREATE TABLE slack_threads (
     team_id text NOT NULL,
     slack_channel_id text NOT NULL,
     thread_ts text CHECK (thread_ts<>''),
-    next_lifecycle_projection_at timestamptz DEFAULT clock_timestamp(),
+    projected_lifecycle_state jsonb,
     opening_post_key text CHECK (opening_post_key<>''),
     recipient_team_id text,
     recipient_user_id text,
@@ -2079,7 +2079,6 @@ CREATE TABLE slack_threads (
 
 CREATE INDEX slack_threads_remote_root ON slack_threads(thread_ts, slack_channel_binding_id) WHERE thread_ts IS NOT NULL;
 
-CREATE INDEX slack_threads_lifecycle_due ON slack_threads(next_lifecycle_projection_at,id) WHERE next_lifecycle_projection_at IS NOT NULL AND deleted_at IS NULL;
 
 CREATE INDEX slack_threads_status_due ON slack_threads(next_attempt_at, refresh_at, id);
 

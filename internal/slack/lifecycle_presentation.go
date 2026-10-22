@@ -12,7 +12,11 @@ import (
 )
 
 func lifecycleButton(config ProjectionConfig, target controlTarget, action, label, actor, scope string, computerID uuid.UUID) (map[string]any, error) {
-	value, err := encodeControl(config.ControlKey, controlEnvelope{Nonce: target.Thread, Action: action, Target: target, Actor: actor, Scope: scope, Computer: computerID, ExpiresAt: time.Now().UTC().Truncate(time.Hour).Add(25 * time.Hour).Unix()})
+	var expires int64
+	if !persistentLifecycleControl(action) {
+		expires = time.Now().Add(10 * time.Minute).Unix()
+	}
+	value, err := encodeControl(config.ControlKey, controlEnvelope{Nonce: target.Thread, Action: action, Target: target, Actor: actor, Scope: scope, Computer: computerID, ExpiresAt: expires})
 	if err != nil {
 		return nil, err
 	}
@@ -30,27 +34,22 @@ func lifecycleButton(config ProjectionConfig, target controlTarget, action, labe
 // Private help is rendered only after current linked-user authorization. Shared
 // cards never disclose another Session's identity or issue scope confirmation.
 func lifecyclePresentation(ctx context.Context, tx pgx.Tx, config ProjectionConfig, target controlTarget, action, actor string, private bool) (string, []any, error) {
-	var computerID *uuid.UUID
-	var status, policy string
-	var idle *int64
-	var muted bool
-	if err := tx.QueryRow(ctx, `SELECT s.computer_id,s.status,s.suspension,s.close_after_idle_ms,t.input_muted FROM sessions s JOIN slack_threads t ON t.id=$3 AND t.front_session_id=s.id WHERE s.environment_id=$1 AND s.id=$2`, target.Environment, target.Session, target.Thread).Scan(&computerID, &status, &policy, &idle, &muted); err != nil {
+	state, _, err := readLifecycleState(ctx, tx, target)
+	if err != nil {
 		return "", nil, err
 	}
+	return lifecyclePresentationFromState(ctx, tx, config, target, action, actor, private, state)
+}
+
+func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config ProjectionConfig, target controlTarget, action, actor string, private bool, snapshot lifecycleState) (string, []any, error) {
+	computerID, status, policy, idle, muted := snapshot.ComputerID, snapshot.Status, snapshot.Policy, snapshot.Idle, snapshot.Muted
 	sleeping := false
 	text := "Session " + status + "."
 	if status == "open" {
 		state := "Computer not yet running"
 		if computerID != nil {
-			var checkpoint, control, controlStatus, failure string
-			var awake bool
-			if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT status FROM checkpoints WHERE environment_id=$1 AND computer_id=$2 AND status IN ('capturing','sealed','ready','restoring','aborting') ORDER BY created_at DESC LIMIT 1),''),
- EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND status='active' AND fenced_at IS NULL),
- COALESCE((SELECT kind FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 ORDER BY accepted_at DESC,id DESC LIMIT 1),''),
- COALESCE((SELECT status FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 ORDER BY accepted_at DESC,id DESC LIMIT 1),''),
- COALESCE((SELECT error_code FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 ORDER BY accepted_at DESC,id DESC LIMIT 1),'')`, target.Environment, *computerID).Scan(&checkpoint, &awake, &control, &controlStatus, &failure); err != nil {
-				return "", nil, err
-			}
+			checkpoint, control, controlStatus, failure := snapshot.Checkpoint, snapshot.Control.Kind, snapshot.Control.Status, snapshot.Control.Failure
+			awake := snapshot.Awake
 			if awake {
 				state = "Computer awake. Background work can continue"
 			}

@@ -155,7 +155,7 @@ func (h InteractionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expires := occurred.Add(5 * time.Minute)
-	if tokenExpiry := time.Unix(claims.ExpiresAt, 0); tokenExpiry.Before(expires) {
+	if tokenExpiry := time.Unix(claims.ExpiresAt, 0); claims.ExpiresAt != 0 && tokenExpiry.Before(expires) {
 		expires = tokenExpiry
 	}
 	gesture := controlGesture{Control: claims}

@@ -124,6 +124,8 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			text = "Close accepted. The Session and its owned Sessions will close after accepted work settles. Wake cannot undo closure. Other work may still occupy the Computer."
 		case "computer_busy":
 			text = "Cannot hibernate while foreground work or another control is active. Wait for it to settle or use the existing Stop control, then try again."
+		case "execution_settling":
+			text = "The previous execution timed out and is still settling. Try again shortly."
 		case "execution_capacity_unavailable":
 			text = "Worker capacity could not be confirmed. No new work was accepted. Try again after Worker capacity becomes available."
 		case "execution_capacity_incompatible":

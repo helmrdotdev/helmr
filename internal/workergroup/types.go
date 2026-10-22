@@ -163,17 +163,17 @@ type Incompatibility struct {
 }
 
 type PlanResponse struct {
-	// UnplacedItems includes demand skipped by Environment limits. Admission
-	// requires a complete plan with no unplaced items, including earlier claims.
-	UnplacedItems   int64             `json:"-"`
-	WorkerGroupID   string            `json:"worker_group_id"`
-	WorkerGroupName string            `json:"worker_group_name"`
-	RegionID        string            `json:"region_id"`
-	GroupStatus     WorkerGroupStatus `json:"group_status"`
-	Pools           []PoolPlan        `json:"pools"`
-	UnmatchedDemand []Incompatibility `json:"unmatched_demand"`
-	Complete        bool              `json:"complete"`
-	ComputedAt      time.Time         `json:"computed_at"`
+	// PlacementResults keeps internal demand identity for transactional admission.
+	// An empty reason means placed; non-empty reasons identify unplaced demand.
+	PlacementResults map[string]string `json:"-"`
+	WorkerGroupID    string            `json:"worker_group_id"`
+	WorkerGroupName  string            `json:"worker_group_name"`
+	RegionID         string            `json:"region_id"`
+	GroupStatus      WorkerGroupStatus `json:"group_status"`
+	Pools            []PoolPlan        `json:"pools"`
+	UnmatchedDemand  []Incompatibility `json:"unmatched_demand"`
+	Complete         bool              `json:"complete"`
+	ComputedAt       time.Time         `json:"computed_at"`
 }
 
 type PlacementObservation struct {

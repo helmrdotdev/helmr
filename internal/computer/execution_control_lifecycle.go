@@ -38,7 +38,7 @@ func ReconcileExecutionControls(ctx context.Context, database db.TxBeginner) err
     ELSE 'execution_deadline_exceeded' END AS code
    FROM computer_controls r JOIN computers c ON (c.environment_id,c.id)=(r.environment_id,r.computer_id)
    LEFT JOIN checkpoints cp ON (cp.environment_id,cp.id)=(r.environment_id,r.checkpoint_id)
-   WHERE r.status='accepted' AND (r.deadline_at<=clock_timestamp() OR c.deleted_at IS NOT NULL OR c.integrity_fault_at IS NOT NULL OR c.preparation_failed_at IS NOT NULL OR cp.status IN ('cancelled','lost'))
+   WHERE r.status='accepted' AND ((r.deadline_at<=clock_timestamp() AND NOT (r.kind='hibernate' AND COALESCE(cp.status IN ('capturing','sealed'),false))) OR c.deleted_at IS NOT NULL OR c.integrity_fault_at IS NOT NULL OR c.preparation_failed_at IS NOT NULL OR cp.status IN ('cancelled','lost'))
    ORDER BY r.deadline_at,r.id LIMIT 100 FOR NO KEY UPDATE OF c SKIP LOCKED
   ) UPDATE computer_controls r SET status='failed',error_code=f.code,settled_at=clock_timestamp()
   FROM failed f WHERE (r.environment_id,r.id)=(f.environment_id,f.id) AND r.status='accepted'`)

@@ -160,7 +160,8 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		return PlanResponse{}, fmt.Errorf("%w: every requested pool must be active in the Worker Group", ErrInvalidPlanRequest)
 	}
 	response := PlanResponse{
-		WorkerGroupID: pgvalue.UUIDString(group.ID), WorkerGroupName: group.Name, RegionID: group.RegionID,
+		PlacementResults: map[string]string{},
+		WorkerGroupID:    pgvalue.UUIDString(group.ID), WorkerGroupName: group.Name, RegionID: group.RegionID,
 		GroupStatus: WorkerGroupStatus(group.Status),
 		Complete:    true, ComputedAt: now.UTC(), Pools: make([]PoolPlan, 0, len(rows)),
 		UnmatchedDemand: []Incompatibility{},
@@ -251,10 +252,11 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 			residents = 1
 		}
 		if candidate.resources.CPUMillis > budget.cpu || candidate.resources.MemoryBytes > budget.memory || residents > budget.residents {
-			response.UnplacedItems++
+			response.PlacementResults[candidate.key] = "environment_limit"
 			continue
 		}
 		consume := func() {
+			response.PlacementResults[candidate.key] = ""
 			budget.cpu -= candidate.resources.CPUMillis
 			budget.memory -= candidate.resources.MemoryBytes
 			budget.residents -= residents
@@ -262,7 +264,7 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		}
 		if candidate.reason != "" {
 			reasons[candidate.reason]++
-			response.UnplacedItems++
+			response.PlacementResults[candidate.key] = candidate.reason
 			continue
 		}
 		placed := false
@@ -297,12 +299,14 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 			compatiblePoolCount++
 		}
 		if compatiblePoolCount == 0 {
-			response.UnplacedItems++
 			if candidate.restore != nil {
+				response.PlacementResults[candidate.key] = reasonRuntimeCompatibility
 				reasons[reasonRuntimeCompatibility]++
 			} else if _, exists := planByID[candidate.targetPoolID.Bytes]; !exists {
+				response.PlacementResults[candidate.key] = reasonProviderPool
 				reasons[reasonProviderPool]++
 			} else {
+				response.PlacementResults[candidate.key] = reasonPerInstanceResources
 				reasons[reasonPerInstanceResources]++
 			}
 			continue
@@ -354,8 +358,8 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 			break
 		}
 		if !assigned {
+			response.PlacementResults[candidate.key] = reasonProviderSaturated
 			reasons[reasonProviderSaturated]++
-			response.UnplacedItems++
 		} else {
 			consume()
 		}

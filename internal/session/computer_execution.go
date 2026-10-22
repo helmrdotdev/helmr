@@ -30,8 +30,10 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 		return result, ErrInvalidInput
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := workergroup.LockExecutionSupply(ctx, tx, req.EnvironmentID); err != nil {
-			return err
+		if req.Kind == "wake" {
+			if err := workergroup.LockExecutionSupply(ctx, tx, req.EnvironmentID); err != nil {
+				return err
+			}
 		}
 		if err := authorizeComputerExecution(ctx, tx, caller, req.EnvironmentID); err != nil {
 			return err

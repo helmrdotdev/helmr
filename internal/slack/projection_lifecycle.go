@@ -9,8 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// One retained card per bound thread. A bounded refresh observes physical state
-// even when a checkpoint transition produces no authored Session event.
+// One retained card per bound thread follows execution state changes, including
+// checkpoint transitions that produce no authored Session event.
 func projectLifecycleCard(ctx context.Context, tx pgx.Tx, o projectionOwner) (bool, error) {
 	if o.session != o.front {
 		return false, nil
@@ -23,7 +23,11 @@ func projectLifecycleCard(ctx context.Context, tx pgx.Tx, o projectionOwner) (bo
 		return false, nil
 	}
 	target := controlTarget{Installation: o.installation, Thread: o.thread, Participant: o.frontSource, Environment: o.environment, Session: o.front}
-	text, blocks, err := lifecyclePresentation(ctx, tx, o.config, target, "help", "", false)
+	state, rawState, err := readLifecycleState(ctx, tx, target)
+	if err != nil {
+		return false, err
+	}
+	text, blocks, err := lifecyclePresentationFromState(ctx, tx, o.config, target, "help", "", false, state)
 	if err != nil {
 		return false, err
 	}
@@ -40,6 +44,6 @@ func projectLifecycleCard(ctx context.Context, tx pgx.Tx, o projectionOwner) (bo
 	if err != nil {
 		return false, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE slack_threads SET next_lifecycle_projection_at=CASE WHEN EXISTS(SELECT 1 FROM sessions WHERE environment_id=$2 AND id=$3 AND status IN ('open','closing')) THEN clock_timestamp()+interval '15 seconds' ELSE NULL END WHERE id=$1`, o.thread, o.environment, o.front)
+	_, err = tx.Exec(ctx, `UPDATE slack_threads SET projected_lifecycle_state=$2 WHERE id=$1`, o.thread, rawState)
 	return tag.RowsAffected() > 0, err
 }

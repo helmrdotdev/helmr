@@ -161,6 +161,8 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Tru
 						return err
 					}
 					switch {
+					case errors.Is(admissionErr, computer.ErrExecutionSettling):
+						reason = "execution_settling"
 					case errors.Is(admissionErr, computer.ErrExecutionLimit):
 						reason = "environment_execution_limit"
 					case errors.Is(admissionErr, workergroup.ErrCapacityIncompatible):

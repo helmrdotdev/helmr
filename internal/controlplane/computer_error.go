@@ -25,6 +25,8 @@ func computerError(err error, operation computerOperation) error {
 	var expired idempotency.ExpiredError
 	var idempotencyConflict idempotency.ConflictError
 	switch {
+	case errors.Is(err, computer.ErrExecutionSettling):
+		return conflict(codedError{code: "execution_settling", message: err.Error(), retryable: true})
 	case errors.Is(err, workergroup.ErrCapacityUnavailable):
 		return unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true})
 	case errors.Is(err, workergroup.ErrCapacityIncompatible):

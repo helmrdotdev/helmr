@@ -174,8 +174,10 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		})
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := workergroup.LockExecutionSupply(ctx, tx, p.route.Target.EnvironmentID); err != nil {
-			return err
+		if command == "" || command == "wake" {
+			if err := workergroup.LockExecutionSupply(ctx, tx, p.route.Target.EnvironmentID); err != nil {
+				return err
+			}
 		}
 		active, err := slackroute.LockConnections(ctx, tx, p.route.Target.EnvironmentID, []uuid.UUID{p.route.Target.ConnectionID})
 		if err != nil {
@@ -264,6 +266,8 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				return rejectMessage(ctx, tx, id, "gesture_expired")
 			case (errors.Is(err, session.ErrDenied) || errors.Is(err, computer.ErrDenied)):
 				return rejectMessage(ctx, tx, id, "permission_denied")
+			case errors.Is(err, computer.ErrExecutionSettling):
+				return rejectMessage(ctx, tx, id, "execution_settling")
 			case errors.Is(err, workergroup.ErrCapacityUnavailable):
 				return rejectMessage(ctx, tx, id, "execution_capacity_unavailable")
 			case errors.Is(err, workergroup.ErrCapacityIncompatible):

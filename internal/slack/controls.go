@@ -42,9 +42,20 @@ type controlEnvelope struct {
 	SourceTimestamp string        `json:"source_ts,omitempty"`
 }
 
+// Base lifecycle controls always recheck current membership and authorization.
+// Scoped confirmations and question responses remain time bounded.
+func persistentLifecycleControl(action string) bool {
+	switch action {
+	case "sleep", "wake", "close", "help", "mute", "unmute":
+		return true
+	default:
+		return false
+	}
+}
+
 func validControl(c controlEnvelope) bool {
 	t := c.Target
-	if c.Nonce == uuid.Nil() || t.Installation == uuid.Nil() || t.Thread == uuid.Nil() || t.Participant == uuid.Nil() || t.Environment == uuid.Nil() || t.Session == uuid.Nil() || c.ExpiresAt <= 0 {
+	if c.Nonce == uuid.Nil() || t.Installation == uuid.Nil() || t.Thread == uuid.Nil() || t.Participant == uuid.Nil() || t.Environment == uuid.Nil() || t.Session == uuid.Nil() || c.ExpiresAt < 0 || (c.ExpiresAt == 0 && !persistentLifecycleControl(c.Action)) {
 		return false
 	}
 	switch c.Action {
@@ -117,7 +128,7 @@ func decodeControl(key []byte, value string, now time.Time) (controlEnvelope, er
 	if decoder.Decode(&claims) != nil || !validControl(claims) {
 		return controlEnvelope{}, errControlInvalid
 	}
-	if claims.ExpiresAt <= now.Unix() {
+	if claims.ExpiresAt != 0 && claims.ExpiresAt <= now.Unix() {
 		return claims, errControlExpired
 	}
 	return claims, nil

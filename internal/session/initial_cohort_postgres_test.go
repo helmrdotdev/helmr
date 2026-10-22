@@ -232,6 +232,14 @@ func TestInitialCohortExcludesHeldSessionUntilLaterAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 1, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
+		t.Fatalf("held-only Computer allocated without runnable demand: %v", err)
+	}
+	peerRequest := f.startRequest("runnable-initial-peer")
+	peerRequest.ComputerID = computerID
+	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), peerRequest); err != nil {
+		t.Fatal(err)
+	}
 	r, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 1, f.worker)
 	if err != nil {
 		t.Fatal(err)

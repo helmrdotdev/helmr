@@ -13,15 +13,18 @@ import (
 
 // Owner edges express transaction orchestration. Reads of another owner's
 // tables do not justify a reverse edge or a second writer.
+// Agent and Slack admission acquire Worker supply before their channel locks.
+// Command admission uses Org's Environment gate. Dispatch composes Command and
+// Session failure transitions atomically when an execution admission expires.
 var ownerImports = map[string][]string{
-	"agent":       {"session", "slack", "slackroute", "computer", "org"},
+	"agent":       {"session", "slack", "slackroute", "computer", "org", "workergroup"},
 	"computer":    {"secret", "workergroup"},
 	"session":     {"computer", "slackroute", "secret", "org", "workergroup"},
-	"dispatch":    {"session", "computer", "secret", "org", "workergroup"},
-	"slack":       {"session", "slackroute", "computer", "audit"},
+	"dispatch":    {"session", "command", "computer", "secret", "org", "workergroup"},
+	"slack":       {"session", "slackroute", "computer", "audit", "workergroup"},
 	"slackroute":  {},
 	"deployment":  {"agent", "computer", "slackroute", "org", "audit"},
-	"command":     {"computer", "secret", "workergroup"},
+	"command":     {"computer", "secret", "workergroup", "org"},
 	"identity":    {"org", "audit"},
 	"org":         {"audit"},
 	"secret":      {"audit"},
