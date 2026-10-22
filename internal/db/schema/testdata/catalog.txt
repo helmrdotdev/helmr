@@ -726,7 +726,6 @@ column sessions.parent_session_id uuid
 column sessions.requester_session_id uuid
 column sessions.root_session_id uuid not null
 column sessions.status text not null default 'open'::text
-column sessions.suspension text not null default 'manual'::text
 column sessions.suspension_after_seq bigint not null default 0
 column slack_app_registrations.app_icon_url text
 column slack_app_registrations.app_id text
@@ -1730,7 +1729,6 @@ constraint sessions c CHECK (origin_turn_id IS NULL OR requester_session_id IS N
 constraint sessions c CHECK (parent_session_id IS NULL AND root_session_id = id OR parent_session_id IS NOT NULL AND root_session_id = parent_session_id AND root_session_id <> id AND requester_session_id IS NOT NULL AND requester_session_id = parent_session_id)
 constraint sessions c CHECK (requester_session_id IS NULL AND causal_depth = 0 OR requester_session_id IS NOT NULL AND causal_depth > 0)
 constraint sessions c CHECK (status = ANY (ARRAY['open'::text, 'closing'::text, 'closed'::text, 'cancelled'::text]))
-constraint sessions c CHECK (suspension = ANY (ARRAY['manual'::text, 'after_turn'::text]))
 constraint sessions c CHECK (suspension_after_seq >= 0)
 constraint sessions f FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
 constraint sessions f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)

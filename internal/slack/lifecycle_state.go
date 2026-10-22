@@ -11,7 +11,7 @@ import (
 // rendering could acknowledge a change that the published card never showed.
 // Aliases s and t are the front Session and its Slack thread.
 const lifecycleStateSQL = `jsonb_build_object(
- 'computer_id',s.computer_id,'status',s.status,'policy',s.suspension,
+ 'computer_id',s.computer_id,'status',s.status,'policy',(SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)),
  'idle',s.close_after_idle_ms,'muted',t.input_muted,
  'checkpoint',COALESCE((SELECT cp.status FROM checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.computer_id=s.computer_id AND cp.status IN ('capturing','sealed','ready','restoring','aborting') ORDER BY cp.created_at DESC LIMIT 1),''),
  'awake',EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.status='active' AND l.fenced_at IS NULL),

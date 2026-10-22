@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/lifetime"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestSessionIdleClosesOnlyContinuouslyQuiescentSession(t *testing.T) {
@@ -202,14 +203,18 @@ func TestSessionIdleScanSkipsFutureQuietClock(t *testing.T) {
 	}
 }
 
-func TestStartSnapshotsSuspensionPolicy(t *testing.T) {
+func TestStartPinsSuspensionPolicyAcrossDeploymentPromotion(t *testing.T) {
 	f := newAdmissionFixture(t)
 	ctx := t.Context()
 	first, err := session.Start(ctx, f.pool, nil, f.caller(), f.startRequest("manual"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE agent_definitions SET suspension='after_turn' WHERE environment_id=$1`, f.env)
+	promoted := uuid.NewV7()
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('e',64));
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension) SELECT environment_id,agent_id,$3,template_id,has_init,'after_turn' FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, promoted)
 	second, err := session.Start(ctx, f.pool, nil, f.caller(), f.startRequest("after-turn"))
 	if err != nil {
 		t.Fatal(err)
@@ -222,9 +227,9 @@ func TestStartSnapshotsSuspensionPolicy(t *testing.T) {
 		id     uuid.UUID
 		policy string
 	}{{first.SessionID, "manual"}, {second.SessionID, "after_turn"}} {
-		var got string
-		if err := f.pool.QueryRow(ctx, `SELECT suspension FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, want.id).Scan(&got); err != nil || got != want.policy {
-			t.Fatalf("policy = %q, want %q: %v", got, want.policy, err)
+		got, err := session.GetSession(ctx, f.pool, f.caller(), f.env, want.id)
+		if err != nil || got.Suspension != want.policy {
+			t.Fatalf("policy = %q, want %q: %v", got.Suspension, want.policy, err)
 		}
 	}
 }
