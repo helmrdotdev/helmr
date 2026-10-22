@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises"
+import { readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { fixtureInput } from "../../support/runtime-mcp"
@@ -28,9 +28,26 @@ await verify("session-worker-restart", async ({ marker, objects, computer, start
         before.ready_leaf_keys?.length > 0 && Date.now() - Date.parse(before.resource_observed_at) < 60_000) break
     await delay(500, undefined, { signal: readySignal })
   }
-  await writeFile(join(process.env.HELMR_EVIDENCE_DIR, "ready-for-worker-restart.json"),
+  await writeFile(join(process.env.HELMR_EVIDENCE_DIR, "ready-for-worker-restart.json.tmp"),
     JSON.stringify({ before, parked, sessionId: first.session.id, computerId: target.id }) + "\n", { mode: 0o600 })
+  await rename(join(process.env.HELMR_EVIDENCE_DIR, "ready-for-worker-restart.json.tmp"),
+    join(process.env.HELMR_EVIDENCE_DIR, "ready-for-worker-restart.json"))
   const signal = deadline(5 * 60_000)
+  // The native host tool owns an exclusive profile lock during fault injection.
+  // Wait for its atomic completion receipt before polling native observations.
+  for (;;) {
+    signal.throwIfAborted()
+    try {
+      const receipt = JSON.parse(await readFile(join(process.env.HELMR_EVIDENCE_DIR, "worker-restart-complete.json"), "utf8"))
+      assertEqual(receipt.workerHostId, before.id, "Operator restarted another Worker")
+      assertEqual(receipt.previousEpoch, before.current_epoch, "Operator used another Worker epoch")
+      assertEqual(receipt.passed, true, "Operator crash/recovery failed")
+      break
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error
+    }
+    await delay(500, undefined, { signal })
+  }
   let after: any
   for (;;) {
     signal.throwIfAborted()

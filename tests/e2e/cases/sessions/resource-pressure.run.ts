@@ -69,7 +69,10 @@ await verify("session-resource-pressure", async ({ marker, objects, computer, st
   const survivorResult: any = await completedResult(survivor.second)
   assertEqual(survivorResult.nonce, survivor.first.nonce, "Pressure changed the surviving Session's memory")
   assertEqual(survivorResult.count, 2, "Pressure restarted authored initialization")
-  const paths = await Promise.all([first.target, survivor.target, queuedComputer].map(target => hostObservation("computer-path", { computer_id: target.id })))
+  const paths = []
+  for (const target of [first.target, survivor.target, queuedComputer]) {
+    paths.push(await hostObservation("computer-path", { computer_id: target.id }))
+  }
   for (const member of [survivor, { target: queuedComputer, admission: queued }]) {
     await member.admission.session.cancel({ idempotencyKey: `cancel:${marker}:${member.target.id}` }, { signal })
     await deleteComputer(member.target, `delete:${marker}:${member.target.id}`)
@@ -81,11 +84,14 @@ await verify("session-resource-pressure", async ({ marker, objects, computer, st
       input: { marker }, idempotencyKey: `burst:${marker}:${ordinal}` })
     const result = await completedResult(admission.turn)
     const usefulOutputMs = Date.now() - startedAt
-    const path = await hostObservation("computer-path", { computer_id: target.id })
     await admission.session.cancel({ idempotencyKey: `cancel-burst:${marker}:${ordinal}` }, { signal })
     await deleteComputer(target, `delete-burst:${marker}:${ordinal}`)
-    return { result, usefulOutputMs, path }
+    return { result, usefulOutputMs, computerId: target.id }
   }))
   assert(burst.every(result => result.status === "fulfilled"), `Burst did not finish: ${JSON.stringify(burst)}`)
-  return { before, pressure, waiting, queuedUsefulOutputMs, releaseToOutputMs, firstResult, survivorResult, queuedResult, paths, burst }
+  const burstPaths = []
+  for (const result of burst) {
+    if (result.status === "fulfilled") burstPaths.push(await hostObservation("computer-path", { computer_id: result.value.computerId }))
+  }
+  return { before, pressure, waiting, queuedUsefulOutputMs, releaseToOutputMs, firstResult, survivorResult, queuedResult, paths, burst, burstPaths }
 })
