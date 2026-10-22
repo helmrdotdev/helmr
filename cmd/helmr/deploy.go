@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -19,6 +20,7 @@ func deployCommand() *cobra.Command {
 	var projectRef string
 	var envRef string
 	var bundlePath string
+	var refreshDependencies bool
 	var skipPromotion bool
 	var jsonOutput bool
 	var idempotencyKey string
@@ -27,6 +29,9 @@ func deployCommand() *cobra.Command {
 		Short: "Build and deploy a verified deployment bundle.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (returnErr error) {
+			if strings.TrimSpace(bundlePath) != "" && refreshDependencies {
+				return errors.New("--refresh-dependencies requires a source build, not --bundle")
+			}
 			if strings.TrimSpace(bundlePath) != "" && len(args) != 0 {
 				return errors.New("deploy accepts either a source path or --bundle, not both")
 			}
@@ -69,7 +74,7 @@ func deployCommand() *cobra.Command {
 				if err := reporter.Step("Building deployment bundle"); err != nil {
 					return err
 				}
-				if err := buildDeploymentBundleAt(cmd.Context(), cmd, source, bundlePath, false); err != nil {
+				if err := buildDeploymentBundleAt(cmd.Context(), cmd, source, bundlePath, false, refreshDependencies); err != nil {
 					return err
 				}
 			}
@@ -119,6 +124,7 @@ func deployCommand() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&projectRef, "project", "p", "", "Project ID.")
 	cmd.Flags().StringVarP(&envRef, "env", "e", "", "Environment ID for this deployment.")
+	cmd.Flags().BoolVar(&refreshDependencies, "refresh-dependencies", false, "Reinstall source and runtime dependencies without cached install layers.")
 	cmd.Flags().StringVar(&bundlePath, "bundle", "", "Existing verified deployment bundle directory.")
 	cmd.Flags().BoolVar(&skipPromotion, "skip-promotion", false, "Finalize the deployment without promoting it current.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON lines for deployment progress.")
@@ -141,32 +147,27 @@ func uploadDeploymentBundleObjects(
 	totalUploads := len(uploads)
 	completedUploads := 0
 	for len(uploads) > 0 {
-		upload := uploads[0]
-		path := directory.Objects[upload.Digest]
-		index := completedUploads + 1
-		if err := reporter.DeploymentObjectUploadStarted(upload.Digest, index, totalUploads); err != nil {
-			return err
-		}
-		uploadErr := controlPlane.UploadDeploymentBundleObject(
-			ctx,
-			upload,
-			path,
-			func(bytesRead int64, totalBytes int64) error {
-				return reporter.DeploymentObjectUploadProgress(
-					upload.Digest, index, totalUploads, bytesRead, totalBytes,
-				)
-			},
-		)
-		if uploadErr == nil {
-			if err := reporter.DeploymentObjectUploaded(upload.Digest, index, totalUploads); err != nil {
-				return err
+		// Keep a small, bounded batch. Join every request before reconciliation or
+		// returning, so no upload can still use the temporary bundle after cleanup.
+		batch := uploads[:min(2, len(uploads))]
+		uploadErrors, reportErr := uploadDeploymentBundleBatch(ctx, controlPlane, directory, batch, completedUploads, totalUploads, reporter)
+		var originalErr error
+		unattempted := false
+		for index, uploadErr := range uploadErrors {
+			if uploadErr != nil {
+				originalErr = errors.Join(originalErr, fmt.Errorf("upload deployment object %s: %w", batch[index].Digest, uploadErr))
+				unattempted = unattempted || errors.Is(uploadErr, client.ErrDeploymentObjectUploadNotAttempted)
 			}
-			completedUploads++
-			uploads = uploads[1:]
+		}
+		if reportErr != nil || ctx.Err() != nil {
+			return errors.Join(originalErr, reportErr, ctx.Err())
+		}
+		if originalErr == nil {
+			completedUploads += len(batch)
+			uploads = uploads[len(batch):]
 			continue
 		}
-		originalErr := fmt.Errorf("upload deployment object %s: %w", upload.Digest, uploadErr)
-		if reconciled || errors.Is(uploadErr, client.ErrDeploymentObjectUploadNotAttempted) {
+		if reconciled || unattempted {
 			return originalErr
 		}
 		reconciled = true
@@ -178,17 +179,65 @@ func uploadDeploymentBundleObjects(
 			return errors.Join(originalErr, fmt.Errorf("reconcile deployment upload: %w", planErr))
 		}
 		for _, candidate := range replanned {
-			if candidate.Digest == upload.Digest {
-				return originalErr
+			for index, upload := range batch {
+				if uploadErrors[index] != nil && candidate.Digest == upload.Digest {
+					return originalErr
+				}
 			}
 		}
-		if err := reporter.DeploymentObjectUploaded(upload.Digest, index, totalUploads); err != nil {
-			return errors.Join(originalErr, err)
+		for index, upload := range batch {
+			if uploadErrors[index] != nil {
+				if err := reporter.DeploymentObjectUploaded(upload.Digest, completedUploads+index+1, totalUploads); err != nil {
+					return errors.Join(originalErr, err)
+				}
+			}
 		}
-		completedUploads++
+		completedUploads += len(batch)
 		uploads = replanned
 	}
 	return nil
+}
+
+func uploadDeploymentBundleBatch(
+	ctx context.Context, controlPlane *client.Client, directory bundle.Directory,
+	uploads []api.DeploymentBundleUpload, completed, total int, reporter deployReporter,
+) ([]error, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var reports sync.Mutex
+	var reportErr error
+	// Reporters may write to a non-concurrent writer. Preserve whole JSON lines
+	// and stop all transfers if the output consumer fails.
+	report := func(write func() error) error {
+		reports.Lock()
+		defer reports.Unlock()
+		if reportErr == nil {
+			reportErr = write()
+			if reportErr != nil {
+				cancel()
+			}
+		}
+		return reportErr
+	}
+	errs := make([]error, len(uploads))
+	var workers sync.WaitGroup
+	for offset, upload := range uploads {
+		workers.Go(func() {
+			index := completed + offset + 1
+			if err := report(func() error { return reporter.DeploymentObjectUploadStarted(upload.Digest, index, total) }); err != nil {
+				return
+			}
+			errs[offset] = controlPlane.UploadDeploymentBundleObject(ctx, upload, directory.Objects[upload.Digest],
+				func(read, size int64) error {
+					return report(func() error { return reporter.DeploymentObjectUploadProgress(upload.Digest, index, total, read, size) })
+				})
+			if errs[offset] == nil {
+				_ = report(func() error { return reporter.DeploymentObjectUploaded(upload.Digest, index, total) })
+			}
+		})
+	}
+	workers.Wait()
+	return errs, reportErr
 }
 
 func planDeploymentBundleObjectUploads(

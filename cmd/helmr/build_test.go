@@ -115,7 +115,7 @@ func TestBuildUsesIndependentPrivateContextAndCleansFailure(t *testing.T) {
 		}
 		return stopped
 	}
-	err := buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), false)
+	err := buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), false, false)
 	if !errors.Is(err, stopped) {
 		t.Fatalf("build: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestBuildEvaluatesConfigOnceAndMaterializesOneEnvironment(t *testing.T) {
 		t.Fatalf("unexpected graph %q", request.Target)
 		return nil
 	}
-	err = buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), false)
+	err = buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), false, false)
 	if !errors.Is(err, stopped) {
 		t.Fatalf("build: %v", err)
 	}
@@ -249,8 +249,41 @@ func TestBuildEvaluatesConfigOnceAndMaterializesOneEnvironment(t *testing.T) {
 		}
 		return stopped
 	}
-	if err := buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), false); !errors.Is(err, stopped) {
+	if err := buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), false, false); !errors.Is(err, stopped) {
 		t.Fatalf("build: %v", err)
+	}
+
+	// Refresh bypasses both dependency installations, never declaration analysis.
+	for _, refresh := range []bool{false, true} {
+		runDockerBuildx = func(_ context.Context, _ *cobra.Command, request dockerBuildxRequest) error {
+			switch request.Target {
+			case "installed-tree":
+				want := ""
+				if refresh {
+					want = "installed"
+				}
+				if strings.Join(request.NoCacheFilters, ",") != want {
+					t.Fatalf("install filters: %v", request.NoCacheFilters)
+				}
+				writeTestLayout(t, request.Output)
+				return nil
+			case "preparation":
+				want := "analyzed"
+				if refresh {
+					want += ",runtime-installed"
+				}
+				if strings.Join(request.NoCacheFilters, ",") != want {
+					t.Fatalf("preparation filters: %v", request.NoCacheFilters)
+				}
+				return stopped
+			default:
+				t.Fatalf("unexpected target: %s", request.Target)
+				return nil
+			}
+		}
+		if err := buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), false, refresh); !errors.Is(err, stopped) {
+			t.Fatalf("build: %v", err)
+		}
 	}
 
 	// A copy source that exists on the host but is excluded from the capture stops the build before Docker.
@@ -267,7 +300,7 @@ func TestBuildEvaluatesConfigOnceAndMaterializesOneEnvironment(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(source, ".helmrignore"), []byte("host-only\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err = buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), false)
+	err = buildDeploymentBundleAt(t.Context(), &cobra.Command{}, source, filepath.Join(t.TempDir(), "bundle"), false, false)
 	if err == nil || !strings.Contains(err.Error(), "not in the captured project source") {
 		t.Fatalf("host-only copy source error = %v", err)
 	}
@@ -290,5 +323,45 @@ func writeTestLayout(t *testing.T, directory string) {
 		if err := os.WriteFile(path, body, 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestDeployDependencyRefreshFlag(t *testing.T) {
+	command := newRootCommand()
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"deploy", "--bundle", "unused", "--refresh-dependencies"})
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "requires a source build") {
+		t.Fatalf("existing bundle refresh: %v", err)
+	}
+
+	fakeDocker(t, "running")
+	originalRun, originalImage, originalEvaluate := runDockerBuildx, deploymentBundleBuilderImage, evaluateHostConfig
+	t.Cleanup(func() {
+		runDockerBuildx, deploymentBundleBuilderImage, evaluateHostConfig = originalRun, originalImage, originalEvaluate
+	})
+	deploymentBundleBuilderImage = "ghcr.io/helmrdotdev/bundle-builder@sha256:" + strings.Repeat("a", 64)
+	evaluateHostConfig = func(context.Context, string, io.Writer) (hostconfig.Document, error) { return resolvedDocument(), nil }
+	t.Setenv(helmrAPIURLEnv, "https://api.example.test")
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "package.json"), []byte(`{"private":true}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	stopped := errors.New("stop before dependency install")
+	reached := false
+	runDockerBuildx = func(_ context.Context, _ *cobra.Command, request dockerBuildxRequest) error {
+		reached = true
+		if request.Target != "installed-tree" || strings.Join(request.NoCacheFilters, ",") != "installed" {
+			t.Fatalf("deploy install request: %+v", request)
+		}
+		return stopped
+	}
+	command = newRootCommand()
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"deploy", source, "--refresh-dependencies"})
+	if err := command.Execute(); !errors.Is(err, stopped) || !reached {
+		t.Fatalf("source refresh: %v, reached %v", err, reached)
 	}
 }

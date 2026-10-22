@@ -10,8 +10,17 @@ these stages:
    All declaration entries share one split ESM graph.
 2. Install explicit runtime externals with pinned npm in a fresh copy of the
    project's build environment. Each root uses its installed exact version; npm
-   resolves its runtime dependencies once. The generated lock is checked during preparation and cleaned up with temporary
-   build files. A new build may resolve different transitive dependency versions.
+   resolves its runtime dependencies on a cache miss. BuildKit reuses the installed
+   tree for unchanged roots, overrides, project lockfiles, package-manager declaration,
+   compiler and build environment. Source-only edits can reuse this runtime tree;
+   source installation still includes all project files for lifecycle scripts.
+   The generated npm lock is checked during preparation and cleaned up with temporary
+   build files. `helmr build --refresh-dependencies` and source
+   `helmr deploy --refresh-dependencies` bypass both install layers. Refresh retains
+   the source package manager's lockfile rules. Runtime transitive versions can change
+   after refresh or cache eviction: project lockfiles invalidate the cache but do not
+   serve as an npm runtime lock. Python helpers use a fixed hash seed and run without generating bytecode;
+   package-supplied files and native build outputs remain intact.
 3. Analyze only the generated payload, offline, using pinned Node and the native
    module provenance policy. Export the payload, declaration results and Computer
    Image plan together. Finalization reuses those exact bytes without evaluating

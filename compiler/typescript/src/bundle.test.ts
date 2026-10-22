@@ -186,3 +186,32 @@ test("nested Template wrapper exports only the selected Template and keeps its e
     expect(sourceMap).toContain("included")
   } finally { await f.close() }
 })
+
+
+test("runtime install inputs reuse source edits and invalidate lock and manager changes", async () => {
+  const f = await fixture({"package.json": {packageManager: "bun@1.3.13"}, "bun.lock": "first"})
+  let sequence = 0
+  const inputs = async () => {
+    const output = resolve(f.output, String(sequence++))
+    await run({...f, output})
+    return await readFile(resolve(output, "install/source-inputs.json"), "utf8")
+  }
+  try {
+    const first = await inputs()
+    await writeFile(resolve(f.root, "agents/main.ts"), "export const value = 2")
+    expect(await inputs()).toBe(first)
+    await writeFile(resolve(f.root, "bun.lock"), "second")
+    const changedLock = await inputs()
+    expect(changedLock).not.toBe(first)
+    expect(changedLock).not.toContain("second")
+    await writeFile(resolve(f.root, "package.json"), JSON.stringify({packageManager: "bun@1.3.14"}))
+    expect(await inputs()).not.toBe(changedLock)
+    await writeFile(resolve(f.root, "bun.lockb"), Buffer.from([0xff, 0x00]))
+    const binary = await inputs()
+    await writeFile(resolve(f.root, "bun.lockb"), Buffer.from([0xfe, 0x00]))
+    expect(await inputs()).not.toBe(binary)
+    await rm(resolve(f.root, "bun.lockb"))
+    await symlink("/etc/hosts", resolve(f.root, "bun.lockb"))
+    await expect(inputs()).rejects.toThrow("contained regular file")
+  } finally { await f.close() }
+})

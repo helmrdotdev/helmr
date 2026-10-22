@@ -104,6 +104,16 @@ func TestPreparationSeparatesCompilerInstallAndAnalysis(t *testing.T) {
 	if !strings.Contains(analyzed, "source=/workspace/project,target=/workspace/source") || !strings.Contains(analyzed, "/workspace/output/payload/") || !strings.Contains(analyzed, "--network=none") || !strings.Contains(analyzed, "--runtime-installed") {
 		t.Fatal("independent preparation requires read-only source, installed packages and canonical tools")
 	}
+	assembled := strings.Join(stageNamed(t, stages, "assembled").instructions, "\n")
+	if !strings.Contains(assembled, `&& chmod -R a-w /workspace/output/payload`) {
+		t.Fatal("the payload must lose write bits before entering an immutable layer")
+	}
+	// COPY merges into an existing directory without changing its owner/mode.
+	// Protect both the copied contents and that directory before tenant analysis.
+	hardenRoot := strings.Index(analyzed, `RUN ["chmod","a-w","/workspace/project"]`)
+	if hardenRoot < strings.Index(analyzed, "COPY --from=assembled") || hardenRoot > strings.Index(analyzed, "USER 65532:65532") {
+		t.Fatal("analysis project root must be non-writable before switching user")
+	}
 	installed := strings.Join(stageNamed(t, stages, "runtime-installed").instructions, "\n")
 	if !strings.Contains(installed, "--install-runtime") || !strings.Contains(installed, "rm -rf /workspace/project") {
 		t.Fatal("runtime install must be fresh")

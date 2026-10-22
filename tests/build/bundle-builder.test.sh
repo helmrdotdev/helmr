@@ -363,7 +363,8 @@ prepare_host_sdk "$native_project"
 cp -R "$project/vendor" "$native_project/vendor"
 native_build() {
   local label="$1"
-  "$tmp/helmr" build "$native_project" --output "$tmp/$label" 2>"$tmp/$label.log" ||
+  shift
+  "$tmp/helmr" build "$native_project" "$@" --output "$tmp/$label" 2>"$tmp/$label.log" ||
     { tail -n 120 "$tmp/$label.log" >&2; return 1; }
   jq -e '.contract == "helmr.deployment-bundle.v0"' "$tmp/$label/bundle.json" >/dev/null
 }
@@ -393,9 +394,8 @@ fi
 native_build native-unchanged
 step_cached "$tmp/native-unchanged.log" "$setup_step"
 step_cached "$tmp/native-unchanged.log" "$install_step"
-# Each new preparation resolves runtime dependencies and analyzes its payload,
-# even when authoring inputs and the download cache are unchanged.
-step_ran "$tmp/native-unchanged.log" '"--install-runtime"'
+# Unchanged runtime inputs reuse installation; declaration analysis always runs.
+step_cached "$tmp/native-unchanged.log" '"--install-runtime"'
 step_ran "$tmp/native-unchanged.log" '"--prepare-output"'
 [ "$(program_file native-unchanged generated/environment-stamp.txt)" = "$(program_file native generated/environment-stamp.txt)" ]
 
@@ -407,6 +407,16 @@ step_cached "$tmp/native-lifecycle.log" "$setup_step"
 step_cached "$tmp/native-lifecycle.log" "$input_copy_step"
 step_ran "$tmp/native-lifecycle.log" "$install_step"
 [ "$(program_file native-lifecycle generated/lifecycle.json)" = '{"input":"lifecycle input 2"}' ]
+
+step_cached "$tmp/native-lifecycle.log" '"--install-runtime"'
+
+native_build native-refresh --refresh-dependencies
+step_ran "$tmp/native-refresh.log" "$install_step"
+step_ran "$tmp/native-refresh.log" '"--install-runtime"'
+step_ran "$tmp/native-refresh.log" '"--prepare-output"'
+native_build native-after-refresh
+step_cached "$tmp/native-after-refresh.log" '"--install-runtime"'
+[ "$(program_file native-after-refresh helmr/program-manifest.json)" = "$(program_file native-refresh helmr/program-manifest.json)" ]
 
 # A file the builder copies invalidates that step and the preparation after it.
 echo "recipe input 2" >"$native_project/recipe-input.txt"
@@ -514,13 +524,20 @@ mkdir "$tmp/shim"
 export HELMR_TEST_REAL_DOCKER="$(command -v docker)" HELMR_TEST_PREPARED="$tmp/prepared"
 cat >"$tmp/shim/docker" <<'PYWRAP'
 #!/usr/bin/env python3
-import os,sys,subprocess,shutil
+import os,sys,subprocess,tarfile
 args=sys.argv[1:]
 result=subprocess.run([os.environ['HELMR_TEST_REAL_DOCKER'],*args])
 if result.returncode==0 and '--target' in args and args[args.index('--target')+1]=='preparation':
  output=args[args.index('--output')+1]
  path=next(x[5:] for x in output.split(',') if x.startswith('dest='))
- shutil.copytree(path,os.environ['HELMR_TEST_PREPARED'],dirs_exist_ok=True,symlinks=True)
+ # The CLI exports local build results as tar before its own safe extraction.
+ # Retain payload modes for the finalizer's content identity check.
+ def payload_filter(member, destination):
+  checked=tarfile.data_filter(member, destination)
+  if checked.isfile() or checked.isdir(): checked.mode=member.mode & 0o777
+  return checked
+ with tarfile.open(path) as archive:
+  archive.extractall(os.environ['HELMR_TEST_PREPARED'], filter=payload_filter)
 sys.exit(result.returncode)
 PYWRAP
 chmod +x "$tmp/shim/docker"

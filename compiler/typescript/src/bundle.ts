@@ -109,6 +109,19 @@ export async function bundleProgram(options: {
     private: true, dependencies,
     ...(sourcePackage["overrides"] === undefined ? {} : { overrides: sourcePackage["overrides"] }),
   })
+  // These are invalidation inputs, not an npm lock projection. Keep their
+  // contents out of generated metadata and keep source-only edits reusable.
+  const locks: Record<string, string> = {}
+  for (const name of ["npm-shrinkwrap.json", "package-lock.json", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "yarn.lock"]) {
+    try {
+      locks[name] = createHash("sha256").update(await readFile(await projectFile(root, name))).digest("hex")
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    }
+  }
+  await writeJSON(resolve(output, "install/source-inputs.json"), {
+    locks, packageManager: sourcePackage["packageManager"] ?? null,
+  })
   const manifest: BundleManifest = { apiVersion: BUNDLE_API_VERSION, entries }
   await writeJSON(resolve(output, "bundle.json"), manifest)
   return manifest

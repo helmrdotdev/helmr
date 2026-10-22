@@ -41,6 +41,7 @@ type dockerBuildxRequest struct {
 
 func bundleBuildCommand() *cobra.Command {
 	var output string
+	var refreshDependencies bool
 	command := &cobra.Command{
 		Use:   "build [path]",
 		Short: "Build a verified deployment bundle locally.",
@@ -50,7 +51,7 @@ func bundleBuildCommand() *cobra.Command {
 			if len(arguments) == 1 {
 				source = arguments[0]
 			}
-			return buildDeploymentBundleAt(command.Context(), command, source, output, true)
+			return buildDeploymentBundleAt(command.Context(), command, source, output, true, refreshDependencies)
 		},
 	}
 	command.Flags().StringVarP(
@@ -60,6 +61,7 @@ func bundleBuildCommand() *cobra.Command {
 		".helmr/deployment-bundle",
 		"New deployment bundle directory.",
 	)
+	command.Flags().BoolVar(&refreshDependencies, "refresh-dependencies", false, "Reinstall source and runtime dependencies without cached install layers.")
 	return command
 }
 
@@ -69,6 +71,7 @@ func buildDeploymentBundleAt(
 	source string,
 	output string,
 	printOutput bool,
+	refreshDependencies bool,
 ) (returnErr error) {
 	builderContext, err := builder.BuilderContext(deploymentBundleBuilderImage)
 	if err != nil {
@@ -184,6 +187,12 @@ func buildDeploymentBundleAt(
 	if err != nil {
 		return err
 	}
+	var installedNoCache []string
+	preparationNoCache := []string{"analyzed"}
+	if refreshDependencies {
+		installedNoCache = []string{"installed"}
+		preparationNoCache = append(preparationNoCache, "runtime-installed")
+	}
 	installedLayout := filepath.Join(stage, "installed-layout")
 	if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
 		Runner:     runner,
@@ -192,6 +201,7 @@ func buildDeploymentBundleAt(
 		OutputAttributes: map[string]string{"rewrite-timestamp": "true", "tar": "false"},
 		BuildContexts:    map[string]string{builder.EnvironmentContextName: environmentContext},
 		SecretIDs:        install.SecretIDs,
+		NoCacheFilters:   installedNoCache,
 	}); err != nil {
 		return fmt.Errorf("install project dependencies: %w", err)
 	}
@@ -212,7 +222,7 @@ func buildDeploymentBundleAt(
 	if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
 		Runner:     runner,
 		Dockerfile: preparationDockerfilePath, ContextDirectory: emptyContext,
-		NoCacheFilters: []string{"runtime-installed", "analyzed"},
+		NoCacheFilters: preparationNoCache,
 		Target:         "preparation", Output: preparationOutput, OutputType: "local",
 		BuildContexts: map[string]string{
 			builder.BuilderContextName:     builderContext,
