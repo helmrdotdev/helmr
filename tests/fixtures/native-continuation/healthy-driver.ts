@@ -12,7 +12,7 @@ import type { SessionEvent, TurnRef, TurnState } from "../../../sdk/typescript/s
 // PostgreSQL observations are written by the surrounding qualification process.
 // They only observe checkpoint readiness and ordinary Worker physical-stop
 // receipts; the driver never manufactures an allocation or a source fence.
-export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "corrupt-memory" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
+export async function runHealthyContinuation(options: { url: string; apiKey: string; timeoutMs: number; evidence: string; checkpointObservations: string; sessionDiscovery?: boolean; secretBindings?: boolean; longIdle?: boolean; checkpointKeyMismatch?: boolean; crossHost?: boolean; sourceHostId?: string; targetHostId?: string; checkpointFault?: "corrupt-config" | "corrupt-memory" | "missing-memory"; performanceKind?: "no-op" | "edit-test" | "dependencies" }) {
  const soakMS = Number(process.env["HELMR_NATIVE_PERFORMANCE_SOAK_MS"] ?? "0")
  assert(Number.isSafeInteger(soakMS) && soakMS >= 0 && soakMS <= 900000, "performance soak must be 0–900000 milliseconds")
  assert(!soakMS || options.performanceKind === "no-op", "performance soak uses the no-op native workload")
@@ -20,6 +20,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
  const client = new HelmrClient({ url: options.url, apiKey: options.apiKey })
  const sessions: SessionRef[] = []
  const turns: TurnState[] = []
+ const modelTurns: string[] = []
  const retainedTurns = new Map<string, TurnRef>()
  const nativeSessions: Record<string, string> = {}
  const native: Record<string, { session: SessionRef; previous: Record<string, unknown> }> = {}
@@ -225,6 +226,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
   sessions.push(model.session)
   const firstModel = await model.turn.wait({ signal }); assert.equal(firstModel.status, "completed")
   const modelState = (await model.turn.get({ signal })).result as Record<string, unknown>
+  modelTurns.push(model.turn.id)
   // Identical warm-up under both policies lets ordinary background saving occur
   // while the peer is doing real I/O, outside native handler timing intervals.
   if (options.performanceKind) await delay(12000, undefined, { signal })
@@ -271,6 +273,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    const park = await model.session.enqueue(fixtureInput("park"), undefined, { signal })
    assert.equal((await park.wait({ signal })).status, "completed")
    assert.deepEqual((await park.get({ signal })).result, { parked: true, nonce: modelState["nonce"], pid: modelState["pid"], count: cycle })
+   modelTurns.push(park.id)
    await holding.send(fixtureInput("release"), undefined, { signal })
    peerOutcome = await holding.wait({ signal }); assert.equal(peerOutcome.status, "completed")
    const peerState = (await holding.get({ signal })).result as Record<string, unknown>
@@ -470,6 +473,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    }
    const modelOutcome = await modelTurn.wait({ signal }); assert.equal(modelOutcome.status, "completed")
    const restoredModel = (await modelTurn.get({ signal })).result as Record<string, unknown>
+   modelTurns.push(modelTurn.id)
    for (const key of ["pid", "nonce"]) assert.equal(restoredModel[key], modelState[key], `model ${key} changed`)
    assert.equal(restoredModel["count"], cycle + 1)
    const evidence = { cycle, checkpoint, keyFault, releaseRequestToCheckpointObservedMS, resumeTiming, requestedIdleMs, idleMs, idleStartedAt, idleFinishedAt, idleSamples, idleAndResumeMs: performance.now() - idleStarted, before,
@@ -480,6 +484,19 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
   if (options.sessionDiscovery) assert.equal(discovery.length, 3)
   if (options.secretBindings) {
    assert.equal(secretChecks, 3)
+   // Isolate revocation from loss of an unfinished save, which correctly adds
+   // a separate recovery-gap hold when the Computer's authority is fenced.
+   const publishedTurnIds = [...turns.map(turn => turn.id), ...modelTurns]
+   for (const turnId of publishedTurnIds) {
+    for (;;) {
+     try {
+      const receipt = JSON.parse(await readFile(`${options.evidence}/turn-published-${turnId}.json`, "utf8"))
+      assert.equal(receipt.turnId, turnId)
+      break
+     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
+     await delay(50, undefined, { signal })
+    }
+   }
    const pending = await peer.session.enqueue(fixtureInput("retained-after-revocation"), undefined, { signal })
    assert.equal((await pending.get({ signal })).status, "queued")
    assert.equal((await holding.get({ signal })).status, "running")
@@ -499,7 +516,7 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    }
    await peer.session.cancel({ idempotencyKey: "cancel-revoked-queue" }, { signal })
    assert.equal((await pending.wait({ signal })).status, "cancelled")
-   secretRevocation = { interruptedTurnId: holding.id, retainedTurnId: pending.id, holds: held.holds, explicitlyCancelled: true }
+   secretRevocation = { publishedTurnIds, interruptedTurnId: holding.id, retainedTurnId: pending.id, holds: held.holds, explicitlyCancelled: true }
   } else {
    await holding.send(fixtureInput("release"), undefined, { signal }); peerOutcome = await holding.wait({ signal }); assert.equal(peerOutcome.status, "completed")
   }

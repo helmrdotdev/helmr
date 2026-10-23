@@ -424,8 +424,9 @@ It is exclusive with every other fault/restart mode.
 `HELMR_NATIVE_CORRUPT_MEMORY_PROOF=1` selects `TestWorkerAgentCorruptMemory`,
 also exclusive with the other modes. It corrupts the encrypted memory object
 after the restored peer reaches running, exercising pager authentication after
-guest health succeeds. The checkpoint must become lost and the affected Turn
-interrupted within the case's 30-second bound; the failed VMM must be absent.
+guest health succeeds. The checkpoint must become lost within the case's
+30-second bound, and the driver then requires the affected Turn to be interrupted.
+The failed VMM must be absent.
 
 The configuration and memory corruption cases require automatic disk recovery:
 a fresh setup nonce and reset in-memory counter, the retained disk marker, no
@@ -641,9 +642,12 @@ before hibernation and after both RAM restorations. Values and selectors are nev
 written to evidence. Rotation while the first checkpoint is released must not
 rewrite the admitted process values or its retained selector.
 
-After both native harnesses complete their eight own-Save Turns, revoking the raw
-Secret must interrupt the active peer, leave its queued successor unstarted and
-inspectable under a hold, and permit explicit Session cancellation of that input.
+After both native harnesses complete their eight own-Save Turns, the driver waits
+for publication receipts for every completed native and model Turn. This isolates
+Secret revocation from the independent recovery hold caused by losing an
+unfinished save. Revoking the raw Secret must interrupt the active peer, leave its
+queued successor unstarted and inspectable under a hold, and permit explicit
+Session cancellation of that input.
 Earlier native outcomes must remain unchanged. `result.json` records the three
 checks, Secret identities and revocation/cancellation observations. The ordinary
 outer retirement still checks physical closure. This case does not exercise
