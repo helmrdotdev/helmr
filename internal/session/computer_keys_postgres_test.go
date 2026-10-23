@@ -111,6 +111,57 @@ func TestComputerDiskSourceConcurrentRetryPinsOnePrivateKey(t *testing.T) {
 	}
 }
 
+func TestComputerDiskSourceRejectsChangedBinding(t *testing.T) {
+	for _, change := range []string{"bound root", "key envelope during unwrap"} {
+		t.Run(change, func(t *testing.T) {
+			f, id := computerSourceFixture(t)
+			provider := &preparationKeyProvider{DataKeyWrapper: preparationWrapper(t)}
+			broker, err := computer.NewKeyBroker(f.pool, provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial, err := broker.Source(t.Context(), *f.host(), id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer initial.Clear()
+			if initial.WriteKeyID == uuid.Nil() || len(initial.Keys) != 2 {
+				t.Fatalf("initial binding did not deliver image and private keys: %d", len(initial.Keys))
+			}
+			initial.Clear()
+			switch change {
+			case "bound root":
+				var otherID uuid.UUID
+				if err := f.pool.QueryRow(t.Context(), `SELECT id FROM disk_roots WHERE environment_id=$1 AND id<>(SELECT base_root_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3) ORDER BY id LIMIT 1`, f.env, id.ComputerID, id.Epoch).Scan(&otherID); err != nil {
+					t.Fatal(err)
+				}
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET base_root_id=$4 WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.env, id.ComputerID, id.Epoch, otherID)
+			case "key envelope during unwrap":
+				key := bytes.Repeat([]byte{11}, computerkey.Size)
+				defer clear(key)
+				envelope, err := provider.Wrap(t.Context(), initial.Scope, initial.WriteKeyID.String(), key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var once sync.Once
+				provider.beforeUnwrap = func() {
+					once.Do(func() {
+						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE disk_encryption_keys SET wrapping_key_id=$3,wrapped_key=$4 WHERE environment_id=$1 AND id=$2`, f.env, initial.WriteKeyID, envelope.WrappingKeyID, envelope.Ciphertext)
+					})
+				}
+			}
+			rejected, err := broker.Source(t.Context(), *f.host(), id)
+			defer rejected.Clear()
+			if !errors.Is(err, computer.ErrConflict) || len(rejected.Keys) != 0 {
+				t.Fatalf("changed binding must return conflict without plaintext: keys=%d err=%v", len(rejected.Keys), err)
+			}
+			if change == "key envelope during unwrap" && (len(provider.lastPlain) != computerkey.Size || !bytes.Equal(provider.lastPlain, make([]byte, computerkey.Size))) {
+				t.Fatal("rejected plaintext was not cleared")
+			}
+		})
+	}
+}
+
 func TestComputerDiskSourceRechecksAuthorityAfterProviderIO(t *testing.T) {
 	for _, phase := range []string{"wrap", "unwrap"} {
 		for _, change := range []string{"expire", "delete", "stop"} {

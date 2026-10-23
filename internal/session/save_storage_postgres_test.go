@@ -520,31 +520,6 @@ func TestSavePublicationCancellationKeepsTerminalOutcome(t *testing.T) {
 	}
 }
 
-func TestComputerLeaseDiskRejectsChangedMountAndKey(t *testing.T) {
-	f := newFixture(t)
-	s := newSaveStorageFixture(t, f)
-	key := uuid.MustParse(s.writer.ActiveKey)
-	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, key); err != nil {
-		t.Fatal(err)
-	}
-	var seedKey uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT k.id FROM computers c JOIN disk_roots r ON (r.environment_id,r.id)=(c.environment_id,c.initial_root_id) JOIN disk_encryption_keys k ON k.id=r.page_key_id WHERE c.environment_id=$1 AND c.id=$2`, f.env, f.computer).Scan(&seedKey); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, seedKey); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("unowned write key: %v", err)
-	}
-	otherKey := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO disk_encryption_keys(id,environment_id,writer_computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'test',decode('01','hex'))`, otherKey, f.env, f.computer)
-	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, otherKey); !errors.Is(err, session.ErrConflict) {
-		t.Fatalf("rebound key: %v", err)
-	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET base_root_id=(SELECT id FROM disk_roots WHERE environment_id=$1 AND id<>base_root_id LIMIT 1) WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, key); !errors.Is(err, session.ErrConflict) {
-		t.Fatalf("rebound mount: %v", err)
-	}
-}
-
 func TestSaveStorageSchemaRoundTrip(t *testing.T) {
 	database := dbtest.Open(t)
 	if err := schema.Up(t.Context(), database.DSN); err != nil {

@@ -2,8 +2,8 @@ package session_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 	"uuid"
@@ -79,30 +79,123 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 	}
 }
 
-func TestComputerCaptureRacesDispatch(t *testing.T) {
-	for range 4 {
-		f := newFixture(t)
-		f.enqueue(t, "queued")
-		start := make(chan struct{})
-		var group sync.WaitGroup
-		var captureErr, dispatchErr error
-		group.Go(func() {
-			<-start
-			_, captureErr = session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest())
+// Keep the first operation's real transaction open until the competing backend
+// waits on it. Nested production transactions use savepoints, not a fake owner.
+func commitWithBlockedOperation(t *testing.T, f fixture, hold pgx.Tx, operation func(context.Context) error) error {
+	t.Helper()
+	var blocker int32
+	if err := hold.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	done := make(chan error, 1)
+	go func() { done <- operation(ctx) }()
+	received := false
+	defer func() {
+		cancel()
+		_ = hold.Rollback(context.Background())
+		if !received {
+			<-done
+		}
+	}()
+	for {
+		var blocked bool
+		if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			break
+		}
+		select {
+		case err := <-done:
+			received = true
+			t.Fatalf("competing operation did not wait for the owner transaction: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if err := hold.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	err := <-done
+	received = true
+	return err
+}
+
+func TestComputerCaptureSerializesWithNewAdmission(t *testing.T) {
+	for _, first := range []string{"capture", "enqueue"} {
+		t.Run(first+" first", func(t *testing.T) {
+			f := newFixture(t)
+			req := f.captureRequest()
+			if control, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
+				t.Fatalf("idle hibernate intent: %+v %v", control, err)
+			}
+			hold, err := f.pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer hold.Rollback(t.Context())
+			input := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "new-demand", Input: []byte(`[]`)}
+			var admitted session.Admission
+			var capture session.ComputerCapture
+			if first == "capture" {
+				capture, err = session.BeginComputerCapture(t.Context(), hold, *f.host(), req)
+				if err != nil || capture.SaveID == uuid.Nil() {
+					t.Fatalf("idle capture positive control: %+v %v", capture, err)
+				}
+				err = commitWithBlockedOperation(t, f, hold, func(ctx context.Context) error {
+					var err error
+					admitted, err = session.Enqueue(ctx, f.pool, nil, f.caller(), input)
+					return err
+				})
+				if err != nil {
+					t.Fatalf("public admission behind capture: %v", err)
+				}
+			} else {
+				admitted, err = session.Enqueue(t.Context(), hold, nil, f.caller(), input)
+				if err != nil || admitted.TurnID == uuid.Nil() {
+					t.Fatalf("new admission positive control: %+v %v", admitted, err)
+				}
+				err = commitWithBlockedOperation(t, f, hold, func(ctx context.Context) error {
+					var err error
+					capture, err = session.BeginComputerCapture(ctx, f.pool, *f.host(), req)
+					return err
+				})
+				if !errors.Is(err, session.ErrNotReady) || capture.SaveID != uuid.Nil() || len(capture.Request) != 0 {
+					t.Fatalf("capture admitted after new demand: %+v %v", capture, err)
+				}
+			}
+			var queued bool
+			if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND process_epoch IS NULL FROM turns WHERE environment_id=$1 AND id=$2`, f.env, admitted.TurnID).Scan(&queued); err != nil || !queued {
+				t.Fatalf("admitted turn was not durably queued: queued=%v err=%v", queued, err)
+			}
+			var saves, checkpoints int
+			if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computer_saves WHERE environment_id=$1 AND computer_id=$2),(SELECT count(*) FROM checkpoints WHERE environment_id=$1 AND computer_id=$2)`, f.env, f.computer).Scan(&saves, &checkpoints); err != nil {
+				t.Fatal(err)
+			}
+			if first == "capture" {
+				var persisted bool
+				if err := f.pool.QueryRow(t.Context(), `SELECT p.status='capturing' AND p.capture_request=$4 AND s.status='requested' AND s.id=$3 FROM checkpoints p JOIN computer_saves s ON (s.environment_id,s.id)=(p.environment_id,p.disk_save_id) WHERE p.environment_id=$1 AND p.id=$2`, f.env, req.CheckpointID, capture.SaveID, capture.Request).Scan(&persisted); err != nil || !persisted || saves != 1 || checkpoints != 1 {
+					t.Fatalf("capture/save ownership: persisted=%v saves=%d checkpoints=%d err=%v", persisted, saves, checkpoints, err)
+				}
+				if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, session.ErrNotReady) {
+					t.Fatalf("dispatch bypassed committed capture: %v", err)
+				}
+				replay, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), req)
+				if err != nil || !replay.WorkPending || replay.SaveID != capture.SaveID || !bytes.Equal(replay.Request, capture.Request) {
+					t.Fatalf("capture replay lost queued demand or identity: %+v %v", replay, err)
+				}
+			} else {
+				if saves != 0 || checkpoints != 0 {
+					t.Fatalf("rejected capture left partial state: saves=%d checkpoints=%d", saves, checkpoints)
+				}
+				dispatched, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
+				if err != nil || dispatched.TurnID != admitted.TurnID {
+					t.Fatalf("admitted turn cannot dispatch: %+v %v", dispatched, err)
+				}
+			}
 		})
-		group.Go(func() { <-start; _, dispatchErr = dispatchTurnForTest(t.Context(), f.pool, f.execution()) })
-		close(start)
-		group.Wait()
-		if (captureErr == nil) == (dispatchErr == nil) {
-			t.Fatalf("expected exactly one winner: capture=%v dispatch=%v", captureErr, dispatchErr)
-		}
-		loser := captureErr
-		if loser == nil {
-			loser = dispatchErr
-		}
-		if !errors.Is(loser, session.ErrNotReady) {
-			t.Fatal(loser)
-		}
 	}
 }
 
