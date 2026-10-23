@@ -233,9 +233,9 @@ if [ "$1" = fence ]; then exit "$FENCE_EXIT"; fi
         result, calls = self.run_termination(fence_ok=False)
         self.assertIn("fence\n", calls)
         self.assertNotIn("complete-lifecycle-action", calls)
-        self.assertEqual(result.returncode, 78, result.stderr)
+        self.assertEqual(result.returncode, 42, result.stderr)
         service = TEMPLATE.read_text().split("cat >/etc/systemd/system/helmr-asg-lifecycle.service <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
-        self.assertIn("RestartPreventExitStatus=78", service)
+        self.assertIn("RestartPreventExitStatus=42", service)
         self.assertIn("Restart=always", service)
 
     def test_lost_termination_evidence_does_not_fence(self):
