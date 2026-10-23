@@ -2,6 +2,7 @@ import { fixtureValue } from "../../support/runtime-mcp"
 import { agent, template, image, source, type JsonValue } from "@helmr/sdk"
 import { createHash, randomUUID } from "node:crypto"
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import { checkCommand as checkProcessCommand } from "./process"
 import { z } from "zod"
 
@@ -188,15 +189,17 @@ async function checkComputer(marker: string, largeFileKiB: number, expectedPrevi
   }
 }
 
-async function checkBundledGuides(): Promise<Check> {
-  const index = await readFile("/opt/verification/inputs/INDEX.md", "utf8")
-  const nix = await readFile("/opt/verification/inputs/nix-validation.md", "utf8")
+export async function checkBundledGuides(directory = "/opt/verification/inputs"): Promise<Check> {
+  const index = await readFile(join(directory, "INDEX.md"), "utf8")
+  const nix = await readFile(join(directory, "nix-validation.md"), "utf8")
+  const hasGuideIndex = index.includes("Helmr")
+  const hasNixGuide = nix.includes("Nix")
   return {
     name: "source-bundle",
-    ok: true,
+    ok: hasGuideIndex && hasNixGuide,
     detail: {
-      hasGuideIndex: index.includes("Helmr"),
-      hasNixGuide: nix.includes("Nix"),
+      hasGuideIndex,
+      hasNixGuide,
     },
   }
 }

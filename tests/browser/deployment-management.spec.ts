@@ -26,6 +26,7 @@ async function catalog(page: Page, permissions = ["agents.read", "deployments.re
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
     await route.fulfill({ json });
   });
+  return deployment;
 }
 
 
@@ -53,12 +54,24 @@ for (const view of ["list"] as const) {
 
 for (const condition of ["current", "no write permission", "unknown current"] as const) {
   test(`Deployment promotion is guarded when ${condition}`, async ({ page }) => {
-    await catalog(page, condition === "no write permission" ? ["agents.read", "deployments.read"] : undefined, condition === "current" ? deploymentID : "another-deployment");
+    const deployment = await catalog(page, condition === "no write permission" ? ["agents.read", "deployments.read"] : undefined, condition === "current" ? deploymentID : "another-deployment");
+    if (condition === "no write permission") {
+      await page.route(`**${base}/deployments?*`, route => route.fulfill({ json: {
+        deployments: [deployment, { ...deployment, id: "another-deployment", version: "current-version" }],
+      } }));
+    }
     if (condition === "unknown current") await page.route(`**${base}/deployments/current`, route => route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Unavailable" } } }));
-    await page.goto(`/deployments/${deploymentID}`);
-    await expect(page.getByText("assistant", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Promote", exact: true })).toHaveCount(0);
-    await expect(page.locator("form")).toHaveCount(0);
+    const currentResponse = page.waitForResponse(response => new URL(response.url()).pathname === `${base}/deployments/current`);
+    await page.goto("/deployments");
+    expect((await currentResponse).status()).toBe(condition === "unknown current" ? 503 : 200);
+    const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: "test-version", exact: true }) });
+    await expect(row).toBeVisible();
+    if (condition === "current") await expect(row.getByText("Current", { exact: true })).toBeVisible();
+    if (condition === "no write permission") {
+      const currentRow = page.getByRole("row").filter({ has: page.getByRole("link", { name: "current-version", exact: true }) });
+      await expect(currentRow.getByText("Current", { exact: true })).toBeVisible();
+    }
+    await expect(row.getByRole("button", { name: "Actions for test-version", exact: true })).toHaveCount(0);
   });
 }
 
