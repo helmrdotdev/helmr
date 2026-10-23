@@ -187,7 +187,9 @@ drain_and_complete_termination() {
       complete_lifecycle_action "$termination_hook" CONTINUE
     else
       echo "worker drain failed and durable fence could not be persisted" >>/var/log/helmr-worker-drain.log
-      exit 1
+      # Stop heartbeats across service restarts; let the existing provider
+      # termination expire without claiming successful cleanup.
+      exit 42
     fi
   fi
 }
@@ -251,6 +253,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=/etc/helmr/worker-base.env
 ExecStart=/usr/local/bin/helmr-asg-lifecycle watch
+RestartPreventExitStatus=42
 Restart=always
 RestartSec=15s
 
