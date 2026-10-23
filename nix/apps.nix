@@ -354,6 +354,7 @@ ciApps
         helmrPackages.goPackage
         pkgs.jq
         pkgs.nix
+        pkgs.python3
       ]
       ''
         bash ./tests/build/netboot-inputs.test.sh
