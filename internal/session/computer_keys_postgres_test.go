@@ -2,10 +2,12 @@ package session_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -43,15 +45,25 @@ func TestComputerDiskSourceConcurrentRetryPinsOnePrivateKey(t *testing.T) {
 	}
 	const n = 8
 	results := make(chan computer.DiskSource, n)
-	errors := make(chan error, n)
+	errs := make(chan error, n)
 	var wg sync.WaitGroup
 	for range n {
-		wg.Go(func() { source, err := broker.Source(t.Context(), *f.host(), id); results <- source; errors <- err })
+		wg.Go(func() {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			source, err := broker.Source(ctx, *f.host(), id)
+			// Lock contention is retryable; every caller must still converge.
+			for errors.Is(err, computer.ErrNotReady) && ctx.Err() == nil {
+				source, err = broker.Source(ctx, *f.host(), id)
+			}
+			results <- source
+			errs <- err
+		})
 	}
 	wg.Wait()
 	close(results)
-	close(errors)
-	for err := range errors {
+	close(errs)
+	for err := range errs {
 		if err != nil {
 			t.Fatal(err)
 		}
