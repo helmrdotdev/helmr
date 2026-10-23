@@ -2,11 +2,6 @@ package guestd
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
-	"strconv"
-	"strings"
 
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 )
@@ -40,16 +35,6 @@ func (r *computerOperationRegistry) retireLocked(computerInstanceID string, entr
 	if cleanup != nil {
 		cleanup()
 	}
-}
-
-func programCgroupLeafName(runID string, attemptNumber uint32, runLeaseID string) (string, error) {
-	runID = strings.TrimSpace(runID)
-	runLeaseID = strings.TrimSpace(runLeaseID)
-	if runID == "" || attemptNumber == 0 || runLeaseID == "" {
-		return "", errors.New("program cgroup identity is incomplete")
-	}
-	sum := sha256.Sum256([]byte(runID + "\x00" + strconv.FormatUint(uint64(attemptNumber), 10) + "\x00" + runLeaseID))
-	return programCgroupLeafPrefix + hex.EncodeToString(sum[:16]), nil
 }
 
 func (r *computerOperationRegistry) runComputerBasicExec(ctx context.Context, entry *computerMountEntry, request *computerv0.ComputerBasicExecRequest) *computerv0.ComputerBasicExecResult {

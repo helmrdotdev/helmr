@@ -30,7 +30,7 @@ func TestProgramCgroupContainsAndKillsCompleteTree(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	leaf, err := programCgroupLeafName("run-1", 1, "lease-1")
+	leaf, err := execCgroupLeafName("command-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,11 +206,11 @@ func TestProgramCgroupStaleCleanupIsIsolatedByProgram(t *testing.T) {
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	firstLeaf, err := programCgroupLeafName("run-1", 1, "lease-1")
+	firstLeaf, err := execCgroupLeafName("command-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondLeaf, err := programCgroupLeafName("run-2", 1, "lease-2")
+	secondLeaf, err := execCgroupLeafName("command-2")
 	if err != nil {
 		t.Fatal(err)
 	}
