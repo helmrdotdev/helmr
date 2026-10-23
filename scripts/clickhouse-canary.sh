@@ -34,8 +34,8 @@ command_id="${HELMR_CLICKHOUSE_CANARY_COMMAND_ID:-$(new_uuid)}"
 curl "${curl_args[@]}" "${url}/" --data-binary @- <<SQL
 INSERT INTO helmr_telemetry.computer_command_logs
     (environment_id, command_id, producer_epoch, stream, sequence, through_sequence, kind, observed_at_unix_nano, data, dropped_bytes, complete, byte_offset, through_byte_offset, accepted_at, expires_at)
-VALUES
-    ('${environment_id}', '${command_id}', 1, 'stdout', 1, 1, 'end', 1, '', 0, true, 0, 0, now64(6), now64(6) + INTERVAL 90 DAY);
+SELECT
+    '${environment_id}', '${command_id}', 1, 'stdout', 1, 1, 'end', 1, '', 0, true, 0, 0, now64(6) AS accepted_at, accepted_at + INTERVAL 90 DAY;
 SQL
 
 count="$(
@@ -47,4 +47,4 @@ if [[ "${count}" != "1" ]]; then
   exit 1
 fi
 
-printf 'clickhouse canary ok org_id=%s subject_id=%s\n' "${org_id}" "${subject_id}"
+printf 'clickhouse canary ok environment_id=%s command_id=%s\n' "${environment_id}" "${command_id}"

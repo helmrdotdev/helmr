@@ -94,6 +94,7 @@ let
           scripts/security-checks.sh
           bash -n dev/local/start.sh
           bash tests/build/buildkit-steps.test.sh
+          bash tests/build/clickhouse-canary.test.sh
           bash tests/build/ci-workflow.test.sh
           bash tests/release/install.test.sh
           bash tests/release/manifest.test.sh
@@ -234,7 +235,13 @@ let
         pkgsClickHouse = import nixpkgs-clickhouse { inherit system; };
       in
       app "ci-clickhouse" "run real ClickHouse projection and access tests"
-        (toolsets.ciPostgres ++ [ pkgsClickHouse.clickhouse ])
+        (
+          toolsets.ciPostgres
+          ++ [
+            pkgsClickHouse.clickhouse
+            pkgs.curl
+          ]
+        )
         ''
           unset HELMR_TEST_CLICKHOUSE_URL HELMR_TEST_CLICKHOUSE_IDLE_ONLY HELMR_TEST_CLICKHOUSE_BATCH_KIND
           export HELMR_TEST_CLICKHOUSE_BOOTSTRAP=1
