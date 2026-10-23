@@ -41,9 +41,21 @@ func TestWorkerTemplateRejectsIncompleteCPUShapes(t *testing.T) {
 
 func TestWorkerTemplateRejectsCPUShapeOverflow(t *testing.T) {
 	template := validTestTemplate(t)
+	if err := template.Validate(); err != nil {
+		t.Fatalf("valid template: %v", err)
+	}
 	template.PerVM.CPUMillis = math.MaxInt64
-	if err := template.Validate(); err == nil {
-		t.Fatal("template with an unrepresentable vCPU range was accepted")
+	template.Capacity.CPUMillis = math.MaxInt64
+	if err := template.Validate(); err == nil || err.Error() != "per_vm CPU does not define a supported vCPU range" {
+		t.Fatalf("expected supported vCPU range error, got %v", err)
+	}
+}
+
+func TestWorkerTemplateRejectsPerVMResourcesExceedingCapacity(t *testing.T) {
+	template := validTestTemplate(t)
+	template.Capacity.CPUMillis = template.PerVM.CPUMillis - 1
+	if err := template.Validate(); err == nil || err.Error() != "per_vm resources must fit within aggregate capacity" {
+		t.Fatalf("expected aggregate capacity error, got %v", err)
 	}
 }
 

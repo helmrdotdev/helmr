@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -121,13 +122,21 @@ func TestDigestVerifierDescriptorUsesExactBytes(t *testing.T) {
 }
 
 func TestProgramArtifactFromDescriptorRejectsPhysicalBoundBeforeRead(t *testing.T) {
-	file, err := os.CreateTemp(t.TempDir(), "artifact")
+	file, err := os.OpenFile(t.TempDir()+"/artifact", os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer file.Close()
 	if err := file.Truncate(artifact.MaxProgramPhysicalBytes + 1); err != nil {
 		t.Fatal(err)
+	}
+
+	// A read must fail immediately, even if the size guard regresses. This
+	// exercises descriptor conversion directly, not child descriptor admission.
+	_, err = digestVerifierDescriptor(t.Context(), verifierFDReader{fd: int(file.Fd())}, 1)
+	var infrastructureError *artifactInfrastructureError
+	if !errors.As(err, &infrastructureError) || !errors.Is(err, syscall.EBADF) {
+		t.Fatalf("write-only descriptor did not reject hashing: %v", err)
 	}
 
 	_, err = artifactFromDescriptor(
@@ -137,8 +146,9 @@ func TestProgramArtifactFromDescriptorRejectsPhysicalBoundBeforeRead(t *testing.
 		artifact.ProgramArtifactMediaType,
 	)
 	var contentError *artifactContentError
-	if !errors.As(err, &contentError) {
-		t.Fatalf("error = %T %v, want content error", err, err)
+	want := fmt.Sprintf("artifact physical size = %d, want within [1,%d]", artifact.MaxProgramPhysicalBytes+1, artifact.MaxProgramPhysicalBytes)
+	if !errors.As(err, &contentError) || err.Error() != want {
+		t.Fatalf("error = %T %v, want early size rejection %q", err, err, want)
 	}
 }
 
