@@ -13,10 +13,10 @@ import (
 func WithAccessServiceToken(client *http.Client, origin, id, secret string) (*http.Client, error) {
 	u, err := url.Parse(origin)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return nil, errors.New("Access service token origin must be an HTTPS origin")
+		return nil, errors.New("access service token origin must be an HTTPS origin")
 	}
 	if id == "" || secret == "" || strings.ContainsAny(id+secret, " \t\r\n") {
-		return nil, errors.New("Access service token requires a valid client ID and secret")
+		return nil, errors.New("access service token requires a valid client ID and secret")
 	}
 	if client == nil {
 		client = http.DefaultClient
