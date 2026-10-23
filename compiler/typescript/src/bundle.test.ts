@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { dirname, resolve } from "node:path"
 import { bundleProgram } from "./bundle"
 import { spawnSync } from "node:child_process"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 async function fixture(files: Record<string, unknown>) {
  const temporary = await mkdtemp(resolve(tmpdir(), "helmr-bundle-"))
@@ -59,7 +59,18 @@ test("assets reject missing matches, managed namespaces and symlink traversal",a
 
 test("package tsconfig extends and path aliases are resolved during bundling",async()=>{
  const f=await fixture({"tsconfig.json":{extends:"@config/base/config.json",compilerOptions:{baseUrl:".",paths:{"@/*":["src/*"]}}},"node_modules/@config/base/package.json":{name:"@config/base",version:"1.0.0"},"node_modules/@config/base/config.json":{compilerOptions:{target:"ESNext",module:"Preserve"}},"src/value.ts":"export const value:number=42","agents/main.ts":"export {value} from '@/value'"})
- try{await run(f);expect(await readFile(resolve(f.output,"payload/helmr/app/entry-0.mjs"),"utf8")).toContain("42")}finally{await f.close()}
+ try {
+  await run(f)
+  await rm(f.root, {recursive:true})
+  const entry = pathToFileURL(resolve(f.output,"payload/helmr/app/entry-0.mjs")).href
+  const child = spawnSync("node", [
+   "--input-type=module", "--eval",
+   "const entry = await import(process.argv[1]); process.stdout.write(JSON.stringify(entry.value))",
+   entry,
+  ], {cwd:f.output, encoding:"utf8"})
+  expect(child.status, child.stderr).toBe(0)
+  expect(child.stdout).toBe("42")
+ } finally {await f.close()}
 })
 
 test("runtime lock admission accepts bundled records but rejects unsupported transitive sources",async()=>{

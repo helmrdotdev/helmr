@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -20,6 +22,7 @@ type testControlPlane struct {
 	authorityRejected atomic.Bool
 	recovered         atomic.Bool
 	activated         atomic.Bool
+	recoveryRequests  []workerapi.StartupRecoveryRequest
 	recoveryCalls     atomic.Int32
 	recovery409s      atomic.Int32
 	completed         atomic.Int32
@@ -48,6 +51,7 @@ func (c *testControlPlane) ActivateWorker(_ context.Context, capabilities worker
 }
 
 func (c *testControlPlane) ReportWorkerStartupRecovery(_ context.Context, request workerapi.StartupRecoveryRequest) error {
+	c.recoveryRequests = append(c.recoveryRequests, workerapi.StartupRecoveryRequest{Quarantined: slices.Clone(request.Quarantined)})
 	c.recoveryCalls.Add(1)
 	if request.Quarantined == nil {
 		return errors.New("incomplete startup recovery proof")
@@ -136,7 +140,20 @@ func (c *successfulRejectionConsumer) Claim(ctx context.Context, admission Consu
 func TestSupervisorRetriesStartupRecoveryConflictWithExactProof(t *testing.T) {
 	controlPlane := &testControlPlane{}
 	controlPlane.recovery409s.Store(2)
-	s, err := New(Config{Recover: emptyPhysicalRecovery, ControlPlane: controlPlane, PollEvery: time.Millisecond})
+	const reclaimedID = "019c10d5-a6f7-7af1-8f5f-000000000106"
+	const quarantinedID = "019c10d5-a6f7-7af1-8f5f-000000000107"
+	s, err := New(Config{
+		Recover: func(context.Context) (RecoveryEvidence, error) {
+			return RecoveryEvidence{
+				ObservedAt:        time.Now().UTC(),
+				Reclaimed:         []string{reclaimedID},
+				Quarantined:       []string{quarantinedID},
+				QuarantinedOwners: []vm.Owner{{Kind: vm.OwnerInstance, ID: quarantinedID}},
+			}, nil
+		},
+		Capabilities: workerapi.Capabilities{ExecutionSlotsAvailable: 2},
+		ControlPlane: controlPlane, PollEvery: time.Millisecond,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +180,14 @@ func TestSupervisorRetriesStartupRecoveryConflictWithExactProof(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("supervisor did not stop")
+	}
+	if len(controlPlane.recoveryRequests) != 3 {
+		t.Fatalf("captured startup recovery requests = %d, want 3", len(controlPlane.recoveryRequests))
+	}
+	for attempt, request := range controlPlane.recoveryRequests {
+		if !slices.Equal(request.Quarantined, []string{quarantinedID}) {
+			t.Fatalf("startup recovery attempt %d quarantined = %v, want [%s]", attempt+1, request.Quarantined, quarantinedID)
+		}
 	}
 }
 

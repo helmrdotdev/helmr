@@ -52,7 +52,7 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 			}
 			if finalizing {
 				var unchanged bool
-				if err := f.pool.QueryRow(t.Context(), `SELECT t.status='completed' AND t.result_recorded_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$2) AND EXISTS(SELECT 1 FROM computer_saves WHERE id=$3 AND status='requested') FROM turns t WHERE t.id=$1`, active.TurnID, f.session, save.ID).Scan(&unchanged); err != nil || !unchanged {
+				if err := f.pool.QueryRow(t.Context(), `SELECT t.status='completed' AND t.result->>'result'='1' AND t.result_digest IS NOT NULL AND t.result_recorded_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$2) AND EXISTS(SELECT 1 FROM computer_saves WHERE id=$3 AND status='requested') FROM turns t WHERE t.id=$1`, active.TurnID, f.session, save.ID).Scan(&unchanged); err != nil || !unchanged {
 					t.Fatalf("deadline altered recorded result: %v %v", unchanged, err)
 				}
 				return
@@ -74,16 +74,6 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 			var pending bool
 			if err := f.pool.QueryRow(t.Context(), `SELECT status='stopping' AND fenced_at IS NULL FROM session_processes WHERE session_id=$1`, f.session).Scan(&pending); err != nil || !pending {
 				t.Fatalf("deadline claimed physical stop: %v %v", pending, err)
-			}
-			if finalizing {
-				var retained bool
-				if err := f.pool.QueryRow(t.Context(), `SELECT result->>'result'='1' AND result_digest IS NOT NULL AND result_recorded_at IS NOT NULL FROM turns WHERE id=$1`, active.TurnID).Scan(&retained); err != nil || !retained {
-					t.Fatalf("recorded result lost: %v %v", retained, err)
-				}
-				var state string
-				if err := f.pool.QueryRow(t.Context(), `SELECT status FROM computer_saves WHERE id=$1`, save.ID).Scan(&state); err != nil || state != "requested" {
-					t.Fatalf("ordered save changed: %s %v", state, err)
-				}
 			}
 			release := controlRequest(f, "resume", "release-deadline")
 			release.HoldID = hold

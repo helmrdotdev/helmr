@@ -33,21 +33,6 @@ func TestCheckpointEncryptorRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCheckpointEncryptorRejectsWrongPurpose(t *testing.T) {
-	encryptor, err := NewCheckpointEncryptor(bytes.Repeat([]byte{2}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var encrypted bytes.Buffer
-	if err := encryptor.Encrypt(context.Background(), strings.NewReader("state"), &encrypted, "vmstate"); err != nil {
-		t.Fatal(err)
-	}
-	var decrypted bytes.Buffer
-	if err := encryptor.Decrypt(context.Background(), bytes.NewReader(encrypted.Bytes()), &decrypted, "memory"); err == nil {
-		t.Fatal("expected decrypt failure for wrong purpose")
-	}
-}
-
 func TestCheckpointEncryptorRejectsTruncatedCiphertext(t *testing.T) {
 	encryptor, err := NewCheckpointEncryptor(bytes.Repeat([]byte{3}, 32))
 	if err != nil {

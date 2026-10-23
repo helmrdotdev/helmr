@@ -115,21 +115,30 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "START_TOKEN", []byte("first-value"), "start-create")
+	record, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "START_TOKEN", []byte("first-env-value"), "start-create")
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := pgvalue.MustUUIDValue(record.ID)
+	fileRecord, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "START_FILE", []byte("first-file-value"), "start-file-create")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileID := pgvalue.MustUUIDValue(fileRecord.ID)
 	for _, binding := range []struct{ kind, target, mode string }{{"env", "TOKEN", "protected"}, {"env", "RAW_TOKEN", "raw"}, {"file", "/secrets/token", "raw"}} {
 		marker, err := secretbinding.Placeholder(binding.mode)
 		if err != nil {
 			t.Fatal(err)
 		}
+		bindingID := id
+		if binding.kind == "file" {
+			bindingID = fileID
+		}
 		origins := []string{}
 		if binding.mode == "protected" {
 			origins = append(origins, "https://api.example.com")
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''))`, f.Environment, f.Computer, id, binding.kind, binding.target, binding.mode, origins, marker)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''))`, f.Environment, f.Computer, bindingID, binding.kind, binding.target, binding.mode, origins, marker)
 	}
 	trust, err := secrets.GenerateProxyTrust(f.Environment, f.Computer, time.Now())
 	if err != nil {
@@ -157,14 +166,17 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 		}
 		seenEnv, seenFile := false, false
 		for _, delivery := range response.Secrets {
-			if string(delivery.Value) != "first-value" {
-				t.Fatal("startup changed pinned raw value")
-			}
 			if delivery.Env != nil && delivery.Env.Name == "RAW_TOKEN" {
 				seenEnv = true
+				if !bytes.Equal(delivery.Value, []byte("first-env-value")) {
+					t.Fatal("startup changed pinned raw env value")
+				}
 			}
 			if delivery.File != nil && delivery.File.Path == "/secrets/token" {
 				seenFile = true
+				if !bytes.Equal(delivery.Value, []byte("first-file-value")) {
+					t.Fatal("startup changed pinned raw file value")
+				}
 			}
 		}
 		if !seenEnv || !seenFile || !strings.HasPrefix(response.ProtectedEnv.Env["TOKEN"], "hlmr_protected_") {
@@ -173,6 +185,9 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 	}
 	assertDelivery(first)
 	if _, err = secrets.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, id, []byte("second-value"), "start-rotate"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = secrets.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, fileID, []byte("second-file-value"), "start-file-rotate"); err != nil {
 		t.Fatal(err)
 	}
 	retry, err := client.AuthorizeAgentStart(t.Context(), request)
@@ -184,7 +199,7 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 		t.Fatal("retry changed selector")
 	}
 	var count int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session).Scan(&count); err != nil || count != 1 {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("logical exposure count %d: %v", count, err)
 	}
 	if _, err = secrets.Revoke(t.Context(), audit.System("test-fixture"), f.Environment, id, "start-revoke"); err != nil {

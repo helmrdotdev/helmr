@@ -194,13 +194,24 @@ let
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
         '';
     ci-infra-test =
-      app "ci-infra-test" "run AWS module tests with pinned OpenTofu" toolsets.infraTest
+      app "ci-infra-test" "run AWS module tests with pinned OpenTofu"
+        (
+          toolsets.infraTest
+          ++ [
+            pkgs.jq
+            pkgs.gnutar
+            pkgs.gzip
+            pkgs.gawk
+            pkgs.gnused
+          ]
+        )
         ''
           for module in release-storage release-publisher controlplane network release-artifacts worker worker-image; do
             (
               cd "infra/aws/modules/$module"
               if [ "$module" = worker-image ]; then
                 bash tests/prepare-root.test.sh
+                python3 tests/test_install.py
               fi
               if [ "$module" = worker ]; then
                 python3 tests/test_lifecycle.py

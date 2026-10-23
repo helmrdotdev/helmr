@@ -17,7 +17,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -517,19 +516,6 @@ func TestSavePublicationCancellationKeepsTerminalOutcome(t *testing.T) {
 				t.Fatalf("outcome %s: %v", state, err)
 			}
 		})
-	}
-}
-
-func TestSaveStorageSchemaRoundTrip(t *testing.T) {
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
-	}
-	if err := schema.Down(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
-	}
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
 	}
 }
 

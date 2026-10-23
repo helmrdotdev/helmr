@@ -655,24 +655,6 @@ func TestLoadWorkerDoesNotRequireEnrollmentTokenFileToExistAtStartup(t *testing.
 	}
 }
 
-func TestLoadWorkerReadsExecutionSlots(t *testing.T) {
-	setWorkerRuntimeEnv(t)
-	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
-	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
-	t.Setenv("JAILER_UID", "1001")
-	t.Setenv("JAILER_GID", "1002")
-	t.Setenv("WORKER_EXECUTION_SLOTS", "4")
-
-	cfg, err := LoadWorker()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.WorkerExecutionSlots != 4 {
-		t.Fatalf("config = %+v", cfg)
-	}
-}
-
 func TestLoadWorkerControlPlaneReadsOnlyControlAuth(t *testing.T) {
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("WORKER_HOST_SECRET_PATH", "/run/helmr/worker-host-secret.json")

@@ -49,6 +49,7 @@ func TestSecretListCursorRoundTripAndScope(t *testing.T) {
 func TestSecretListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 	for _, target := range []string{
 		"/v1/secrets?name=API_TOKEN&limit=1",
+		"/v1/secrets?name=API_TOKEN",
 		"/v1/secrets?name=bad%20name",
 		"/v1/secrets?limit=0",
 		"/v1/secrets?limit=101",
@@ -62,13 +63,6 @@ func TestSecretListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 		); err == nil {
 			t.Fatalf("parseSecretListQuery(%q) succeeded", target)
 		}
-	}
-}
-
-func TestSecretListQueryRejectsNameFilter(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/v1/secrets?name=API_TOKEN", nil)
-	if _, _, err := parseSecretListQuery(request, "project-1", "environment-1"); err == nil {
-		t.Fatal("name filter accepted")
 	}
 }
 
