@@ -120,7 +120,7 @@ echo $((clock + 1)) >"$TEST_ROOT/clock"
         image = TEMPLATE.parents[2] / "worker-image/templates/install-worker-host.sh"
         self.assertIn("Restart=on-failure", image.read_text())
 
-    def run_termination(self, state="Terminated", after_state=None, drain_ok=False, enrolled=True, action="drain_and_complete_termination"):
+    def run_termination(self, state="Terminated", after_state=None, drain_ok=False, fence_ok=True, enrolled=True, action="drain_and_complete_termination"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "state").write_text(state)
@@ -155,6 +155,7 @@ if [ "$1" = drain ]; then
  [ -z "$AFTER_STATE" ] || printf '%s' "$AFTER_STATE" > "$TEST_ROOT/state"
  exit "$DRAIN_EXIT"
 fi
+if [ "$1" = fence ]; then exit "$FENCE_EXIT"; fi
 ''',
             }
             for name, contents in executables.items():
@@ -164,6 +165,7 @@ fi
             result = subprocess.run(["sh", "-c", script], env={**os.environ,
                 "PATH": str(root) + os.pathsep + os.environ["PATH"], "TEST_ROOT": str(root),
                 "AFTER_STATE": after_state or "", "DRAIN_EXIT": "0" if drain_ok else "1",
+                "FENCE_EXIT": "0" if fence_ok else "1",
             }, capture_output=True, text=True, timeout=10)
             return result, (root / "calls").read_text()
 
@@ -226,6 +228,15 @@ fi
         self.assertIn("drain --wait-timeout 1s", calls)
         self.assertIn("fence\n", calls)
         self.assertIn("--instance-id i-source --lifecycle-action-result CONTINUE", calls)
+
+    def test_failed_fence_stops_watcher_restarts_without_completing_termination(self):
+        result, calls = self.run_termination(fence_ok=False)
+        self.assertIn("fence\n", calls)
+        self.assertNotIn("complete-lifecycle-action", calls)
+        self.assertEqual(result.returncode, 78, result.stderr)
+        service = TEMPLATE.read_text().split("cat >/etc/systemd/system/helmr-asg-lifecycle.service <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+        self.assertIn("RestartPreventExitStatus=78", service)
+        self.assertIn("Restart=always", service)
 
     def test_lost_termination_evidence_does_not_fence(self):
         for changes in ({"after_state": "InService"},):
