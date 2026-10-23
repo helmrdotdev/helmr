@@ -1,10 +1,12 @@
 package session_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -33,7 +35,13 @@ func TestBackgroundSaveAdmissionConvergesAndPreservesRequiredOrder(t *testing.T)
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
-			s, e := computer.NextSave(t.Context(), f.pool, *f.host(), identity, true, true, nil)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			s, e := computer.NextSave(ctx, f.pool, *f.host(), identity, true, true, nil)
+			// Lock contention is retryable; every caller must still converge.
+			for errors.Is(e, computer.ErrNotReady) && ctx.Err() == nil {
+				s, e = computer.NextSave(ctx, f.pool, *f.host(), identity, true, true, nil)
+			}
 			results <- s
 			errs <- e
 		})
