@@ -120,11 +120,12 @@ echo $((clock + 1)) >"$TEST_ROOT/clock"
         image = TEMPLATE.parents[2] / "worker-image/templates/install-worker-host.sh"
         self.assertIn("Restart=on-failure", image.read_text())
 
-    def run_termination(self, state="Terminated", after_state=None, drain_ok=False, fence_ok=True, enrolled=True, action="drain_and_complete_termination"):
+    def run_termination(self, state="Terminated", after_state=None, drain_ok=False, fence_ok=True, enrolled=True, action="drain_and_complete_termination", access=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "state").write_text(state)
             (root / "identity").write_text("i-source")
+            (root / "worker.env").write_text("HELMR_ACCESS_CLIENT_SECRET=fixture-secret\nUNRELATED=$(exit 17)\n")
             (root / "calls").touch()
             if enrolled:
                 (root / "worker-host-secret.json").touch()
@@ -139,6 +140,7 @@ echo $((clock + 1)) >"$TEST_ROOT/clock"
             }
             script = re.sub(r"\$\{([a-z_]+)\}", lambda m: values[m[1]], script)
             script = script.replace("/var/log/helmr-worker-drain.log", str(root / "drain.log"))
+            script = script.replace("/etc/helmr/worker.env", str(root / "worker.env")).replace("$${", "${")
             # Override provider transport, retaining the production identity/state
             # checks and complete/fence control flow unchanged.
             script += '''
@@ -151,6 +153,10 @@ target_lifecycle_state() { cat "$TEST_ROOT/state"; }
                 "aws": '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_ROOT/calls"\n',
                 "worker": '''#!/bin/sh
 printf '%s\\n' "$*" >> "$TEST_ROOT/calls"
+if [ "$TEST_ACCESS" = 1 ]; then
+ test "$HELMR_ACCESS_CLIENT_SECRET" = fixture-secret || exit 31
+ echo access-authenticated >>"$TEST_ROOT/calls"
+fi
 if [ "$1" = drain ]; then
  [ -z "$AFTER_STATE" ] || printf '%s' "$AFTER_STATE" > "$TEST_ROOT/state"
  exit "$DRAIN_EXIT"
@@ -166,8 +172,26 @@ if [ "$1" = fence ]; then exit "$FENCE_EXIT"; fi
                 "PATH": str(root) + os.pathsep + os.environ["PATH"], "TEST_ROOT": str(root),
                 "AFTER_STATE": after_state or "", "DRAIN_EXIT": "0" if drain_ok else "1",
                 "FENCE_EXIT": "0" if fence_ok else "1",
+                "TEST_ACCESS": "1" if access else "0", "HELMR_ACCESS_CLIENT_ID": "fixture-id" if access else "",
+                "HELMR_ACCESS_CLIENT_SECRET": "",
             }, capture_output=True, text=True, timeout=10)
             return result, (root / "calls").read_text()
+
+    def test_access_secret_reaches_lifecycle_status_and_drain(self):
+        for state, action in (("InService", "complete_launch"), ("Terminated", "drain_and_complete_termination")):
+            with self.subTest(action=action):
+                result, calls = self.run_termination(state=state, action=action, access=True, drain_ok=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("access-authenticated", calls)
+                self.assertIn("complete-lifecycle-action", calls)
+                self.assertNotIn("fence\n", calls)
+
+    def test_access_secret_reaches_fence_after_drain_failure(self):
+        result, calls = self.run_termination(access=True, drain_ok=False, fence_ok=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.count("access-authenticated"), 2)
+        self.assertIn("fence\n", calls)
+        self.assertIn("complete-lifecycle-action", calls)
 
     def test_warm_entry_completes_without_enrollment(self):
         result, calls = self.run_termination(state="Warmed:Stopped", enrolled=False, action="complete_launch")
@@ -199,6 +223,7 @@ if [ "$1" = fence ]; then exit "$FENCE_EXIT"; fi
             root=Path(directory)
             script=TEMPLATE.read_text().split("cat >/usr/local/sbin/helmr-worker-enrollment-token <<'EOF'\n",1)[1].split("\nEOF",1)[0]
             script=script.replace("${aws_region}","us-east-1").replace("${checkpoint_key_secret_arn}","checkpoint").replace("${worker_enrollment_token_secret_arn}","enrollment")
+            script=re.sub(r"%\{ if access_client_secret_arn != null ~\}.*?%\{ endif ~\}\n", "", script, flags=re.S)
             script=script.replace("-o root -g root ","").replace("/etc/helmr",str(root / "etc")).replace("/run/helmr",str(root / "run"))
             (root / "etc").mkdir();(root / "run").mkdir()
             (root / "etc/worker-base.env").write_text("WORKER_POOL_NAME=pool\n")
@@ -216,6 +241,29 @@ if [ "$1" = fence ]; then exit "$FENCE_EXIT"; fi
                 self.assertIn("CHECKPOINT_ENCRYPTION_KEY=key-"+rotation,(root / "etc/worker.env").read_text())
                 self.assertEqual((root / "run/worker-enrollment-token").read_text(),"token-"+rotation)
                 self.assertEqual((root / "etc/worker.env").stat().st_mode & 0o777,0o600)
+
+    def test_access_secret_failure_preserves_previous_boot_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = TEMPLATE.read_text().split("cat >/usr/local/sbin/helmr-worker-enrollment-token <<'EOF'\n", 1)[1].split("\nEOF", 1)[0]
+            for key, value in {"aws_region": "us-east-1", "checkpoint_key_secret_arn": "checkpoint", "worker_enrollment_token_secret_arn": "enrollment", "access_client_secret_arn": "access"}.items():
+                script = script.replace("${" + key + "}", value)
+            script = re.sub(r"%\{ (?:if access_client_secret_arn != null|endif) ~\}\n", "", script)
+            script = script.replace("-o root -g root ", "").replace("/etc/helmr", str(root / "etc")).replace("/run/helmr", str(root / "run"))
+            (root / "etc").mkdir(); (root / "run").mkdir()
+            (root / "etc/worker-base.env").write_text("HELMR_ACCESS_CLIENT_ID=fixture-id\n")
+            (root / "etc/worker.env").write_text("previous-complete-environment\n")
+            (root / "aws").write_text('#!/bin/sh\ncase "$*" in *access*) test "$ACCESS_FAIL" = 0 || exit 1; echo access-secret;; *) echo fixture-secret;; esac\n')
+            (root / "curl").write_text('#!/bin/sh\necho fixture-metadata\n')
+            for name in ("aws", "curl"): (root / name).chmod(0o755)
+            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"]}
+            failed = subprocess.run(["sh", "-c", script], env={**env, "ACCESS_FAIL": "1"}, capture_output=True, text=True)
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertEqual((root / "etc/worker.env").read_text(), "previous-complete-environment\n")
+            result = subprocess.run(["sh", "-c", script], env={**env, "ACCESS_FAIL": "0"}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("HELMR_ACCESS_CLIENT_SECRET=access-secret\n", (root / "etc/worker.env").read_text())
+            self.assertEqual((root / "etc/worker.env").stat().st_mode & 0o777, 0o600)
 
     def test_planned_drain_does_not_enter_loss_path(self):
         result, calls = self.run_termination(state="InService")

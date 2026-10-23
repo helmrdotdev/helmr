@@ -17,7 +17,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"golang.org/x/sys/unix"
 )
 
@@ -60,7 +59,7 @@ func resolveWorkerHostSecret(ctx context.Context, cfg config.Worker, workDir str
 		if err != nil {
 			return err
 		}
-		controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL)
+		controlPlaneClient, err := newControlPlaneClient(cfg.ControlPlaneURL)
 		if err != nil {
 			return fmt.Errorf("configure worker enrollment client: %w", err)
 		}

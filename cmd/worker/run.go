@@ -110,7 +110,7 @@ func run(log *slog.Logger) error {
 	var controlPlaneClient *workerclient.Client
 	phaseStarted = time.Now()
 	workerHostSecret, err := resolveAuthenticatedWorkerHostSecret(ctx, cfg, workDir, func(hostSecret workerHostSecretFile) error {
-		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
+		candidate, candidateErr := newControlPlaneClient(cfg.ControlPlaneURL,
 			workerclient.WithAuth(hostSecret.WorkerHostID, hostSecret.WorkerHostSecret),
 			workerclient.WithService(serviceID),
 		)

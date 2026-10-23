@@ -1,3 +1,4 @@
+import { accessFetch } from "./access"
 import { fixtureInput } from "./runtime-mcp"
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
@@ -139,8 +140,8 @@ export async function verify(
   const client = new HelmrClient({
       url,
       apiKey,
-      fetch: ((input, init) =>
-        fetch(input, { ...init, signal: init?.signal ?? deadline(30_000) })) as typeof fetch,
+      fetch: accessFetch(process.env, ((input, init) =>
+        fetch(input, { ...init, signal: init?.signal ?? deadline(30_000) })) as typeof fetch),
     }),
     marker = randomUUID()
   const objects = {
