@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from test_host import host, config, ROOT
 
@@ -159,9 +159,14 @@ class UpdateTests(unittest.TestCase):
         cfg = host.compile_config(config())
         with patch.object(host, 'run') as run:
             host.candidate_config(cfg, Path('/private/attempt'), ['control-plane', 'dispatcher'])
-        for call, name, key in zip(run.call_args_list, ['control-plane', 'dispatcher'], ['control_plane', 'dispatcher']):
-            self.assertEqual(call.args, ('/private/attempt/' + name, 'check-config'))
-            self.assertEqual(call.kwargs['env'], {'PATH': os.environ.get('PATH', os.defpath)} | cfg[key])
+        self.assertEqual(run.call_args_list, [
+            call('/private/attempt/control-plane', 'check-config',
+                 env={'PATH': os.environ.get('PATH', os.defpath)} | cfg['control_plane'],
+                 capture_output=True, text=True),
+            call('/private/attempt/dispatcher', 'check-config',
+                 env={'PATH': os.environ.get('PATH', os.defpath)} | cfg['dispatcher'],
+                 capture_output=True, text=True),
+        ])
 
     def test_dispatcher_startup_log_is_bound_to_current_invocation(self):
         identity = {'InvocationID': 'exact-invocation', 'MainPID': '9'}

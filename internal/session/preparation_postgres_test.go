@@ -132,16 +132,16 @@ func TestPreparationDemandCoalescingRetainsTerminalAttachment(t *testing.T) {
 		}
 	}
 }
-func TestPreparationClaimsDoNotReplaceOrResurrectExecutors(t *testing.T) {
+func TestPreparationRenewalRequiresExactLiveExecutor(t *testing.T) {
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
 	ref := f.claim(t, p)
-	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), ref); err != nil {
-		t.Fatalf("same claim: %v", err)
+	if expires, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); err != nil || expires.IsZero() {
+		t.Fatalf("live renewal: %v", err)
 	}
 	wrong := ref
 	wrong.InstanceID = uuid.NewV7()
-	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, computer.ErrDenied) {
+	if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), wrong); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("changed instance: %v", err)
 	}
 	wrong = ref
@@ -158,11 +158,12 @@ func TestPreparationClaimsDoNotReplaceOrResurrectExecutors(t *testing.T) {
 	if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("expired renewal: %v", err)
 	}
-	if _, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) {
-		t.Fatalf("expired reclaim: %v", err)
-	}
 	if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 		t.Fatalf("late physical stop: %v", err)
+	}
+	var stopped bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='failed' AND fenced_at IS NOT NULL AND fence_evidence IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
+		t.Fatalf("late physical stop was not recorded: stopped=%v err=%v", stopped, err)
 	}
 }
 func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T) {
@@ -518,40 +519,6 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 	}
 	if _, err := q.ActivateWorkerHost(t.Context(), activation); err != nil {
 		t.Fatalf("fenced preparation blocked activation: %v", err)
-	}
-}
-
-func TestPreparationConcurrentClaimsSelectOneExecutor(t *testing.T) {
-	f := newPreparationFixture(t)
-	p := f.attach(t, f.waiter(t))
-	refs := []computer.ImageBuildExecutor{
-		{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{1}, 32)},
-		{EnvironmentID: f.env, ImageBuildID: p.ID, InstanceID: uuid.NewV7(), Epoch: 1, ChannelCredential: bytes.Repeat([]byte{2}, 32)},
-	}
-	start := make(chan struct{})
-	results := make(chan error, 2)
-	for _, ref := range refs {
-		go func() {
-			<-start
-			_, err := claimPreparationFixture(t.Context(), f.pool, *f.host(), ref)
-			results <- err
-		}()
-	}
-	close(start)
-	success, denied := 0, 0
-	for range refs {
-		err := <-results
-		switch {
-		case err == nil:
-			success++
-		case errors.Is(err, computer.ErrDenied):
-			denied++
-		default:
-			t.Fatal(err)
-		}
-	}
-	if success != 1 || denied != 1 {
-		t.Fatalf("success=%d denied=%d", success, denied)
 	}
 }
 

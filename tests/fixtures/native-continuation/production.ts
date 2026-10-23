@@ -54,6 +54,7 @@ function native(definition: typeof nativeCodex) {
   return agent({
     id: definition.id,
     template: workspace,
+    suspension: "after_turn",
     async init(context) {
       assert.equal(await readFile("/workspace/prepared-environment", "utf8"), "prepared once")
       // Observe ordinary Node launches without replacing spawn or runtime state.
@@ -159,6 +160,7 @@ export const claude = native(nativeClaude)
 
 export const receipt = agent({
   id: "receipt", template: workspace,
+  suspension: "after_turn",
   async turn(turn, { session }) {
     const input = fixtureValue(turn.input)
     const marker = `/workspace/control-${session.id}.json`
@@ -177,6 +179,7 @@ export const receipt = agent({
 export const peer = agent({
   id: "peer",
   template: workspace,
+  suspension: "after_turn",
   init: () => ({ nonce: crypto.randomUUID(), count: 0, discovery: undefined as DiscoveryState | undefined, secrets: undefined as SecretBindingState | undefined }),
   async turn(turn, { initResult: state, session, computer, mcp }): Promise<JsonValue> {
     const input = fixtureValue(turn.input)
@@ -289,6 +292,7 @@ export const peer = agent({
 // request history and setup state in RAM; reopen the same ports after restoration.
 export const models = agent({
   id: "models", template: workspace,
+  suspension: "after_turn",
   async init() {
     const target = { session: "", performance: false }
     const model = await startNativeModels(() => { assert(target.session); return target.session }, undefined, undefined, () => target.performance)

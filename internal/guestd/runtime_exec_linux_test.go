@@ -13,7 +13,7 @@ import (
 )
 
 func TestImageCommandUsesNamespaceInit(t *testing.T) {
-	leaf, err := programCgroupLeafName("run-1", 1, "lease-1")
+	leaf, err := execCgroupLeafName("command-1")
 	if err != nil {
 		t.Fatal(err)
 	}

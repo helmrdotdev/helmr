@@ -3,6 +3,7 @@ package guestd
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -138,45 +139,47 @@ func TestAgentRelayAttachmentReportsUnretiredTurn(t *testing.T) {
 	}
 }
 
-func TestAgentRelayCaptureRequiresReattachmentBeforePhysicalThaw(t *testing.T) {
-	session, process := agentSessionFixture(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	relay := newAgentRelay(ctx, session, nil)
-	go relay.sendLoop()
+func TestAgentComputerCaptureRequiresRelayReattachmentBeforeThaw(t *testing.T) {
+	r, capture, processes := agentComputerFixture(t)
+	relay := r.agentSessions["session"]
+	session := relay.session
 	first := attachAgentRelay(t, relay, 1, session.grant)
-	process.writeHook = func(_ context.Context, command *agentv1.GuestCommand) error {
-		_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: command.GetCheckpoint().GetCheckpointId(), Outcome: &agentv1.SessionCheckpointReady_Ready{Ready: true}}}})
-		return err
-	}
-	if err := relay.prepareCapture(t.Context(), "capture"); err != nil {
+	if _, err := r.captureAgentComputer(t.Context(), capture); err != nil {
 		t.Fatal(err)
-	}
-	if err := relay.freezeForCapture(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	if err := relay.activateAfterCapture(t.Context()); err == nil {
-		t.Fatal("thawed without upstream authority")
 	}
 	var data [1]byte
-	if _, err := first.Read(data[:]); err == nil {
-		t.Fatal("capture retained a live host socket")
+	if _, err := first.Read(data[:]); !errors.Is(err, io.EOF) {
+		t.Fatalf("capture did not close the host socket: %v", err)
+	}
+	installation := agentComputerInstallation(r, capture, false)
+	if _, err := r.installAgentComputer(t.Context(), installation, false, testComputerAuthorityClock()); err != nil {
+		t.Fatal(err)
+	}
+	applyAgentComputerTestControls(t, r)
+	peer := r.agentSessions["peer"]
+	attachAgentRelay(t, peer, 1, peer.session.grant)
+	if receipt, err := r.installAgentComputer(t.Context(), installation, true, nil); err == nil || receipt.GetActivationStarted() {
+		t.Fatalf("thawed without primary upstream authority: %v %v", receipt, err)
 	}
 	second := attachAgentRelay(t, relay, 2, session.grant)
-	relay.mu.Lock()
-	frozen := relay.captureFrozen
-	relay.mu.Unlock()
-	if !frozen {
-		t.Fatal("attachment prematurely thawed a captured Session")
+	for _, process := range processes {
+		if !process.physicallyFrozen {
+			t.Fatal("attachment prematurely thawed a captured Session")
+		}
 	}
-	if err := relay.activateAfterCapture(t.Context()); err != nil {
-		t.Fatal(err)
+	if receipt, err := r.installAgentComputer(t.Context(), installation, true, nil); err != nil || !receipt.GetActivated() {
+		t.Fatalf("activation: %v %v", receipt, err)
+	}
+	for _, process := range processes {
+		if process.physicallyFrozen {
+			t.Fatal("activation left a Session frozen")
+		}
 	}
 	if err := writeAgentTransportFrame(second, &agentv1.HostSessionMessage{AttachmentSequence: 1, Message: &agentv1.HostSessionMessage_Renew{Renew: session.grant}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Read(data[:]); err == nil {
-		t.Fatal("old attachment command was accepted")
+	if _, err := second.Read(data[:]); !errors.Is(err, io.EOF) {
+		t.Fatalf("stale attachment did not close the host socket: %v", err)
 	}
 }
 
@@ -533,28 +536,25 @@ func TestAgentRelayCheckpointWriteFailureClosesUnusablePipe(t *testing.T) {
 	}
 }
 
-func TestAgentRelayCheckpointVerifiesFrozenMembership(t *testing.T) {
-	session, process := agentSessionFixture(t)
-	relay := newAgentRelay(t.Context(), session, nil)
-	process.writeHook = func(_ context.Context, _ *agentv1.GuestCommand) error {
-		_, _, err := session.receive(&agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_CheckpointReady{CheckpointReady: &agentv1.SessionCheckpointReady{CheckpointId: "checkpoint", Outcome: &agentv1.SessionCheckpointReady_Ready{Ready: true}}}})
-		return err
-	}
-	if err := relay.prepareCapture(t.Context(), "checkpoint"); err != nil {
-		t.Fatal(err)
-	}
+func TestAgentComputerCaptureRejectsMembershipChangedDuringFreeze(t *testing.T) {
+	r, capture, processes := agentComputerFixture(t)
+	relay, process := r.agentSessions["session"], processes[0]
 	process.freezeHook = func() { process.convergenceErr = errors.New("child appeared before physical freeze") }
-	if err := relay.freezeForCapture(t.Context()); err == nil {
+	receipt, err := r.captureAgentComputer(t.Context(), capture)
+	if err == nil {
 		t.Fatal("accepted membership changed during freeze")
 	}
-	if !relay.captureFrozen || session.checkpointID == "" {
+	if receipt.GetFrozen() || relay.captureVerified {
+		t.Fatal("failed membership proof advertised a verified capture")
+	}
+	if !relay.captureFrozen || relay.session.checkpointID == "" || !r.captureSealed() {
 		t.Fatal("failed proof released physical capture or admission")
 	}
 	if process.proofs != 2 {
 		t.Fatal("did not verify frozen state")
 	}
-	if err := relay.activateAfterCapture(t.Context()); err == nil {
-		t.Fatal("activated a capture with failed physical verification")
+	if _, err := r.installAgentComputer(t.Context(), agentComputerInstallation(r, capture, false), false, testComputerAuthorityClock()); err == nil {
+		t.Fatal("installed authority on a capture with failed physical verification")
 	}
 }
 

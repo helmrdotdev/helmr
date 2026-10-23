@@ -67,7 +67,7 @@ func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 	}
 }
 
-func TestProgramTreeEntriesCreateEmptyNodeModules(t *testing.T) {
+func TestProgramTreeEntriesWithoutDependencies(t *testing.T) {
 	tree := artifacttest.NewMemory()
 	tree.AddFile("app.js", []byte("export {}\n"), 0644)
 	inspected, err := inspectMemoryBuildTree(t, tree)
@@ -84,8 +84,10 @@ func TestProgramTreeEntriesCreateEmptyNodeModules(t *testing.T) {
 		),
 		false,
 	)
-	if program["node_modules"] != "" {
-		t.Fatalf("Program tree = %#v", program)
+	for path, want := range map[string]string{"app.js": "export {}\n", "helmr": ""} {
+		if got, exists := program[path]; !exists || got != want {
+			t.Fatalf("Program tree entry %q = %q, present %t; want %q", path, got, exists, want)
+		}
 	}
 }
 

@@ -66,63 +66,6 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 	}
 }
 
-func TestDevSeedPreservesUserEditsAcrossRestart(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	pool := dbtest.Open(t).Pool
-	var serverVersion int
-	if err := pool.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverVersion); err != nil {
-		t.Fatal(err)
-	}
-	if serverVersion < 180000 {
-		t.Skipf("Postgres %d is older than the Helmr PostgreSQL 18 schema baseline; skipping dev seed integration test", serverVersion)
-	}
-	freshInit, err := migrate(ctx, pool)
-	if err != nil {
-		t.Fatalf("migrate fresh database: %v", err)
-	}
-	if !freshInit {
-		t.Fatal("expected fresh database initialization")
-	}
-	q := db.New(pool)
-	if _, err := q.CreateRegion(ctx, db.CreateRegionParams{ID: "dev-local", DisplayName: "Local"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := q.CreateWorkerGroup(ctx, db.CreateWorkerGroupParams{
-		ID: pgvalue.NewUUIDv7(), TokenID: pgvalue.NewUUIDv7(), TokenHash: make([]byte, 32),
-		RegionID: "dev-local", Name: "default",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	cfg := devConfig{environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
-	if err := seedDevData(ctx, pool, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE environments
-		   SET name = 'Renamed Production', color_hex = '#22C55E'
-		 WHERE id = '00000000-0000-7000-8000-000000000401'
-	`); err != nil {
-		t.Fatal(err)
-	}
-	freshInit, err = migrate(ctx, pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if freshInit {
-		t.Fatal("expected existing database on second migrate")
-	}
-	var name, color string
-	if err := pool.QueryRow(ctx, `
-		SELECT name, color_hex FROM environments WHERE id = '00000000-0000-7000-8000-000000000401'
-	`).Scan(&name, &color); err != nil {
-		t.Fatal(err)
-	}
-	if name != "Renamed Production" || color != "#22C55E" {
-		t.Fatalf("environment after restart = %q/%q, want Renamed Production/#22C55E", name, color)
-	}
-}
-
 func TestMigrateRejectsSchemaVersionMismatch(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
 import { template, image } from "@helmr/sdk"
 import { runComputerPreparation } from "./computer-preparation"
 
@@ -30,11 +31,46 @@ test("preparation propagates failure and waits for in-flight commands before suc
 })
 
 test("cancellation joins the command even when it ignores graceful termination", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "helmr-prepare-cancel-"))
   const cancellation = new AbortController()
-  const execution = runComputerPreparation(template({ ...base, prepare: build => build.exec([process.execPath, "-e", 'process.on("SIGTERM",()=>{});setInterval(()=>{},1000)']) }), cancellation.signal)
-  const cancelled = assert.rejects(execution, error => error instanceof Error && error.name === "AbortError")
-  cancellation.abort()
-  await cancelled
+  let pid: number | undefined
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const execution = runComputerPreparation(template({ ...base, prepare: build => build.exec([
+    process.execPath, "-e",
+    'process.on("SIGTERM",()=>{});setInterval(()=>{},1000);const fs=require("node:fs");fs.writeFileSync("ready.tmp",String(process.pid));fs.renameSync("ready.tmp","ready")',
+  ], { cwd }) }), cancellation.signal)
+  try {
+    const readyDeadline = Date.now() + 2000
+    for (;;) {
+      try { pid = Number(await readFile(join(cwd, "ready"), "utf8")); break }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error }
+      assert(Date.now() < readyDeadline, "child did not install its SIGTERM handler")
+      await delay(10)
+    }
+    assert(Number.isInteger(pid) && pid! > 0)
+    process.kill(pid!, 0)
+    const joined = Promise.race([
+      execution,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("cancellation did not join the ready child")), 2000)
+      }),
+    ])
+    cancellation.abort()
+    await assert.rejects(joined, error => error instanceof Error && error.name === "AbortError")
+    assert.throws(() => process.kill(pid!, 0), { code: "ESRCH" })
+  } finally {
+    clearTimeout(timeout)
+    cancellation.abort()
+    if (pid !== undefined) {
+      try { process.kill(pid, "SIGKILL") }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error }
+    }
+    await execution.catch(() => {})
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test("already-cancelled preparation does not enter its hook", async () => {
   const already = new AbortController()
   already.abort()
   let started = false

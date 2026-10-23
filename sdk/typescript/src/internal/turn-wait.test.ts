@@ -74,7 +74,55 @@ test("identity mismatch and invalid durations fail without changing work", async
 })
 
 test("long observation deadlines do not overflow the native timer", async () => {
-  expect(await waitForTurn(sessionId, turnId, async () => ({ ...pending, status: "completed", result: true }), { timeout: "30d" })).toEqual({ status: "settled", outcome: { status: "completed", result: true } })
+  const duration = 30 * 24 * 60 * 60 * 1000
+  const maximumDelay = 2147483647
+  let now = 0
+  const scheduled: { callback: () => void; delay: number; handle: ReturnType<typeof setTimeout> }[] = []
+  const clock = spyOn(performance, "now").mockImplementation(() => now)
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => {
+    const handle = (scheduled.length + 1) as unknown as ReturnType<typeof setTimeout>
+    scheduled.push({ callback, delay, handle })
+    return handle
+  }) as typeof setTimeout)
+  const clear = spyOn(globalThis, "clearTimeout").mockImplementation(() => {})
+  const cancellation = new AbortController()
+  let started!: (signal: AbortSignal) => void
+  const reading = new Promise<AbortSignal>(resolve => { started = resolve })
+  const observation = waitForTurn(sessionId, turnId, signal => {
+    started(signal)
+    return new Promise(() => {})
+  }, { timeout: "30d", signal: cancellation.signal })
+  // Cleanup can abort the observation after an assertion failure.
+  void observation.catch(() => {})
+  try {
+    const signal = await reading
+    expect(scheduled.map(item => item.delay)).toEqual([maximumDelay])
+    expect(signal.aborted).toBe(false)
+
+    now = maximumDelay
+    scheduled[0]!.callback()
+    expect(scheduled.map(item => item.delay)).toEqual([maximumDelay, duration - maximumDelay])
+    expect(signal.aborted).toBe(false)
+
+    // An early callback must rearm for the remainder rather than expire early.
+    now = duration - 1
+    scheduled[1]!.callback()
+    expect(scheduled.map(item => item.delay)).toEqual([maximumDelay, duration - maximumDelay, 1])
+    expect(signal.aborted).toBe(false)
+
+    now = duration
+    scheduled[2]!.callback()
+    expect(await observation).toEqual({ status: "timeout" })
+    expect(signal.aborted).toBe(true)
+    expect(clear).toHaveBeenCalledTimes(1)
+    expect(clear).toHaveBeenCalledWith(scheduled[2]!.handle)
+  } finally {
+    cancellation.abort()
+    await observation.catch(() => {})
+    clear.mockRestore()
+    timer.mockRestore()
+    clock.mockRestore()
+  }
 })
 
 test("HTTP authorization failures are not retried or returned as timeout", async () => {

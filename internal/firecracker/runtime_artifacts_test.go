@@ -2,8 +2,10 @@ package firecracker
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -44,33 +46,68 @@ func TestRuntimeCorpusBytesIncludesManifestAndFilesystemRounding(t *testing.T) {
 	}
 }
 
-func TestRuntimeArtifactProducersUseLoaderContract(t *testing.T) {
+func TestMakeRuntimeArtifactsLoad(t *testing.T) {
 	_, source, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve runtime artifact test source")
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
-	checks := []struct {
+	cfg, want := writeRuntimeArtifactFixture(t)
+	if err := os.Remove(cfg.RuntimeArtifactsPath); err != nil {
+		t.Fatal(err)
+	}
+	// Supply existing small artifacts without invoking their image-build recipes.
+	cmd := exec.Command("make", "--no-print-directory", "-s", "-f", filepath.Join(repoRoot, "images", "boot-artifacts.mk"),
+		"--old-file="+cfg.KernelPath, "--old-file="+cfg.InitramfsPath, "--old-file="+cfg.RootfsPath,
+		"REPO_ROOT="+repoRoot, "GUESTD_INPUT_HASH=fixture", "GUESTD_GO_IDENTITY=fixture",
+		"KERNEL="+cfg.KernelPath, "INITRAMFS="+cfg.InitramfsPath, "ROOTFS="+cfg.RootfsPath,
+		"RUNTIME_ARTIFACTS="+cfg.RuntimeArtifactsPath, cfg.RuntimeArtifactsPath)
+	cmd.Dir = filepath.Join(repoRoot, "images", "guest")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("produce runtime manifest: %v\n%s", err, output)
+	}
+	artifacts, err := loadRuntimeArtifacts(cfg)
+	// Boot images currently target amd64. Other workers must reject their output.
+	if runtime.GOARCH != "amd64" {
+		want := fmt.Sprintf("runtime artifacts arch %q does not match worker arch %q", "amd64", runtime.GOARCH)
+		if err == nil || err.Error() != want {
+			t.Fatalf("load Make runtime manifest: %v, want %q", err, want)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("load Make runtime manifest: %v", err)
+	}
+	if artifacts != want {
+		t.Fatalf("Make artifacts = %+v, want %+v", artifacts, want)
+	}
+}
+
+// Keep both infrastructure admission checks bound to the loader contract. The
+// executable producer and installer tests separately exercise their behavior.
+func TestRuntimeArtifactValidatorContractsMatchLoader(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve runtime artifact test source")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
+	for _, check := range []struct {
+		name string
 		path string
 		want string
 	}{
-		{
-			path: filepath.Join(repoRoot, "images", "boot-artifacts.mk"),
-			want: `"vm_runtime_contract": "` + vmplatform.Contract + `"`,
-		},
-		{
-			path: filepath.Join(repoRoot, "infra", "aws", "modules", "worker-image", "main.tf"),
-			want: `.vm_runtime_contract == \"` + vmplatform.Contract + `\"`,
-		},
-	}
-	for _, check := range checks {
-		body, err := os.ReadFile(check.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(string(body), check.want) {
-			t.Fatalf("%s does not produce or validate %s", check.path, check.want)
-		}
+		{name: "image validation", path: "infra/aws/modules/worker-image/main.tf", want: `.vm_runtime_contract == \"` + vmplatform.Contract + `\"`},
+		{name: "installer", path: "infra/aws/modules/worker-image/templates/install-worker-host.sh", want: `.vm_runtime_contract == "` + vmplatform.Contract + `"`},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			body, err := os.ReadFile(filepath.Join(repoRoot, check.path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(body), check.want) {
+				t.Fatalf("%s does not validate loader contract %q", check.path, vmplatform.Contract)
+			}
+		})
 	}
 }
 

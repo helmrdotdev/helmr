@@ -195,21 +195,6 @@ func TestLiveComputerCaptureNeverPausesBeforePublication(t *testing.T) {
 	}
 }
 
-func TestLiveComputerCaptureWritebackFailureCanRetrySamePrefix(t *testing.T) {
-	s, d, _ := liveCaptureMachine(t, true)
-	if _, err := s.CaptureComputer(t.Context()); err == nil {
-		t.Fatal("accepted failed writeback")
-	}
-	if d.captures != 0 || d.releases != 0 {
-		t.Fatal("captured without guest writeback")
-	}
-	cut, err := s.CaptureComputer(t.Context())
-	if err != nil {
-		t.Fatal("retry of unreceipted online flush failed", err)
-	}
-	cut.Capture.Release()
-}
-
 func TestLiveComputerCaptureCheckpointWaitsForCut(t *testing.T) {
 	s, d, states := liveCaptureMachine(t, false)
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -298,6 +283,12 @@ func TestLiveComputerCaptureFailureRetriesWithoutPause(t *testing.T) {
 			}
 			if _, err := s.CaptureComputer(t.Context()); err == nil {
 				t.Fatal("accepted failed capture")
+			}
+			if stage == "guest flush" && (d.captures != 0 || d.releases != 0) {
+				t.Fatalf("captured without guest writeback: captures=%d releases=%d", d.captures, d.releases)
+			}
+			if got := states(); len(got) != 0 {
+				t.Fatalf("failed capture changed VMM state: %v", got)
 			}
 			d.capture = nil
 			cut, err := s.CaptureComputer(t.Context())

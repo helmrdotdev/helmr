@@ -68,24 +68,36 @@ func TestUploadDeploymentBundleObjectRequiresExactContentLength(t *testing.T) {
 	if err := os.WriteFile(object, []byte("object"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	client, err := New("http://localhost")
-	if err != nil {
-		t.Fatal(err)
+	transportCalls := 0
+	client := newDeploymentUploadTestClient(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		transportCalls++
+		if _, err := io.Copy(io.Discard, request.Body); err != nil {
+			return nil, err
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+	}))
+	valid := deploymentUploadTestPlan("https://upload.example/object", 6)
+	if err := client.UploadDeploymentBundleObject(t.Context(), valid, object, nil); err != nil || transportCalls != 1 {
+		t.Fatalf("valid upload: transport calls=%d err=%v", transportCalls, err)
 	}
-	for name, headers := range map[string]map[string]string{
-		"missing":   nil,
-		"invalid":   {"Content-Length": "invalid"},
-		"mismatch":  {"Content-Length": "7"},
-		"duplicate": {"Content-Length": "6", "content-length": "6"},
+	for name, tc := range map[string]struct {
+		headers   map[string]string
+		wantError string
+	}{
+		"missing":   {nil, "missing content length"},
+		"invalid":   {map[string]string{"Content-Length": "invalid"}, "invalid content length"},
+		"mismatch":  {map[string]string{"Content-Length": "7"}, "size differs from the upload plan"},
+		"duplicate": {map[string]string{"Content-Length": "6", "content-length": "6"}, "duplicate content length"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			transportCalls = 0
 			err := client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
 				Method:  http.MethodPut,
-				URL:     "http://localhost/upload",
-				Headers: headers,
+				URL:     valid.URL,
+				Headers: tc.headers,
 			}, object, nil)
-			if err == nil {
-				t.Fatal("UploadDeploymentBundleObject returned nil error")
+			if !errors.Is(err, ErrDeploymentObjectUploadNotAttempted) || !strings.Contains(err.Error(), tc.wantError) || transportCalls != 0 {
+				t.Fatalf("want preflight error %q and no transport, got calls=%d err=%v", tc.wantError, transportCalls, err)
 			}
 		})
 	}

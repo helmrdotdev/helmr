@@ -94,6 +94,7 @@ let
           scripts/security-checks.sh
           bash -n dev/local/start.sh
           bash tests/build/buildkit-steps.test.sh
+          bash tests/build/clickhouse-canary.test.sh
           bash tests/build/ci-workflow.test.sh
           bash tests/release/install.test.sh
           bash tests/release/manifest.test.sh
@@ -193,13 +194,24 @@ let
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
         '';
     ci-infra-test =
-      app "ci-infra-test" "run AWS module tests with pinned OpenTofu" toolsets.infraTest
+      app "ci-infra-test" "run AWS module tests with pinned OpenTofu"
+        (
+          toolsets.infraTest
+          ++ [
+            pkgs.jq
+            pkgs.gnutar
+            pkgs.gzip
+            pkgs.gawk
+            pkgs.gnused
+          ]
+        )
         ''
           for module in release-storage release-publisher controlplane network release-artifacts worker worker-image; do
             (
               cd "infra/aws/modules/$module"
               if [ "$module" = worker-image ]; then
                 bash tests/prepare-root.test.sh
+                python3 tests/test_install.py
               fi
               if [ "$module" = worker ]; then
                 python3 tests/test_lifecycle.py
@@ -234,7 +246,13 @@ let
         pkgsClickHouse = import nixpkgs-clickhouse { inherit system; };
       in
       app "ci-clickhouse" "run real ClickHouse projection and access tests"
-        (toolsets.ciPostgres ++ [ pkgsClickHouse.clickhouse ])
+        (
+          toolsets.ciPostgres
+          ++ [
+            pkgsClickHouse.clickhouse
+            pkgs.curl
+          ]
+        )
         ''
           unset HELMR_TEST_CLICKHOUSE_URL HELMR_TEST_CLICKHOUSE_IDLE_ONLY HELMR_TEST_CLICKHOUSE_BATCH_KIND
           export HELMR_TEST_CLICKHOUSE_BOOTSTRAP=1
@@ -336,6 +354,7 @@ ciApps
         helmrPackages.goPackage
         pkgs.jq
         pkgs.nix
+        pkgs.python3
       ]
       ''
         bash ./tests/build/netboot-inputs.test.sh

@@ -8,7 +8,7 @@ import (
 
 func TestWorkerEnrollmentGuardBoundsEnrollmentRate(t *testing.T) {
 	guard := newWorkerEnrollmentGuard()
-	now := time.Now()
+	now := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)
 	for range workerEnrollmentPerSourceLimit {
 		if !guard.allowEnrollment("192.0.2.1", now) {
 			t.Fatal("enrollment was rejected before the source limit")
@@ -17,8 +17,21 @@ func TestWorkerEnrollmentGuardBoundsEnrollmentRate(t *testing.T) {
 	if guard.allowEnrollment("192.0.2.1", now) {
 		t.Fatal("enrollment source limit was not enforced")
 	}
-	if !guard.allowEnrollment("192.0.2.2", now) {
-		t.Fatal("one source exhausted another source's allowance")
+	for range workerEnrollmentGlobalLimit - workerEnrollmentPerSourceLimit {
+		if !guard.allowEnrollment("192.0.2.2", now) {
+			t.Fatal("enrollment was rejected before the global limit")
+		}
+	}
+	if guard.allowEnrollment("192.0.2.3", now) {
+		t.Fatal("global limit did not reject an unused source")
+	}
+	if guard.allowEnrollment("192.0.2.3", now.Add(workerEnrollmentRateWindow-time.Nanosecond)) {
+		t.Fatal("global allowance reset before the window elapsed")
+	}
+	for _, source := range []string{"192.0.2.1", "192.0.2.2", "192.0.2.3"} {
+		if !guard.allowEnrollment(source, now.Add(workerEnrollmentRateWindow)) {
+			t.Fatalf("enrollment for %s rejected at the exact window boundary", source)
+		}
 	}
 }
 

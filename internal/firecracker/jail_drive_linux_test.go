@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
@@ -32,12 +33,16 @@ func TestLinkIntoJailSetsOwnerAndMode(t *testing.T) {
 	if os.Getuid() != 0 {
 		t.Skip("requires root to verify chown")
 	}
+	const uid, gid = 10001, 10002
 	source := filepath.Join(t.TempDir(), "snapshot.mem")
-	if err := os.WriteFile(source, []byte("snapshot"), 0o600); err != nil {
+	if err := os.WriteFile(source, []byte("snapshot"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(source, 0o640); err != nil {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	if err := linkIntoJailForVMM(source, root, "snapshot.mem", os.Getuid(), os.Getgid()); err != nil {
+	if err := linkIntoJailForVMM(source, root, "snapshot.mem", uid, gid); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(root, "snapshot.mem"))
@@ -46,6 +51,10 @@ func TestLinkIntoJailSetsOwnerAndMode(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
+	}
+	stat := info.Sys().(*syscall.Stat_t)
+	if stat.Uid != uid || stat.Gid != gid {
+		t.Fatalf("owner = %d:%d, want %d:%d", stat.Uid, stat.Gid, uid, gid)
 	}
 }
 

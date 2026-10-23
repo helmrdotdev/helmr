@@ -89,6 +89,10 @@ if [[ ${HELMR_NATIVE_LATE_SEED_FAULT_PROOF:-0} == 1 ]]; then
   [[ "$test_case" == TestWorkerAgentNativeExecution ]]
   test_case=TestWorkerAgentLateBootSeedFault
 fi
+if [[ ${HELMR_NATIVE_CORRUPT_MEMORY_PROOF:-0} == 1 ]]; then
+  [[ "$role" == source && "$test_case" == TestWorkerAgentNativeExecution && ${HELMR_NATIVE_NETWORK_RECOVERY_PROOF:-0} != 1 && ${HELMR_NATIVE_RESTART_PUBLICATION_OWNER:-0} != 1 ]]
+  test_case=TestWorkerAgentCorruptMemory
+fi
 if [[ ${HELMR_NATIVE_SDK_PROOF:-0} == 1 || ${HELMR_CODEX_STARTER_PROOF:-0} == 1 || ${HELMR_CLAUDE_STARTER_PROOF:-0} == 1 || ${HELMR_EMBEDDED_STARTER_PROOF:-0} == 1 || ${HELMR_PROTECTED_STARTER_PROOF:-0} == 1 ]]; then [[ "$test_case" == TestWorkerAgentNativeExecution ]]; fi
 [[ $(id -u) == 0 && $(uname -m) == x86_64 && "$candidate" == /* && "$evidence" == /* ]]
 [[ "$remote" == s3://*/_verification/native-execution/* && "$remote" != *'?'* && "$remote" != *'#'* ]]

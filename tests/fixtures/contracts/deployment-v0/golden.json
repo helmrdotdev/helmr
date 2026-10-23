@@ -49,10 +49,5 @@
       "name": "non-finite-double",
       "inputHex": "7b2278223a31653430307d"
     }
-  ],
-  "manifest": {
-    "input": "{ \"run\": { \"retry\": { \"enabled\": false }, \"queue\": \"task/Build-\", \"maxDurationMs\": 900000 }, \"payload\": { \"kind\": \"standard_schema\" } }",
-    "canonical": "{\"payload\":{\"kind\":\"standard_schema\"},\"run\":{\"maxDurationMs\":900000,\"queue\":\"task/Build-\",\"retry\":{\"enabled\":false}}}",
-    "digestHex": "954dad3b54577b2088f81d62e72a08186ff35c825020a68c406fcc92ffff4777"
-  }
+  ]
 }

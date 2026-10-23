@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -49,16 +50,22 @@ func TestPublishPlatformReleaseRejectsInvalidRuntimeObject(t *testing.T) {
 func TestPublishPlatformReleaseRejectsSymlinkObject(t *testing.T) {
 	directory, manifest := platformReleaseFixture(t)
 	path := platformReleaseObjectPath(directory, manifest.Runtime.Digest)
-	target := path + ".target"
+	// Match the symlink length to the descriptor size so only its type rejects it.
+	targetName := strings.Repeat("x", int(manifest.Runtime.SizeBytes))
+	target := filepath.Join(filepath.Dir(path), targetName)
 	if err := os.Rename(path, target); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, path); err != nil {
+	if err := os.Symlink(targetName, path); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := publishPlatformRelease(context.Background(), &releasePublishStore{}, directory); err == nil {
-		t.Fatal("symlink Platform release object was published")
+	store := &releasePublishStore{}
+	if err := publishPlatformRelease(context.Background(), store, directory); err == nil || err.Error() != "platform release Runtime object does not match its descriptor" {
+		t.Fatalf("expected object-type rejection before runtime verification, got %v", err)
+	}
+	if len(store.published) != 0 {
+		t.Fatalf("published %d objects before validation completed", len(store.published))
 	}
 }
 

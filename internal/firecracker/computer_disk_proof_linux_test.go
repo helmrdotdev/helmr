@@ -175,9 +175,20 @@ func TestComputerDiskProof(t *testing.T) {
 	if !strings.Contains(executableStat, "0755") {
 		t.Fatalf("executable permissions not preserved: %s", executableStat)
 	}
-	hardlinkStat := computerProofCommand(t, "debugfs", "-R", "stat /workspace/result-link.txt", restored)
-	if !strings.Contains(hardlinkStat, "Links: 2") {
-		t.Fatalf("hard link not preserved: %s", hardlinkStat)
+	var hardlinkInodes [2]uint64
+	for i, path := range []string{"/computer/result.txt", "/computer/result-link.txt"} {
+		stat := computerProofCommand(t, "debugfs", "-R", "stat "+path, restored)
+		if _, err := fmt.Sscanf(stat, "Inode: %d", &hardlinkInodes[i]); err != nil || hardlinkInodes[i] == 0 {
+			t.Fatalf("missing inode for %s: %s", path, stat)
+		}
+		_, linkCount, found := strings.Cut(stat, "Links: ")
+		var links int
+		if _, err := fmt.Sscanf(linkCount, "%d", &links); !found || err != nil || links != 2 {
+			t.Fatalf("hard link count not preserved for %s: %s", path, stat)
+		}
+	}
+	if hardlinkInodes[0] != hardlinkInodes[1] {
+		t.Fatalf("hard link names have different inodes: %v", hardlinkInodes)
 	}
 	if got := computerProofCommand(t, "debugfs", "-R", "cat /opt/agent/cache", restored); got != string(payload) {
 		t.Fatal("cache content differs")
