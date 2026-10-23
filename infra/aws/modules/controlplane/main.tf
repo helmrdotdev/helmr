@@ -17,7 +17,8 @@ locals {
   ))
   dispatcher_secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
-    var.clickhouse_ingester_password_kms_key_arns
+    var.clickhouse_ingester_password_kms_key_arns,
+    var.dispatcher_access_service_token == null ? [] : var.dispatcher_access_service_token.kms_key_arns
   ))
   controlplane_security_group_ids = concat(
     [aws_security_group.controlplane.id],
@@ -171,6 +172,7 @@ locals {
   reserved_controlplane_keys             = setunion(local.reserved_controlplane_environment_keys, local.reserved_controlplane_secret_keys, local.reserved_optional_controlplane_keys)
   reserved_dispatcher_keys = setunion(toset(keys(local.dispatcher_environment_defaults)), toset(keys(local.dispatcher_secrets)), toset([
     "CLICKHOUSE_PASSWORD",
+    "HELMR_ACCESS_ORIGIN", "HELMR_ACCESS_CLIENT_ID", "HELMR_ACCESS_CLIENT_SECRET",
   ]))
   controlplane_environment_conflicts = setintersection(keys(var.controlplane_environment), local.reserved_controlplane_keys)
   dispatcher_environment_conflicts   = setintersection(keys(var.dispatcher_environment), local.reserved_dispatcher_keys)
@@ -182,6 +184,9 @@ locals {
     APP_ORIGIN         = local.controlplane_url
     SLACK_TRANSPORT    = var.slack_transport
     OUTBOUND_PROXY_URL = var.outbound_proxy_url
+    }, var.dispatcher_access_service_token == null ? {} : {
+    HELMR_ACCESS_ORIGIN    = var.dispatcher_access_service_token.origin
+    HELMR_ACCESS_CLIENT_ID = var.dispatcher_access_service_token.client_id
   })
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
@@ -189,7 +194,8 @@ locals {
     ENCRYPTION_KEY       = aws_secretsmanager_secret.encryption_key.arn
     DATABASE_URL         = aws_secretsmanager_secret.database_url.arn
     COMPUTER_FENCING_KEY = aws_secretsmanager_secret.computer_fencing_key.arn
-    }, local.clickhouse_ingester_secrets
+    }, local.clickhouse_ingester_secrets,
+    var.dispatcher_access_service_token == null ? {} : { HELMR_ACCESS_CLIENT_SECRET = var.dispatcher_access_service_token.client_secret_arn }
   )
 
 }
@@ -433,7 +439,7 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_http_public" {
-  count             = var.ingress_mode == "public" && !var.enable_cloudfront && (var.certificate_arn != null || var.allow_insecure_http) ? 1 : 0
+  count             = var.ingress_mode == "public" && var.origin_authentication == null && !var.enable_cloudfront && (var.certificate_arn != null || var.allow_insecure_http) ? 1 : 0
   security_group_id = aws_security_group.alb.id
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 80
@@ -451,7 +457,7 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https_cloudfront" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_https" {
-  count             = var.ingress_mode == "private" || var.enable_cloudfront || var.certificate_arn == null ? 0 : 1
+  count             = var.ingress_mode == "private" || var.origin_authentication != null || var.enable_cloudfront || var.certificate_arn == null ? 0 : 1
   security_group_id = aws_security_group.alb.id
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 443
@@ -555,8 +561,57 @@ resource "aws_lb_listener" "https" {
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
   default_action {
+    type             = var.origin_authentication == null ? "forward" : "fixed-response"
+    target_group_arn = var.origin_authentication == null ? aws_lb_target_group.controlplane.arn : null
+    dynamic "fixed_response" {
+      for_each = var.origin_authentication == null ? [] : [1]
+      content {
+        content_type = "text/plain"
+        message_body = "Forbidden"
+        status_code  = "403"
+      }
+    }
+  }
+}
+
+data "aws_secretsmanager_secret_version" "origin_authentication" {
+  count      = var.origin_authentication == null ? 0 : 1
+  secret_id  = var.origin_authentication.secret_arn
+  version_id = var.origin_authentication.secret_version_id
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_authenticated_origin" {
+  for_each          = var.origin_authentication == null ? toset([]) : var.origin_authentication.allowed_ipv4_cidrs
+  security_group_id = aws_security_group.alb.id
+  cidr_ipv4         = each.value
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+resource "aws_lb_listener_rule" "authenticated_origin" {
+  count        = var.origin_authentication == null ? 0 : 1
+  listener_arn = aws_lb_listener.https[0].arn
+  priority     = 1
+  condition {
+    http_header {
+      http_header_name = "X-Helmr-Origin-Verify"
+      values           = [data.aws_secretsmanager_secret_version.origin_authentication[0].secret_string]
+    }
+  }
+  action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.controlplane.arn
+  }
+  lifecycle {
+    precondition {
+      condition     = var.ingress_mode == "public" && !var.enable_cloudfront && !var.allow_insecure_http && var.certificate_arn != null
+      error_message = "Origin authentication requires a direct HTTPS ALB without insecure HTTP or CloudFront."
+    }
+    precondition {
+      condition     = can(regex("^[a-f0-9]{64}$", data.aws_secretsmanager_secret_version.origin_authentication[0].secret_string))
+      error_message = "The origin header secret must contain exactly 64 lowercase hexadecimal characters."
+    }
   }
 }
 

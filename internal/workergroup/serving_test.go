@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 )
 
 type advancingFenceClock struct{ now time.Time }
@@ -45,7 +46,7 @@ func TestServingProbeRequiresOriginReadiness(t *testing.T) {
 				_, _ = io.WriteString(w, test.body)
 			}))
 			defer server.Close()
-			probe, err := controlPlaneServingProbe(server.URL)
+			probe, err := controlPlaneServingProbe(server.URL, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -65,7 +66,7 @@ func TestServingProbeRequiresOriginReadiness(t *testing.T) {
 			_, _ = io.WriteString(w, `{"status":"ready"}`)
 		}))
 		defer server.Close()
-		probe, err := controlPlaneServingProbe(server.URL)
+		probe, err := controlPlaneServingProbe(server.URL, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -77,7 +78,7 @@ func TestServingProbeRequiresOriginReadiness(t *testing.T) {
 		started := make(chan struct{})
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(started); <-r.Context().Done() }))
 		defer server.Close()
-		probe, err := controlPlaneServingProbe(server.URL)
+		probe, err := controlPlaneServingProbe(server.URL, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,7 +93,7 @@ func TestServingProbeRequiresOriginReadiness(t *testing.T) {
 		}
 	})
 	for _, endpoint := range []string{"", "ftp://example.com", "/relative", "https://user:secret@example.com", "https://example.com?x=1", "https://example.com#fragment", "https://example.com/base/", "http://example.com"} {
-		if _, err := controlPlaneServingProbe(endpoint); err == nil {
+		if _, err := controlPlaneServingProbe(endpoint, nil); err == nil {
 			t.Fatalf("accepted invalid endpoint %q", endpoint)
 		}
 	}
@@ -262,5 +263,33 @@ func TestServingSampleRejectsSuspendAndClockStepGaps(t *testing.T) {
 				t.Fatalf("sample freshness=%v, want %v", got, tc.fresh)
 			}
 		})
+	}
+}
+
+func TestServingProbeAuthenticatesAccessGateway(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("CF-Access-Client-Id") != "fixture-id" || r.Header.Get("CF-Access-Client-Secret") != "fixture-secret" {
+			http.Error(w, "gateway identity required", http.StatusForbidden)
+			return
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Error("readiness probe sent application credentials")
+		}
+		_, _ = io.WriteString(w, `{"status":"ready"}`)
+	}))
+	defer server.Close()
+	probe, err := controlPlaneServingProbe(server.URL, func(client *http.Client) (*http.Client, error) {
+		transport := client.Transport.(*http.Transport)
+		if !transport.DisableKeepAlives || client.Timeout != servingProbeTimeout || client.CheckRedirect == nil {
+			t.Fatal("gateway configuration lost probe transport bounds")
+		}
+		transport.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+		return httpclient.WithAccessServiceToken(client, server.URL, "fixture-id", "fixture-secret")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := probe(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }

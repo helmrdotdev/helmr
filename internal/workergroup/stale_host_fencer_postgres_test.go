@@ -26,7 +26,7 @@ func TestStaleHostFencerSkipsCycleWhileLockIsHeld(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(`{"status":"ready"}`)) }))
 	defer server.Close()
 	clock := &advancingFenceClock{now: time.Now()}
-	fencer, err := NewStaleHostFencer(fixture.Pool, server.URL,
+	fencer, err := NewStaleHostFencer(fixture.Pool, server.URL, nil,
 		WithStaleHostFenceLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		WithStaleHostFenceClock(clock),
 	)
@@ -63,7 +63,7 @@ func TestStaleHostFencerSkipsCycleWhileLockIsHeld(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	other, err := NewStaleHostFencer(fixture.Pool, server.URL, WithStaleHostFenceClock(clock))
+	other, err := NewStaleHostFencer(fixture.Pool, server.URL, nil, WithStaleHostFenceClock(clock))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/clistate"
+	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -80,7 +81,7 @@ func controlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 	if sessionScopedRoutes {
 		opts = append(opts, client.WithSessionScopedRoutes())
 	}
-	return client.New(baseURL, opts...)
+	return newControlPlaneClient(baseURL, opts...)
 }
 
 func sessionControlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
@@ -111,7 +112,7 @@ func sessionControlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 		}
 		return nil, err
 	}
-	return client.New(baseURL, client.WithBearerToken(bearer), client.WithSessionScopedRoutes())
+	return newControlPlaneClient(baseURL, client.WithBearerToken(bearer), client.WithSessionScopedRoutes())
 }
 
 func cliControlPlaneURL(cmd *cobra.Command) string {
@@ -171,4 +172,13 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func newControlPlaneClient(baseURL string, opts ...client.Option) (*client.Client, error) {
+	httpClient, err := config.AccessHTTPClient(nil)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, client.WithHTTPClient(httpClient))
+	return client.New(baseURL, opts...)
 }

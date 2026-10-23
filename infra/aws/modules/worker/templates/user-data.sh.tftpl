@@ -38,8 +38,17 @@ cat /etc/helmr/worker-base.env >"$env_tmp"
   printf 'WORKER_RESOURCE_ID=%s\n' "$worker_resource_id"
 } >>"$env_tmp"
 chmod 0600 "$env_tmp"
-mv "$env_tmp" /etc/helmr/worker.env
 unset checkpoint_key
+%{ if access_client_secret_arn != null ~}
+access_secret="$(aws secretsmanager get-secret-value --secret-id '${access_client_secret_arn}' --query SecretString --output text)"
+# Access secrets contain no whitespace or environment-file metacharacters.
+case "$access_secret" in
+  ''|*[!A-Za-z0-9_-]*) exit 1 ;;
+esac
+printf 'HELMR_ACCESS_CLIENT_SECRET=%s\n' "$access_secret" >>"$env_tmp"
+unset access_secret
+%{ endif ~}
+mv "$env_tmp" /etc/helmr/worker.env
 
 token="$(aws secretsmanager get-secret-value --secret-id '${worker_enrollment_token_secret_arn}' --query SecretString --output text)"
 install -d -m 0700 -o root -g root /run/helmr
@@ -133,6 +142,19 @@ record_heartbeat() {
     --instance-id "$provider_instance_id" >/dev/null
 }
 
+# The lifecycle unit starts before enrollment materializes worker.env. Read the
+# generated Access value at command time; environment files are not shell code.
+worker_control_command() (
+  if [ -n "$${HELMR_ACCESS_CLIENT_ID:-}" ]; then
+    HELMR_ACCESS_CLIENT_SECRET="$(sed -n 's/^HELMR_ACCESS_CLIENT_SECRET=//p' /etc/helmr/worker.env)" || return 1
+    case "$HELMR_ACCESS_CLIENT_SECRET" in
+      ''|*[!A-Za-z0-9_-]*) return 1 ;;
+    esac
+    export HELMR_ACCESS_CLIENT_SECRET
+  fi
+  exec "$worker_binary" "$@"
+)
+
 complete_launch() {
   if [ -z "$launch_hook" ]; then
     return 0
@@ -145,7 +167,7 @@ complete_launch() {
     *) return 1 ;;
   esac
   systemctl is-active --quiet '${worker_service_name}' || return 1
-  "$worker_binary" status >/dev/null || return 1
+  worker_control_command status >/dev/null || return 1
   complete_lifecycle_action "$launch_hook" CONTINUE
 }
 
@@ -169,7 +191,7 @@ drain_and_complete_termination() {
 		complete_lifecycle_action "$termination_hook" CONTINUE
 		return 0
 	fi
-  "$worker_binary" drain --wait-timeout "$termination_wait_timeout" >/var/log/helmr-worker-drain.log 2>&1 &
+  worker_control_command drain --wait-timeout "$termination_wait_timeout" >/var/log/helmr-worker-drain.log 2>&1 &
   drain_pid="$!"
   while kill -0 "$drain_pid" 2>/dev/null; do
     record_heartbeat "$termination_hook" || true
@@ -183,7 +205,7 @@ drain_and_complete_termination() {
       return 1
     fi
     echo "provider termination is in progress; fencing actual worker loss after bounded cleanup" >>/var/log/helmr-worker-drain.log
-    if "$worker_binary" fence >>/var/log/helmr-worker-drain.log 2>&1; then
+    if worker_control_command fence >>/var/log/helmr-worker-drain.log 2>&1; then
       complete_lifecycle_action "$termination_hook" CONTINUE
     else
       echo "worker drain failed and durable fence could not be persisted" >>/var/log/helmr-worker-drain.log

@@ -34,7 +34,7 @@ func loginCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			controlPlane, err := client.New(baseURL)
+			controlPlane, err := newControlPlaneClient(baseURL)
 			if err != nil {
 				return err
 			}
@@ -102,7 +102,7 @@ func logoutCommand() *cobra.Command {
 				}
 				return err
 			}
-			controlPlane, err := client.New(baseURL, client.WithBearerToken(token))
+			controlPlane, err := newControlPlaneClient(baseURL, client.WithBearerToken(token))
 			if err != nil {
 				return err
 			}

@@ -17,12 +17,19 @@ const servingProbeTimeout = 5 * time.Second
 
 var errServingEvidenceExpired = errors.New("control plane serving evidence expired")
 
-func controlPlaneServingProbe(baseURL string) (func(context.Context) error, error) {
+func controlPlaneServingProbe(baseURL string, configureClient func(*http.Client) (*http.Client, error)) (func(context.Context) error, error) {
 	transport := platformhttp.Direct()
 	// Each sample exercises the current DNS/TLS path instead of a retained connection.
 	transport.DisableKeepAlives = true
 	client := &http.Client{Transport: transport, Timeout: servingProbeTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	if configureClient != nil {
+		var err error
+		client, err = configureClient(client)
+		if err != nil {
+			return nil, err
+		}
 	}
 	endpoint, err := httpclient.New(baseURL, client)
 	if err != nil {
