@@ -421,18 +421,22 @@ recorded. This injection does not download or modify the memory payload and does
 not permanently delete its version; ordinary reclamation can subsequently do so.
 It is exclusive with every other fault/restart mode.
 
-Both cases use the same assertions. The SDK admits two new native Turns and
-observes local holds on all four Sessions.
-For at least 20 seconds, both inputs remain queued, hold identities stay stable,
-and prior Completed Turn records and their results remain
-unchanged. SQL then requires
-one physically closed restore attempt, a definitively lost checkpoint, no guest
-initialization or reconciled controls, and only the original four process epochs.
-`checkpoint-loss.json` retains the physical lease and process observations.
-The driver cancels Sessions only after recording these observations, and ordinary
-fixture retirement performs the remaining cleanup. Neither case claims
-corruption within the memory payload, transport-failure, incompatible-runtime or
-explicit-resume proof.
+`HELMR_NATIVE_CORRUPT_MEMORY_PROOF=1` selects `TestWorkerAgentCorruptMemory`,
+also exclusive with the other modes. It corrupts the encrypted memory object
+after the restored peer reaches running, exercising pager authentication after
+guest health succeeds. The checkpoint must become lost and the affected Turn
+interrupted within the case's 30-second bound; the failed VMM must be absent.
+
+The configuration and memory corruption cases require automatic disk recovery:
+a fresh setup nonce and reset in-memory counter, the retained disk marker, no
+recovery holds, and unchanged prior Completed Turns. `checkpoint-loss.json`
+retains the physical lease and process observations. The missing-memory case
+instead requires at least two failed, physically fenced restore owners without
+guest initialization. It removes the injected delete marker, verifies that the
+original object version is current again, and completes both healthy RAM
+continuation cycles using that checkpoint. Ordinary fixture retirement and the
+outer physical audit remain required for every case. These checks do not qualify
+incompatible runtimes or explicit-resume behavior.
 
 
 ## Integrated distinct-host continuation
