@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises"
-import { verify, assert, deadline } from "../../support/context"
+import { verify, assert, deadline, errorCode } from "../../support/context"
 import { hostObservation } from "../../support/host-observation"
 import { replyFault } from "../../support/reply-fault"
 
@@ -8,7 +8,19 @@ import { replyFault } from "../../support/reply-fault"
 await verify("reply-relay", async ({ client, computer, marker, cleanup }) => {
   const shared = await computer("verification-outage")
   const ref = client.computers.ref(shared.id)
-  const warm = await ref.exec({ command: ["true"], idempotencyKey: `${marker}:warm` })
+  // Computer creation admits asynchronous image preparation.
+  const warmDeadline = deadline(300_000)
+  let warm: Awaited<ReturnType<typeof ref.exec>>
+  for (;;) {
+    warmDeadline.throwIfAborted()
+    try {
+      warm = await ref.exec({ command: ["true"], idempotencyKey: `${marker}:warm` }, { signal: warmDeadline })
+      break
+    } catch (error) {
+      if (errorCode(error) !== "computer_busy") throw error
+    }
+    await delay(500, undefined, { signal: warmDeadline })
+  }
   assert.equal((await warm.wait({ signal: deadline(300_000) })).exitCode, 0)
   const before = await hostObservation("computer-path", { computer_id: shared.id })
   const sources = before.leases.filter((lease: any) => lease.status === "active" && lease.fenced_at === null)
