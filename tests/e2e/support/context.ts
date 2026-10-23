@@ -137,11 +137,12 @@ export async function verify(
     "HELMR_API_URL, HELMR_API_KEY and HELMR_EVIDENCE_DIR are required",
   )
   await mkdir(output, { recursive: false, mode: 0o700 })
+  const securedFetch = accessFetch(process.env)
   const client = new HelmrClient({
       url,
       apiKey,
-      fetch: accessFetch(process.env, ((input, init) =>
-        fetch(input, { ...init, signal: init?.signal ?? deadline(30_000) })) as typeof fetch),
+      fetch: ((input, init) =>
+        securedFetch(input, { ...init, signal: init?.signal ?? (input instanceof Request ? input.signal : deadline(30_000)) })) as typeof fetch,
     }),
     marker = randomUUID()
   const objects = {
