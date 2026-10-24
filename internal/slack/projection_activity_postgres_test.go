@@ -513,7 +513,7 @@ func TestDirectActivityRechecksEveryRepresentedAgent(t *testing.T) {
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
  UPDATE sessions SET agent_id=$2 WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.Environment, otherAgent, f.Agent, child.Session)
 			revoke := func() {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET agents_mode='selected' WHERE environment_id=$1;
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET all_agents=false WHERE environment_id=$1;
  INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1 ON CONFLICT DO NOTHING`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Agent)
 			}
 			write("Visible parent explanation.")

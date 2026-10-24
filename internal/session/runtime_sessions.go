@@ -61,12 +61,12 @@ func RuntimeListSessions(ctx context.Context, database db.TxBeginner, caller Cal
 		if err != nil {
 			return err
 		}
-		filter := sessionReadScope{All: source.Mode == "environment", Agents: []uuid.UUID{}}
-		if source.Mode == "shared" && source.Connection != nil {
+		filter := sessionReadScope{All: source.mode() == "environment", Agents: []uuid.UUID{}}
+		if source.mode() == "shared" && source.Connection != nil {
 			filter.SharedConnection = *source.Connection
 		}
-		if source.Mode == "scoped" {
-			filter, err = readScopeFor(ctx, tx, Caller{Kind: source.Kind, ID: source.id()}, caller.Execution.EnvironmentID)
+		if source.mode() == "scoped" {
+			filter, err = readScopeFor(ctx, tx, Caller{Kind: source.kind(), ID: source.id()}, caller.Execution.EnvironmentID)
 			if err != nil {
 				return err
 			}

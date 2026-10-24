@@ -204,7 +204,7 @@ func ListSessions(ctx context.Context, pool db.TxBeginner, caller Caller, req Se
 	return result, err
 }
 
-const sessionReadPredicate = `($2::boolean OR agent_id=ANY($7::uuid[]) OR (admission_mode='shared' AND origin_slack_connection_id=$8) OR (admission_mode='scoped' AND origin_kind=$3 AND COALESCE(origin_user_id,origin_api_key_id)=$4 AND ($5::boolean OR agent_id=ANY($6::uuid[]))))`
+const sessionReadPredicate = `($2::boolean OR agent_id=ANY($7::uuid[]) OR (origin_slack_connection_id=$8) OR (origin_slack_connection_id IS NULL AND (origin_user_id=$3 OR origin_api_key_id=$4) AND ($5::boolean OR agent_id=ANY($6::uuid[]))))`
 
 func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter sessionReadScope) (SessionPage, error) {
 	result := SessionPage{Sessions: []SessionView{}}
@@ -227,7 +227,7 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter
  AND (cardinality($12::text[]) IS NULL OR cardinality($12::text[])=0 OR status=ANY($12))
  AND ($13::uuid IS NULL OR parent_session_id=$13) AND ($14::uuid IS NULL OR requester_session_id=$14)
  AND ($15::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$15))
- ORDER BY id DESC LIMIT $10`, req.EnvironmentID, filter.All, filter.Kind, filter.ID, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent)
+ ORDER BY id DESC LIMIT $10`, req.EnvironmentID, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent)
 	if err != nil {
 		return result, err
 	}
@@ -352,7 +352,7 @@ func redactSessionRelations(ctx context.Context, tx pgx.Tx, caller Caller, env u
 			if err != nil {
 				return err
 			}
-			rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND `+sessionReadPredicate+` AND id=ANY($9::uuid[])`, env, filter.All, filter.Kind, filter.ID, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), ids)
+			rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND `+sessionReadPredicate+` AND id=ANY($9::uuid[])`, env, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), ids)
 			if err != nil {
 				return err
 			}

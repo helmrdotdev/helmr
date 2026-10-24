@@ -176,7 +176,6 @@ func TestAgentDefinitionHTTP(t *testing.T) {
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile)
 	consumer := issue(auth.CapabilityAgentsUse)
 	closePath := "/v1/sessions/" + f.Session.String() + "/close-scope"
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET admission_mode='scoped' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Session)
 	get(closePath, consumer, http.StatusForbidden)
 	get("/v1/sessions/"+uuid.NewV7().String()+"/close-scope", consumer, http.StatusForbidden)
 	get(closePath, reader, http.StatusForbidden)

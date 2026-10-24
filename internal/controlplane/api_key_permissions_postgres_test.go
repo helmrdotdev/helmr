@@ -188,7 +188,7 @@ func newAPIKeyHTTPPostgresFixture(t *testing.T, keyCount int) apiKeyHTTPPostgres
 		t.Fatal(err)
 	}
 	for _, row := range keyRows[:keyCount] {
-		dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO role_grants(id,org_id,role_id,api_key_id,environment_id,agents_mode) VALUES($1,$2,$3,$4,$5,'all')`, uuid.NewV7(), orgID, roleID, row[0], environmentID)
+		dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO role_grants(id,org_id,role_id,api_key_id,environment_id,all_agents) VALUES($1,$2,$3,$4,$5,true)`, uuid.NewV7(), orgID, roleID, row[0], environmentID)
 	}
 	return apiKeyHTTPPostgresFixture{httpPostgresFixture: fixture, store: store, token: token, projectID: projectID, environmentID: environmentID, roleID: roleID}
 }

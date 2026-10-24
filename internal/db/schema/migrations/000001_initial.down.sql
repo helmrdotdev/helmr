@@ -5,7 +5,6 @@ DROP TABLE IF EXISTS audit_events;
 DROP TABLE IF EXISTS
     role_grant_agents,
     role_grants,
-    role_permissions,
     roles,
     permission_group_members,
     permission_groups,
@@ -87,6 +86,3 @@ DROP TABLE IF EXISTS
     regions,
     organizations;
 DROP TYPE IF EXISTS magic_link_purpose;
-
-DROP FUNCTION IF EXISTS bump_grant_target_revision();
-DROP FUNCTION IF EXISTS audit_deleted_agent_targets();

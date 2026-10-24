@@ -24,7 +24,7 @@ import (
 func attentionSession(t *testing.T, f sessiontest.Fixture) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,'scoped','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1))`, f.Environment, id, f.Agent, f.Deployment, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1))`, f.Environment, id, f.Agent, f.Deployment, f.Computer)
 	return id
 }
 
@@ -168,7 +168,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($1,$4,$4,$4,1000,536870912,NULL);
  INSERT INTO agents(environment_id,id,key) VALUES($1,$6,'second-agent');
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES($1,$6,$4,$4,false);
- INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$7,$6,$4,$7,0,'scoped','user',$12);
+ INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$7,$6,$4,$7,0,$12);
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$8,$7,'local','Second hold');
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$9,$2,'second-app','second-client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$12);
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id,authorization_lost_at) VALUES($10,$9,$2,'second-app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$12,clock_timestamp());

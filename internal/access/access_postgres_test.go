@@ -28,7 +28,7 @@ func TestRemovedMembershipCannotAcquireLaterAudienceGrant(t *testing.T) {
 	database := beforeGrantRead{DBTX: f.Pool, before: func() {
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=now() WHERE id=$1`, f.MemberID)
 		f.SetPermissions(t, "agents.use")
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET group_id=NULL,all_members=true,agents_mode='selected' WHERE environment_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Agent)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET group_id=NULL,all_members=true,all_agents=false WHERE environment_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Agent)
 	}}
 	p, err := access.OrganizationPrincipal(t.Context(), database, original.OrgID, f.User)
 	if err != nil {

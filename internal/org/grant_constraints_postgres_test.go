@@ -46,7 +46,7 @@ func TestGrantSchemaRejectsInvalidSubjectAndTenant(t *testing.T) {
 		{name: "no subject", code: "23514"},
 		{name: "multiple subjects", member: &f.member.MemberID, group: &group.ID, code: "23514"},
 		{name: "audience organization scope", all: true, code: "23514"},
-		{name: "agent without environment", member: &f.member.MemberID, agent: new(uuid.NewV7()), code: "23514"},
+		{name: "agent without environment", member: &f.member.MemberID, agent: new(uuid.NewV7()), code: "23502"},
 		{name: "foreign group", group: &foreignGroup, code: "23503"},
 		{name: "foreign environment with null agent", member: &f.member.MemberID, environment: &foreignEnvironment, code: "23503"},
 		{name: "agent from another environment", member: &f.member.MemberID, environment: &environment, agent: &otherAgent, code: "23503"},
@@ -58,12 +58,8 @@ func TestGrantSchemaRejectsInvalidSubjectAndTenant(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			mode := "none"
-			if tc.agent != nil {
-				mode = "selected"
-			}
 			id := uuid.NewV7()
-			_, err = tx.Exec(t.Context(), `INSERT INTO role_grants(id,org_id,role_id,member_id,group_id,all_members,agents_mode,environment_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, id, f.owner.OrgID, role.ID, tc.member, tc.group, tc.all, mode, tc.environment)
+			_, err = tx.Exec(t.Context(), `INSERT INTO role_grants(id,org_id,role_id,member_id,group_id,all_members,environment_id) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, f.owner.OrgID, role.ID, tc.member, tc.group, tc.all, tc.environment)
 			if err == nil && tc.agent != nil {
 				_, err = tx.Exec(t.Context(), `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) VALUES($1,$2,$3)`, id, tc.environment, tc.agent)
 			}

@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestAssignmentTargetsRemainIndependent(t *testing.T) {
@@ -119,7 +120,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current[0].AgentsMode != "none" || len(current[0].AgentIDs) != 0 || current[0].Revision <= grant.Revision {
+	if current[0].AgentsMode != "none" || len(current[0].AgentIDs) != 0 || current[0].Revision != grant.Revision+1 {
 		t.Fatalf("latent targets: %+v", current[0])
 	}
 	if _, err := org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"agents.use", "secrets.manage"}}); !errors.Is(err, org.ErrRoleTarget) {
@@ -140,7 +141,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	if err := org.RemoveRoleGrant(ctx, f.pool, m, grant.ID, "1"); err != nil {
 		t.Fatalf("absent delete: %v", err)
 	}
-	// Physical deletion leaves the selected mode empty and other resource actions live.
+	// A targeted Agent cannot be physically deleted without an explicit assignment change.
 	selectedRole, err := org.SavePermissionRole(ctx, f.pool, m, uuid.Nil(), org.RoleInput{Name: "Deletion", Permissions: []string{"agents.use", "secrets.manage"}})
 	if err != nil {
 		t.Fatal(err)
@@ -155,29 +156,44 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	grant = rows[0]
-	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM agents WHERE environment_id=$1 AND id=$2`, prod, faq)
+	_, err = f.pool.Exec(ctx, `DELETE FROM agents WHERE environment_id=$1 AND id=$2`, prod, faq)
+	var constraint *pgconn.PgError
+	if !errors.As(err, &constraint) || constraint.Code != "23001" {
+		t.Fatalf("targeted Agent deletion: %v", err)
+	}
 	current, err = org.QueryRoleGrants(ctx, f.pool, m, org.GrantFilter{ID: grant.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current[0].AgentsMode != "selected" || len(current[0].AgentIDs) != 0 || current[0].Revision <= grant.Revision {
-		t.Fatalf("deleted target was broadened: %+v", current[0])
+	if len(current[0].AgentIDs) != 1 || current[0].AgentIDs[0] != faq || current[0].Revision != grant.Revision {
+		t.Fatalf("rejected delete changed targets: %+v", current[0])
 	}
+	check(prod, faq, auth.CapabilityAgentsUse, true)
+	// No product mutation currently creates an empty selection. Construct one to
+	// retain the fail-closed read/repair contract without a deletion side effect.
+	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM role_grant_agents WHERE grant_id=$1`, grant.ID)
+	current, err = org.QueryRoleGrants(ctx, f.pool, m, org.GrantFilter{ID: grant.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current[0].AgentsMode != "selected" || len(current[0].AgentIDs) != 0 || current[0].Revision != grant.Revision {
+		t.Fatalf("empty target was broadened: %+v", current[0])
+	}
+	check(prod, faq, auth.CapabilityAgentsUse, false)
 	check(prod, invoice, auth.CapabilityAgentsUse, false)
 	check(prod, uuid.Nil(), auth.CapabilitySecretsManage, true)
-	var audited bool
-	if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='role_grant.target_removed' AND target_id=$1 AND details->>'removed_agent_key'='faq')`, grant.ID).Scan(&audited); err != nil || !audited {
-		t.Fatalf("missing deletion audit: %v", err)
-	}
-	input.ExpectedRevision = strconv.FormatInt(grant.Revision, 10)
 	input.AgentIDs = []uuid.UUID{invoice}
-	if _, err := org.UpdateRoleGrant(ctx, f.pool, m, grant.ID, input); !errors.Is(err, org.ErrStaleRevision) {
-		t.Fatalf("stale repair: %v", err)
-	}
 	input.ExpectedRevision = strconv.FormatInt(current[0].Revision, 10)
 	repaired, err := org.UpdateRoleGrant(ctx, f.pool, m, grant.ID, input)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if repaired.Revision != grant.Revision+1 {
+		t.Fatalf("replacement revision = %d, want %d", repaired.Revision, grant.Revision+1)
+	}
+	input.ExpectedRevision = strconv.FormatInt(grant.Revision, 10)
+	if _, err := org.UpdateRoleGrant(ctx, f.pool, m, grant.ID, input); !errors.Is(err, org.ErrStaleRevision) {
+		t.Fatalf("stale repair: %v", err)
 	}
 	check(prod, invoice, auth.CapabilityAgentsUse, true)
 	// Concurrent complete replacements permit exactly one writer at an observed revision.

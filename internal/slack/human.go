@@ -59,7 +59,7 @@ func directRecipientAuthorized(ctx context.Context, tx pgx.Tx, thread uuid.UUID)
 	var user *uuid.UUID
 	var env, agent uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT left(t.slack_channel_id,1)='D',l.user_id,s.environment_id,s.agent_id,
- s.admission_mode='scoped' AND s.origin_kind='user' AND COALESCE(s.origin_user_id=l.user_id,false)
+ s.origin_slack_connection_id IS NULL AND COALESCE(s.origin_user_id=l.user_id,false)
  FROM slack_threads t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id)
  LEFT JOIN slack_user_links l ON l.team_id=t.recipient_team_id AND l.slack_user_id=t.recipient_user_id
  WHERE t.id=$1`, thread).Scan(&direct, &user, &env, &agent, &bound)

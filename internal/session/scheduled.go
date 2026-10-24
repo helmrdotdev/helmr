@@ -57,7 +57,7 @@ func AdmitScheduled(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, 
 	}
 	idle = lifetime.Resolve(lifetime.Policy{}, idle, never)
 	receipt := Admission{CloseAfterIdleMs: idle, SessionID: uuid.NewV7(), TurnID: uuid.NewV7(), Sequence: 1, Created: true}
-	if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,next_turn_seq,close_after_idle_ms,admission_mode,origin_kind,origin_activation_id) SELECT $1,$2,$3,$4,$5,$2,0,2,$6,'environment','schedule',$7 FROM environments WHERE id=$1`, s.environment, receipt.SessionID, s.agent, s.deployment, computerID, idle, start.ActivationID); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,next_turn_seq,close_after_idle_ms,origin_activation_id) SELECT $1,$2,$3,$4,$5,$2,0,2,$6,$7 FROM environments WHERE id=$1`, s.environment, receipt.SessionID, s.agent, s.deployment, computerID, idle, start.ActivationID); err != nil {
 		return Admission{}, err
 	}
 	digest, err := digestJSON(s.input)

@@ -225,6 +225,18 @@ func hasAgentCapabilities(permissions []string) bool {
 	}
 	return false
 }
+
+// Agent applicability follows the current Role; only all-versus-selected is stored.
+func grantAgentsMode(permissions []string, allAgents bool) string {
+	if !hasAgentCapabilities(permissions) {
+		return "none"
+	}
+	if allAgents {
+		return "all"
+	}
+	return "selected"
+}
+
 func roleSupportsTargets(permissions []string, organization bool, mode string, allMembers bool) bool {
 	if len(permissions) == 0 {
 		return false
@@ -285,7 +297,7 @@ func grantTargets(g RoleGrant) []GrantTarget {
 func readPermissionRole(ctx context.Context, database db.DBTX, orgID, id uuid.UUID) (PermissionRole, error) {
 	r := PermissionRole{Permissions: []string{}}
 	err := database.QueryRow(ctx, `SELECT r.id,r.name,r.description,r.builtin_key,r.updated_at,r.revision,
- ARRAY(SELECT permission FROM role_permissions WHERE org_id=r.org_id AND role_id=r.id ORDER BY permission),
+ r.permissions,
  (SELECT count(*) FROM role_grants WHERE org_id=r.org_id AND role_id=r.id),
  (SELECT count(DISTINCT group_id) FROM role_grants WHERE org_id=r.org_id AND role_id=r.id)
  FROM roles r WHERE r.org_id=$1 AND r.id=$2`, orgID, id).Scan(&r.ID, &r.Name, &r.Description, &r.BuiltinKey, &r.UpdatedAt, &r.Revision, &r.Permissions, &r.GrantCount, &r.GroupCount)
@@ -353,7 +365,7 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 		affected := []string{}
 		if id == uuid.Nil() {
 			id = uuid.NewV7()
-			if _, err := tx.Exec(ctx, `INSERT INTO roles(id,org_id,name,description) VALUES($1,$2,$3,$4)`, id, m.OrgID, input.Name, input.Description); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO roles(id,org_id,name,description,permissions) VALUES($1,$2,$3,$4,$5)`, id, m.OrgID, input.Name, input.Description, input.Permissions); err != nil {
 				return accessWriteError(err)
 			}
 		} else {
@@ -376,21 +388,20 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 			}
 			before = permissionRoleSnapshot(old)
 			action = "role.updated"
-			rows, err := tx.Query(ctx, `SELECT id,environment_id IS NULL,agents_mode,all_members,api_key_id IS NOT NULL FROM role_grants WHERE org_id=$1 AND role_id=$2 ORDER BY id FOR UPDATE`, m.OrgID, id)
+			rows, err := tx.Query(ctx, `SELECT id,environment_id IS NULL,all_agents,all_members,api_key_id IS NOT NULL FROM role_grants WHERE org_id=$1 AND role_id=$2 ORDER BY id FOR UPDATE`, m.OrgID, id)
 			if err != nil {
 				return err
 			}
 			incompatible := []string{}
 			for rows.Next() {
 				var gid uuid.UUID
-				var organization, allMembers, machine bool
-				var mode string
-				if err = rows.Scan(&gid, &organization, &mode, &allMembers, &machine); err != nil {
+				var organization, allAgents, allMembers, machine bool
+				if err = rows.Scan(&gid, &organization, &allAgents, &allMembers, &machine); err != nil {
 					rows.Close()
 					return err
 				}
 				affected = append(affected, gid.String())
-				if !roleSupportsTargets(input.Permissions, organization, mode, allMembers) || machine && !machineAssignable(input.Permissions) {
+				if !roleSupportsTargets(input.Permissions, organization, grantAgentsMode(old.Permissions, allAgents), allMembers) || machine && !machineAssignable(input.Permissions) {
 					incompatible = append(incompatible, gid.String())
 				}
 			}
@@ -409,24 +420,16 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 			for _, g := range oldGrants {
 				beforeAssignments = append(beforeAssignments, grantSnapshot(g))
 			}
-			if _, err = tx.Exec(ctx, `UPDATE roles SET name=$3,description=$4,revision=revision+1,updated_at=clock_timestamp() WHERE org_id=$1 AND id=$2`, m.OrgID, id, input.Name, input.Description); err != nil {
+			if _, err = tx.Exec(ctx, `UPDATE roles SET name=$3,description=$4,permissions=$5,revision=revision+1,updated_at=clock_timestamp() WHERE org_id=$1 AND id=$2`, m.OrgID, id, input.Name, input.Description, input.Permissions); err != nil {
 				return accessWriteError(err)
 			}
-			if !hasAgentCapabilities(input.Permissions) {
+			if hasAgentCapabilities(old.Permissions) && !hasAgentCapabilities(input.Permissions) {
 				if _, err = tx.Exec(ctx, `DELETE FROM role_grant_agents WHERE grant_id IN (SELECT id FROM role_grants WHERE org_id=$1 AND role_id=$2)`, m.OrgID, id); err != nil {
 					return err
 				}
-				if _, err = tx.Exec(ctx, `UPDATE role_grants SET agents_mode='none',revision=revision+1 WHERE org_id=$1 AND role_id=$2 AND agents_mode<>'none'`, m.OrgID, id); err != nil {
+				if _, err = tx.Exec(ctx, `UPDATE role_grants SET all_agents=false,revision=revision+1 WHERE org_id=$1 AND role_id=$2`, m.OrgID, id); err != nil {
 					return err
 				}
-			}
-			if _, err = tx.Exec(ctx, `DELETE FROM role_permissions WHERE org_id=$1 AND role_id=$2`, m.OrgID, id); err != nil {
-				return err
-			}
-		}
-		for _, permission := range input.Permissions {
-			if _, err := tx.Exec(ctx, `INSERT INTO role_permissions(org_id,role_id,permission) VALUES($1,$2,$3)`, m.OrgID, id, permission); err != nil {
-				return err
 			}
 		}
 		var err error
@@ -506,18 +509,14 @@ func SeedStandardRoles(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, actor au
 		{"environment_administrator", "Environment Administrator", "Manage all workloads and API keys in the assigned environment.", []string{"agents.use", "sessions.manage", "deployments.publish", "deployments.promote", "computers.operate", "secrets.manage", "keys.manage", "agents.manage"}},
 	}
 	for _, standard := range standards {
+		slices.Sort(standard.permissions)
 		id := uuid.NewV7()
-		tag, err := tx.Exec(ctx, `INSERT INTO roles(id,org_id,name,description,builtin_key) VALUES($1,$2,$3,$4,$5) ON CONFLICT(org_id,builtin_key) DO NOTHING`, id, orgID, standard.name, standard.description, standard.key)
+		tag, err := tx.Exec(ctx, `INSERT INTO roles(id,org_id,name,description,builtin_key,permissions) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(org_id,builtin_key) DO NOTHING`, id, orgID, standard.name, standard.description, standard.key, standard.permissions)
 		if err != nil {
 			return err
 		}
 		if tag.RowsAffected() == 0 {
 			continue
-		}
-		for _, permission := range standard.permissions {
-			if _, err = tx.Exec(ctx, `INSERT INTO role_permissions(org_id,role_id,permission) VALUES($1,$2,$3)`, orgID, id, permission); err != nil {
-				return err
-			}
 		}
 		if err = accessAudit(ctx, tx, ManagingMember{Actor: actor, OrgID: orgID}, "role.standard_created", "role", id, nil, &audit.AccessSnapshot{Name: standard.name, Description: standard.description, Permissions: standard.permissions}, nil); err != nil {
 			return err
@@ -828,7 +827,7 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		created := false
 		if id == uuid.Nil() {
 			id = uuid.NewV7()
-			tag, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,group_id,all_members,environment_id,agents_mode,created_by,api_key_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, id, m.OrgID, roleID, input.Subject.MemberID, input.Subject.GroupID, input.Subject.Type == "all_members", input.EnvironmentID, input.AgentsMode, m.UserID, input.Subject.APIKeyID)
+			tag, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,group_id,all_members,environment_id,all_agents,created_by,api_key_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, id, m.OrgID, roleID, input.Subject.MemberID, input.Subject.GroupID, input.Subject.Type == "all_members", input.EnvironmentID, input.AgentsMode == "all", m.UserID, input.Subject.APIKeyID)
 			if err != nil {
 				return err
 			}
@@ -877,7 +876,7 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 			if _, err := tx.Exec(ctx, `DELETE FROM role_grant_agents WHERE grant_id=$1`, id); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE role_grants SET agents_mode=$3,revision=revision+1 WHERE org_id=$1 AND id=$2`, m.OrgID, id, input.AgentsMode); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE role_grants SET all_agents=$3,revision=revision+1 WHERE org_id=$1 AND id=$2`, m.OrgID, id, input.AgentsMode == "all"); err != nil {
 				return err
 			}
 		}
@@ -1094,8 +1093,8 @@ func readRoleGrants(ctx context.Context, q db.DBTX, orgID uuid.UUID, filter Gran
  CASE WHEN g.all_members THEN 'all_members' WHEN g.member_id IS NOT NULL THEN 'member' WHEN g.api_key_id IS NOT NULL THEN 'api_key' ELSE 'group' END,
  g.member_id,g.group_id,g.api_key_id,COALESCE(k.name,''),g.role_id,e.project_id,g.environment_id,
  CASE WHEN g.environment_id IS NULL THEN 'organization' ELSE 'environment' END,
- g.revision,r.revision,g.agents_mode,ARRAY(SELECT agent_id FROM role_grant_agents WHERE grant_id=g.id ORDER BY agent_id),ARRAY(SELECT a.key FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id ORDER BY ga.agent_id),r.name,COALESCE(p.name,''),COALESCE(e.name,''),COALESCE(p.slug,''),COALESCE(e.slug,''),COALESCE(pg.name,''),COALESCE(m.display_name,u.display_name,''),g.created_at,g.created_by,
- ARRAY(SELECT permission FROM role_permissions WHERE org_id=r.org_id AND role_id=r.id ORDER BY permission)
+ g.revision,r.revision,g.all_agents,ARRAY(SELECT agent_id FROM role_grant_agents WHERE grant_id=g.id ORDER BY agent_id),ARRAY(SELECT a.key FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id ORDER BY ga.agent_id),r.name,COALESCE(p.name,''),COALESCE(e.name,''),COALESCE(p.slug,''),COALESCE(e.slug,''),COALESCE(pg.name,''),COALESCE(m.display_name,u.display_name,''),g.created_at,g.created_by,
+ r.permissions
  FROM role_grants g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
  LEFT JOIN environments e ON e.id=g.environment_id LEFT JOIN projects p ON p.id=e.project_id
  LEFT JOIN api_keys k ON (k.org_id,k.id)=(g.org_id,g.api_key_id)
@@ -1106,7 +1105,7 @@ func readRoleGrants(ctx context.Context, q db.DBTX, orgID uuid.UUID, filter Gran
  AND ($4::uuid='00000000-0000-0000-0000-000000000000' OR g.role_id=$4)
  AND ($5='' OR CASE WHEN g.all_members THEN 'all_members' WHEN g.member_id IS NOT NULL THEN 'member' WHEN g.api_key_id IS NOT NULL THEN 'api_key' ELSE 'group' END=$5)
  AND ($6='' OR p.slug=$6) AND ($7='' OR e.slug=$7)
- AND ($8='' OR g.agents_mode='all' OR EXISTS(SELECT 1 FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id AND a.key=$8))
+ AND ($8='' OR g.all_agents OR EXISTS(SELECT 1 FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id AND a.key=$8))
  AND g.id>$9
  AND ($11::uuid='00000000-0000-0000-0000-000000000000' OR g.member_id=$11)
  AND ($12='' OR CASE WHEN g.environment_id IS NULL THEN 'organization' ELSE 'environment' END=$12)
@@ -1119,8 +1118,9 @@ func readRoleGrants(ctx context.Context, q db.DBTX, orgID uuid.UUID, filter Gran
 	result := []RoleGrant{}
 	for rows.Next() {
 		var g RoleGrant
+		var allAgents bool
 		var project, env *uuid.UUID
-		if err := rows.Scan(&g.ID, &g.SubjectKind, &g.MemberID, &g.GroupID, &g.APIKeyID, &g.APIKeyName, &g.RoleID, &project, &env, &g.TargetKind, &g.Revision, &g.RoleRevision, &g.AgentsMode, &g.AgentIDs, &g.AgentKeys, &g.RoleName, &g.ProjectName, &g.EnvironmentName, &g.Project, &g.Environment, &g.GroupName, &g.MemberName, &g.CreatedAt, &g.CreatedBy, &g.Permissions); err != nil {
+		if err := rows.Scan(&g.ID, &g.SubjectKind, &g.MemberID, &g.GroupID, &g.APIKeyID, &g.APIKeyName, &g.RoleID, &project, &env, &g.TargetKind, &g.Revision, &g.RoleRevision, &allAgents, &g.AgentIDs, &g.AgentKeys, &g.RoleName, &g.ProjectName, &g.EnvironmentName, &g.Project, &g.Environment, &g.GroupName, &g.MemberName, &g.CreatedAt, &g.CreatedBy, &g.Permissions); err != nil {
 			return nil, err
 		}
 		if project != nil {
@@ -1129,6 +1129,7 @@ func readRoleGrants(ctx context.Context, q db.DBTX, orgID uuid.UUID, filter Gran
 		if env != nil {
 			g.EnvironmentID = *env
 		}
+		g.AgentsMode = grantAgentsMode(g.Permissions, allAgents)
 		g.Targets = grantTargets(g)
 		result = append(result, g)
 	}

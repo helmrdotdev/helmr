@@ -51,9 +51,8 @@ func New(t *testing.T) Fixture {
       INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp());
       INSERT INTO permission_groups(id,org_id,name) VALUES($1,$1,'Fixture operators');
       INSERT INTO permission_group_members(org_id,group_id,member_id) VALUES($1,$1,$23);
-      INSERT INTO roles(id,org_id,name) VALUES($1,$1,'Fixture operator');
-      INSERT INTO role_permissions(org_id,role_id,permission) SELECT $1,$1,unnest(ARRAY['agents.use','sessions.view','sessions.manage','deployments.publish','deployments.promote','computers.operate','secrets.manage','keys.manage','agents.manage']);
-      INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,agents_mode) VALUES($1,$1,$1,$1,$4,'all');
+      INSERT INTO roles(id,org_id,name,permissions) VALUES($1,$1,'Fixture operator',ARRAY['agents.manage','agents.use','computers.operate','deployments.promote','deployments.publish','keys.manage','secrets.manage','sessions.manage','sessions.view']);
+      INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,all_agents) VALUES($1,$1,$1,$1,$4,true);
       INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($4,$5,$6);
       UPDATE environments SET current_deployment_id=$5 WHERE id=$4;
       INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($4,$5,$6,'{}','{}');
@@ -68,7 +67,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($4,$16,$15,true);
       `+DiskRootInsert("$4", "$20", "$21")+`;
       INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($4,$8,$20,decode(substring($22::text from 8),'hex'),$5,$5,1000,536870912,NULL,34359738368);
-      INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($4,$9,$7,$5,$8,$9,0,'scoped','user',$2);
+      INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($4,$9,$7,$5,$8,$9,0,$2);
       INSERT INTO worker_group_tokens(id,token_hash) VALUES($10,decode(repeat('00',32),'hex'));
       INSERT INTO worker_groups(id,token_id,region_id,name) VALUES($11,$10,'test','group');
       INSERT INTO vm_platforms(id,descriptor_digest,firecracker_digest,firecracker_version,snapshot_format_version,host_kernel_release,kernel_digest,initramfs_digest,rootfs_digest) VALUES($6,$6,$6,'1.16.1','6.0.0','test',$6,$6,$6);
@@ -122,6 +121,5 @@ func (f Fixture) Principal(t *testing.T) auth.Principal {
 // SetPermissions replaces this fixture user's workload Role bundle.
 func (f Fixture) SetPermissions(t *testing.T, permissions ...string) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM role_permissions WHERE role_id IN (SELECT role_id FROM role_grants WHERE environment_id=$1)`, f.Environment)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO role_permissions(org_id,role_id,permission) SELECT g.org_id,g.role_id,p FROM role_grants g CROSS JOIN unnest($2::text[]) p WHERE environment_id=$1`, f.Environment, permissions)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE roles SET permissions=$2 WHERE id IN (SELECT role_id FROM role_grants WHERE environment_id=$1)`, f.Environment, permissions)
 }

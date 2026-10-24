@@ -255,8 +255,7 @@ func assertDatabaseConstraintBoundaries(
 	if deferredRetryReferences != 0 {
 		t.Fatalf("deferred retry references = %d, want 0", deferredRetryReferences)
 	}
-	// Selected-target cascades preserve revision/audit evidence; the shared view
-	// projects assignment targets. No other database behavior is expected.
+	// Policy evaluation, revisions and audit are owned by application transactions.
 	var triggerCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
@@ -265,8 +264,6 @@ func assertDatabaseConstraintBoundaries(
 		  JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
 		 WHERE pg_namespace.nspname = 'public'
 		   AND NOT pg_trigger.tgisinternal
-		   AND NOT (pg_class.relname = 'role_grant_agents' AND pg_trigger.tgname = 'changed_grant_target')
-		   AND NOT (pg_class.relname = 'agents' AND pg_trigger.tgname = 'deleted_agent_targets')
 	`).Scan(&triggerCount); err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +278,6 @@ func assertDatabaseConstraintBoundaries(
 		  JOIN pg_namespace ON pg_namespace.oid = pg_proc.pronamespace
 		 WHERE pg_namespace.nspname = 'public'
 		   AND pg_proc.prokind IN ('f', 'p')
-		   AND pg_proc.proname NOT IN ('bump_grant_target_revision', 'audit_deleted_agent_targets')
 		   AND NOT EXISTS (
 		       SELECT 1
 		         FROM pg_depend

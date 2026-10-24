@@ -114,12 +114,19 @@ func TestAPIKeyRoleGrantsUseCurrentSelectedTargets(t *testing.T) {
 	}
 	f.check(t, f.key, f.agent, f.env, auth.PermissionSessionsRead, false)
 	f.check(t, f.key, f.otherAgent, f.env, auth.PermissionSessionsRead, true)
-	// Deleting the final target never turns selected into all.
-	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM agents WHERE id=$1`, f.otherAgent)
+	// Physical deletion is refused without changing the machine's target/revision.
+	_, err = f.pool.Exec(ctx, `DELETE FROM agents WHERE id=$1`, f.otherAgent)
+	var constraint *pgconn.PgError
+	if !errors.As(err, &constraint) || constraint.Code != "23001" {
+		t.Fatalf("targeted Agent deletion: %v", err)
+	}
+	f.check(t, f.key, f.otherAgent, f.env, auth.PermissionSessionsRead, true)
+	// Construct an empty selection explicitly to retain its fail-closed contract.
+	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM role_grant_agents WHERE grant_id=$1`, grant.ID)
 	f.check(t, f.key, f.agent, f.env, auth.PermissionSessionsRead, false)
 	current, err := org.QueryRoleGrants(ctx, f.pool, f.owner, org.GrantFilter{APIKeyID: f.key})
-	if err != nil || len(current) != 1 || len(current[0].AgentIDs) != 0 || current[0].Revision <= changed.Revision {
-		t.Fatal("target deletion projection", current, err)
+	if err != nil || len(current) != 1 || len(current[0].AgentIDs) != 0 || current[0].Revision != changed.Revision {
+		t.Fatal("empty-target projection", current, err)
 	}
 	if err := org.RemoveRoleGrant(ctx, f.pool, f.owner, grant.ID, strconv.FormatInt(current[0].Revision, 10)); err != nil {
 		t.Fatal(err)
@@ -210,7 +217,7 @@ func TestAPIKeyRoleAssignmentRacesIncompatibleRoleEdit(t *testing.T) {
 			t.Fatal(editErr)
 		}
 		var bad bool
-		if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM role_grants g JOIN role_permissions p ON (p.org_id,p.role_id)=(g.org_id,g.role_id) WHERE g.api_key_id=$1 AND p.permission='keys.manage')`, f.key).Scan(&bad); err != nil || bad {
+		if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM role_grants g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id) CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.api_key_id=$1 AND p.permission='keys.manage')`, f.key).Scan(&bad); err != nil || bad {
 			t.Fatal("persisted forbidden machine grant", err)
 		}
 	}

@@ -36,7 +36,7 @@ var dynamicStatementSites = map[string]string{
 // The shared diagnostic protocol's dynamic writes are documented above.
 // Owner names are import paths without the module prefix.
 var tableOwners = map[string]string{
-	"permission_groups": "internal/org", "permission_group_members": "internal/org", "roles": "internal/org", "role_permissions": "internal/org", "role_grants": "internal/org", "role_grant_agents": "internal/org",
+	"permission_groups": "internal/org", "permission_group_members": "internal/org", "roles": "internal/org", "role_grants": "internal/org", "role_grant_agents": "internal/org",
 	"audit_events": "internal/audit",
 	// identity
 	"api_keys": "internal/identity", "auth_identities": "internal/identity", "login_sessions": "internal/identity",

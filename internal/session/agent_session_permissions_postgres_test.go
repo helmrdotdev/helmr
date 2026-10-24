@@ -27,7 +27,7 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	member := dbtest.GrantMember(t, f.pool, org, viewer, &f.env, "sessions.view")
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET agents_mode='selected' WHERE member_id=$1;
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id=$1;
  INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE member_id=$1`, pgx.QueryExecModeSimpleProtocol, member, f.agent)
 	caller := session.Caller{Kind: "user", ID: viewer}
 	if _, err := session.GetSession(ctx, f.pool, caller, f.env, f.session); err != nil {
@@ -46,24 +46,24 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 		t.Fatalf("attention escaped: %+v %v", attention, err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM session_holds WHERE environment_id=$1`, f.env)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_permissions SET permission='sessions.manage' WHERE role_id IN (SELECT role_id FROM role_grants WHERE member_id=$1)`, member)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=ARRAY['sessions.manage'] WHERE id IN (SELECT role_id FROM role_grants WHERE member_id=$1)`, member)
 	input := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "management-input", Input: json.RawMessage(`[]`)}
 	if _, err := session.Enqueue(ctx, f.pool, nil, caller, input); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("management alone executed", err)
 	}
 	// A separate assignment combines only on the same Agent.
 	dbtest.GrantMember(t, f.pool, org, viewer, &f.env, "agents.use")
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET agents_mode='selected' WHERE member_id=$1 AND agents_mode='all';
- INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN role_permissions p ON p.role_id=g.role_id WHERE g.member_id=$1 AND p.permission='agents.use'`, pgx.QueryExecModeSimpleProtocol, member, otherAgent)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id=$1 AND all_agents;
+ INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.member_id=$1 AND p.permission='agents.use'`, pgx.QueryExecModeSimpleProtocol, member, otherAgent)
 	if _, err := session.Enqueue(ctx, f.pool, nil, caller, input); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("other Agent use was borrowed", err)
 	}
-	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN role_permissions p ON p.role_id=g.role_id WHERE g.member_id=$1 AND p.permission='agents.use'`, member, f.agent)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.member_id=$1 AND p.permission='agents.use'`, member, f.agent)
 	if _, err := session.Enqueue(ctx, f.pool, nil, caller, input); err != nil {
 		t.Fatal("matching grants did not combine", err)
 	}
 	// Management cannot revive a personal runtime whose original owner lost use.
-	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM role_permissions WHERE permission='agents.use' AND role_id IN (SELECT g.role_id FROM role_grants g JOIN permission_group_members gm ON gm.group_id=g.group_id JOIN org_members m ON m.id=gm.member_id WHERE m.user_id=$1)`, f.user)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=array_remove(permissions,'agents.use') WHERE id IN (SELECT g.role_id FROM role_grants g JOIN permission_group_members gm ON gm.group_id=g.group_id JOIN org_members m ON m.id=gm.member_id WHERE m.user_id=$1)`, f.user)
 	input.IdempotencyKey = "revoked-origin"
 	if _, err := session.Enqueue(ctx, f.pool, nil, caller, input); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("management revived origin", err)
@@ -122,7 +122,7 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 		}
 	}
 	checkRelations(false)
-	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN role_permissions p ON p.role_id=g.role_id WHERE g.member_id=$1 AND p.permission='sessions.manage'`, member, otherAgent)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.member_id=$1 AND p.permission='sessions.manage'`, member, otherAgent)
 	checkRelations(true)
 
 }

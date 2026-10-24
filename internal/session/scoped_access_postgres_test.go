@@ -14,9 +14,8 @@ import (
 
 func scopeFixtureToAgent(t *testing.T, f fixture) {
 	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM role_permissions WHERE role_id IN (SELECT role_id FROM role_grants WHERE environment_id=$1);
- INSERT INTO role_permissions(org_id,role_id,permission) SELECT org_id,role_id,'agents.use' FROM role_grants WHERE environment_id=$1;
- UPDATE role_grants SET agents_mode='selected' WHERE environment_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.agent)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE roles SET permissions=ARRAY['agents.use'] WHERE id IN (SELECT role_id FROM role_grants WHERE environment_id=$1);
+ UPDATE role_grants SET all_agents=false WHERE environment_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.agent)
 }
 
 func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
@@ -42,7 +41,7 @@ func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	var fresh bool
-	if err = f.pool.QueryRow(ctx, `SELECT admission_mode='scoped' AND origin_kind='user' AND origin_user_id=$3 AND computer_id<>$4 FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, first.SessionID, f.user, f.computer).Scan(&fresh); err != nil || !fresh {
+	if err = f.pool.QueryRow(ctx, `SELECT origin_slack_connection_id IS NULL AND origin_user_id IS NOT NULL AND origin_user_id=$3 AND computer_id<>$4 FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, first.SessionID, f.user, f.computer).Scan(&fresh); err != nil || !fresh {
 		t.Fatal("invalid scoped origin or Computer", fresh, err)
 	}
 	if _, err = session.Start(ctx, f.pool, nil, f.caller(), req); err != nil {
@@ -119,9 +118,9 @@ func TestScopedRuntimeRelationsAndQueuedRevocation(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	scopeFixtureToAgent(t, f)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, f.session)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, f.session)
 	peer := f.peer(t)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, peer.session)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, peer.session)
 	caller := runtimeReadCaller(t, f)
 	if _, err := session.RuntimeGetSession(ctx, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("same-origin peer readable", err)
@@ -167,9 +166,9 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var mode string
-	if err = f.pool.QueryRow(ctx, `SELECT admission_mode FROM sessions WHERE id=$1 AND origin_api_key_id=$2 AND origin_user_id IS NULL`, created.SessionID, key).Scan(&mode); err != nil || mode != "scoped" {
-		t.Fatal("run viewer upgraded lineage", mode, err)
+	var personal bool
+	if err = f.pool.QueryRow(ctx, `SELECT origin_slack_connection_id IS NULL FROM sessions WHERE id=$1 AND origin_api_key_id=$2 AND origin_user_id IS NULL`, created.SessionID, key).Scan(&personal); err != nil || !personal {
+		t.Fatal("run viewer upgraded lineage", personal, err)
 	}
 	// Token rotation leaves the machine principal ID and its receipt ownership intact.
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE api_keys SET token_hash=convert_to('rotated','UTF8') WHERE id=$1`, key)
@@ -181,8 +180,8 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	}
 	// Exercise an authenticated runtime on an existing fixture attachment.
 	peer := f.peer(t)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',origin_kind='api_key',origin_user_id=NULL,origin_api_key_id=$1 WHERE id=$2`, key, f.session)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',origin_kind='api_key',origin_user_id=NULL,origin_api_key_id=$1 WHERE id=$2`, key, peer.session)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET origin_user_id=NULL,origin_api_key_id=$1 WHERE id=$2`, key, f.session)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET origin_user_id=NULL,origin_api_key_id=$1 WHERE id=$2`, key, peer.session)
 	runtime := runtimeReadCaller(t, f)
 	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.manage")
 	if _, err := session.GetSession(ctx, f.pool, caller, f.env, peer.session); err != nil {
@@ -204,7 +203,7 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 	f := newAdmissionFixture(t)
 	ctx := t.Context()
 	scopeFixtureToAgent(t, f)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, f.session)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, f.session)
 	admitted := f.enqueue(t, "caller")
 	if _, err := dispatchTurnForTest(ctx, f.pool, f.execution()); err != nil {
 		t.Fatal(err)
@@ -216,7 +215,7 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 			t.Fatalf("%s: %v", method, err)
 		}
 		var valid bool
-		if err := f.pool.QueryRow(ctx, `SELECT admission_mode='scoped' AND origin_kind='user' AND origin_user_id=$3 AND requester_session_id=$4 AND CASE WHEN $5='spawn' THEN computer_id<>$6 AND parent_session_id=$4 ELSE computer_id<>$6 AND parent_session_id IS NULL END FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, result.SessionID, f.user, f.session, method, f.computer).Scan(&valid); err != nil || !valid {
+		if err := f.pool.QueryRow(ctx, `SELECT origin_slack_connection_id IS NULL AND origin_user_id IS NOT NULL AND origin_user_id=$3 AND requester_session_id=$4 AND CASE WHEN $5='spawn' THEN computer_id<>$6 AND parent_session_id=$4 ELSE computer_id<>$6 AND parent_session_id IS NULL END FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, result.SessionID, f.user, f.session, method, f.computer).Scan(&valid); err != nil || !valid {
 			t.Fatalf("%s origin/isolation: %v %v", method, valid, err)
 		}
 	}
@@ -239,7 +238,7 @@ func TestAPIKeySelectedAgentSessionVisibilityAndRevocation(t *testing.T) {
 	key, hiddenAgent := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $1,org_id,project_id,id,'selected','fixture',convert_to('selected','UTF8') FROM environments WHERE id=$2`, key, f.env)
 	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.view")
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET agents_mode='selected' WHERE api_key_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE api_key_id=$1`, pgx.QueryExecModeSimpleProtocol, key, f.agent)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE api_key_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE api_key_id=$1`, pgx.QueryExecModeSimpleProtocol, key, f.agent)
 	hidden := f.peer(t)
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'hidden'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3; UPDATE sessions SET agent_id=$2 WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, hiddenAgent, f.agent, hidden.session)
 	caller := session.Caller{Kind: "api_key", ID: key}

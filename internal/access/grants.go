@@ -12,11 +12,12 @@ import (
 // catalog's resource classification into the database schema.
 const grantPermissionsSQL = `SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.api_key_id,g.all_members,g.environment_id,
  a.agent_id,p.permission
- FROM role_grants g JOIN role_permissions p ON (p.org_id,p.role_id)=(g.org_id,g.role_id)
+ FROM role_grants g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
+ CROSS JOIN LATERAL unnest(r.permissions) p(permission)
  LEFT JOIN role_grant_agents a ON a.grant_id=g.id
-  AND p.permission=ANY($1::text[]) AND g.agents_mode='selected'
+  AND p.permission=ANY($1::text[]) AND NOT g.all_agents
  WHERE NOT (p.permission=ANY($1::text[]))
-  OR g.agents_mode='all' OR (g.agents_mode='selected' AND a.agent_id IS NOT NULL)`
+  OR g.all_agents OR a.agent_id IS NOT NULL`
 
 // MemberPermissionGrantsSQL reads one active membership's direct, Group and
 // all-members assignments. Hosts bind $1 to auth.CapabilityIDsForResource("agents"),

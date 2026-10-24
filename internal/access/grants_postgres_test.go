@@ -67,7 +67,7 @@ func TestGrantReadersPreserveTargetsAndCallerTransaction(t *testing.T) {
 		}
 	}
 	read(f.Pool, true, "")
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE role_grants SET agents_mode='selected' WHERE environment_id=$1`, f.Environment)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE role_grants SET all_agents=false WHERE environment_id=$1`, f.Environment)
 	read(f.Pool, false, "")
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1`, f.Environment, f.Agent)
 	read(f.Pool, true, f.Agent.String())
@@ -84,10 +84,10 @@ func TestGrantReadersPreserveTargetsAndCallerTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM role_grant_agents WHERE environment_id=$1`, f.Environment)
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE role_grants SET agents_mode='none' WHERE environment_id=$1`, f.Environment)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE role_grants SET all_agents=false WHERE environment_id=$1`, f.Environment)
 	read(f.Pool, false, "")
 	// Live Role edits remove non-Agent authority as well.
-	dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM role_permissions WHERE org_id=$1 AND permission='secrets.manage'`, org)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=array_remove(permissions,'secrets.manage') WHERE org_id=$1`, org)
 	grants, err := access.APIKeyGrants(ctx, f.Pool, org, key)
 	if err != nil || len(grants) != 0 {
 		t.Fatalf("stale Role: %v %v", grants, err)

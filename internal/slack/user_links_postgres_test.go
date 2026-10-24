@@ -99,12 +99,11 @@ func TestLinkWorkspaceAuthorizationPrecedesPagination(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
  SELECT $2,$3,org_id,'hidden-app','hidden-team',bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id FROM slack_installations WHERE id=$1`, f.installation, hidden, registration)
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($1,$2,$3,$4,$5,$6)`, connection, f.Environment, agent, registration, hidden, f.User)
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE role_grants SET agents_mode='selected' WHERE org_id=$1 AND environment_id=$2`, org, f.Environment)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE role_grants SET all_agents=false WHERE org_id=$1 AND environment_id=$2`, org, f.Environment)
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$3 FROM role_grants WHERE org_id=$1 AND environment_id=$2`, org, f.Environment, f.Agent)
 	for _, capability := range []string{"agents.use", "agents.manage", "sessions.manage"} {
 		t.Run(capability, func(t *testing.T) {
-			dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM role_permissions WHERE org_id=$1`, org)
-			dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO role_permissions(org_id,role_id,permission) SELECT org_id,id,$2 FROM roles WHERE org_id=$1`, org, capability)
+			dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=ARRAY[$2::text] WHERE org_id=$1`, org, capability)
 			page, err := ListLinkWorkspaces(ctx, f.Pool, org, f.User, uuid.Nil(), 1)
 			if err != nil || len(page) != 1 || page[0].InstallationID != f.installation {
 				t.Fatalf("authorized first page: %+v %v", page, err)

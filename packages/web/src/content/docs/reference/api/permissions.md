@@ -85,10 +85,13 @@ observed assignment revision in `If-Match`, returning 412 for stale state and
 Role edits preserve Agent targets when adding environment-only actions. Adding
 Agent actions to assignments without configured targets is rejected atomically
 with conflicting `grant_ids`. Removing the last explicit Agent action clears
-stored Agent targets. Physical Agent deletion removes only that target, advances
-the assignment revision and records an audit event. An empty selected assignment
-remains visible and grants no explicit Agent access; other resource types remain
-effective. Repair it with a conditional PATCH or remove the assignment.
+stored Agent targets. Each assignment mutation advances its revision once and
+records an audit event in the same transaction. The database refuses direct physical
+deletion of an Agent referenced by a selected assignment. Agent deletion is not
+currently exposed as a product operation. If an empty selected assignment exists,
+it remains visible and grants no explicit Agent access; other resource types remain
+effective. Conditional PATCH and assignment removal remain available, although
+current product mutations do not create empty selected assignments.
 
 List filters are `member_id`, `group_id`, `api_key_id`, `role_id`, `subject_kind`, `scope_kind`,
 `project`, `environment` and `agent`. Project/Environment filters use slugs; an

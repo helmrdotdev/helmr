@@ -46,7 +46,7 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 	var grantID uuid.UUID
 	// Remove Organization Manager first, then Access Administrator through the writer.
 	for _, capability := range []string{"organization.manage", "access.manage"} {
-		if err = d.Pool.QueryRow(ctx, `SELECT g.id FROM role_grants g JOIN role_permissions p ON p.role_id=g.role_id WHERE g.org_id=$1 AND p.permission=$2`, orgID, capability).Scan(&grantID); err != nil {
+		if err = d.Pool.QueryRow(ctx, `SELECT g.id FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.org_id=$1 AND p.permission=$2`, orgID, capability).Scan(&grantID); err != nil {
 			t.Fatal(err)
 		}
 		if err = org.RemoveRoleGrant(ctx, d.Pool, m, grantID, "1"); err != nil {

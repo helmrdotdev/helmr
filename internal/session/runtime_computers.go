@@ -23,11 +23,11 @@ func RuntimeListComputers(ctx context.Context, pool db.TxBeginner, caller Caller
 		if err != nil {
 			return err
 		}
-		if origin.Mode != "environment" {
-			if origin.Mode != "scoped" {
+		if origin.mode() != "environment" {
+			if origin.mode() != "scoped" {
 				return ErrDenied
 			}
-			if err := requireCapability(ctx, tx, origin.Kind, origin.id(), caller.Execution.EnvironmentID, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+			if err := requireCapability(ctx, tx, origin.kind(), origin.id(), caller.Execution.EnvironmentID, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
 				return err
 			}
 		}

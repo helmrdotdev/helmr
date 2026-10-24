@@ -12,13 +12,13 @@ import (
 
 func TestAgentManagementUsesExactCurrentGrantAndStoredConnection(t *testing.T) {
 	f, store, org := credentialFixture(t)
-	f.SetPermissions(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM role_grants WHERE environment_id=$1`, f.Environment)
 	// Ownership deliberately remains set while all operational authority is absent.
 	if _, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent); !errors.Is(err, errInstallationAuthority) {
 		t.Fatalf("owner-only connection read: %v", err)
 	}
-	f.SetPermissions(t, "agents.manage")
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET agents_mode='selected' WHERE environment_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Agent)
+	dbtest.GrantMember(t, f.Pool, org, f.User, &f.Environment, "agents.manage")
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET all_agents=false WHERE environment_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Agent)
 	otherAgent, otherRegistration, otherInstallation, otherConnection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'other');
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) SELECT transport,$3,org_id,'other-app','other-client',credential_revision,credential_ciphertext,credential_nonce,created_by_user_id FROM slack_app_registrations WHERE id=$7;
@@ -52,7 +52,7 @@ func TestAgentManagementUsesExactCurrentGrantAndStoredConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.SetPermissions(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM role_grants WHERE environment_id=$1`, f.Environment)
 	if _, err = store.attachConnectionGrant(t.Context(), audit.System("test-fixture"), org, f.User, f.publication, observed, refreshResult().grant); !errors.Is(err, errInstallationAuthority) {
 		t.Fatalf("revoked manager attached credentials: %v", err)
 	}

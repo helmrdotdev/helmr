@@ -141,7 +141,7 @@ func TestRoleEditRacesAgentGrant(t *testing.T) {
 			t.Fatalf("successful incompatible writers: %d", successes)
 		}
 		var incompatible bool
-		if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM role_grants g JOIN role_permissions p ON (p.org_id,p.role_id)=(g.org_id,g.role_id) WHERE g.role_id=$1 AND g.agents_mode='selected' AND p.permission<>'agents.use')`, role.ID).Scan(&incompatible); err != nil || incompatible {
+		if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM role_grants g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id) CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.role_id=$1 AND NOT g.all_agents AND p.permission<>'agents.use')`, role.ID).Scan(&incompatible); err != nil || incompatible {
 			t.Fatal("incompatible grant committed", incompatible, err)
 		}
 		var facts int

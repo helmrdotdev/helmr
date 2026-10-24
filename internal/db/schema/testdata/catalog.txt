@@ -578,11 +578,9 @@ column organizations.id uuid not null
 column organizations.name text not null
 column organizations.slug text not null
 column organizations.updated_at timestamp with time zone not null default now()
-column permission_group_members.created_at timestamp with time zone not null default now()
 column permission_group_members.group_id uuid not null
 column permission_group_members.member_id uuid not null
 column permission_group_members.org_id uuid not null
-column permission_groups.created_at timestamp with time zone not null default now()
 column permission_groups.id uuid not null
 column permission_groups.name text not null
 column permission_groups.org_id uuid not null
@@ -603,10 +601,9 @@ column regions.id text not null
 column regions.location text not null default ''::text
 column regions.updated_at timestamp with time zone not null default now()
 column role_grant_agents.agent_id uuid not null
-column role_grant_agents.agents_mode text not null default 'selected'::text
 column role_grant_agents.environment_id uuid not null
 column role_grant_agents.grant_id uuid not null
-column role_grants.agents_mode text not null default 'none'::text
+column role_grants.all_agents boolean not null default false
 column role_grants.all_members boolean not null default false
 column role_grants.api_key_id uuid
 column role_grants.created_at timestamp with time zone not null default now()
@@ -618,15 +615,12 @@ column role_grants.member_id uuid
 column role_grants.org_id uuid not null
 column role_grants.revision bigint not null default 1
 column role_grants.role_id uuid not null
-column role_permissions.org_id uuid not null
-column role_permissions.permission text not null
-column role_permissions.role_id uuid not null
 column roles.builtin_key text
-column roles.created_at timestamp with time zone not null default now()
 column roles.description text not null default ''::text
 column roles.id uuid not null
 column roles.name text not null
 column roles.org_id uuid not null
+column roles.permissions text[] not null
 column roles.revision bigint not null default 1
 column roles.updated_at timestamp with time zone not null default now()
 column secret_bindings.allowed_origins text[] not null default '{}'::text[]
@@ -735,7 +729,6 @@ column session_processes.stdout_last_sequence bigint
 column session_processes.stop_deadline_at timestamp with time zone
 column session_processes.stop_sequence bigint not null default 0
 column session_processes.stop_turn_id uuid
-column sessions.admission_mode text not null
 column sessions.agent_id uuid not null
 column sessions.authority_generation bigint not null default 1
 column sessions.causal_depth integer not null
@@ -759,7 +752,6 @@ column sessions.next_event_seq bigint not null default 1
 column sessions.next_turn_seq bigint not null default 1
 column sessions.origin_activation_id uuid
 column sessions.origin_api_key_id uuid
-column sessions.origin_kind text not null
 column sessions.origin_slack_connection_id uuid
 column sessions.origin_turn_id uuid
 column sessions.origin_user_id uuid
@@ -1216,7 +1208,6 @@ constraint api_keys f FOREIGN KEY (org_id, project_id) REFERENCES projects(org_i
 constraint api_keys f FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE CASCADE
 constraint api_keys p PRIMARY KEY (id)
 constraint api_keys u UNIQUE (environment_id, id)
-constraint api_keys u UNIQUE (org_id, environment_id, id)
 constraint api_keys u UNIQUE (token_hash)
 constraint audit_events c CHECK (action <> ''::text)
 constraint audit_events c CHECK (actor_kind = 'login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'api_key'::text AND actor_user_id IS NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'verified_login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NULL AND actor_source <> ''::text OR actor_kind = 'capacity'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source = ''::text OR actor_kind = 'system'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source <> ''::text)
@@ -1671,30 +1662,26 @@ constraint projects u UNIQUE (org_id, slug)
 constraint regions c CHECK (btrim(display_name) <> ''::text)
 constraint regions c CHECK (id = btrim(id) AND octet_length(id) >= 1 AND octet_length(id) <= 255 AND id !~ '[[:cntrl:]]'::text AND id !~ '(^[[:space:]])|([[:space:]]$)'::text)
 constraint regions p PRIMARY KEY (id)
-constraint role_grant_agents c CHECK (agents_mode = 'selected'::text)
-constraint role_grant_agents f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id) ON DELETE CASCADE
-constraint role_grant_agents f FOREIGN KEY (grant_id, environment_id, agents_mode) REFERENCES role_grants(id, environment_id, agents_mode) ON DELETE CASCADE
+constraint role_grant_agents f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id) ON DELETE RESTRICT
+constraint role_grant_agents f FOREIGN KEY (grant_id, environment_id) REFERENCES role_grants(id, environment_id) ON DELETE CASCADE
 constraint role_grant_agents p PRIMARY KEY (grant_id, agent_id)
 constraint role_grants c CHECK ((num_nonnulls(member_id, group_id, api_key_id) + all_members::integer) = 1)
-constraint role_grants c CHECK (NOT all_members OR agents_mode = 'selected'::text)
-constraint role_grants c CHECK (agents_mode = 'none'::text OR environment_id IS NOT NULL)
-constraint role_grants c CHECK (agents_mode = ANY (ARRAY['none'::text, 'selected'::text, 'all'::text]))
+constraint role_grants c CHECK (NOT all_agents OR environment_id IS NOT NULL)
+constraint role_grants c CHECK (NOT all_members OR environment_id IS NOT NULL AND NOT all_agents)
 constraint role_grants c CHECK (api_key_id IS NULL OR environment_id IS NOT NULL)
 constraint role_grants c CHECK (revision > 0)
 constraint role_grants f FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+constraint role_grants f FOREIGN KEY (environment_id, api_key_id) REFERENCES api_keys(environment_id, id) ON DELETE RESTRICT
 constraint role_grants f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint role_grants f FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id) ON DELETE CASCADE
-constraint role_grants f FOREIGN KEY (org_id, environment_id, api_key_id) REFERENCES api_keys(org_id, environment_id, id) ON DELETE RESTRICT
 constraint role_grants f FOREIGN KEY (org_id, group_id) REFERENCES permission_groups(org_id, id) ON DELETE CASCADE
 constraint role_grants f FOREIGN KEY (org_id, member_id) REFERENCES org_members(org_id, id) ON DELETE CASCADE
 constraint role_grants f FOREIGN KEY (org_id, role_id) REFERENCES roles(org_id, id) ON DELETE RESTRICT
 constraint role_grants p PRIMARY KEY (id)
-constraint role_grants u UNIQUE (id, environment_id, agents_mode)
+constraint role_grants u UNIQUE (id, environment_id)
 constraint role_grants u UNIQUE NULLS NOT DISTINCT (org_id, role_id, environment_id, member_id, group_id, api_key_id, all_members)
-constraint role_permissions c CHECK (permission = ANY (ARRAY['agents.use'::text, 'sessions.view'::text, 'sessions.manage'::text, 'deployments.publish'::text, 'deployments.promote'::text, 'computers.operate'::text, 'secrets.manage'::text, 'access.manage'::text, 'organization.manage'::text, 'keys.manage'::text, 'agents.manage'::text]))
-constraint role_permissions f FOREIGN KEY (org_id, role_id) REFERENCES roles(org_id, id) ON DELETE CASCADE
-constraint role_permissions p PRIMARY KEY (org_id, role_id, permission)
-constraint roles c CHECK (builtin_key IS NULL OR (builtin_key = ANY (ARRAY['agent_user'::text, 'agent_settings_manager'::text, 'session_viewer'::text, 'session_operator'::text, 'release_manager'::text, 'computer_operator'::text, 'secrets_manager'::text, 'access_administrator'::text, 'organization_manager'::text, 'environment_administrator'::text])))
+constraint roles c CHECK (builtin_key IS NULL OR builtin_key <> ''::text)
+constraint roles c CHECK (cardinality(permissions) > 0 AND array_ndims(permissions) = 1 AND array_position(permissions, NULL::text) IS NULL)
 constraint roles c CHECK (name = btrim(name) AND name <> ''::text)
 constraint roles c CHECK (revision > 0)
 constraint roles f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
@@ -1801,10 +1788,6 @@ constraint session_processes f FOREIGN KEY (environment_id, session_id, computer
 constraint session_processes f FOREIGN KEY (environment_id, session_id, stop_turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint session_processes p PRIMARY KEY (environment_id, session_id, epoch)
 constraint session_processes u UNIQUE (environment_id, computer_id, session_id, epoch)
-constraint sessions c CHECK ((admission_mode = 'environment'::text) = (origin_kind = 'schedule'::text))
-constraint sessions c CHECK ((admission_mode = 'shared'::text) = (origin_slack_connection_id IS NOT NULL))
-constraint sessions c CHECK (admission_mode <> 'shared'::text OR origin_kind = 'user'::text)
-constraint sessions c CHECK (admission_mode = ANY (ARRAY['scoped'::text, 'shared'::text, 'environment'::text]))
 constraint sessions c CHECK (authority_generation > 0)
 constraint sessions c CHECK (causal_depth >= 0)
 constraint sessions c CHECK (close_after_idle_ms > 0)
@@ -1817,10 +1800,11 @@ constraint sessions c CHECK (history_expired_at IS NULL OR history_eligible_at I
 constraint sessions c CHECK (next_event_seq > 0)
 constraint sessions c CHECK (next_turn_seq > 0)
 constraint sessions c CHECK (num_nonnulls(creation_caller_kind, creation_caller_id, creation_method, creation_digest) = ANY (ARRAY[0, 4]))
+constraint sessions c CHECK (num_nonnulls(origin_user_id, origin_api_key_id, origin_activation_id) = 1)
 constraint sessions c CHECK (octet_length(creation_digest) = 32)
 constraint sessions c CHECK (octet_length(creation_idempotency_key) >= 1 AND octet_length(creation_idempotency_key) <= 512)
 constraint sessions c CHECK (octet_length(key) >= 1 AND octet_length(key) <= 512)
-constraint sessions c CHECK (origin_kind = 'user'::text AND origin_user_id IS NOT NULL AND origin_api_key_id IS NULL AND origin_activation_id IS NULL OR origin_kind = 'api_key'::text AND origin_api_key_id IS NOT NULL AND origin_user_id IS NULL AND origin_activation_id IS NULL OR origin_kind = 'schedule'::text AND origin_activation_id IS NOT NULL AND origin_user_id IS NULL AND origin_api_key_id IS NULL)
+constraint sessions c CHECK (origin_slack_connection_id IS NULL OR origin_user_id IS NOT NULL)
 constraint sessions c CHECK (origin_turn_id IS NULL OR requester_session_id IS NOT NULL)
 constraint sessions c CHECK (parent_session_id IS NULL AND root_session_id = id OR parent_session_id IS NOT NULL AND root_session_id = parent_session_id AND root_session_id <> id AND requester_session_id IS NOT NULL AND requester_session_id = parent_session_id)
 constraint sessions c CHECK (requester_session_id IS NULL AND causal_depth = 0 OR requester_session_id IS NOT NULL AND causal_depth > 0)
@@ -2262,7 +2246,6 @@ index CREATE INDEX role_grants_api_key ON public.role_grants USING btree (org_id
 index CREATE INDEX role_grants_environment ON public.role_grants USING btree (org_id, environment_id)
 index CREATE INDEX role_grants_group ON public.role_grants USING btree (org_id, group_id) WHERE (group_id IS NOT NULL)
 index CREATE INDEX role_grants_member ON public.role_grants USING btree (org_id, member_id) WHERE (member_id IS NOT NULL)
-index CREATE INDEX role_grants_role ON public.role_grants USING btree (org_id, role_id)
 index CREATE INDEX secret_bindings_secret ON public.secret_bindings USING btree (environment_id, secret_id)
 index CREATE INDEX secret_exposures_secret ON public.secret_exposures USING btree (environment_id, secret_id)
 index CREATE INDEX session_events_expired_floor ON public.session_events USING btree (environment_id, session_id, seq) WHERE (payload_expired_at IS NOT NULL)
@@ -2272,8 +2255,8 @@ index CREATE INDEX session_processes_stop_due ON public.session_processes USING 
 index CREATE INDEX sessions_children ON public.sessions USING btree (environment_id, parent_session_id) WHERE (parent_session_id IS NOT NULL)
 index CREATE INDEX sessions_closing ON public.sessions USING btree (environment_id, id) WHERE (status = 'closing'::text)
 index CREATE INDEX sessions_idle_policy ON public.sessions USING btree (environment_id, id) WHERE ((status = 'open'::text) AND (close_after_idle_ms IS NOT NULL))
-index CREATE INDEX sessions_key_origin ON public.sessions USING btree (environment_id, origin_api_key_id, id) WHERE (admission_mode = 'scoped'::text)
-index CREATE INDEX sessions_user_origin ON public.sessions USING btree (environment_id, origin_user_id, id) WHERE (admission_mode = 'scoped'::text)
+index CREATE INDEX sessions_key_origin ON public.sessions USING btree (environment_id, origin_api_key_id, id) WHERE (origin_api_key_id IS NOT NULL)
+index CREATE INDEX sessions_user_origin ON public.sessions USING btree (environment_id, origin_user_id, id) WHERE ((origin_user_id IS NOT NULL) AND (origin_slack_connection_id IS NULL))
 index CREATE INDEX slack_channel_bindings_environment ON public.slack_channel_bindings USING btree (environment_id, id)
 index CREATE INDEX slack_posts_claims ON public.slack_posts USING btree (claimed_until, id) WHERE (status = 'sending'::text)
 index CREATE INDEX slack_posts_due ON public.slack_posts USING btree (next_attempt_at, id) WHERE (status = 'pending'::text)

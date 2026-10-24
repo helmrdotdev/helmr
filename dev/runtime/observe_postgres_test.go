@@ -215,7 +215,7 @@ func TestVerificationObservationCheckpointMembership(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,1,1)`, f.Environment, save, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,capture_digest) VALUES($1,$2,$3,1,1,$4,'capturing','request',now()+interval '1 hour',decode(repeat('01',32),'hex'))`, f.Environment, checkpoint, f.Computer, save)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO checkpoint_processes(environment_id,checkpoint_id,session_id,process_epoch,computer_id) VALUES($1,$2,$3,1,$4)`, f.Environment, checkpoint, f.Session, f.Computer)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0,admission_mode,origin_kind,origin_user_id FROM sessions WHERE id=$1`, f.Session, peer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0,origin_user_id FROM sessions WHERE id=$1`, f.Session, peer)
 	sessionPath := func(id uuid.UUID) map[string]any {
 		return observe(t, f.Pool, "session-path", map[string]any{"session_id": id.String()}).(map[string]any)
 	}
