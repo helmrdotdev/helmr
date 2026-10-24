@@ -120,3 +120,16 @@ SELECT * FROM environments
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND slug = sqlc.arg(slug);
+
+-- name: ListAuthorizedProjects :many
+SELECT *
+  FROM projects
+ WHERE org_id = sqlc.arg(org_id)
+   AND (sqlc.arg(all_projects)::boolean OR id=ANY(sqlc.arg(project_ids)::uuid[]))
+   AND (
+       NOT sqlc.arg(has_after)::boolean
+       OR ((NOT is_default), slug, id) >
+          ((NOT sqlc.arg(after_is_default)::boolean), sqlc.arg(after_slug)::text, sqlc.arg(after_id)::uuid)
+   )
+ ORDER BY is_default DESC, slug ASC, id ASC
+ LIMIT sqlc.arg(row_limit);

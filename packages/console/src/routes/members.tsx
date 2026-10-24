@@ -1,4 +1,6 @@
-import { isOrganizationAdmin, useMe } from "../lib/me";
+import { listGrants, listGroups, memberGrantSources } from "../lib/permissions";
+import { MemberAccess } from "../features/access/MemberAccess";
+import { useMe } from "../lib/me";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { errorMessage, loadError } from "../lib/error";
@@ -12,14 +14,12 @@ import {
   parseInviteEmails,
   removeMember,
   revokeInvitation,
-  updateMemberRole,
+  updateMemberOwnership,
   type InvitationResult,
-  type MemberRole,
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
 import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
-import { statusLabel } from "../ui/label";
 import { ConfirmDialog, Dialog, FormDialog } from "../ui/Dialog";
 import { Field, TextArea } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
@@ -31,15 +31,14 @@ import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, toneClass, ui } from "../ui/styles";
 
-const OWNER_ROLE_OPTION: SelectOption<MemberRole> = { value: "owner", label: "Owner" };
+type OwnershipChoice = "owner" | "member";
+const OWNER_ROLE_OPTION: SelectOption<OwnershipChoice> = { value: "owner", label: "Owner" };
 
-const NON_OWNER_ROLE_OPTIONS: SelectOption<MemberRole>[] = [
-  { value: "admin", label: "Admin" },
-  { value: "developer", label: "Developer" },
-  { value: "viewer", label: "Viewer" },
+const NON_OWNER_ROLE_OPTIONS: SelectOption<OwnershipChoice>[] = [
+  { value: "member", label: "Member" },
 ];
 
-const OWNER_ROLE_OPTIONS: SelectOption<MemberRole>[] = [OWNER_ROLE_OPTION, ...NON_OWNER_ROLE_OPTIONS];
+const OWNER_ROLE_OPTIONS: SelectOption<OwnershipChoice>[] = [OWNER_ROLE_OPTION, ...NON_OWNER_ROLE_OPTIONS];
 
 const EMAIL_FAILED_MESSAGE = "Invitation emails could not be sent. Nobody was invited.";
 const NO_EMAIL_DELIVERY = "Email delivery is not set up for this Helmr installation, so members can't be invited.";
@@ -72,33 +71,17 @@ function memberName(member: OrganizationMember): string {
   return member.display_name || member.email || member.user_id;
 }
 
-function canManageFromMe(role?: string | null, permissions?: string[]): boolean {
-  if (isOrganizationAdmin(role)) return true;
-  return (permissions ?? []).some((permission) =>
-    [
-      "members:write",
-      "members:manage",
-      "invitations:write",
-      "invitations:manage",
-      "org:write",
-      "org:admin",
-    ].includes(permission),
-  );
-}
-
 function InviteMembersDialog(props: {
-  currentUserRole: string | null | undefined;
+  currentUserIsOwner: boolean | undefined;
   onClose: () => void;
   onInvited: (results: InvitationResult[]) => Promise<void>;
 }) {
   const [text, setText] = createSignal("");
-  const [role, setRole] = createSignal<MemberRole>("developer");
+
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
-  const roleOptions = createMemo(() =>
-    props.currentUserRole === "owner" ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS,
-  );
+
   const entries = createMemo(() => parseInviteEmails(text()));
   const valid = createMemo(() => entries().filter((entry) => entry.state === "valid").map((entry) => entry.email));
   const invalidCount = () => entries().filter((entry) => entry.state === "invalid").length;
@@ -115,7 +98,7 @@ function InviteMembersDialog(props: {
     setError(null);
     setSubmitting(true);
     try {
-      const results = await createInvitations({ emails: valid(), role: role() });
+      const results = await createInvitations({ emails: valid() });
       // When no email could be sent nothing was created: keep the form and its
       // addresses so the same invitations can be sent again.
       if (results.every((result) => result.error?.code === "email_failed" || result.error?.code === "email_rejected")) {
@@ -172,9 +155,7 @@ function InviteMembersDialog(props: {
           </ul>
         </div>
       </Show>
-      <Field label="Role">
-        <Select<MemberRole> value={role()} options={roleOptions()} onChange={setRole} minWidth="100%" />
-      </Field>
+      <p class={ui.fieldHint}>Invitations create members without access. An access administrator can assign Roles directly or through Groups after they join. Owners manage ownership separately.</p>
     </FormDialog>
   );
 }
@@ -215,7 +196,7 @@ function InvitationResultsDialog(props: { results: InvitationResult[]; onClose: 
 // Members and pending invitations in one table: a member's name over their
 // email, or an invitee's email; "Since" is when they joined or were invited.
 // Roles change from the row menu; your own row has none.
-const COLUMNS = ["Member", "Role", "Status", "Since", { label: "Actions", srOnly: true }] as const;
+const COLUMNS = ["Member", "Ownership and roles", "Status", "Since", { label: "Actions", srOnly: true }] as const;
 
 function MemberCell(props: { name: string; email?: string | null | undefined; you?: boolean }) {
   return (
@@ -231,38 +212,39 @@ function MemberCell(props: { name: string; email?: string | null | undefined; yo
 
 // The roles the signed-in account may give a member. An owner may step down to
 // admin on their own row; the server keeps the last owner.
-function assignableRoles(currentUserRole: string | null | undefined, ownRow: boolean): SelectOption<MemberRole>[] {
+function assignableRoles(currentUserIsOwner: boolean | undefined, ownRow: boolean): SelectOption<OwnershipChoice>[] {
   if (ownRow) return [OWNER_ROLE_OPTION, NON_OWNER_ROLE_OPTIONS[0]!];
-  return currentUserRole === "owner" ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS;
+  return currentUserIsOwner ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS.filter(option=>option.value==="member");
 }
 
 function MemberRow(props: {
   member: OrganizationMember;
   canManage: boolean;
+  organizationRoles: string[];
   isCurrentUser: boolean;
-  currentUserRole: string | null | undefined;
+  currentUserIsOwner: boolean | undefined;
+  onInspect: (member: OrganizationMember) => void;
   onChangeRole: (member: OrganizationMember) => void;
   onRemove: (member: OrganizationMember) => void;
 }) {
   const id = () => memberResourceID(props.member);
-  const isOwner = () => props.member.role === "owner";
+  const isOwner = () => props.member.is_owner;
   const active = () => props.member.status === "active" && props.canManage && id() !== "";
-  const manageable = () => active() && !props.isCurrentUser && (!isOwner() || props.currentUserRole === "owner");
   // Your own row: only an owner has a role to step down from.
-  const ownOwner = () => active() && props.isCurrentUser && isOwner();
   return (
     <>
       <tr>
         <td><MemberCell name={memberName(props.member)} email={props.member.email} you={props.isCurrentUser} /></td>
-        <td>{statusLabel(props.member.role)}</td>
+        <td><Show when={props.member.is_owner}><span class="font-medium">Owner</span></Show><p class="text-control text-console-muted">{props.organizationRoles.join(" · ") || "No organization roles"}</p></td>
         <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
         <td><RelativeTime value={props.member.created_at} /></td>
         <RowActions
           label={`Actions for ${memberName(props.member)}`}
-          items={manageable() ? [
-            { label: "Change role", onSelect: () => props.onChangeRole(props.member) },
-            { label: "Remove", tone: "danger", onSelect: () => props.onRemove(props.member) },
-          ] : ownOwner() ? [{ label: "Change role", onSelect: () => props.onChangeRole(props.member) }] : []}
+          items={active() ? [
+            {label:"Inspect access",onSelect:()=>props.onInspect(props.member)},
+            ...(props.currentUserIsOwner ? [{label: "Change ownership", onSelect: () => props.onChangeRole(props.member)}] : []),
+            ...(!isOwner() ? [{label: "Remove", tone: "danger" as const, onSelect: () => props.onRemove(props.member)}] : []),
+          ] : []}
         />
       </tr>
     </>
@@ -278,7 +260,7 @@ function InvitationRow(props: {
   return (
     <tr>
       <td><MemberCell name={props.invitation.email} /></td>
-      <td>{statusLabel(props.invitation.role)}</td>
+      <td>{"Not an owner"}</td>
       <td><StatusBadge resource="member" status="invited" /></td>
       <td><RelativeTime value={props.invitation.created_at} /></td>
       <RowActions
@@ -289,18 +271,18 @@ function InvitationRow(props: {
   );
 }
 
-function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOption<MemberRole>[]; onClose: () => void; onSave: (role: MemberRole) => Promise<void> }) {
-  const [role, setRole] = createSignal<MemberRole>(props.member.role);
+function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOption<OwnershipChoice>[]; onClose: () => void; onSave: (role: OwnershipChoice) => Promise<void> }) {
+  const [role, setRole] = createSignal<OwnershipChoice>((props.member.is_owner ? "owner" : "member"));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   return (
     <FormDialog
-      title="Change role"
-      intro={<>Choose the role for <strong>{memberName(props.member)}</strong>. It applies across the organization at once.</>}
-      submitLabel="Change role"
+      title="Change ownership"
+      intro={<>Change ownership for <strong>{memberName(props.member)}</strong>. Ownership enables ownership transfer and access recovery; it does not grant workload permissions.</>}
+      submitLabel="Change ownership"
       busyLabel="Changing..."
       busy={busy()}
-      disabled={role() === props.member.role}
+      disabled={role() === (props.member.is_owner ? "owner" : "member")}
       error={error()}
       onClose={props.onClose}
       onSubmit={async () => {
@@ -310,8 +292,8 @@ function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOpti
         finally { setBusy(false); }
       }}
     >
-      <Field label="Role">
-        <Select<MemberRole> value={role()} options={props.roles} onChange={setRole} minWidth="100%" />
+      <Field label="Ownership">
+        <Select<OwnershipChoice> value={role()} options={props.roles} onChange={setRole} minWidth="100%" />
       </Field>
     </FormDialog>
   );
@@ -319,6 +301,7 @@ function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOpti
 
 export function Members() {
   const queryClient = useQueryClient();
+  const [inspecting,setInspecting]=createSignal<OrganizationMember>();
   const [inviting, setInviting] = createSignal(false);
   const [inviteResults, setInviteResults] = createSignal<InvitationResult[] | null>(null);
   const [removing, setRemoving] = createSignal<OrganizationMember | null>(null);
@@ -338,7 +321,9 @@ export function Members() {
     retry: false,
   }));
 
-  const canManage = createMemo(() => canManageFromMe(me.data?.role, me.data?.permissions));
+  const canManage = createMemo(() => me.data?.permissions.includes("access.manage") === true);
+  const grants = createQuery(()=>({queryKey:["access","grants"],queryFn:listGrants,enabled:canManage()}));
+  const groups = createQuery(()=>({queryKey:["access","groups"],queryFn:listGroups,enabled:canManage()}));
   const emailDelivery = () => me.data?.email_delivery === true;
   // The server lists pending invitations, newest first; further pages are
   // appended in that order.
@@ -357,18 +342,18 @@ export function Members() {
   // retry after someone else's change expects the role they set.
   const [changingRoleID, setChangingRoleID] = createSignal<string | null>(null);
   const changingRole = () => members.data?.members.find((member) => memberResourceID(member) === changingRoleID()) ?? null;
-  const changeMemberRole = async (member: OrganizationMember, role: MemberRole) => {
+  const changeOwnershipChoice = async (member: OrganizationMember, role: OwnershipChoice) => {
     const id = memberResourceID(member);
-    if (!id || role === member.role) return;
+    if (!id || (role === "owner") === member.is_owner) return;
     try {
-      await updateMemberRole(id, role, member.role);
+      await updateMemberOwnership(id, role === "owner", member.is_owner);
     } finally {
       await queryClient.invalidateQueries({ queryKey: ["members"] });
     }
   };
 
   const isCurrentUser = (member: OrganizationMember) =>
-    member.user_id === me.data?.user_id || memberResourceID(member) === me.data?.user_id;
+    member.membership_id === me.data?.membership_id;
 
   return (
     <>
@@ -384,7 +369,7 @@ export function Members() {
       />
 
       <Show when={!me.isPending && !canManage()}>
-        <Notice tone="info" class="mb-3">Member settings require admin access.</Notice>
+        <Notice tone="info" class="mb-3">Manage access permission is required to view and manage members.</Notice>
       </Show>
       <Show when={canManage() && !emailDelivery()}>
         <Notice tone="info" class="mb-3">{NO_EMAIL_DELIVERY}</Notice>
@@ -415,8 +400,10 @@ export function Members() {
                 <MemberRow
                   member={member}
                   canManage={canManage()}
+                  organizationRoles={member.status === "active" ? [...new Set(memberGrantSources(grants.data?.grants ?? [], groups.data?.groups ?? [], member.membership_id).filter(g=>g.target_kind === "organization").map(g=>g.role_name))] : []}
                   isCurrentUser={isCurrentUser(member)}
-                  currentUserRole={me.data?.role}
+                  currentUserIsOwner={me.data?.is_owner}
+                  onInspect={setInspecting}
                   onChangeRole={(member) => setChangingRoleID(memberResourceID(member))}
                   onRemove={setRemoving}
                 />
@@ -431,7 +418,7 @@ export function Members() {
 
       <Show when={inviting()}>
         <InviteMembersDialog
-          currentUserRole={me.data?.role}
+          currentUserIsOwner={me.data?.is_owner}
           onClose={() => setInviting(false)}
           onInvited={async (results) => {
             setInviting(false);
@@ -445,8 +432,9 @@ export function Members() {
         {(results) => <InvitationResultsDialog results={results()} onClose={() => setInviteResults(null)} />}
       </Show>
 
+      <Show when={inspecting()}>{member=><Dialog title={`Access: ${memberName(member())}`} onClose={()=>setInspecting(undefined)}><MemberAccess membershipID={member().membership_id} /></Dialog>}</Show>
       <Show when={changingRole()}>
-        {(member) => <ChangeRoleDialog member={member()} roles={assignableRoles(me.data?.role, isCurrentUser(member()))} onClose={() => setChangingRoleID(null)} onSave={(role) => changeMemberRole(member(), role)} />}
+        {(member) => <ChangeRoleDialog member={member()} roles={assignableRoles(me.data?.is_owner, isCurrentUser(member()))} onClose={() => setChangingRoleID(null)} onSave={(role) => changeOwnershipChoice(member(), role)} />}
       </Show>
 
       <Show when={removing()}>

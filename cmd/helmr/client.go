@@ -94,7 +94,7 @@ func sessionControlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 		if err == nil {
 			rawURL = cfg.DefaultHost
 		} else if errors.Is(err, clistate.ErrNotFound) {
-			return nil, fmt.Errorf("project and environment management requires helmr login")
+			return nil, fmt.Errorf("management commands require helmr login")
 		} else {
 			return nil, err
 		}
@@ -107,7 +107,7 @@ func sessionControlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 	bearer, err := state.Token(baseURL)
 	if err != nil {
 		if errors.Is(err, clistate.ErrNotFound) {
-			return nil, fmt.Errorf("project and environment management requires helmr login")
+			return nil, fmt.Errorf("management commands require helmr login")
 		}
 		return nil, err
 	}

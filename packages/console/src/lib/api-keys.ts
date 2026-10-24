@@ -2,28 +2,14 @@ import { ApiError, del, postJson, request } from "./api";
 
 type ApiKeyStatus = "active" | "expired" | "revoked";
 
-export type ApiKeyScope =
-  | "asks:answer"
-  | "sessions:read"
-  | "sessions:create"
-  | "sessions:send"
-  | "sessions:interrupt"
-  | "sessions:resume"
-  | "sessions:close"
-  | "sessions:cancel"
-  | "computers:create"
-  | "computers:read"
-  | "computers:delete"
-  | "computers:update"
-  | "computer-exec:create"
-  | "secrets:write"
-  | "deployments:write";
+export type ApiKeyScope = "agents.use" | "runs.view" | "runs.operate" | "deployments.publish" | "deployments.promote" | "computers.operate" | "secrets.manage";
 
 type ApiKeyPermissionGrant = {
   scopes: ApiKeyScope[];
 };
 
 export type ApiKeySummary = {
+  created_by_member_id: string | null;
   id: string;
   name: string;
   key_prefix: string;
@@ -77,4 +63,11 @@ export async function revokeApiKey(projectID: string, environmentID: string, id:
 
 function apiKeysPath(projectID: string, environmentID: string): string {
   return `/api/projects/${encodeURIComponent(projectID)}/environments/${encodeURIComponent(environmentID)}/api-keys`;
+}
+
+export function rotateApiKey(project: string, environment: string, id: string): Promise<ApiKeyIssued> {
+ return postJson(`${apiKeysPath(project,environment)}/${encodeURIComponent(id)}/rotate`, {});
+}
+export function updateApiKey(project: string, environment: string, id: string, input: {name:string;permissions:ApiKeyPermissionGrant[];expires_at:string|null}): Promise<ApiKeySummary> {
+ return request(`${apiKeysPath(project,environment)}/${encodeURIComponent(id)}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(input)});
 }

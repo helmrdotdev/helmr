@@ -61,11 +61,11 @@ func (f statusFixture) pendingQuestion(t *testing.T) (uuid.UUID, uuid.UUID) {
 	return admission.TurnID, ask
 }
 
-func TestSlackAnswerAllowsLinkedViewerAndKeepsExactAskOnlyReceipt(t *testing.T) {
+func TestSlackAnswerAllowsLinkedOperatorAndKeepsExactAskOnlyReceipt(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
 	turn, ask := f.pendingQuestion(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.User)
+	f.SetPermissions(t, "runs.operate")
 	c := f.control("answer")
 	c.Target.Turn, c.Target.Ask = turn, ask
 	first := f.controlReceipt(t, c, json.RawMessage(`"yes"`))
@@ -86,6 +86,7 @@ func TestSlackAnswerAllowsLinkedViewerAndKeepsExactAskOnlyReceipt(t *testing.T) 
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='rejected' AND error='ask_already_answered' FROM slack_requests WHERE id=$1`, second).Scan(&exact); err != nil || !exact {
 		t.Fatalf("competing answer replaced first: %v %v", exact, err)
 	}
+	f.SetPermissions(t, "runs.view")
 	stop := f.nativeStop(t, "viewer-stop")
 	if err := admitNativeStop(t.Context(), f.Pool, stop); err != nil {
 		t.Fatal(err)

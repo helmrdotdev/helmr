@@ -2,6 +2,8 @@ package controlplane
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"net/http"
 	"uuid"
 
@@ -29,7 +31,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		AppOrigin:       s.appOrigin.String(),
 		Admin:           principal.Admin,
 		Permissions:     []string{},
-		ProjectRequired: hasOrg && !account.HasProjects,
+		ProjectRequired: hasOrg && !account.HasProjects && principal.HasPermission(auth.CapabilityOrganizationManage, auth.Scope{OrgID: principal.OrgID}),
 		EmailDelivery:   s.emailConfigured(),
 	}
 	switch {
@@ -37,8 +39,30 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		response.OrgID = principal.OrgID.String()
 		response.OrgName = account.OrgName
 		response.OrgSlug = account.OrgSlug
-		response.Role = string(principal.Role)
-		response.Permissions = sessionPermissions(principal.Role)
+		response.MembershipID = principal.MemberID.String()
+		response.IsOwner = principal.IsOwner
+		response.Permissions = sessionPermissions(principal)
+		grants, err := s.db.ListUserPermissionGrants(r.Context(), db.ListUserPermissionGrantsParams{OrgID: pgvalue.UUID(principal.OrgID), UserID: pgvalue.UUID(principal.UserID)})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		response.PermissionScopes = []api.PermissionScope{}
+		for _, g := range grants {
+			if !g.EnvironmentID.Valid {
+				continue
+			}
+			item := api.PermissionScope{Project: g.ProjectSlug, Environment: g.EnvironmentSlug, Agent: g.AgentKey, Permissions: []string{}}
+			for _, operation := range auth.AllPermissions() {
+				if auth.CapabilityAllows(auth.Permission(g.Permission), operation) {
+					item.Permissions = append(item.Permissions, string(operation))
+				}
+			}
+			for _, capability := range auth.IncludedCapabilities(auth.Permission(g.Permission)) {
+				item.Permissions = append(item.Permissions, string(capability))
+			}
+			response.PermissionScopes = append(response.PermissionScopes, item)
+		}
 	case s.selfHostedMode():
 		response.OrganizationRequired = !account.OrganizationExists
 		response.AccessRequired = account.OrganizationExists
@@ -49,12 +73,17 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func sessionPermissions(role auth.Role) []string {
-	all := auth.AllPermissions()
-	permissions := make([]string, 0, len(all))
-	for _, permission := range all {
-		if auth.RoleAllows(role, permission) {
+func sessionPermissions(principal auth.Principal) []string {
+	permissions := []string{}
+	scope := auth.Scope{OrgID: principal.OrgID}
+	for _, permission := range auth.AllPermissions() {
+		if principal.HasPermission(permission, scope) {
 			permissions = append(permissions, string(permission))
+		}
+	}
+	for _, cap := range auth.CapabilityCatalog() {
+		if principal.HasPermission(cap.ID, scope) {
+			permissions = append(permissions, string(cap.ID))
 		}
 	}
 	return permissions

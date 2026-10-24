@@ -66,11 +66,13 @@ func (f identityFixture) user(t *testing.T, name string, email string) uuid.UUID
 	return userID
 }
 
-func (f identityFixture) member(t *testing.T, orgID uuid.UUID, userID uuid.UUID, role db.OrgMemberRole) {
+func (f identityFixture) member(t *testing.T, orgID uuid.UUID, userID uuid.UUID, role string) uuid.UUID {
 	t.Helper()
-	if _, err := f.queries.EnsureOrgMember(t.Context(), db.EnsureOrgMemberParams{OrgID: pgvalue.UUID(orgID), UserID: pgvalue.UUID(userID), Role: role}); err != nil {
+	record, err := f.queries.EnsureOrgMember(t.Context(), db.EnsureOrgMemberParams{ID: pgvalue.NewUUIDv7(), OrgID: pgvalue.UUID(orgID), UserID: pgvalue.UUID(userID), IsOwner: role == "owner"})
+	if err != nil {
 		t.Fatal(err)
 	}
+	return pgvalue.MustUUIDValue(record.ID)
 }
 
 // invitation creates an invitation from a new owner of the organization and
@@ -78,10 +80,11 @@ func (f identityFixture) member(t *testing.T, orgID uuid.UUID, userID uuid.UUID,
 func (f identityFixture) invitation(t *testing.T, orgID uuid.UUID, email string, role string) (db.Invitation, string) {
 	t.Helper()
 	owner := f.user(t, "Owner", "")
-	f.member(t, orgID, owner, db.OrgMemberRoleOwner)
+	f.member(t, orgID, owner, "owner")
+	memberID := dbtest.GrantMember(t, f.pool, orgID, owner, nil, "access.manage")
 	var delivered org.NewInvitation
 	results, err := org.CreateInvitations(t.Context(), f.pool, f.keys.Invitation,
-		org.ManagingMember{Actor: audit.System("test-fixture"), OrgID: orgID, UserID: owner, Role: auth.RoleOwner}, org.InvitationInput{Emails: []string{email}, Role: role},
+		org.ManagingMember{Actor: audit.System("test-fixture"), OrgID: orgID, UserID: owner, MemberID: memberID}, org.InvitationInput{Emails: []string{email}},
 		func(_ context.Context, invitations []org.NewInvitation) error {
 			delivered = invitations[0]
 			return nil

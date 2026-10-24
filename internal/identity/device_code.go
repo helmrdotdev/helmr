@@ -100,7 +100,7 @@ func decideDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver au
 	if err != nil {
 		return DeviceCodeState{}, err
 	}
-	if approver.Role == "" {
+	if approver.MemberID == uuid.Nil() {
 		return DeviceCodeState{}, ErrOrganizationRequired
 	}
 	if consent.UserID != approver.UserID.String() || consent.OrgID != approver.OrgID.String() {
@@ -110,13 +110,13 @@ func decideDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver au
 	if approve {
 		device, err = q.ApproveDeviceCode(ctx, db.ApproveDeviceCodeParams{
 			OrgID:        pgvalue.UUID(approver.OrgID),
-			UserID:       pgvalue.UUID(approver.UserID),
+			MemberID:     pgvalue.UUID(approver.MemberID),
 			UserCodeHash: hash,
 		})
 	} else {
 		device, err = q.DenyDeviceCode(ctx, db.DenyDeviceCodeParams{
 			OrgID:        pgvalue.UUID(approver.OrgID),
-			UserID:       pgvalue.UUID(approver.UserID),
+			MemberID:     pgvalue.UUID(approver.MemberID),
 			UserCodeHash: hash,
 		})
 	}
@@ -168,7 +168,11 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		if err != nil {
 			return fmt.Errorf("consume device code: %w", err)
 		}
-		rawSession, err = issueLoginSession(ctx, q, cfg, consumed.DecidedByUserID, consumed.OrgID)
+		member, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{OrgID: consumed.OrgID, ID: consumed.DecidedByMemberID})
+		if err != nil || member.RemovedAt.Valid {
+			return ErrInvalidDeviceCode
+		}
+		rawSession, err = issueLoginSession(ctx, q, cfg, member.UserID, consumed.OrgID)
 		return err
 	})
 	if err != nil {

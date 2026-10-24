@@ -11,17 +11,18 @@ const (
 )
 
 type APIKeySummary struct {
-	ID          string                  `json:"id"`
-	Name        string                  `json:"name"`
-	KeyPrefix   string                  `json:"key_prefix"`
-	Project     string                  `json:"project"`
-	Environment string                  `json:"environment"`
-	Permissions []APIKeyPermissionGrant `json:"permissions,omitempty"`
-	Status      APIKeyStatus            `json:"status"`
-	CreatedAt   time.Time               `json:"created_at"`
-	LastUsedAt  *time.Time              `json:"last_used_at"`
-	ExpiresAt   *time.Time              `json:"expires_at"`
-	RevokedAt   *time.Time              `json:"revoked_at"`
+	CreatedByMemberID *string                 `json:"created_by_member_id"`
+	ID                string                  `json:"id"`
+	Name              string                  `json:"name"`
+	KeyPrefix         string                  `json:"key_prefix"`
+	Project           string                  `json:"project"`
+	Environment       string                  `json:"environment"`
+	Permissions       []APIKeyPermissionGrant `json:"permissions,omitempty"`
+	Status            APIKeyStatus            `json:"status"`
+	CreatedAt         time.Time               `json:"created_at"`
+	LastUsedAt        *time.Time              `json:"last_used_at"`
+	ExpiresAt         *time.Time              `json:"expires_at"`
+	RevokedAt         *time.Time              `json:"revoked_at"`
 }
 
 type APIKeyIssued struct {
@@ -47,19 +48,17 @@ type APIKeyPermissionGrant struct {
 type APIKeyScope string
 
 const (
-	APIKeyScopeAsksAnswer            APIKeyScope = "asks:answer"
-	APIKeyScopeSessionsRead          APIKeyScope = "sessions:read"
-	APIKeyScopeSessionsCreate        APIKeyScope = "sessions:create"
-	APIKeyScopeSessionsSend          APIKeyScope = "sessions:send"
-	APIKeyScopeSessionsInterrupt     APIKeyScope = "sessions:interrupt"
-	APIKeyScopeSessionsResume        APIKeyScope = "sessions:resume"
-	APIKeyScopeSessionsClose         APIKeyScope = "sessions:close"
-	APIKeyScopeSessionsCancel        APIKeyScope = "sessions:cancel"
-	APIKeyScopeComputersCreate       APIKeyScope = "computers:create"
-	APIKeyScopeComputersRead         APIKeyScope = "computers:read"
-	APIKeyScopeComputersDelete       APIKeyScope = "computers:delete"
-	APIKeyScopeComputersUpdate       APIKeyScope = "computers:update"
-	APIKeyScopeComputerCommandCreate APIKeyScope = "computer-exec:create"
-	APIKeyScopeSecretsWrite          APIKeyScope = "secrets:write"
-	APIKeyScopeDeploymentsWrite      APIKeyScope = "deployments:write"
+	APIKeyScopeAgentsUse          APIKeyScope = "agents.use"
+	APIKeyScopeRunsView           APIKeyScope = "runs.view"
+	APIKeyScopeRunsOperate        APIKeyScope = "runs.operate"
+	APIKeyScopeDeploymentsPublish APIKeyScope = "deployments.publish"
+	APIKeyScopeDeploymentsPromote APIKeyScope = "deployments.promote"
+	APIKeyScopeComputersOperate   APIKeyScope = "computers.operate"
+	APIKeyScopeSecretsManage      APIKeyScope = "secrets.manage"
 )
+
+type UpdateAPIKeyRequest struct {
+	Name        string                  `json:"name"`
+	Permissions []APIKeyPermissionGrant `json:"permissions"`
+	ExpiresAt   *time.Time              `json:"expires_at"`
+}

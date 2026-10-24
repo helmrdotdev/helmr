@@ -62,8 +62,8 @@ test("sends every address in one invitation request and returns its results", as
     return Response.json({ results: [{ email: "ada@example.test", status: "invited" }] });
   }) as typeof fetch;
 
-  const results = await createInvitations({ emails: ["ada@example.test", "grace@example.test"], role: "viewer" });
+  const results = await createInvitations({ emails: ["ada@example.test", "grace@example.test"] });
 
-  expect(body).toEqual({ emails: ["ada@example.test", "grace@example.test"], role: "viewer" });
+  expect(body).toEqual({ emails: ["ada@example.test", "grace@example.test"] });
   expect(results).toEqual([{ email: "ada@example.test", status: "invited" }]);
 });

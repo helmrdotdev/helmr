@@ -24,6 +24,10 @@ func (r Record) Version() string { return version(r.ID) }
 
 // List returns finalized Deployments, newest first, within the authorized scope.
 func List(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, limit int32, after *Position) ([]Record, bool, error) {
+	principal, refreshErr := currentPrincipal(ctx, q, principal, scope)
+	if refreshErr != nil {
+		return nil, false, refreshErr
+	}
 	if err := authorizeRead(principal, scope); err != nil {
 		return nil, false, err
 	}
@@ -63,6 +67,10 @@ func List(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.S
 }
 
 func Get(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, id uuid.UUID) (Record, error) {
+	principal, refreshErr := currentPrincipal(ctx, q, principal, scope)
+	if refreshErr != nil {
+		return Record{}, refreshErr
+	}
 	if err := authorizeRead(principal, scope); err != nil {
 		return Record{}, err
 	}
@@ -81,9 +89,15 @@ func Get(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Sc
 }
 
 func GetCurrent(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope) (Record, error) {
-	if err := authorizeRead(principal, scope); err != nil {
-		return Record{}, err
+	principal, refreshErr := currentPrincipal(ctx, q, principal, scope)
+	if refreshErr != nil {
+		return Record{}, refreshErr
 	}
+	allAgents, agentIDs := agentReadScope(principal, scope)
+	if !allAgents && len(agentIDs) == 0 {
+		return Record{}, ErrPermissionRequired
+	}
+
 	project, env, err := scopeIDs(scope)
 	if err != nil {
 		return Record{}, err
@@ -131,6 +145,16 @@ func validDefinitionKind(kind definition.Kind) error {
 	return invalidInput(fmt.Errorf("unsupported definition kind %q", kind))
 }
 func definitionDeployment(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, selected *uuid.UUID) (Record, error) {
+	if selected != nil && !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
+		r, err := GetCurrent(ctx, q, principal, scope)
+		if err != nil {
+			return Record{}, err
+		}
+		if r.ID != *selected {
+			return Record{}, ErrSelectedDeploymentNotFound
+		}
+		return r, nil
+	}
 	if selected != nil {
 		r, err := Get(ctx, q, principal, scope, *selected)
 		if errors.Is(err, ErrNotFound) {
@@ -145,19 +169,28 @@ func definitionDeployment(ctx context.Context, q db.DBTX, principal auth.Princip
 	return r, err
 }
 func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, limit int32, after *string) (DefinitionPage, error) {
+	principal, refreshErr := currentPrincipal(ctx, q, principal, scope)
+	if refreshErr != nil {
+		return DefinitionPage{}, refreshErr
+	}
 	if limit < 1 || limit > 100 {
 		return DefinitionPage{}, invalidInput(errors.New("definition page limit must be between 1 and 100"))
 	}
 	if err := validDefinitionKind(kind); err != nil {
 		return DefinitionPage{}, err
 	}
+	allAgents, agentIDs := agentReadScope(principal, scope)
+	if kind == definition.KindTemplate && !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
+		return DefinitionPage{}, ErrPermissionRequired
+	}
+
 	r, err := definitionDeployment(ctx, q, principal, scope, selected)
 	if err != nil {
 		return DefinitionPage{}, err
 	}
 	var rows pgx.Rows
 	if kind == definition.KindAgent {
-		rows, err = q.Query(ctx, agentDefinitionProjection+definitionListClause, r.EnvironmentID, r.ID, after, limit+1)
+		rows, err = q.Query(ctx, agentDefinitionProjection+" WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR key>$3) AND ($5::boolean OR agent_id=ANY($6::uuid[])) ORDER BY key LIMIT $4", r.EnvironmentID, r.ID, after, limit+1, allAgents, agentIDs)
 	} else {
 		rows, err = q.Query(ctx, templateDefinitionProjection+definitionListClause, r.EnvironmentID, r.ID, after, limit+1)
 	}
@@ -171,6 +204,9 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 		if err := rows.Scan(&item.ID, &item.AgentID, &item.TemplateID, &item.Resources, &item.InputKind, &item.InputSchema); err != nil {
 			return DefinitionPage{}, err
 		}
+		if !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
+			item.TemplateID = nil
+		}
 		page.Items = append(page.Items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -183,9 +219,18 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	return page, nil
 }
 func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, id string) (uuid.UUID, DefinitionRecord, error) {
+	principal, refreshErr := currentPrincipal(ctx, q, principal, scope)
+	if refreshErr != nil {
+		return uuid.Nil(), DefinitionRecord{}, refreshErr
+	}
 	if err := validDefinitionKind(kind); err != nil {
 		return uuid.Nil(), DefinitionRecord{}, err
 	}
+	allAgents, agentIDs := agentReadScope(principal, scope)
+	if kind == definition.KindTemplate && !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
+		return uuid.Nil(), DefinitionRecord{}, ErrPermissionRequired
+	}
+
 	r, err := definitionDeployment(ctx, q, principal, scope, selected)
 	if err != nil {
 		return uuid.Nil(), DefinitionRecord{}, err
@@ -193,7 +238,7 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 	var found DefinitionRecord
 	var row pgx.Row
 	if kind == definition.KindAgent {
-		row = q.QueryRow(ctx, agentDefinitionProjection+definitionGetClause, r.EnvironmentID, r.ID, id)
+		row = q.QueryRow(ctx, agentDefinitionProjection+definitionGetClause+" AND ($4::boolean OR agent_id=ANY($5::uuid[]))", r.EnvironmentID, r.ID, id, allAgents, agentIDs)
 	} else {
 		row = q.QueryRow(ctx, templateDefinitionProjection+definitionGetClause, r.EnvironmentID, r.ID, id)
 	}
@@ -203,6 +248,9 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 	}
 	if err != nil {
 		return uuid.Nil(), DefinitionRecord{}, err
+	}
+	if !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
+		found.TemplateID = nil
 	}
 	return r.ID, found, nil
 }
@@ -217,9 +265,12 @@ type RetainedAgent struct {
 // ListRetainedAgents returns up to limit+1 identities within the authorized scope.
 // A nonempty key selects one identity; after is an exclusive key cursor.
 func ListRetainedAgents(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, key, after string, limit int) ([]RetainedAgent, error) {
-	if err := authorizeRead(principal, scope); err != nil {
-		return nil, err
+	principal, refreshErr := currentPrincipal(ctx, q, principal, scope)
+	if refreshErr != nil {
+		return nil, refreshErr
 	}
+	allAgents, agentIDs := agentIdentityScope(principal, scope)
+
 	if limit < 1 || limit > 100 {
 		return nil, invalidInput(errors.New("agent page limit must be between 1 and 100"))
 	}
@@ -231,8 +282,8 @@ func ListRetainedAgents(ctx context.Context, q db.DBTX, principal auth.Principal
  EXISTS(SELECT 1 FROM agent_definitions d WHERE d.environment_id=a.environment_id AND d.agent_id=a.id AND d.deployment_id=e.current_deployment_id)
  FROM agents a JOIN environments e ON e.id=a.environment_id
  WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3
- AND ($4='' OR a.key=$4) AND ($5='' OR a.key>$5)
- ORDER BY a.key LIMIT $6`, principal.OrgID, project, environment, key, after, limit+1)
+ AND ($4='' OR a.key=$4) AND ($5='' OR a.key>$5) AND ($7::boolean OR a.id=ANY($8::uuid[]))
+ ORDER BY a.key LIMIT $6`, principal.OrgID, project, environment, key, after, limit+1, allAgents, agentIDs)
 	if err != nil {
 		return nil, err
 	}

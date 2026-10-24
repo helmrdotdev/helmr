@@ -17,11 +17,17 @@ func RuntimeListComputers(ctx context.Context, pool db.TxBeginner, caller Caller
 		if err := LockRuntimeCaller(ctx, tx, caller); err != nil {
 			return err
 		}
+		origin, err := loadSessionOrigin(ctx, tx, caller.Execution.EnvironmentID, caller.ID)
+		if err != nil {
+			return err
+		}
+		if origin.Mode != "environment" {
+			return ErrDenied
+		}
 		scope.EnvironmentID = caller.Execution.EnvironmentID
 		if err := tx.QueryRow(ctx, `SELECT org_id,project_id FROM environments WHERE id=$1`, scope.EnvironmentID).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 			return err
 		}
-		var err error
 		result, err = computer.List(ctx, tx, scope, page)
 		return err
 	})

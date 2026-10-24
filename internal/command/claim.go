@@ -7,6 +7,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -145,6 +147,22 @@ func claimNext(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal,
 		}
 		if c.Status != "pending" && c.Status != "starting" && c.Status != "running" {
 			continue
+		}
+		// Running commands retain their durable dispatch receipt, including when
+		// delivery is uncertain. Queued commands need current caller authority.
+		if c.Status != "running" {
+			if err = access.Check(ctx, tx, c.CallerKind, uuid.UUID(c.CallerID.Bytes), request.EnvironmentID, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+				if !errors.Is(err, access.ErrDenied) {
+					return ClaimResult{}, err
+				}
+				if _, err = tx.Exec(ctx, `UPDATE commands SET status='failed',failure_reason='dispatch_failed',
+ error='{"code":"permission_revoked","message":"Permission was revoked before execution"}',
+ terminal_at=clock_timestamp(),terminal_reason_code='permission_revoked',result_expires_at=clock_timestamp()+interval '30 days',
+ revision=revision+1,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, request.EnvironmentID, id); err != nil {
+					return ClaimResult{}, err
+				}
+				continue
+			}
 		}
 		if err = launchAvailable(ctx, tx, worker, lease, c.Status != "running"); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

@@ -248,7 +248,23 @@ func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, raw
 			return auth.Principal{}, fmt.Errorf("login session org id: %w", err)
 		}
 		principal.OrgID = orgID
-		principal.Role = auth.Role(row.Role)
+		principal.MemberID = pgvalue.MustUUIDValue(row.MemberID)
+		principal.IsOwner = row.IsOwner
+		grants, err := q.ListUserPermissionGrants(ctx, db.ListUserPermissionGrantsParams{OrgID: row.OrgID, UserID: row.UserID})
+		if err != nil {
+			return auth.Principal{}, fmt.Errorf("load permission grants: %w", err)
+		}
+		for _, grant := range grants {
+			g := auth.PermissionGrant{Permission: auth.Permission(grant.Permission)}
+			if grant.EnvironmentID.Valid {
+				g.ProjectID = pgvalue.MustUUIDValue(grant.ProjectID).String()
+				g.EnvironmentID = pgvalue.MustUUIDValue(grant.EnvironmentID).String()
+			}
+			if grant.AgentID.Valid {
+				g.AgentID = pgvalue.MustUUIDValue(grant.AgentID).String()
+			}
+			principal.Grants = append(principal.Grants, g)
+		}
 	}
 	return principal, nil
 }

@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"slices"
 	"strings"
 
 	"uuid"
@@ -10,24 +9,29 @@ import (
 type Permission string
 
 const (
-	PermissionAPIKeysManage         Permission = "api_keys.manage"
-	PermissionMembersManage         Permission = "members.manage"
-	PermissionProjectsManage        Permission = "projects.manage"
-	PermissionAsksAnswer            Permission = "asks.answer"
-	PermissionSessionsRead          Permission = "sessions.read"
-	PermissionSessionsCreate        Permission = "sessions.create"
-	PermissionSessionsSend          Permission = "sessions.send"
-	PermissionSessionsClose         Permission = "sessions.close"
-	PermissionSessionsCancel        Permission = "sessions.cancel"
-	PermissionSessionsInterrupt     Permission = "sessions.interrupt"
-	PermissionSessionsResume        Permission = "sessions.resume"
-	PermissionComputersCreate       Permission = "computers.create"
-	PermissionComputersRead         Permission = "computers.read"
-	PermissionComputersDelete       Permission = "computers.delete"
-	PermissionComputersUpdate       Permission = "computers.update"
-	PermissionComputerCommandCreate Permission = "computer.exec.create"
-	PermissionSecretsWrite          Permission = "secrets.write"
-	PermissionDeploymentsWrite      Permission = "deployments.write"
+	PermissionSecretMetadataRead     Permission = "secret_metadata.read"
+	PermissionAgentUse               Permission = "agent.use"
+	PermissionRunMetadataRead        Permission = "run_metadata.read"
+	PermissionDeploymentMetadataRead Permission = "deployment_metadata.read"
+	PermissionDeploymentsPromote     Permission = "deployment.promote"
+	PermissionAPIKeysManage          Permission = "api_keys.manage"
+	PermissionMembersManage          Permission = "members.manage"
+	PermissionProjectsManage         Permission = "projects.manage"
+	PermissionAsksAnswer             Permission = "asks.answer"
+	PermissionSessionsRead           Permission = "sessions.read"
+	PermissionSessionsCreate         Permission = "sessions.create"
+	PermissionSessionsSend           Permission = "sessions.send"
+	PermissionSessionsClose          Permission = "sessions.close"
+	PermissionSessionsCancel         Permission = "sessions.cancel"
+	PermissionSessionsInterrupt      Permission = "sessions.interrupt"
+	PermissionSessionsResume         Permission = "sessions.resume"
+	PermissionComputersCreate        Permission = "computers.create"
+	PermissionComputersRead          Permission = "computers.read"
+	PermissionComputersDelete        Permission = "computers.delete"
+	PermissionComputersUpdate        Permission = "computers.update"
+	PermissionComputerCommandCreate  Permission = "computer.exec.create"
+	PermissionSecretsWrite           Permission = "secrets.write"
+	PermissionDeploymentsWrite       Permission = "deployments.write"
 )
 
 // AllPermissions lists every Permission in declaration order. Callers that
@@ -35,6 +39,7 @@ const (
 // the constants.
 func AllPermissions() []Permission {
 	return []Permission{
+		PermissionAgentUse, PermissionRunMetadataRead, PermissionDeploymentMetadataRead, PermissionDeploymentsPromote, PermissionSecretMetadataRead,
 		PermissionAsksAnswer,
 		PermissionAPIKeysManage,
 		PermissionMembersManage,
@@ -58,6 +63,7 @@ func AllPermissions() []Permission {
 
 type Scope struct {
 	OrgID         uuid.UUID
+	AgentID       string
 	ProjectID     string
 	EnvironmentID string
 }
@@ -67,9 +73,22 @@ func (a Principal) HasPermission(permission Permission, scope Scope) bool {
 		return false
 	}
 	if a.Kind == PrincipalKindAPIKey {
-		return RoleAllows(a.Role, permission) && a.matchesEnvironmentScope(scope) && slices.Contains(a.Permissions, permission)
+		if !a.matchesEnvironmentScope(scope) {
+			return false
+		}
+		for _, capability := range a.Permissions {
+			if IsMachineCapability(capability) && CapabilityAllows(capability, permission) {
+				return true
+			}
+		}
+		return false
 	}
-	return RoleAllows(a.Role, permission)
+	for _, grant := range a.Grants {
+		if grant.allows(permission, scope) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a Principal) matchesEnvironmentScope(scope Scope) bool {
@@ -80,62 +99,7 @@ func (a Principal) matchesEnvironmentScope(scope Scope) bool {
 		strings.TrimSpace(a.EnvironmentID) == strings.TrimSpace(scope.EnvironmentID)
 }
 
-func RoleAllows(role Role, permission Permission) bool {
-	switch role {
-	case RoleOwner, RoleAdmin:
-		return true
-	case RoleDeveloper:
-		switch permission {
-		case PermissionSessionsRead,
-			PermissionSessionsCreate,
-			PermissionSessionsSend,
-			PermissionSessionsClose,
-			PermissionSessionsCancel,
-			PermissionSessionsInterrupt,
-			PermissionSessionsResume,
-			PermissionComputersCreate,
-			PermissionComputersRead,
-			PermissionComputersDelete,
-			PermissionComputersUpdate,
-			PermissionComputerCommandCreate,
-			PermissionDeploymentsWrite:
-			return true
-		default:
-			return false
-		}
-	case RoleViewer:
-		switch permission {
-		case PermissionSessionsRead,
-			PermissionComputersRead:
-			return true
-		default:
-			return false
-		}
-	default:
-		return false
-	}
-}
-
 func ParseAPIKeyGrant(value string) (Permission, bool) {
 	permission := Permission(strings.TrimSpace(value))
-	switch permission {
-	case PermissionAsksAnswer,
-		PermissionSessionsRead,
-		PermissionSessionsCreate,
-		PermissionSessionsSend,
-		PermissionSessionsClose,
-		PermissionSessionsCancel,
-		PermissionSessionsInterrupt,
-		PermissionSessionsResume,
-		PermissionComputersCreate,
-		PermissionComputersRead,
-		PermissionComputersDelete,
-		PermissionComputersUpdate,
-		PermissionComputerCommandCreate,
-		PermissionSecretsWrite,
-		PermissionDeploymentsWrite:
-		return permission, true
-	default:
-		return "", false
-	}
+	return permission, IsMachineCapability(permission)
 }

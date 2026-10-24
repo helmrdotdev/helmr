@@ -209,7 +209,11 @@ func writeDefinitionList(w http.ResponseWriter, kind definition.Kind, deployment
 	case definition.KindAgent:
 		items := make([]api.AgentDefinitionListItem, 0, len(records))
 		for _, item := range records {
-			items = append(items, api.AgentDefinitionListItem{InputKind: item.InputKind, InputSchema: item.InputSchema, ID: item.ID, TemplateID: *item.TemplateID})
+			templateID := ""
+			if item.TemplateID != nil {
+				templateID = *item.TemplateID
+			}
+			items = append(items, api.AgentDefinitionListItem{InputKind: item.InputKind, InputSchema: item.InputSchema, ID: item.ID, TemplateID: templateID})
 		}
 		writeJSON(w, http.StatusOK, api.ListAgentDefinitionsResponse{DeploymentID: deploymentID, AgentDefinitions: items, NextCursor: nextCursor})
 	case definition.KindTemplate:
@@ -224,7 +228,11 @@ func writeDefinitionList(w http.ResponseWriter, kind definition.Kind, deployment
 func writeDefinition(w http.ResponseWriter, kind definition.Kind, item deployment.DefinitionRecord, deploymentID string) {
 	switch kind {
 	case definition.KindAgent:
-		writeJSON(w, http.StatusOK, api.AgentDefinition{InputKind: item.InputKind, InputSchema: item.InputSchema, ID: item.ID, DeploymentID: deploymentID, TemplateID: *item.TemplateID})
+		templateID := ""
+		if item.TemplateID != nil {
+			templateID = *item.TemplateID
+		}
+		writeJSON(w, http.StatusOK, api.AgentDefinition{InputKind: item.InputKind, InputSchema: item.InputSchema, ID: item.ID, DeploymentID: deploymentID, TemplateID: templateID})
 	case definition.KindTemplate:
 		writeJSON(w, http.StatusOK, api.TemplateDefinition{ID: item.ID, DeploymentID: deploymentID, Resources: item.Resources})
 	}

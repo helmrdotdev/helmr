@@ -1,10 +1,3 @@
-CREATE TYPE org_member_role AS ENUM (
-    'owner',
-    'admin',
-    'developer',
-    'viewer'
-);
-
 CREATE TYPE magic_link_purpose AS ENUM (
     'login',
     'invite_accept'
@@ -57,19 +50,19 @@ CREATE TABLE auth_identities (
 );
 
 CREATE TABLE org_members (
-    org_id uuid NOT NULL,
-    user_id uuid NOT NULL,
-    role org_member_role NOT NULL,
+    id uuid PRIMARY KEY,
+    org_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    is_owner boolean NOT NULL DEFAULT false,
     display_name text,
-    disabled_at timestamptz,
+    removed_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, user_id),
-    FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    UNIQUE (org_id,id),
+    CHECK (NOT is_owner OR removed_at IS NULL)
 );
-
-CREATE INDEX org_members_user_active ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
+CREATE UNIQUE INDEX org_members_active ON org_members(org_id,user_id) WHERE removed_at IS NULL;
+CREATE INDEX org_members_user_active ON org_members(user_id,org_id) WHERE removed_at IS NULL;
 
 CREATE TABLE projects (
     id uuid PRIMARY KEY,
@@ -111,6 +104,7 @@ CREATE TABLE environments (
     admission_burst bigint NOT NULL CHECK (admission_burst>0),
     admission_tokens numeric NOT NULL CHECK (admission_tokens>=0),
     admission_refilled_at timestamptz NOT NULL,
+    UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, id),
     UNIQUE (org_id, project_id, slug),
     FOREIGN KEY (org_id, project_id)
@@ -146,26 +140,25 @@ CREATE TABLE invitations (
     id uuid PRIMARY KEY,
     org_id uuid NOT NULL,
     invitee_email text NOT NULL,
-    role org_member_role NOT NULL,
-    invited_by_user_id uuid,
+    invited_by_member_id uuid,
     token_hash bytea NOT NULL UNIQUE,
     created_at timestamptz NOT NULL DEFAULT now(),
     expires_at timestamptz NOT NULL,
     accepted_at timestamptz,
-    accepted_by_user_id uuid,
+    accepted_by_member_id uuid,
     revoked_at timestamptz,
-    revoked_by_user_id uuid,
+    revoked_by_member_id uuid,
     FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
-    FOREIGN KEY (org_id, invited_by_user_id)
-        REFERENCES org_members(org_id, user_id)
-        ON DELETE SET NULL (invited_by_user_id),
-    FOREIGN KEY (org_id, accepted_by_user_id)
-        REFERENCES org_members(org_id, user_id)
-        ON DELETE SET NULL (accepted_by_user_id)
+    FOREIGN KEY (org_id, invited_by_member_id)
+        REFERENCES org_members(org_id, id)
+        ON DELETE SET NULL (invited_by_member_id),
+    FOREIGN KEY (org_id, accepted_by_member_id)
+        REFERENCES org_members(org_id, id)
+        ON DELETE SET NULL (accepted_by_member_id)
         DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (org_id, revoked_by_user_id)
-        REFERENCES org_members(org_id, user_id)
-        ON DELETE SET NULL (revoked_by_user_id)
+    FOREIGN KEY (org_id, revoked_by_member_id)
+        REFERENCES org_members(org_id, id)
+        ON DELETE SET NULL (revoked_by_member_id)
 );
 
 CREATE UNIQUE INDEX invitations_pending_invitee_idx ON invitations(org_id, invitee_email) WHERE accepted_at IS NULL AND revoked_at IS NULL;
@@ -203,9 +196,11 @@ CREATE TABLE api_keys (
     org_id uuid NOT NULL,
     project_id uuid NOT NULL,
     environment_id uuid NOT NULL,
-    created_by_user_id uuid,
-    role org_member_role NOT NULL,
-    permissions text[] NOT NULL CHECK (cardinality(permissions) > 0),
+    created_by_member_id uuid,
+    permissions text[] NOT NULL CHECK (
+        (revoked_at IS NOT NULL OR cardinality(permissions)>0) AND
+        permissions <@ ARRAY['agents.use','runs.view','runs.operate','deployments.publish','deployments.promote','computers.operate','secrets.manage']::text[]
+    ),
     name text NOT NULL CHECK (btrim(name) <> ''),
     key_prefix text NOT NULL CHECK (btrim(key_prefix) <> ''),
     token_hash bytea NOT NULL UNIQUE,
@@ -213,6 +208,7 @@ CREATE TABLE api_keys (
     last_used_at timestamptz,
     expires_at timestamptz,
     revoked_at timestamptz,
+    UNIQUE (environment_id,id),
     FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
@@ -220,9 +216,9 @@ CREATE TABLE api_keys (
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, created_by_user_id)
-        REFERENCES org_members(org_id, user_id)
-        ON DELETE SET NULL (created_by_user_id)
+    FOREIGN KEY (org_id, created_by_member_id)
+        REFERENCES org_members(org_id, id)
+        ON DELETE SET NULL (created_by_member_id)
 );
 
 CREATE UNIQUE INDEX api_keys_scope_active_name_idx ON api_keys(org_id, project_id, environment_id, name) WHERE revoked_at IS NULL;
@@ -236,7 +232,7 @@ CREATE TABLE device_codes (
     org_id uuid,
     user_code_hash bytea NOT NULL UNIQUE,
     device_code_hash bytea NOT NULL UNIQUE,
-    decided_by_user_id uuid,
+    decided_by_member_id uuid,
     status text NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'approved', 'denied', 'consumed')),
     expires_at timestamptz NOT NULL,
@@ -245,9 +241,9 @@ CREATE TABLE device_codes (
     decided_at timestamptz,
     consumed_at timestamptz,
     FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
-    FOREIGN KEY (org_id, decided_by_user_id)
-        REFERENCES org_members(org_id, user_id)
-        ON DELETE SET NULL (decided_by_user_id)
+    FOREIGN KEY (org_id, decided_by_member_id)
+        REFERENCES org_members(org_id, id)
+        ON DELETE SET NULL (decided_by_member_id)
 );
 
 CREATE INDEX device_codes_pending_expiry_idx ON device_codes(expires_at) WHERE status = 'pending';
@@ -1175,7 +1171,7 @@ CREATE TABLE commands (
     env jsonb CHECK (jsonb_typeof(env)='object'),
     stdin bytea CHECK (octet_length(stdin)<=1048576),
     timeout_ms bigint NOT NULL CHECK (timeout_ms>0),
-    caller_kind text NOT NULL CHECK (caller_kind IN ('api_key', 'session')),
+    caller_kind text NOT NULL CHECK (caller_kind IN ('api_key', 'user')),
     caller_id uuid NOT NULL,
     started_at timestamptz,
     cancel_requested_at timestamptz,
@@ -1389,7 +1385,7 @@ CREATE TABLE slack_connections (
     id uuid NOT NULL UNIQUE,
     environment_id uuid NOT NULL,
     agent_id uuid NOT NULL,
-    slack_app_registration_id uuid NOT NULL REFERENCES slack_app_registrations(id),
+    slack_app_registration_id uuid NOT NULL UNIQUE REFERENCES slack_app_registrations(id),
     slack_installation_id uuid,
     created_by_user_id uuid NOT NULL REFERENCES users(id),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -1473,6 +1469,17 @@ CREATE INDEX trigger_activations_due ON trigger_activations(next_fire_at, enviro
 CREATE TABLE sessions (
     id uuid NOT NULL,
     environment_id uuid NOT NULL,
+    admission_mode text NOT NULL CHECK (admission_mode IN ('scoped','environment')),
+    origin_kind text NOT NULL,
+    origin_user_id uuid REFERENCES users(id),
+    origin_api_key_id uuid,
+    origin_activation_id uuid,
+    FOREIGN KEY (environment_id,origin_api_key_id) REFERENCES api_keys(environment_id,id),
+    FOREIGN KEY (environment_id,origin_activation_id) REFERENCES trigger_activations(environment_id,id),
+    CHECK ((origin_kind='user' AND origin_user_id IS NOT NULL AND origin_api_key_id IS NULL AND origin_activation_id IS NULL)
+        OR (origin_kind='api_key' AND origin_api_key_id IS NOT NULL AND origin_user_id IS NULL AND origin_activation_id IS NULL)
+        OR (origin_kind='schedule' AND origin_activation_id IS NOT NULL AND origin_user_id IS NULL AND origin_api_key_id IS NULL)),
+    CHECK (admission_mode<>'scoped' OR origin_kind IN ('user','api_key')),
     suspension_after_seq bigint NOT NULL DEFAULT 0 CHECK (suspension_after_seq>=0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     idle_since timestamptz,
@@ -2358,3 +2365,140 @@ CREATE TABLE slack_method_limits (
     retry_after timestamptz NOT NULL,
     PRIMARY KEY (installation_id, method)
 );
+
+CREATE TABLE permission_groups (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name text NOT NULL CHECK (name = btrim(name) AND name <> ''),
+  revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (org_id,id)
+);
+CREATE UNIQUE INDEX permission_groups_name ON permission_groups(org_id,lower(name));
+CREATE TABLE permission_group_members (
+  org_id uuid NOT NULL,
+  group_id uuid NOT NULL,
+  member_id uuid NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (org_id,group_id,member_id),
+  FOREIGN KEY (org_id,group_id) REFERENCES permission_groups(org_id,id) ON DELETE CASCADE,
+  FOREIGN KEY (org_id,member_id) REFERENCES org_members(org_id,id) ON DELETE CASCADE
+);
+CREATE INDEX permission_group_members_member ON permission_group_members(org_id,member_id,group_id);
+
+CREATE TABLE roles (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  name text NOT NULL CHECK (name = btrim(name) AND name <> ''),
+  description text NOT NULL DEFAULT '',
+  builtin_key text CHECK (builtin_key IS NULL OR builtin_key IN
+    ('agent_user','run_viewer','run_operator','release_manager','computer_operator',
+     'secrets_manager','access_administrator','organization_manager','environment_administrator')),
+  revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (org_id,id),
+  UNIQUE (org_id,builtin_key)
+);
+CREATE UNIQUE INDEX roles_name ON roles(org_id,lower(name));
+CREATE TABLE role_permissions (
+  org_id uuid NOT NULL,
+  role_id uuid NOT NULL,
+  permission text NOT NULL CHECK (permission IN
+    ('agents.use','runs.view','runs.operate','deployments.publish',
+     'deployments.promote','computers.operate','secrets.manage',
+     'access.manage','organization.manage','keys.manage','agents.manage')),
+  PRIMARY KEY (org_id,role_id,permission),
+  FOREIGN KEY (org_id,role_id) REFERENCES roles(org_id,id) ON DELETE CASCADE
+);
+
+CREATE TABLE role_grants (
+  id uuid PRIMARY KEY,
+  org_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  role_id uuid NOT NULL,
+  member_id uuid,
+  group_id uuid,
+  all_members boolean NOT NULL DEFAULT false,
+  environment_id uuid,
+  agents_mode text NOT NULL DEFAULT 'none' CHECK (agents_mode IN ('none','selected','all')),
+  revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (num_nonnulls(member_id,group_id) + all_members::int = 1),
+  CHECK (agents_mode = 'none' OR environment_id IS NOT NULL),
+  CHECK (NOT all_members OR agents_mode = 'selected'),
+  FOREIGN KEY (org_id,member_id) REFERENCES org_members(org_id,id) ON DELETE CASCADE,
+  FOREIGN KEY (org_id,group_id) REFERENCES permission_groups(org_id,id) ON DELETE CASCADE,
+  FOREIGN KEY (org_id,role_id) REFERENCES roles(org_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (org_id,environment_id) REFERENCES environments(org_id,id) ON DELETE CASCADE,
+  UNIQUE (id,environment_id,agents_mode),
+  UNIQUE NULLS NOT DISTINCT (org_id,role_id,environment_id,member_id,group_id,all_members)
+);
+CREATE TABLE role_grant_agents (
+  grant_id uuid NOT NULL,
+  environment_id uuid NOT NULL,
+  agents_mode text NOT NULL DEFAULT 'selected' CHECK (agents_mode = 'selected'),
+  agent_id uuid NOT NULL,
+  PRIMARY KEY (grant_id,agent_id),
+  FOREIGN KEY (grant_id,environment_id,agents_mode)
+    REFERENCES role_grants(id,environment_id,agents_mode) ON DELETE CASCADE,
+  FOREIGN KEY (environment_id,agent_id) REFERENCES agents(environment_id,id) ON DELETE CASCADE
+);
+-- Explicit Agent actions keep their selected targets. Implications are evaluated
+-- from each originating permission, so Operate runs retains its environment scope.
+CREATE VIEW role_grant_permissions AS
+SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.all_members,g.environment_id,
+       a.agent_id,p.permission
+FROM role_grants g
+JOIN role_permissions p ON (p.org_id,p.role_id)=(g.org_id,g.role_id)
+LEFT JOIN role_grant_agents a ON a.grant_id=g.id
+  AND p.permission IN ('agents.use','agents.manage') AND g.agents_mode='selected'
+WHERE p.permission NOT IN ('agents.use','agents.manage')
+   OR g.agents_mode='all' OR (g.agents_mode='selected' AND a.agent_id IS NOT NULL);
+
+-- Cascading physical Agent deletion must invalidate previously observed targets.
+CREATE FUNCTION bump_grant_target_revision() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE role_grants SET revision=revision+1 WHERE id=NEW.grant_id;
+    RETURN NEW;
+  END IF;
+  UPDATE role_grants SET revision=revision+1 WHERE id=OLD.grant_id;
+  RETURN OLD;
+END;
+$$;
+CREATE TRIGGER changed_grant_target AFTER INSERT OR DELETE ON role_grant_agents
+  FOR EACH ROW EXECUTE FUNCTION bump_grant_target_revision();
+
+-- Record named targets before FK cascade removes the Agent registration.
+CREATE FUNCTION audit_deleted_agent_targets() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE target record;
+BEGIN
+  FOR target IN
+    SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.all_members,g.revision,r.name AS role_name
+    FROM role_grants g JOIN role_grant_agents a ON a.grant_id=g.id
+    JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
+    WHERE a.environment_id=OLD.environment_id AND a.agent_id=OLD.id
+    ORDER BY g.id FOR UPDATE OF g
+  LOOP
+    INSERT INTO audit_events(id,actor_kind,actor_source,org_id,action,target_kind,target_id,details)
+    VALUES(uuidv7(),'system','agent-registration-deletion',target.org_id,'role_grant.target_removed','role_grant',target.id,
+      jsonb_build_object('role_id',target.role_id,'role_name',target.role_name,'member_id',target.member_id,
+        'group_id',target.group_id,'all_members',target.all_members,'environment_id',OLD.environment_id,
+        'removed_agent_id',OLD.id,'removed_agent_key',OLD.key,
+        'before_revision',target.revision,'after_revision',target.revision+1));
+  END LOOP;
+  RETURN OLD;
+END;
+$$;
+CREATE TRIGGER deleted_agent_targets BEFORE DELETE ON agents
+  FOR EACH ROW EXECUTE FUNCTION audit_deleted_agent_targets();
+
+CREATE INDEX role_grants_role ON role_grants(org_id,role_id);
+CREATE INDEX role_grants_environment ON role_grants(org_id,environment_id);
+CREATE INDEX role_grants_member ON role_grants(org_id,member_id) WHERE member_id IS NOT NULL;
+CREATE INDEX role_grants_group ON role_grants(org_id,group_id) WHERE group_id IS NOT NULL;
+
+CREATE INDEX sessions_user_origin ON sessions(environment_id,origin_user_id,id) WHERE admission_mode='scoped';
+CREATE INDEX sessions_key_origin ON sessions(environment_id,origin_api_key_id,id) WHERE admission_mode='scoped';

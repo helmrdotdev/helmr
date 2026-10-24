@@ -54,6 +54,10 @@ func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller session.C
 		if err := session.RequireRootCaller(ctx, tx, caller); err != nil {
 			return err
 		}
+		allAgents, agentIDs, err := session.RuntimeAgentScope(ctx, tx, caller)
+		if err != nil {
+			return err
+		}
 		var selected *uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT CASE WHEN $3='spawn' THEN s.deployment_id ELSE e.current_deployment_id END FROM sessions s JOIN environments e ON e.id=s.environment_id WHERE s.environment_id=$1 AND s.id=$2`, caller.Execution.EnvironmentID, caller.ID, operation).Scan(&selected); err != nil {
 			return err
@@ -65,7 +69,7 @@ func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller session.C
 		if expected != uuid.Nil() && expected != *selected {
 			return ErrInvalidInput
 		}
-		rows, err := tx.Query(ctx, `SELECT a.key,d.input_kind,d.input_schema FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key>$3 ORDER BY a.key LIMIT 51`, caller.Execution.EnvironmentID, *selected, after)
+		rows, err := tx.Query(ctx, `SELECT a.key,d.input_kind,d.input_schema FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key>$3 AND ($4::boolean OR a.id=ANY($5::uuid[])) ORDER BY a.key LIMIT 51`, caller.Execution.EnvironmentID, *selected, after, allAgents, agentIDs)
 		if err != nil {
 			return err
 		}

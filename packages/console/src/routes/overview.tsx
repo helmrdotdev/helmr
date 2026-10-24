@@ -1,3 +1,5 @@
+import { hasPermission } from "../lib/auth";
+import { useMe } from "../lib/me";
 import { A } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
@@ -21,7 +23,7 @@ import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, ui } from "../ui/styles";
 
-const overviewError = (error: unknown) => loadError(error, "Could not load what is waiting in this environment.");
+const overviewError = (error: unknown) => loadError(error, "Could not load what is waiting in this environment.", {forbidden:"You do not have run or Agent connection access in this environment. View your access in My account or ask an access administrator for a Role."});
 
 type Filter = "all" | AttentionKind;
 
@@ -71,6 +73,8 @@ function actionHref(item: AttentionItem): string {
 // promoted, from its latest promotion event, as separate meta items.
 function DeploymentContext() {
   const scope = useScopeIDs();
+  const me = useMe();
+  const canRead = () => hasPermission(me.data, "deployment_metadata.read", scope());
   const enabled = () => !!scope().projectID && !!scope().environmentID;
   const current = createQuery(() => ({
     queryKey: ["deployments", "current", scope().projectID, scope().environmentID],
@@ -85,7 +89,7 @@ function DeploymentContext() {
       const page = await getDeploymentEvents(current.data!.id, scope(), { limit: 100 });
       return page.events.filter((event) => event.kind === "deployment.promoted").at(-1)?.at ?? null;
     },
-    enabled: enabled() && !!current.data,
+    enabled: enabled() && !!current.data && canRead(),
     retry: false,
   }));
   return (
@@ -93,7 +97,7 @@ function DeploymentContext() {
       <Show when={current.data} fallback={<span>No current deployment</span>}>
         {(deployment) => (
           <>
-            <span class="whitespace-nowrap">Current deployment <IDText value={deployment().id} mode="link" href={deploymentHref(deployment().id)} /></span>
+            <span class="whitespace-nowrap">Current deployment <Show when={canRead()} fallback={<IDText value={deployment().id} />}><IDText value={deployment().id} mode="link" href={deploymentHref(deployment().id)} /></Show></span>
             <Show when={promoted.data}>
               {(at) => <span class="whitespace-nowrap">Promoted <RelativeTime value={at()} /></span>}
             </Show>
@@ -155,6 +159,7 @@ function Queue(props: { items: readonly AttentionItem[]; counts: AttentionCounts
 }
 
 export function Overview() {
+  const me = useMe();
   const ids = useScopeIDs();
   const enabled = () => !!ids().projectID && !!ids().environmentID;
   const attention = useAttention();
@@ -185,7 +190,7 @@ export function Overview() {
   return (
     <Page>
       <PageHeader title="Overview" meta={<DeploymentContext />} />
-      <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
+      <Show when={enabled()} fallback={<EmptyState title="No environment selected" hint={<>Select an accessible project and environment. If none are available, ask an access administrator to assign a Role. <A href="/settings/account" class="underline">View your access</A>.</>} />}>
         <Switch>
           <Match when={attention.isError && !attention.data}>
             <ErrorState message={overviewError(attention.error)} details={errorDetails(attention.error)} onRetry={() => void attention.refetch()} />
@@ -195,7 +200,7 @@ export function Overview() {
           </Match>
           <Match when={setUp()}>
             <div class={ui.sectionStack}>
-              <SetUpPanel projectID={ids().projectID} environmentID={ids().environmentID} />
+              <Show when={hasPermission(me.data, "deployments.write", ids()) && hasPermission(me.data, "deployment.promote", ids())} fallback={<EmptyState title="No deployed agents are available to you in this environment." hint="Ask a member who can publish and activate deployments to make an Agent available." />}><SetUpPanel projectID={ids().projectID} environmentID={ids().environmentID} /></Show>
               <Show when={attention.data && total() > 0}>
                 <Queue items={attention.data!.items} counts={attention.data!.counts} />
               </Show>

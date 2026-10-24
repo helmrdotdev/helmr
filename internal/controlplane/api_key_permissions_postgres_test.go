@@ -36,6 +36,9 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		if item.Name == "other-org" {
 			t.Fatal("cross-organization API key appeared in target list")
 		}
+		if item.CreatedByMemberID == nil {
+			t.Fatal("list omitted creator identity")
+		}
 		if !reflect.DeepEqual(item.Permissions, wantGrants) {
 			t.Fatalf("list permissions for %q = %+v, want %+v", item.Name, item.Permissions, wantGrants)
 		}
@@ -69,7 +72,7 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		{name: "empty"},
 		{name: "empty grant", grants: []api.APIKeyPermissionGrant{{}}},
 		{name: "unsupported", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{"unsupported"}}}},
-		{name: "", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsRead}}}},
+		{name: "", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeRunsView}}}},
 	} {
 		fixture.store.reset()
 		response := fixture.issueRecorder(t, test.name, test.grants)
@@ -78,9 +81,9 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		}
 	}
 
-	inputScopes := append([]api.APIKeyScope{api.APIKeyScopeSessionsRead}, allAPIKeyPermissionScopes()...)
+	inputScopes := append([]api.APIKeyScope{api.APIKeyScopeRunsView}, allAPIKeyPermissionScopes()...)
 	fixture.store.reset()
-	issuedRecorder := fixture.issueRecorder(t, "issued", []api.APIKeyPermissionGrant{{Scopes: inputScopes}, {Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsRead}}})
+	issuedRecorder := fixture.issueRecorder(t, "issued", []api.APIKeyPermissionGrant{{Scopes: inputScopes}, {Scopes: []api.APIKeyScope{api.APIKeyScopeRunsView}}})
 	if issuedRecorder.Code != http.StatusCreated || fixture.store.transactions.Load() != 1 {
 		t.Fatalf("issue status/transactions = %d/%d", issuedRecorder.Code, fixture.store.transactions.Load())
 	}
@@ -93,6 +96,10 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		t.Fatalf("issued = %+v", issued.APIKeySummary)
 	}
 
+	var creator string
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT created_by_member_id::text FROM api_keys WHERE id=$1`, issued.ID).Scan(&creator); err != nil || issued.CreatedByMemberID == nil || *issued.CreatedByMemberID != creator {
+		t.Fatal("creator provenance missing", err)
+	}
 	var attributed bool
 	if err := fixture.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events a JOIN login_sessions s ON s.id=a.actor_credential_id AND s.user_id=a.actor_user_id WHERE a.action='api_key.issued' AND a.target_id=$1 AND a.actor_kind='login' AND a.project_id=$2 AND a.environment_id=$3)`, issued.ID, fixture.projectID, fixture.environmentID).Scan(&attributed); err != nil || !attributed {
 		t.Fatal("issued key has no fact attributed to its authenticated login", attributed, err)
@@ -153,7 +160,7 @@ func newAPIKeyHTTPPostgresFixture(t *testing.T, keyCount int) apiKeyHTTPPostgres
 	owner := func(orgID uuid.UUID) uuid.UUID {
 		t.Helper()
 		var userID uuid.UUID
-		if err := fixture.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id = $1`, orgID).Scan(&userID); err != nil {
+		if err := fixture.pool.QueryRow(t.Context(), `SELECT id FROM org_members WHERE org_id = $1`, orgID).Scan(&userID); err != nil {
 			t.Fatal(err)
 		}
 		return userID
@@ -173,14 +180,19 @@ func newAPIKeyHTTPPostgresFixture(t *testing.T, keyCount int) apiKeyHTTPPostgres
 			t.Fatal(err)
 		}
 	}
+	var ownerUser uuid.UUID
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE id=$1`, ownerID).Scan(&ownerUser); err != nil {
+		t.Fatal(err)
+	}
+	fixture.grant(t, orgID, ownerUser, environmentID, "keys.manage")
 	permissions := allAPIKeyInternalPermissions()
 	keyRows := make([][]any, 0, keyCount+1)
 	for index := range keyCount {
-		keyRows = append(keyRows, []any{uuid.NewV7(), orgID, projectID, environmentID, ownerID, "owner", permissions, fmt.Sprintf("key-%03d", index), fmt.Sprintf("hlmr_%03d", index), []byte(fmt.Sprintf("hash-%03d", index))})
+		keyRows = append(keyRows, []any{uuid.NewV7(), orgID, projectID, environmentID, ownerID, permissions, fmt.Sprintf("key-%03d", index), fmt.Sprintf("hlmr_%03d", index), []byte(fmt.Sprintf("hash-%03d", index))})
 	}
-	keyRows = append(keyRows, []any{uuid.NewV7(), otherOrgID, otherProjectID, otherEnvironmentID, otherOwnerID, "owner", permissions, "other-org", "hlmr_other_org", []byte("other-org-hash")})
+	keyRows = append(keyRows, []any{uuid.NewV7(), otherOrgID, otherProjectID, otherEnvironmentID, otherOwnerID, permissions, "other-org", "hlmr_other_org", []byte("other-org-hash")})
 	if _, err := fixture.pool.CopyFrom(t.Context(), pgx.Identifier{"api_keys"},
-		[]string{"id", "org_id", "project_id", "environment_id", "created_by_user_id", "role", "permissions", "name", "key_prefix", "token_hash"}, pgx.CopyFromRows(keyRows)); err != nil {
+		[]string{"id", "org_id", "project_id", "environment_id", "created_by_member_id", "permissions", "name", "key_prefix", "token_hash"}, pgx.CopyFromRows(keyRows)); err != nil {
 		t.Fatal(err)
 	}
 	return apiKeyHTTPPostgresFixture{httpPostgresFixture: fixture, store: store, token: token, projectID: projectID, environmentID: environmentID}
@@ -219,20 +231,13 @@ func (f apiKeyHTTPPostgresFixture) issueRecorder(t *testing.T, name string, gran
 
 func allAPIKeyPermissionScopes() []api.APIKeyScope {
 	return []api.APIKeyScope{
-		api.APIKeyScopeAsksAnswer,
-		api.APIKeyScopeSessionsRead,
-		api.APIKeyScopeSessionsCreate,
-		api.APIKeyScopeSessionsSend,
-		api.APIKeyScopeSessionsInterrupt,
-		api.APIKeyScopeSessionsResume,
-		api.APIKeyScopeSessionsClose,
-		api.APIKeyScopeSessionsCancel,
-		api.APIKeyScopeComputersCreate,
-		api.APIKeyScopeComputersRead,
-		api.APIKeyScopeComputersDelete,
-		api.APIKeyScopeComputerCommandCreate,
-		api.APIKeyScopeSecretsWrite,
-		api.APIKeyScopeDeploymentsWrite,
+		api.APIKeyScopeAgentsUse,
+		api.APIKeyScopeRunsView,
+		api.APIKeyScopeRunsOperate,
+		api.APIKeyScopeDeploymentsPublish,
+		api.APIKeyScopeDeploymentsPromote,
+		api.APIKeyScopeComputersOperate,
+		api.APIKeyScopeSecretsManage,
 	}
 }
 

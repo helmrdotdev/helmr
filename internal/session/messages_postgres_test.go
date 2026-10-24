@@ -127,7 +127,7 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 	if err != nil || repeated.MessageID != admitted.MessageID {
 		t.Fatalf("expired retry: %+v %v", repeated, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.user)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.user)
 	if _, err := session.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked retry: %v", err)
 	}

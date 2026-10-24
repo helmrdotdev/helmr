@@ -1,3 +1,4 @@
+import { ResourceAccess } from "../features/access/ResourceAccess";
 import { useMe } from "../lib/me";
 import { useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
@@ -24,7 +25,7 @@ function EditEnvironmentDialog(props: {
   onSaved: () => Promise<void>;
 }) {
   const [name, setName] = createSignal(props.env.name);
-  const [colorHex, setColorHex] = createSignal(normalizeEnvironmentColor(props.env.color_hex));
+  const [colorHex, setColorHex] = createSignal(normalizeEnvironmentColor(props.env.color_hex ?? "#64748B"));
   const [submitting, setSubmitting] = createSignal(false);
   const [formError, setFormError] = createSignal<string | null>(null);
 
@@ -78,6 +79,7 @@ export function Environments() {
   const me = useMe();
   const clipboard = useClipboard({ copied: "Environment ID copied", failed: "Could not copy the environment ID" });
   const canManage = () => hasPermission(me.data, "projects.manage");
+  const [accessEnvironment, setAccessEnvironment] = createSignal<string>();
   const [creating, setCreating] = createSignal(false);
   const [editing, setEditing] = createSignal<Environment | null>(null);
 
@@ -89,7 +91,7 @@ export function Environments() {
       <PageHeader
         title="Environments"
         actions={
-          <button type="button" class={ui.button} disabled={!project()} onClick={() => setCreating(true)}>
+          <button type="button" class={ui.button} disabled={!project() || !canManage()} onClick={() => setCreating(true)}>
             New environment
           </button>
         }
@@ -109,6 +111,7 @@ export function Environments() {
                   items={[
                     ...(scope.selectedEnvironmentID() !== env.environment ? [{ label: "Use", onSelect: () => scope.setSelectedEnvironmentID(env.environment) }] : []),
                     ...(canManage() ? [{ label: "Edit", onSelect: () => setEditing(env) }] : []),
+                    ...(hasPermission(me.data,"access.manage") ? [{label:"Access",onSelect:()=>setAccessEnvironment(env.environment)}] : []),
                     { label: "Copy ID", onSelect: () => void clipboard.copy(env.environment) },
                   ]}
                 />
@@ -128,11 +131,13 @@ export function Environments() {
               await queryClient.invalidateQueries({ queryKey: ["projects"] });
               scope.setSelectedEnvironmentID(env.environment);
               setCreating(false);
+              if(hasPermission(me.data,"access.manage")) setAccessEnvironment(env.environment);
             }}
           />
         )}
       </Show>
 
+      <Show when={accessEnvironment()}>{env => <ResourceAccess environment={env()} onClose={() => setAccessEnvironment(undefined)} />}</Show>
       <Show when={editing()}>
         {(env) => (
           <EditEnvironmentDialog

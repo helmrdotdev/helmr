@@ -142,9 +142,9 @@ function slackFixture(req: IncomingMessage, res: ServerResponse, url: URL, backe
   const role = cookie(req, "helmr_dev_role");
   const path = url.pathname;
   if (role && path === "/api/me" && req.method === "GET") {
-    // A member who is not an owner or admin does not manage secrets either.
+    // This preview persona omits connection and secret management grants.
     const manages = role === "owner" || role === "admin";
-    patched(req, res, backendURL, (body) => ({ ...body, role, permissions: (body["permissions"] as string[] | undefined ?? []).filter((permission) => manages || permission !== "secrets.write") }));
+    patched(req, res, backendURL, (body) => ({ ...body, permissions: (body["permissions"] as string[] | undefined ?? []).filter((permission) => manages || !["secrets.manage", "agents.manage"].includes(permission)), permission_scopes: (body["permission_scopes"] as {permissions:string[]}[] | undefined ?? []).map(scope => ({...scope, permissions:scope.permissions.filter(permission => manages || !["secrets.manage", "agents.manage"].includes(permission))})) }));
     return true;
   }
   if (!state) return false;
@@ -214,7 +214,7 @@ function setupFixture(req: IncomingMessage, res: ServerResponse, url: URL): bool
   // Like the server, only people who manage secrets can list them.
   const role = cookie(req, "helmr_dev_role");
   if (rest === "/secrets" && req.method === "GET" && role && role !== "owner" && role !== "admin") {
-    json(res, 403, { error: { code: "forbidden", message: "secrets.write is required" } });
+    json(res, 403, { error: { code: "forbidden", message: "secrets.manage is required" } });
     return true;
   }
   if (rest === "/secrets" && req.method === "GET") {

@@ -26,15 +26,15 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if s.slackConfig == nil {
-		writeError(w, unavailable(errors.New("the Slack integration is not configured")))
-		return
-	}
 	env := pgvalue.MustUUIDValue(environment)
 	name := chi.URLParam(r, "agentName")
 	agent, err := slack.ConnectionAgent(r.Context(), s.tx, principal.OrgID, principal.UserID, env, name)
 	if err != nil {
 		s.writeSlackError(w, err)
+		return
+	}
+	if s.slackConfig == nil {
+		writeError(w, unavailable(errors.New("the Slack integration is not configured")))
 		return
 	}
 	var connection uuid.UUID

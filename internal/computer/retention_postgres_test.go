@@ -53,7 +53,7 @@ func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 	if err := f.Pool.QueryRow(ctx, `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := UpdateRetention(ctx, f.Pool, scope, f.Computer, lifetime.Policy{Set: true}); err != nil {
+	if _, err := UpdateRetention(ctx, f.Pool, f.Principal(t), scope, f.Computer, lifetime.Policy{Set: true}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
@@ -65,7 +65,7 @@ func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 		t.Fatal("never failed to preserve Computer")
 	}
 	ms := int64(1)
-	if _, err := UpdateRetention(ctx, f.Pool, scope, f.Computer, lifetime.Policy{Set: true, Milliseconds: &ms}); err != nil {
+	if _, err := UpdateRetention(ctx, f.Pool, f.Principal(t), scope, f.Computer, lifetime.Policy{Set: true, Milliseconds: &ms}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reconcileUnused(ctx, f.Pool, f.Environment, f.Computer); err != nil {
@@ -75,7 +75,7 @@ func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 	if !deleted {
 		t.Fatal("safe Computer with inert lease did not delete")
 	}
-	if _, err := UpdateRetention(ctx, f.Pool, scope, f.Computer, lifetime.Policy{Set: true}); err == nil {
+	if _, err := UpdateRetention(ctx, f.Pool, f.Principal(t), scope, f.Computer, lifetime.Policy{Set: true}); err == nil {
 		t.Fatal("deleted Computer was revived")
 	}
 }

@@ -101,7 +101,7 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
   return <Panel title="Slack delivery">
     <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
     <Show when={!props.canManage && rows().some((post) => post.attempt_id)}>
-      <p class={cx(ui.muted, "m-0")}>An organization owner or admin can check again or stop delivery.</p>
+      <p class={cx(ui.muted, "m-0")}>A run operator for this environment can check again or stop delivery.</p>
     </Show>
     <QueryState
       query={posts}

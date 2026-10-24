@@ -7,16 +7,15 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
 )
 
 func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 	fixture := newIdentityFixture(t)
 	ctx := t.Context()
-	userID := fixture.user(t, "Developer", "")
+	userID := fixture.user(t, "Member", "")
 	orgID := fixture.organization(t, "device")
-	fixture.member(t, orgID, userID, db.OrgMemberRoleDeveloper)
-	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleDeveloper}
+	memberID := fixture.member(t, orgID, userID, "member")
+	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, MemberID: memberID}
 	consent := DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}
 
 	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
@@ -58,7 +57,7 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw)
-	if err != nil || principal.UserID != userID || principal.OrgID != orgID || principal.Role != auth.RoleDeveloper {
+	if err != nil || principal.UserID != userID || principal.OrgID != orgID || principal.IsOwner {
 		t.Fatalf("device principal = %+v, err = %v", principal, err)
 	}
 	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, started.DeviceCode); !errors.Is(err, ErrInvalidDeviceCode) {
@@ -75,10 +74,10 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 	fixture := newIdentityFixture(t)
 	ctx := t.Context()
-	userID := fixture.user(t, "Viewer", "")
+	userID := fixture.user(t, "Peer", "")
 	orgID := fixture.organization(t, "device-denied")
-	fixture.member(t, orgID, userID, db.OrgMemberRoleViewer)
-	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleViewer}
+	memberID := fixture.member(t, orgID, userID, "member")
+	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, MemberID: memberID}
 	consent := DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}
 
 	denied, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
@@ -118,10 +117,10 @@ func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 func TestDeviceCodePostgresFailedExchangeKeepsApprovedCode(t *testing.T) {
 	fixture := newIdentityFixture(t)
 	ctx := t.Context()
-	userID := fixture.user(t, "Developer", "")
+	userID := fixture.user(t, "Member", "")
 	orgID := fixture.organization(t, "device-atomic")
-	fixture.member(t, orgID, userID, db.OrgMemberRoleDeveloper)
-	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleDeveloper}
+	memberID := fixture.member(t, orgID, userID, "member")
+	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, MemberID: memberID}
 	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -157,10 +156,10 @@ func TestDeviceCodePostgresFailedExchangeKeepsApprovedCode(t *testing.T) {
 func TestDeviceCodePostgresConcurrentExchangeIssuesOneSession(t *testing.T) {
 	fixture := newIdentityFixture(t)
 	ctx := t.Context()
-	userID := fixture.user(t, "Developer", "")
+	userID := fixture.user(t, "Member", "")
 	orgID := fixture.organization(t, "device-concurrent")
-	fixture.member(t, orgID, userID, db.OrgMemberRoleDeveloper)
-	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleDeveloper}
+	memberID := fixture.member(t, orgID, userID, "member")
+	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, MemberID: memberID}
 	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
 	if err != nil {
 		t.Fatal(err)

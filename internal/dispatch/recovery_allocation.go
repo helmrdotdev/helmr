@@ -49,6 +49,13 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
+		allowed, err := initialSessionDemand(ctx, tx, env, computerID, sessions)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return nil
+		} // Commit revoked input settlement without reserving a VM.
 		var save *uuid.UUID
 		var base string
 		var cpu, memory int64
@@ -92,6 +99,9 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 	})
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)
+	}
+	if result.InstanceID == uuid.Nil() {
+		return computer.ComputerAllocation{}, ErrNotReady
 	}
 	return result, nil
 }

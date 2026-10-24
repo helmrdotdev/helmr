@@ -9,7 +9,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
@@ -28,7 +27,7 @@ func (f statusFixture) choiceAsk(t *testing.T) (uuid.UUID, uuid.UUID) {
 }
 func TestDirectChoiceUsesVerifiedActorAndExactQuestion(t *testing.T) {
 	for _, linked := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unlinked", true: "viewer"}[linked], func(t *testing.T) {
+		t.Run(map[bool]string{false: "unlinked", true: "operator"}[linked], func(t *testing.T) {
 			f := newStatusFixture(t)
 			if linked {
 				f.link(t)
@@ -36,7 +35,7 @@ func TestDirectChoiceUsesVerifiedActorAndExactQuestion(t *testing.T) {
 			}
 			turn, ask := f.choiceAsk(t)
 			if linked {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.User)
+				f.SetPermissions(t, "runs.operate")
 			}
 			c := f.control("choose")
 			c.Target.Turn, c.Target.Ask, c.OptionID = turn, ask, "yes"

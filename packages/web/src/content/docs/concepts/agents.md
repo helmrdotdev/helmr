@@ -175,7 +175,7 @@ and Trigger activations. The list initially shows current Agents; choose
 **All Agents** to include identities absent from the current Deployment, even
 when the Environment has no current Deployment. Registration alone does not mean
 an Agent has ever been active. Existing connections remain manageable by an
-organization owner or admin.
+person with `agents.manage` on the Agent.
 
 Deployment details are read-only snapshots. They list each Agent with its
 Template and each Template with its resources; Sessions and Computers link to the

@@ -85,14 +85,14 @@ func TestPublicCommandInfoProjectsEveryState(t *testing.T) {
 func TestComputerCommandGETRequiresExecPermissionNotComputerRead(t *testing.T) {
 	orgID := uuid.New()
 	scope := auth.Scope{OrgID: orgID, ProjectID: "project", EnvironmentID: "environment"}
-	viewer := auth.Principal{Kind: auth.PrincipalKindSession, OrgID: orgID, Role: auth.RoleViewer}
+	viewer := auth.Principal{Kind: auth.PrincipalKindSession, OrgID: orgID}
 	if canAccessComputerCommandOutput(viewer, scope) {
 		t.Fatal("Computer reader was allowed to read Computer Exec output")
 	}
 	createOnly := auth.Principal{
-		Kind: auth.PrincipalKindAPIKey, OrgID: orgID, Role: auth.RoleDeveloper,
+		Kind: auth.PrincipalKindAPIKey, OrgID: orgID,
 		ProjectID: "project", EnvironmentID: "environment",
-		Permissions: []auth.Permission{auth.PermissionComputerCommandCreate},
+		Permissions: []auth.Permission{auth.CapabilityComputersOperate},
 	}
 	if !canAccessComputerCommandOutput(createOnly, scope) {
 		t.Fatal("create-only API key was unable to poll its Computer Exec")

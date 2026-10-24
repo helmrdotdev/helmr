@@ -38,7 +38,7 @@ func diagnosticTestSource(t *testing.T, pool *pgxpool.Pool, kind string, env uui
 		if env != baseEnv {
 			t.Fatal("Session test source requires fixture Environment")
 		}
-		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) SELECT environment_id,$1,agent_id,deployment_id,computer_id,$1,0 FROM sessions WHERE environment_id=$2 LIMIT 1`, s.ID, env)
+		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id,origin_api_key_id,origin_activation_id) SELECT environment_id,$1,agent_id,deployment_id,computer_id,$1,0,admission_mode,origin_kind,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE environment_id=$2 LIMIT 1`, s.ID, env)
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) SELECT environment_id,$1,1,computer_id,computer_lease_epoch,'ready' FROM session_processes WHERE environment_id=$2 LIMIT 1`, s.ID, env)
 	case "image_build":
 		dbtest.MustExec(t, t.Context(), pool, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2::uuid,'sha256:'||repeat(replace($2::text,'-',''),2),'{}','{}')`, env, s.ID)

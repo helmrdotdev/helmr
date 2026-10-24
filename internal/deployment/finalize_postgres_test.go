@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/artifacttest"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -41,8 +42,12 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
  INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($3,$1,$2,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, org, project, env); err != nil {
 		t.Fatal(err)
 	}
+	key := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,permissions,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,ARRAY['deployments.publish','deployments.promote'],'fixture','fixture',convert_to('fixture','UTF8'))`, key, org, project, env)
+	principal := auth.Principal{Kind: auth.PrincipalKindAPIKey, APIKeyID: key, OrgID: org, ProjectID: project.String(), EnvironmentID: env.String(), Permissions: []auth.Permission{auth.CapabilityDeploymentsPublish, auth.CapabilityDeploymentsPromote}}
+	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), idempotencyKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output, Preparations: artifacttest.PreparationOutputs(t, output)}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
+	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{principal: principal, scope: scope, orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), idempotencyKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output, Preparations: artifacttest.PreparationOutputs(t, output)}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}
 }
 
 func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {

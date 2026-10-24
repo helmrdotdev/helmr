@@ -41,6 +41,9 @@ func ListEvents(ctx context.Context, pool db.TxBeginner, caller Caller, req Turn
 		return result, ErrInvalidInput
 	}
 	err := readTransaction(ctx, pool, caller, req.EnvironmentID, func(tx pgx.Tx) error {
+		if err := authorizeSessionRead(ctx, tx, caller, req.EnvironmentID, req.SessionID); err != nil {
+			return err
+		}
 		var end int64
 		if err := tx.QueryRow(ctx, `SELECT next_event_seq-1 FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, req.SessionID).Scan(&end); err != nil {
 			return err

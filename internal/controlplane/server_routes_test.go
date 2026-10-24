@@ -40,11 +40,15 @@ func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	sort.Strings(got)
 
 	want := strings.Split(strings.TrimSpace(`
+DELETE /api/groups/{id}
+DELETE /api/groups/{id}/members/{memberID}
 DELETE /api/invitations/{id}
-DELETE /api/members/{userID}
+DELETE /api/members/{memberID}
 DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}
 DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}
 DELETE /api/projects/{project}/environments/{environment}/computers/{computerID}
+DELETE /api/role-grants/{id}
+DELETE /api/roles/{id}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
 DELETE /v1/computers/{computerID}
 GET /admin/api/v1/regions
@@ -54,11 +58,17 @@ GET /admin/api/v1/worker-groups/{groupID}
 GET /admin/api/v1/worker-groups/{groupID}/pools
 GET /agent-setup/{harness}.md
 GET /api/auth/device/status
+GET /api/groups
+GET /api/groups/{id}
+GET /api/groups/{id}/members
 GET /api/invitations
 GET /api/me
 GET /api/members
+GET /api/members/{memberID}/permissions
+GET /api/ownership/members
 GET /api/projects
 GET /api/projects/{project}
+GET /api/projects/{project}/access-targets
 GET /api/projects/{project}/environments/{environment}
 GET /api/projects/{project}/environments/{environment}/agents
 GET /api/projects/{project}/environments/{environment}/agents/{agentName}/slack
@@ -96,6 +106,10 @@ GET /api/projects/{project}/environments/{environment}/triggers
 GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}
 GET /api/projects/{project}/settings
 GET /api/regions
+GET /api/role-grants
+GET /api/role-grants/{id}
+GET /api/roles
+GET /api/roles/{id}
 GET /api/slack/link-workspaces
 GET /api/slack/user-links
 GET /api/slack/user-links/callback
@@ -143,11 +157,13 @@ GET /worker/v1/instance
 GET /worker/v1/updates
 PATCH /admin/api/v1/regions/{regionID}
 PATCH /admin/api/v1/worker-groups/{groupID}
-PATCH /api/members/{userID}
+PATCH /api/groups/{id}
 PATCH /api/projects/{project}
 PATCH /api/projects/{project}/environments/{environment}
 PATCH /api/projects/{project}/environments/{environment}/computers/{computerID}
 PATCH /api/projects/{project}/settings
+PATCH /api/role-grants/{id}
+PATCH /api/roles/{id}
 PATCH /v1/computers/{computerID}
 POST /admin/api/v1/regions
 POST /admin/api/v1/worker-groups
@@ -171,13 +187,16 @@ POST /api/auth/logout
 POST /api/auth/magic-link/finish
 POST /api/auth/magic-link/invite/start
 POST /api/auth/magic-link/start
+POST /api/groups
 POST /api/invitations
 POST /api/organizations
+POST /api/ownership/recover-access
 POST /api/projects
 POST /api/projects/{project}/environments
 POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack
 POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/authorize
 POST /api/projects/{project}/environments/{environment}/api-keys
+POST /api/projects/{project}/environments/{environment}/api-keys/{id}/rotate
 POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel
 POST /api/projects/{project}/environments/{environment}/computers
 POST /api/projects/{project}/environments/{environment}/computers/{computerID}/exec
@@ -200,6 +219,8 @@ POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/tur
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/interrupt
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/messages
 POST /api/projects/{project}/environments/{environment}/templates/{template}/refresh
+POST /api/role-grants
+POST /api/roles
 POST /api/slack/installations/finish
 POST /api/slack/user-links/authorize
 POST /api/slack/user-links/callback
@@ -313,7 +334,10 @@ POST /worker/v1/sessions/start/release
 POST /worker/v1/sessions/stopped
 POST /worker/v1/sessions/turn
 POST /worker/v1/sessions/turn/receipt
+PUT /api/groups/{id}/members/{memberID}
+PUT /api/members/{memberID}/ownership
 PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/credentials
+PUT /api/projects/{project}/environments/{environment}/api-keys/{id}
 PUT /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
 `), "\n")

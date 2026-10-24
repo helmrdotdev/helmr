@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"net/http"
 	"strconv"
 	"strings"
@@ -87,7 +88,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionSecretsWrite, scope) {
+	if !principal.HasPermission(auth.PermissionSecretMetadataRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -164,7 +165,7 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionSecretsWrite, scope) {
+	if !principal.HasPermission(auth.PermissionSecretMetadataRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -334,6 +335,8 @@ func (s *Server) writeSecretMutationError(
 	var expired idempotency.ExpiredError
 	var retryConflict idempotency.ConflictError
 	switch {
+	case errors.Is(err, access.ErrDenied):
+		writeError(w, forbidden(errors.New("permission is required")))
 	case errors.As(err, &expired):
 		writeError(w, gone(expired))
 	case errors.As(err, &retryConflict):

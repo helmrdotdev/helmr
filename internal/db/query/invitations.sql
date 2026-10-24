@@ -1,5 +1,5 @@
 -- name: GetActiveInvitation :one
-SELECT id, org_id, invitee_email, role
+SELECT id, org_id, invitee_email
   FROM invitations
  WHERE token_hash = sqlc.arg(token_hash)
    AND accepted_at IS NULL
@@ -7,7 +7,7 @@ SELECT id, org_id, invitee_email, role
    AND expires_at > now();
 
 -- name: GetActiveInvitationByID :one
-SELECT id, org_id, invitee_email, role
+SELECT id, org_id, invitee_email
   FROM invitations
  WHERE id = sqlc.arg(id)
    AND accepted_at IS NULL
@@ -18,14 +18,13 @@ SELECT id, org_id, invitee_email, role
 SELECT id,
        org_id,
        invitee_email,
-       role,
-       invited_by_user_id,
+       invited_by_member_id,
        created_at,
        expires_at,
        accepted_at,
-       accepted_by_user_id,
+       accepted_by_member_id,
        revoked_at,
-       revoked_by_user_id
+       revoked_by_member_id
   FROM invitations
  WHERE org_id = sqlc.arg(org_id)
    AND accepted_at IS NULL
@@ -39,7 +38,7 @@ SELECT id,
  LIMIT sqlc.arg(row_limit);
 
 -- name: GetPendingInvitationByEmail :one
-SELECT id, org_id, invitee_email, role
+SELECT id, org_id, invitee_email
   FROM invitations
  WHERE org_id = sqlc.arg(org_id)
    AND invitee_email = sqlc.arg(invitee_email)
@@ -49,7 +48,7 @@ SELECT id, org_id, invitee_email, role
  LIMIT 1;
 
 -- name: GetRevocableInvitation :one
-SELECT id, org_id, invitee_email, role
+SELECT id, org_id, invitee_email
   FROM invitations
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
@@ -63,7 +62,7 @@ UPDATE invitations
    AND invitee_email = sqlc.arg(invitee_email)
    AND accepted_at IS NULL
    AND revoked_at IS NULL
-   AND expires_at <= now() RETURNING id,role;
+   AND expires_at <= now() RETURNING id;
 
 -- name: CreateInvitation :one
 WITH active_invitee AS (
@@ -72,26 +71,25 @@ WITH active_invitee AS (
       JOIN users ON users.id = org_members.user_id
      WHERE org_members.org_id = sqlc.arg(org_id)
        AND lower(users.primary_email) = sqlc.arg(invitee_email)
-       AND org_members.disabled_at IS NULL
+       AND org_members.removed_at IS NULL
     UNION
     SELECT 1
       FROM invitations AS accepted_invitation
       JOIN org_members
         ON org_members.org_id = accepted_invitation.org_id
-       AND org_members.user_id = accepted_invitation.accepted_by_user_id
+       AND org_members.id = accepted_invitation.accepted_by_member_id
       JOIN users ON users.id = org_members.user_id
      WHERE accepted_invitation.org_id = sqlc.arg(org_id)
        AND accepted_invitation.invitee_email = sqlc.arg(invitee_email)
        AND accepted_invitation.accepted_at IS NOT NULL
-       AND org_members.disabled_at IS NULL
+       AND org_members.removed_at IS NULL
 )
-INSERT INTO invitations (id, org_id, invitee_email, role, invited_by_user_id, token_hash, expires_at)
+INSERT INTO invitations (id, org_id, invitee_email, invited_by_member_id, token_hash, expires_at)
 SELECT
     sqlc.arg(id),
     sqlc.arg(org_id),
     sqlc.arg(invitee_email),
-    sqlc.arg(role)::org_member_role,
-    sqlc.arg(invited_by_user_id),
+    sqlc.arg(invited_by_member_id),
     sqlc.arg(token_hash),
     sqlc.arg(expires_at)
 WHERE NOT EXISTS (SELECT 1 FROM active_invitee)
@@ -100,7 +98,7 @@ RETURNING *;
 -- name: AcceptInvitation :execrows
 UPDATE invitations
    SET accepted_at = now(),
-       accepted_by_user_id = sqlc.arg(user_id)
+       accepted_by_member_id = sqlc.arg(member_id)
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
    AND accepted_at IS NULL
@@ -110,7 +108,7 @@ UPDATE invitations
 -- name: RevokeInvitation :execrows
 UPDATE invitations
    SET revoked_at = now(),
-       revoked_by_user_id = sqlc.arg(revoked_by_user_id)
+       revoked_by_member_id = sqlc.arg(revoked_by_member_id)
  WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
    AND accepted_at IS NULL

@@ -542,7 +542,27 @@ func migrationPaths() ([]string, error) {
 func devLogin(w http.ResponseWriter, r *http.Request, pool *pgxpool.Pool, queries *db.Queries, cfg devConfig) {
 	ctx := r.Context()
 	userID := mustUUID(defaultUserID)
-	if _, err := pool.Exec(ctx, `
+	persona := r.URL.Query().Get("as")
+	switch persona {
+	case "employee":
+		userID = mustUUID("00000000-0000-7000-8000-000000000111")
+	case "observer":
+		userID = mustUUID("00000000-0000-7000-8000-000000000112")
+	case "release":
+		userID = mustUUID("00000000-0000-7000-8000-000000000113")
+	case "operator":
+		userID = mustUUID("00000000-0000-7000-8000-000000000114")
+	case "governance":
+		userID = mustUUID("00000000-0000-7000-8000-000000000115")
+	case "no-access":
+		userID = mustUUID("00000000-0000-7000-8000-000000000116")
+	case "", "owner":
+	default:
+		http.Error(w, "unknown local persona", http.StatusBadRequest)
+		return
+	}
+	if persona == "" || persona == "owner" {
+		if _, err := pool.Exec(ctx, `
 INSERT INTO users (id, display_name, primary_email)
 VALUES ($1, 'Local Developer', 'dev@helmr.local')
 ON CONFLICT (id) DO UPDATE
@@ -550,8 +570,15 @@ ON CONFLICT (id) DO UPDATE
        primary_email = EXCLUDED.primary_email,
        updated_at = now()
 `, pgvalue.UUID(userID)); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		var active bool
+		if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM org_members WHERE org_id='00000000-0000-7000-8000-000000000201' AND user_id=$1 AND removed_at IS NULL)`, userID).Scan(&active); err != nil || !active {
+			http.Error(w, "local persona is not available", http.StatusNotFound)
+			return
+		}
 	}
 	raw, err := auth.GenerateOpaque(32)
 	if err != nil {

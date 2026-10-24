@@ -201,114 +201,14 @@ func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.
 }
 
 func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
-	switch strings.TrimSpace(string(scope)) {
-	case string(api.APIKeyScopeAsksAnswer):
-		return api.APIKeyScopeAsksAnswer, true
-	case string(api.APIKeyScopeSessionsRead):
-		return api.APIKeyScopeSessionsRead, true
-	case string(api.APIKeyScopeSessionsCreate):
-		return api.APIKeyScopeSessionsCreate, true
-	case string(api.APIKeyScopeSessionsSend):
-		return api.APIKeyScopeSessionsSend, true
-	case string(api.APIKeyScopeSessionsInterrupt):
-		return api.APIKeyScopeSessionsInterrupt, true
-	case string(api.APIKeyScopeSessionsResume):
-		return api.APIKeyScopeSessionsResume, true
-	case string(api.APIKeyScopeSessionsClose):
-		return api.APIKeyScopeSessionsClose, true
-	case string(api.APIKeyScopeSessionsCancel):
-		return api.APIKeyScopeSessionsCancel, true
-	case string(api.APIKeyScopeComputersCreate):
-		return api.APIKeyScopeComputersCreate, true
-	case string(api.APIKeyScopeComputersRead):
-		return api.APIKeyScopeComputersRead, true
-	case string(api.APIKeyScopeComputersUpdate):
-		return api.APIKeyScopeComputersUpdate, true
-	case string(api.APIKeyScopeComputersDelete):
-		return api.APIKeyScopeComputersDelete, true
-	case string(api.APIKeyScopeComputerCommandCreate):
-		return api.APIKeyScopeComputerCommandCreate, true
-	case string(api.APIKeyScopeSecretsWrite):
-		return api.APIKeyScopeSecretsWrite, true
-	case string(api.APIKeyScopeDeploymentsWrite):
-		return api.APIKeyScopeDeploymentsWrite, true
-	default:
-		return "", false
-	}
+	value := strings.TrimSpace(string(scope))
+	return api.APIKeyScope(value), auth.IsCapability(auth.Permission(value))
 }
-
 func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
-	switch scope {
-	case api.APIKeyScopeAsksAnswer:
-		return auth.PermissionAsksAnswer, true
-	case api.APIKeyScopeSessionsRead:
-		return auth.PermissionSessionsRead, true
-	case api.APIKeyScopeSessionsCreate:
-		return auth.PermissionSessionsCreate, true
-	case api.APIKeyScopeSessionsSend:
-		return auth.PermissionSessionsSend, true
-	case api.APIKeyScopeSessionsInterrupt:
-		return auth.PermissionSessionsInterrupt, true
-	case api.APIKeyScopeSessionsResume:
-		return auth.PermissionSessionsResume, true
-	case api.APIKeyScopeSessionsClose:
-		return auth.PermissionSessionsClose, true
-	case api.APIKeyScopeSessionsCancel:
-		return auth.PermissionSessionsCancel, true
-	case api.APIKeyScopeComputersCreate:
-		return auth.PermissionComputersCreate, true
-	case api.APIKeyScopeComputersRead:
-		return auth.PermissionComputersRead, true
-	case api.APIKeyScopeComputersUpdate:
-		return auth.PermissionComputersUpdate, true
-	case api.APIKeyScopeComputersDelete:
-		return auth.PermissionComputersDelete, true
-	case api.APIKeyScopeComputerCommandCreate:
-		return auth.PermissionComputerCommandCreate, true
-	case api.APIKeyScopeSecretsWrite:
-		return auth.PermissionSecretsWrite, true
-	case api.APIKeyScopeDeploymentsWrite:
-		return auth.PermissionDeploymentsWrite, true
-	default:
-		return "", false
-	}
+	return auth.Permission(scope), auth.IsCapability(auth.Permission(scope))
 }
-
 func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
-	switch strings.TrimSpace(permission) {
-	case string(auth.PermissionAsksAnswer):
-		return api.APIKeyScopeAsksAnswer, true
-	case string(auth.PermissionSessionsRead):
-		return api.APIKeyScopeSessionsRead, true
-	case string(auth.PermissionSessionsCreate):
-		return api.APIKeyScopeSessionsCreate, true
-	case string(auth.PermissionSessionsSend):
-		return api.APIKeyScopeSessionsSend, true
-	case string(auth.PermissionSessionsInterrupt):
-		return api.APIKeyScopeSessionsInterrupt, true
-	case string(auth.PermissionSessionsResume):
-		return api.APIKeyScopeSessionsResume, true
-	case string(auth.PermissionSessionsClose):
-		return api.APIKeyScopeSessionsClose, true
-	case string(auth.PermissionSessionsCancel):
-		return api.APIKeyScopeSessionsCancel, true
-	case string(auth.PermissionComputersCreate):
-		return api.APIKeyScopeComputersCreate, true
-	case string(auth.PermissionComputersRead):
-		return api.APIKeyScopeComputersRead, true
-	case string(auth.PermissionComputersUpdate):
-		return api.APIKeyScopeComputersUpdate, true
-	case string(auth.PermissionComputersDelete):
-		return api.APIKeyScopeComputersDelete, true
-	case string(auth.PermissionComputerCommandCreate):
-		return api.APIKeyScopeComputerCommandCreate, true
-	case string(auth.PermissionSecretsWrite):
-		return api.APIKeyScopeSecretsWrite, true
-	case string(auth.PermissionDeploymentsWrite):
-		return api.APIKeyScopeDeploymentsWrite, true
-	default:
-		return "", false
-	}
+	return normalizeAPIKeyScope(api.APIKeyScope(permission))
 }
 
 func apiKeyPermissionGrantsFromPermissions(permissions []string) []api.APIKeyPermissionGrant {
@@ -329,6 +229,7 @@ func apiKeyPermissionGrantsFromPermissions(permissions []string) []api.APIKeyPer
 func apiKeySummaryFromRecord(record db.APIKey, project, environment string) (api.APIKeySummary, error) {
 	return apiKeySummary(
 		record.ID,
+		record.CreatedByMemberID,
 		record.Name,
 		record.KeyPrefix,
 		project,
@@ -343,6 +244,7 @@ func apiKeySummaryFromRecord(record db.APIKey, project, environment string) (api
 func apiKeySummaryFromRow(row db.ListAPIKeysRow, project, environment string) (api.APIKeySummary, error) {
 	return apiKeySummary(
 		row.ID,
+		row.CreatedByMemberID,
 		row.Name,
 		row.KeyPrefix,
 		project,
@@ -354,10 +256,19 @@ func apiKeySummaryFromRow(row db.ListAPIKeysRow, project, environment string) (a
 	)
 }
 
-func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, project string, environment string, createdAt pgtype.Timestamptz, lastUsedAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, revokedAt pgtype.Timestamptz) (api.APIKeySummary, error) {
+func apiKeySummary(id pgtype.UUID, createdBy pgtype.UUID, name string, keyPrefix string, project string, environment string, createdAt pgtype.Timestamptz, lastUsedAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, revokedAt pgtype.Timestamptz) (api.APIKeySummary, error) {
 	parsedID, err := pgvalue.UUIDValue(id)
 	if err != nil {
 		return api.APIKeySummary{}, err
+	}
+	var creator *string
+	if createdBy.Valid {
+		id, err := pgvalue.UUIDValue(createdBy)
+		if err != nil {
+			return api.APIKeySummary{}, err
+		}
+		value := id.String()
+		creator = &value
 	}
 	status := api.APIKeyStatusActive
 	if revokedAt.Valid {
@@ -366,15 +277,77 @@ func apiKeySummary(id pgtype.UUID, name string, keyPrefix string, project string
 		status = api.APIKeyStatusExpired
 	}
 	return api.APIKeySummary{
-		ID:          parsedID.String(),
-		Name:        name,
-		KeyPrefix:   keyPrefix,
-		Project:     project,
-		Environment: environment,
-		Status:      status,
-		CreatedAt:   pgvalue.Time(createdAt),
-		LastUsedAt:  pgvalue.TimePtr(lastUsedAt),
-		ExpiresAt:   pgvalue.TimePtr(expiresAt),
-		RevokedAt:   pgvalue.TimePtr(revokedAt),
+		ID:                parsedID.String(),
+		CreatedByMemberID: creator,
+		Name:              name,
+		KeyPrefix:         keyPrefix,
+		Project:           project,
+		Environment:       environment,
+		Status:            status,
+		CreatedAt:         pgvalue.Time(createdAt),
+		LastUsedAt:        pgvalue.TimePtr(lastUsedAt),
+		ExpiresAt:         pgvalue.TimePtr(expiresAt),
+		RevokedAt:         pgvalue.TimePtr(revokedAt),
 	}, nil
+}
+
+func (s *Server) updateAPIKey(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUIDParam(r, "id")
+	if err != nil {
+		writeError(w, notFound(err))
+		return
+	}
+	var input api.UpdateAPIKeyRequest
+	if err := decodeRequestJSON(r, &input); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	principal := principalFromContext(r.Context())
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	_, permissions, err := normalizeAPIKeyPermissionGrants(input.Permissions)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	record, err := identity.UpdateAPIKey(r.Context(), s.tx, principal, scope, id, identity.APIKeyUpdate{Name: input.Name, Permissions: permissions, ExpiresAt: input.ExpiresAt})
+	if err != nil {
+		writeError(w, identityError(err))
+		return
+	}
+	summary, err := apiKeySummaryFromRecord(record, chi.URLParam(r, "project"), chi.URLParam(r, "environment"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	summary.Permissions = apiKeyPermissionGrantsFromPermissions(record.Permissions)
+	writeJSON(w, http.StatusOK, summary)
+}
+func (s *Server) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUIDParam(r, "id")
+	if err != nil {
+		writeError(w, notFound(err))
+		return
+	}
+	principal := principalFromContext(r.Context())
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	result, err := identity.RotateAPIKey(r.Context(), s.tx, principal, scope, id)
+	if err != nil {
+		writeError(w, identityError(err))
+		return
+	}
+	summary, err := apiKeySummaryFromRecord(result.Record, chi.URLParam(r, "project"), chi.URLParam(r, "environment"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	summary.Permissions = apiKeyPermissionGrantsFromPermissions(result.Record.Permissions)
+	writeJSON(w, http.StatusOK, api.APIKeyIssued{APIKeySummary: summary, RawKey: result.Raw})
 }

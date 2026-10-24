@@ -71,6 +71,7 @@ export const docsNav = [
         label: "CLI",
         ids: [
           "reference/cli/overview",
+          "reference/cli/permissions",
           "reference/cli/init",
           "reference/cli/login",
           "reference/cli/status",
@@ -91,6 +92,7 @@ export const docsNav = [
         label: "API",
         ids: [
           "reference/api/overview",
+          "reference/api/permissions",
           "reference/api/authentication",
           "reference/api/errors",
           "reference/api/pagination",

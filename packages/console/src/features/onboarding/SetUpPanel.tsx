@@ -1,3 +1,4 @@
+import { EnvironmentAccessSetup } from "../access/EnvironmentAccessSetup";
 import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
@@ -49,7 +50,7 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
     retry: false,
   }));
   const secret = () => secrets.data?.secrets.find((item) => item.secret === provider().secret);
-  const canWrite = () => permission.has("secrets.write");
+  const canWrite = () => permission.has("secrets.write", { projectID: props.projectID, environmentID: props.environmentID });
   const [replacing, setReplacing] = createSignal(false);
   const [value, setValue] = createSignal("");
   const [saving, setSaving] = createSignal(false);
@@ -100,8 +101,8 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
     if (secrets.isError) return isDenied(secrets.error) ? "denied" : "error";
     return secret()?.status ?? "missing";
   });
-  // Someone who cannot add the key can still hand setup to their agent; an
-  // owner or admin adds the key before it deploys.
+  // Someone who cannot add the key can still hand setup to their agent; a
+  // secret manager adds the key before it deploys.
   const ready = () => state() === "active" || ((state() === "missing" || state() === "denied") && !canWrite());
   createEffect(() => props.onReady(ready()));
 
@@ -123,7 +124,7 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
         </Match>
         <Match when={state() === "revoked"}>
           <Notice tone="warning">
-            {provider().secret} was revoked in this environment, and a revoked ID cannot be used again. {props.otherChoices ? "Choose another agent or provider" : "Choose another agent"}, or ask an owner or admin how to proceed.
+            {provider().secret} was revoked in this environment, and a revoked ID cannot be used again. {props.otherChoices ? "Choose another agent or provider" : "Choose another agent"}, or ask a member with Manage secrets in this environment how to proceed.
           </Notice>
         </Match>
         <Match when={state() === "error"}>
@@ -131,7 +132,7 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
         </Match>
         <Match when={!canWrite()}>
           <Notice tone="info" action={<A href={secretsHref()}>Secrets</A>}>
-            An owner or admin adds <code class="font-mono">{provider().secret}</code> to this environment. You can copy the prompt now; your agent asks you to confirm the key before it deploys.
+            A member with Manage secrets adds <code class="font-mono">{provider().secret}</code> to this environment. You can copy the prompt now; your agent asks you to confirm the key before it deploys.
           </Notice>
         </Match>
         <Match when={true}>{form()}</Match>
@@ -194,6 +195,7 @@ export function SetUpPanel(props: { projectID: string; environmentID: string }) 
 
   return (
     <Panel title="Set up">
+      <EnvironmentAccessSetup projectID={props.projectID} environmentID={props.environmentID} />
       <Steps label="Set up" steps={steps} />
     </Panel>
   );

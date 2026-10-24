@@ -41,8 +41,8 @@ func (s *Server) mountSlackRoutes(r chi.Router) {
 
 func slackManagementPrincipal(r *http.Request) (auth.Principal, error) {
 	principal := principalFromContext(r.Context())
-	if principal.UserID == uuid.Nil() || principal.OrgID == uuid.Nil() || (principal.Role != auth.RoleOwner && principal.Role != auth.RoleAdmin) {
-		return principal, forbidden(errors.New("organization management is required"))
+	if principal.UserID == uuid.Nil() || principal.OrgID == uuid.Nil() || principal.Kind != auth.PrincipalKindSession {
+		return principal, forbidden(errors.New("a human organization member is required"))
 	}
 	return principal, nil
 }
@@ -97,7 +97,7 @@ func (s *Server) slackRedirectURL() string {
 func (s *Server) writeSlackError(w http.ResponseWriter, err error) {
 	switch {
 	case slack.IsInstallationDenied(err):
-		writeError(w, forbidden(errors.New("the Slack connection is unavailable or organization management authority changed")))
+		writeError(w, forbidden(errors.New("the Slack connection is unavailable or Agent management authority changed")))
 	case errors.Is(err, slack.ErrConnectionUnavailable):
 		writeError(w, conflict(err))
 	case errors.Is(err, slack.ErrOAuthAuthorization):

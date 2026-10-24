@@ -10,7 +10,7 @@ import { ScopeSelector } from "./components/ScopeSelector";
 import { CommandPalette } from "./components/CommandPalette";
 import { attentionTotal, useAttention } from "./lib/attention";
 import { SettingsLayout } from "./components/SettingsLayout";
-import { onboardingRedirectPath, type AuthRequirement } from "./lib/auth";
+import { hasPermission, onboardingRedirectPath, type AuthRequirement } from "./lib/auth";
 import { useMe } from "./lib/me";
 import { isProtectedEnvironment } from "./lib/projects";
 import { ScopeProvider, useScope } from "./lib/scope";
@@ -35,6 +35,8 @@ import { Deployments } from "./routes/deployments";
 import { DeploymentDetail } from "./routes/deployment-detail";
 import { ApiKeys } from "./routes/api-keys";
 import { Secrets } from "./routes/secrets";
+import { Groups } from "./routes/groups";
+import { Roles } from "./routes/roles";
 import { Members } from "./routes/members";
 import { ProjectSettings } from "./routes/project-settings";
 import { Environments } from "./routes/environments";
@@ -92,7 +94,7 @@ function DrawerAccount(props: { close: () => void }) {
         Sign out
       </button>
       <p class="m-0 truncate px-2.5 py-2 font-mono text-chrome text-console-muted">
-        {me.data?.display_name?.trim() || me.data?.user_id || "Account"} · {formatRole(me.data?.role)}
+        {me.data?.display_name?.trim() || me.data?.user_id || "Account"} · {formatRole(me.data?.is_owner ? "owner" : "member")}
       </p>
     </div>
   );
@@ -101,12 +103,14 @@ function DrawerAccount(props: { close: () => void }) {
 function AppShell(props: { children?: JSX.Element }) {
   const scope = useScope();
   const attention = useAttention();
-  const nav: NavItem[] = [
+  const me = useMe();
+  const canRead = (permission: string) => hasPermission(me.data, permission, { projectID: scope.selectedProjectID(), environmentID: scope.selectedEnvironmentID() });
+  const nav = (): NavItem[] => [
     { href: "/", label: "Overview", count: () => (attention.data ? attentionTotal(attention.data.counts) : undefined) },
     { href: "/sessions", label: "Sessions" },
     { href: "/agents", label: "Agents", match: ["/triggers"] },
-    { href: "/computers", label: "Computers", match: ["/templates"] },
-    { href: "/deployments", label: "Deployments" },
+    ...(canRead("run_metadata.read") ? [{ href: "/computers", label: "Computers", match: ["/templates"] }] : []),
+    ...(canRead("deployment_metadata.read") ? [{ href: "/deployments", label: "Deployments" }] : []),
   ];
   const protectedColor = () => {
     const environment = scope.selectedEnvironment();
@@ -116,7 +120,7 @@ function AppShell(props: { children?: JSX.Element }) {
     <div class={"min-h-dvh bg-transparent font-sans text-sm text-console-text"}>
       <AppBar
         leading={<ScopeSelector />}
-        nav={nav}
+        nav={nav()}
         trailing={<><CommandPalette /><div class="flex items-center gap-2 max-[720px]:hidden"><SettingsLink /><ProfileMenu /></div></>}
         protectedColor={protectedColor()}
         drawerEnd={(close) => <DrawerAccount close={close} />}
@@ -247,6 +251,8 @@ export function App() {
       <Route path="/settings/environments" component={wrapSettings(Environments)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />
       <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
+      <Route path="/settings/groups" component={wrapSettings(Groups)} />
+      <Route path="/settings/roles" component={wrapSettings(Roles)} />
       <Route path="/settings/members" component={wrapSettings(Members)} />
       <Route path="*" component={Missing} />
     </Router>

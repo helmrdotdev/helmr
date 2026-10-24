@@ -11,6 +11,13 @@ import (
 // Request bodies and arbitrary metadata must never be copied into an audit event.
 type Details interface{ auditDetails() }
 
+type OwnershipChangedDetails struct {
+	WasOwner bool `json:"was_owner"`
+	IsOwner  bool `json:"is_owner"`
+}
+
+func (OwnershipChangedDetails) auditDetails() {}
+
 type RoleChangedDetails struct {
 	OldRole string `json:"old_role"`
 	NewRole string `json:"new_role"`
@@ -25,15 +32,36 @@ type RoleRemovedDetails struct {
 }
 
 type InvitationCreatedDetails struct {
-	NewRole   string     `json:"new_role"`
 	ExpiresAt *time.Time `json:"expires_at"`
 }
 
+type MembershipDetails struct {
+	UserID       string `json:"user_id,omitempty"`
+	DisplayName  string `json:"display_name,omitempty"`
+	MembershipID string `json:"membership_id"`
+	IsOwner      bool   `json:"is_owner"`
+}
+type InvitationStateDetails struct{}
+
+func (MembershipDetails) auditDetails()      {}
+func (InvitationStateDetails) auditDetails() {}
+
 type APIKeyIssuedDetails struct {
-	NewRole     string     `json:"new_role"`
 	Permissions []string   `json:"permissions"`
 	ExpiresAt   *time.Time `json:"expires_at"`
 }
+
+type APIKeyPolicy struct {
+	Name        string     `json:"name"`
+	Permissions []string   `json:"permissions"`
+	ExpiresAt   *time.Time `json:"expires_at"`
+}
+type APIKeyChangedDetails struct {
+	Before APIKeyPolicy `json:"before"`
+	After  APIKeyPolicy `json:"after"`
+}
+
+func (APIKeyChangedDetails) auditDetails() {}
 
 type PermissionsDetails struct {
 	Permissions []string `json:"permissions"`
@@ -52,26 +80,73 @@ func (APIKeyIssuedDetails) auditDetails()      {}
 func (PermissionsDetails) auditDetails()       {}
 func (RetentionChangedDetails) auditDetails()  {}
 
+// AccessChangeDetails contains policy facts, never request metadata or credentials.
+type AccessSnapshot struct {
+	GrantID    string   `json:"grant_id,omitempty"`
+	AgentsMode string   `json:"agents_mode,omitempty"`
+	AgentIDs   []string `json:"agent_ids,omitempty"`
+	AgentKeys  []string `json:"agent_keys,omitempty"`
+	Revision   int64    `json:"revision,omitempty"`
+
+	MemberName      string   `json:"member_name,omitempty"`
+	GroupName       string   `json:"group_name,omitempty"`
+	RoleName        string   `json:"role_name,omitempty"`
+	ProjectName     string   `json:"project_name,omitempty"`
+	EnvironmentName string   `json:"environment_name,omitempty"`
+	AgentKey        string   `json:"agent_key,omitempty"`
+	Name            string   `json:"name,omitempty"`
+	Description     string   `json:"description,omitempty"`
+	Permissions     []string `json:"permissions,omitempty"`
+	SubjectKind     string   `json:"subject_kind,omitempty"`
+	MemberID        string   `json:"member_id,omitempty"`
+	GroupID         string   `json:"group_id,omitempty"`
+	RoleID          string   `json:"role_id,omitempty"`
+	ProjectID       string   `json:"project_id,omitempty"`
+	EnvironmentID   string   `json:"environment_id,omitempty"`
+	TargetKind      string   `json:"target_kind,omitempty"`
+	AgentID         string   `json:"agent_id,omitempty"`
+	UserID          string   `json:"user_id,omitempty"`
+}
+type AccessChangeDetails struct {
+	BeforeAssignments []*AccessSnapshot `json:"before_assignments,omitempty"`
+	AfterAssignments  []*AccessSnapshot `json:"after_assignments,omitempty"`
+	Before            *AccessSnapshot   `json:"before"`
+	After             *AccessSnapshot   `json:"after"`
+	AffectedGrantIDs  []string          `json:"affected_grant_ids,omitempty"`
+}
+
+func (AccessChangeDetails) auditDetails() {}
+
 func marshalDetails(action string, details Details) ([]byte, error) {
 	valid := false
 	switch action {
+	case "member.ownership_changed":
+		_, valid = details.(OwnershipChangedDetails)
+	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role.standard_created", "role_grant.created", "role_grant.updated", "role_grant.deleted":
+		d, ok := details.(AccessChangeDetails)
+		valid = ok && (d.Before != nil || d.After != nil)
 	case "member.role_changed":
 		d, ok := details.(RoleChangedDetails)
 		valid = ok && d.OldRole != "" && d.NewRole != ""
-	case "member.granted", "installation_admin.granted", "invitation.accepted":
+	case "member.granted", "member.removed", "invitation.accepted":
+		d, ok := details.(MembershipDetails)
+		valid = ok && d.MembershipID != ""
+	case "installation_admin.granted":
 		d, ok := details.(RoleGrantedDetails)
 		valid = ok && d.NewRole != ""
-	case "member.removed", "invitation.revoked", "invitation.expired":
-		d, ok := details.(RoleRemovedDetails)
-		valid = ok && d.OldRole != ""
+	case "invitation.revoked", "invitation.expired":
+		_, valid = details.(InvitationStateDetails)
 	case "invitation.created":
 		d, ok := details.(InvitationCreatedDetails)
-		valid = ok && d.NewRole != "" && d.ExpiresAt != nil && !d.ExpiresAt.IsZero()
+		valid = ok && d.ExpiresAt != nil && !d.ExpiresAt.IsZero()
 		d.ExpiresAt = utcTime(d.ExpiresAt)
 		details = d
+	case "api_key.updated":
+		d, ok := details.(APIKeyChangedDetails)
+		valid = ok && d.Before.Name != "" && d.After.Name != "" && validPermissions(d.After.Permissions)
 	case "api_key.issued":
 		d, ok := details.(APIKeyIssuedDetails)
-		valid = ok && d.NewRole != "" && validPermissions(d.Permissions)
+		valid = ok && validPermissions(d.Permissions)
 		d.ExpiresAt = utcTime(d.ExpiresAt)
 		details = d
 	case "slack_connection.authorized":

@@ -15,7 +15,7 @@ between Slack messages and Turns.
 ## Connections
 
 Each Agent has its own Slack app and one Slack connection in each Environment.
-An organization owner or admin creates the app from a manifest Helmr provides,
+A person with `agents.manage` on the Agent creates the app from a manifest Helmr provides,
 saves its credentials and installs it in the workspace from the Console. See
 [Connect Slack](/docs/guides/connect-slack).
 
@@ -24,20 +24,19 @@ channel to use it. One-to-one direct messages with the app are also supported;
 mentions are not required there. Group direct messages, shared channels and
 Slack Connect channels are not supported.
 
-DM Sessions use the same organization roles as other Sessions. Organization
-members, including viewers, can read their input and output in Console. Owners,
-admins and developers can continue or control the work; viewers can answer Agent
-questions. Other authorized input can produce replies in the original Slack DM.
+DM Sessions use the same scoped permissions as other Sessions. Members with
+View runs in the environment can read their input and output in Console. Members
+with Operate runs can continue or control the work and answer Agent questions. Other authorized input can produce replies in the original Slack DM.
 A private Slack DM does not create a user-private Helmr Session.
 
 Each person who talks to the Agent links their Slack account to their Helmr
 account once. A message from an unlinked person is not accepted: Helmr replies
 with a message only that person can see, containing a link to connect the
 account. After linking, they send the message again; nothing is replayed.
-Linked members with the owner, admin or developer role can request work.
-Viewers can answer questions but not request work. These checks also apply to
+Linked members with Operate runs in the environment can request work and answer
+questions. View runs alone does not allow either action. These checks also apply to
 unmentioned replies in an accepted Session thread: an unlinked person receives
-the linking notice, and a Viewer receives a private permission notice.
+the linking notice, and a member without Operate runs receives a private permission notice.
 
 Structured-input Agents require a conversational front for Slack. The front can
 spawn typed child work and deliberately summarize its result.
@@ -100,7 +99,7 @@ Use these in the Session thread, optionally after the Agent's mention:
 `!mute` and `!unmute` must be the whole message. Quoted commands and commands
 inside code are ordinary text. Wait for the command confirmation before relying
 on the changed state. A command does not start a Session, create Agent work or
-release a Stop hold. Only linked Owners, Admins and Developers can change input
+release a Stop hold. Only linked members with Operate runs in the environment can change input
 state; a DM also retains its original peer boundary.
 
 While muted, an explicit Agent mention with work submits only that message and
@@ -236,8 +235,8 @@ output, a question or a response, the Session records a
 running. The full output remains in the Session's events. See
 [Events](/docs/reference/events).
 
-When a post's delivery is uncertain or has failed, organization owners and
-admins can recheck it against Slack or stop delivering it from the Session's
+When a post's delivery is uncertain or has failed, members with Operate runs in
+the environment can recheck it against Slack or stop delivering it from the Session's
 page in the Console. Neither action resends content.
 
 Reconnecting an Agent's Slack app creates a new connection. Threads from the

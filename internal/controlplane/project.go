@@ -13,10 +13,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -33,7 +35,7 @@ type projectListCursor struct {
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	if principal.Role == "" {
+	if principal.MemberID == uuid.Nil() {
 		writeError(w, forbidden(errors.New("organization is required")))
 		return
 	}
@@ -42,18 +44,33 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	var after *org.ProjectPosition
-	if cursor != nil {
-		after = &org.ProjectPosition{IsDefault: cursor.IsDefault, Slug: cursor.Slug, ID: uuid.MustParse(cursor.ID)}
+	params := db.ListAuthorizedProjectsParams{OrgID: pgvalue.UUID(principal.OrgID), RowLimit: limit + 1, AllProjects: directoryAdministrator(principal), ProjectIds: []pgtype.UUID{}}
+	for _, grant := range principal.Grants {
+		if grant.ProjectID != "" {
+			id, e := uuid.Parse(grant.ProjectID)
+			if e == nil {
+				params.ProjectIds = append(params.ProjectIds, pgvalue.UUID(id))
+			}
+		}
 	}
-	projects, hasMore, err := org.ListProjects(r.Context(), s.db, principal.OrgID, limit, after)
+	if cursor != nil {
+		params.HasAfter = true
+		params.AfterIsDefault = cursor.IsDefault
+		params.AfterSlug = cursor.Slug
+		params.AfterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+	}
+	projects, err := s.db.ListAuthorizedProjects(r.Context(), params)
+	hasMore := len(projects) > int(limit)
+	if hasMore {
+		projects = projects[:limit]
+	}
 	if err != nil {
 		writeError(w, orgError(err))
 		return
 	}
 	response := api.ListProjectsResponse{Projects: make([]api.ProjectSummary, 0, len(projects))}
 	for _, project := range projects {
-		response.Projects = append(response.Projects, projectResponse(project))
+		response.Projects = append(response.Projects, visibleProjectResponse(principal, project))
 	}
 	if hasMore {
 		last := projects[len(projects)-1]
@@ -76,12 +93,23 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, orgError(err))
 		return
 	}
+	if !directoryVisible(principal, pgvalue.UUIDString(project.ID), "") {
+		writeError(w, notFound(org.ErrProjectNotFound))
+		return
+	}
 	environments, err := org.ListEnvironments(r.Context(), s.db, project)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, projectResponseWithEnvironments(project, environments))
+	response := visibleProjectResponse(principal, project)
+	response.Environments = []api.EnvironmentSummary{}
+	for _, environment := range environments {
+		if directoryVisible(principal, pgvalue.UUIDString(project.ID), pgvalue.UUIDString(environment.ID)) {
+			response.Environments = append(response.Environments, visibleEnvironmentResponse(principal, environment, project.Slug))
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func parseProjectListQuery(r *http.Request, orgID uuid.UUID) (int32, *projectListCursor, error) {
@@ -218,7 +246,12 @@ func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, environmentResponse(environmentRecord, projectRecord.Slug))
+	principal := principalFromContext(r.Context())
+	if !directoryVisible(principal, projectID.String(), pgvalue.UUIDString(environmentRecord.ID)) {
+		writeError(w, notFound(org.ErrEnvironmentNotFound))
+		return
+	}
+	writeJSON(w, http.StatusOK, visibleEnvironmentResponse(principal, environmentRecord, projectRecord.Slug))
 }
 
 func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +300,7 @@ func normalizeEnvironmentColorHex(colorHex string) (string, error) {
 
 func projectResponse(project db.Project) api.ProjectSummary {
 	return api.ProjectSummary{
-		Project:         project.Slug,
+		ID: pgvalue.UUIDString(project.ID), Project: project.Slug,
 		Name:            project.Name,
 		DefaultRegionID: project.DefaultRegionID,
 		IsDefault:       project.IsDefault,
@@ -287,13 +320,13 @@ func projectResponseWithEnvironments(project db.Project, environments []db.Envir
 
 func environmentResponse(environment db.Environment, project string) api.EnvironmentSummary {
 	return api.EnvironmentSummary{
-		Environment: environment.Slug,
-		Project:     project,
-		Name:        environment.Name,
-		ColorHex:    environment.ColorHex,
-		IsDefault:   environment.IsDefault,
-		CreatedAt:   pgvalue.Time(environment.CreatedAt),
-		UpdatedAt:   pgvalue.Time(environment.UpdatedAt),
+		ID: pgvalue.UUIDString(environment.ID), Environment: environment.Slug,
+		Project:   project,
+		Name:      environment.Name,
+		ColorHex:  environment.ColorHex,
+		IsDefault: environment.IsDefault,
+		CreatedAt: pgvalue.Time(environment.CreatedAt),
+		UpdatedAt: pgvalue.Time(environment.UpdatedAt),
 	}
 }
 
@@ -306,6 +339,11 @@ func projectSettingsResponse(project db.Project) api.ProjectSettings {
 }
 
 func (s *Server) getProjectSettings(w http.ResponseWriter, r *http.Request) {
+	p := principalFromContext(r.Context())
+	if !p.HasPermission(auth.CapabilityOrganizationManage, auth.Scope{OrgID: p.OrgID}) {
+		writeError(w, notFound(org.ErrProjectNotFound))
+		return
+	}
 	project, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
 		writeError(w, orgError(err))
@@ -336,4 +374,32 @@ func (s *Server) updateProjectSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, api.ProjectSettings{HistoryRetention: api.FormatHistoryRetention(seconds)})
+}
+
+func directoryAdministrator(p auth.Principal) bool {
+	scope := auth.Scope{OrgID: p.OrgID}
+	return p.HasPermission(auth.CapabilityAccessManage, scope) || p.HasPermission(auth.CapabilityOrganizationManage, scope)
+}
+func directoryVisible(p auth.Principal, project, environment string) bool {
+	if directoryAdministrator(p) {
+		return true
+	}
+	for _, g := range p.Grants {
+		if g.ProjectID == project && (environment == "" || g.EnvironmentID == environment) {
+			return true
+		}
+	}
+	return false
+}
+func visibleProjectResponse(p auth.Principal, project db.Project) api.ProjectSummary {
+	if p.HasPermission(auth.CapabilityOrganizationManage, auth.Scope{OrgID: p.OrgID}) {
+		return projectResponse(project)
+	}
+	return api.ProjectSummary{ID: pgvalue.UUIDString(project.ID), Project: project.Slug, Name: project.Name}
+}
+func visibleEnvironmentResponse(p auth.Principal, environment db.Environment, project string) api.EnvironmentSummary {
+	if p.HasPermission(auth.CapabilityOrganizationManage, auth.Scope{OrgID: p.OrgID}) {
+		return environmentResponse(environment, project)
+	}
+	return api.EnvironmentSummary{ID: pgvalue.UUIDString(environment.ID), Project: project, Environment: environment.Slug, Name: environment.Name}
 }

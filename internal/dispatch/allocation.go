@@ -337,6 +337,13 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
+		allowed, err := initialSessionDemand(ctx, tx, env, computerID, sessions)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return nil
+		} // Commit revoked input settlement without reserving a VM.
 		var cpuMillis, memoryBytes int64
 		var base string
 		if err := tx.QueryRow(ctx, `SELECT cpu_millis,memory_bytes,'sha256:'||encode(initial_root_digest,'hex') FROM computers c WHERE environment_id=$1 AND id=$2
@@ -371,6 +378,9 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 	if err != nil {
 		return computer.ComputerAllocation{}, allocationError(err)
 	}
+	if result.InstanceID == uuid.Nil() {
+		return computer.ComputerAllocation{}, ErrNotReady
+	}
 	return result, nil
 }
 
@@ -382,6 +392,9 @@ func (a *Allocator) insertComputerAllocation(ctx context.Context, tx pgx.Tx, r *
 
 // AllocateRestoredLease reserves the full physical shape before a Host may
 // materialize a retained checkpoint. It never falls back to fresh boot or setup.
+// A coherent restore resumes previously admitted native effects, including an
+// operator-requested wake. Origin revocation blocks new business admission, not
+// continuation of those effects; restored processes reauthorize new work.
 func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint uuid.UUID, epoch int64, host uuid.UUID) (computer.ComputerAllocation, error) {
 	if env == uuid.Nil() || checkpoint == uuid.Nil() || epoch <= 0 || host == uuid.Nil() {
 		return computer.ComputerAllocation{}, ErrInvalidInput
@@ -494,4 +507,15 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		return computer.ComputerAllocation{}, allocationError(err)
 	}
 	return result, nil
+}
+
+// Independent command demand may still require a VM after Session revocation.
+func initialSessionDemand(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, sessions []uuid.UUID) (bool, error) {
+	allowed, err := session.AuthorizeInitialSessions(ctx, tx, env, sessions)
+	if err != nil || allowed {
+		return allowed, err
+	}
+	var pending bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND status='pending')`, env, computerID).Scan(&pending)
+	return pending, err
 }

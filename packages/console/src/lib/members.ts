@@ -1,24 +1,23 @@
 import { ApiError, del, postJson, request } from "./api";
 
-export type MemberRole = "owner" | "admin" | "developer" | "viewer";
-type MemberStatus = "active" | "disabled";
+type MemberStatus = "active" | "removed";
 type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
 
 export type OrganizationMember = {
   user_id: string;
+  membership_id: string;
+  is_owner: boolean;
   display_name: string;
   email?: string | null;
-  role: MemberRole;
   status: MemberStatus;
   created_at: string;
   updated_at: string;
-  disabled_at?: string | null;
+  removed_at?: string | null;
 };
 
 export type OrganizationInvitation = {
   id: string;
   email: string;
-  role: MemberRole;
   status: InvitationStatus;
   created_at: string;
   expires_at: string;
@@ -38,7 +37,6 @@ export const MAX_INVITATIONS_PER_REQUEST = 50;
 
 type CreateInvitationsInput = {
   emails: string[];
-  role: MemberRole;
 };
 
 // One address of an invitation request: invited (its invitation was
@@ -116,7 +114,7 @@ export function parseInviteEmails(text: string): InviteEntry[] {
 }
 
 export function memberResourceID(member: OrganizationMember): string {
-  return member.user_id;
+  return member.membership_id;
 }
 
 export function invitationResourceID(invitation: OrganizationInvitation): string {
@@ -137,10 +135,9 @@ export async function createInvitations(input: CreateInvitationsInput): Promise<
   return response.results;
 }
 
-export async function updateMemberRole(id: string, role: MemberRole, expectedRole: MemberRole): Promise<OrganizationMember> {
-  return request<OrganizationMember>(`/api/members/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    body: JSON.stringify({ role, expected_role: expectedRole }),
+export async function updateMemberOwnership(id: string, isOwner: boolean, expectedIsOwner: boolean): Promise<OrganizationMember> {
+  return request<OrganizationMember>(`/api/members/${encodeURIComponent(id)}/ownership`, {
+    method: "PUT", body: JSON.stringify({ is_owner: isOwner, expected_is_owner: expectedIsOwner }),
   });
 }
 

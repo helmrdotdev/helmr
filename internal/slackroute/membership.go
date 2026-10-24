@@ -25,7 +25,7 @@ func RootThread(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (uuid.UU
 // when the thread is not the one the Session's root owns.
 func JoinRootThread(ctx context.Context, tx pgx.Tx, env, session, thread uuid.UUID) (bool, error) {
 	tag, err := tx.Exec(ctx, `INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id)
- SELECT $1,t.id,s.environment_id,s.id FROM sessions s JOIN slack_threads t ON t.environment_id=s.environment_id AND t.front_session_id=s.root_session_id WHERE s.environment_id=$2 AND s.id=$3 AND t.id=$4`, uuid.NewV7(), env, session, thread)
+ SELECT $1,t.id,s.environment_id,s.id FROM sessions s JOIN slack_threads t ON t.environment_id=s.environment_id AND t.front_session_id=s.root_session_id WHERE s.environment_id=$2 AND s.id=$3 AND t.id=$4 AND s.admission_mode='environment'`, uuid.NewV7(), env, session, thread)
 	if err != nil {
 		return false, err
 	}
@@ -36,7 +36,7 @@ func JoinRootThread(ctx context.Context, tx pgx.Tx, env, session, thread uuid.UU
 // membership.
 func AddMember(ctx context.Context, tx pgx.Tx, env, thread, session uuid.UUID) (uuid.UUID, error) {
 	id := uuid.NewV7()
-	_, err := tx.Exec(ctx, `INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($1,$2,$3,$4)`, id, thread, env, session)
+	err := tx.QueryRow(ctx, `INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) SELECT $1,$2,$3,$4 FROM sessions WHERE environment_id=$3 AND id=$4 AND admission_mode='environment' RETURNING id`, id, thread, env, session).Scan(&id)
 	return id, err
 }
 

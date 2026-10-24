@@ -27,12 +27,20 @@ type LinkWorkspace struct {
 
 func lockLinkUser(ctx context.Context, tx pgx.Tx, org, user uuid.UUID) error {
 	var active bool
-	err := tx.QueryRow(ctx, `SELECT m.disabled_at IS NULL FROM org_members m WHERE m.org_id=$1 AND m.user_id=$2 FOR SHARE OF m`, org, user).Scan(&active)
+	err := tx.QueryRow(ctx, `SELECT true FROM org_members m WHERE m.org_id=$1 AND m.user_id=$2 AND m.removed_at IS NULL FOR SHARE OF m`, org, user).Scan(&active)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && !active {
 		return ErrUserLinkDenied
 	}
 	return err
 }
+
+// Visibility follows either Slack use authority or the Agent's configuration authority.
+const linkWorkspaceAccess = `EXISTS (
+ SELECT 1 FROM slack_connections c JOIN org_members m ON m.org_id=i.org_id AND m.user_id=$4 AND m.removed_at IS NULL
+ JOIN role_grant_permissions g ON g.org_id=m.org_id AND g.environment_id=c.environment_id
+ WHERE c.slack_installation_id=i.id AND c.revoked_at IS NULL
+ AND (g.member_id=m.id OR g.all_members OR EXISTS (SELECT 1 FROM permission_group_members gm WHERE (gm.org_id,gm.group_id,gm.member_id)=(g.org_id,g.group_id,m.id)))
+ AND ((g.permission='runs.operate' AND g.agent_id IS NULL) OR (g.permission='agents.manage' AND (g.agent_id IS NULL OR g.agent_id=c.agent_id))))`
 
 func CheckLinkWorkspace(ctx context.Context, pool db.TxBeginner, org, user, installation uuid.UUID) (LinkWorkspace, error) {
 	var v LinkWorkspace
@@ -42,7 +50,7 @@ func CheckLinkWorkspace(ctx context.Context, pool db.TxBeginner, org, user, inst
 		}
 		// Linking alone grants no org or publication authority. Read the connection
 		// without acquiring admission's installation gate while holding user locks.
-		err := tx.QueryRow(ctx, `SELECT id,team_id,workspace_name FROM slack_installations WHERE id=$1 AND org_id=$2 AND disconnected_at IS NULL AND authorization_lost_at IS NULL`, installation, org).Scan(&v.InstallationID, &v.TeamID, &v.WorkspaceName)
+		err := tx.QueryRow(ctx, `SELECT i.id,i.team_id,i.workspace_name FROM slack_installations i WHERE i.id=$1 AND i.org_id=$2 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND $3::boolean AND `+linkWorkspaceAccess, installation, org, true, user).Scan(&v.InstallationID, &v.TeamID, &v.WorkspaceName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrUserLinkDenied
 		}
@@ -59,7 +67,7 @@ func ListLinkWorkspaces(ctx context.Context, pool db.TxBeginner, org, user, befo
 		if err := lockLinkUser(ctx, tx, org, user); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT id,team_id,workspace_name FROM slack_installations WHERE org_id=$1 AND disconnected_at IS NULL AND authorization_lost_at IS NULL AND ($2::uuid='00000000-0000-0000-0000-000000000000' OR id<$2) ORDER BY id DESC LIMIT $3`, org, before, limit)
+		rows, err := tx.Query(ctx, `SELECT i.id,i.team_id,i.workspace_name FROM slack_installations i WHERE i.org_id=$1 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND ($2::uuid='00000000-0000-0000-0000-000000000000' OR i.id<$2) AND `+linkWorkspaceAccess+` ORDER BY i.id DESC LIMIT $3`, org, before, limit, user)
 		if err != nil {
 			return err
 		}
@@ -113,7 +121,7 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, actor audit.Actor, org, u
 			return err
 		}
 		var active bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_installations WHERE id=$1 AND org_id=$2 AND team_id=$3 AND disconnected_at IS NULL AND authorization_lost_at IS NULL)`, installation, org, identity.TeamID).Scan(&active); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_installations i WHERE i.id=$1 AND i.org_id=$2 AND i.team_id=$3 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND `+linkWorkspaceAccess+`)`, installation, org, identity.TeamID, user).Scan(&active); err != nil {
 			return err
 		}
 		if !active {

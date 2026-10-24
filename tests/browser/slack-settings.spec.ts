@@ -193,7 +193,7 @@ test("Members manage only their Slack identity and explicitly unlink it", async 
   const deletions: string[] = [];
   await page.route("**/api/me", async route => {
     const response = await route.fetch();
-    await route.fulfill({ json: { ...await response.json(), role: "viewer", permissions: [] } });
+    await route.fulfill({ json: { ...await response.json(), role: "member", permissions: [] } });
   });
   await page.route("**/api/slack/user-links**", async route => {
     if (route.request().method() === "DELETE") { deletions.push(new URL(route.request().url()).pathname); linked = false; await route.fulfill({ status: 204 }); }

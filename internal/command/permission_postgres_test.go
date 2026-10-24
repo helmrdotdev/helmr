@@ -1,0 +1,55 @@
+package command
+
+import (
+	"testing"
+	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+)
+
+func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
+	for _, kind := range []string{"human_grant", "removed_member", "api_key"} {
+		t.Run(kind, func(t *testing.T) {
+			f := commandFixture(t)
+			request := f.request("queued-revocation")
+			if kind == "api_key" {
+				key := uuid.NewV7()
+				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,permissions,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,ARRAY['computers.operate'],'command test','test',$5)`, key, f.OrgID, f.ProjectID, f.Environment, []byte(key.String()))
+				request.Creator = Creator{Kind: "api_key", ID: key}
+			}
+			c, err := Create(t.Context(), f.Pool, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "human_grant":
+				f.SetPermissions(t, "runs.view")
+			case "removed_member":
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=now(),is_owner=false WHERE org_id=$1 AND user_id=$2`, f.OrgID, f.User)
+			case "api_key":
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=now() WHERE id=$1`, request.Creator.ID)
+			}
+			claimed, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
+			if err != nil || claimed.Start != nil {
+				t.Fatalf("revoked command dispatched: %+v, %v", claimed, err)
+			}
+			got := f.get(t, uuid.UUID(c.ID.Bytes))
+			if got.Status != "failed" || got.TerminalReasonCode.String != "permission_revoked" || !got.TerminalAt.Valid || got.StartedAt.Valid {
+				t.Fatalf("command not settled before execution: %+v", got)
+			}
+		})
+	}
+}
+
+func TestAdmittedCommandRetainsDispatchReceiptAfterRevocation(t *testing.T) {
+	f := commandFixture(t)
+	first := f.start(t, "admitted")
+	f.SetPermissions(t, "runs.view")
+	replay, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
+	if err != nil || replay.Start == nil || replay.Start.Command.ID != first.Command.ID {
+		t.Fatalf("lost dispatch receipt: %+v %v", replay, err)
+	}
+	if err := CheckStart(t.Context(), f.Pool, f.host(), *replay.Start); err != nil {
+		t.Fatal(err)
+	}
+}

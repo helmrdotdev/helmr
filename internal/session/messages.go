@@ -169,6 +169,24 @@ func ClaimRuntimeMessage(ctx context.Context, pool db.TxBeginner, host workergro
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
+		var pendingID uuid.UUID
+		var inputCaller Caller
+		err = tx.QueryRow(ctx, `SELECT id,caller_kind,caller_id FROM turn_messages WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND status='admitted' ORDER BY seq LIMIT 1 FOR UPDATE`, e.EnvironmentID, e.SessionID, turn).Scan(&pendingID, &inputCaller.Kind, &inputCaller.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller); err != nil {
+			if !errors.Is(err, ErrDenied) {
+				return err
+			}
+			if _, err = tx.Exec(ctx, `UPDATE turn_messages SET status='rejected',rejection_reason='permission_revoked',terminal_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, pendingID); err != nil {
+				return err
+			}
+			return messageEvent(ctx, tx, e.EnvironmentID, e.SessionID, turn, pendingID, "rejected", "permission_revoked")
+		}
 		err = tx.QueryRow(ctx, `UPDATE turn_messages SET status='started',started_at=clock_timestamp() WHERE environment_id=$1 AND id=(SELECT m.id FROM turn_messages m JOIN turns t ON t.environment_id=m.environment_id AND t.id=m.turn_id WHERE m.environment_id=$1 AND m.session_id=$2 AND m.turn_id=$3 AND m.status='admitted' AND t.processing_closed_at IS NULL ORDER BY m.seq LIMIT 1) RETURNING id,turn_id,message`, e.EnvironmentID, e.SessionID, turn).Scan(&m.ID, &m.TurnID, &m.Input)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil

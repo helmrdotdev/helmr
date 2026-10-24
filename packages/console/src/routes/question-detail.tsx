@@ -25,7 +25,7 @@ function QuestionDetailContent(props: { address: AskAddress }) {
   const enabled = () => Object.values(props.address).every(Boolean);
   const ask = createQuery(() => ({ queryKey: ["ask", props.address], queryFn: () => getAsk(props.address), enabled: enabled(), retry: false, refetchInterval: 5_000 }));
   const me = useMe();
-  const missing = (error: unknown) => isMissingSessionRead(error, hasPermission(me.data, "sessions.read"));
+  const missing = (error: unknown) => isMissingSessionRead(error, hasPermission(me.data, "sessions.read", props.address));
   const notFound = () => !ask.data && ask.isError && missing(ask.error);
   return <Page>
     <PageHeader title={notFound() ? "Question not found" : "Question"} breadcrumb={[

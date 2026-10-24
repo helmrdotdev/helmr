@@ -56,6 +56,8 @@ func NewFinalizer(uploads cas.UploadStore, platform cas.Reader, admission bundle
 // Finalization is an authorized request to finalize one admitted bundle into a
 // Deployment of an environment. Only Prepare creates it.
 type Finalization struct {
+	principal      auth.Principal
+	scope          auth.Scope
 	orgID          uuid.UUID
 	projectID      pgtype.UUID
 	environmentID  pgtype.UUID
@@ -105,7 +107,7 @@ func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope
 	}
 
 	return Finalization{
-		orgID: principal.OrgID, projectID: projectID, environmentID: environmentID,
+		principal: principal, scope: scope, orgID: principal.OrgID, projectID: projectID, environmentID: environmentID,
 		bundle: prepared, idempotencyKey: idempotencyKey,
 	}, nil
 }
@@ -114,6 +116,9 @@ func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope
 // Deployment and its definitions. An operation-specific receipt binds a retry
 // key to the exact bundle; distinct keys for that bundle converge on one record.
 func (f *Finalizer) Finalize(ctx context.Context, database db.TxDB, finalization Finalization, progress func(objectDigest string) error) (Record, error) {
+	if err := authorizeCurrent(ctx, database, finalization.principal, finalization.scope, auth.PermissionDeploymentsWrite); err != nil {
+		return Record{}, err
+	}
 	available, err := f.available(ctx, database, finalization)
 	if err != nil {
 		return Record{}, err
@@ -153,6 +158,9 @@ func register(ctx context.Context, txb db.TxBeginner, f Finalization) (Record, e
 		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 FOR NO KEY UPDATE`, env, f.orgID, project).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
+			return err
+		}
+		if err := authorizeCurrent(ctx, tx, f.principal, f.scope, auth.PermissionDeploymentsWrite); err != nil {
 			return err
 		}
 		request, err := idempotency.NewDeploymentFinalizeRequest(env, project, f.idempotencyKey, idempotency.DeploymentFinalizeFingerprint{BundleDigest: f.bundle.root.Digest})

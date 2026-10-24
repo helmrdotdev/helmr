@@ -48,6 +48,9 @@ an Environment require both flags; each accepts the public ID shown in the Conso
 | `helmr project` | `list`, `get`, `create`, `update` | Manage Projects. Requires a saved login. | [project](/docs/reference/cli/project) |
 | `helmr env` | `list`, `get`, `create`, `update` | Manage a Project's Environments. Requires a saved login. | [project](/docs/reference/cli/project) |
 | `helmr secret` | `list`, `get`, `create`, `rotate`, `revoke` | Manage Environment Secrets. | [secret](/docs/reference/cli/secret) |
+| `helmr role` | `list`, `get`, `create`, `update`, `copy`, `delete`, `grant list/get/create/delete` | Define Roles and assign scoped grants. | [permissions](/docs/reference/cli/permissions) |
+| `helmr group` | `list`, `get`, `create`, `update`, `delete`, `member list/add/remove` | Manage permission Groups. | [permissions](/docs/reference/cli/permissions) |
+| `helmr member` | `permissions` | Inspect a member’s effective permissions. | [permissions](/docs/reference/cli/permissions) |
 | `helmr completion` | `bash`, `zsh`, `fish`, `powershell` | Generate a shell completion script. | [login](/docs/reference/cli/login#helmr-completion) |
 
 ## Output
@@ -61,7 +64,7 @@ a request, not that the work has finished.
 
 | Variable | Description |
 | --- | --- |
-| `HELMR_API_KEY` | API key. Takes precedence over a saved login. |
+| `HELMR_API_KEY` | API key for workload commands. Management commands use the saved login. |
 | `HELMR_API_URL` | Control plane origin when `--api-url` is not given. |
 | `HELMR_CONFIG_DIR` | Directory for saved CLI configuration. |
 

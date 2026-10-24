@@ -396,7 +396,7 @@ new one). The raw server message is only ever in the technical details.
   fallback. `authErrorMessage` maps sign-in failure codes; `errorDetails` is the
   code and server message for folded technical details.
 - `useMe`, `usePermission` (`lib/me.ts`) — the one account query and the
-  owner/admin and permission checks.
+  ownership and permission checks.
 - `createRowActions` (`ui/rowActions.ts`) — busy and error state for per-row actions.
 
 ## IDs and actions

@@ -19,8 +19,9 @@ import (
 
 func (f statusFixture) deliveryManager(t *testing.T) uuid.UUID {
 	t.Helper()
+	f.SetPermissions(t, "runs.view", "runs.operate")
 	var org uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `UPDATE org_members SET role='owner' WHERE user_id=$1 RETURNING org_id`, f.User).Scan(&org); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `UPDATE org_members SET is_owner=true WHERE user_id=$1 RETURNING org_id`, f.User).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
 	return org
@@ -127,7 +128,7 @@ func TestSlackDeliveryRecoveryRequiresCurrentManagerAndObservedPublication(t *te
 		t.Fatal(err)
 	}
 	input := f.recoveryInput(t, org, post)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='developer' WHERE user_id=$1`, f.User)
+	f.SetPermissions(t, "runs.view")
 	if _, err := ListSessionDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, 0, 100); err != nil {
 		t.Fatal("reader denied", err)
 	}
@@ -154,7 +155,7 @@ func TestSlackDeliveryRecoveryRequiresCurrentManagerAndObservedPublication(t *te
 	if err := RecoverDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
 		t.Fatal("confirmation lost to stale action", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
 	if _, err := ListSessionDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, 0, 100); !errors.Is(err, ErrDeliveryUnavailable) {
 		t.Fatal("disabled member read delivery", err)
 	}

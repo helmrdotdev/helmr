@@ -6,12 +6,13 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/jackc/pgx/v5"
 )
 
 // linkedHuman retains the live link and membership locks through admission.
-// Answering uses current organization membership; work/control operations retain
-// the existing core developer role requirement.
+// Slack input requires current environment run-operation access.
 func linkedHuman(ctx context.Context, tx pgx.Tx, team, actor string, environment uuid.UUID, source time.Time, answer bool) (uuid.UUID, string, error) {
 	var user uuid.UUID
 	var linked time.Time
@@ -25,18 +26,12 @@ func linkedHuman(ctx context.Context, tx pgx.Tx, team, actor string, environment
 	if source.Before(linked) {
 		return uuid.Nil(), "identity_unlinked", nil
 	}
-	var member bool
-	err = tx.QueryRow(ctx, `SELECT m.disabled_at IS NULL AND (m.role IN ('owner','admin','developer') OR ($3 AND m.role='viewer'))
- FROM org_members m JOIN environments e ON e.org_id=m.org_id
- WHERE e.id=$1 AND m.user_id=$2 FOR SHARE OF m`, environment, user, answer).Scan(&member)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = access.Check(ctx, tx, "user", user, environment, uuid.Nil(), auth.CapabilityRunsOperate)
+	if errors.Is(err, access.ErrDenied) {
 		return uuid.Nil(), "permission_denied", nil
 	}
 	if err != nil {
 		return uuid.Nil(), "", err
-	}
-	if !member {
-		return uuid.Nil(), "permission_denied", nil
 	}
 	return user, "", nil
 }

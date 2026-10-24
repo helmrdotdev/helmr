@@ -8,6 +8,7 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -28,6 +29,14 @@ func ReadComputerExecutionScope(ctx context.Context, tx pgx.Tx, env, computerID 
 		return ExecutionScope{}, err
 	}
 	return readExecutionScope(rows, computerID)
+}
+
+// SessionCloseScope checks current target authority before exposing the close tree.
+func SessionCloseScope(ctx context.Context, tx pgx.Tx, caller Caller, env, sessionID uuid.UUID) (ExecutionScope, error) {
+	if err := authorizeTarget(ctx, tx, caller, env, sessionID, auth.PermissionSessionsClose); err != nil {
+		return ExecutionScope{}, err
+	}
+	return ReadSessionCloseScope(ctx, tx, env, sessionID)
 }
 
 func ReadSessionCloseScope(ctx context.Context, tx pgx.Tx, env, sessionID uuid.UUID) (ExecutionScope, error) {

@@ -21,10 +21,18 @@ func TestDeploymentHTTPPostgresSessionRoutes(t *testing.T) {
 	fixture := newHTTPPostgresFixture(t)
 	orgID, owner := fixture.organizationOwner(t, "deployments")
 	viewerID := fixture.user(t, "Viewer")
-	fixture.member(t, orgID, viewerID, db.OrgMemberRoleViewer)
+	fixture.member(t, orgID, viewerID, "member")
 	viewer := fixture.session(t, viewerID, orgID)
 	projectID, environmentID := deploymentHTTPEnvironment(t, fixture, orgID)
 	deploymentID := deploymentHTTPDeployment(t, fixture, orgID, projectID, environmentID)
+	var ownerUser uuid.UUID
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id=$1 AND is_owner`, orgID).Scan(&ownerUser); err != nil {
+		t.Fatal(err)
+	}
+	for _, permission := range []string{"deployments.publish", "deployments.promote", "runs.view"} {
+		fixture.grant(t, orgID, ownerUser, environmentID, permission)
+	}
+	fixture.grant(t, orgID, viewerID, environmentID, "runs.view")
 	base := "/api/projects/deployments/environments/staging"
 
 	expectError := func(t *testing.T, method, path, token string, status int, code string) {
@@ -109,19 +117,20 @@ func TestDeploymentHTTPPostgresAPIKeyRoutes(t *testing.T) {
 	deploymentID := deploymentHTTPDeployment(t, fixture, orgID, projectID, environmentID)
 	scope := auth.Scope{OrgID: orgID, ProjectID: projectID.String(), EnvironmentID: environmentID.String()}
 	managerID := fixture.user(t, "Manager")
-	fixture.member(t, orgID, managerID, db.OrgMemberRoleOwner)
-	manager := auth.Principal{OrgID: orgID, UserID: managerID, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
+	managerMemberID := fixture.member(t, orgID, managerID, "owner")
+	fixture.grant(t, orgID, managerID, environmentID, "keys.manage")
+	manager := auth.Principal{OrgID: orgID, UserID: managerID, MemberID: managerMemberID, Grants: []auth.PermissionGrant{{ProjectID: projectID.String(), EnvironmentID: environmentID.String(), Permission: auth.CapabilityKeysManage}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}
 	issue := func(permission auth.Permission) string {
 		t.Helper()
 		issued, err := identity.IssueAPIKey(t.Context(), fixture.pool, manager, scope, identity.APIKeyInput{
-			Name: string(permission), Permissions: []auth.Permission{permission},
+			Name: string(permission) + uuid.NewV7().String(), Permissions: []auth.Permission{permission},
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return issued.Raw
 	}
-	reader, deployer, unrelated := issue(auth.PermissionSessionsRead), issue(auth.PermissionDeploymentsWrite), issue(auth.PermissionSessionsSend)
+	reader, deployer, unrelated := issue(auth.CapabilityRunsView), issue(auth.CapabilityDeploymentsPromote), issue(auth.CapabilitySecretsManage)
 
 	promote := "/v1/deployments/" + deploymentID.String() + "/promote"
 	if response := fixture.request(t, http.MethodPost, promote, reader, ""); response.Code != http.StatusForbidden {

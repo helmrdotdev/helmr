@@ -31,33 +31,41 @@ const (
 	maxInvitationExpiryDays     = 30
 )
 
-// ManagingMember is the organization member performing member management.
-// Its role must allow member management; owners alone manage owner
-// memberships and owner invitations.
+// ManagingMember identifies the acting human membership. Authority is read live.
 type ManagingMember struct {
-	Actor  audit.Actor
-	OrgID  uuid.UUID
-	UserID uuid.UUID
-	Role   auth.Role
+	Actor    audit.Actor
+	OrgID    uuid.UUID
+	UserID   uuid.UUID
+	MemberID uuid.UUID
 }
 
-// Authorize reports whether the member may manage members.
-func (m ManagingMember) Authorize() error {
-	if !auth.RoleAllows(m.Role, auth.PermissionMembersManage) {
+func (m ManagingMember) Authorize(ctx context.Context, q db.Querier) error {
+	member, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(m.OrgID), UserID: pgvalue.UUID(m.UserID)})
+	if isNoRows(err) {
 		return ErrMemberManagementRequired
 	}
-	return nil
-}
-
-func (m ManagingMember) isOwner() bool {
-	return m.Role == auth.RoleOwner
+	if err != nil {
+		return err
+	}
+	if pgvalue.MustUUIDValue(member.ID) != m.MemberID {
+		return ErrMemberManagementRequired
+	}
+	grants, err := q.ListUserPermissionGrants(ctx, db.ListUserPermissionGrantsParams{OrgID: member.OrgID, UserID: member.UserID})
+	if err != nil {
+		return err
+	}
+	for _, g := range grants {
+		if !g.EnvironmentID.Valid && auth.Permission(g.Permission) == auth.CapabilityAccessManage {
+			return nil
+		}
+	}
+	return ErrMemberManagementRequired
 }
 
 // InvitationInput describes one invitation request: the addresses to invite
 // with one role and expiry. A nil ExpiresInDays takes the default expiry.
 type InvitationInput struct {
 	Emails        []string
-	Role          string
 	ExpiresInDays *int
 }
 
@@ -96,7 +104,7 @@ type UpdatedMember struct {
 
 // ListMembers returns every member of the organization, including disabled ones.
 func ListMembers(ctx context.Context, q db.Querier, manager ManagingMember) ([]db.ListOrgMembersRow, error) {
-	if err := manager.Authorize(); err != nil {
+	if err := manager.Authorize(ctx, q); err != nil {
 		return nil, err
 	}
 	members, err := q.ListOrgMembers(ctx, pgvalue.UUID(manager.OrgID))
@@ -109,7 +117,7 @@ func ListMembers(ctx context.Context, q db.Querier, manager ManagingMember) ([]d
 // ListInvitations returns up to limit invitations of the organization after
 // the given position and whether more follow.
 func ListInvitations(ctx context.Context, q db.Querier, manager ManagingMember, limit int32, after *InvitationPosition) ([]db.ListInvitationsRow, bool, error) {
-	if err := manager.Authorize(); err != nil {
+	if err := manager.Authorize(ctx, q); err != nil {
 		return nil, false, err
 	}
 	params := db.ListInvitationsParams{OrgID: pgvalue.UUID(manager.OrgID), RowLimit: limit + 1}
@@ -142,28 +150,19 @@ func ListInvitations(ctx context.Context, q db.Querier, manager ManagingMember, 
 // those addresses with that error; a delivery failure wraps
 // ErrInvitationNotDelivered. Raw tokens reach only deliver.
 func CreateInvitations(ctx context.Context, database db.TxBeginner, tokenKey []byte, inviter ManagingMember, input InvitationInput, deliver DeliverInvitations) ([]InvitationResult, error) {
-	if err := inviter.Authorize(); err != nil {
-		return nil, err
-	}
 	if len(input.Emails) == 0 {
 		return nil, invalidInput("emails must name at least one address")
 	}
 	if len(input.Emails) > MaxInvitationsPerRequest {
 		return nil, invalidInput("emails must name at most %d addresses", MaxInvitationsPerRequest)
 	}
-	role, err := parseMemberRole(input.Role, "role")
-	if err != nil {
-		return nil, err
-	}
+	var err error
 	expiresInDays := defaultInvitationExpiryDays
 	if input.ExpiresInDays != nil {
 		expiresInDays = *input.ExpiresInDays
 	}
 	if expiresInDays < 1 || expiresInDays > maxInvitationExpiryDays {
 		return nil, invalidInput("expires_in_days must be between 1 and %d", maxInvitationExpiryDays)
-	}
-	if role == db.OrgMemberRoleOwner && !inviter.isOwner() {
-		return nil, ErrOwnerRoleRequired
 	}
 	results := make([]InvitationResult, 0, len(input.Emails))
 	var valid []int
@@ -182,21 +181,21 @@ func CreateInvitations(ctx context.Context, database db.TxBeginner, tokenKey []b
 		}
 		results = append(results, InvitationResult{Email: email, Err: err})
 	}
-	if len(valid) == 0 {
-		return results, nil
-	}
 	// Rows are written in address order so requests naming overlapping
 	// addresses take their locks in the same order rather than deadlocking.
 	ordered := slices.Clone(valid)
 	slices.SortFunc(ordered, func(a, b int) int { return strings.Compare(results[a].Email, results[b].Email) })
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := lockAccessMembers(ctx, tx, inviter); err != nil {
+			return err
+		}
 		var batch []NewInvitation
 		for _, i := range ordered {
 			var invitation db.Invitation
 			var rawToken string
 			err := db.RunTx(ctx, tx, func(savepoint pgx.Tx) error {
 				var err error
-				invitation, rawToken, err = createInvitation(ctx, savepoint, tokenKey, inviter, results[i].Email, role, expiresInDays)
+				invitation, rawToken, err = createInvitation(ctx, savepoint, tokenKey, inviter, results[i].Email, expiresInDays)
 				return err
 			})
 			if invitationRefused(err) {
@@ -216,6 +215,9 @@ func CreateInvitations(ctx context.Context, database db.TxBeginner, tokenKey []b
 		}
 		return nil
 	})
+	if errors.Is(err, ErrMemberManagementRequired) {
+		return nil, err
+	}
 	if err != nil {
 		for _, i := range valid {
 			if results[i].Err == nil {
@@ -232,7 +234,7 @@ func invitationRefused(err error) bool {
 	return errors.Is(err, ErrInvitationActiveMember) || errors.Is(err, ErrInvitationPending) || errors.Is(err, ErrOwnerRoleRequired)
 }
 
-func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter ManagingMember, email string, role db.OrgMemberRole, expiresInDays int) (db.Invitation, string, error) {
+func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter ManagingMember, email string, expiresInDays int) (db.Invitation, string, error) {
 	q := db.New(tx)
 	expired, err := q.RevokeExpiredInvitationsByEmail(ctx, db.RevokeExpiredInvitationsByEmailParams{
 		OrgID:        pgvalue.UUID(inviter.OrgID),
@@ -242,18 +244,15 @@ func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter M
 		return db.Invitation{}, "", fmt.Errorf("expire invitations: %w", err)
 	}
 	for _, old := range expired {
-		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("invitation-expiry"), OrgID: inviter.OrgID, Action: "invitation.expired", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(old.ID), Details: audit.RoleRemovedDetails{OldRole: string(old.Role)}}); err != nil {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("invitation-expiry"), OrgID: inviter.OrgID, Action: "invitation.expired", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(old), Details: audit.InvitationStateDetails{}}); err != nil {
 			return db.Invitation{}, "", err
 		}
 	}
-	pending, found, err := pendingInvitation(ctx, q, inviter.OrgID, email)
+	_, found, err := pendingInvitation(ctx, q, inviter.OrgID, email)
 	if err != nil {
 		return db.Invitation{}, "", err
 	}
 	if found {
-		if pending.Role == db.OrgMemberRoleOwner && !inviter.isOwner() {
-			return db.Invitation{}, "", ErrOwnerRoleRequired
-		}
 		return db.Invitation{}, "", ErrInvitationPending
 	}
 	rawToken, err := auth.GenerateOpaque(invitationTokenBytes)
@@ -265,22 +264,14 @@ func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter M
 		return db.Invitation{}, "", fmt.Errorf("hash invitation token: %w", err)
 	}
 	invitation, err := q.CreateInvitation(ctx, db.CreateInvitationParams{
-		ID:              pgvalue.UUID(uuid.NewV7()),
-		OrgID:           pgvalue.UUID(inviter.OrgID),
-		InviteeEmail:    email,
-		Role:            role,
-		InvitedByUserID: pgvalue.UUID(inviter.UserID),
-		TokenHash:       tokenHash,
-		ExpiresAt:       pgvalue.Timestamptz(time.Now().AddDate(0, 0, expiresInDays)),
+		ID:                pgvalue.UUID(uuid.NewV7()),
+		OrgID:             pgvalue.UUID(inviter.OrgID),
+		InviteeEmail:      email,
+		InvitedByMemberID: pgvalue.UUID(inviter.MemberID),
+		TokenHash:         tokenHash,
+		ExpiresAt:         pgvalue.Timestamptz(time.Now().AddDate(0, 0, expiresInDays)),
 	})
 	if isNoRows(err) {
-		// The insert admits no row when the address already belongs to an
-		// active member. A pending owner invitation for the address answers a
-		// non-owner inviter the same way as before the insert.
-		pending, found, err := pendingInvitation(ctx, q, inviter.OrgID, email)
-		if err == nil && found && pending.Role == db.OrgMemberRoleOwner && !inviter.isOwner() {
-			return db.Invitation{}, "", ErrOwnerRoleRequired
-		}
 		return db.Invitation{}, "", ErrInvitationActiveMember
 	}
 	if db.IsUniqueViolation(err) {
@@ -289,7 +280,7 @@ func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter M
 	if err != nil {
 		return db.Invitation{}, "", fmt.Errorf("create invitation: %w", err)
 	}
-	if err := audit.Append(ctx, tx, audit.Event{Actor: inviter.Actor, OrgID: inviter.OrgID, Action: "invitation.created", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(invitation.ID), Details: audit.InvitationCreatedDetails{NewRole: string(invitation.Role), ExpiresAt: pgvalue.TimePtr(invitation.ExpiresAt)}}); err != nil {
+	if err := audit.Append(ctx, tx, audit.Event{Actor: inviter.Actor, OrgID: inviter.OrgID, Action: "invitation.created", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(invitation.ID), Details: audit.InvitationCreatedDetails{ExpiresAt: pgvalue.TimePtr(invitation.ExpiresAt)}}); err != nil {
 		return db.Invitation{}, "", err
 	}
 	return invitation, rawToken, nil
@@ -311,14 +302,16 @@ func pendingInvitation(ctx context.Context, q db.Querier, orgID uuid.UUID, email
 
 // RevokeInvitation revokes a pending invitation of the organization.
 func RevokeInvitation(ctx context.Context, database db.TxBeginner, manager ManagingMember, invitationID uuid.UUID) error {
-	if err := manager.Authorize(); err != nil {
-		return err
-	}
-	return db.RunTx(ctx, database, func(tx pgx.Tx) error { return revokeInvitation(ctx, tx, manager, invitationID) })
+	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := lockAccessMembers(ctx, tx, manager); err != nil {
+			return err
+		}
+		return revokeInvitation(ctx, tx, manager, invitationID)
+	})
 }
 func revokeInvitation(ctx context.Context, tx pgx.Tx, manager ManagingMember, invitationID uuid.UUID) error {
 	q := db.New(tx)
-	invitation, err := q.GetRevocableInvitation(ctx, db.GetRevocableInvitationParams{
+	_, err := q.GetRevocableInvitation(ctx, db.GetRevocableInvitationParams{
 		OrgID: pgvalue.UUID(manager.OrgID),
 		ID:    pgvalue.UUID(invitationID),
 	})
@@ -328,13 +321,10 @@ func revokeInvitation(ctx context.Context, tx pgx.Tx, manager ManagingMember, in
 	if err != nil {
 		return fmt.Errorf("load invitation: %w", err)
 	}
-	if invitation.Role == db.OrgMemberRoleOwner && !manager.isOwner() {
-		return ErrOwnerRoleRequired
-	}
 	revoked, err := q.RevokeInvitation(ctx, db.RevokeInvitationParams{
-		OrgID:           pgvalue.UUID(manager.OrgID),
-		ID:              pgvalue.UUID(invitationID),
-		RevokedByUserID: pgvalue.UUID(manager.UserID),
+		OrgID:             pgvalue.UUID(manager.OrgID),
+		ID:                pgvalue.UUID(invitationID),
+		RevokedByMemberID: pgvalue.UUID(manager.MemberID),
 	})
 	if err != nil {
 		return fmt.Errorf("revoke invitation: %w", err)
@@ -342,132 +332,110 @@ func revokeInvitation(ctx context.Context, tx pgx.Tx, manager ManagingMember, in
 	if revoked == 0 {
 		return ErrInvitationNotFound
 	}
-	return audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "invitation.revoked", TargetKind: "invitation", TargetID: invitationID, Details: audit.RoleRemovedDetails{OldRole: string(invitation.Role)}})
+	return audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "invitation.revoked", TargetKind: "invitation", TargetID: invitationID, Details: audit.InvitationStateDetails{}})
 }
 
-// UpdateMemberRole changes an active member's role when it still holds
-// expectedRole. Managers cannot drop their own member management access, only
-// owners change owner roles, and the last active owner cannot be demoted.
-func UpdateMemberRole(ctx context.Context, database db.TxBeginner, manager ManagingMember, targetUserID uuid.UUID, role string, expectedRole string) (UpdatedMember, error) {
-	if err := manager.Authorize(); err != nil {
-		return UpdatedMember{}, err
-	}
+// UpdateMemberOwnership serializes owner changes on the organization row.
+// Ownership conveys recovery authority, not ordinary management permission.
+func UpdateMemberOwnership(ctx context.Context, database db.TxBeginner, manager ManagingMember, targetID uuid.UUID, value, expected bool) (UpdatedMember, error) {
 	var result UpdatedMember
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		var err error
-		result, err = updateMemberRole(ctx, tx, manager, targetUserID, role, expectedRole)
-		return err
+		if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, manager.OrgID); err != nil {
+			return err
+		}
+		q := db.New(tx)
+		actor, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(manager.OrgID), UserID: pgvalue.UUID(manager.UserID)})
+		if isNoRows(err) {
+			return ErrOwnerRoleRequired
+		}
+		if err != nil {
+			return err
+		}
+		if !actor.IsOwner || pgvalue.MustUUIDValue(actor.ID) != manager.MemberID {
+			return ErrOwnerRoleRequired
+		}
+		target, err := activeMember(ctx, q, manager.OrgID, targetID)
+		if err != nil {
+			return err
+		}
+		if target.IsOwner != expected {
+			return ErrMemberRoleChanged
+		}
+		if target.IsOwner && !value {
+			var count int
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM org_members WHERE org_id=$1 AND is_owner AND removed_at IS NULL`, manager.OrgID).Scan(&count); err != nil {
+				return err
+			}
+			if count <= 1 {
+				return ErrLastActiveOwner
+			}
+		}
+		updated, err := q.UpdateOrgMemberOwnership(ctx, db.UpdateOrgMemberOwnershipParams{OrgID: pgvalue.UUID(manager.OrgID), ID: pgvalue.UUID(targetID), IsOwner: value, ExpectedIsOwner: expected})
+		if isNoRows(err) {
+			return ErrMemberRoleChanged
+		}
+		if err != nil {
+			return err
+		}
+		result = UpdatedMember{Member: updated, DisplayName: target.DisplayName, PrimaryEmail: target.PrimaryEmail}
+		if expected == value {
+			return nil
+		}
+		return audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.ownership_changed", TargetKind: "member", TargetID: targetID, Details: audit.OwnershipChangedDetails{WasOwner: expected, IsOwner: value}})
 	})
 	return result, err
 }
-func updateMemberRole(ctx context.Context, tx pgx.Tx, manager ManagingMember, targetUserID uuid.UUID, role string, expectedRole string) (UpdatedMember, error) {
-	q := db.New(tx)
-	newRole, err := parseMemberRole(role, "role")
-	if err != nil {
-		return UpdatedMember{}, err
-	}
-	currentRole, err := parseMemberRole(expectedRole, "expected_role")
-	if err != nil {
-		return UpdatedMember{}, err
-	}
-	target, err := activeMember(ctx, q, manager.OrgID, targetUserID)
-	if err != nil {
-		return UpdatedMember{}, err
-	}
-	if target.Role != currentRole {
-		return UpdatedMember{}, ErrMemberRoleChanged
-	}
-	if manager.UserID == targetUserID && !auth.RoleAllows(auth.Role(newRole), auth.PermissionMembersManage) {
-		return UpdatedMember{}, ErrSelfMemberManagement
-	}
-	if (currentRole == db.OrgMemberRoleOwner || newRole == db.OrgMemberRoleOwner) && !manager.isOwner() {
-		return UpdatedMember{}, ErrOwnerRoleRequired
-	}
-	updated, err := q.UpdateOrgMemberRole(ctx, db.UpdateOrgMemberRoleParams{
-		OrgID:        pgvalue.UUID(manager.OrgID),
-		UserID:       pgvalue.UUID(targetUserID),
-		Role:         newRole,
-		ExpectedRole: currentRole,
-		ActorIsOwner: manager.isOwner(),
-	})
-	if isNoRows(err) {
-		if currentRole == db.OrgMemberRoleOwner && newRole != db.OrgMemberRoleOwner {
-			return UpdatedMember{}, ErrLastActiveOwner
-		}
-		return UpdatedMember{}, ErrMemberRoleChanged
-	}
-	if err != nil {
-		return UpdatedMember{}, fmt.Errorf("update member role: %w", err)
-	}
-	if currentRole != newRole {
-		if err := audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.role_changed", TargetKind: "member", TargetID: targetUserID, Details: audit.RoleChangedDetails{OldRole: string(currentRole), NewRole: string(newRole)}}); err != nil {
-			return UpdatedMember{}, err
-		}
-	}
-	return UpdatedMember{Member: updated, DisplayName: target.DisplayName, PrimaryEmail: target.PrimaryEmail}, nil
-}
 
-// DisableMember disables an active member in the caller's transaction.
-// The caller revokes the member's login sessions before committing. Managers cannot remove themselves, only
-// owners remove owners, and the last active owner cannot be removed.
-func DisableMember(ctx context.Context, tx pgx.Tx, manager ManagingMember, targetUserID uuid.UUID) error {
-	q := db.New(tx)
-	if err := manager.Authorize(); err != nil {
+// DisableMember removes one membership and its explicit access atomically.
+// An owner must relinquish ownership before this operation.
+func DisableMember(ctx context.Context, tx pgx.Tx, manager ManagingMember, targetID uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, manager.OrgID); err != nil {
 		return err
 	}
-	if manager.UserID == targetUserID {
-		return ErrSelfMemberRemoval
+	if err := lockAccessMembers(ctx, tx, manager, targetID); err != nil {
+		return err
 	}
-	target, err := activeMember(ctx, q, manager.OrgID, targetUserID)
+	q := db.New(tx)
+	target, err := activeMember(ctx, q, manager.OrgID, targetID)
 	if err != nil {
 		return err
 	}
-	if target.Role == db.OrgMemberRoleOwner && !manager.isOwner() {
+	if target.IsOwner {
 		return ErrOwnerRoleRequired
 	}
-	_, err = q.DisableOrgMember(ctx, db.DisableOrgMemberParams{
-		OrgID:        pgvalue.UUID(manager.OrgID),
-		UserID:       pgvalue.UUID(targetUserID),
-		ExpectedRole: target.Role,
-		ActorIsOwner: manager.isOwner(),
-	})
-	if isNoRows(err) {
-		if target.Role == db.OrgMemberRoleOwner {
-			return ErrLastActiveOwner
-		}
-		return ErrMemberNotFound
-	}
+	grants, err := readRoleGrants(ctx, tx, manager.OrgID, GrantFilter{MemberID: targetID})
 	if err != nil {
-		return fmt.Errorf("remove member: %w", err)
+		return err
 	}
-	return audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.removed", TargetKind: "member", TargetID: targetUserID, Details: audit.RoleRemovedDetails{OldRole: string(target.Role)}})
+	for _, grant := range grants {
+		if err := accessAudit(ctx, tx, manager, "role_grant.deleted", "role_grant", grant.ID, grantSnapshot(grant), nil, nil); err != nil {
+			return err
+		}
+	}
+	if _, err = q.RemoveOrgMember(ctx, db.RemoveOrgMemberParams{OrgID: pgvalue.UUID(manager.OrgID), ID: pgvalue.UUID(targetID)}); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM role_grants WHERE org_id=$1 AND member_id=$2`, manager.OrgID, targetID); err != nil {
+		return err
+	}
+	if err = RemovePermissionGroupMemberships(ctx, tx, manager, targetID); err != nil {
+		return err
+	}
+	return audit.Append(ctx, tx, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.removed", TargetKind: "member", TargetID: targetID, Details: audit.MembershipDetails{MembershipID: targetID.String(), UserID: pgvalue.UUIDString(target.UserID), DisplayName: target.DisplayName.String}})
 }
 
-// activeMember loads a member whose membership and user are both enabled.
-func activeMember(ctx context.Context, q db.Querier, orgID uuid.UUID, userID uuid.UUID) (db.GetOrgMemberForManagementRow, error) {
-	member, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{
-		OrgID:  pgvalue.UUID(orgID),
-		UserID: pgvalue.UUID(userID),
-	})
+func activeMember(ctx context.Context, q db.Querier, orgID, memberID uuid.UUID) (db.GetOrgMemberForManagementRow, error) {
+	member, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(memberID)})
 	if isNoRows(err) {
-		return db.GetOrgMemberForManagementRow{}, ErrMemberNotFound
+		return member, ErrMemberNotFound
 	}
 	if err != nil {
-		return db.GetOrgMemberForManagementRow{}, fmt.Errorf("load member: %w", err)
+		return member, err
 	}
-	if member.DisabledAt.Valid {
-		return db.GetOrgMemberForManagementRow{}, ErrMemberNotFound
+	if member.RemovedAt.Valid {
+		return member, ErrMemberNotFound
 	}
 	return member, nil
-}
-
-func parseMemberRole(value string, field string) (db.OrgMemberRole, error) {
-	switch role := db.OrgMemberRole(strings.TrimSpace(value)); role {
-	case db.OrgMemberRoleOwner, db.OrgMemberRoleAdmin, db.OrgMemberRoleDeveloper, db.OrgMemberRoleViewer:
-		return role, nil
-	default:
-		return "", invalidInput("%s must be owner, admin, developer, or viewer", field)
-	}
 }
 
 // NormalizeEmail validates a bare email address and returns it lowercased.
@@ -488,7 +456,6 @@ type PendingInvitation struct {
 	ID           uuid.UUID
 	OrgID        uuid.UUID
 	InviteeEmail string
-	Role         db.OrgMemberRole
 }
 
 // PendingInvitationByTokenHash loads the pending invitation whose token hashes
@@ -502,7 +469,7 @@ func PendingInvitationByTokenHash(ctx context.Context, q db.Querier, tokenHash [
 	if err != nil {
 		return PendingInvitation{}, fmt.Errorf("load invitation: %w", err)
 	}
-	return pendingInvitationFromRow(row.ID, row.OrgID, row.InviteeEmail, row.Role)
+	return pendingInvitationFromRow(row.ID, row.OrgID, row.InviteeEmail)
 }
 
 // PendingInvitationByID loads a pending invitation by its ID. A missing,
@@ -515,10 +482,10 @@ func PendingInvitationByID(ctx context.Context, q db.Querier, id uuid.UUID) (Pen
 	if err != nil {
 		return PendingInvitation{}, fmt.Errorf("load invitation: %w", err)
 	}
-	return pendingInvitationFromRow(row.ID, row.OrgID, row.InviteeEmail, row.Role)
+	return pendingInvitationFromRow(row.ID, row.OrgID, row.InviteeEmail)
 }
 
-func pendingInvitationFromRow(id pgtype.UUID, orgID pgtype.UUID, inviteeEmail string, role db.OrgMemberRole) (PendingInvitation, error) {
+func pendingInvitationFromRow(id pgtype.UUID, orgID pgtype.UUID, inviteeEmail string) (PendingInvitation, error) {
 	invitationID, err := pgvalue.UUIDValue(id)
 	if err != nil {
 		return PendingInvitation{}, fmt.Errorf("invitation id: %w", err)
@@ -527,52 +494,32 @@ func pendingInvitationFromRow(id pgtype.UUID, orgID pgtype.UUID, inviteeEmail st
 	if err != nil {
 		return PendingInvitation{}, fmt.Errorf("invitation org id: %w", err)
 	}
-	return PendingInvitation{ID: invitationID, OrgID: invitationOrgID, InviteeEmail: inviteeEmail, Role: role}, nil
+	return PendingInvitation{ID: invitationID, OrgID: invitationOrgID, InviteeEmail: inviteeEmail}, nil
 }
 
-// AcceptInvitation makes the user a member of the invitation's organization
-// with the invited role. It runs on the caller's transaction and requires one:
-// the accepted invitation references the membership written after it, which
-// the database checks at commit. It rejects a user who is already an active
-// member, marks the invitation accepted, writes the membership, re-enabling a
-// disabled one. The caller revokes existing login sessions before committing. An
-// invitation accepted, revoked or expired since it was loaded is
-// ErrInvitationNotFound.
-//
-// Paths that write both a membership and login sessions lock org_members rows
-// before login_sessions rows, as member removal does, so that acceptance and
-// removal of the same user cannot deadlock.
+// AcceptInvitation creates a new membership; removed membership IDs never revive.
 func AcceptInvitation(ctx context.Context, tx pgx.Tx, actor audit.Actor, invitation PendingInvitation, userID uuid.UUID, displayName string) error {
-	q := db.New(tx)
-	existing, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{
-		OrgID:  pgvalue.UUID(invitation.OrgID),
-		UserID: pgvalue.UUID(userID),
-	})
-	if err != nil && !isNoRows(err) {
-		return fmt.Errorf("load member: %w", err)
+	if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, invitation.OrgID); err != nil {
+		return err
 	}
-	if err == nil && !existing.DisabledAt.Valid {
+	q := db.New(tx)
+	_, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(invitation.OrgID), UserID: pgvalue.UUID(userID)})
+	if err == nil {
 		return ErrAlreadyMember
 	}
-	accepted, err := q.AcceptInvitation(ctx, db.AcceptInvitationParams{
-		OrgID:  pgvalue.UUID(invitation.OrgID),
-		ID:     pgvalue.UUID(invitation.ID),
-		UserID: pgvalue.UUID(userID),
-	})
+	if !isNoRows(err) {
+		return err
+	}
+	member, err := q.EnsureOrgMember(ctx, db.EnsureOrgMemberParams{ID: pgvalue.NewUUIDv7(), OrgID: pgvalue.UUID(invitation.OrgID), UserID: pgvalue.UUID(userID), IsOwner: false, DisplayName: pgtype.Text{String: displayName, Valid: displayName != ""}})
 	if err != nil {
-		return fmt.Errorf("accept invitation: %w", err)
+		return err
+	}
+	accepted, err := q.AcceptInvitation(ctx, db.AcceptInvitationParams{OrgID: pgvalue.UUID(invitation.OrgID), ID: pgvalue.UUID(invitation.ID), MemberID: member.ID})
+	if err != nil {
+		return err
 	}
 	if accepted == 0 {
 		return ErrInvitationNotFound
 	}
-	if _, err := q.EnsureOrgMember(ctx, db.EnsureOrgMemberParams{
-		OrgID:       pgvalue.UUID(invitation.OrgID),
-		UserID:      pgvalue.UUID(userID),
-		Role:        invitation.Role,
-		DisplayName: pgtype.Text{String: displayName, Valid: displayName != ""},
-	}); err != nil {
-		return fmt.Errorf("add member: %w", err)
-	}
-
-	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: invitation.OrgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: invitation.ID, TargetUserID: userID, Details: audit.RoleGrantedDetails{NewRole: string(invitation.Role)}})
+	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: invitation.OrgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: invitation.ID, TargetUserID: userID, Details: audit.MembershipDetails{MembershipID: pgvalue.UUIDString(member.ID)}})
 }

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
@@ -110,7 +109,7 @@ func TestMagicLinkPostgresInvitationJoinsOrganization(t *testing.T) {
 	fixture := newIdentityFixture(t)
 	ctx := t.Context()
 	orgID := fixture.organization(t, "magic")
-	invitation, rawToken := fixture.invitation(t, orgID, "joiner@example.test", "admin")
+	invitation, rawToken := fixture.invitation(t, orgID, "joiner@example.test", "member")
 	resolved, _, err := ResolveInvitation(ctx, fixture.queries, fixture.cfg, rawToken)
 	if err != nil {
 		t.Fatal(err)
@@ -127,19 +126,19 @@ func TestMagicLinkPostgresInvitationJoinsOrganization(t *testing.T) {
 		t.Fatal(err)
 	}
 	principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, completed.Session)
-	if err != nil || principal.OrgID != orgID || principal.Role != auth.RoleAdmin {
+	if err != nil || principal.OrgID != orgID || principal.IsOwner {
 		t.Fatalf("principal = %+v, err = %v", principal, err)
 	}
 	var consumedBy, acceptedBy uuid.UUID
 	if err := fixture.pool.QueryRow(ctx, `SELECT consumed_by_user_id FROM magic_links WHERE id = $1`, link.ID).Scan(&consumedBy); err != nil || consumedBy != principal.UserID {
 		t.Fatalf("consumed by = %s, err = %v", consumedBy, err)
 	}
-	if err := fixture.pool.QueryRow(ctx, `SELECT accepted_by_user_id FROM invitations WHERE id = $1`, invitation.ID).Scan(&acceptedBy); err != nil || acceptedBy != principal.UserID {
+	if err := fixture.pool.QueryRow(ctx, `SELECT accepted_by_member_id FROM invitations WHERE id = $1`, invitation.ID).Scan(&acceptedBy); err != nil || acceptedBy != principal.MemberID {
 		t.Fatalf("accepted by = %s, err = %v", acceptedBy, err)
 	}
 
 	// A link for an invitation revoked after delivery is not consumed.
-	_, secondToken := fixture.invitation(t, orgID, "late@example.test", "viewer")
+	_, secondToken := fixture.invitation(t, orgID, "late@example.test", "member")
 	second, _, err := ResolveInvitation(ctx, fixture.queries, fixture.cfg, secondToken)
 	if err != nil {
 		t.Fatal(err)

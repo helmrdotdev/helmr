@@ -510,7 +510,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := apiClient.PlanDeploymentBundleUploads(ctx, closed.BundleJSON, client.EnvironmentScopeOptions{})
+	plan, err := apiClient.PlanDeploymentBundleUploads(ctx, closed.BundleJSON, client.EnvironmentScopeOptions{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

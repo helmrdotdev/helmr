@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const directMessageDescription = "DMs create shared Helmr Sessions. Organization members can read them; owners, admins and developers can continue or control work, and viewers can answer questions. New message: new Session. Thread reply: continue."
+const directMessageDescription = "DMs create shared Helmr Sessions. Environment run viewers can read them; run operators can continue, answer questions or control work. New message: new Session. Thread reply: continue."
 
 func validConversationID(channel string) bool {
 	return definition.ValidSlackChannelID(channel) || slackroute.IsDirectMessage(channel)

@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 
@@ -13,7 +14,7 @@ import (
 // listAttentionHTTP returns what in the Environment is waiting on a person:
 // pending Questions, holds on open Sessions and failed Turns (read with the
 // authority to read Sessions), and Slack connections that need authorizing
-// again (only for the organization owners and admins who manage them).
+// again (only for callers who manage those Agents).
 func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
@@ -21,11 +22,17 @@ func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	waiting, err := session.ListAttention(r.Context(), s.tx, caller, env)
-	if err != nil {
+	if err != nil && !errors.Is(err, session.ErrDenied) {
 		s.writeAgentHTTPError(w, err)
 		return
 	}
-	response := api.Attention{Items: []api.AttentionItem{}, Counts: api.AttentionCounts{Question: waiting.QuestionCount, Hold: waiting.HoldCount, FailedTurn: waiting.FailedTurnCount}}
+	runsAllowed := err == nil
+	response := api.Attention{Items: []api.AttentionItem{}, Counts: api.AttentionCounts{}}
+	if runsAllowed {
+		response.Counts.Question = &waiting.QuestionCount
+		response.Counts.Hold = &waiting.HoldCount
+		response.Counts.FailedTurn = &waiting.FailedTurnCount
+	}
 	for _, item := range waiting.Questions {
 		value := attentionItem(api.AttentionQuestion, item)
 		value.Prompt = &item.Summary
@@ -45,7 +52,7 @@ func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Items = append(response.Items, value)
 	}
 	principal := principalFromContext(r.Context())
-	if s.slackConfig != nil && principal.Kind == auth.PrincipalKindSession && (principal.Role == auth.RoleOwner || principal.Role == auth.RoleAdmin) {
+	if s.slackConfig != nil && principal.Kind == auth.PrincipalKindSession {
 		connections, count, err := slack.ReauthorizationRequired(r.Context(), s.tx, principal.OrgID, principal.UserID, env, session.AttentionLimit)
 		switch {
 		case slack.IsInstallationDenied(err):
@@ -59,6 +66,10 @@ func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 				response.Items = append(response.Items, api.AttentionItem{Kind: api.AttentionSlackReauthorization, ID: connection.ConnectionID.String(), At: connection.LostAt.UTC(), Agent: connection.Agent, WorkspaceName: connection.WorkspaceName})
 			}
 		}
+	}
+	if !runsAllowed && response.Counts.SlackReauthorization == nil {
+		s.writeAgentHTTPError(w, session.ErrDenied)
+		return
 	}
 	sort.SliceStable(response.Items, func(i, j int) bool {
 		a, b := response.Items[i], response.Items[j]

@@ -12,7 +12,7 @@ import { ApiError } from "../lib/api";
 import { hasPermission } from "../lib/auth";
 import { agentHref } from "../lib/definitions";
 import { errorMessage, loadError } from "../lib/error";
-import { isOrganizationAdmin, useMe } from "../lib/me";
+import { useMe } from "../lib/me";
 import { useScope } from "../lib/scope";
 import {
   askConsolePath,
@@ -75,7 +75,7 @@ function SessionDetailContent() {
   });
   const enabled = () => !!sessionID() && !!projectID() && !!environmentID();
   const me = useMe();
-  const can = (permission: string) => hasPermission(me.data, permission);
+  const can = (permission: string): boolean => session.data?.permissions?.includes(permission) ?? hasPermission(me.data, permission, {projectID:projectID(),environmentID:environmentID()});
   const session = createQuery(() => ({
     queryKey: ["session", sessionID(), projectID(), environmentID()],
     queryFn: () => getSession(address()),
@@ -175,7 +175,7 @@ function SessionDetailContent() {
                 canInterrupt={can("sessions.interrupt")}
                 onInterruptTurn={(turnID) => setControl({ kind: "turn_interrupt", turnID })}
               />
-              <Show when={current().slack_channel_id}><SessionDelivery address={address()} live={live()} canManage={isOrganizationAdmin(me.data?.role)} /></Show>
+              <Show when={current().slack_channel_id}><SessionDelivery address={address()} live={live()} canManage={hasPermission(me.data, "runs.operate", address())} /></Show>
               <Show when={can("sessions.cancel") && live()}>
                 <DangerZone
                   class="mt-3"

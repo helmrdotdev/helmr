@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"uuid"
 
@@ -43,13 +44,20 @@ func CreateOrganization(ctx context.Context, database db.TxBeginner, input org.O
 
 // RemoveMember disables membership and revokes organization-pinned and unpinned
 // login sessions in one transaction, taking membership locks before session locks.
-func RemoveMember(ctx context.Context, database db.TxBeginner, manager org.ManagingMember, user uuid.UUID) error {
+func RemoveMember(ctx context.Context, database db.TxBeginner, manager org.ManagingMember, memberID uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		if err := org.DisableMember(ctx, tx, manager, user); err != nil {
+		member, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{OrgID: pgvalue.UUID(manager.OrgID), ID: pgvalue.UUID(memberID)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return org.ErrMemberNotFound
+		}
+		if err != nil {
 			return err
 		}
-		if err := q.RevokeLoginSessionsForMembership(ctx, db.RevokeLoginSessionsForMembershipParams{UserID: pgvalue.UUID(user), OrgID: pgvalue.UUID(manager.OrgID)}); err != nil {
+		if err := org.DisableMember(ctx, tx, manager, memberID); err != nil {
+			return err
+		}
+		if err := q.RevokeLoginSessionsForMembership(ctx, db.RevokeLoginSessionsForMembershipParams{UserID: member.UserID, OrgID: pgvalue.UUID(manager.OrgID)}); err != nil {
 			return fmt.Errorf("revoke member login sessions: %w", err)
 		}
 		return nil

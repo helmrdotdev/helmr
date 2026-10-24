@@ -10,20 +10,20 @@ import (
 
 func TestNormalizeAPIKeyPermissionGrantsCanonicalizes(t *testing.T) {
 	grants, permissions, err := normalizeAPIKeyPermissionGrants([]api.APIKeyPermissionGrant{
-		{Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsSend, api.APIKeyScopeSessionsRead}},
-		{Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsRead, api.APIKeyScopeSessionsCreate}},
+		{Scopes: []api.APIKeyScope{api.APIKeyScopeRunsOperate, api.APIKeyScopeRunsView}},
+		{Scopes: []api.APIKeyScope{api.APIKeyScopeRunsView, api.APIKeyScopeAgentsUse}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPermissions := []auth.Permission{auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend}
+	wantPermissions := []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilityRunsOperate, auth.CapabilityRunsView}
 	if !reflect.DeepEqual(permissions, wantPermissions) {
 		t.Fatalf("permissions = %v, want %v", permissions, wantPermissions)
 	}
 	wantGrants := []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{
-		api.APIKeyScopeSessionsCreate,
-		api.APIKeyScopeSessionsRead,
-		api.APIKeyScopeSessionsSend,
+		api.APIKeyScopeAgentsUse,
+		api.APIKeyScopeRunsOperate,
+		api.APIKeyScopeRunsView,
 	}}}
 	if !reflect.DeepEqual(grants, wantGrants) {
 		t.Fatalf("grants = %+v, want %+v", grants, wantGrants)
@@ -49,7 +49,7 @@ func TestNormalizeAPIKeyPermissionGrantsRejectsInvalidInput(t *testing.T) {
 }
 
 func TestNormalizeAPIKeyPermissionGrantsAllowsComputerRetentionUpdates(t *testing.T) {
-	wantGrants := []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeComputersUpdate}}}
+	wantGrants := []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeComputersOperate}}}
 	grants, permissions, err := normalizeAPIKeyPermissionGrants(wantGrants)
 	if err != nil {
 		t.Fatal(err)
@@ -57,7 +57,7 @@ func TestNormalizeAPIKeyPermissionGrantsAllowsComputerRetentionUpdates(t *testin
 	if !reflect.DeepEqual(grants, wantGrants) {
 		t.Fatalf("grants = %+v, want %+v", grants, wantGrants)
 	}
-	wantPermissions := []auth.Permission{auth.PermissionComputersUpdate}
+	wantPermissions := []auth.Permission{auth.CapabilityComputersOperate}
 	if !reflect.DeepEqual(permissions, wantPermissions) {
 		t.Fatalf("permissions = %v, want %v", permissions, wantPermissions)
 	}

@@ -108,8 +108,8 @@ func TestWorkerAgentSessionDiscovery(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE user_id=$1`, f.User)
-	key, err := identity.IssueAPIKey(t.Context(), f.Pool, auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "SDK discovery", Permissions: []auth.Permission{auth.PermissionSessionsRead}})
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User)
+	key, err := identity.IssueAPIKey(t.Context(), f.Pool, f.Principal(t), auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "SDK discovery", Permissions: []auth.Permission{auth.CapabilityRunsView}})
 	if err != nil {
 		t.Fatal(err)
 	}

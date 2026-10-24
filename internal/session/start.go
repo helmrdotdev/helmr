@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/org"
 
@@ -188,6 +190,10 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		if err = tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND key=$2`, req.EnvironmentID, req.Agent).Scan(&agentID); err != nil {
 			return err
 		}
+		lineage, err := resolveStartOrigin(ctx, tx, caller, req, agentID)
+		if err != nil {
+			return err
+		}
 		prior, err := sessionCreationReceipt(ctx, tx, caller, req.EnvironmentID, agentID, method, req.IdempotencyKey, digest)
 		if err != nil {
 			return err
@@ -264,6 +270,9 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		} else if err = authorizeStart(ctx, tx, caller, req.EnvironmentID); err != nil {
 			return err
 		}
+		if err = lineage.authorize(ctx, tx, req.EnvironmentID, agentID); err != nil {
+			return err
+		}
 		if computerID != uuid.Nil() {
 			if err = computerAcceptsAdmission(ctx, tx, req.EnvironmentID, computerID, true); err != nil {
 				return err
@@ -312,8 +321,8 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 				return ErrInvalidInput
 			}
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,key,close_after_idle_ms,creation_caller_kind,creation_caller_id,creation_method,creation_idempotency_key,creation_digest,creation_turn_id,idle_since,next_turn_seq)
- SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),$17,$18,CASE WHEN $18::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $18::uuid IS NULL THEN 1 ELSE 2 END FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computerID), root, parent, requester, origin, causal, req.SessionKey, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.IdempotencyKey, digest[:], nullableID(result.TurnID)); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,key,close_after_idle_ms,creation_caller_kind,creation_caller_id,creation_method,creation_idempotency_key,creation_digest,creation_turn_id,idle_since,next_turn_seq,admission_mode,origin_kind,origin_user_id,origin_api_key_id,origin_activation_id)
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),$17,$18,CASE WHEN $18::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $18::uuid IS NULL THEN 1 ELSE 2 END,$19,$20,$21,$22,$23 FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computerID), root, parent, requester, origin, causal, req.SessionKey, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.IdempotencyKey, digest[:], nullableID(result.TurnID), lineage.Mode, lineage.Kind, lineage.User, lineage.Key, lineage.Activation); err != nil {
 			return err
 		}
 		if err = inheritComputerRecoveryGap(ctx, tx, req.EnvironmentID, result.SessionID, computerID); err != nil {
@@ -365,6 +374,9 @@ func StartReceipt(ctx context.Context, pool db.TxBeginner, p StartPlan) (*Admiss
 			err = tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND key=$2`, req.EnvironmentID, req.Agent).Scan(&agentID)
 		}
 		if err != nil {
+			return err
+		}
+		if _, err = resolveStartOrigin(ctx, tx, caller, req, agentID); err != nil {
 			return err
 		}
 		receipt, err = sessionCreationReceipt(ctx, tx, caller, req.EnvironmentID, agentID, method, req.IdempotencyKey, p.Digest)
@@ -424,6 +436,9 @@ func sessionCreationReceipt(ctx context.Context, tx pgx.Tx, caller Caller, env, 
 	} else if err = authorizeStart(ctx, tx, caller, env); err != nil {
 		return nil, err
 	}
+	if err := authorizeTarget(ctx, tx, caller, env, result.SessionID, auth.PermissionSessionsRead); err != nil {
+		return nil, err
+	}
 	if !bytes.Equal(prior, digest[:]) {
 		return nil, ErrConflict
 	}
@@ -435,29 +450,17 @@ func sessionCreationReceipt(ctx context.Context, tx pgx.Tx, caller Caller, env, 
 }
 
 func authorizeStart(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID) error {
-	var allowed bool
-	var err error
-	switch caller.Kind {
-	case "user":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
-	case "api_key":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id) WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND k.role IN ('owner','admin','developer') AND 'sessions.create'=ANY(k.permissions))`, env, caller.ID).Scan(&allowed)
-	default:
-		return ErrDenied
-	}
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return ErrDenied
-	}
-	return nil
+	_, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+	return accessError(err)
 }
 
 func computerAcceptsAdmission(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, newPlacement bool) error {
-	var available bool
-	if err := tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) AND (NOT $3 OR (integrity_fault_at IS NULL AND (initial_root_id IS NOT NULL OR preparation_deadline_at>clock_timestamp()))) FROM computers WHERE environment_id=$1 AND id=$2`, env, computerID, newPlacement).Scan(&available); err != nil {
+	var available, scoped bool
+	if err := tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) AND (NOT $3 OR (integrity_fault_at IS NULL AND (initial_root_id IS NOT NULL OR preparation_deadline_at>clock_timestamp())))  , EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND admission_mode='scoped') FROM computers WHERE environment_id=$1 AND id=$2`, env, computerID, newPlacement).Scan(&available, &scoped); err != nil {
 		return err
+	}
+	if scoped {
+		return ErrDenied
 	}
 	if !available {
 		return ErrNotReady

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"sync"
 	"testing"
 	"time"
@@ -70,7 +72,7 @@ func (f fixture) peer(t *testing.T) fixture {
 	t.Helper()
 	p := f
 	p.session = uuid.New()
-	_, err := f.pool.Exec(t.Context(), `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES($1,$2,$3,$4,$5,$2,0);
+	_, err := f.pool.Exec(t.Context(), `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,'environment','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
       INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$5,1,'ready',1,1,1,'resume',1,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, f.env, p.session, f.agent, f.deployment, f.computer)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +122,7 @@ func TestEnqueueConcurrentRetryAndRevocation(t *testing.T) {
 	if !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed retry: %v", err)
 	}
-	_, err = f.pool.Exec(t.Context(), `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.user)
+	_, err = f.pool.Exec(t.Context(), `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.user)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +435,7 @@ func TestRuntimeInputCannotCrossEnvironment(t *testing.T) {
 	INSERT INTO agents(environment_id,id,key) SELECT $2,id,key FROM agents WHERE environment_id=$1;
 	INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT $2,agent_id,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1;
 	INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT $2,id,$5,clock_timestamp()+interval '5 minutes',origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1;
-	INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) SELECT $2,$3,agent_id,deployment_id,computer_id,$3,0 FROM sessions WHERE environment_id=$1 AND id=$4;`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, otherSession, f.session, f.deployment)
+	INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id,origin_api_key_id,origin_activation_id) SELECT $2,$3,agent_id,deployment_id,computer_id,$3,0,admission_mode,origin_kind,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE environment_id=$1 AND id=$4;`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, otherSession, f.session, f.deployment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,4 +534,14 @@ func TestRuntimeBlockedAdmissionDoesNotBlockAuthorityRenewal(t *testing.T) {
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func sessiontestPrincipal(t *testing.T, f fixture) auth.Principal {
+	t.Helper()
+	p, err := access.Principal(t.Context(), f.pool, "user", f.user, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SessionID = uuid.NewV7()
+	return p
 }

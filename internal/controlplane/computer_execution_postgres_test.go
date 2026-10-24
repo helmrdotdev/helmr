@@ -10,7 +10,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -59,7 +58,7 @@ func TestComputerExecutionHTTPUsesCurrentAuthorityAndConfirmedScope(t *testing.T
 	if !strings.Contains(string(read), `"execution_control"`) || !strings.Contains(string(read), `"hibernate"`) {
 		t.Fatalf("missing operation state: %s", read)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.User)
+	f.SetPermissions(t, "runs.view")
 	call("POST", base+"/hibernate", string(request), http.StatusForbidden)
 	call("POST", base+"/wake", `{}`, http.StatusForbidden)
 	call("GET", base+"/execution-scope", "", http.StatusForbidden)

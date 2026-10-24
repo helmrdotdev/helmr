@@ -32,8 +32,6 @@ func TestOrgErrorMapsHTTPContract(t *testing.T) {
 		{org.ErrMemberManagementRequired, http.StatusForbidden, "forbidden"},
 		{org.ErrOwnerRoleRequired, http.StatusForbidden, "forbidden"},
 		{org.ErrLastActiveOwner, http.StatusForbidden, "forbidden"},
-		{org.ErrSelfMemberManagement, http.StatusForbidden, "forbidden"},
-		{org.ErrSelfMemberRemoval, http.StatusForbidden, "forbidden"},
 		{org.ErrProjectNotFound, http.StatusNotFound, "not_found"},
 		{org.ErrEnvironmentNotFound, http.StatusNotFound, "not_found"},
 		{org.ErrMemberNotFound, http.StatusNotFound, "not_found"},

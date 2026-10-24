@@ -57,7 +57,7 @@ export function ProfileMenu() {
       <Popover open={open()} anchor={trigger()} onDismiss={() => setOpen(false)} role="menu" label="Profile" align="end" width={224}>
         <div class={ui.containerHeader}>
           <span class={cx(ui.containerTitle, "text-console-text")}>{displayName()}</span>
-          <span class={cx(ui.microLabel, "shrink-0")}>{formatRole(me.data?.role)}</span>
+          <span class={cx(ui.microLabel, "shrink-0")}>{formatRole(me.data?.is_owner ? "owner" : "member")}</span>
         </div>
         <div class="p-1">
           <A href="/settings/account" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>

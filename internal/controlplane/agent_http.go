@@ -39,7 +39,7 @@ func (s *Server) agentRequestAuthority(r *http.Request, permission auth.Permissi
 	if err != nil {
 		return session.Caller{}, uuid.Nil(), err
 	}
-	if !principal.HasPermission(permission, scope) {
+	if permission == auth.PermissionComputersUpdate && !principal.HasPermission(permission, scope) {
 		return session.Caller{}, uuid.Nil(), session.ErrDenied
 	}
 	caller, err := externalAgentCaller(principal)

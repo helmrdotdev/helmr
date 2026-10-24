@@ -1,6 +1,11 @@
+import { hasPermission } from "../lib/auth";
 import { useLocation, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
+import { listAccessTargets } from "../lib/permissions";
+import { ResourceAccess } from "../features/access/ResourceAccess";
+import { useMe } from "../lib/me";
+import { ui } from "../ui/styles";
 import { CopyLinkButton } from "../components/CopyLinkButton";
 import { SectionLayout } from "../components/SectionLayout";
 import { deploymentHref } from "../features/deployments/navigation";
@@ -48,6 +53,20 @@ export function AgentsSection(props: { children?: JSX.Element }) {
 type AgentRow = RetainedAgent & { template?: string | undefined };
 
 export function AgentList() {
+ const me=useMe();
+ const [view,setView]=createSignal<"workloads"|"access">();
+ const selected=()=>view() ?? (hasPermission(me.data,"access.manage") ? "access" : "workloads");
+ return <><Show when={hasPermission(me.data,"access.manage")}><div class="mb-4"><Segmented label="Agent view" value={selected()} options={[{value:"workloads" as const,label:"Workloads"},{value:"access" as const,label:"Manage access"}]} onChange={setView} /></div></Show><Show when={selected()==="access" && hasPermission(me.data,"access.manage")} fallback={<OperationalAgentList />}><AccessAgentDirectory /></Show></>;
+}
+
+function AccessAgentDirectory() {
+ const scope=useScopeIDs(); const [sharing,setSharing]=createSignal("");
+ const targets=createQuery(()=>({queryKey:["access","targets",scope().projectID],queryFn:()=>listAccessTargets(scope().projectID),enabled:!!scope().projectID}));
+ const agents=()=>targets.data?.targets.find(t=>t.environment===scope().environmentID)?.agents ?? [];
+ return <><p class="mb-3 text-control text-console-muted">Manage access to registered Agents in this environment.</p><QueryState query={targets} pending={<LinesSkeleton label="Loading agents" />} error={failure}>{()=> <DataTable columns={["Agent","Access"]}><For each={agents()}>{agent=><tr><td>{agent.key}</td><td><button class={ui.secondaryButton} onClick={()=>setSharing(agent.key)}>Access</button></td></tr>}</For></DataTable>}</QueryState><Show when={sharing()}>{agent=><ResourceAccess environment={scope().environmentID} agent={agent()} onClose={()=>setSharing("")} />}</Show></>;
+}
+
+function OperationalAgentList() {
   const scope = useScopeIDs();
   const [all, setAll] = createSignal(false);
   const [search, setSearch] = createSignal("");
@@ -142,6 +161,7 @@ const AGENT_TABS: { value: AgentTab; label: string }[] = [
 // Deployment, then its Sessions, triggers and Slack connection as tabs, each a
 // page of its own.
 export function AgentDetail(props: { children?: JSX.Element }) {
+  const me = useMe(); const [accessOpen, setAccessOpen] = createSignal(false);
   const scope = useScopeIDs();
   const scopeState = useScope();
   const params = useParams();
@@ -155,7 +175,9 @@ export function AgentDetail(props: { children?: JSX.Element }) {
     queryFn: () => getAgentDefinition(name(), { ...scope(), deploymentID: currentDeploymentID() }),
     enabled: !!currentDeploymentID(), retry: false,
   }));
-  const missing = () => !agent.data && isNotFound(agent.error);
+  const accessTargets=createQuery(()=>({queryKey:["access","targets",scope().projectID],queryFn:()=>listAccessTargets(scope().projectID),enabled:enabled() && hasPermission(me.data,"access.manage")}));
+  const accessIdentity=()=>accessTargets.data?.targets.find(t=>t.environment===scope().environmentID)?.agents.find(a=>a.key===name());
+  const missing = () => !agent.data && !accessIdentity() && isNotFound(agent.error);
   const environment = () => scopeState.selectedEnvironment()?.name;
   const tabs = createMemo(() => AGENT_TABS.map(tab => ({ ...tab, href: agentHref(name(), tab.value) })));
   const selected = () => selectedLinkTab(tabs(), location.pathname);
@@ -172,11 +194,12 @@ export function AgentDetail(props: { children?: JSX.Element }) {
         )}</Show>
         <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
       </>}
-      actions={<Show when={!missing()}><CopyLinkButton /></Show>}
+      actions={<Show when={!missing()}><Show when={hasPermission(me.data, "access.manage")}><button class={ui.secondaryButton} onClick={() => setAccessOpen(true)}>Access</button></Show><CopyLinkButton /></Show>}
     />
+    <Show when={accessOpen()}><ResourceAccess environment={scope().environmentID} agent={name()} onClose={() => setAccessOpen(false)} /></Show>
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
       <Show when={!missing()} fallback={<NotFoundState noun="agent" id={name()} environment={environment()} back={{ href: "/agents", label: "Go to agents" }} />}>
-        <QueryState query={agent} pending={<LinesSkeleton label="Loading agent" />} error={failure}>
+        <Show when={!agent.data && accessIdentity()} fallback={<QueryState query={agent} pending={<LinesSkeleton label="Loading agent" />} error={failure}>
           {record => <>
             <Show when={!record().defined_in_current}>
               <Notice tone="info" class="mb-4">{record().current_deployment_id ? "This agent is not in the current deployment." : "This environment has no current deployment."} New independent sessions cannot start. Existing sessions, trigger history and connections remain available for inspection and management.</Notice>
@@ -184,7 +207,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
             <LinkTabs id="agent-tabs" label="Agent" items={tabs()} selected={selected()} />
             <TabPanel tabs="agent-tabs" value={selected()} selected={selected()}>{props.children}</TabPanel>
           </>}
-        </QueryState>
+        </QueryState>}><Notice tone="info">You can manage access to this Agent. Workload details require a separate Role.</Notice></Show>
       </Show>
     </Show>
   </Page>;

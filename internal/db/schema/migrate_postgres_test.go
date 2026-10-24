@@ -218,14 +218,13 @@ func assertPrimitiveLifecycleSchema(
 		SELECT count(*)
 		  FROM pg_type
 		 WHERE typname = ANY(ARRAY[
-		     'org_member_role',
 		     'magic_link_purpose'
 		 ])
 	`).Scan(&categoricalEnums); err != nil {
 		t.Fatal(err)
 	}
-	if categoricalEnums != 2 {
-		t.Fatalf("categorical enum sentinels = %d, want 2", categoricalEnums)
+	if categoricalEnums != 1 {
+		t.Fatalf("categorical enum sentinels = %d, want 1", categoricalEnums)
 	}
 
 	queryFiles, err := filepath.Glob("../query/*.sql")
@@ -256,6 +255,8 @@ func assertDatabaseConstraintBoundaries(
 	if deferredRetryReferences != 0 {
 		t.Fatalf("deferred retry references = %d, want 0", deferredRetryReferences)
 	}
+	// Selected-target cascades preserve revision/audit evidence; the shared view
+	// projects assignment targets. No other database behavior is expected.
 	var triggerCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
@@ -264,6 +265,8 @@ func assertDatabaseConstraintBoundaries(
 		  JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
 		 WHERE pg_namespace.nspname = 'public'
 		   AND NOT pg_trigger.tgisinternal
+		   AND NOT (pg_class.relname = 'role_grant_agents' AND pg_trigger.tgname = 'changed_grant_target')
+		   AND NOT (pg_class.relname = 'agents' AND pg_trigger.tgname = 'deleted_agent_targets')
 	`).Scan(&triggerCount); err != nil {
 		t.Fatal(err)
 	}
@@ -278,6 +281,7 @@ func assertDatabaseConstraintBoundaries(
 		  JOIN pg_namespace ON pg_namespace.oid = pg_proc.pronamespace
 		 WHERE pg_namespace.nspname = 'public'
 		   AND pg_proc.prokind IN ('f', 'p')
+		   AND pg_proc.proname NOT IN ('bump_grant_target_revision', 'audit_deleted_agent_targets')
 		   AND NOT EXISTS (
 		       SELECT 1
 		         FROM pg_depend
@@ -293,7 +297,7 @@ func assertDatabaseConstraintBoundaries(
 	}
 
 	var viewCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m')`).Scan(&viewCount); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m') AND c.relname <> 'role_grant_permissions'`).Scan(&viewCount); err != nil {
 		t.Fatal(err)
 	}
 	if viewCount != 0 {

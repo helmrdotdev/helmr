@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -132,11 +133,20 @@ func looksLikeSessionBearerToken(token string) bool {
 func (s *Server) requireSessionPermission(permission auth.Permission, next http.Handler) http.Handler {
 	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal := principalFromContext(r.Context())
-		if principal.Role == "" {
+		if principal.MemberID == uuid.Nil() {
 			writeError(w, forbidden(errors.New("organization is required")))
 			return
 		}
-		if !principal.HasPermission(permission, auth.Scope{OrgID: principal.OrgID}) {
+		scope := auth.Scope{OrgID: principal.OrgID}
+		if permission == auth.PermissionAPIKeysManage {
+			resolved, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			scope = resolved
+		}
+		if !principal.HasPermission(permission, scope) {
 			writeError(w, forbidden(errors.New("permission is required")))
 			return
 		}

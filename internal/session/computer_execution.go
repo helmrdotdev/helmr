@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -124,21 +125,5 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 }
 
 func authorizeComputerExecution(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID) error {
-	var allowed bool
-	var err error
-	switch caller.Kind {
-	case "user":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
-	case "api_key":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id) WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND k.role IN ('owner','admin','developer') AND 'computers.update'=ANY(k.permissions))`, env, caller.ID).Scan(&allowed)
-	default:
-		return ErrDenied
-	}
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return ErrDenied
-	}
-	return nil
+	return requireCapability(ctx, tx, caller.Kind, caller.ID, env, uuid.Nil(), auth.CapabilityComputersOperate)
 }

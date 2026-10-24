@@ -11,101 +11,63 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const disableOrgMember = `-- name: DisableOrgMember :one
-WITH locked_active_owners AS (
-    SELECT org_members.user_id
-      FROM org_members
-      JOIN users ON users.id = org_members.user_id
-     WHERE org_members.org_id = $1
-       AND org_members.role = 'owner'
-       AND org_members.disabled_at IS NULL
-     FOR UPDATE OF org_members
-)
-UPDATE org_members
-   SET disabled_at = now(),
-       updated_at = now()
- WHERE org_members.org_id = $1
-   AND org_members.user_id = $2
-   AND org_members.role = $3::org_member_role
-   AND org_members.disabled_at IS NULL
-   AND (
-       $4::boolean
-       OR org_members.role <> 'owner'
-   )
-   AND (
-       org_members.role <> 'owner'
-       OR EXISTS (
-           SELECT 1 FROM locked_active_owners
-            WHERE locked_active_owners.user_id <> org_members.user_id
-       )
-   )
-RETURNING org_id, user_id, role, display_name, disabled_at, created_at, updated_at
+const ensureOrgMember = `-- name: EnsureOrgMember :one
+INSERT INTO org_members (id,org_id,user_id,is_owner,display_name)
+VALUES ($1,$2,$3,$4,$5)
+ON CONFLICT (org_id,user_id) WHERE removed_at IS NULL DO UPDATE
+SET display_name=EXCLUDED.display_name, updated_at=now()
+RETURNING id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at
 `
 
-type DisableOrgMemberParams struct {
-	OrgID        pgtype.UUID   `json:"org_id"`
-	UserID       pgtype.UUID   `json:"user_id"`
-	ExpectedRole OrgMemberRole `json:"expected_role"`
-	ActorIsOwner bool          `json:"actor_is_owner"`
+type EnsureOrgMemberParams struct {
+	ID          pgtype.UUID `json:"id"`
+	OrgID       pgtype.UUID `json:"org_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	IsOwner     bool        `json:"is_owner"`
+	DisplayName pgtype.Text `json:"display_name"`
 }
 
-func (q *Queries) DisableOrgMember(ctx context.Context, arg DisableOrgMemberParams) (OrgMember, error) {
-	row := q.db.QueryRow(ctx, disableOrgMember,
+func (q *Queries) EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error) {
+	row := q.db.QueryRow(ctx, ensureOrgMember,
+		arg.ID,
 		arg.OrgID,
 		arg.UserID,
-		arg.ExpectedRole,
-		arg.ActorIsOwner,
+		arg.IsOwner,
+		arg.DisplayName,
 	)
 	var i OrgMember
 	err := row.Scan(
+		&i.ID,
 		&i.OrgID,
 		&i.UserID,
-		&i.Role,
+		&i.IsOwner,
 		&i.DisplayName,
-		&i.DisabledAt,
+		&i.RemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const ensureOrgMember = `-- name: EnsureOrgMember :one
-INSERT INTO org_members (org_id, user_id, role, display_name)
-VALUES (
-    $1,
-    $2,
-    $3::org_member_role,
-    $4
-)
-ON CONFLICT (org_id, user_id) DO UPDATE
-   SET role = EXCLUDED.role,
-       display_name = EXCLUDED.display_name,
-       disabled_at = NULL,
-       updated_at = now()
-RETURNING org_id, user_id, role, display_name, disabled_at, created_at, updated_at
+const getActiveOrgMemberByUser = `-- name: GetActiveOrgMemberByUser :one
+SELECT id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at FROM org_members WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL
 `
 
-type EnsureOrgMemberParams struct {
-	OrgID       pgtype.UUID   `json:"org_id"`
-	UserID      pgtype.UUID   `json:"user_id"`
-	Role        OrgMemberRole `json:"role"`
-	DisplayName pgtype.Text   `json:"display_name"`
+type GetActiveOrgMemberByUserParams struct {
+	OrgID  pgtype.UUID `json:"org_id"`
+	UserID pgtype.UUID `json:"user_id"`
 }
 
-func (q *Queries) EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error) {
-	row := q.db.QueryRow(ctx, ensureOrgMember,
-		arg.OrgID,
-		arg.UserID,
-		arg.Role,
-		arg.DisplayName,
-	)
+func (q *Queries) GetActiveOrgMemberByUser(ctx context.Context, arg GetActiveOrgMemberByUserParams) (OrgMember, error) {
+	row := q.db.QueryRow(ctx, getActiveOrgMemberByUser, arg.OrgID, arg.UserID)
 	var i OrgMember
 	err := row.Scan(
+		&i.ID,
 		&i.OrgID,
 		&i.UserID,
-		&i.Role,
+		&i.IsOwner,
 		&i.DisplayName,
-		&i.DisabledAt,
+		&i.RemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -113,77 +75,63 @@ func (q *Queries) EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams
 }
 
 const getOrgMemberForManagement = `-- name: GetOrgMemberForManagement :one
-SELECT org_members.org_id,
-       org_members.user_id,
-       org_members.role,
-       org_members.display_name,
-       users.primary_email,
-       org_members.disabled_at,
-       org_members.created_at,
-       org_members.updated_at
-  FROM org_members
-  JOIN users ON users.id = org_members.user_id
- WHERE org_members.org_id = $1
-   AND org_members.user_id = $2
+SELECT m.id, m.org_id, m.user_id, m.is_owner, m.display_name, m.removed_at, m.created_at, m.updated_at,u.primary_email
+FROM org_members m JOIN users u ON u.id=m.user_id
+WHERE m.org_id=$1 AND m.id=$2
 `
 
 type GetOrgMemberForManagementParams struct {
-	OrgID  pgtype.UUID `json:"org_id"`
-	UserID pgtype.UUID `json:"user_id"`
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
 }
 
 type GetOrgMemberForManagementRow struct {
+	ID           pgtype.UUID        `json:"id"`
 	OrgID        pgtype.UUID        `json:"org_id"`
 	UserID       pgtype.UUID        `json:"user_id"`
-	Role         OrgMemberRole      `json:"role"`
+	IsOwner      bool               `json:"is_owner"`
 	DisplayName  pgtype.Text        `json:"display_name"`
-	PrimaryEmail pgtype.Text        `json:"primary_email"`
-	DisabledAt   pgtype.Timestamptz `json:"disabled_at"`
+	RemovedAt    pgtype.Timestamptz `json:"removed_at"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	PrimaryEmail pgtype.Text        `json:"primary_email"`
 }
 
 func (q *Queries) GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error) {
-	row := q.db.QueryRow(ctx, getOrgMemberForManagement, arg.OrgID, arg.UserID)
+	row := q.db.QueryRow(ctx, getOrgMemberForManagement, arg.OrgID, arg.ID)
 	var i GetOrgMemberForManagementRow
 	err := row.Scan(
+		&i.ID,
 		&i.OrgID,
 		&i.UserID,
-		&i.Role,
+		&i.IsOwner,
 		&i.DisplayName,
-		&i.PrimaryEmail,
-		&i.DisabledAt,
+		&i.RemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.PrimaryEmail,
 	)
 	return i, err
 }
 
 const listOrgMembers = `-- name: ListOrgMembers :many
-SELECT org_members.org_id,
-       org_members.user_id,
-       org_members.role,
-       COALESCE(org_members.display_name, users.display_name) AS display_name,
-       users.primary_email,
-       org_members.disabled_at,
-       org_members.created_at,
-       org_members.updated_at
-  FROM org_members
-  JOIN users ON users.id = org_members.user_id
- WHERE org_members.org_id = $1
- ORDER BY org_members.disabled_at IS NULL DESC,
-          org_members.created_at ASC
+SELECT m.id, m.org_id, m.user_id, m.is_owner, m.display_name, m.removed_at, m.created_at, m.updated_at, COALESCE(m.display_name,u.display_name)::text AS effective_display_name,u.primary_email
+FROM org_members m JOIN users u ON u.id=m.user_id
+WHERE m.org_id=$1
+ORDER BY m.removed_at IS NULL DESC,m.created_at
 `
 
 type ListOrgMembersRow struct {
-	OrgID        pgtype.UUID        `json:"org_id"`
-	UserID       pgtype.UUID        `json:"user_id"`
-	Role         OrgMemberRole      `json:"role"`
-	DisplayName  string             `json:"display_name"`
-	PrimaryEmail pgtype.Text        `json:"primary_email"`
-	DisabledAt   pgtype.Timestamptz `json:"disabled_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	UserID               pgtype.UUID        `json:"user_id"`
+	IsOwner              bool               `json:"is_owner"`
+	DisplayName          pgtype.Text        `json:"display_name"`
+	RemovedAt            pgtype.Timestamptz `json:"removed_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	EffectiveDisplayName string             `json:"effective_display_name"`
+	PrimaryEmail         pgtype.Text        `json:"primary_email"`
 }
 
 func (q *Queries) ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]ListOrgMembersRow, error) {
@@ -196,14 +144,16 @@ func (q *Queries) ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]List
 	for rows.Next() {
 		var i ListOrgMembersRow
 		if err := rows.Scan(
+			&i.ID,
 			&i.OrgID,
 			&i.UserID,
-			&i.Role,
+			&i.IsOwner,
 			&i.DisplayName,
-			&i.PrimaryEmail,
-			&i.DisabledAt,
+			&i.RemovedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.EffectiveDisplayName,
+			&i.PrimaryEmail,
 		); err != nil {
 			return nil, err
 		}
@@ -215,64 +165,62 @@ func (q *Queries) ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]List
 	return items, nil
 }
 
-const updateOrgMemberRole = `-- name: UpdateOrgMemberRole :one
-WITH locked_active_owners AS (
-    SELECT org_members.user_id
-      FROM org_members
-      JOIN users ON users.id = org_members.user_id
-     WHERE org_members.org_id = $2
-       AND org_members.role = 'owner'
-       AND org_members.disabled_at IS NULL
-     FOR UPDATE OF org_members
-)
-UPDATE org_members
-   SET role = $1::org_member_role,
-       updated_at = now()
- WHERE org_members.org_id = $2
-   AND org_members.user_id = $3
-   AND org_members.role = $4::org_member_role
-   AND org_members.disabled_at IS NULL
-   AND (
-       $5::boolean
-       OR (
-           org_members.role <> 'owner'
-           AND $1::org_member_role <> 'owner'
-       )
-   )
-   AND (
-       org_members.role <> 'owner'
-       OR $1::org_member_role = 'owner'
-       OR EXISTS (
-           SELECT 1 FROM locked_active_owners
-            WHERE locked_active_owners.user_id <> org_members.user_id
-       )
-   )
-RETURNING org_id, user_id, role, display_name, disabled_at, created_at, updated_at
+const removeOrgMember = `-- name: RemoveOrgMember :one
+UPDATE org_members SET removed_at=now(),updated_at=now()
+WHERE org_id=$1 AND id=$2 AND removed_at IS NULL AND NOT is_owner
+RETURNING id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at
 `
 
-type UpdateOrgMemberRoleParams struct {
-	Role         OrgMemberRole `json:"role"`
-	OrgID        pgtype.UUID   `json:"org_id"`
-	UserID       pgtype.UUID   `json:"user_id"`
-	ExpectedRole OrgMemberRole `json:"expected_role"`
-	ActorIsOwner bool          `json:"actor_is_owner"`
+type RemoveOrgMemberParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) UpdateOrgMemberRole(ctx context.Context, arg UpdateOrgMemberRoleParams) (OrgMember, error) {
-	row := q.db.QueryRow(ctx, updateOrgMemberRole,
-		arg.Role,
+func (q *Queries) RemoveOrgMember(ctx context.Context, arg RemoveOrgMemberParams) (OrgMember, error) {
+	row := q.db.QueryRow(ctx, removeOrgMember, arg.OrgID, arg.ID)
+	var i OrgMember
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.UserID,
+		&i.IsOwner,
+		&i.DisplayName,
+		&i.RemovedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateOrgMemberOwnership = `-- name: UpdateOrgMemberOwnership :one
+UPDATE org_members SET is_owner=$1,updated_at=now()
+WHERE org_id=$2 AND id=$3
+AND removed_at IS NULL AND is_owner=$4
+RETURNING id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at
+`
+
+type UpdateOrgMemberOwnershipParams struct {
+	IsOwner         bool        `json:"is_owner"`
+	OrgID           pgtype.UUID `json:"org_id"`
+	ID              pgtype.UUID `json:"id"`
+	ExpectedIsOwner bool        `json:"expected_is_owner"`
+}
+
+func (q *Queries) UpdateOrgMemberOwnership(ctx context.Context, arg UpdateOrgMemberOwnershipParams) (OrgMember, error) {
+	row := q.db.QueryRow(ctx, updateOrgMemberOwnership,
+		arg.IsOwner,
 		arg.OrgID,
-		arg.UserID,
-		arg.ExpectedRole,
-		arg.ActorIsOwner,
+		arg.ID,
+		arg.ExpectedIsOwner,
 	)
 	var i OrgMember
 	err := row.Scan(
+		&i.ID,
 		&i.OrgID,
 		&i.UserID,
-		&i.Role,
+		&i.IsOwner,
 		&i.DisplayName,
-		&i.DisabledAt,
+		&i.RemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

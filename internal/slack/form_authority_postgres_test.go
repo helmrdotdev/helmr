@@ -11,7 +11,7 @@ import (
 )
 
 func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
-	for _, scenario := range []string{"viewer", "unlinked", "disabled_member", "revoked_publication", "retired_app", "disconnected", "reauthorized", "reenabled", "wrong_app", "wrong_team", "bot", "wrong_session", "wrong_turn", "wrong_ask", "expired"} {
+	for _, scenario := range []string{"operator", "unlinked", "disabled_member", "revoked_publication", "retired_app", "disconnected", "reauthorized", "reenabled", "wrong_app", "wrong_team", "bot", "wrong_session", "wrong_turn", "wrong_ask", "expired"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newStatusFixture(t)
 			f.link(t)
@@ -20,12 +20,12 @@ func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
 			source := time.Now().UTC()
 			app, team, actor := "app", "team", "human"
 			switch scenario {
-			case "viewer":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.User)
+			case "operator":
+				f.SetPermissions(t, "runs.operate")
 			case "unlinked":
 				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM slack_user_links`)
 			case "disabled_member":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.User)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			case "revoked_publication":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "retired_app":
@@ -53,15 +53,15 @@ func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
 			}
 			err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
 				view, credential, err := readFormQuestion(t.Context(), tx, app, team, actor, c, source)
-				if scenario == "viewer" && err == nil && (view.ID != c.Target.Ask || view.Status != "pending" || len(view.Question) == 0 || credential != 1) {
+				if scenario == "operator" && err == nil && (view.ID != c.Target.Ask || view.Status != "pending" || len(view.Question) == 0 || credential != 1) {
 					t.Fatalf("incomplete exact ask: %+v %d", view, credential)
 				}
-				if scenario != "viewer" && (len(view.Question) != 0 || credential != 0) {
+				if scenario != "operator" && (len(view.Question) != 0 || credential != 0) {
 					t.Fatal("unauthorized read disclosed question or credential reference")
 				}
 				return err
 			})
-			if (err == nil) != (scenario == "viewer") {
+			if (err == nil) != (scenario == "operator") {
 				t.Fatalf("authorization mismatch: %v", err)
 			}
 		})

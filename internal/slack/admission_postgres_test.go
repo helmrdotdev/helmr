@@ -65,7 +65,7 @@ func TestSlackBoundReplyRejectsCurrentAuthorityAndContentFailures(t *testing.T) 
 			case "deleted-root":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET deleted_at=clock_timestamp() WHERE id=$1`, f.thread)
 			case "member-disabled":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.User)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			case "publication-revoked":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "reauthorized":
@@ -236,9 +236,14 @@ func TestSlackNewHumanRootAcceptsText(t *testing.T) {
 func TestSlackHistoricalRootCannotBindAcrossConnectionGeneration(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
-	nextPublication := uuid.NewV7()
+	nextPublication, nextRegistration, nextInstallation := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1;
- INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) SELECT $2,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id FROM slack_connections WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.publication, nextPublication)
+ UPDATE slack_app_registrations SET retired_at=clock_timestamp(),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$5;
+ UPDATE slack_installations SET disconnected_at=clock_timestamp(),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$6;
+ INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) SELECT transport,$3,org_id,app_id,client_id,1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),created_by_user_id FROM slack_app_registrations WHERE id=$5;
+ INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) SELECT $4,$3,org_id,app_id,team_id,bot_user_id,1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),granted_scopes,connected_by_user_id FROM slack_installations WHERE id=$6;
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) SELECT $2,environment_id,agent_id,$3,$4,created_by_user_id FROM slack_connections WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.publication, nextPublication, nextRegistration, nextInstallation, f.registration, f.installation)
+	f.installation = nextInstallation
 	id := f.newMessage(t, "old-root", "123.456")
 	if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
@@ -327,7 +332,12 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := uuid.NewV7()
-	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Second'); INSERT INTO org_members(org_id,user_id,role) SELECT org_id,$1,'developer' FROM environments WHERE id=$2; INSERT INTO slack_user_links(team_id,slack_user_id,user_id) VALUES('team','second-human',$1)`, pgx.QueryExecModeSimpleProtocol, user, f.Environment)
+	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Second'); INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$1 FROM environments WHERE id=$2; INSERT INTO slack_user_links(team_id,slack_user_id,user_id) VALUES('team','second-human',$1)`, pgx.QueryExecModeSimpleProtocol, user, f.Environment)
+	var org uuid.UUID
+	if err := f.Pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.GrantMember(t, f.Pool, org, user, &f.Environment, "agents.use", "runs.operate")
 	payload, _ := json.Marshal(messageGesture{Channel: "C1", Timestamp: slackNow(), Thread: "123.456", Text: "<@bot> another author"})
 	now := time.Now().UTC()
 	second, err := receiveGesture(ctx, f.Pool, inboundGesture{Installation: f.installation, Key: "second-source", Actor: "second-human", OccurredAt: now, ExpiresAt: now.Add(time.Minute), Payload: payload})

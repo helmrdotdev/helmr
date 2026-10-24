@@ -131,7 +131,7 @@ func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	manager := managingMember(principal)
-	if err := manager.Authorize(); err != nil {
+	if err := manager.Authorize(r.Context(), s.db); err != nil {
 		writeError(w, orgError(err))
 		return
 	}
@@ -156,7 +156,6 @@ func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	created, err := org.CreateInvitations(ctx, s.tx, s.authKeys.Invitation, manager, org.InvitationInput{
 		Emails:        input.Emails,
-		Role:          input.Role,
 		ExpiresInDays: input.ExpiresInDays,
 	}, func(ctx context.Context, invitations []org.NewInvitation) error {
 		messages := make([]email.Message, len(invitations))
@@ -222,10 +221,10 @@ func invitationEmailMessage(inviterName string, orgName string, invitation db.In
 		To:      invitation.InviteeEmail,
 		Subject: fmt.Sprintf("%s invited you to %s on Helmr", inviterName, orgName),
 		PlainText: fmt.Sprintf(
-			"%s invited you to join the %s organization on Helmr with the %s role.\n\n"+
+			"%s invited you to join the %s organization on Helmr.\n\n"+
 				"Open this link to accept the invitation:\n\n%s\n\n"+
 				"This invitation expires at %s. If you did not expect it, you can ignore this email.\n",
-			inviterName, orgName, invitation.Role, inviteURL, expiresAt.Format("January 2, 2006 15:04 MST"),
+			inviterName, orgName, inviteURL, expiresAt.Format("January 2, 2006 15:04 MST"),
 		),
 		Link: &email.Link{
 			Email:     invitation.InviteeEmail,
@@ -249,18 +248,18 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
-	targetUserID, err := parseUUIDParam(r, "userID")
+func (s *Server) updateMemberOwnership(w http.ResponseWriter, r *http.Request) {
+	targetUserID, err := parseUUIDParam(r, "memberID")
 	if err != nil {
 		writeError(w, notFound(org.ErrMemberNotFound))
 		return
 	}
-	var input api.UpdateMemberRoleRequest
+	var input api.UpdateMemberOwnershipRequest
 	if err := decodeRequestJSON(r, &input); err != nil {
 		writeError(w, fmt.Errorf("invalid member role request JSON: %w", err))
 		return
 	}
-	updated, err := org.UpdateMemberRole(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), targetUserID, input.Role, input.ExpectedRole)
+	updated, err := org.UpdateMemberOwnership(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), targetUserID, input.IsOwner, input.ExpectedIsOwner)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -274,7 +273,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
-	targetUserID, err := parseUUIDParam(r, "userID")
+	targetUserID, err := parseUUIDParam(r, "memberID")
 	if err != nil {
 		writeError(w, notFound(org.ErrMemberNotFound))
 		return
@@ -287,7 +286,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func managingMember(principal auth.Principal) org.ManagingMember {
-	return org.ManagingMember{Actor: audit.FromPrincipal(principal), OrgID: principal.OrgID, UserID: principal.UserID, Role: principal.Role}
+	return org.ManagingMember{Actor: audit.FromPrincipal(principal), OrgID: principal.OrgID, UserID: principal.UserID, MemberID: principal.MemberID}
 }
 
 func (s *Server) inviteURL(token string) string {
@@ -301,23 +300,24 @@ func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, erro
 		return api.MemberSummary{}, err
 	}
 	status := api.MemberStatusActive
-	disabledAt := row.DisabledAt
+	disabledAt := row.RemovedAt
 	if disabledAt.Valid {
-		status = api.MemberStatusDisabled
+		status = api.MemberStatusRemoved
 	}
 	email := ""
 	if row.PrimaryEmail.Valid {
 		email = row.PrimaryEmail.String
 	}
 	return api.MemberSummary{
-		UserID:      userID.String(),
-		DisplayName: row.DisplayName,
-		Email:       email,
-		Role:        string(row.Role),
-		Status:      status,
-		CreatedAt:   pgvalue.Time(row.CreatedAt),
-		UpdatedAt:   pgvalue.Time(row.UpdatedAt),
-		DisabledAt:  pgvalue.TimePtr(disabledAt),
+		UserID:       userID.String(),
+		DisplayName:  row.EffectiveDisplayName,
+		Email:        email,
+		MembershipID: pgvalue.MustUUIDValue(row.ID).String(),
+		IsOwner:      row.IsOwner,
+		Status:       status,
+		CreatedAt:    pgvalue.Time(row.CreatedAt),
+		UpdatedAt:    pgvalue.Time(row.UpdatedAt),
+		RemovedAt:    pgvalue.TimePtr(disabledAt),
 	}, nil
 }
 
@@ -328,18 +328,19 @@ func memberSummaryFromUpdated(updated org.UpdatedMember) (api.MemberSummary, err
 		return api.MemberSummary{}, err
 	}
 	status := api.MemberStatusActive
-	if member.DisabledAt.Valid {
-		status = api.MemberStatusDisabled
+	if member.RemovedAt.Valid {
+		status = api.MemberStatusRemoved
 	}
 	return api.MemberSummary{
-		UserID:      userID.String(),
-		DisplayName: updated.DisplayName.String,
-		Email:       updated.PrimaryEmail.String,
-		Role:        string(member.Role),
-		Status:      status,
-		CreatedAt:   pgvalue.Time(member.CreatedAt),
-		UpdatedAt:   pgvalue.Time(member.UpdatedAt),
-		DisabledAt:  pgvalue.TimePtr(member.DisabledAt),
+		UserID:       userID.String(),
+		DisplayName:  updated.DisplayName.String,
+		Email:        updated.PrimaryEmail.String,
+		MembershipID: pgvalue.MustUUIDValue(member.ID).String(),
+		IsOwner:      member.IsOwner,
+		Status:       status,
+		CreatedAt:    pgvalue.Time(member.CreatedAt),
+		UpdatedAt:    pgvalue.Time(member.UpdatedAt),
+		RemovedAt:    pgvalue.TimePtr(member.RemovedAt),
 	}, nil
 }
 
@@ -347,18 +348,17 @@ func invitationSummaryFromListRow(row db.ListInvitationsRow) (api.InvitationSumm
 	return invitationSummary(
 		row.ID,
 		row.InviteeEmail,
-		row.Role,
-		row.InvitedByUserID,
+		row.InvitedByMemberID,
 		row.CreatedAt,
 		row.ExpiresAt,
 		row.AcceptedAt,
-		row.AcceptedByUserID,
+		row.AcceptedByMemberID,
 		row.RevokedAt,
-		row.RevokedByUserID,
+		row.RevokedByMemberID,
 	)
 }
 
-func invitationSummary(id pgtype.UUID, email string, role db.OrgMemberRole, invitedByUserID pgtype.UUID, createdAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, acceptedAt pgtype.Timestamptz, acceptedByUserID pgtype.UUID, revokedAt pgtype.Timestamptz, revokedByUserID pgtype.UUID) (api.InvitationSummary, error) {
+func invitationSummary(id pgtype.UUID, email string, invitedByMemberID pgtype.UUID, createdAt pgtype.Timestamptz, expiresAt pgtype.Timestamptz, acceptedAt pgtype.Timestamptz, acceptedByMemberID pgtype.UUID, revokedAt pgtype.Timestamptz, revokedByMemberID pgtype.UUID) (api.InvitationSummary, error) {
 	parsedID, err := pgvalue.UUIDValue(id)
 	if err != nil {
 		return api.InvitationSummary{}, err
@@ -372,16 +372,32 @@ func invitationSummary(id pgtype.UUID, email string, role db.OrgMemberRole, invi
 		status = api.InvitationStatusExpired
 	}
 	return api.InvitationSummary{
-		ID:               parsedID.String(),
-		Email:            email,
-		Role:             string(role),
-		Status:           status,
-		InvitedByUserID:  pgvalue.UUIDString(invitedByUserID),
-		AcceptedByUserID: pgvalue.UUIDString(acceptedByUserID),
-		RevokedByUserID:  pgvalue.UUIDString(revokedByUserID),
-		CreatedAt:        pgvalue.Time(createdAt),
-		ExpiresAt:        pgvalue.Time(expiresAt),
-		AcceptedAt:       pgvalue.TimePtr(acceptedAt),
-		RevokedAt:        pgvalue.TimePtr(revokedAt),
+		ID:                 parsedID.String(),
+		Email:              email,
+		Status:             status,
+		InvitedByMemberID:  pgvalue.UUIDString(invitedByMemberID),
+		AcceptedByMemberID: pgvalue.UUIDString(acceptedByMemberID),
+		RevokedByMemberID:  pgvalue.UUIDString(revokedByMemberID),
+		CreatedAt:          pgvalue.Time(createdAt),
+		ExpiresAt:          pgvalue.Time(expiresAt),
+		AcceptedAt:         pgvalue.TimePtr(acceptedAt),
+		RevokedAt:          pgvalue.TimePtr(revokedAt),
 	}, nil
+}
+
+func (s *Server) recoverOwnAccess(w http.ResponseWriter, r *http.Request) {
+	result, err := org.RecoverOwnAccess(r.Context(), s.tx, managingMember(principalFromContext(r.Context())))
+	if err != nil {
+		writeError(w, orgError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+func (s *Server) ownershipMembers(w http.ResponseWriter, r *http.Request) {
+	result, err := org.OwnershipMembers(r.Context(), s.tx, managingMember(principalFromContext(r.Context())))
+	if err != nil {
+		writeError(w, orgError(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"members": result})
 }

@@ -18,6 +18,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -199,6 +201,9 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 				return err
 			}
 		}
+		if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, req.SessionID, auth.PermissionSessionsSend); err != nil {
+			return err
+		}
 		if caller.Kind != "session" {
 			if err := authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, owners{}); err != nil {
 				return err
@@ -236,6 +241,9 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 				return err
 			}
 		} else if err = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, locked[caller.ID]); err != nil {
+			return err
+		}
+		if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, req.SessionID, auth.PermissionSessionsSend); err != nil {
 			return err
 		}
 		if req.IdempotencyKey != "" {
@@ -323,6 +331,9 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 		if err = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, locked[caller.ID]); err != nil {
 			return err
 		}
+		if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, req.SessionID, auth.PermissionSessionsSend); err != nil {
+			return err
+		}
 		if err = consumeAdmission(ctx, tx, req.EnvironmentID, policy); err != nil {
 			return err
 		}
@@ -364,20 +375,13 @@ func authorizeEnqueue(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UU
 func authorizeSessionInput(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID, o owners, steering bool) error {
 	var allowed bool
 	switch caller.Kind {
-	case "user":
-		err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id
-          WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
-		if err != nil {
-			return err
-		}
-	case "api_key":
-		err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id)
-          WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
-          AND k.role IN ('owner','admin','developer') AND 'sessions.send'=ANY(k.permissions))`, env, caller.ID).Scan(&allowed)
-		if err != nil {
-			return err
-		}
+	case "user", "api_key":
+		_, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+		return accessError(err)
 	case "session":
+		if err := authorizeRuntimeOrigin(ctx, tx, env, caller.ID); err != nil {
+			return err
+		}
 		// Enqueue may address any Session in the same Environment. Exact-Turn
 		// steering additionally requires owned ancestry before target admission.
 		if caller.Execution.EnvironmentID != env || caller.Execution.SessionID != caller.ID {
@@ -554,6 +558,22 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
 	}
 	if err != nil {
 		return err
+	}
+	var inputCaller Caller
+	if err = tx.QueryRow(ctx, `SELECT caller_kind,caller_id FROM turns WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID).Scan(&inputCaller.Kind, &inputCaller.ID); err != nil {
+		return err
+	}
+	if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller); err != nil {
+		if !errors.Is(err, ErrDenied) {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp(),error_code='permission_revoked',error_message=$3 WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID, []byte("Permission was revoked before dispatch")); err != nil {
+			return err
+		}
+		if err = eventData(ctx, tx, e.EnvironmentID, e.SessionID, result.TurnID, "turn.failed", []byte(`{"code":"permission_revoked"}`)); err != nil {
+			return err
+		}
+		return ErrNotReady
 	}
 	_, err = tx.Exec(ctx, `UPDATE turns SET status='running',process_epoch=$3,started_at=clock_timestamp(),
           deadline_at=CASE WHEN d.max_turn_duration_ms IS NOT NULL THEN clock_timestamp()+d.max_turn_duration_ms*interval '1 millisecond' END

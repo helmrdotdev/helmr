@@ -68,7 +68,7 @@ func (f httpPostgresFixture) organizationOwner(t *testing.T, slug string) (uuid.
 		t.Fatal(err)
 	}
 	userID := f.user(t, "Owner")
-	f.member(t, orgID, userID, db.OrgMemberRoleOwner)
+	f.member(t, orgID, userID, "owner")
 	return orgID, f.session(t, userID, orgID)
 }
 
@@ -81,13 +81,18 @@ func (f httpPostgresFixture) user(t *testing.T, name string) uuid.UUID {
 	return userID
 }
 
-func (f httpPostgresFixture) member(t *testing.T, orgID uuid.UUID, userID uuid.UUID, role db.OrgMemberRole) {
+func (f httpPostgresFixture) member(t *testing.T, orgID uuid.UUID, userID uuid.UUID, role string) uuid.UUID {
 	t.Helper()
-	if _, err := f.queries.EnsureOrgMember(t.Context(), db.EnsureOrgMemberParams{
-		OrgID: pgvalue.UUID(orgID), UserID: pgvalue.UUID(userID), Role: role,
-	}); err != nil {
+	record, err := f.queries.EnsureOrgMember(t.Context(), db.EnsureOrgMemberParams{ID: pgvalue.NewUUIDv7(),
+		OrgID: pgvalue.UUID(orgID), UserID: pgvalue.UUID(userID), IsOwner: role == "owner",
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if role == "owner" || role == "admin" {
+		dbtest.GrantMember(t, f.pool, orgID, userID, nil, "access.manage", "organization.manage")
+	}
+	return pgvalue.MustUUIDValue(record.ID)
 }
 
 // session creates a login session for the user that selects orgID, or no
@@ -129,4 +134,9 @@ func (f httpPostgresFixture) request(t *testing.T, method string, path string, t
 	recorder := httptest.NewRecorder()
 	f.handler.ServeHTTP(recorder, request)
 	return recorder
+}
+
+func (f httpPostgresFixture) grant(t *testing.T, org, user, env uuid.UUID, permission string) {
+	t.Helper()
+	dbtest.GrantMember(t, f.pool, org, user, &env, permission)
 }

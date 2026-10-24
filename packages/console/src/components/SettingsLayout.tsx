@@ -28,7 +28,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
     },
     {
       label: "Organization",
-      links: [{ href: "/settings/members", label: "Members" }],
+      links: [{ href: "/settings/members", label: "Members" }, { href: "/settings/groups", label: "Groups" }, { href: "/settings/roles", label: "Roles" }],
     },
   ];
 

@@ -53,7 +53,7 @@ func TestDedicatedAppManifestSeparatesBotInstallationAndIdentityConsent(t *testi
 		if err := json.Unmarshal(AppManifest(origin, registration, name, TransportHTTP), &manifest); err != nil {
 			t.Fatal(err)
 		}
-		if !manifest.Features.Bot.AlwaysOnline || !manifest.Features.Home.Messages || manifest.Features.Home.ReadOnly || !strings.Contains(manifest.Features.Agent.Description, "Organization members") {
+		if !manifest.Features.Bot.AlwaysOnline || !manifest.Features.Home.Messages || manifest.Features.Home.ReadOnly || !strings.Contains(manifest.Features.Agent.Description, "Environment run viewers") {
 			t.Fatal("DM disclosure, presence or Messages tab missing")
 		}
 		for _, event := range []string{"message.im", "app_home_opened"} {

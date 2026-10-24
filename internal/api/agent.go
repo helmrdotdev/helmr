@@ -9,7 +9,7 @@ import (
 type AgentDefinition struct {
 	InputKind    string          `json:"input_kind"`
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
-	TemplateID   string          `json:"template"`
+	TemplateID   string          `json:"template,omitempty"`
 	ID           string          `json:"agent"`
 	DeploymentID string          `json:"deployment_id"`
 }
@@ -17,7 +17,7 @@ type AgentDefinition struct {
 type AgentDefinitionListItem struct {
 	InputKind   string          `json:"input_kind"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
-	TemplateID  string          `json:"template"`
+	TemplateID  string          `json:"template,omitempty"`
 	ID          string          `json:"agent"`
 }
 
@@ -57,9 +57,10 @@ type CreateSessionResponse struct {
 
 // AgentSession is a retained conversation, independent of a physical process.
 type AgentSession struct {
+	Permissions          []string                 `json:"permissions,omitempty"`
 	Suspension           string                   `json:"suspension"`
 	AgentDefinitionID    string                   `json:"agent"`
-	TemplateDefinitionID string                   `json:"template"`
+	TemplateDefinitionID string                   `json:"template,omitempty"`
 	Activity             AgentSessionActivity     `json:"activity"`
 	CloseAfterIdleMs     *int64                   `json:"close_after_idle_ms"`
 	IdleSince            *time.Time               `json:"idle_since"`

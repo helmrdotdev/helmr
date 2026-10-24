@@ -43,6 +43,9 @@ func checkSessionStart(ctx context.Context, tx pgx.Tx, host workergroup.HostPrin
 	if _, err := lockRuntimeAuthority(ctx, tx, host, e); err != nil {
 		return err
 	}
+	if err := authorizeRuntimeOrigin(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
+		return err
+	}
 	var currentAttachment int64
 	var starting bool
 	if err := tx.QueryRow(ctx, `SELECT attachment_sequence,status='starting' AND fenced_at IS NULL AND failure_recorded_at IS NULL FROM session_processes

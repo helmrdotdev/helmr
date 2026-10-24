@@ -8,6 +8,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -49,10 +51,8 @@ func ListSessionDelivery(ctx context.Context, pool db.TxBeginner, org, user, env
 		return nil, ErrDeliveryUnavailable
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		var allowed bool
-		err := tx.QueryRow(ctx, `SELECT m.disabled_at IS NULL AND m.role IN ('owner','admin','developer','viewer')
- FROM org_members m WHERE m.org_id=$1 AND m.user_id=$2 FOR SHARE OF m`, org, user).Scan(&allowed)
-		if errors.Is(err, pgx.ErrNoRows) || err == nil && !allowed {
+		err := access.Check(ctx, tx, "user", user, environment, uuid.Nil(), auth.CapabilityRunsView)
+		if errors.Is(err, access.ErrDenied) {
 			return ErrDeliveryUnavailable
 		}
 		if err != nil {
@@ -113,12 +113,19 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 		return ErrDeliveryChanged
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
+		if err := lockSlackMember(ctx, tx, org, user); err != nil {
 			return err
+		}
+		p, err := access.Principal(ctx, tx, "user", user, environment)
+		if err != nil {
+			return err
+		}
+		if p.OrgID != org || !p.HasPermission(auth.CapabilityRunsOperate, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String()}) {
+			return errInstallationAuthority
 		}
 		var installation, thread, participant uuid.UUID
 		var publication string
-		err := tx.QueryRow(ctx, `SELECT c.installation_id,p.thread_id,p.thread_source_id,p.post_key
+		err = tx.QueryRow(ctx, `SELECT c.installation_id,p.thread_id,p.thread_source_id,p.post_key
  FROM slack_posts p JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id
  JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND p.session_id=$3 AND e.org_id=$4`, post, environment, session, org).Scan(&installation, &thread, &participant, &publication)
 		if errors.Is(err, pgx.ErrNoRows) {

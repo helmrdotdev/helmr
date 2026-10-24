@@ -3,6 +3,8 @@ package sessiontest
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"strings"
@@ -20,8 +22,8 @@ import (
 const ChannelCredential = "test-computer-channel"
 
 type Fixture struct {
-	Pool                                                                   *pgxpool.Pool
-	Environment, Session, Computer, User, Worker, Agent, Deployment, Group uuid.UUID
+	Pool                                                                             *pgxpool.Pool
+	Environment, Session, Computer, User, Worker, Agent, Deployment, Group, MemberID uuid.UUID
 }
 
 // SeededAttachment is the runtime attachment the fixture Session Process already
@@ -35,7 +37,7 @@ func New(t *testing.T) Fixture {
 	if err := schema.Up(t.Context(), database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	f := Fixture{Pool: database.Pool, Environment: uuid.NewV7(), Session: uuid.NewV7(), Computer: uuid.NewV7(), User: uuid.NewV7(), Worker: uuid.NewV7(), Agent: uuid.NewV7(), Deployment: uuid.NewV7()}
+	f := Fixture{Pool: database.Pool, Environment: uuid.NewV7(), Session: uuid.NewV7(), Computer: uuid.NewV7(), User: uuid.NewV7(), Worker: uuid.NewV7(), Agent: uuid.NewV7(), Deployment: uuid.NewV7(), MemberID: uuid.NewV7()}
 	org, project, token, group, pool := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	f.Group = group
 	initial := newInitialRoot(t, f.Environment)
@@ -44,9 +46,14 @@ func New(t *testing.T) Fixture {
       INSERT INTO regions(id,display_name) VALUES('test','Test');
       INSERT INTO organizations(id,name,slug) VALUES($1,'Org','org');
       INSERT INTO users(id,display_name) VALUES($2,'Developer');
-      INSERT INTO org_members(org_id,user_id,role) VALUES($1,$2,'developer');
+      INSERT INTO org_members(id,org_id,user_id) VALUES($23,$1,$2);
       INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'test','project','Project');
       INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp());
+      INSERT INTO permission_groups(id,org_id,name) VALUES($1,$1,'Fixture operators');
+      INSERT INTO permission_group_members(org_id,group_id,member_id) VALUES($1,$1,$23);
+      INSERT INTO roles(id,org_id,name) VALUES($1,$1,'Fixture operator');
+      INSERT INTO role_permissions(org_id,role_id,permission) SELECT $1,$1,unnest(ARRAY['agents.use','runs.view','runs.operate','deployments.publish','deployments.promote','computers.operate','secrets.manage','keys.manage','agents.manage']);
+      INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,agents_mode) VALUES($1,$1,$1,$1,$4,'all');
       INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($4,$5,$6);
       UPDATE environments SET current_deployment_id=$5 WHERE id=$4;
       INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($4,$5,$6,'{}','{}');
@@ -61,7 +68,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($4,$16,$15,true);
       `+DiskRootInsert("$4", "$20", "$21")+`;
       INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($4,$8,$20,decode(substring($22::text from 8),'hex'),$5,$5,1000,536870912,NULL,34359738368);
-      INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES($4,$9,$7,$5,$8,$9,0);
+      INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($4,$9,$7,$5,$8,$9,0,'environment','user',$2);
       INSERT INTO worker_group_tokens(id,token_hash) VALUES($10,decode(repeat('00',32),'hex'));
       INSERT INTO worker_groups(id,token_id,region_id,name) VALUES($11,$10,'test','group');
       INSERT INTO vm_platforms(id,descriptor_digest,firecracker_digest,firecracker_version,snapshot_format_version,host_kernel_release,kernel_digest,initramfs_digest,rootfs_digest) VALUES($6,$6,$6,'1.16.1','6.0.0','test',$6,$6,$6);
@@ -70,7 +77,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO worker_hosts(id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,epoch_started_at,activated_at,epoch_cpu_millis,epoch_memory_bytes,per_vm_cpu_millis,per_vm_memory_bytes,per_vm_guest_ephemeral_disk_bytes,vm_platform_id,max_vm_slots,max_vm_starts,cpu_environment,cpu_environment_digest) VALUES($13,'host',$11,$12,'active',1,$13,clock_timestamp(),clock_timestamp(),1000,1073741824,1000,1073741824,1073741824,$6,1,1,'{}'::jsonb,$6);
       INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) VALUES($4,$8,1,$13,1,clock_timestamp()+interval '1 hour','active',$8,$14,536870912,1073741824,'sha256:1111111111111111111111111111111111111111111111111111111111111111',1,'sha256:1111111111111111111111111111111111111111111111111111111111111111',clock_timestamp(),clock_timestamp());
       INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($4,$9,1,$8,1,'ready',1,1,1,'resume',1,clock_timestamp());
-    `, pgx.QueryExecModeSimpleProtocol, org, f.User, project, f.Environment, f.Deployment, "sha256:"+strings.Repeat("1", 64), f.Agent, f.Computer, f.Session, token, group, pool, f.Worker, channelDigest[:], initial.key, initial.root.Pack.Digest, initial.root.Pack.SizeBytes, initial.root.Pack.Rank, string(initial.inspection), initial.id, string(initial.locator), initial.identity)
+    `, pgx.QueryExecModeSimpleProtocol, org, f.User, project, f.Environment, f.Deployment, "sha256:"+strings.Repeat("1", 64), f.Agent, f.Computer, f.Session, token, group, pool, f.Worker, channelDigest[:], initial.key, initial.root.Pack.Digest, initial.root.Pack.SizeBytes, initial.root.Pack.Rank, string(initial.inspection), initial.id, string(initial.locator), initial.identity, f.MemberID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,4 +107,21 @@ func ObserveProvisioning(t *testing.T, f Fixture) {
 	}
 	digest := sha256.Sum256([]byte(identity.Identity))
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp(),capacity_supply_fingerprint=$2,capacity_pools=(SELECT jsonb_build_array(jsonb_build_object('pool_id',id,'max_additional_workers',1000,'active_workers',1,'registering_workers',0)) FROM worker_pools WHERE worker_group_id=$1) WHERE id=$1`, f.Group, hex.EncodeToString(digest[:]))
+}
+
+func (f Fixture) Principal(t *testing.T) auth.Principal {
+	t.Helper()
+	p, err := access.Principal(t.Context(), f.Pool, "user", f.User, f.Environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SessionID = uuid.NewV7()
+	return p
+}
+
+// SetPermissions replaces this fixture user's workload Role bundle.
+func (f Fixture) SetPermissions(t *testing.T, permissions ...string) {
+	t.Helper()
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM role_permissions WHERE role_id IN (SELECT role_id FROM role_grants WHERE environment_id=$1)`, f.Environment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO role_permissions(org_id,role_id,permission) SELECT g.org_id,g.role_id,p FROM role_grants g CROSS JOIN unnest($2::text[]) p WHERE environment_id=$1`, f.Environment, permissions)
 }

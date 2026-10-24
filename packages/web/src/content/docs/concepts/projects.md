@@ -113,7 +113,7 @@ already delivered to Slack. Session identities and statuses remain. Computer dis
 retention and administrative audit records are separate. Open Sessions keep their
 history. Very short periods may expire content before a delayed reader fetches it.
 
-All organization members can read the policy; Owners and Admins can change it. Policy
+Reading or changing the policy requires Manage organization. Policy
 changes are recorded in the administrative audit trail.
 
 ## Related

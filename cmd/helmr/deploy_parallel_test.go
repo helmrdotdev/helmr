@@ -87,7 +87,7 @@ func TestDeploymentUploadsOverlapWithinBoundAndSerializeReports(t *testing.T) {
 	command.SetOut(&output)
 	done := make(chan error, 1)
 	go func() {
-		done <- uploadDeploymentBundleObjects(ctx, controlPlane, directory, client.EnvironmentScopeOptions{}, newDeployReporter(command, true))
+		done <- uploadDeploymentBundleObjects(ctx, controlPlane, directory, client.EnvironmentScopeOptions{}, false, newDeployReporter(command, true))
 	}()
 	for range 2 {
 		select {
@@ -161,7 +161,7 @@ func TestParallelDeploymentUploadsReconcileAfterBatchJoins(t *testing.T) {
 			command := newRootCommand()
 			command.SetOut(io.Discard)
 			command.SetErr(io.Discard)
-			err = uploadDeploymentBundleObjects(t.Context(), controlPlane, directory, client.EnvironmentScopeOptions{}, newDeployReporter(command, false))
+			err = uploadDeploymentBundleObjects(t.Context(), controlPlane, directory, client.EnvironmentScopeOptions{}, false, newDeployReporter(command, false))
 			if (err != nil) != missing {
 				t.Fatalf("error=%v", err)
 			}
@@ -197,7 +197,7 @@ func TestParallelDeploymentUploadsDoNotReconcileOutputFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	outputErr := errors.New("output closed")
-	err = uploadDeploymentBundleObjects(t.Context(), controlPlane, directory, client.EnvironmentScopeOptions{}, failedUploadReporter{err: outputErr})
+	err = uploadDeploymentBundleObjects(t.Context(), controlPlane, directory, client.EnvironmentScopeOptions{}, false, failedUploadReporter{err: outputErr})
 	if !errors.Is(err, outputErr) || requests.Load() != 1 {
 		t.Fatalf("error=%v requests=%d", err, requests.Load())
 	}
@@ -231,7 +231,7 @@ func TestParallelDeploymentUploadsJoinOnCancellation(t *testing.T) {
 	command.SetErr(io.Discard)
 	done := make(chan error, 1)
 	go func() {
-		done <- uploadDeploymentBundleObjects(ctx, controlPlane, directory, client.EnvironmentScopeOptions{}, newDeployReporter(command, false))
+		done <- uploadDeploymentBundleObjects(ctx, controlPlane, directory, client.EnvironmentScopeOptions{}, false, newDeployReporter(command, false))
 	}()
 	timeout := time.NewTimer(10 * time.Second)
 	defer timeout.Stop()
@@ -315,10 +315,10 @@ func BenchmarkDeploymentUploadConnectionLimited(b *testing.B) {
 			b.SetBytes(int64(sizes[0] + sizes[1]))
 			for b.Loop() {
 				if parallel {
-					err = uploadDeploymentBundleObjects(b.Context(), controlPlane, directory, client.EnvironmentScopeOptions{}, reporter)
+					err = uploadDeploymentBundleObjects(b.Context(), controlPlane, directory, client.EnvironmentScopeOptions{}, false, reporter)
 				} else {
 					var plan []api.DeploymentBundleUpload
-					plan, err = planDeploymentBundleObjectUploads(b.Context(), controlPlane, directory, client.EnvironmentScopeOptions{})
+					plan, err = planDeploymentBundleObjectUploads(b.Context(), controlPlane, directory, client.EnvironmentScopeOptions{}, false)
 					if err == nil {
 						for _, upload := range plan {
 							err = controlPlane.UploadDeploymentBundleObject(b.Context(), upload, directory.Objects[upload.Digest], nil)

@@ -24,6 +24,8 @@ const (
 	errNotImplemented
 	errUnavailable
 	errTooManyRequests
+	errPreconditionFailed
+	errPreconditionRequired
 )
 
 var (
@@ -40,10 +42,13 @@ type errorDetailer interface {
 }
 
 type codedError struct {
+	details   map[string]json.RawMessage
 	code      string
 	message   string
 	retryable bool
 }
+
+func (e codedError) ErrorDetails() map[string]json.RawMessage { return e.details }
 
 func (e codedError) Error() string {
 	if e.message != "" {
@@ -115,6 +120,10 @@ func errorStatus(err error) int {
 		return http.StatusInternalServerError
 	}
 	switch apiErr.kind {
+	case errPreconditionFailed:
+		return http.StatusPreconditionFailed
+	case errPreconditionRequired:
+		return http.StatusPreconditionRequired
 	case errBadRequest:
 		return http.StatusBadRequest
 	case errUnauthorized:

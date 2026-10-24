@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -178,21 +179,8 @@ func cancelTurnAsks(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID
 
 // Answer authority is independent of Session browsing. Human membership and
 // service-key grants are rechecked and locked in the answer transaction.
-func authorizeAskAnswer(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID) error {
-	var id uuid.UUID
-	var err error
-	switch caller.Kind {
-	case "user":
-		err = tx.QueryRow(ctx, `SELECT m.user_id FROM environments e JOIN org_members m ON m.org_id=e.org_id WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer','viewer') FOR SHARE OF m`, env, caller.ID).Scan(&id)
-	case "api_key":
-		err = tx.QueryRow(ctx, `SELECT k.id FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id) WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND k.role IN ('owner','admin') AND 'asks.answer'=ANY(k.permissions) FOR SHARE OF k`, env, caller.ID).Scan(&id)
-	default:
-		return ErrDenied
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrDenied
-	}
-	return err
+func authorizeAskAnswer(ctx context.Context, tx pgx.Tx, caller Caller, env, target uuid.UUID) error {
+	return authorizeTarget(ctx, tx, caller, env, target, auth.PermissionAsksAnswer)
 }
 
 type AskAnswerRequest struct {
@@ -202,6 +190,9 @@ type AskAnswerRequest struct {
 }
 
 func AnswerAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskAnswerRequest) (AskView, error) {
+	if caller.Kind != "user" && caller.Kind != "api_key" {
+		return AskView{}, ErrDenied
+	}
 	var view AskView
 	if strings.TrimSpace(req.AnswerID) == "" || len(req.AnswerID) > 512 || !utf8.ValidString(req.AnswerID) || strings.ContainsRune(req.AnswerID, 0) {
 		return view, ErrInvalidInput
@@ -215,7 +206,7 @@ func AnswerAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskAn
 	}
 	digest := sha256.Sum256(value)
 	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := authorizeAskAnswer(ctx, tx, caller, req.EnvironmentID); err != nil {
+		if err := authorizeAskAnswer(ctx, tx, caller, req.EnvironmentID, req.SessionID); err != nil {
 			return err
 		}
 		if _, err := lockSession(ctx, tx, req.EnvironmentID, req.SessionID); err != nil {
@@ -235,7 +226,7 @@ func AnswerAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskAn
 		if err != nil {
 			return err
 		}
-		if err := authorizeAskAnswer(ctx, tx, caller, req.EnvironmentID); err != nil {
+		if err := authorizeAskAnswer(ctx, tx, caller, req.EnvironmentID, req.SessionID); err != nil {
 			return err
 		}
 		if priorID != nil {
@@ -283,6 +274,9 @@ func AnswerAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskAn
 func GetAsk(ctx context.Context, pool db.TxBeginner, caller Caller, env, session, turn, id uuid.UUID) (AskView, error) {
 	var view AskView
 	err := readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error {
+		if err := authorizeSessionRead(ctx, tx, caller, env, session); err != nil {
+			return err
+		}
 		var err error
 		view, err = scanAsk(tx.QueryRow(ctx, `SELECT `+askColumns+` FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4`, env, session, turn, id))
 		return err
@@ -301,6 +295,9 @@ func ListAsks(ctx context.Context, pool db.TxBeginner, caller Caller, req TurnLi
 		return page, ErrInvalidInput
 	}
 	err := readTransaction(ctx, pool, caller, req.EnvironmentID, func(tx pgx.Tx) error {
+		if err := authorizeSessionRead(ctx, tx, caller, req.EnvironmentID, req.SessionID); err != nil {
+			return err
+		}
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3`, req.EnvironmentID, req.SessionID, turn).Scan(&id); err != nil {
 			return err

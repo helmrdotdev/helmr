@@ -56,7 +56,6 @@ type Querier interface {
 	CreateSecret(ctx context.Context, arg CreateSecretParams) (CreateSecretRow, error)
 	CreateWorkerGroup(ctx context.Context, arg CreateWorkerGroupParams) (WorkerGroup, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
-	DisableOrgMember(ctx context.Context, arg DisableOrgMemberParams) (OrgMember, error)
 	DrainWorkerHost(ctx context.Context, arg DrainWorkerHostParams) (DrainWorkerHostRow, error)
 	// EnrollHost owns the deciding authority locks and physical-custody exclusion.
 	EnrollWorkerHost(ctx context.Context, arg EnrollWorkerHostParams) (EnrollWorkerHostRow, error)
@@ -66,6 +65,7 @@ type Querier interface {
 	GetActiveInvitation(ctx context.Context, tokenHash []byte) (GetActiveInvitationRow, error)
 	GetActiveInvitationByID(ctx context.Context, id pgtype.UUID) (GetActiveInvitationByIDRow, error)
 	GetActiveMagicLinkByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveMagicLinkByTokenHashRow, error)
+	GetActiveOrgMemberByUser(ctx context.Context, arg GetActiveOrgMemberByUserParams) (OrgMember, error)
 	GetCapacityWorkerHost(ctx context.Context, workerHostID pgtype.UUID) (GetCapacityWorkerHostRow, error)
 	GetCasObject(ctx context.Context, arg GetCasObjectParams) (CasObject, error)
 	GetCommand(ctx context.Context, arg GetCommandParams) (Command, error)
@@ -111,6 +111,7 @@ type Querier interface {
 	// Planning counts physical Computer/preparation demand once. Session processes
 	// and Commands on a resident Computer consume its existing allocation.
 	ListAllocationPlanningDemand(ctx context.Context, arg ListAllocationPlanningDemandParams) ([]ListAllocationPlanningDemandRow, error)
+	ListAuthorizedProjects(ctx context.Context, arg ListAuthorizedProjectsParams) ([]Project, error)
 	ListCapacityWorkerHosts(ctx context.Context, arg ListCapacityWorkerHostsParams) ([]ListCapacityWorkerHostsRow, error)
 	ListCapacityWorkerPools(ctx context.Context, arg ListCapacityWorkerPoolsParams) ([]ListCapacityWorkerPoolsRow, error)
 	ListEnvironments(ctx context.Context, arg ListEnvironmentsParams) ([]Environment, error)
@@ -122,11 +123,13 @@ type Querier interface {
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)
 	ListStaleWorkerFenceCandidates(ctx context.Context, arg ListStaleWorkerFenceCandidatesParams) ([]ListStaleWorkerFenceCandidatesRow, error)
 	ListTriggers(ctx context.Context, arg ListTriggersParams) ([]ListTriggersRow, error)
+	ListUserPermissionGrants(ctx context.Context, arg ListUserPermissionGrantsParams) ([]ListUserPermissionGrantsRow, error)
 	ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error)
 	ListWorkerGroupRetainedProfiles(ctx context.Context, arg ListWorkerGroupRetainedProfilesParams) ([]ListWorkerGroupRetainedProfilesRow, error)
 	ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error)
 	ListWorkerPoolCPUShapes(ctx context.Context, workerPoolID pgtype.UUID) ([]WorkerPoolCpuShape, error)
 	ListWorkerPools(ctx context.Context, workerGroupID pgtype.UUID) ([]WorkerPool, error)
+	LockActiveAPIKey(ctx context.Context, arg LockActiveAPIKeyParams) (APIKey, error)
 	// Worker Host fence for dispatch and Computer preparation. The caller
 	// (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share
 	// locks and have validated their status. This query locks the Worker Host and
@@ -162,20 +165,21 @@ type Querier interface {
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (RecordWorkerObservationRow, error)
 	RefreshLoginSession(ctx context.Context, arg RefreshLoginSessionParams) error
 	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
+	RemoveOrgMember(ctx context.Context, arg RemoveOrgMemberParams) (OrgMember, error)
 	RequestCommandCancellation(ctx context.Context, arg RequestCommandCancellationParams) (Command, error)
 	RetainDiskRoot(ctx context.Context, arg RetainDiskRootParams) (pgtype.UUID, error)
 	// Commit before making any remote calls. Never clear retired_at or remove this
 	// row: an in-flight upload can finish after a successful empty sweep.
 	RetireAbandonedCasBlob(ctx context.Context, digest string) (int64, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
-	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]RevokeExpiredInvitationsByEmailRow, error)
+	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]pgtype.UUID, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
 	RevokeLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
 	RevokeLoginSessionsForMembership(ctx context.Context, arg RevokeLoginSessionsForMembershipParams) error
 	RevokeLoginSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)
-	RevokeNamedAPIKeys(ctx context.Context, arg RevokeNamedAPIKeysParams) ([]pgtype.UUID, error)
 	RevokeOpenMagicLinksForRecipient(ctx context.Context, arg RevokeOpenMagicLinksForRecipientParams) (int64, error)
 	RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error)
+	RotateActiveAPIKey(ctx context.Context, arg RotateActiveAPIKeyParams) (APIKey, error)
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)
 	RotateWorkerGroupToken(ctx context.Context, arg RotateWorkerGroupTokenParams) (WorkerGroupToken, error)
 	SealWorkerPool(ctx context.Context, arg SealWorkerPoolParams) (WorkerPool, error)
@@ -184,8 +188,9 @@ type Querier interface {
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)
 	TransitionWorkerGroupStatus(ctx context.Context, arg TransitionWorkerGroupStatusParams) (TransitionWorkerGroupStatusRow, error)
 	TransitionWorkerPoolLifecycle(ctx context.Context, arg TransitionWorkerPoolLifecycleParams) (WorkerPool, error)
+	UpdateActiveAPIKey(ctx context.Context, arg UpdateActiveAPIKeyParams) (APIKey, error)
 	UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnvironmentDetailsParams) (Environment, error)
-	UpdateOrgMemberRole(ctx context.Context, arg UpdateOrgMemberRoleParams) (OrgMember, error)
+	UpdateOrgMemberOwnership(ctx context.Context, arg UpdateOrgMemberOwnershipParams) (OrgMember, error)
 	UpdateProjectDetails(ctx context.Context, arg UpdateProjectDetailsParams) (Project, error)
 	UpdateRegionMetadata(ctx context.Context, arg UpdateRegionMetadataParams) (Region, error)
 	UpdateWorkerGroupDescription(ctx context.Context, arg UpdateWorkerGroupDescriptionParams) (WorkerGroup, error)

@@ -55,19 +55,21 @@ SELECT
     users.profile_image_url,
     users.admin,
     selected_member.org_id,
-    COALESCE(selected_member.role::text, '')::text AS role,
+    selected_member.id AS member_id,
+    COALESCE(selected_member.is_owner,false)::boolean AS is_owner,
     COALESCE(selected_member.display_name, users.display_name) AS member_display_name,
     login_sessions.expires_at
   FROM login_sessions
   JOIN users ON users.id = login_sessions.user_id
   LEFT JOIN LATERAL (
       SELECT org_members.org_id,
-             org_members.role,
+             org_members.id,
+             org_members.is_owner,
              org_members.display_name
         FROM org_members
        WHERE org_members.user_id = login_sessions.user_id
          AND (login_sessions.org_id IS NULL OR org_members.org_id = login_sessions.org_id)
-         AND org_members.disabled_at IS NULL
+         AND org_members.removed_at IS NULL
        ORDER BY (org_members.org_id = login_sessions.org_id) DESC, org_members.created_at ASC
        LIMIT 1
   ) AS selected_member ON true
@@ -84,7 +86,8 @@ type GetLoginSessionByTokenHashRow struct {
 	ProfileImageURL   pgtype.Text        `json:"profile_image_url"`
 	Admin             bool               `json:"admin"`
 	OrgID             pgtype.UUID        `json:"org_id"`
-	Role              string             `json:"role"`
+	MemberID          pgtype.UUID        `json:"member_id"`
+	IsOwner           bool               `json:"is_owner"`
 	MemberDisplayName string             `json:"member_display_name"`
 	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
 }
@@ -99,7 +102,8 @@ func (q *Queries) GetLoginSessionByTokenHash(ctx context.Context, tokenHash []by
 		&i.ProfileImageURL,
 		&i.Admin,
 		&i.OrgID,
-		&i.Role,
+		&i.MemberID,
+		&i.IsOwner,
 		&i.MemberDisplayName,
 		&i.ExpiresAt,
 	)

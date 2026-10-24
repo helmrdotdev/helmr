@@ -129,7 +129,7 @@ for (const current of [true, false]) {
 }
 
 test("viewer sees who manages an Agent's Slack connection without reading it", async ({ page }) => {
-  const paths = await catalog(page, { current: false, defined: false, role: "viewer" });
+  const paths = await catalog(page, { current: false, defined: false, role: "member" });
   await page.goto(`/agents/support/slack?${scope}`);
   await expect(page.getByRole("heading", { name: "support", exact: true })).toBeVisible();
   await expect(page.getByText("Organization owners and admins manage this connection.", { exact: false })).toBeVisible();

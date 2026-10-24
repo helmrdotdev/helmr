@@ -14,6 +14,7 @@ import (
 // SessionView reports retained work independently of current execution eligibility.
 // A revoked Computer does not revoke a human's authority to inspect its Sessions.
 type SessionView struct {
+	Permissions          []string
 	AgentDefinitionID    string
 	TemplateDefinitionID string
 	Activity             SessionActivityView
@@ -113,30 +114,8 @@ type TurnPage struct {
 }
 
 func authorizeRead(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID) error {
-	var allowed bool
-	var err error
-	switch caller.Kind {
-	case "user":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e
-   JOIN org_members m ON m.org_id=e.org_id
-   WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL
-   AND m.role IN ('owner','admin','developer','viewer'))`, env, caller.ID).Scan(&allowed)
-	case "api_key":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM api_keys k
-   JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id)
-   WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL
-   AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
-   AND k.role IN ('owner','admin','developer','viewer') AND 'sessions.read'=ANY(k.permissions))`, env, caller.ID).Scan(&allowed)
-	default:
-		return ErrDenied
-	}
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return ErrDenied
-	}
-	return nil
+	_, err := readScopeFor(ctx, tx, caller, env)
+	return err
 }
 
 func readTransaction(ctx context.Context, pool db.TxBeginner, caller Caller, env uuid.UUID, read func(pgx.Tx) error) error {
@@ -181,7 +160,14 @@ func GetSession(ctx context.Context, pool db.TxBeginner, caller Caller, env, id 
 	var result SessionView
 	err := readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error {
 		var err error
+		if err = authorizeSessionRead(ctx, tx, caller, env, id); err != nil {
+			return err
+		}
 		result, err = getSession(ctx, tx, env, id)
+		if err != nil {
+			return err
+		}
+		result.Permissions, err = externalSessionPermissions(ctx, tx, caller, env, id)
 		return err
 	})
 	return result, err
@@ -196,13 +182,17 @@ func ListSessions(ctx context.Context, pool db.TxBeginner, caller Caller, req Se
 	result := SessionPage{Sessions: []SessionView{}}
 	err := readTransaction(ctx, pool, caller, req.EnvironmentID, func(tx pgx.Tx) error {
 		var err error
-		result, err = listSessions(ctx, tx, req)
+		filter, err := readScopeFor(ctx, tx, caller, req.EnvironmentID)
+		if err != nil {
+			return err
+		}
+		result, err = listSessions(ctx, tx, req, filter)
 		return err
 	})
 	return result, err
 }
 
-func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest) (SessionPage, error) {
+func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter sessionReadScope) (SessionPage, error) {
 	result := SessionPage{Sessions: []SessionView{}}
 	if req.Limit < 1 || req.Limit > 100 {
 		return result, ErrInvalidInput
@@ -223,7 +213,8 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest) (Sessi
  AND (cardinality($5::text[]) IS NULL OR cardinality($5::text[])=0 OR status=ANY($5))
  AND ($6::uuid IS NULL OR parent_session_id=$6) AND ($7::uuid IS NULL OR requester_session_id=$7)
  AND ($8::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$8))
- ORDER BY id DESC LIMIT $3`, req.EnvironmentID, nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent)
+ AND ($9::boolean OR (admission_mode='scoped' AND origin_kind=$10 AND COALESCE(origin_user_id,origin_api_key_id)=$11 AND ($12::boolean OR agent_id=ANY($13::uuid[]))))
+ ORDER BY id DESC LIMIT $3`, req.EnvironmentID, nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent, filter.All, filter.Kind, filter.ID, filter.AllAgents, filter.Agents)
 	if err != nil {
 		return result, err
 	}
@@ -267,6 +258,9 @@ func GetTurn(ctx context.Context, pool db.TxBeginner, caller Caller, env, sessio
 	var result TurnView
 	err := readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error {
 		var err error
+		if err = authorizeSessionRead(ctx, tx, caller, env, session); err != nil {
+			return err
+		}
 		result, err = scanTurn(tx.QueryRow(ctx, `SELECT `+turnViewColumns+` FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3`, env, session, id))
 		return err
 	})
@@ -279,6 +273,9 @@ func ListTurns(ctx context.Context, pool db.TxBeginner, caller Caller, req TurnL
 		return result, ErrInvalidInput
 	}
 	err := readTransaction(ctx, pool, caller, req.EnvironmentID, func(tx pgx.Tx) error {
+		if err := authorizeSessionRead(ctx, tx, caller, req.EnvironmentID, req.SessionID); err != nil {
+			return err
+		}
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND id=$2)`, req.EnvironmentID, req.SessionID).Scan(&exists); err != nil {
 			return err

@@ -1,38 +1,20 @@
 package controlplane
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"slices"
 	"testing"
-
-	"github.com/helmrdotdev/helmr/internal/auth"
+	"uuid"
 )
 
-func TestSessionPermissionsAdvertiseEveryRoleGrant(t *testing.T) {
-	var owner []string
-	for _, permission := range auth.AllPermissions() {
-		if auth.RoleAllows(auth.RoleOwner, permission) {
-			owner = append(owner, string(permission))
-		}
+func TestSessionPermissionsAreExplicitOrganizationGrants(t *testing.T) {
+	p := auth.Principal{Kind: auth.PrincipalKindSession, OrgID: uuid.NewV7(), IsOwner: true}
+	if got := sessionPermissions(p); len(got) != 0 {
+		t.Fatalf("owner bypass: %v", got)
 	}
-	if len(owner) != len(auth.AllPermissions()) {
-		t.Fatalf("owner is denied a permission: %v", owner)
-	}
-	if got := sessionPermissions(auth.RoleOwner); !slices.Equal(got, owner) {
-		t.Fatalf("owner permissions = %v, want %v", got, owner)
-	}
-	for _, permission := range []string{
-		"sessions.read", "sessions.send", "sessions.close", "sessions.interrupt", "sessions.resume", "sessions.create",
-	} {
-		if !slices.Contains(owner, permission) {
-			t.Fatalf("owner permissions omit %s: %v", permission, owner)
-		}
-	}
-	if got := sessionPermissions(auth.RoleViewer); !slices.Equal(got, []string{
-		"sessions.read", "computers.read",
-	}) {
-		t.Fatalf("viewer permissions = %v", got)
-	}
-	if got := sessionPermissions(auth.Role("unknown")); len(got) != 0 {
-		t.Fatalf("unknown role permissions = %v", got)
+	p.Grants = []auth.PermissionGrant{{Permission: auth.CapabilityAccessManage}, {Permission: auth.CapabilityKeysManage, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}}
+	got := sessionPermissions(p)
+	if !slices.Contains(got, "access.manage") || !slices.Contains(got, string(auth.PermissionMembersManage)) || slices.Contains(got, "keys.manage") || slices.Contains(got, "organization.manage") {
+		t.Fatalf("incorrect organization projection: %v", got)
 	}
 }

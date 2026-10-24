@@ -16,7 +16,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/org"
 )
@@ -69,7 +68,7 @@ func createInvitationsRequest(t *testing.T, fixture httpPostgresFixture, token s
 
 // memberWithEmail adds an active member with a primary email to the
 // organization.
-func (f httpPostgresFixture) memberWithEmail(t *testing.T, orgID uuid.UUID, address string, role db.OrgMemberRole) {
+func (f httpPostgresFixture) memberWithEmail(t *testing.T, orgID uuid.UUID, address string, role string) {
 	t.Helper()
 	userID := uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO users (id, display_name, primary_email) VALUES ($1, $2, $3)`, userID, "Member", address); err != nil {
@@ -101,14 +100,14 @@ func TestCreateInvitationsHTTPPostgresRequiresEmailDelivery(t *testing.T) {
 	fixture := newInvitationHTTPFixture(t, nil)
 	orgID, token := fixture.organizationOwner(t, "acme")
 	developer := fixture.user(t, "Developer")
-	fixture.member(t, orgID, developer, db.OrgMemberRoleDeveloper)
-	if code, _, body := createInvitationsRequest(t, fixture, fixture.session(t, developer, orgID), api.CreateInvitationsRequest{Emails: []string{"dev@example.test"}, Role: "viewer"}); code != http.StatusForbidden {
+	fixture.member(t, orgID, developer, "member")
+	if code, _, body := createInvitationsRequest(t, fixture, fixture.session(t, developer, orgID), api.CreateInvitationsRequest{Emails: []string{"dev@example.test"}}); code != http.StatusForbidden {
 		t.Fatalf("developer without email delivery = %d %s, want authorization first", code, body)
 	}
 	if emailDelivery(t, fixture, token) {
 		t.Fatal("me reports email delivery without a mailer")
 	}
-	code, _, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{Emails: []string{"new@example.test"}, Role: "viewer"})
+	code, _, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{Emails: []string{"new@example.test"}})
 	if code != http.StatusServiceUnavailable || !strings.Contains(body, `"service_unavailable"`) || !strings.Contains(body, "email delivery is not configured") {
 		t.Fatalf("create invitations without email = %d %s", code, body)
 	}
@@ -124,15 +123,14 @@ func TestCreateInvitationsHTTPPostgresEmailsOneBatch(t *testing.T) {
 	if !emailDelivery(t, fixture, token) {
 		t.Fatal("me does not report the configured mailer")
 	}
-	fixture.memberWithEmail(t, orgID, "member@example.test", db.OrgMemberRoleDeveloper)
-	if code, _, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{Emails: []string{"pending@example.test"}, Role: "viewer"}); code != http.StatusOK {
+	fixture.memberWithEmail(t, orgID, "member@example.test", "member")
+	if code, _, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{Emails: []string{"pending@example.test"}}); code != http.StatusOK {
 		t.Fatalf("seed invitation = %d %s", code, body)
 	}
 	sender.batches = nil
 
 	code, response, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{
 		Emails: []string{"New@Example.test", "not-an-address", "member@example.test", "new@example.test", "pending@example.test", "second@example.test"},
-		Role:   "admin",
 	})
 	if code != http.StatusOK {
 		t.Fatalf("create invitations = %d %s", code, body)
@@ -170,7 +168,7 @@ func TestCreateInvitationsHTTPPostgresEmailsOneBatch(t *testing.T) {
 		t.Fatalf("batches = %+v, want one batch of two emails", sender.batches)
 	}
 	var facts int
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='invitation.created' AND org_id=$1 AND details->>'new_role'='admin'`, orgID).Scan(&facts); err != nil || facts != 2 {
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='invitation.created' AND org_id=$1`, orgID).Scan(&facts); err != nil || facts != 3 {
 		t.Fatalf("audit facts = %d, err = %v", facts, err)
 	}
 	for i, address := range []string{"new@example.test", "second@example.test"} {
@@ -187,11 +185,11 @@ func TestCreateInvitationsHTTPPostgresEmailsOneBatch(t *testing.T) {
 			t.Fatal(err)
 		}
 		invitation, err := org.PendingInvitationByTokenHash(t.Context(), fixture.queries, tokenHash)
-		if err != nil || invitation.InviteeEmail != address || invitation.Role != db.OrgMemberRoleAdmin {
+		if err != nil || invitation.InviteeEmail != address {
 			t.Fatalf("emailed link resolves to %+v, err = %v", invitation, err)
 		}
 		expires := message.Link.ExpiresAt.Format("January 2, 2006 15:04 MST")
-		wantBody := "Owner invited you to join the acme organization on Helmr with the admin role.\n\n" +
+		wantBody := "Owner invited you to join the acme organization on Helmr.\n\n" +
 			"Open this link to accept the invitation:\n\n" + message.Link.URL + "\n\n" +
 			"This invitation expires at " + expires + ". If you did not expect it, you can ignore this email.\n"
 		if message.PlainText != wantBody {
@@ -208,7 +206,7 @@ func TestCreateInvitationsHTTPPostgresEmailsOneBatch(t *testing.T) {
 		for i := range addresses {
 			addresses[i] = fmt.Sprintf("bulk-%d@example.test", i)
 		}
-		code, response, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{Emails: addresses, Role: "viewer"})
+		code, response, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{Emails: addresses})
 		if code != http.StatusOK || len(response.Results) != len(addresses) {
 			t.Fatalf("create invitations = %d %s", code, body)
 		}
@@ -222,11 +220,10 @@ func TestCreateInvitationsHTTPPostgresRollsBackAFailedBatch(t *testing.T) {
 	sender := &batchInvitationSender{err: errors.New("provider unavailable")}
 	fixture := newInvitationHTTPFixture(t, sender)
 	orgID, token := fixture.organizationOwner(t, "acme")
-	fixture.memberWithEmail(t, orgID, "member@example.test", db.OrgMemberRoleDeveloper)
+	fixture.memberWithEmail(t, orgID, "member@example.test", "member")
 
 	code, response, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{
 		Emails: []string{"first@example.test", "member@example.test", "second@example.test"},
-		Role:   "developer",
 	})
 	if code != http.StatusOK || len(response.Results) != 3 {
 		t.Fatalf("create invitations = %d %s", code, body)
@@ -261,26 +258,18 @@ func TestCreateInvitationsHTTPPostgresRejectsTheRequestAsAWhole(t *testing.T) {
 		tooMany[i] = fmt.Sprintf("bulk-%d@example.test", i)
 	}
 	for name, request := range map[string]api.CreateInvitationsRequest{
-		"over limit":   {Emails: tooMany, Role: "viewer"},
-		"no addresses": {Emails: []string{}, Role: "viewer"},
-		"invalid role": {Emails: []string{"role@example.test"}, Role: "guest"},
+		"over limit":   {Emails: tooMany},
+		"no addresses": {Emails: []string{}},
 	} {
 		if code, _, body := createInvitationsRequest(t, fixture, token, request); code != http.StatusBadRequest || !strings.Contains(body, `"bad_request"`) {
 			t.Fatalf("%s = %d %s", name, code, body)
 		}
 	}
-	if code := fixture.request(t, http.MethodPost, "/api/invitations", token, `{"email":"old@example.test","role":"viewer"}`).Code; code != http.StatusBadRequest {
-		t.Fatalf("single-address body = %d, want 400", code)
-	}
+
 	developer := fixture.user(t, "Developer")
-	fixture.member(t, orgID, developer, db.OrgMemberRoleDeveloper)
-	if code, _, body := createInvitationsRequest(t, fixture, fixture.session(t, developer, orgID), api.CreateInvitationsRequest{Emails: []string{"dev@example.test"}, Role: "viewer"}); code != http.StatusForbidden {
+	fixture.member(t, orgID, developer, "member")
+	if code, _, body := createInvitationsRequest(t, fixture, fixture.session(t, developer, orgID), api.CreateInvitationsRequest{Emails: []string{"dev@example.test"}}); code != http.StatusForbidden {
 		t.Fatalf("developer = %d %s", code, body)
-	}
-	admin := fixture.user(t, "Admin")
-	fixture.member(t, orgID, admin, db.OrgMemberRoleAdmin)
-	if code, _, body := createInvitationsRequest(t, fixture, fixture.session(t, admin, orgID), api.CreateInvitationsRequest{Emails: []string{"owner@example.test"}, Role: "owner"}); code != http.StatusForbidden {
-		t.Fatalf("admin owner invitations = %d %s", code, body)
 	}
 	if count := countInvitations(t, fixture, append(tooMany, "role@example.test", "dev@example.test", "owner@example.test", "old@example.test")...); count != 0 || len(sender.batches) != 0 {
 		t.Fatalf("rejected requests created %d invitations and sent %d batches", count, len(sender.batches))
@@ -291,7 +280,7 @@ func TestCreateInvitationsHTTPPostgresNamesTheRefusedRecipient(t *testing.T) {
 	sender := &batchInvitationSender{err: email.RecipientError{Address: "grace@example.test", Err: errors.New("550 mailbox unavailable")}}
 	fixture := newInvitationHTTPFixture(t, sender)
 	_, token := fixture.organizationOwner(t, "acme")
-	code, response, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{Emails: []string{"ada@example.test", "grace@example.test", "lin@example.test"}, Role: "viewer"})
+	code, response, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{Emails: []string{"ada@example.test", "grace@example.test", "lin@example.test"}})
 	if code != http.StatusOK || len(response.Results) != 3 {
 		t.Fatalf("create invitations = %d %s", code, body)
 	}
@@ -317,7 +306,7 @@ func TestCreateInvitationsHTTPPostgresCommitsWhenTheCallerLeavesAfterTheSend(t *
 	}}
 	fixture := newInvitationHTTPFixture(t, sender)
 	_, token := fixture.organizationOwner(t, "acme")
-	request := httptest.NewRequestWithContext(requestCtx, http.MethodPost, "/api/invitations", strings.NewReader(`{"emails":["ada@example.test"],"role":"viewer"}`))
+	request := httptest.NewRequestWithContext(requestCtx, http.MethodPost, "/api/invitations", strings.NewReader(`{"emails":["ada@example.test"]}`))
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()

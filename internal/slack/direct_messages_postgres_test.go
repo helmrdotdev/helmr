@@ -101,7 +101,7 @@ func TestSlackDirectRejectedRootNeverReplaysAfterLink(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			t.Fatal(err)
 		}
-		if r.URL.Path != "/api/chat.postMessage" || p["channel"] != "D1" || p["user"] != nil || !strings.Contains(p["text"].(string), "Organization members can read them") {
+		if r.URL.Path != "/api/chat.postMessage" || p["channel"] != "D1" || p["user"] != nil || !strings.Contains(p["text"].(string), "Environment run viewers can read them") {
 			t.Fatal(r.URL, p)
 		}
 		return `{"ok":true,"ts":"123.999"}`
@@ -169,7 +169,7 @@ func TestSlackDirectReplyRejectsAuthorityChanges(t *testing.T) {
 			case "missing-peer":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET recipient_user_id=NULL,recipient_team_id=NULL WHERE slack_channel_id='D1'`)
 			case "revoked":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.User)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			case "reauthorized":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorized_at=clock_timestamp() WHERE id=$1`, f.installation)
 			case "deleted":
@@ -209,7 +209,7 @@ func TestSlackDirectAppHomeOnlySetsVerifiedPrompts(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 					t.Fatal(err)
 				}
-				if r.URL.Path != "/api/assistant.threads.setSuggestedPrompts" || p["channel_id"] != "D1" || p["thread_ts"] != nil || !strings.Contains(p["title"].(string), "Organization members") {
+				if r.URL.Path != "/api/assistant.threads.setSuggestedPrompts" || p["channel_id"] != "D1" || p["thread_ts"] != nil || !strings.Contains(p["title"].(string), "Environment run viewers") {
 					t.Fatal(r.URL, p)
 				}
 				if kind == "api-rejected" {

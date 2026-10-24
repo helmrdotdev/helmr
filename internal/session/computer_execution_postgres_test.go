@@ -103,7 +103,7 @@ func TestComputerExecutionRechecksAuthorityOnReplay(t *testing.T) {
 	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.user)
+	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
 	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked actor replay: %v", err)
 	}

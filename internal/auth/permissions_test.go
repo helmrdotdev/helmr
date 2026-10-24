@@ -2,135 +2,143 @@ package auth
 
 import (
 	"testing"
-
 	"uuid"
 )
 
-func TestAPIKeyPermissionIsLimitedByCreatorRole(t *testing.T) {
-	orgID := uuid.New()
-	principal := Principal{
-		OrgID:         orgID,
-		Kind:          PrincipalKindAPIKey,
-		Role:          RoleViewer,
-		ProjectID:     "00000000-0000-0000-0000-000000000101",
-		EnvironmentID: "00000000-0000-0000-0000-000000000102",
-		Permissions:   []Permission{PermissionSessionsRead, PermissionSecretsWrite},
+func TestCapabilityBoundaries(t *testing.T) {
+	cases := []struct {
+		cap            Permission
+		allows, denies []Permission
+	}{
+		{CapabilityAgentsManage, []Permission{CapabilityAgentsManage}, []Permission{CapabilityAgentsUse, CapabilityRunsView, CapabilityRunsOperate, CapabilityDeploymentsPublish, CapabilityDeploymentsPromote}},
+		{CapabilityAgentsUse, []Permission{PermissionSessionsCreate, PermissionAgentUse}, []Permission{PermissionSessionsRead, PermissionSessionsSend, PermissionComputersRead, PermissionDeploymentMetadataRead}},
+		{CapabilityRunsView, []Permission{PermissionSessionsRead, PermissionRunMetadataRead, PermissionDeploymentMetadataRead}, []Permission{PermissionSessionsCreate, PermissionSessionsSend, PermissionComputersRead, PermissionComputerCommandCreate, PermissionSecretsWrite}},
+		{CapabilityRunsOperate, []Permission{PermissionSessionsRead, PermissionSessionsCreate, PermissionSessionsSend, PermissionAsksAnswer, PermissionSessionsCancel}, []Permission{PermissionComputersCreate, PermissionComputerCommandCreate, PermissionSecretsWrite, PermissionDeploymentsWrite}},
+		{CapabilityDeploymentsPublish, []Permission{PermissionDeploymentsWrite, PermissionDeploymentMetadataRead}, []Permission{PermissionDeploymentsPromote, PermissionSessionsRead, PermissionSecretsWrite}},
+		{CapabilityDeploymentsPromote, []Permission{PermissionDeploymentsPromote, PermissionDeploymentMetadataRead}, []Permission{PermissionDeploymentsWrite, PermissionSessionsRead}},
+		{CapabilityComputersOperate, []Permission{PermissionComputersCreate, PermissionComputersRead, PermissionComputersDelete, PermissionComputersUpdate, PermissionComputerCommandCreate, PermissionSecretMetadataRead}, []Permission{PermissionSecretsWrite, PermissionSessionsRead, PermissionDeploymentsWrite}},
+		{CapabilitySecretsManage, []Permission{PermissionSecretsWrite, PermissionSecretMetadataRead}, []Permission{PermissionComputerCommandCreate, PermissionDeploymentsWrite, PermissionSessionsRead}},
 	}
-
-	scope := Scope{OrgID: orgID, ProjectID: "00000000-0000-0000-0000-000000000101", EnvironmentID: "00000000-0000-0000-0000-000000000102"}
-	if !principal.HasPermission(PermissionSessionsRead, scope) {
-		t.Fatal("viewer-backed api key should keep read grants")
-	}
-	if principal.HasPermission(PermissionSecretsWrite, scope) {
-		t.Fatal("viewer-backed api key should not keep write grants after demotion")
-	}
-}
-
-func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
-	orgID := uuid.New()
-	principal := Principal{
-		OrgID:       orgID,
-		Kind:        PrincipalKindAPIKey,
-		Role:        RoleOwner,
-		Permissions: []Permission{PermissionSessionsRead},
-	}
-	scope := Scope{
-		OrgID:         orgID,
-		ProjectID:     "00000000-0000-0000-0000-000000000101",
-		EnvironmentID: "00000000-0000-0000-0000-000000000102",
-	}
-
-	if principal.HasPermission(PermissionSessionsRead, scope) {
-		t.Fatal("api key without environment scope matched an environment-scoped resource")
-	}
-	if principal.HasPermission(PermissionSessionsRead, Scope{OrgID: orgID}) {
-		t.Fatal("api key matched org-level scope")
-	}
-
-	concretePrincipal := Principal{
-		OrgID:         orgID,
-		Kind:          PrincipalKindAPIKey,
-		Role:          RoleOwner,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		Permissions:   []Permission{PermissionSessionsRead},
-	}
-	if concretePrincipal.HasPermission(PermissionSessionsRead, Scope{OrgID: orgID}) {
-		t.Fatal("environment-scoped api key matched an org-level scope")
+	for _, c := range cases {
+		t.Run(string(c.cap), func(t *testing.T) {
+			for _, operation := range c.allows {
+				if !CapabilityAllows(c.cap, operation) {
+					t.Errorf("missing operation %s", operation)
+				}
+			}
+			for _, operation := range append(c.denies, PermissionMembersManage, PermissionAPIKeysManage, PermissionProjectsManage) {
+				if CapabilityAllows(c.cap, operation) {
+					t.Errorf("unexpected operation %s", operation)
+				}
+			}
+		})
 	}
 }
 
-func TestGranularComputerPermissionsDoNotEscalate(t *testing.T) {
-	orgID := uuid.New()
-	scope := Scope{
-		OrgID:         orgID,
-		ProjectID:     "00000000-0000-0000-0000-000000000101",
-		EnvironmentID: "00000000-0000-0000-0000-000000000102",
+func TestMachineCapabilitiesDoNotBorrowHumanRoleOrGrant(t *testing.T) {
+	org := uuid.NewV7()
+	scope := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
+	p := Principal{Kind: PrincipalKindAPIKey, OrgID: org, IsOwner: true, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permissions: []Permission{CapabilityRunsView}, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilitySecretsManage}}}
+	if !p.HasPermission(PermissionSessionsRead, scope) {
+		t.Fatal("explicit capability denied")
 	}
-	principal := Principal{
-		OrgID:         orgID,
-		Kind:          PrincipalKindAPIKey,
-		Role:          RoleDeveloper,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		Permissions: []Permission{
-			PermissionComputersRead,
-			PermissionSessionsRead,
-		},
+	for _, operation := range []Permission{PermissionSecretsWrite, PermissionAPIKeysManage, PermissionSessionsCreate} {
+		if p.HasPermission(operation, scope) {
+			t.Fatalf("borrowed authority: %s", operation)
+		}
 	}
-
-	for _, permission := range []Permission{
-		PermissionComputersCreate,
-		PermissionComputersDelete,
-		PermissionComputersUpdate,
-		PermissionComputerCommandCreate,
-	} {
-		if principal.HasPermission(permission, scope) {
-			t.Fatalf("read-only computer grants allowed %s", permission)
+	p.IsOwner = false
+	if !p.HasPermission(PermissionSessionsRead, scope) {
+		t.Fatal("creator role affected machine authority")
+	}
+	for _, other := range []Scope{{OrgID: org}, {OrgID: uuid.NewV7(), ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID}, {OrgID: org, ProjectID: scope.ProjectID, EnvironmentID: uuid.NewV7().String()}, {OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: scope.EnvironmentID}} {
+		if p.HasPermission(PermissionSessionsRead, other) {
+			t.Fatal("scope escaped")
 		}
 	}
 }
 
-func TestSessionSendPermissionRequiresWritableRole(t *testing.T) {
-	for _, permission := range []Permission{PermissionSessionsSend, PermissionSessionsInterrupt, PermissionSessionsResume, PermissionSessionsClose} {
-		if !RoleAllows(RoleDeveloper, permission) || RoleAllows(RoleViewer, permission) {
-			t.Fatalf("Session mutation %s must require a writable role", permission)
+func TestHumanGrantUnionAndAgentScope(t *testing.T) {
+	org := uuid.NewV7()
+	scope := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(), AgentID: uuid.NewV7().String()}
+	p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, AgentID: scope.AgentID, Permission: CapabilityAgentsUse}}}
+	if !p.HasPermission(PermissionSessionsCreate, scope) || p.HasPermission(PermissionSessionsRead, scope) {
+		t.Fatal("Agent use scope mismatch")
+	}
+	other := scope
+	other.AgentID = uuid.NewV7().String()
+	if p.HasPermission(PermissionSessionsCreate, other) {
+		t.Fatal("other Agent allowed")
+	}
+	p.Grants = append(p.Grants, PermissionGrant{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilityRunsView})
+	if !p.HasPermission(PermissionSessionsRead, other) || p.HasPermission(PermissionSessionsSend, scope) {
+		t.Fatal("union broadened operation")
+	}
+	p.Grants = nil
+	if p.HasPermission(PermissionSessionsRead, scope) {
+		t.Fatal("member has implicit workload authority")
+	}
+	p.IsOwner = true
+	for _, permission := range AllPermissions() {
+		if p.HasPermission(permission, scope) || p.HasPermission(permission, Scope{OrgID: org}) {
+			t.Fatalf("owner borrowed authority: %s", permission)
 		}
-		if normalized, ok := ParseAPIKeyGrant(string(permission)); !ok || normalized != permission {
-			t.Fatalf("Session mutation grant = %v", normalized)
+	}
+
+}
+
+func TestAPIKeyGrantCatalog(t *testing.T) {
+	for _, entry := range CapabilityCatalog() {
+		if permission, ok := ParseAPIKeyGrant(" " + string(entry.ID) + " "); ok != IsMachineCapability(entry.ID) || permission != entry.ID {
+			t.Fatal("catalog capability rejected")
+		}
+	}
+	for _, value := range []string{"", "*", "unsupported.permission"} {
+		if _, ok := ParseAPIKeyGrant(value); ok {
+			t.Fatalf("unsupported grant %q accepted", value)
 		}
 	}
 }
 
-func TestAgentStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
-	if !RoleAllows(RoleDeveloper, PermissionSessionsCreate) {
-		t.Fatal("developer should be allowed to start an Agent")
+func TestOrganizationAndKeyGrantsHaveExactScope(t *testing.T) {
+	org := uuid.NewV7()
+	env := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
+	organization := Scope{OrgID: org}
+	p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{{Permission: CapabilityAccessManage}, {Permission: CapabilityOrganizationManage}, {ProjectID: env.ProjectID, EnvironmentID: env.EnvironmentID, Permission: CapabilityKeysManage}}}
+	if !p.HasPermission(PermissionMembersManage, organization) || !p.HasPermission(PermissionProjectsManage, organization) || !p.HasPermission(PermissionAPIKeysManage, env) {
+		t.Fatal("explicit administrative authority denied")
 	}
-	if RoleAllows(RoleViewer, PermissionSessionsCreate) {
-		t.Fatal("viewer should not be allowed to start an Agent")
+	if p.HasPermission(PermissionMembersManage, env) || p.HasPermission(PermissionProjectsManage, env) || p.HasPermission(PermissionAPIKeysManage, organization) || p.HasPermission(PermissionSessionsRead, env) {
+		t.Fatal("administrative grant crossed its boundary")
 	}
-	normalized, ok := ParseAPIKeyGrant(string(PermissionSessionsCreate))
-	if !ok || normalized != PermissionSessionsCreate {
-		t.Fatalf("normalized Agent start permission = %v", normalized)
+	p.Kind = PrincipalKindAPIKey
+	p.ProjectID = env.ProjectID
+	p.EnvironmentID = env.EnvironmentID
+	p.Permissions = []Permission{CapabilityAccessManage, CapabilityOrganizationManage, CapabilityKeysManage}
+	for _, permission := range []Permission{PermissionMembersManage, PermissionProjectsManage, PermissionAPIKeysManage} {
+		if p.HasPermission(permission, env) || p.HasPermission(permission, organization) {
+			t.Fatal("machine obtained human administration")
+		}
 	}
 }
 
-func TestSessionReadPermissionAllowsReadOnlyRoles(t *testing.T) {
-	for _, role := range []Role{RoleOwner, RoleAdmin, RoleDeveloper, RoleViewer} {
-		if !RoleAllows(role, PermissionSessionsRead) {
-			t.Fatalf("%s should be allowed to read Sessions", role)
-		}
+func TestAgentManagementScopeAndMachineExclusion(t *testing.T) {
+	org := uuid.NewV7()
+	scope := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(), AgentID: uuid.NewV7().String()}
+	p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, AgentID: scope.AgentID, Permission: CapabilityAgentsManage}}}
+	if !p.HasPermission(CapabilityAgentsManage, scope) {
+		t.Fatal("exact Agent denied")
 	}
-	normalized, ok := ParseAPIKeyGrant(string(PermissionSessionsRead))
-	if !ok || normalized != PermissionSessionsRead {
-		t.Fatalf("normalized Session read permission = %v", normalized)
+	other := scope
+	other.AgentID = uuid.NewV7().String()
+	if p.HasPermission(CapabilityAgentsManage, other) {
+		t.Fatal("other Agent admitted")
 	}
-}
-
-func TestAPIKeyGrantRejectsUnknownPermission(t *testing.T) {
-	for _, grant := range []string{"", "*", "unsupported.permission"} {
-		if permission, ok := ParseAPIKeyGrant(grant); ok {
-			t.Fatalf("unknown grant %q accepted as %q", grant, permission)
-		}
+	p.Kind = PrincipalKindAPIKey
+	p.ProjectID = scope.ProjectID
+	p.EnvironmentID = scope.EnvironmentID
+	p.Permissions = []Permission{CapabilityAgentsManage}
+	if IsMachineCapability(CapabilityAgentsManage) || p.HasPermission(CapabilityAgentsManage, scope) {
+		t.Fatal("machine acquired human configuration authority")
 	}
 }

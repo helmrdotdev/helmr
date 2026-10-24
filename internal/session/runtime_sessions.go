@@ -4,6 +4,7 @@ import (
 	"context"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -13,6 +14,9 @@ import (
 func RuntimeGetSession(ctx context.Context, database db.TxBeginner, caller Caller, id uuid.UUID) (SessionView, error) {
 	var result SessionView
 	err := runtimeSessionRead(ctx, database, caller, func(tx pgx.Tx) error {
+		if err := authorizeTarget(ctx, tx, caller, caller.Execution.EnvironmentID, id, auth.PermissionSessionsRead); err != nil {
+			return err
+		}
 		var allowed bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND id=$2 AND (parent_session_id=$3 OR requester_session_id=$3))`, caller.Execution.EnvironmentID, id, caller.ID).Scan(&allowed); err != nil {
 			return err
@@ -47,7 +51,19 @@ func RuntimeListSessions(ctx context.Context, database db.TxBeginner, caller Cal
 			query.RequesterSessionID = caller.ID
 		}
 		var err error
-		result, err = listSessions(ctx, tx, query)
+		source, err := loadSessionOrigin(ctx, tx, caller.Execution.EnvironmentID, caller.ID)
+		if err != nil {
+			return err
+		}
+		filter := sessionReadScope{All: source.Mode == "environment", Agents: []uuid.UUID{}}
+		if source.Mode == "scoped" {
+			filter, err = readScopeFor(ctx, tx, Caller{Kind: source.Kind, ID: source.id()}, caller.Execution.EnvironmentID)
+			if err != nil {
+				return err
+			}
+			filter.All = false
+		}
+		result, err = listSessions(ctx, tx, query, filter)
 		return err
 	})
 	return result, err

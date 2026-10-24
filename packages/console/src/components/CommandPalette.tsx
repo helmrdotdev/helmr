@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import { createMemo, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { environmentChip } from "../features/projects/display";
 import { agentHref, listRetainedAgents } from "../lib/definitions";
+import { hasPermission } from "../lib/auth";
 import { useMe } from "../lib/me";
 import { isProtectedEnvironment, type Project } from "../lib/projects";
 import { useScope, useScopeIDs } from "../lib/scope";
@@ -15,14 +16,14 @@ import { EnvDot, ProtectedBadge } from "../ui/EnvChip";
 import { formatID } from "../ui/id";
 import { cx } from "../ui/styles";
 
-const PAGES: readonly { label: string; href: string; keywords?: string }[] = [
+const PAGES: readonly { label: string; href: string; keywords?: string; permission?: string }[] = [
   { label: "Overview", href: "/", keywords: "needs you questions holds" },
   { label: "Sessions", href: "/sessions" },
   { label: "Agents", href: "/agents" },
   { label: "Triggers", href: "/triggers" },
-  { label: "Computers", href: "/computers" },
-  { label: "Templates", href: "/templates" },
-  { label: "Deployments", href: "/deployments" },
+  { label: "Computers", href: "/computers", permission: "run_metadata.read" },
+  { label: "Templates", href: "/templates", permission: "deployment_metadata.read" },
+  { label: "Deployments", href: "/deployments", permission: "deployment_metadata.read" },
   { label: "Settings › General", href: "/settings/project", keywords: "project history retention" },
   { label: "Settings › Environments", href: "/settings/environments" },
   { label: "Settings › Secrets", href: "/settings/secrets" },
@@ -128,7 +129,7 @@ function Palette(props: { onClose: () => void }) {
         });
       }
     }
-    const pages: CommandItem[] = PAGES.map((page) => ({
+    const pages: CommandItem[] = PAGES.filter(page => !page.permission || hasPermission(me.data, page.permission, ids())).map((page) => ({
       id: `page:${page.href}`,
       group: "Go to",
       label: page.label,

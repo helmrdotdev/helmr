@@ -54,7 +54,7 @@ func TestSlackUserLinksNeverMergeAndPreserveHistoricalAdmissions(t *testing.T) {
 	if err != nil || len(links) != 1 {
 		t.Fatal("stale unlink removed replacement", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE org_id=$1 AND user_id=$2`, org, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE org_id=$1 AND user_id=$2`, org, f.User)
 	if err = LinkUser(t.Context(), f.Pool, audit.System("test-fixture"), org, f.User, f.installation, first); !errors.Is(err, ErrUserLinkDenied) {
 		t.Fatal("disabled member linked", err)
 	}
@@ -63,7 +63,8 @@ func TestSlackUserLinksCompetingUsersCannotStealIdentity(t *testing.T) {
 	f, _, org := credentialFixture(t)
 	other := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Other')`, other)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO org_members(org_id,user_id,role) VALUES($1,$2,'developer')`, org, other)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES(uuidv7(),$1,$2)`, org, other)
+	dbtest.GrantMember(t, f.Pool, org, other, &f.Environment, "runs.operate")
 	ready := make(chan struct{})
 	results := make(chan error, 2)
 	for _, user := range []uuid.UUID{f.User, other} {

@@ -53,7 +53,7 @@ func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	result, err := s.computers.Create(r.Context(), s.tx, computer.Request{
+	result, err := s.computers.Create(r.Context(), s.tx, computer.Request{Principal: principal,
 		Scope:             computerScope(principal.OrgID, projectID, environmentID),
 		DefinitionKey:     declaredID,
 		DeleteAfterUnused: request.DeleteAfterUnused,
@@ -75,7 +75,7 @@ func (s *Server) getComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
+	if !principal.HasPermission(auth.PermissionRunMetadataRead, scope) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
@@ -91,7 +91,12 @@ func (s *Server) getComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeComputerError(w, err, computerReadOperation, "read Computer failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, apiComputerSnapshot(snapshot))
+	view := apiComputerSnapshot(snapshot)
+	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
+		view.Secrets = nil
+		view.Error = nil
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +132,7 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	result, err := computer.Delete(r.Context(), s.tx, computer.Deletion{
+	result, err := computer.Delete(r.Context(), s.tx, computer.Deletion{Principal: principal,
 		Scope:          computerScope(principal.OrgID, projectID, environmentID),
 		ComputerID:     computerID,
 		IdempotencyKey: idempotencyKey,
@@ -196,7 +201,7 @@ func (s *Server) updateComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_computer_update", message: err.Error()}))
 		return
 	}
-	snapshot, err := computer.UpdateRetention(r.Context(), s.tx, computerScope(principal.OrgID, projectID, environmentID), id, request.DeleteAfterUnused)
+	snapshot, err := computer.UpdateRetention(r.Context(), s.tx, principal, computerScope(principal.OrgID, projectID, environmentID), id, request.DeleteAfterUnused)
 	if err != nil {
 		s.writeComputerError(w, err, computerCreateOperation, "update Computer failed")
 		return

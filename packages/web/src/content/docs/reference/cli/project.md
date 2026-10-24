@@ -47,7 +47,7 @@ helmr project settings update PROJECT --history-retention never --json
 `d`, or `never` to disable automatic expiry. The minimum duration is one second.
 Responses use the largest exact unit (`48h` becomes `2d`). JSON output is a settings
 object such as `{"history_retention":"30d"}`. These commands use your login session;
-reading is available to organization members and updating requires Owner or Admin.
+reading and updating require Manage organization.
 
 Changes apply to all remaining history, including existing Sessions, across every
 Environment of the Project. Environment creation and editing have no retention
