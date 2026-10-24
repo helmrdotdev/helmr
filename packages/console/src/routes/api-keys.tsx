@@ -58,7 +58,7 @@ const API_KEY_ERROR_MESSAGES: Record<string, string> = {
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
 function permissionGroups(catalog: Capability[]) {
- return [{label:"Agents and runs",prefixes:["agents.","runs."]},{label:"Deployments",prefixes:["deployments."]},{label:"Computers and secrets",prefixes:["computers.","secrets."]}].map(group=>({label:group.label,options:catalog.filter(c=>group.prefixes.some(prefix=>c.id.startsWith(prefix))).map(c=>({value:c.id as ApiKeyScope,label:c.name,description:c.description}))}));
+ return [{label:"Agents and sessions",prefixes:["agents.","sessions."]},{label:"Deployments",prefixes:["deployments."]},{label:"Computers and secrets",prefixes:["computers.","secrets."]}].map(group=>({label:group.label,options:catalog.filter(c=>group.prefixes.some(prefix=>c.id.startsWith(prefix))).map(c=>({value:c.id as ApiKeyScope,label:c.name,description:c.description}))}));
 }
 
 const DEFAULT_SCOPES: ApiKeyScope[] = ["agents.use"];
@@ -171,7 +171,7 @@ function IssueApiKeyDialog(props: {
         <Select<ExpiryValue> value={expiry()} options={EXPIRY_OPTIONS} onChange={setExpiry} minWidth="100%" />
       </Field>
       <CheckboxGroup label="Permissions for this environment" groups={permissionGroups(props.catalog)} value={selectedScopes()} onChange={setSelectedScopes} />
- <p class="text-control text-console-muted">Includes: {includedPermissions(selectedScopes(),props.catalog).map(id=>props.catalog.find(c=>c.id===id)?.name??id).join(" · ")}. Use agents without Operate runs starts isolated sessions owned by this key. Operate runs starts environment-mode sessions. Use separate keys for isolated execution and independent monitoring.</p>
+ <p class="text-control text-console-muted">Includes: {includedPermissions(selectedScopes(),props.catalog).map(id=>props.catalog.find(c=>c.id===id)?.name??id).join(" · ")}. Use agents starts conversations owned by this key. Manage all sessions grants control of other sessions; sending input, answering questions or resuming also requires Use agents.</p>
     </FormDialog>
   );
 }
@@ -198,7 +198,7 @@ function EditApiKeyDialog(props: {catalog: Capability[];keyItem:ApiKeySummary;ta
   <Field label="Name"><TextInput value={name()} maxLength={64} onInput={e=>setName(e.currentTarget.value)}/></Field>
   <Field label="Expiry"><Select<"keep"|ExpiryValue> value={expiry()} options={[{value:"keep",label:"Keep current expiry"},...EXPIRY_OPTIONS]} onChange={setExpiry}/></Field>
   <CheckboxGroup label="Permissions for this environment" groups={permissionGroups(props.catalog)} value={permissions()} onChange={setPermissions}/>
-  <p class="text-control text-console-muted">Operate runs starts environment-mode sessions. Without it, Use agents starts isolated key-owned sessions. Existing sessions keep their original mode; removing Operate runs cannot convert an environment-mode session into an isolated one. Use a separate key for independent monitoring.</p>
+  <p class="text-control text-console-muted">Use agents is required to start sessions and continue this key’s own conversations. Managing other sessions does not change their original owner. Sending input, answering questions or resuming another session also requires Use agents.</p>
  <p class="text-control text-console-muted">Includes: {includedPermissions(permissions(),props.catalog).map(id=>props.catalog.find(c=>c.id===id)?.name??id).join(" · ")}</p>
   <p class="text-sm text-muted">Changes apply to future work, including sessions started by this key. Removing access can prevent those sessions from continuing.</p>
  </FormDialog>;

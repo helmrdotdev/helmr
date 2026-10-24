@@ -72,7 +72,7 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		{name: "empty"},
 		{name: "empty grant", grants: []api.APIKeyPermissionGrant{{}}},
 		{name: "unsupported", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{"unsupported"}}}},
-		{name: "", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeRunsView}}}},
+		{name: "", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsView}}}},
 	} {
 		fixture.store.reset()
 		response := fixture.issueRecorder(t, test.name, test.grants)
@@ -81,9 +81,9 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		}
 	}
 
-	inputScopes := append([]api.APIKeyScope{api.APIKeyScopeRunsView}, allAPIKeyPermissionScopes()...)
+	inputScopes := append([]api.APIKeyScope{api.APIKeyScopeSessionsView}, allAPIKeyPermissionScopes()...)
 	fixture.store.reset()
-	issuedRecorder := fixture.issueRecorder(t, "issued", []api.APIKeyPermissionGrant{{Scopes: inputScopes}, {Scopes: []api.APIKeyScope{api.APIKeyScopeRunsView}}})
+	issuedRecorder := fixture.issueRecorder(t, "issued", []api.APIKeyPermissionGrant{{Scopes: inputScopes}, {Scopes: []api.APIKeyScope{api.APIKeyScopeSessionsView}}})
 	if issuedRecorder.Code != http.StatusCreated || fixture.store.transactions.Load() != 1 {
 		t.Fatalf("issue status/transactions = %d/%d", issuedRecorder.Code, fixture.store.transactions.Load())
 	}
@@ -232,8 +232,8 @@ func (f apiKeyHTTPPostgresFixture) issueRecorder(t *testing.T, name string, gran
 func allAPIKeyPermissionScopes() []api.APIKeyScope {
 	return []api.APIKeyScope{
 		api.APIKeyScopeAgentsUse,
-		api.APIKeyScopeRunsView,
-		api.APIKeyScopeRunsOperate,
+		api.APIKeyScopeSessionsView,
+		api.APIKeyScopeSessionsManage,
 		api.APIKeyScopeDeploymentsPublish,
 		api.APIKeyScopeDeploymentsPromote,
 		api.APIKeyScopeComputersOperate,

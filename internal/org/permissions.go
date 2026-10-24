@@ -470,15 +470,16 @@ func SeedStandardRoles(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, actor au
 		key, name, description string
 		permissions            []string
 	}{
-		{"agent_user", "Agent user", "Use assigned agents and your own sessions.", []string{"agents.use"}},
-		{"run_viewer", "Run viewer", "Read all runs in the assigned environment.", []string{"runs.view"}},
-		{"run_operator", "Run operator", "Use agents, view and operate all runs in the assigned environment.", []string{"runs.operate"}},
+		{"agent_user", "Agent user", "Use assigned Agents in personal and connected shared conversations.", []string{"agents.use"}},
+		{"agent_settings_manager", "Agent settings manager", "Use assigned Agents and configure their settings and chat connections.", []string{"agents.use", "agents.manage"}},
+		{"session_viewer", "Session viewer", "Read all sessions for assigned Agents, including other people's personal conversations.", []string{"sessions.view"}},
+		{"session_operator", "Session operator", "Use assigned Agents and view, stop or continue their sessions.", []string{"agents.use", "sessions.manage"}},
 		{"release_manager", "Release manager", "Register and activate deployments in the assigned environment.", []string{"deployments.publish", "deployments.promote"}},
 		{"computer_operator", "Computer operator", "Operate computers and their workload credentials.", []string{"computers.operate"}},
 		{"secrets_manager", "Secrets manager", "Manage secrets in the assigned environment.", []string{"secrets.manage"}},
 		{"access_administrator", "Access Administrator", "Manage organization membership and access assignments.", []string{"access.manage"}},
 		{"organization_manager", "Organization Manager", "Manage Projects and environments.", []string{"organization.manage"}},
-		{"environment_administrator", "Environment Administrator", "Manage all workloads and API keys in the assigned environment.", []string{"agents.use", "runs.view", "runs.operate", "deployments.publish", "deployments.promote", "computers.operate", "secrets.manage", "keys.manage", "agents.manage"}},
+		{"environment_administrator", "Environment Administrator", "Manage all workloads and API keys in the assigned environment.", []string{"agents.use", "sessions.manage", "deployments.publish", "deployments.promote", "computers.operate", "secrets.manage", "keys.manage", "agents.manage"}},
 	}
 	for _, standard := range standards {
 		id := uuid.NewV7()
@@ -1064,7 +1065,7 @@ func readRoleGrants(ctx context.Context, q db.DBTX, orgID uuid.UUID, filter Gran
  AND ($4::uuid='00000000-0000-0000-0000-000000000000' OR g.role_id=$4)
  AND ($5='' OR CASE WHEN g.all_members THEN 'all_members' WHEN g.member_id IS NOT NULL THEN 'member' ELSE 'group' END=$5)
  AND ($6='' OR p.slug=$6) AND ($7='' OR e.slug=$7)
- AND ($8='' OR g.agents_mode='all' OR EXISTS(SELECT 1 FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id AND a.key=$8) OR EXISTS(SELECT 1 FROM role_permissions rp WHERE rp.role_id=g.role_id AND rp.permission='runs.operate'))
+ AND ($8='' OR g.agents_mode='all' OR EXISTS(SELECT 1 FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id AND a.key=$8))
  AND g.id>$9
  AND ($11::uuid='00000000-0000-0000-0000-000000000000' OR g.member_id=$11)
  AND ($12='' OR CASE WHEN g.environment_id IS NULL THEN 'organization' ELSE 'environment' END=$12)

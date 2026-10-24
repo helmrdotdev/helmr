@@ -760,6 +760,7 @@ column sessions.next_turn_seq bigint not null default 1
 column sessions.origin_activation_id uuid
 column sessions.origin_api_key_id uuid
 column sessions.origin_kind text not null
+column sessions.origin_slack_connection_id uuid
 column sessions.origin_turn_id uuid
 column sessions.origin_user_id uuid
 column sessions.parent_session_id uuid
@@ -1207,7 +1208,7 @@ constraint agents c CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'::text)
 constraint agents f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint agents p PRIMARY KEY (environment_id, id)
 constraint agents u UNIQUE (environment_id, key)
-constraint api_keys c CHECK ((revoked_at IS NOT NULL OR cardinality(permissions) > 0) AND permissions <@ ARRAY['agents.use'::text, 'runs.view'::text, 'runs.operate'::text, 'deployments.publish'::text, 'deployments.promote'::text, 'computers.operate'::text, 'secrets.manage'::text])
+constraint api_keys c CHECK ((revoked_at IS NOT NULL OR cardinality(permissions) > 0) AND permissions <@ ARRAY['agents.use'::text, 'sessions.view'::text, 'sessions.manage'::text, 'deployments.publish'::text, 'deployments.promote'::text, 'computers.operate'::text, 'secrets.manage'::text])
 constraint api_keys c CHECK (btrim(key_prefix) <> ''::text)
 constraint api_keys c CHECK (btrim(name) <> ''::text)
 constraint api_keys f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
@@ -1688,10 +1689,10 @@ constraint role_grants f FOREIGN KEY (org_id, role_id) REFERENCES roles(org_id, 
 constraint role_grants p PRIMARY KEY (id)
 constraint role_grants u UNIQUE (id, environment_id, agents_mode)
 constraint role_grants u UNIQUE NULLS NOT DISTINCT (org_id, role_id, environment_id, member_id, group_id, all_members)
-constraint role_permissions c CHECK (permission = ANY (ARRAY['agents.use'::text, 'runs.view'::text, 'runs.operate'::text, 'deployments.publish'::text, 'deployments.promote'::text, 'computers.operate'::text, 'secrets.manage'::text, 'access.manage'::text, 'organization.manage'::text, 'keys.manage'::text, 'agents.manage'::text]))
+constraint role_permissions c CHECK (permission = ANY (ARRAY['agents.use'::text, 'sessions.view'::text, 'sessions.manage'::text, 'deployments.publish'::text, 'deployments.promote'::text, 'computers.operate'::text, 'secrets.manage'::text, 'access.manage'::text, 'organization.manage'::text, 'keys.manage'::text, 'agents.manage'::text]))
 constraint role_permissions f FOREIGN KEY (org_id, role_id) REFERENCES roles(org_id, id) ON DELETE CASCADE
 constraint role_permissions p PRIMARY KEY (org_id, role_id, permission)
-constraint roles c CHECK (builtin_key IS NULL OR (builtin_key = ANY (ARRAY['agent_user'::text, 'run_viewer'::text, 'run_operator'::text, 'release_manager'::text, 'computer_operator'::text, 'secrets_manager'::text, 'access_administrator'::text, 'organization_manager'::text, 'environment_administrator'::text])))
+constraint roles c CHECK (builtin_key IS NULL OR (builtin_key = ANY (ARRAY['agent_user'::text, 'agent_settings_manager'::text, 'session_viewer'::text, 'session_operator'::text, 'release_manager'::text, 'computer_operator'::text, 'secrets_manager'::text, 'access_administrator'::text, 'organization_manager'::text, 'environment_administrator'::text])))
 constraint roles c CHECK (name = btrim(name) AND name <> ''::text)
 constraint roles c CHECK (revision > 0)
 constraint roles f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
@@ -1798,8 +1799,10 @@ constraint session_processes f FOREIGN KEY (environment_id, session_id, computer
 constraint session_processes f FOREIGN KEY (environment_id, session_id, stop_turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint session_processes p PRIMARY KEY (environment_id, session_id, epoch)
 constraint session_processes u UNIQUE (environment_id, computer_id, session_id, epoch)
-constraint sessions c CHECK (admission_mode <> 'scoped'::text OR (origin_kind = ANY (ARRAY['user'::text, 'api_key'::text])))
-constraint sessions c CHECK (admission_mode = ANY (ARRAY['scoped'::text, 'environment'::text]))
+constraint sessions c CHECK ((admission_mode = 'environment'::text) = (origin_kind = 'schedule'::text))
+constraint sessions c CHECK ((admission_mode = 'shared'::text) = (origin_slack_connection_id IS NOT NULL))
+constraint sessions c CHECK (admission_mode <> 'shared'::text OR origin_kind = 'user'::text)
+constraint sessions c CHECK (admission_mode = ANY (ARRAY['scoped'::text, 'shared'::text, 'environment'::text]))
 constraint sessions c CHECK (authority_generation > 0)
 constraint sessions c CHECK (causal_depth >= 0)
 constraint sessions c CHECK (close_after_idle_ms > 0)
@@ -1822,6 +1825,7 @@ constraint sessions c CHECK (requester_session_id IS NULL AND causal_depth = 0 O
 constraint sessions c CHECK (status = ANY (ARRAY['open'::text, 'closing'::text, 'closed'::text, 'cancelled'::text]))
 constraint sessions c CHECK (suspension_after_seq >= 0)
 constraint sessions f FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
+constraint sessions f FOREIGN KEY (environment_id, agent_id, origin_slack_connection_id) REFERENCES slack_connections(environment_id, agent_id, id)
 constraint sessions f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
 constraint sessions f FOREIGN KEY (environment_id, id, creation_turn_id) REFERENCES turns(environment_id, session_id, id) DEFERRABLE INITIALLY DEFERRED
 constraint sessions f FOREIGN KEY (environment_id, origin_activation_id) REFERENCES trigger_activations(environment_id, id)
@@ -1861,6 +1865,7 @@ constraint slack_connections f FOREIGN KEY (environment_id, agent_id) REFERENCES
 constraint slack_connections f FOREIGN KEY (slack_app_registration_id) REFERENCES slack_app_registrations(id)
 constraint slack_connections f FOREIGN KEY (slack_installation_id, slack_app_registration_id) REFERENCES slack_installations(id, app_registration_id)
 constraint slack_connections p PRIMARY KEY (environment_id, id)
+constraint slack_connections u UNIQUE (environment_id, agent_id, id)
 constraint slack_connections u UNIQUE (id)
 constraint slack_connections u UNIQUE (id, environment_id, slack_installation_id)
 constraint slack_connections u UNIQUE (slack_app_registration_id)

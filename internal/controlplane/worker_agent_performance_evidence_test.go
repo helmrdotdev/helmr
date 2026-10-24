@@ -36,7 +36,7 @@ func TestNativePerformanceRetainsModelDiagnosticsSeparately(t *testing.T) {
 	model, agent := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'models');
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES($1,$2,$3,$3,false);
- INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$4,$2,$3,$5,$4,0,'environment','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
+ INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$4,$2,$3,$5,$4,0,'scoped','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
  INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) VALUES($1,$4,1,$5,1,'ready');`, pgx.QueryExecModeSimpleProtocol, f.Environment, agent, f.Deployment, model, f.Computer)
 	observation := "{\"event\":\"native.performance.command_observation\",\"targetMiss\":true}\n"
 	for _, seed := range []struct {

@@ -31,7 +31,7 @@ func dispatchRuntimeTurn(ctx context.Context, pool db.TxBeginner, e session.Exec
 		}
 		sequence = a.Sequence
 	}
-	dispatch, err := session.DispatchRuntimeTurn(ctx, pool, host, e, sequence)
+	dispatch, err := session.DispatchRuntimeTurn(ctx, pool, host, e, sequence, fixtureConversationVerifier(true))
 	if err != nil {
 		return session.TurnDispatch{}, err
 	}
@@ -39,4 +39,10 @@ func dispatchRuntimeTurn(ctx context.Context, pool db.TxBeginner, e session.Exec
 		return session.TurnDispatch{}, session.ErrNotReady
 	}
 	return *dispatch, nil
+}
+
+type fixtureConversationVerifier bool
+
+func (v fixtureConversationVerifier) VerifyInputConversation(context.Context, uuid.UUID, int64, string, string, string) (bool, error) {
+	return bool(v), nil
 }

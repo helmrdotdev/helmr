@@ -29,10 +29,10 @@ func TestDeploymentHTTPPostgresSessionRoutes(t *testing.T) {
 	if err := fixture.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id=$1 AND is_owner`, orgID).Scan(&ownerUser); err != nil {
 		t.Fatal(err)
 	}
-	for _, permission := range []string{"deployments.publish", "deployments.promote", "runs.view"} {
+	for _, permission := range []string{"deployments.publish", "deployments.promote", "sessions.view"} {
 		fixture.grant(t, orgID, ownerUser, environmentID, permission)
 	}
-	fixture.grant(t, orgID, viewerID, environmentID, "runs.view")
+	fixture.grant(t, orgID, viewerID, environmentID, "sessions.view")
 	base := "/api/projects/deployments/environments/staging"
 
 	expectError := func(t *testing.T, method, path, token string, status int, code string) {
@@ -130,7 +130,7 @@ func TestDeploymentHTTPPostgresAPIKeyRoutes(t *testing.T) {
 		}
 		return issued.Raw
 	}
-	reader, deployer, unrelated := issue(auth.CapabilityRunsView), issue(auth.CapabilityDeploymentsPromote), issue(auth.CapabilitySecretsManage)
+	reader, deployer, unrelated := issue(auth.CapabilitySessionsView), issue(auth.CapabilityDeploymentsPromote), issue(auth.CapabilitySecretsManage)
 
 	promote := "/v1/deployments/" + deploymentID.String() + "/promote"
 	if response := fixture.request(t, http.MethodPost, promote, reader, ""); response.Code != http.StatusForbidden {

@@ -47,7 +47,7 @@ type Attention struct {
 // there is no separate dismissal.
 const attentionFailedTurnWindow = `interval '24 hours'`
 
-const attentionAccessSQL = `($3::boolean OR (s.admission_mode='scoped' AND s.origin_kind=$4 AND COALESCE(s.origin_user_id,s.origin_api_key_id)=$5 AND ($6::boolean OR s.agent_id=ANY($7::uuid[]))))`
+const attentionAccessSQL = `($3::boolean OR s.agent_id=ANY($8::uuid[]) OR (s.admission_mode='scoped' AND s.origin_kind=$4 AND COALESCE(s.origin_user_id,s.origin_api_key_id)=$5 AND ($6::boolean OR s.agent_id=ANY($7::uuid[]))))`
 
 const attentionQuestionsSQL = `SELECT a.id,a.session_id,a.turn_id,ag.key,a.created_at,a.question,count(*) OVER ()
  FROM turn_asks a
@@ -83,7 +83,7 @@ func ListAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env u
 		if err != nil {
 			return err
 		}
-		if !filter.All && !filter.AllAgents && len(filter.Agents) == 0 {
+		if !filter.All && !filter.AllAgents && len(filter.Agents) == 0 && len(filter.ViewAgents) == 0 {
 			return ErrDenied
 		}
 		result.Questions, result.QuestionCount, err = attentionRows(ctx, tx, attentionQuestionsSQL, env, filter, func(row pgx.Rows, item *AttentionItem, count *int64) error {
@@ -126,7 +126,7 @@ func ListAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env u
 func attentionRows(ctx context.Context, tx pgx.Tx, sql string, env uuid.UUID, filter sessionReadScope, scan func(pgx.Rows, *AttentionItem, *int64) error) ([]AttentionItem, int64, error) {
 	items := []AttentionItem{}
 	var count int64
-	rows, err := tx.Query(ctx, sql, env, AttentionLimit, filter.All, filter.Kind, filter.ID, filter.AllAgents, filter.Agents)
+	rows, err := tx.Query(ctx, sql, env, AttentionLimit, filter.All, filter.Kind, filter.ID, filter.AllAgents, filter.Agents, filter.ViewAgents)
 	if err != nil {
 		return items, 0, err
 	}

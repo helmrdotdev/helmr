@@ -22,6 +22,8 @@ func scopeFixtureToAgent(t *testing.T, f fixture) {
 func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 	f := newAdmissionFixture(t)
 	ctx := t.Context()
+	otherOwner := uuid.NewV7()
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Other owner'); UPDATE sessions SET origin_user_id=$1 WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, otherOwner, f.session)
 	scopeFixtureToAgent(t, f)
 	req := f.startRequest("scoped")
 	req.ComputerID = f.computer
@@ -47,7 +49,7 @@ func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 		t.Fatal("own creation retry failed", err)
 	}
 	if _, err = session.GetSession(ctx, f.pool, f.caller(), f.env, f.session); !errors.Is(err, session.ErrDenied) {
-		t.Fatal("Use read an environment Session", err)
+		t.Fatal("Use read another person's Session", err)
 	}
 	other := uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Peer');
@@ -83,12 +85,12 @@ func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 	if _, err = session.Enqueue(ctx, f.pool, nil, peer, session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "peer-input", Input: req.Input}); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("peer input accepted", err)
 	}
-	// A trusted environment operator can intervene, but cannot attach to the scoped Computer.
+	// Session management permits intervention; Computer placement requires its own capability.
 	var org uuid.UUID
 	if err := f.pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.env).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.GrantMember(t, f.pool, org, other, &f.env, "runs.operate", "computers.operate")
+	dbtest.GrantMember(t, f.pool, org, other, &f.env, "sessions.manage")
 	view, err := session.GetSession(ctx, f.pool, peer, f.env, first.SessionID)
 	if err != nil {
 		t.Fatal(err)
@@ -117,9 +119,9 @@ func TestScopedRuntimeRelationsAndQueuedRevocation(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	scopeFixtureToAgent(t, f)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped' WHERE environment_id=$1 AND id=$2`, f.env, f.session)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, f.session)
 	peer := f.peer(t)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped' WHERE environment_id=$1 AND id=$2`, f.env, peer.session)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, peer.session)
 	caller := runtimeReadCaller(t, f)
 	if _, err := session.RuntimeGetSession(ctx, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("same-origin peer readable", err)
@@ -151,7 +153,7 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	ctx := t.Context()
 	key, other := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,permissions,name,key_prefix,token_hash)
- SELECT k.id,e.org_id,e.project_id,e.id,ARRAY['agents.use','runs.view'],k.name,'fixture',convert_to(k.name,'UTF8') FROM environments e CROSS JOIN (VALUES($1::uuid,'source'),($2::uuid,'other')) k(id,name) WHERE e.id=$3`, key, other, f.env)
+ SELECT k.id,e.org_id,e.project_id,e.id,ARRAY['agents.use','sessions.view'],k.name,'fixture',convert_to(k.name,'UTF8') FROM environments e CROSS JOIN (VALUES($1::uuid,'source'),($2::uuid,'other')) k(id,name) WHERE e.id=$3`, key, other, f.env)
 	caller := session.Caller{Kind: "api_key", ID: key}
 	req := f.startRequest("machine")
 	noRetry := req
@@ -180,7 +182,7 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',origin_kind='api_key',origin_user_id=NULL,origin_api_key_id=$1 WHERE id=$2`, key, f.session)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',origin_kind='api_key',origin_user_id=NULL,origin_api_key_id=$1 WHERE id=$2`, key, peer.session)
 	runtime := runtimeReadCaller(t, f)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE api_keys SET permissions=ARRAY['runs.operate'] WHERE id=$1`, key)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE api_keys SET permissions=ARRAY['sessions.manage'] WHERE id=$1`, key)
 	if _, err := session.GetSession(ctx, f.pool, caller, f.env, peer.session); err != nil {
 		t.Fatal("explicit run-view path denied", err)
 	}
@@ -200,7 +202,7 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 	f := newAdmissionFixture(t)
 	ctx := t.Context()
 	scopeFixtureToAgent(t, f)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped' WHERE environment_id=$1 AND id=$2`, f.env, f.session)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, f.session)
 	admitted := f.enqueue(t, "caller")
 	if _, err := dispatchTurnForTest(ctx, f.pool, f.execution()); err != nil {
 		t.Fatal(err)

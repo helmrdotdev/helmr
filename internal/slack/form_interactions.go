@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -26,7 +27,11 @@ func (h InteractionHandler) receiveAnswerOpening(ctx context.Context, envelope i
 	var rejected bool
 	err = db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
 		question, ref, err := readFormQuestion(ctx, tx, h.AppID, envelope.Team.ID, envelope.User.ID, claims, source)
-		if errors.Is(err, errFormIdentityUnlinked) {
+		if errors.Is(err, errFormIdentityUnlinked) || errors.Is(err, session.ErrDenied) {
+			code := "permission_denied"
+			if errors.Is(err, errFormIdentityUnlinked) {
+				code = "identity_unlinked"
+			}
 			key, err := controlRequestKey(claims, envelope.User.ID, action.Timestamp)
 			if err != nil {
 				return err
@@ -40,7 +45,7 @@ func (h InteractionHandler) receiveAnswerOpening(ctx context.Context, envelope i
 			if err != nil {
 				return err
 			}
-			_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp(),error='identity_unlinked' WHERE id=$1 AND status='received'`, receipt.ID)
+			_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp(),error=$2 WHERE id=$1 AND status='received'`, receipt.ID, code)
 			rejected = true
 			return err
 		}
@@ -68,6 +73,29 @@ func (h InteractionHandler) receiveAnswerOpening(ctx context.Context, envelope i
 	}
 	if rejected {
 		return receiptResult{disposition: receiptAccepted}
+	}
+	var channel string
+	err = db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT slack_channel_id FROM slack_threads WHERE id=$1`, claims.Target.Thread).Scan(&channel)
+	})
+	if err != nil {
+		return receiptOutcome(err)
+	}
+	if err = h.Client.VerifyConversation(ctx, claims.Target.Installation, credential, envelope.Team.ID, channel, envelope.User.ID); err != nil {
+		return receiptOutcome(err)
+	}
+	err = db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
+		_, current, err := readFormQuestion(ctx, tx, h.AppID, envelope.Team.ID, envelope.User.ID, claims, source)
+		if err != nil {
+			return err
+		}
+		if current != credential {
+			return errControlInvalid
+		}
+		return nil
+	})
+	if err != nil {
+		return receiptOutcome(err)
 	}
 	payload, _ := json.Marshal(map[string]any{"trigger_id": envelope.TriggerID, "view": view})
 	result := h.Client.Call(ctx, claims.Target.Installation, credential, "views.open", payload)

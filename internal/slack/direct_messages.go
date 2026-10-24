@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const directMessageDescription = "DMs create shared Helmr Sessions. Environment run viewers can read them; run operators can continue, answer questions or control work. New message: new Session. Thread reply: continue."
+const directMessageDescription = "DMs create personal Helmr Sessions. People with session viewing or management access to this Agent can also access them. New message: new Session. Thread reply: continue."
 
 func validConversationID(channel string) bool {
 	return definition.ValidSlackChannelID(channel) || slackroute.IsDirectMessage(channel)
@@ -68,10 +68,10 @@ func (h EventHandler) logPromptFailure(ctx context.Context, code string) {
 	}
 }
 
-// verifyDirectControl checks the same retained peer as message admission before
+// verifyControlConversation checks the same retained peer as message admission before
 // consuming a control receipt. Transactional admission rechecks peer identity,
 // current grants and human authority under the route's locks.
-func verifyDirectControl(ctx context.Context, pool db.TxBeginner, client *WebClient, request, thread uuid.UUID) (bool, error) {
+func verifyControlConversation(ctx context.Context, pool db.TxBeginner, client *WebClient, request, thread uuid.UUID) (bool, error) {
 	var installation, channelID, env uuid.UUID
 	var active bool
 	var channel, team, actor, peer, peerTeam string
@@ -84,11 +84,8 @@ func verifyDirectControl(ctx context.Context, pool db.TxBeginner, client *WebCli
 		if err != nil {
 			return err
 		}
-		if slackroute.IsDirectMessage(channel) {
-			active, err = slackroute.LockChannels(ctx, tx, env, []uuid.UUID{channelID})
-			return err
-		}
-		return nil
+		active, err = slackroute.LockChannels(ctx, tx, env, []uuid.UUID{channelID})
+		return err
 	})
 	// Ordinary admission owns nonexistent, stale and non-DM targets.
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -97,20 +94,20 @@ func verifyDirectControl(ctx context.Context, pool db.TxBeginner, client *WebCli
 	if err != nil {
 		return false, err
 	}
-	if !slackroute.IsDirectMessage(channel) || !active {
+	if !active {
 		// Locked admission handles revoked routes without waiting for remote access.
 		return true, nil
 	}
 	reject := func() (bool, error) {
 		return false, db.RunTx(ctx, pool, func(tx pgx.Tx) error { return rejectMessage(ctx, tx, request, "permission_denied") })
 	}
-	if peer == "" || peer != actor || peerTeam != team {
+	if slackroute.IsDirectMessage(channel) && (peer == "" || peer != actor || peerTeam != team) {
 		return reject()
 	}
 	if client == nil {
 		return false, ErrChannelVerification
 	}
-	_, err = client.verifyConversation(ctx, installation, revision, team, channel, peer)
+	_, err = client.verifyConversation(ctx, installation, revision, team, channel, actor)
 	if err != nil {
 		var failure *channelVerificationFailure
 		typed := errors.As(err, &failure)

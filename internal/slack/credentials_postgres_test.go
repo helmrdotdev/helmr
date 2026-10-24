@@ -191,7 +191,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if err != nil || next == f.installation {
 		t.Fatal("reconnect did not create generation", err)
 	}
-	f.SetPermissions(t, "agents.use", "deployments.publish", "deployments.promote", "runs.view", "runs.operate", "computers.operate", "secrets.manage", "keys.manage")
+	f.SetPermissions(t, "agents.use", "deployments.publish", "deployments.promote", "sessions.view", "sessions.manage", "computers.operate", "secrets.manage", "keys.manage")
 	if _, err = f.reauthorize(t, store, org, grant); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("non-manager reauthorized", err)
 	}

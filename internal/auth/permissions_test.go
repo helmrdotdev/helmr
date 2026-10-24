@@ -10,10 +10,10 @@ func TestCapabilityBoundaries(t *testing.T) {
 		cap            Permission
 		allows, denies []Permission
 	}{
-		{CapabilityAgentsManage, []Permission{CapabilityAgentsManage}, []Permission{CapabilityAgentsUse, CapabilityRunsView, CapabilityRunsOperate, CapabilityDeploymentsPublish, CapabilityDeploymentsPromote}},
+		{CapabilityAgentsManage, []Permission{CapabilityAgentsManage}, []Permission{CapabilityAgentsUse, CapabilitySessionsView, CapabilitySessionsManage, CapabilityDeploymentsPublish, CapabilityDeploymentsPromote}},
 		{CapabilityAgentsUse, []Permission{PermissionSessionsCreate, PermissionAgentUse}, []Permission{PermissionSessionsRead, PermissionSessionsSend, PermissionComputersRead, PermissionDeploymentMetadataRead}},
-		{CapabilityRunsView, []Permission{PermissionSessionsRead, PermissionRunMetadataRead, PermissionDeploymentMetadataRead}, []Permission{PermissionSessionsCreate, PermissionSessionsSend, PermissionComputersRead, PermissionComputerCommandCreate, PermissionSecretsWrite}},
-		{CapabilityRunsOperate, []Permission{PermissionSessionsRead, PermissionSessionsCreate, PermissionSessionsSend, PermissionAsksAnswer, PermissionSessionsCancel}, []Permission{PermissionComputersCreate, PermissionComputerCommandCreate, PermissionSecretsWrite, PermissionDeploymentsWrite}},
+		{CapabilitySessionsView, []Permission{PermissionSessionsRead, PermissionDeploymentMetadataRead}, []Permission{PermissionRunMetadataRead, PermissionSessionsCreate, PermissionSessionsSend, PermissionComputersRead, PermissionComputerCommandCreate, PermissionSecretsWrite}},
+		{CapabilitySessionsManage, []Permission{PermissionSessionsRead, PermissionSessionsCancel, PermissionSessionsClose, PermissionSessionsInterrupt}, []Permission{PermissionSessionsCreate, PermissionSessionsSend, PermissionSessionsResume, PermissionAsksAnswer, PermissionComputersCreate, PermissionComputerCommandCreate, PermissionSecretsWrite, PermissionDeploymentsWrite}},
 		{CapabilityDeploymentsPublish, []Permission{PermissionDeploymentsWrite, PermissionDeploymentMetadataRead}, []Permission{PermissionDeploymentsPromote, PermissionSessionsRead, PermissionSecretsWrite}},
 		{CapabilityDeploymentsPromote, []Permission{PermissionDeploymentsPromote, PermissionDeploymentMetadataRead}, []Permission{PermissionDeploymentsWrite, PermissionSessionsRead}},
 		{CapabilityComputersOperate, []Permission{PermissionComputersCreate, PermissionComputersRead, PermissionComputersDelete, PermissionComputersUpdate, PermissionComputerCommandCreate, PermissionSecretMetadataRead}, []Permission{PermissionSecretsWrite, PermissionSessionsRead, PermissionDeploymentsWrite}},
@@ -38,7 +38,7 @@ func TestCapabilityBoundaries(t *testing.T) {
 func TestMachineCapabilitiesDoNotBorrowHumanRoleOrGrant(t *testing.T) {
 	org := uuid.NewV7()
 	scope := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
-	p := Principal{Kind: PrincipalKindAPIKey, OrgID: org, IsOwner: true, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permissions: []Permission{CapabilityRunsView}, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilitySecretsManage}}}
+	p := Principal{Kind: PrincipalKindAPIKey, OrgID: org, IsOwner: true, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permissions: []Permission{CapabilitySessionsView}, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilitySecretsManage}}}
 	if !p.HasPermission(PermissionSessionsRead, scope) {
 		t.Fatal("explicit capability denied")
 	}
@@ -70,7 +70,7 @@ func TestHumanGrantUnionAndAgentScope(t *testing.T) {
 	if p.HasPermission(PermissionSessionsCreate, other) {
 		t.Fatal("other Agent allowed")
 	}
-	p.Grants = append(p.Grants, PermissionGrant{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilityRunsView})
+	p.Grants = append(p.Grants, PermissionGrant{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilitySessionsView})
 	if !p.HasPermission(PermissionSessionsRead, other) || p.HasPermission(PermissionSessionsSend, scope) {
 		t.Fatal("union broadened operation")
 	}
@@ -140,5 +140,32 @@ func TestAgentManagementScopeAndMachineExclusion(t *testing.T) {
 	p.Permissions = []Permission{CapabilityAgentsManage}
 	if IsMachineCapability(CapabilityAgentsManage) || p.HasPermission(CapabilityAgentsManage, scope) {
 		t.Fatal("machine acquired human configuration authority")
+	}
+}
+
+func TestSessionExecutionRequiresUseAndManagementOnSameAgent(t *testing.T) {
+	env, project, first, second := uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String()
+	p := Principal{Kind: PrincipalKindSession, Grants: []PermissionGrant{
+		{ProjectID: project, EnvironmentID: env, AgentID: first, Permission: CapabilitySessionsManage},
+		{ProjectID: project, EnvironmentID: env, AgentID: second, Permission: CapabilityAgentsUse},
+	}}
+	scope := Scope{ProjectID: project, EnvironmentID: env, AgentID: first}
+	if !p.HasPermission(PermissionSessionsRead, scope) || !p.HasPermission(PermissionSessionsClose, scope) {
+		t.Fatal("management must allow reading and closing")
+	}
+	for _, op := range []Permission{PermissionSessionsSend, PermissionAsksAnswer, PermissionSessionsResume, PermissionSessionsCreate} {
+		if p.HasPermission(op, scope) {
+			t.Fatalf("borrowed use from another Agent: %s", op)
+		}
+	}
+	p.Grants = append(p.Grants, PermissionGrant{ProjectID: project, EnvironmentID: env, AgentID: first, Permission: CapabilityAgentsUse})
+	for _, op := range []Permission{PermissionSessionsSend, PermissionAsksAnswer, PermissionSessionsResume, PermissionSessionsCreate} {
+		if !p.HasPermission(op, scope) {
+			t.Fatalf("separate matching assignments must combine: %s", op)
+		}
+	}
+	all, agents := p.AgentPermissionScope(PermissionSessionsRead, Scope{ProjectID: project, EnvironmentID: env})
+	if all || len(agents) != 1 || agents[0].String() != first {
+		t.Fatalf("read scope escaped: %v %v", all, agents)
 	}
 }

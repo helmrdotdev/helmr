@@ -11,6 +11,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -72,11 +73,18 @@ func (f fixture) peer(t *testing.T) fixture {
 	t.Helper()
 	p := f
 	p.session = uuid.New()
-	_, err := f.pool.Exec(t.Context(), `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,'environment','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
+	_, err := f.pool.Exec(t.Context(), `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,'scoped','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
       INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,attachment_sequence,control_sequence,control_attachment,control_kind,control_generation,control_acknowledged_at) VALUES($1,$2,1,$5,1,'ready',1,1,1,'resume',1,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, f.env, p.session, f.agent, f.deployment, f.computer)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return p
+}
+
+func (f fixture) requestedPeer(t *testing.T) fixture {
+	t.Helper()
+	p := f.peer(t)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET requester_session_id=$3,causal_depth=1 WHERE environment_id=$1 AND id=$2`, f.env, p.session, f.session)
 	return p
 }
 
@@ -235,7 +243,7 @@ func TestCompletedResultSurvivesLaterDeadline(t *testing.T) {
 
 func TestRuntimePeerAdmissionRequiresCurrentAuthority(t *testing.T) {
 	f := newFixture(t)
-	peer := f.peer(t)
+	peer := f.requestedPeer(t)
 	caller := session.Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution()}
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)}
 	first, err := session.Enqueue(t.Context(), f.pool, nil, caller, req)
@@ -261,7 +269,7 @@ func TestRuntimePeerAdmissionRequiresCurrentAuthority(t *testing.T) {
 
 func TestDirectTurnAuthorityNeverBorrowsAnotherTurn(t *testing.T) {
 	f := newFixture(t)
-	peer := f.peer(t)
+	peer := f.requestedPeer(t)
 	a := f.enqueue(t, "active")
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
@@ -286,7 +294,7 @@ func TestDirectTurnAuthorityNeverBorrowsAnotherTurn(t *testing.T) {
 
 func TestDirectTurnAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
 	f := newFixture(t)
-	peer := f.peer(t)
+	peer := f.requestedPeer(t)
 	a := f.enqueue(t, "active")
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
@@ -332,7 +340,7 @@ func TestDirectTurnAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
 
 func TestOldTurnCannotBorrowReplacementProcess(t *testing.T) {
 	f := newFixture(t)
-	peer := f.peer(t)
+	peer := f.requestedPeer(t)
 	a := f.enqueue(t, "active")
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
@@ -392,7 +400,7 @@ func TestSaveRequiresRecordedResult(t *testing.T) {
 
 func TestRuntimePeerInputQueuesWithoutReleasingTargetHold(t *testing.T) {
 	f := newFixture(t)
-	peer := f.peer(t) // Independent target with no origin relationship to caller.
+	peer := f.requestedPeer(t) // Independently rooted target requested by the caller.
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','human interrupt')`, f.env, uuid.New(), peer.session); err != nil {
 		t.Fatal(err)
 	}

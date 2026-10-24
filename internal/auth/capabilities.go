@@ -8,8 +8,8 @@ const (
 	CapabilityAgentsManage       Permission = "agents.manage"
 	CapabilityKeysManage         Permission = "keys.manage"
 	CapabilityAgentsUse          Permission = "agents.use"
-	CapabilityRunsView           Permission = "runs.view"
-	CapabilityRunsOperate        Permission = "runs.operate"
+	CapabilitySessionsView       Permission = "sessions.view"
+	CapabilitySessionsManage     Permission = "sessions.manage"
 	CapabilityDeploymentsPublish Permission = "deployments.publish"
 	CapabilityDeploymentsPromote Permission = "deployments.promote"
 	CapabilityComputersOperate   Permission = "computers.operate"
@@ -29,10 +29,10 @@ func CapabilityCatalog() []CapabilityDefinition {
 		{"organization", CapabilityAccessManage, "Manage access", "Manage members, invitations, Groups, Roles and assignments across the organization. This can delegate powerful workload access.", nil},
 		{"organization", CapabilityOrganizationManage, "Manage organization", "Create and manage Projects and environments. Does not grant workload or access administration.", nil},
 		{"api_keys", CapabilityKeysManage, "Manage API keys", "Create and revoke organization-owned API keys in this environment, including keys with any workload permission.", nil},
-		{"agents", CapabilityAgentsManage, "Manage agents", "Configure Agent settings and external chat connections. Does not grant Agent use, deployment changes or run access.", nil},
-		{"agents", CapabilityAgentsUse, "Use agents", "Start permitted agents and work with your own sessions. Environment readers and operators can access these sessions.", nil},
-		{"runs", CapabilityRunsView, "View runs", "Read every session, conversation, event and run log in the environment. Does not grant shell or file access.", nil},
-		{"runs", CapabilityRunsOperate, "Operate runs", "Includes View runs and Use agents. Send input, answer questions and control all sessions in the environment.", nil},
+		{"agents", CapabilityAgentsManage, "Configure agents", "Configure assigned Agent settings and chat connections. Does not grant Agent use, session history or deployment changes.", nil},
+		{"agents", CapabilityAgentsUse, "Use agents", "Use assigned Agents in your own conversations and connected shared channels. Session viewers and operators can access these conversations.", nil},
+		{"agents", CapabilitySessionsView, "View all sessions", "Read all conversations and execution history for assigned Agents, including other people's personal sessions. Does not grant Computer access.", nil},
+		{"agents", CapabilitySessionsManage, "Manage all sessions", "View, stop and close all sessions for assigned Agents. Sending input, answering questions or resuming also requires Use agents for that Agent.", nil},
 		{"deployments", CapabilityDeploymentsPublish, "Register deployments", "Upload code and register deployments. Workload code can exercise configured service credentials.", nil},
 		{"deployments", CapabilityDeploymentsPromote, "Activate deployments", "Activate or roll back registered deployments. Does not include uploading code or reading run logs.", nil},
 		{"computers", CapabilityComputersOperate, "Operate computers", "Create, execute commands, inspect files and remove computers. This is trusted access to workload credentials.", nil},
@@ -45,8 +45,8 @@ func CapabilityCatalog() []CapabilityDefinition {
 }
 
 func IncludedCapabilities(capability Permission) []Permission {
-	if capability == CapabilityRunsOperate {
-		return []Permission{capability, CapabilityRunsView, CapabilityAgentsUse}
+	if capability == CapabilitySessionsManage {
+		return []Permission{capability, CapabilitySessionsView}
 	}
 	return []Permission{capability}
 }
@@ -71,18 +71,18 @@ func CapabilityAllows(capability, operation Permission) bool {
 		return operation == PermissionProjectsManage
 	case CapabilityKeysManage:
 		return operation == PermissionAPIKeysManage
-	case CapabilityRunsOperate:
+	case CapabilitySessionsManage:
 		for _, included := range IncludedCapabilities(capability)[1:] {
 			if CapabilityAllows(included, operation) {
 				return true
 			}
 		}
 		switch operation {
-		case PermissionAsksAnswer, PermissionSessionsSend, PermissionSessionsClose, PermissionSessionsCancel, PermissionSessionsInterrupt, PermissionSessionsResume:
+		case PermissionSessionsClose, PermissionSessionsCancel, PermissionSessionsInterrupt:
 			return true
 		}
-	case CapabilityRunsView:
-		return operation == PermissionSessionsRead || operation == PermissionRunMetadataRead || operation == PermissionDeploymentMetadataRead
+	case CapabilitySessionsView:
+		return operation == PermissionSessionsRead || operation == PermissionDeploymentMetadataRead
 	case CapabilityAgentsUse:
 		// Own-session access is checked against immutable origin by the Session
 		// owner, never inferred from this environment/Agent permission alone.

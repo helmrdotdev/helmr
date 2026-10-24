@@ -64,7 +64,7 @@ func TestSlackUserLinksCompetingUsersCannotStealIdentity(t *testing.T) {
 	other := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Other')`, other)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES(uuidv7(),$1,$2)`, org, other)
-	dbtest.GrantMember(t, f.Pool, org, other, &f.Environment, "runs.operate")
+	dbtest.GrantMember(t, f.Pool, org, other, &f.Environment, "sessions.manage")
 	ready := make(chan struct{})
 	results := make(chan error, 2)
 	for _, user := range []uuid.UUID{f.User, other} {

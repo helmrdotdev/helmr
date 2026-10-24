@@ -33,7 +33,7 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 	}
 	m := org.ManagingMember{Actor: audit.System("test"), OrgID: orgID, UserID: user, MemberID: principal.MemberID}
 	roles, err := org.ListPermissionRoles(ctx, d.Pool, m)
-	if err != nil || len(roles) != 9 {
+	if err != nil || len(roles) != 10 {
 		t.Fatalf("roles: %d %v", len(roles), err)
 	}
 	var groupCount, grantCount int

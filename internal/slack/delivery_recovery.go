@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	sessionowner "github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -51,8 +52,8 @@ func ListSessionDelivery(ctx context.Context, pool db.TxBeginner, org, user, env
 		return nil, ErrDeliveryUnavailable
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		err := access.Check(ctx, tx, "user", user, environment, uuid.Nil(), auth.CapabilityRunsView)
-		if errors.Is(err, access.ErrDenied) {
+		err := sessionowner.AuthorizeSessionOperation(ctx, tx, sessionowner.Caller{Kind: "user", ID: user}, environment, session, auth.PermissionSessionsRead)
+		if errors.Is(err, sessionowner.ErrDenied) {
 			return ErrDeliveryUnavailable
 		}
 		if err != nil {
@@ -120,7 +121,14 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 		if err != nil {
 			return err
 		}
-		if p.OrgID != org || !p.HasPermission(auth.CapabilityRunsOperate, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String()}) {
+		var agent uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT agent_id FROM sessions WHERE environment_id=$1 AND id=$2`, environment, session).Scan(&agent); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrDeliveryUnavailable
+			}
+			return err
+		}
+		if p.OrgID != org || !p.HasPermission(auth.CapabilitySessionsManage, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}) {
 			return errInstallationAuthority
 		}
 		var installation, thread, participant uuid.UUID

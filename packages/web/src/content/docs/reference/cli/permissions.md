@@ -17,9 +17,9 @@ Creating a Role or Group alone grants no access.
 ```sh
 helmr role list
 helmr role get --builtin agent_user
-helmr role create "Operators" --permission runs.operate
-helmr role copy --builtin run_viewer --name "Observers"
-helmr role update "Observers" --description "Read production runs"
+helmr role create "Operators" --permission sessions.manage --permission agents.use
+helmr role copy --builtin session_viewer --name "Observers"
+helmr role update "Observers" --description "Read production sessions"
 helmr role delete "Observers" --yes
 
 helmr group create Engineering
@@ -39,7 +39,7 @@ deleted; copy one to create a custom definition.
 
 Repeated `--permission` values replace the complete explicit permission set on
 update. Omitted fields are preserved. Available IDs appear in help and shell
-completion. Included permissions, such as View runs included by Operate runs,
+completion. Included permissions, such as View all sessions included by Manage all sessions,
 are derived from the selected IDs. Updating a shared Role changes every grant of
 that Role. An incompatible target or deleting an assigned Role is rejected.
 
@@ -53,7 +53,7 @@ read instead; inspect the new state before retrying a stale edit.
 helmr role grant create --group Engineering --role "Agent user" \
   --project operations --env production --agent invoice-checker
 helmr role grant create --group Engineering --role Operators \
-  --project operations --env development
+  --project operations --env development --all-agents
 helmr role grant create --all-users --role "Agent user" \
   --project operations --env production --agent invoice-checker
 helmr role grant create --user alice@example.com --role "Agent user" \

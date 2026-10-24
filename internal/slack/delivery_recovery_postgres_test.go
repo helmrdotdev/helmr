@@ -19,7 +19,7 @@ import (
 
 func (f statusFixture) deliveryManager(t *testing.T) uuid.UUID {
 	t.Helper()
-	f.SetPermissions(t, "runs.view", "runs.operate")
+	f.SetPermissions(t, "agents.use", "sessions.view", "sessions.manage")
 	var org uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `UPDATE org_members SET is_owner=true WHERE user_id=$1 RETURNING org_id`, f.User).Scan(&org); err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestSlackDeliveryRecoveryRequiresCurrentManagerAndObservedPublication(t *te
 		t.Fatal(err)
 	}
 	input := f.recoveryInput(t, org, post)
-	f.SetPermissions(t, "runs.view")
+	f.SetPermissions(t, "sessions.view")
 	if _, err := ListSessionDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, 0, 100); err != nil {
 		t.Fatal("reader denied", err)
 	}

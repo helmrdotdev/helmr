@@ -782,7 +782,7 @@ func roleGrantActionCommand(action string) *cobra.Command {
 			return errors.New("organization assignments have no workload targets")
 		}
 		if env != "" && project == "" || len(agentKeys) > 0 && env == "" {
-			return errors.New("Agent selection requires --project and --env")
+			return errors.New("agent selection requires --project and --env")
 		}
 		if project != "" {
 			selected, err := resolveProject(ctx, c, project)
@@ -818,7 +818,7 @@ func roleGrantActionCommand(action string) *cobra.Command {
 					}
 				}
 				if found == "" {
-					return fmt.Errorf("Agent %q not found in the selected environment", key)
+					return fmt.Errorf("agent %q not found in the selected environment", key)
 				}
 				input.AgentIDs = append(input.AgentIDs, found)
 			}

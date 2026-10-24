@@ -45,10 +45,10 @@ type PostClaim struct {
 func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostClaim, error) {
 	var claim *PostClaim
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		var installation, channel, targetChannel, env, thread uuid.UUID
+		var installation, channel, targetChannel, env, thread, sourceThread uuid.UUID
 		var team, slackChannel, peer string
-		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,t.slack_channel_binding_id,p.thread_id,c.team_id,c.slack_channel_id,CASE WHEN sender.recipient_team_id=c.team_id THEN COALESCE(sender.recipient_user_id,'') ELSE '' END
- FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &targetChannel, &thread, &team, &slackChannel, &peer)
+		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,t.slack_channel_binding_id,p.thread_id,c.team_id,c.slack_channel_id,CASE WHEN sender.recipient_team_id=c.team_id THEN COALESCE(sender.recipient_user_id,'') ELSE '' END,sender.id
+ FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &targetChannel, &thread, &team, &slackChannel, &peer, &sourceThread)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -58,6 +58,18 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		active, err := slackroute.LockChannelsForDelivery(ctx, tx, env, []uuid.UUID{channel, targetChannel})
 		if err != nil {
 			return err
+		}
+		recipient, err := directRecipientPostAuthorized(ctx, tx, thread, post)
+		if err != nil {
+			return err
+		}
+		active = active && recipient
+		if sourceThread != thread {
+			recipient, err = directRecipientPostAuthorized(ctx, tx, sourceThread, post)
+			if err != nil {
+				return err
+			}
+			active = active && recipient
 		}
 		var credential int64
 		var authorized time.Time

@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -88,7 +89,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return reject("stale_gesture")
 	}
 	var code string
-	p.user, code, err = linkedHuman(ctx, tx, p.route.Target.TeamID, actor, env, occurred, false)
+	p.user, code, err = linkedHuman(ctx, tx, p.route.Target.TeamID, actor, env, target, occurred)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +224,11 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				if slackroute.IsDirectMessage(p.message.Channel) {
 					destination = nil
 				}
-				plan, err = session.PlanStart(session.Caller{Kind: "user", ID: p.user}, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: destination, IdempotencyKey: "slack:" + id.String(), Input: input}, "create")
+				caller := session.Caller{Kind: "user", ID: p.user}
+				if destination != nil {
+					caller.SlackConnectionID = p.route.Target.ConnectionID
+				}
+				plan, err = session.PlanStart(caller, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: destination, IdempotencyKey: "slack:" + id.String(), Input: input}, "create")
 				if err == nil {
 					err = session.LockStartCaller(ctx, core, plan)
 				}
@@ -237,7 +242,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				if err = resumeNativeStops(ctx, core, id, p); err != nil {
 					return err
 				}
-				receipt, err = session.RouteSlackInput(ctx, core, trust, session.Caller{Kind: "user", ID: p.user}, session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
+				receipt, err = session.RouteSlackInput(ctx, core, trust, session.Caller{Kind: "user", ID: p.user, SlackThreadID: p.thread}, session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {
 				return err
@@ -334,6 +339,12 @@ func applyThreadInput(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *messageAd
 	}
 	if !unexpired {
 		return true, rejectMessage(ctx, tx, id, "gesture_expired")
+	}
+	if err := session.AuthorizeSessionOperation(ctx, tx, session.Caller{Kind: "user", ID: p.user, SlackThreadID: p.thread}, p.route.Target.EnvironmentID, p.session, auth.PermissionSessionsInterrupt); err != nil {
+		if errors.Is(err, session.ErrDenied) {
+			return true, rejectMessage(ctx, tx, id, "permission_denied")
+		}
+		return true, err
 	}
 	if changed != nil && !p.occurred.After(*changed) {
 		return true, rejectMessage(ctx, tx, id, "stale_gesture")

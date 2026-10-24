@@ -82,12 +82,15 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(stage, stageInvoice, auth.CapabilityAgentsUse, true)
-	// Runs implication remains broad without widening explicit Agent management.
-	role, err = org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"agents.manage", "runs.operate", "secrets.manage"}})
+	// Session management and its included viewing retain the same Agent targets.
+	role, err = org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"agents.manage", "sessions.manage", "secrets.manage"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	check(prod, invoice, auth.CapabilityAgentsUse, true)
+	check(prod, invoice, auth.CapabilityAgentsUse, false)
+	check(prod, faq, auth.CapabilitySessionsView, true)
+	check(prod, invoice, auth.CapabilitySessionsView, false)
+	check(prod, faq, auth.CapabilityAgentsUse, false)
 	check(prod, faq, auth.CapabilityAgentsManage, true)
 	check(prod, invoice, auth.CapabilityAgentsManage, false)
 	principal, err := access.OrganizationPrincipal(ctx, f.pool, m.OrgID, m.UserID)
@@ -305,7 +308,7 @@ func TestCatalogAgentTargetsAndInspectionVisibility(t *testing.T) {
 	inspect("other", false)
 	inspect("missing", false)
 	// An environment-wide implication of Agent use legitimately reveals targets.
-	dbtest.GrantMember(t, f.pool, m.OrgID, f.member.UserID, &env, "runs.operate")
+	dbtest.GrantMember(t, f.pool, m.OrgID, f.member.UserID, &env, "sessions.manage")
 	inspect("other", true)
 	inspect("missing", false)
 }

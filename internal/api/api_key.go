@@ -49,8 +49,8 @@ type APIKeyScope string
 
 const (
 	APIKeyScopeAgentsUse          APIKeyScope = "agents.use"
-	APIKeyScopeRunsView           APIKeyScope = "runs.view"
-	APIKeyScopeRunsOperate        APIKeyScope = "runs.operate"
+	APIKeyScopeSessionsView       APIKeyScope = "sessions.view"
+	APIKeyScopeSessionsManage     APIKeyScope = "sessions.manage"
 	APIKeyScopeDeploymentsPublish APIKeyScope = "deployments.publish"
 	APIKeyScopeDeploymentsPromote APIKeyScope = "deployments.promote"
 	APIKeyScopeComputersOperate   APIKeyScope = "computers.operate"

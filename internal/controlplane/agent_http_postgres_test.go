@@ -89,7 +89,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	viewerID := httpFixture.user(t, "Viewer")
 	httpFixture.member(t, orgID, viewerID, "member")
 	viewer := httpFixture.session(t, viewerID, orgID)
-	httpFixture.grant(t, orgID, viewerID, f.Environment, "runs.view")
+	httpFixture.grant(t, orgID, viewerID, f.Environment, "sessions.view")
 	call(start, viewer, input, http.StatusForbidden)
 	for _, body := range []string{`{"input":[{"type":"text","text":"{}"}],"caller_id":"fake"}`, `{"input":[{"type":"text","text":"{}"}],"environment_id":"fake"}`, `{"input":[{"type":"text","text":"{}"}],"computer_id":"bad"}`, `{"input":{}} {}`, `{}`, `null`} {
 		call(start, owner, body, http.StatusBadRequest)
@@ -132,9 +132,9 @@ func TestAgentHTTPAdmission(t *testing.T) {
 
 	scope := auth.Scope{OrgID: orgID, ProjectID: projectID.String(), EnvironmentID: f.Environment.String()}
 	issuer := f.Principal(t)
-	issue := func(permission auth.Permission) string {
+	issue := func(permissions ...auth.Permission) string {
 		t.Helper()
-		key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: string(permission) + uuid.NewV7().String(), Permissions: []auth.Permission{permission}})
+		key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: uuid.NewV7().String(), Permissions: permissions})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,14 +146,14 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	otherScope.EnvironmentID = otherEnvironment.String()
 	dbtest.GrantMember(t, f.Pool, orgID, f.User, &otherEnvironment, "keys.manage")
 	issuer = f.Principal(t)
-	otherKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other", Permissions: []auth.Permission{auth.CapabilityRunsOperate}})
+	otherKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other", Permissions: []auth.Permission{auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	call("/v1/sessions/"+first.SessionID+"/enqueue", otherKey.Raw, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
 	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/enqueue", first.SessionID), owner, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
-	starter, sender := issue(auth.CapabilityAgentsUse), issue(auth.CapabilityRunsOperate)
-	call("/v1/sessions", issue(auth.CapabilityRunsView), input, http.StatusForbidden)
+	starter, sender := issue(auth.CapabilityAgentsUse), issue(auth.CapabilityAgentsUse, auth.CapabilitySessionsManage)
+	call("/v1/sessions", issue(auth.CapabilitySessionsView), input, http.StatusForbidden)
 	call("/v1/sessions/"+first.SessionID+"/enqueue", starter, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
 	call("/v1/sessions/"+first.SessionID+"/enqueue", sender, `{"input":[{"type":"text","text":"4"}]}`, http.StatusOK)
 	call("/v1/sessions", starter, `{"input":[{"type":"text","text":"{}"}],"environment_id":"override"}`, http.StatusBadRequest)
@@ -213,7 +213,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	keyResumePath := "/v1/sessions/" + first.SessionID + "/resume"
 	resumeBody := fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"explicit-recovery"}`, systemHold.String())
 	userResumeBody := fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"explicit-recovery"}`, userHold.String())
-	resumer := issue(auth.CapabilityRunsOperate)
+	resumer := issue(auth.CapabilityAgentsUse, auth.CapabilitySessionsManage)
 	call(resumePath, "", resumeBody, http.StatusUnauthorized)
 	call(resumePath, viewer, resumeBody, http.StatusForbidden)
 	call(keyResumePath, starter, resumeBody, http.StatusForbidden)
@@ -262,8 +262,8 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	interruptPath := base + "/sessions/" + toInterrupt.SessionID + "/interrupt"
 	keyInterruptPath := "/v1/sessions/" + toInterrupt.SessionID + "/interrupt"
 	interruptBody := `{"idempotency_key":"interrupt-retained"}`
-	interrupter := issue(auth.CapabilityRunsOperate)
-	otherInterrupter, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other interrupt", Permissions: []auth.Permission{auth.CapabilityRunsOperate}})
+	interrupter := issue(auth.CapabilitySessionsManage)
+	otherInterrupter, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other interrupt", Permissions: []auth.Permission{auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,8 +307,8 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	closePath := base + "/sessions/" + toClose.SessionID + "/close"
 	keyClosePath := "/v1/sessions/" + toClose.SessionID + "/close"
 	closeBody := `{"idempotency_key":"close-retained"}`
-	closer := issue(auth.CapabilityRunsOperate)
-	otherCloser, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other close", Permissions: []auth.Permission{auth.CapabilityRunsOperate}})
+	closer := issue(auth.CapabilitySessionsManage)
+	otherCloser, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other close", Permissions: []auth.Permission{auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(closer))
 	call(keyClosePath, closer, closeBody, http.StatusUnauthorized)
 
-	sdkKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: "SDK composition", Permissions: []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilityRunsView, auth.CapabilityRunsOperate, auth.CapabilityRunsOperate, auth.CapabilityRunsOperate, auth.CapabilityRunsOperate, auth.CapabilityRunsOperate}})
+	sdkKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: "SDK composition", Permissions: []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.PinRevokedImage(t, retainedComputer)
-	reader := issue(auth.CapabilityRunsView)
+	reader := issue(auth.CapabilitySessionsView)
 	for _, transport := range []struct{ path, token string }{{base + "/sessions/" + first.SessionID, viewer}, {"/v1/sessions/" + first.SessionID, reader}} {
 		response := httpFixture.request(t, http.MethodGet, transport.path, transport.token, "")
 		var retained api.AgentSession
@@ -465,7 +465,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM turns WHERE session_id=$1 AND status<>'cancelled'`, first.SessionID).Scan(&unsettled); err != nil || unsettled != 0 {
 		t.Fatalf("retained input not cancelled: %d %v", unsettled, err)
 	}
-	canceller := issue(auth.CapabilityRunsOperate)
+	canceller := issue(auth.CapabilitySessionsManage)
 	call("/v1/sessions/"+keyAdmission.SessionID+"/cancel", canceller, cancelBody, http.StatusOK)
 	call("/v1/sessions/"+keyAdmission.SessionID+"/cancel", canceller, cancelBody, http.StatusOK)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(canceller))

@@ -142,9 +142,13 @@ type MessageDelivery struct {
 
 // ClaimRuntimeMessage serializes callbacks; an uncertain delivery returns the
 // same started identity until its disposition is durable.
-func ClaimRuntimeMessage(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64, turn uuid.UUID) (*MessageDelivery, error) {
+func ClaimRuntimeMessage(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64, turn uuid.UUID, verifier ConversationVerifier) (*MessageDelivery, error) {
+	check, err := checkInputConversation(ctx, pool, host, e, attachment, turn, verifier)
+	if err != nil {
+		return nil, err
+	}
 	var result *MessageDelivery
-	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockRuntimeOperationOwner(ctx, tx, host, e); err != nil {
 			return err
 		}
@@ -178,7 +182,7 @@ func ClaimRuntimeMessage(ctx context.Context, pool db.TxBeginner, host workergro
 		if err != nil {
 			return err
 		}
-		if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller); err != nil {
+		if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller, pendingID, true, check); err != nil {
 			if !errors.Is(err, ErrDenied) {
 				return err
 			}

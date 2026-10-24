@@ -104,7 +104,7 @@ Ask them to connect Slack there and say "done". If their role cannot connect it,
 ask them to involve someone with Manage agents on this Agent; do not change their permissions.
 
 **HAND-OFF:** Explain that Slack conversations, including DMs, create Sessions
-readable by members with View runs in this environment. Members with Operate runs
+readable by members with View all sessions in this environment. Members with Manage all sessions
 can continue or control the work and answer Agent questions.
 Other authorized input can produce replies in the original Slack DM. The human can open the app’s
 Messages tab and send a new message without a mention, then reply in its thread

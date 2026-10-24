@@ -68,7 +68,20 @@ type Scope struct {
 	EnvironmentID string
 }
 
+// SessionExecutionOperation identifies actions that may execute new Agent work.
+// Management alone can observe and stop work, but cannot submit or resume it.
+func SessionExecutionOperation(permission Permission) bool {
+	switch permission {
+	case PermissionSessionsSend, PermissionAsksAnswer, PermissionSessionsResume:
+		return true
+	}
+	return false
+}
+
 func (a Principal) HasPermission(permission Permission, scope Scope) bool {
+	if SessionExecutionOperation(permission) {
+		return a.HasPermission(CapabilitySessionsManage, scope) && a.HasPermission(CapabilityAgentsUse, scope)
+	}
 	if scope.OrgID != uuid.Nil() && a.OrgID != uuid.Nil() && scope.OrgID != a.OrgID {
 		return false
 	}
@@ -102,4 +115,28 @@ func (a Principal) matchesEnvironmentScope(scope Scope) bool {
 func ParseAPIKeyGrant(value string) (Permission, bool) {
 	permission := Permission(strings.TrimSpace(value))
 	return permission, IsMachineCapability(permission)
+}
+
+// AgentPermissionScope returns current Agent targets for an operation. It does
+// not turn selected targets into environment-wide authority.
+func (a Principal) AgentPermissionScope(permission Permission, scope Scope) (bool, []uuid.UUID) {
+	scope.AgentID = ""
+	all := a.HasPermission(permission, scope)
+	ids := []uuid.UUID{}
+	seen := map[uuid.UUID]bool{}
+	for _, grant := range a.Grants {
+		if grant.AgentID == "" {
+			continue
+		}
+		id, err := uuid.Parse(grant.AgentID)
+		if err != nil || seen[id] {
+			continue
+		}
+		scope.AgentID = grant.AgentID
+		if a.HasPermission(permission, scope) {
+			ids = append(ids, id)
+			seen[id] = true
+		}
+	}
+	return all, ids
 }

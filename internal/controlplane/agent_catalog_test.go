@@ -18,7 +18,7 @@ func assertRetainedAgentCatalog(t *testing.T, h httpPostgresFixture, org, projec
 	base := "/api/projects/project/environments/test/agents"
 	viewer := h.user(t, "agent-viewer")
 	h.member(t, org, viewer, "member")
-	h.grant(t, org, viewer, environment, "runs.view")
+	h.grant(t, org, viewer, environment, "sessions.view")
 	token := h.session(t, viewer, org)
 	get := func(path, bearer string, status int) []byte {
 		t.Helper()

@@ -62,11 +62,11 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := session.ClaimRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID)
+	message, err := session.ClaimRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID, nil)
 	if err != nil || message == nil || message.ID != admitted.MessageID || string(message.Input) != string(req.Input) {
 		t.Fatalf("claim: %+v %v", message, err)
 	}
-	repeated, err := session.ClaimRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID)
+	repeated, err := session.ClaimRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID, nil)
 	if err != nil || repeated == nil || repeated.ID != message.ID {
 		t.Fatalf("claim retry: %+v %v", repeated, err)
 	}

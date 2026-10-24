@@ -199,7 +199,7 @@ CREATE TABLE api_keys (
     created_by_member_id uuid,
     permissions text[] NOT NULL CHECK (
         (revoked_at IS NOT NULL OR cardinality(permissions)>0) AND
-        permissions <@ ARRAY['agents.use','runs.view','runs.operate','deployments.publish','deployments.promote','computers.operate','secrets.manage']::text[]
+        permissions <@ ARRAY['agents.use','sessions.view','sessions.manage','deployments.publish','deployments.promote','computers.operate','secrets.manage']::text[]
     ),
     name text NOT NULL CHECK (btrim(name) <> ''),
     key_prefix text NOT NULL CHECK (btrim(key_prefix) <> ''),
@@ -473,7 +473,7 @@ CREATE TABLE worker_hosts (
     activated_at timestamptz,
     draining_at timestamptz,
     drain_reason text CONSTRAINT worker_hosts_drain_reason_value_check CHECK (drain_reason IN (
-        'replacement', 'capacity_reduction', 'idle_scale_in', 
+        'replacement', 'capacity_reduction', 'idle_scale_in',
         'shutdown', 'admin', 'incompatible_worker'
         )),
     termination_ready_at timestamptz,
@@ -1392,6 +1392,7 @@ CREATE TABLE slack_connections (
     revoked_at timestamptz,
     PRIMARY KEY (environment_id, id),
     UNIQUE (id, environment_id, slack_installation_id),
+    UNIQUE (environment_id, agent_id, id),
     FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id),
     FOREIGN KEY (slack_installation_id, slack_app_registration_id) REFERENCES slack_installations(id, app_registration_id)
 );
@@ -1469,8 +1470,10 @@ CREATE INDEX trigger_activations_due ON trigger_activations(next_fire_at, enviro
 CREATE TABLE sessions (
     id uuid NOT NULL,
     environment_id uuid NOT NULL,
-    admission_mode text NOT NULL CHECK (admission_mode IN ('scoped','environment')),
+    admission_mode text NOT NULL CHECK (admission_mode IN ('scoped','shared','environment')),
     origin_kind text NOT NULL,
+    origin_slack_connection_id uuid,
+    CHECK ((admission_mode='shared') = (origin_slack_connection_id IS NOT NULL)),
     origin_user_id uuid REFERENCES users(id),
     origin_api_key_id uuid,
     origin_activation_id uuid,
@@ -1479,7 +1482,8 @@ CREATE TABLE sessions (
     CHECK ((origin_kind='user' AND origin_user_id IS NOT NULL AND origin_api_key_id IS NULL AND origin_activation_id IS NULL)
         OR (origin_kind='api_key' AND origin_api_key_id IS NOT NULL AND origin_user_id IS NULL AND origin_activation_id IS NULL)
         OR (origin_kind='schedule' AND origin_activation_id IS NOT NULL AND origin_user_id IS NULL AND origin_api_key_id IS NULL)),
-    CHECK (admission_mode<>'scoped' OR origin_kind IN ('user','api_key')),
+    CHECK ((admission_mode='environment') = (origin_kind='schedule')),
+    CHECK (admission_mode<>'shared' OR origin_kind='user'),
     suspension_after_seq bigint NOT NULL DEFAULT 0 CHECK (suspension_after_seq>=0),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     idle_since timestamptz,
@@ -1516,6 +1520,7 @@ CREATE TABLE sessions (
     UNIQUE (environment_id, id, root_session_id),
     UNIQUE (environment_id, agent_id, key),
     FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id),
+    FOREIGN KEY (environment_id, agent_id, origin_slack_connection_id) REFERENCES slack_connections(environment_id, agent_id, id),
     FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id),
     FOREIGN KEY (environment_id, root_session_id) REFERENCES sessions(environment_id, id),
     FOREIGN KEY (environment_id, parent_session_id, root_session_id) REFERENCES sessions(environment_id, id, root_session_id),
@@ -2316,7 +2321,7 @@ ALTER TABLE computer_leases
 
 
 ALTER TABLE disk_encryption_keys
-    ADD FOREIGN KEY (environment_id, writer_image_build_id) REFERENCES image_builds(environment_id, id), 
+    ADD FOREIGN KEY (environment_id, writer_image_build_id) REFERENCES image_builds(environment_id, id),
     ADD FOREIGN KEY (environment_id, writer_computer_id) REFERENCES computers(environment_id, id) ON DELETE RESTRICT;
 
 -- Historical facts deliberately do not reference mutable or prunable authority rows.
@@ -2393,7 +2398,7 @@ CREATE TABLE roles (
   name text NOT NULL CHECK (name = btrim(name) AND name <> ''),
   description text NOT NULL DEFAULT '',
   builtin_key text CHECK (builtin_key IS NULL OR builtin_key IN
-    ('agent_user','run_viewer','run_operator','release_manager','computer_operator',
+    ('agent_user','agent_settings_manager','session_viewer','session_operator','release_manager','computer_operator',
      'secrets_manager','access_administrator','organization_manager','environment_administrator')),
   revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -2406,7 +2411,7 @@ CREATE TABLE role_permissions (
   org_id uuid NOT NULL,
   role_id uuid NOT NULL,
   permission text NOT NULL CHECK (permission IN
-    ('agents.use','runs.view','runs.operate','deployments.publish',
+    ('agents.use','sessions.view','sessions.manage','deployments.publish',
      'deployments.promote','computers.operate','secrets.manage',
      'access.manage','organization.manage','keys.manage','agents.manage')),
   PRIMARY KEY (org_id,role_id,permission),
@@ -2445,16 +2450,16 @@ CREATE TABLE role_grant_agents (
     REFERENCES role_grants(id,environment_id,agents_mode) ON DELETE CASCADE,
   FOREIGN KEY (environment_id,agent_id) REFERENCES agents(environment_id,id) ON DELETE CASCADE
 );
--- Explicit Agent actions keep their selected targets. Implications are evaluated
--- from each originating permission, so Operate runs retains its environment scope.
+-- All Agent actions, including Session viewing and management, keep the same
+-- selected targets. Included actions never expand the assignment's Agent scope.
 CREATE VIEW role_grant_permissions AS
 SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.all_members,g.environment_id,
        a.agent_id,p.permission
 FROM role_grants g
 JOIN role_permissions p ON (p.org_id,p.role_id)=(g.org_id,g.role_id)
 LEFT JOIN role_grant_agents a ON a.grant_id=g.id
-  AND p.permission IN ('agents.use','agents.manage') AND g.agents_mode='selected'
-WHERE p.permission NOT IN ('agents.use','agents.manage')
+  AND p.permission IN ('agents.use','agents.manage','sessions.view','sessions.manage') AND g.agents_mode='selected'
+WHERE p.permission NOT IN ('agents.use','agents.manage','sessions.view','sessions.manage')
    OR g.agents_mode='all' OR (g.agents_mode='selected' AND a.agent_id IS NOT NULL);
 
 -- Cascading physical Agent deletion must invalidate previously observed targets.

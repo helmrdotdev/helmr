@@ -75,7 +75,7 @@ export function Groups() {
                     <div class="min-w-0 flex-1"><A href="/settings/roles" class="font-medium text-console-accent">{grant.role_name}</A>
                       <p class="mt-1 text-control">{grant.target_kind === "organization" ? "Organization" : `${grant.project_name} / ${grant.environment_name} / ${targetSummary(grant)}`}</p>
                       <p class="mt-1 text-control text-console-muted">{grant.permissions.map(p => roles.data?.catalog.find(c => c.id === p)?.name ?? p).join(" · ")}</p>
-                      <Show when={grant.permissions.includes("runs.operate")}><p class="mt-1 text-chrome text-console-muted">Operate runs also allows using every Agent in this environment.</p></Show>
+
                     </div>
                     <button class={ui.secondaryButton} onClick={() => setEditing(grant)}>Edit targets</button><button class={ui.secondaryButton} onClick={() => setRemoving(grant)}>Remove</button>
                   </div>}</For>
@@ -154,7 +154,7 @@ export function AssignRoleDialog(props: { project:string; projectName:string; gr
       <Show when={resource === "agents" && mode() === "selected"}><fieldset class="max-h-44 space-y-2 overflow-y-auto rounded border border-console-border p-3"><legend class="px-1 text-control">Select Agents in {environment()?.name ?? "this environment"}</legend><For each={environment()?.agents} fallback={<p class="text-control text-console-muted">Choose an environment with Agents.</p>}>{agent=><label class="flex items-center gap-2 text-control"><input type="checkbox" class="accent-console-accent" checked={agents().includes(agent.id)} disabled={busy() || !!props.fixedTarget?.agent_id} onChange={e=>setAgents(ids=>e.currentTarget.checked ? [...ids,agent.id] : ids.filter(id=>id!==agent.id))} />{agent.key}</label>}</For></fieldset></Show>
       <Show when={resource === "agents" && mode() === "all"}><p class="text-control text-console-muted">Includes all current and future Agents in {environment()?.name}.</p></Show>
     </div>}</For></div>
-    <Show when={role()?.permissions.includes("runs.operate")}><Notice tone="warning">Operate runs also grants View runs and Use agents for every Agent in {environment()?.name ?? "the selected environment"}. Any selected Agent management targets above remain unchanged.</Notice></Show>
+    <Show when={role()?.permissions.includes("sessions.manage")}><Notice tone="warning">Manage all sessions includes viewing all conversations for the Agents selected above, including personal sessions. Executing new work also requires Use agents for the same Agent.</Notice></Show>
     <div class="space-y-1 text-control"><p class="font-medium">Access summary</p><For each={resources()}>{resource=><p>{resourceLabel(resource)}: {resource === "agents" ? mode() === "all" ? "all current and future Agents" : environment()?.agents.filter(a=>agents().includes(a.id)).map(a=>a.key).join(", ") || "No Agents selected" : resource === "organization" ? "organization" : `entire ${environment()?.name ?? "selected environment"}`} — {actionNames(resource)}</p>}</For></div>
     <Show when={kind() === "all_members"}><Notice tone="info">Current and future active members receive Use agents for these selected Agents. New Agents are not included.</Notice></Show>
     <Show when={error() || members.error}><Notice tone="danger">{error() || errorMessage(members.error)}<Show when={error()}><p class="mt-2">If the role or assignment changed, close this editor and reopen it to review current access before retrying.</p></Show></Notice></Show>

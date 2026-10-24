@@ -337,7 +337,7 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 	if err := f.Pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.GrantMember(t, f.Pool, org, user, &f.Environment, "agents.use", "runs.operate")
+	dbtest.GrantMember(t, f.Pool, org, user, &f.Environment, "agents.use", "sessions.manage")
 	payload, _ := json.Marshal(messageGesture{Channel: "C1", Timestamp: slackNow(), Thread: "123.456", Text: "<@bot> another author"})
 	now := time.Now().UTC()
 	second, err := receiveGesture(ctx, f.Pool, inboundGesture{Installation: f.installation, Key: "second-source", Actor: "second-human", OccurredAt: now, ExpiresAt: now.Add(time.Minute), Payload: payload})
@@ -351,14 +351,14 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
+	message, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID, fixtureConversationVerifier(true))
 	if err != nil || message == nil {
 		t.Fatalf("message: %+v %v", message, err)
 	}
 	if message.Source.Kind != "user" || message.Source.Slack == nil || message.Source.Slack.UserID != "second-human" || message.Source.Slack.MessageTS == turn.Source.Slack.MessageTS {
 		t.Fatalf("message reused Turn author: %+v", message.Source)
 	}
-	repeated, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
+	repeated, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID, fixtureConversationVerifier(true))
 	if err != nil || repeated == nil || repeated.ID != message.ID || *repeated.Source.Slack != *message.Source.Slack {
 		t.Fatalf("replay lost attribution: %+v %v", repeated, err)
 	}

@@ -100,12 +100,12 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	call(http.MethodGet, fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/slack-delivery", uuid.NewV7()), owner, "", 404)
 	viewerID := h.user(t, "Viewer")
 	h.member(t, org, viewerID, "member")
-	h.grant(t, org, viewerID, f.Environment, "runs.view")
+	h.grant(t, org, viewerID, f.Environment, "sessions.view")
 	viewer := h.session(t, viewerID, org)
 	call(http.MethodGet, base, viewer, "", 200)
 	call(http.MethodPost, action+"/abandon", viewer, string(input), 403)
 	issuer := f.Principal(t)
-	key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "delivery read", Permissions: []auth.Permission{auth.CapabilityRunsView}})
+	key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "delivery read", Permissions: []auth.Permission{auth.CapabilitySessionsView}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +116,6 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	if !bytes.Contains(raw, []byte(`"disposed_by":"`+f.User.String()+`"`)) || !bytes.Contains(raw, []byte(`"status":"failed"`)) {
 		t.Fatal("disposition not visible", string(raw))
 	}
-	f.SetPermissions(t, "runs.view")
+	f.SetPermissions(t, "sessions.view")
 	call(http.MethodPost, action+"/check", owner, string(input), 403)
 }

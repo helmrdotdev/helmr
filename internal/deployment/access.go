@@ -26,15 +26,10 @@ func authorizeCurrent(ctx context.Context, q db.DBTX, p auth.Principal, scope au
 
 // Agent filters are applied in SQL before pagination. An empty filter stays empty.
 func agentReadScope(p auth.Principal, scope auth.Scope) (bool, []uuid.UUID) {
-	all := p.HasPermission(auth.PermissionDeploymentMetadataRead, scope) || p.HasPermission(auth.CapabilityAgentsUse, scope)
-	ids := []uuid.UUID{}
-	for _, g := range p.Grants {
-		if g.ProjectID == scope.ProjectID && g.EnvironmentID == scope.EnvironmentID && g.AgentID != "" && g.Permission == auth.CapabilityAgentsUse {
-			if id, err := uuid.Parse(g.AgentID); err == nil {
-				ids = append(ids, id)
-			}
-		}
-	}
+	all, ids := p.AgentPermissionScope(auth.PermissionDeploymentMetadataRead, scope)
+	useAll, useIDs := p.AgentPermissionScope(auth.CapabilityAgentsUse, scope)
+	all = all || useAll
+	ids = append(ids, useIDs...)
 	return all, ids
 }
 

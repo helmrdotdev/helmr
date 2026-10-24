@@ -52,7 +52,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO permission_groups(id,org_id,name) VALUES($1,$1,'Fixture operators');
       INSERT INTO permission_group_members(org_id,group_id,member_id) VALUES($1,$1,$23);
       INSERT INTO roles(id,org_id,name) VALUES($1,$1,'Fixture operator');
-      INSERT INTO role_permissions(org_id,role_id,permission) SELECT $1,$1,unnest(ARRAY['agents.use','runs.view','runs.operate','deployments.publish','deployments.promote','computers.operate','secrets.manage','keys.manage','agents.manage']);
+      INSERT INTO role_permissions(org_id,role_id,permission) SELECT $1,$1,unnest(ARRAY['agents.use','sessions.view','sessions.manage','deployments.publish','deployments.promote','computers.operate','secrets.manage','keys.manage','agents.manage']);
       INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,agents_mode) VALUES($1,$1,$1,$1,$4,'all');
       INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($4,$5,$6);
       UPDATE environments SET current_deployment_id=$5 WHERE id=$4;
@@ -68,7 +68,7 @@ func New(t *testing.T) Fixture {
       INSERT INTO disk_object_keys(environment_id,digest,key_id,is_direct) VALUES($4,$16,$15,true);
       `+DiskRootInsert("$4", "$20", "$21")+`;
       INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($4,$8,$20,decode(substring($22::text from 8),'hex'),$5,$5,1000,536870912,NULL,34359738368);
-      INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($4,$9,$7,$5,$8,$9,0,'environment','user',$2);
+      INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($4,$9,$7,$5,$8,$9,0,'scoped','user',$2);
       INSERT INTO worker_group_tokens(id,token_hash) VALUES($10,decode(repeat('00',32),'hex'));
       INSERT INTO worker_groups(id,token_id,region_id,name) VALUES($11,$10,'test','group');
       INSERT INTO vm_platforms(id,descriptor_digest,firecracker_digest,firecracker_version,snapshot_format_version,host_kernel_release,kernel_digest,initramfs_digest,rootfs_digest) VALUES($6,$6,$6,'1.16.1','6.0.0','test',$6,$6,$6);

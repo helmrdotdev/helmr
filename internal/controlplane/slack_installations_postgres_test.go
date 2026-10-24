@@ -158,11 +158,11 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	if w := call("GET", base, owner, nil, nil); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(`"status":"connected"`)) {
 		t.Fatal("missing connection state", w.Body.String())
 	}
-	f.SetPermissions(t, "agents.use", "deployments.publish", "deployments.promote", "runs.view", "runs.operate", "computers.operate", "secrets.manage", "keys.manage")
+	f.SetPermissions(t, "agents.use", "deployments.publish", "deployments.promote", "sessions.view", "sessions.manage", "computers.operate", "secrets.manage", "keys.manage")
 	if w := call("DELETE", base+"/"+publication.ID.String(), owner, nil, nil); w.Code != 403 {
 		t.Fatal("non-manager disconnected")
 	}
-	f.SetPermissions(t, "agents.manage", "runs.view", "runs.operate", "agents.use")
+	f.SetPermissions(t, "agents.manage", "sessions.view", "sessions.manage", "agents.use")
 	if w := call("DELETE", base+"/"+publication.ID.String(), owner, nil, nil); w.Code != 204 {
 		t.Fatal("disconnect failed", w.Code, w.Body.String())
 	}

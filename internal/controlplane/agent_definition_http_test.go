@@ -165,7 +165,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		}
 		return key.Raw
 	}
-	reader := issue(auth.CapabilityRunsView)
+	reader := issue(auth.CapabilitySessionsView)
 	get("/v1/agents"+selected, reader, http.StatusOK)
 	get("/v1/agents/agent"+selected, reader, http.StatusOK)
 	get("/v1/agents"+selected, issue(auth.CapabilityAgentsUse), http.StatusNotFound)
@@ -181,7 +181,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	get("/v1/sessions/"+uuid.NewV7().String()+"/close-scope", consumer, http.StatusForbidden)
 	get(closePath, reader, http.StatusForbidden)
 	get(sessionPath+"/close-scope", owner, http.StatusOK)
-	get(closePath, issue(auth.CapabilityRunsOperate), http.StatusOK)
+	get(closePath, issue(auth.CapabilitySessionsManage), http.StatusOK)
 
 	for _, path := range []string{"/v1/agents", "/v1/agents/agent"} {
 		response := get(path, consumer, http.StatusOK)
@@ -218,7 +218,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("read key created Computer: %d %s", denied.Code, denied.Body.String())
 	}
-	sdkKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: "computer SDK", Permissions: []auth.Permission{auth.CapabilityRunsView, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilitySecretsManage}})
+	sdkKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: "computer SDK", Permissions: []auth.Permission{auth.CapabilitySessionsView, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilitySecretsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		t.Fatalf("computer update: %+v %v", updated, err)
 	}
 	get("/v1/computers/"+f.Computer.String()+"/members", sdkKey.Raw, http.StatusNotFound)
-	get("/v1/computers/"+f.Computer.String()+"/sessions", reader, http.StatusOK)
+	get("/v1/computers/"+f.Computer.String()+"/sessions", reader, http.StatusForbidden)
 	script, err := filepath.Abs("../../sdk/typescript/testdata/computer-catalog-http.ts")
 	if err != nil {
 		t.Fatal(err)

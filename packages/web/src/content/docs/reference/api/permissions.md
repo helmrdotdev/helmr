@@ -63,8 +63,11 @@ Environment IDs and cannot contain workload actions. All members accepts only
 The catalog supplies `resource_type` and `included`
 actions. Responses expose `targets` grouped by resource type, with mode, selected
 Agent names and IDs, explicit permissions and included permissions. For example,
-`agents.manage` can target selected Agents while `runs.operate` retains
-its implied environment-wide `agents.use` and `runs.view`.
+`agents.use`, `agents.manage`, `sessions.view` and `sessions.manage` all use the
+same Agent selection in an assignment. Session management includes viewing for
+those Agents; it does not grant Agent use. Executing new work in another person's
+Session requires both management and use for that Agent, plus current runtime
+authority. Use separate Roles and assignments when actions need different targets.
 
 POST returns `{"grants":[...]}` with one header and `created: true|false`.
 There is one assignment per recipient, Role and environment. Equivalent normalized
@@ -89,10 +92,23 @@ effective. Repair it with a conditional PATCH or remove the assignment.
 
 List filters are `member_id`, `group_id`, `role_id`, `subject_kind`, `scope_kind`,
 `project`, `environment` and `agent`. Project/Environment filters use slugs; an
-Agent filter requires both. Agent listing includes all-Agent assignments and
-assignments that imply environment-wide Agent use. Pagination uses `limit`
+Agent filter requires both. Agent listing includes assignments selecting that Agent and all-Agent assignments. Pagination uses `limit`
 (1–100, default 100), `cursor` and `next_cursor`. Role, Group and Group membership
 lists use the same pagination contract. Membership PUT/DELETE is idempotent.
+
+## Agent and Session actions
+
+| Action | Access for the assigned Agents |
+| --- | --- |
+| `agents.use` | Start personal conversations and participate in configured shared Slack conversations |
+| `agents.manage` | Configure Agent settings and connections |
+| `sessions.view` | Read all Session history, including other people's personal conversations |
+| `sessions.manage` | View, stop and close Sessions; new input, answers and resumption also require `agents.use` |
+
+The standard Agent user Role has use; Agent settings manager has use and configure;
+Session viewer has view; Session operator has use and manage. None embeds a target.
+Computer access, deployments, secrets and administrative actions remain separate.
+API keys use the same workload action names and cover their entire environment.
 
 ## Effective permissions
 
@@ -113,7 +129,7 @@ they are not another user-managed collection.
 
 ## Ownership and initialization
 
-A new organization has nine standard Roles, no custom Groups and no All members
+A new organization has ten standard Roles, no custom Groups and no All members
 Grants. Its creator is an Owner and receives two explicit organization Grants:
 Access Administrator and Organization Manager. Creating an Environment grants
 no workload access; assign an Environment Role separately.

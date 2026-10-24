@@ -26,6 +26,12 @@ func RuntimeGetSession(ctx context.Context, database db.TxBeginner, caller Calle
 		}
 		var err error
 		result, err = getSession(ctx, tx, caller.Execution.EnvironmentID, id)
+		if err != nil {
+			return err
+		}
+		views := []SessionView{result}
+		err = redactSessionRelations(ctx, tx, caller, caller.Execution.EnvironmentID, views)
+		result = views[0]
 		return err
 	})
 	return result, err
@@ -56,15 +62,25 @@ func RuntimeListSessions(ctx context.Context, database db.TxBeginner, caller Cal
 			return err
 		}
 		filter := sessionReadScope{All: source.Mode == "environment", Agents: []uuid.UUID{}}
+		if source.Mode == "shared" && source.Connection != nil {
+			filter.SharedConnection = *source.Connection
+		}
 		if source.Mode == "scoped" {
 			filter, err = readScopeFor(ctx, tx, Caller{Kind: source.Kind, ID: source.id()}, caller.Execution.EnvironmentID)
 			if err != nil {
 				return err
 			}
 			filter.All = false
+			filter.ViewAgents = []uuid.UUID{}
 		}
 		result, err = listSessions(ctx, tx, query, filter)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := redactSessionRelations(ctx, tx, caller, caller.Execution.EnvironmentID, result.Sessions); err != nil {
+			return err
+		}
+		return nil
 	})
 	return result, err
 }

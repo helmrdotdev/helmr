@@ -53,8 +53,9 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			item := api.PermissionScope{Project: g.ProjectSlug, Environment: g.EnvironmentSlug, Agent: g.AgentKey, Permissions: []string{}}
+			scope := auth.Scope{OrgID: principal.OrgID, ProjectID: pgvalue.UUIDString(g.ProjectID), EnvironmentID: pgvalue.UUIDString(g.EnvironmentID), AgentID: pgvalue.UUIDString(g.AgentID)}
 			for _, operation := range auth.AllPermissions() {
-				if auth.CapabilityAllows(auth.Permission(g.Permission), operation) {
+				if auth.CapabilityAllows(auth.Permission(g.Permission), operation) || (auth.SessionExecutionOperation(operation) && principal.HasPermission(operation, scope)) {
 					item.Permissions = append(item.Permissions, string(operation))
 				}
 			}

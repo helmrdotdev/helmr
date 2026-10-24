@@ -23,7 +23,7 @@ func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
 			}
 			switch kind {
 			case "human_grant":
-				f.SetPermissions(t, "runs.view")
+				f.SetPermissions(t, "sessions.view")
 			case "removed_member":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=now(),is_owner=false WHERE org_id=$1 AND user_id=$2`, f.OrgID, f.User)
 			case "api_key":
@@ -44,7 +44,7 @@ func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
 func TestAdmittedCommandRetainsDispatchReceiptAfterRevocation(t *testing.T) {
 	f := commandFixture(t)
 	first := f.start(t, "admitted")
-	f.SetPermissions(t, "runs.view")
+	f.SetPermissions(t, "sessions.view")
 	replay, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
 	if err != nil || replay.Start == nil || replay.Start.Command.ID != first.Command.ID {
 		t.Fatalf("lost dispatch receipt: %+v %v", replay, err)

@@ -22,7 +22,11 @@ func (server *Server) workerAgentTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e.AuthorityGeneration = request.AuthorityGeneration
-	dispatch, err := session.DispatchRuntimeTurn(r.Context(), server.tx, host, e, request.AttachmentSequence)
+	var verifier session.ConversationVerifier
+	if server.slackConfig != nil && server.slackConfig.Client != nil {
+		verifier = server.slackConfig.Client
+	}
+	dispatch, err := session.DispatchRuntimeTurn(r.Context(), server.tx, host, e, request.AttachmentSequence, verifier)
 	if err != nil {
 		server.writeAgentWorkerError(w, err)
 		return

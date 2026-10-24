@@ -56,8 +56,8 @@ func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 	ctx := t.Context()
 	store := &apiKeyCountingQuerier{Querier: fixture.queries}
 	authenticator := NewAPIKeyAuthenticator(store)
-	issued := fixture.issue(t, "  deploy  ", auth.CapabilityRunsView, auth.CapabilityDeploymentsPublish)
-	if issued.Record.Name != "deploy" || issued.Raw == "" || !slices.Equal(issued.Record.Permissions, []string{"runs.view", "deployments.publish"}) {
+	issued := fixture.issue(t, "  deploy  ", auth.CapabilitySessionsView, auth.CapabilityDeploymentsPublish)
+	if issued.Record.Name != "deploy" || issued.Raw == "" || !slices.Equal(issued.Record.Permissions, []string{"sessions.view", "deployments.publish"}) {
 		t.Fatalf("issued = %+v", issued.Record)
 	}
 
@@ -69,7 +69,7 @@ func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 		OrgID: fixture.owner.OrgID, APIKeyID: pgvalue.MustUUIDValue(issued.Record.ID),
 		ProjectID: fixture.scope.ProjectID, EnvironmentID: fixture.scope.EnvironmentID,
 		Kind:        auth.PrincipalKindAPIKey,
-		Permissions: []auth.Permission{auth.CapabilityRunsView, auth.CapabilityDeploymentsPublish},
+		Permissions: []auth.Permission{auth.CapabilitySessionsView, auth.CapabilityDeploymentsPublish},
 	}
 	if !reflect.DeepEqual(principal, want) {
 		t.Fatalf("principal = %+v, want %+v", principal, want)
@@ -87,7 +87,7 @@ func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 	if err := fixture.pool.QueryRow(ctx, `SELECT last_used_at FROM api_keys WHERE id = $1`, issued.Record.ID).Scan(&revokedTouchedAt); err != nil || revokedTouchedAt == nil || !revokedTouchedAt.Equal(*touchedAt) {
 		t.Fatalf("revoked key last_used_at = %v, want %v, err = %v", revokedTouchedAt, touchedAt, err)
 	}
-	expired := fixture.issue(t, "expired", auth.CapabilityRunsView)
+	expired := fixture.issue(t, "expired", auth.CapabilitySessionsView)
 	fixture.expire(t, "api_keys", expired.Record.ID)
 	if _, err := authenticator.Authenticate(ctx, expired.Raw); !errors.Is(err, auth.ErrUnauthenticated) || store.reset() != 1 {
 		t.Fatalf("expired key error = %v, want one statement", err)
@@ -107,7 +107,7 @@ func TestAPIKeyDuplicateNameAndRotation(t *testing.T) {
 	f := newAPIKeyFixture(t)
 	ctx := t.Context()
 	original := f.issue(t, "automation", auth.CapabilityAgentsUse)
-	if _, err := IssueAPIKey(ctx, f.pool, f.owner, f.scope, APIKeyInput{Name: "automation", Permissions: []auth.Permission{auth.CapabilityRunsOperate}}); err == nil {
+	if _, err := IssueAPIKey(ctx, f.pool, f.owner, f.scope, APIKeyInput{Name: "automation", Permissions: []auth.Permission{auth.CapabilitySessionsManage}}); err == nil {
 		t.Fatal("reserved name accepted")
 	}
 	rotated, err := RotateAPIKey(ctx, f.pool, f.owner, f.scope, pgvalue.MustUUIDValue(original.Record.ID))
@@ -145,7 +145,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	ctx := t.Context()
 	rows := make([][]any, 0, 5)
 	for index := range 5 {
-		rows = append(rows, []any{uuid.NewV7(), fixture.owner.OrgID, uuid.MustParse(fixture.scope.ProjectID), uuid.MustParse(fixture.scope.EnvironmentID), fixture.owner.MemberID, []string{"runs.view"}, fmt.Sprintf("key-%d", index), fmt.Sprintf("hlmr_%d", index), []byte(fmt.Sprintf("hash-%d", index))})
+		rows = append(rows, []any{uuid.NewV7(), fixture.owner.OrgID, uuid.MustParse(fixture.scope.ProjectID), uuid.MustParse(fixture.scope.EnvironmentID), fixture.owner.MemberID, []string{"sessions.view"}, fmt.Sprintf("key-%d", index), fmt.Sprintf("hlmr_%d", index), []byte(fmt.Sprintf("hash-%d", index))})
 	}
 	if _, err := fixture.pool.CopyFrom(ctx, pgx.Identifier{"api_keys"},
 		[]string{"id", "org_id", "project_id", "environment_id", "created_by_member_id", "permissions", "name", "key_prefix", "token_hash"}, pgx.CopyFromRows(rows)); err != nil {
@@ -160,7 +160,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	other.MemberID = dbtest.GrantMember(t, fixture.pool, otherOrg, other.UserID, &otherEnvironmentID, "keys.manage")
 	other.Grants = []auth.PermissionGrant{{ProjectID: otherProjectID.String(), EnvironmentID: otherEnvironmentID.String(), Permission: auth.CapabilityKeysManage}}
 	otherScope := auth.Scope{OrgID: otherOrg, ProjectID: otherProjectID.String(), EnvironmentID: otherEnvironmentID.String()}
-	if _, err := IssueAPIKey(ctx, fixture.pool, other, otherScope, APIKeyInput{Name: "other-org", Permissions: []auth.Permission{auth.CapabilityRunsView}}); err != nil {
+	if _, err := IssueAPIKey(ctx, fixture.pool, other, otherScope, APIKeyInput{Name: "other-org", Permissions: []auth.Permission{auth.CapabilitySessionsView}}); err != nil {
 		t.Fatal(err)
 	}
 	if listed, _, err := ListAPIKeys(ctx, fixture.queries, other, fixture.scope, APIKeyFilterAll, 10, nil); !errors.Is(err, ErrAPIKeyManagementRequired) || len(listed) != 0 {
@@ -199,8 +199,8 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 
 	// Listing reports each key's stored permissions, including a key holding
 	// fewer than another.
-	full := fixture.issue(t, "full", auth.CapabilityRunsView, auth.CapabilityDeploymentsPublish)
-	expired := fixture.issue(t, "expired", auth.CapabilityRunsView)
+	full := fixture.issue(t, "full", auth.CapabilitySessionsView, auth.CapabilityDeploymentsPublish)
+	expired := fixture.issue(t, "expired", auth.CapabilitySessionsView)
 	fixture.expire(t, "api_keys", expired.Record.ID)
 	permissions := map[string][]string{}
 	all, _, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterAll, 20, nil)
@@ -211,7 +211,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 		permissions[row.Name] = row.Permissions
 	}
 	if len(all) != 7 || permissions["other-org"] != nil || permissions[second[0].Name] == nil || permissions["expired"] == nil ||
-		!slices.Equal(permissions["full"], full.Record.Permissions) || !slices.Equal(permissions["key-0"], []string{"runs.view"}) {
+		!slices.Equal(permissions["full"], full.Record.Permissions) || !slices.Equal(permissions["key-0"], []string{"sessions.view"}) {
 		t.Fatalf("all list = %v", permissions)
 	}
 	expiredList, _, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterExpired, 10, nil)
@@ -229,7 +229,7 @@ func TestAPIKeyPostgresRequiresManagementAndValidInput(t *testing.T) {
 		principal.MemberID = fixture.member(t, principal.OrgID, principal.UserID, role)
 		principal.IsOwner = role == "owner"
 		principal.Grants = nil
-		if _, err := IssueAPIKey(ctx, fixture.pool, principal, fixture.scope, APIKeyInput{Name: "blocked", Permissions: []auth.Permission{auth.CapabilityRunsView}}); !errors.Is(err, ErrAPIKeyManagementRequired) {
+		if _, err := IssueAPIKey(ctx, fixture.pool, principal, fixture.scope, APIKeyInput{Name: "blocked", Permissions: []auth.Permission{auth.CapabilitySessionsView}}); !errors.Is(err, ErrAPIKeyManagementRequired) {
 			t.Fatalf("%s issue error = %v", role, err)
 		}
 		if _, _, err := ListAPIKeys(ctx, fixture.queries, principal, fixture.scope, APIKeyFilterAll, 10, nil); !errors.Is(err, ErrAPIKeyManagementRequired) {
@@ -241,19 +241,19 @@ func TestAPIKeyPostgresRequiresManagementAndValidInput(t *testing.T) {
 	}
 	days, invalidDays := 90, 31
 	for _, input := range []APIKeyInput{
-		{Name: "", Permissions: []auth.Permission{auth.CapabilityRunsView}},
-		{Name: "bad\nname", Permissions: []auth.Permission{auth.CapabilityRunsView}},
-		{Name: string(make([]byte, 65)), Permissions: []auth.Permission{auth.CapabilityRunsView}},
+		{Name: "", Permissions: []auth.Permission{auth.CapabilitySessionsView}},
+		{Name: "bad\nname", Permissions: []auth.Permission{auth.CapabilitySessionsView}},
+		{Name: string(make([]byte, 65)), Permissions: []auth.Permission{auth.CapabilitySessionsView}},
 		{Name: "no permissions"},
 		{Name: "member management", Permissions: []auth.Permission{auth.PermissionMembersManage}},
-		{Name: "expiry", Permissions: []auth.Permission{auth.CapabilityRunsView}, ExpiresInDays: &invalidDays},
+		{Name: "expiry", Permissions: []auth.Permission{auth.CapabilitySessionsView}, ExpiresInDays: &invalidDays},
 	} {
 		var inputError InputError
 		if _, err := IssueAPIKey(ctx, fixture.pool, fixture.owner, fixture.scope, input); !errors.As(err, &inputError) {
 			t.Fatalf("input %+v error = %v", input, err)
 		}
 	}
-	expiring, err := IssueAPIKey(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyInput{Name: "expiring", Permissions: []auth.Permission{auth.CapabilityRunsView}, ExpiresInDays: &days})
+	expiring, err := IssueAPIKey(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyInput{Name: "expiring", Permissions: []auth.Permission{auth.CapabilitySessionsView}, ExpiresInDays: &days})
 	if err != nil || !expiring.Record.ExpiresAt.Valid || time.Until(expiring.Record.ExpiresAt.Time) < 89*24*time.Hour {
 		t.Fatalf("expiring key = %+v, err = %v", expiring.Record.ExpiresAt, err)
 	}
@@ -276,7 +276,7 @@ func TestParseAPIKeyFilter(t *testing.T) {
 }
 
 func TestGrantedPermissionsKeepsGrantablePermissions(t *testing.T) {
-	if got := grantedPermissions([]string{" runs.view ", "members.manage", "unknown"}); !reflect.DeepEqual(got, []auth.Permission{auth.CapabilityRunsView}) {
+	if got := grantedPermissions([]string{" sessions.view ", "members.manage", "unknown"}); !reflect.DeepEqual(got, []auth.Permission{auth.CapabilitySessionsView}) {
 		t.Fatalf("permissions = %v", got)
 	}
 	if got := grantedPermissions([]string{"members.manage", "unknown"}); got != nil {
@@ -310,7 +310,7 @@ func TestAPIKeyEditsAndRotationAuditRollback(t *testing.T) {
 	first := f.issue(t, "automation", auth.CapabilityAgentsUse)
 	id := pgvalue.MustUUIDValue(first.Record.ID)
 	expires := time.Now().Add(time.Hour)
-	edited, err := UpdateAPIKey(ctx, f.pool, f.owner, f.scope, id, APIKeyUpdate{Name: "renamed", Permissions: []auth.Permission{auth.CapabilityRunsView}, ExpiresAt: &expires})
+	edited, err := UpdateAPIKey(ctx, f.pool, f.owner, f.scope, id, APIKeyUpdate{Name: "renamed", Permissions: []auth.Permission{auth.CapabilitySessionsView}, ExpiresAt: &expires})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestAPIKeyEditsAndRotationAuditRollback(t *testing.T) {
 		t.Fatal("policy edit changed identity/token")
 	}
 	var facts bool
-	if err := f.pool.QueryRow(ctx, `SELECT details->'before'->>'name'='automation' AND details->'after'->>'name'='renamed' AND details->'after'->'permissions'='["runs.view"]'::jsonb FROM audit_events WHERE action='api_key.updated' AND target_id=$1`, id).Scan(&facts); err != nil || !facts {
+	if err := f.pool.QueryRow(ctx, `SELECT details->'before'->>'name'='automation' AND details->'after'->>'name'='renamed' AND details->'after'->'permissions'='["sessions.view"]'::jsonb FROM audit_events WHERE action='api_key.updated' AND target_id=$1`, id).Scan(&facts); err != nil || !facts {
 		t.Fatal("audit facts", facts, err)
 	}
 	f.exec(t, `CREATE FUNCTION reject_key_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
@@ -326,14 +326,14 @@ func TestAPIKeyEditsAndRotationAuditRollback(t *testing.T) {
 	if _, err := RotateAPIKey(ctx, f.pool, f.owner, f.scope, id); err == nil {
 		t.Fatal("rotation ignored audit failure")
 	}
-	if _, err := UpdateAPIKey(ctx, f.pool, f.owner, f.scope, id, APIKeyUpdate{Name: "lost", Permissions: []auth.Permission{auth.CapabilityRunsOperate}}); err == nil {
+	if _, err := UpdateAPIKey(ctx, f.pool, f.owner, f.scope, id, APIKeyUpdate{Name: "lost", Permissions: []auth.Permission{auth.CapabilitySessionsManage}}); err == nil {
 		t.Fatal("edit ignored audit failure")
 	}
 	if err := RevokeAPIKey(ctx, f.pool, f.owner, f.scope, id); err == nil {
 		t.Fatal("revoke ignored audit failure")
 	}
 	current, err := NewAPIKeyAuthenticator(f.queries).Authenticate(ctx, first.Raw)
-	if err != nil || !slices.Equal(current.Permissions, []auth.Permission{auth.CapabilityRunsView}) {
+	if err != nil || !slices.Equal(current.Permissions, []auth.Permission{auth.CapabilitySessionsView}) {
 		t.Fatal("rollback lost original active token or edited policy", err)
 	}
 	var count int

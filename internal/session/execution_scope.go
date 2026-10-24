@@ -36,7 +36,20 @@ func SessionCloseScope(ctx context.Context, tx pgx.Tx, caller Caller, env, sessi
 	if err := authorizeTarget(ctx, tx, caller, env, sessionID, auth.PermissionSessionsClose); err != nil {
 		return ExecutionScope{}, err
 	}
-	return ReadSessionCloseScope(ctx, tx, env, sessionID)
+	scope, err := ReadSessionCloseScope(ctx, tx, env, sessionID)
+	if err != nil {
+		return ExecutionScope{}, err
+	}
+	for _, raw := range scope.Sessions {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return ExecutionScope{}, err
+		}
+		if err := authorizeTarget(ctx, tx, caller, env, id, auth.PermissionSessionsClose); err != nil {
+			return ExecutionScope{}, err
+		}
+	}
+	return scope, nil
 }
 
 func ReadSessionCloseScope(ctx context.Context, tx pgx.Tx, env, sessionID uuid.UUID) (ExecutionScope, error) {

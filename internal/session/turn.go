@@ -42,8 +42,11 @@ var (
 // Caller is transport-authenticated identity. Runtime requests carry the stable
 // Session and its current authority generation; a transport request ID is not identity.
 type Caller struct {
-	Kind string
-	ID   uuid.UUID
+	// Slack route provenance is supplied only by verified Slack admission, never request JSON.
+	SlackThreadID     uuid.UUID
+	SlackConnectionID uuid.UUID
+	Kind              string
+	ID                uuid.UUID
 	// TurnID is present only for direct Turn-scoped native requests. MCP uses
 	// Session authority without guessing a currently running Turn.
 	TurnID    uuid.UUID
@@ -501,16 +504,16 @@ type TurnDispatch struct {
 	Source    TurnSource
 }
 
-func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispatch) error {
+func dispatchReady(ctx context.Context, tx pgx.Tx, e Execution) (owners, error) {
 	o, err := lockSession(ctx, tx, e.EnvironmentID, e.SessionID)
 	if err != nil {
-		return err
+		return o, err
 	}
 	if o.lifecycle != "open" && o.lifecycle != "closing" {
-		return ErrNotReady
+		return o, ErrNotReady
 	}
 	if err = executionReady(ctx, tx, e, o); err != nil {
-		return err
+		return o, err
 	}
 	var blocked bool
 	err = tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
@@ -519,22 +522,16 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
         ) SELECT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
         OR EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$3 AND computer_lease_epoch<>$4 AND status IN ('requested','captured'))`, e.EnvironmentID, e.SessionID, o.computer, e.LeaseEpoch).Scan(&blocked)
 	if err != nil {
-		return err
+		return o, err
 	}
 	if blocked {
-		return ErrNotReady
+		return o, ErrNotReady
 	}
-	var process int64
-	err = tx.QueryRow(ctx, `SELECT id,status,process_epoch FROM turns WHERE environment_id=$1 AND session_id=$2 AND status IN ('running') FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID).Scan(&result.TurnID, &result.Status, &process)
-	if err == nil {
-		if process != e.ProcessEpoch {
-			return ErrNotReady
-		}
-		return loadTurnDispatch(ctx, tx, e.EnvironmentID, result)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
+	return o, nil
+}
+
+func newTurnReady(ctx context.Context, tx pgx.Tx, e Execution, o owners) error {
+	var err error
 	var pressure bool
 	if err = tx.QueryRow(ctx, `SELECT storage_pressure_since IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, e.EnvironmentID, o.computer, e.LeaseEpoch).Scan(&pressure); err != nil {
 		return err
@@ -552,6 +549,28 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
 	if !applied {
 		return ErrNotReady
 	}
+	return nil
+}
+
+func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispatch, check inputAuthorityCheck) error {
+	o, err := dispatchReady(ctx, tx, e)
+	if err != nil {
+		return err
+	}
+	var process int64
+	err = tx.QueryRow(ctx, `SELECT id,status,process_epoch FROM turns WHERE environment_id=$1 AND session_id=$2 AND status IN ('running') FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID).Scan(&result.TurnID, &result.Status, &process)
+	if err == nil {
+		if process != e.ProcessEpoch {
+			return ErrNotReady
+		}
+		return loadTurnDispatch(ctx, tx, e.EnvironmentID, result)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err = newTurnReady(ctx, tx, e, o); err != nil {
+		return err
+	}
 	err = tx.QueryRow(ctx, `SELECT id FROM turns WHERE environment_id=$1 AND session_id=$2 AND status='queued' ORDER BY seq LIMIT 1 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID).Scan(&result.TurnID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotReady
@@ -563,7 +582,7 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
 	if err = tx.QueryRow(ctx, `SELECT caller_kind,caller_id FROM turns WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID).Scan(&inputCaller.Kind, &inputCaller.ID); err != nil {
 		return err
 	}
-	if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller); err != nil {
+	if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller, result.TurnID, false, check); err != nil {
 		if !errors.Is(err, ErrDenied) {
 			return err
 		}

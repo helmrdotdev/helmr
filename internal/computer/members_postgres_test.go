@@ -19,7 +19,7 @@ func TestComputerUsageCollectionsFilterBeforePagination(t *testing.T) {
 	// A terminal Session with an unfenced process remains current usage.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Session)
 	second := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,'environment','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1))`, f.Environment, second, f.Agent, f.Deployment, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,'scoped','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1))`, f.Environment, second, f.Agent, f.Deployment, f.Computer)
 	// Commands are newer than both Sessions: a combined page followed by filtering would lose Sessions.
 	commandIDs := []uuid.UUID{uuid.NewV7(), uuid.NewV7(), uuid.NewV7()}
 	for _, id := range commandIDs {

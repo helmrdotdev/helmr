@@ -44,7 +44,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	}
 	parent := f
 	parent.Session = uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,'environment','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,admission_mode,origin_kind,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,'scoped','user',(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
  INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) VALUES($1,$2,1,$5,1,'ready');
  UPDATE sessions SET parent_session_id=$2,requester_session_id=$2,root_session_id=$2,causal_depth=1 WHERE environment_id=$1 AND id=$6`, pgx.QueryExecModeSimpleProtocol, f.Environment, parent.Session, f.Agent, f.Deployment, f.Computer, f.Session)
 	sendOp := op
@@ -72,7 +72,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	if _, err := f.Pool.Exec(t.Context(), `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User); err != nil {
 		t.Fatal(err)
 	}
-	key, err := identity.IssueAPIKey(t.Context(), f.Pool, f.Principal(t), auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "SDK messages", Permissions: []auth.Permission{auth.CapabilityRunsOperate}})
+	key, err := identity.IssueAPIKey(t.Context(), f.Pool, f.Principal(t), auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "SDK messages", Permissions: []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}

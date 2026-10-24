@@ -45,7 +45,7 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 		}
 		return key.Raw
 	}
-	writer, reader := issue(auth.CapabilityDeploymentsPublish), issue(auth.CapabilityRunsView)
+	writer, reader := issue(auth.CapabilityDeploymentsPublish), issue(auth.CapabilitySessionsView)
 	path := "/v1/templates/fixture-computer/refresh"
 	for _, tc := range []struct {
 		token, body string

@@ -2,7 +2,7 @@ import { ApiError, del, postJson, request } from "./api";
 
 type ApiKeyStatus = "active" | "expired" | "revoked";
 
-export type ApiKeyScope = "agents.use" | "runs.view" | "runs.operate" | "deployments.publish" | "deployments.promote" | "computers.operate" | "secrets.manage";
+export type ApiKeyScope = "agents.use" | "sessions.view" | "sessions.manage" | "deployments.publish" | "deployments.promote" | "computers.operate" | "secrets.manage";
 
 type ApiKeyPermissionGrant = {
   scopes: ApiKeyScope[];

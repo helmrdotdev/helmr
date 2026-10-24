@@ -25,7 +25,7 @@ func TestMentionRootReadsSharePacingAndRespectRetryAfter(t *testing.T) {
 	var limited atomic.Bool
 	var limitedJSON atomic.Bool
 	client := NewWebClient(admissionCredentials{}, roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path == "/api/conversations.info" {
+		if r.URL.Path == "/api/conversations.info" || r.URL.Path == "/api/conversations.members" {
 			return f.admissionClient(t).http.Do(r)
 		}
 		if r.URL.Path != "/api/conversations.history" {

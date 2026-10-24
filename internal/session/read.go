@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 	"uuid"
 
@@ -167,6 +168,11 @@ func GetSession(ctx context.Context, pool db.TxBeginner, caller Caller, env, id 
 		if err != nil {
 			return err
 		}
+		views := []SessionView{result}
+		if err := redactSessionRelations(ctx, tx, caller, env, views); err != nil {
+			return err
+		}
+		result = views[0]
 		result.Permissions, err = externalSessionPermissions(ctx, tx, caller, env, id)
 		return err
 	})
@@ -187,10 +193,18 @@ func ListSessions(ctx context.Context, pool db.TxBeginner, caller Caller, req Se
 			return err
 		}
 		result, err = listSessions(ctx, tx, req, filter)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := redactSessionRelations(ctx, tx, caller, req.EnvironmentID, result.Sessions); err != nil {
+			return err
+		}
+		return nil
 	})
 	return result, err
 }
+
+const sessionReadPredicate = `($2::boolean OR agent_id=ANY($7::uuid[]) OR (admission_mode='shared' AND origin_slack_connection_id=$8) OR (admission_mode='scoped' AND origin_kind=$3 AND COALESCE(origin_user_id,origin_api_key_id)=$4 AND ($5::boolean OR agent_id=ANY($6::uuid[]))))`
 
 func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter sessionReadScope) (SessionPage, error) {
 	result := SessionPage{Sessions: []SessionView{}}
@@ -208,13 +222,12 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter
 	if req.Key != nil && (req.Agent == "" || *req.Key == "") {
 		return result, ErrInvalidInput
 	}
-	rows, err := tx.Query(ctx, `SELECT `+sessionViewColumns+` FROM sessions WHERE environment_id=$1 AND ($2::uuid IS NULL OR id<$2)
- AND ($4::text IS NULL OR key=$4)
- AND (cardinality($5::text[]) IS NULL OR cardinality($5::text[])=0 OR status=ANY($5))
- AND ($6::uuid IS NULL OR parent_session_id=$6) AND ($7::uuid IS NULL OR requester_session_id=$7)
- AND ($8::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$8))
- AND ($9::boolean OR (admission_mode='scoped' AND origin_kind=$10 AND COALESCE(origin_user_id,origin_api_key_id)=$11 AND ($12::boolean OR agent_id=ANY($13::uuid[]))))
- ORDER BY id DESC LIMIT $3`, req.EnvironmentID, nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent, filter.All, filter.Kind, filter.ID, filter.AllAgents, filter.Agents)
+	rows, err := tx.Query(ctx, `SELECT `+sessionViewColumns+` FROM sessions WHERE environment_id=$1 AND `+sessionReadPredicate+`
+ AND ($9::uuid IS NULL OR id<$9) AND ($11::text IS NULL OR key=$11)
+ AND (cardinality($12::text[]) IS NULL OR cardinality($12::text[])=0 OR status=ANY($12))
+ AND ($13::uuid IS NULL OR parent_session_id=$13) AND ($14::uuid IS NULL OR requester_session_id=$14)
+ AND ($15::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$15))
+ ORDER BY id DESC LIMIT $10`, req.EnvironmentID, filter.All, filter.Kind, filter.ID, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent)
 	if err != nil {
 		return result, err
 	}
@@ -305,4 +318,102 @@ func ListTurns(ctx context.Context, pool db.TxBeginner, caller Caller, req TurnL
 		return nil
 	})
 	return result, err
+}
+
+func redactSessionRelations(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID, views []SessionView) error {
+	cache := make(map[uuid.UUID]bool)
+	for _, view := range views {
+		cache[view.ID] = true
+	}
+	// Human/API reads reuse the list predicate and resolve every related ID in
+	// one query. Runtime reads retain their stronger relationship checker.
+	if caller.Kind != "session" && caller.SlackThreadID == uuid.Nil() {
+		ids := make([]uuid.UUID, 0)
+		add := func(id uuid.UUID) {
+			if _, ok := cache[id]; !ok {
+				cache[id] = false
+				ids = append(ids, id)
+			}
+		}
+		for _, view := range views {
+			add(view.RootSessionID)
+			if view.ParentSessionID != nil {
+				add(*view.ParentSessionID)
+			}
+			if view.RequesterSessionID != nil {
+				add(*view.RequesterSessionID)
+			}
+			for _, hold := range view.Holds {
+				add(hold.SessionID)
+			}
+		}
+		if len(ids) > 0 {
+			filter, err := readScopeFor(ctx, tx, caller, env)
+			if err != nil {
+				return err
+			}
+			rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND `+sessionReadPredicate+` AND id=ANY($9::uuid[])`, env, filter.All, filter.Kind, filter.ID, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), ids)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var id uuid.UUID
+				if err := rows.Scan(&id); err != nil {
+					rows.Close()
+					return err
+				}
+				cache[id] = true
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	visible := func(id uuid.UUID) (bool, error) {
+		if allowed, ok := cache[id]; ok {
+			return allowed, nil
+		}
+		err := authorizeSessionRead(ctx, tx, caller, env, id)
+		if err != nil && !errors.Is(err, ErrDenied) && !errors.Is(err, pgx.ErrNoRows) {
+			return false, err
+		}
+		cache[id] = err == nil
+		return err == nil, nil
+	}
+	for i := range views {
+		view := &views[i]
+		for _, field := range []**uuid.UUID{&view.ParentSessionID, &view.RequesterSessionID} {
+			if *field == nil {
+				continue
+			}
+			allowed, err := visible(**field)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				*field = nil
+			}
+		}
+		if allowed, err := visible(view.RootSessionID); err != nil {
+			return err
+		} else if !allowed {
+			view.RootSessionID = uuid.Nil()
+		}
+		for i := range view.Holds {
+			hold := &view.Holds[i]
+			allowed, err := visible(hold.SessionID)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				hold.ID = uuid.Nil()
+				hold.SessionID = uuid.Nil()
+				hold.Reason = "An ancestor session is held"
+				hold.RecoveryGap = nil
+			}
+		}
+	}
+	return nil
 }

@@ -39,7 +39,12 @@ func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionSessionsRead, scope) {
+	allAgents, agentIDs := principal.AgentPermissionScope(auth.PermissionSessionsRead, scope)
+	authorizedAgents := make([]pgtype.UUID, 0, len(agentIDs))
+	for _, id := range agentIDs {
+		authorizedAgents = append(authorizedAgents, pgvalue.UUID(id))
+	}
+	if !allAgents && len(agentIDs) == 0 {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -64,7 +69,7 @@ func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 		}
 		afterID = pgvalue.UUID(id)
 	}
-	rows, err := s.db.ListTriggers(r.Context(), db.ListTriggersParams{
+	rows, err := s.db.ListTriggers(r.Context(), db.ListTriggersParams{AllAgents: allAgents, AuthorizedAgents: authorizedAgents,
 		OrgID:         pgvalue.UUID(principal.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
@@ -193,7 +198,12 @@ func (s *Server) getTrigger(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionSessionsRead, scope) {
+	allAgents, agentIDs := principal.AgentPermissionScope(auth.PermissionSessionsRead, scope)
+	authorizedAgents := make([]pgtype.UUID, 0, len(agentIDs))
+	for _, id := range agentIDs {
+		authorizedAgents = append(authorizedAgents, pgvalue.UUID(id))
+	}
+	if !allAgents && len(agentIDs) == 0 {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -202,7 +212,7 @@ func (s *Server) getTrigger(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	row, err := s.db.GetTriggerByID(r.Context(), db.GetTriggerByIDParams{
+	row, err := s.db.GetTriggerByID(r.Context(), db.GetTriggerByIDParams{AllAgents: allAgents, AuthorizedAgents: authorizedAgents,
 		OrgID:         pgvalue.UUID(principal.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,

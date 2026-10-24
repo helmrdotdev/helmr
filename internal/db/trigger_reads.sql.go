@@ -17,14 +17,16 @@ FROM trigger_activations a
 JOIN agent_triggers t ON (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)
 JOIN agents ag ON (ag.environment_id,ag.id)=(a.environment_id,a.agent_id)
 JOIN environments e ON e.id=a.environment_id
-WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3 AND a.id=$4
+WHERE ($1::boolean OR a.agent_id=ANY($2::uuid[])) AND e.org_id=$3 AND e.project_id=$4 AND e.id=$5 AND a.id=$6
 `
 
 type GetTriggerByIDParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
+	AllAgents        bool          `json:"all_agents"`
+	AuthorizedAgents []pgtype.UUID `json:"authorized_agents"`
+	OrgID            pgtype.UUID   `json:"org_id"`
+	ProjectID        pgtype.UUID   `json:"project_id"`
+	EnvironmentID    pgtype.UUID   `json:"environment_id"`
+	ID               pgtype.UUID   `json:"id"`
 }
 
 type GetTriggerByIDRow struct {
@@ -43,6 +45,8 @@ type GetTriggerByIDRow struct {
 
 func (q *Queries) GetTriggerByID(ctx context.Context, arg GetTriggerByIDParams) (GetTriggerByIDRow, error) {
 	row := q.db.QueryRow(ctx, getTriggerByID,
+		arg.AllAgents,
+		arg.AuthorizedAgents,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -71,20 +75,22 @@ FROM trigger_activations a
 JOIN agent_triggers t ON (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)
 JOIN agents ag ON (ag.environment_id,ag.id)=(a.environment_id,a.agent_id)
 JOIN environments e ON e.id=a.environment_id
-WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3
-AND ($4::text IS NULL OR ag.key=$4)
-AND ($5::uuid IS NULL OR (a.agent_id,a.id)>($6::uuid,$5::uuid))
-ORDER BY a.agent_id,a.id LIMIT $7
+WHERE ($1::boolean OR a.agent_id=ANY($2::uuid[])) AND e.org_id=$3 AND e.project_id=$4 AND e.id=$5
+AND ($6::text IS NULL OR ag.key=$6)
+AND ($7::uuid IS NULL OR (a.agent_id,a.id)>($8::uuid,$7::uuid))
+ORDER BY a.agent_id,a.id LIMIT $9
 `
 
 type ListTriggersParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Agent         pgtype.Text `json:"agent"`
-	AfterID       pgtype.UUID `json:"after_id"`
-	AfterAgentID  pgtype.UUID `json:"after_agent_id"`
-	LimitCount    int32       `json:"limit_count"`
+	AllAgents        bool          `json:"all_agents"`
+	AuthorizedAgents []pgtype.UUID `json:"authorized_agents"`
+	OrgID            pgtype.UUID   `json:"org_id"`
+	ProjectID        pgtype.UUID   `json:"project_id"`
+	EnvironmentID    pgtype.UUID   `json:"environment_id"`
+	Agent            pgtype.Text   `json:"agent"`
+	AfterID          pgtype.UUID   `json:"after_id"`
+	AfterAgentID     pgtype.UUID   `json:"after_agent_id"`
+	LimitCount       int32         `json:"limit_count"`
 }
 
 type ListTriggersRow struct {
@@ -103,6 +109,8 @@ type ListTriggersRow struct {
 
 func (q *Queries) ListTriggers(ctx context.Context, arg ListTriggersParams) ([]ListTriggersRow, error) {
 	rows, err := q.db.Query(ctx, listTriggers,
+		arg.AllAgents,
+		arg.AuthorizedAgents,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,

@@ -19,6 +19,9 @@ import (
 
 func deliveryTestClient(handler func(*http.Request) string) *WebClient {
 	return NewWebClient(credentialsFunc(func(context.Context, uuid.UUID, int64) (string, error) { return "fixture", nil }), roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == "/api/conversations.members" {
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"members":["human","second-human","peer"]}`))}, nil
+		}
 		if r.URL.Path == "/api/conversations.info" {
 			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"channel":{"id":"C1","name":"work","context_team_id":"team","is_channel":true,"is_member":true}}`))}, nil
 		}

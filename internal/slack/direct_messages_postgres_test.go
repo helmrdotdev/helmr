@@ -101,7 +101,7 @@ func TestSlackDirectRejectedRootNeverReplaysAfterLink(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			t.Fatal(err)
 		}
-		if r.URL.Path != "/api/chat.postMessage" || p["channel"] != "D1" || p["user"] != nil || !strings.Contains(p["text"].(string), "Environment run viewers can read them") {
+		if r.URL.Path != "/api/chat.postMessage" || p["channel"] != "D1" || p["user"] != nil || !strings.Contains(p["text"].(string), "People with session viewing or management access") {
 			t.Fatal(r.URL, p)
 		}
 		return `{"ok":true,"ts":"123.999"}`
@@ -209,7 +209,7 @@ func TestSlackDirectAppHomeOnlySetsVerifiedPrompts(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 					t.Fatal(err)
 				}
-				if r.URL.Path != "/api/assistant.threads.setSuggestedPrompts" || p["channel_id"] != "D1" || p["thread_ts"] != nil || !strings.Contains(p["title"].(string), "Environment run viewers") {
+				if r.URL.Path != "/api/assistant.threads.setSuggestedPrompts" || p["channel_id"] != "D1" || p["thread_ts"] != nil || !strings.Contains(p["title"].(string), "session viewing or management access") {
 					t.Fatal(r.URL, p)
 				}
 				if kind == "api-rejected" {
@@ -467,5 +467,45 @@ func TestSlackDirectIngressIgnoresNonHumanAndWrongConversationEvents(t *testing.
 	var n int
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_requests`).Scan(&n); err != nil || n != 0 {
 		t.Fatal("unrelated input retained", n, err)
+	}
+}
+
+func TestDirectDeliveryRechecksRecipientUseAndIdentity(t *testing.T) {
+	for _, revoke := range []string{"permission", "link", "membership"} {
+		t.Run(revoke, func(t *testing.T) {
+			f := newSlackAdmissionFixture(t)
+			f.grantDirect(t)
+			f.link(t)
+			id := f.directEvent(t, "direct-revoke", slackNow(), "")
+			f.reconcileDirect(t, id)
+			f.receiptStatus(t, id, "accepted")
+			var thread uuid.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT thread_id FROM slack_requests WHERE id=$1`, id).Scan(&thread); err != nil {
+				t.Fatal(err)
+			}
+			check := func(want bool) {
+				t.Helper()
+				err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
+					allowed, err := directRecipientAuthorized(t.Context(), tx, thread)
+					if err == nil && allowed != want {
+						t.Fatalf("recipient allowed=%v want=%v", allowed, want)
+					}
+					return err
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			check(true)
+			switch revoke {
+			case "permission":
+				f.SetPermissions(t, "sessions.view")
+			case "link":
+				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM slack_user_links WHERE user_id=$1`, f.User)
+			case "membership":
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
+			}
+			check(false)
+		})
 	}
 }

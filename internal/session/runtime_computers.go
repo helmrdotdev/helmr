@@ -3,9 +3,11 @@ package session
 import (
 	"context"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
+	"uuid"
 )
 
 // RuntimeListComputers uses current execution authority to discover the
@@ -22,7 +24,12 @@ func RuntimeListComputers(ctx context.Context, pool db.TxBeginner, caller Caller
 			return err
 		}
 		if origin.Mode != "environment" {
-			return ErrDenied
+			if origin.Mode != "scoped" {
+				return ErrDenied
+			}
+			if err := requireCapability(ctx, tx, origin.Kind, origin.id(), caller.Execution.EnvironmentID, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+				return err
+			}
 		}
 		scope.EnvironmentID = caller.Execution.EnvironmentID
 		if err := tx.QueryRow(ctx, `SELECT org_id,project_id FROM environments WHERE id=$1`, scope.EnvironmentID).Scan(&scope.OrgID, &scope.ProjectID); err != nil {

@@ -19,7 +19,7 @@ export function ResourceAccess(props: { environment: string; agent?: string; onC
   const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants }));
   const environment = () => targets.data?.targets.find(t => t.environment === props.environment);
   const agent = () => environment()?.agents.find(a => a.key === props.agent);
-  const assignments = createMemo(() => grants.data?.grants.filter(g => g.environment_id === environment()?.environment_id && (!props.agent || g.agents_mode === "all" || g.agent_ids.includes(agent()?.id ?? "") || g.permissions.includes("runs.operate"))) ?? []);
+  const assignments = createMemo(() => grants.data?.grants.filter(g => g.environment_id === environment()?.environment_id && (!props.agent || g.agents_mode === "all" || g.agent_ids.includes(agent()?.id ?? ""))) ?? []);
   const [editing,setEditing] = createSignal<RoleGrant>();
   const audience = () => grants.data?.grants.find(g=>g.subject_kind === "all_members" && g.environment_id === environment()?.environment_id && g.role_id === roles.data?.roles.find(r=>r.builtin_key === "agent_user")?.id);
   const shared = () => audience()?.agent_ids.includes(agent()?.id ?? "") ?? false;
@@ -38,7 +38,7 @@ export function ResourceAccess(props: { environment: string; agent?: string; onC
             <div class="divide-y divide-console-border"><For each={assignments()}>{grant => <div class="flex items-start gap-3 py-3">
               <div class="flex-1"><p class="font-medium">{grant.subject_kind === "all_members" ? "All members" : grant.subject_kind === "member" ? grant.member_name : groups.data?.groups.find(g => g.id === grant.group_id)?.name} → {grant.role_name}</p>
                 <p class="text-control">{targetSummary(grant)}</p>
-                <p class="text-control text-console-muted">{includedPermissions(grant.permissions, roles.data?.catalog ?? []).map(id => roles.data?.catalog.find(c => c.id === id)?.name ?? id).join(" · ")}</p><Show when={grant.permissions.includes("runs.operate")}><p class="text-control text-console-muted">Operate runs also grants View runs and Use agents for every Agent in this environment. Selected Agent management targets remain unchanged.</p></Show>
+                <p class="text-control text-console-muted">{includedPermissions(grant.permissions, roles.data?.catalog ?? []).map(id => roles.data?.catalog.find(c => c.id === id)?.name ?? id).join(" · ")}</p>
               </div><button class={ui.secondaryButton} onClick={() => setEditing(grant)}>Edit targets</button><button class={ui.secondaryButton} onClick={() => setRemoving(grant)}>Remove assignment</button>
             </div>}</For></div>
           </Show>

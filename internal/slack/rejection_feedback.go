@@ -9,7 +9,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -31,13 +34,13 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var id, installation uuid.UUID
 		var raw []byte
-		var actor, code, team string
+		var actor, code, team, bot string
 		var active bool
 		var revision int64
-		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.slack_user_id,COALESCE(r.error,r.operation,''),i.credential_revision,i.team_id,
+		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.slack_user_id,COALESCE(r.error,r.operation,''),i.credential_revision,i.team_id,i.bot_user_id,
  i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND r.source_occurred_at>=i.authorized_at AND r.source_occurred_at>=i.connected_at
  FROM slack_requests r JOIN slack_installations i ON i.id=r.installation_id
- WHERE (r.status='rejected' OR (r.status='accepted' AND r.operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close'))) AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &team, &active)
+ WHERE (r.status='rejected' OR (r.status='accepted' AND r.operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close'))) AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &team, &bot, &active)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -52,9 +55,11 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			return nil
 		}
 		var payload struct {
-			Channel string           `json:"channel"`
-			Thread  string           `json:"thread_ts"`
-			Control *controlEnvelope `json:"control"`
+			Channel    string           `json:"channel"`
+			Text       string           `json:"text"`
+			NativeStop bool             `json:"native_stop"`
+			Thread     string           `json:"thread_ts"`
+			Control    *controlEnvelope `json:"control"`
 		}
 		if json.Unmarshal(raw, &payload) != nil {
 			return nil
@@ -81,6 +86,10 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			return nil
 		}
 		direct := slackroute.IsDirectMessage(channel)
+		if !direct && payload.Control == nil && !payload.NativeStop && (code == "identity_unlinked" || code == "permission_denied") && stripRoutingMention(payload.Text, bot) == payload.Text && threadInputCommand(payload.Text, bot) == "" {
+			return nil
+		}
+
 		if direct {
 			var granted bool
 			if err = tx.QueryRow(ctx, `SELECT granted_scopes @> $2::text[] FROM slack_installations WHERE id=$1`, installation, slackroute.DirectMessageScopes()).Scan(&granted); err != nil {
@@ -93,6 +102,8 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		text := "Helmr could not accept that action. Check your access in Console, then try again."
 		var blocks []any
 		switch code {
+		case "permission_denied":
+			text = "You do not have access to this Agent or action. Ask an administrator to check your Agent access in Helmr Console."
 		case "sleep", "close", "help":
 			var target controlTarget
 			var source time.Time
@@ -104,14 +115,23 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			if err != nil {
 				return err
 			}
-			_, denied, err := linkedHuman(ctx, tx, team, actor, target.Environment, source, false)
+			user, denied, err := linkedSessionHuman(ctx, tx, team, actor, target.Environment, target.Session, source)
 			if err != nil {
 				return err
 			}
 			if denied != "" {
 				return nil
 			}
+			if err := session.AuthorizeSessionOperation(ctx, tx, session.Caller{Kind: "user", ID: user, SlackThreadID: target.Thread}, target.Environment, target.Session, auth.PermissionSessionsRead); err != nil {
+				if errors.Is(err, session.ErrDenied) {
+					return nil
+				}
+				return err
+			}
 			text, blocks, err = lifecyclePresentation(ctx, tx, config, target, code, actor, true)
+			if errors.Is(err, session.ErrDenied) || errors.Is(err, access.ErrDenied) {
+				return nil
+			}
 			if err != nil {
 				return err
 			}

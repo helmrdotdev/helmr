@@ -6,7 +6,7 @@ schema and at least three available VM slots for the small fixture Computers.
 
 Prepare `cases/scoped-permissions` through `tests/e2e/prepare_project.py` and deploy
 that prepared fixture using the normal authorized deployment workflow. Supply
-`HELMR_API_URL`, a verification `HELMR_API_KEY` with `runs.operate` and
+`HELMR_API_URL`, a verification `HELMR_API_KEY` with `sessions.manage` and
 `computers.operate`, and a new private `HELMR_EVIDENCE_DIR`. The operator key owns
 verification cleanup, not either restricted execution identity.
 

@@ -134,7 +134,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 	if role.Description != "Original" || len(role.Permissions) != 1 || role.Revision == oldRevision {
 		t.Fatal(role)
 	}
-	check(request("PATCH", "/api/roles/"+role.ID, `{"permissions":["runs.operate"]}`, owner, strconv.FormatInt(oldRevision, 10)), 412, nil)
+	check(request("PATCH", "/api/roles/"+role.ID, `{"permissions":["sessions.manage"]}`, owner, strconv.FormatInt(oldRevision, 10)), 412, nil)
 	for _, conflict := range []struct {
 		method, body, code string
 		status             int
@@ -226,10 +226,10 @@ func TestPermissionManagementHTTP(t *testing.T) {
 	// An Agent projection preserves the breadth and implied capabilities of
 	// Environment grants alongside an exact-Agent grant.
 	var operator api.PermissionRole
-	check(request("POST", "/api/roles", `{"name":"Operator","permissions":["runs.operate"]}`, owner, ""), 201, &operator)
+	check(request("POST", "/api/roles", `{"name":"Operator","permissions":["sessions.manage"]}`, owner, ""), 201, &operator)
 	input.Subject = api.GrantSubject{Type: "group", GroupID: &group.ID}
 	input.RoleID = operator.ID
-	input.AgentsMode = "none"
+	input.AgentsMode = "all"
 	input.AgentIDs = nil
 	input.ExpectedRoleRevision = operator.Revision
 	check(request("POST", "/api/role-grants", body(input), owner, ""), 201, nil)
@@ -238,7 +238,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 		t.Fatal(effective)
 	}
 	for _, source := range effective.Scopes[0].Sources {
-		if source.RoleID == operator.ID && (source.TargetKind != "environment" || source.AgentID != "" || len(source.IncludedPermissions) != 3) {
+		if source.RoleID == operator.ID && (source.TargetKind != "environment" || source.AgentID != "" || len(source.IncludedPermissions) != 2) {
 			t.Fatalf("environment source: %+v", source)
 		}
 	}

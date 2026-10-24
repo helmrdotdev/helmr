@@ -34,7 +34,7 @@ func TestScopedRoleGrantsAndSharedEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	roles, err := org.ListPermissionRoles(ctx, f.pool, m)
-	if err != nil || len(roles) != 9 {
+	if err != nil || len(roles) != 10 {
 		t.Fatalf("standard roles=%v %v", roles, err)
 	}
 	if err = db.RunTx(ctx, f.pool, func(tx pgx.Tx) error { return org.SeedStandardRoles(ctx, tx, m.OrgID, m.Actor) }); err != nil {
@@ -124,7 +124,7 @@ func TestRoleEditRacesAgentGrant(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			_, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"runs.view"}})
+			_, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"sessions.view"}})
 			results <- err
 		}()
 		close(start)

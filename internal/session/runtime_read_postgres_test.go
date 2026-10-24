@@ -24,8 +24,9 @@ func runtimeReadCaller(t *testing.T, f fixture) session.Caller {
 func TestRuntimeTurnObservationScope(t *testing.T) {
 	f := newFixture(t)
 	caller := runtimeReadCaller(t, f)
-	peer := f.peer(t)
-	unrelated := peer.enqueue(t, "unrelated")
+	peer := f.requestedPeer(t)
+	unrelatedPeer := f.peer(t)
+	unrelated := unrelatedPeer.enqueue(t, "unrelated")
 	own, err := session.Enqueue(t.Context(), f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "own", Input: json.RawMessage(`[{"type":"text","text":"{\"private\":\"input\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +35,7 @@ func TestRuntimeTurnObservationScope(t *testing.T) {
 	if err != nil || view.Status != "queued" || view.Input != nil || view.ID != own.TurnID {
 		t.Fatalf("own receipt: %+v %v", view, err)
 	}
-	if _, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, unrelated.TurnID); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, unrelatedPeer.session, unrelated.TurnID); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("unrelated: %v", err)
 	}
 	if _, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, f.session, own.TurnID); !errors.Is(err, session.ErrDenied) {
@@ -50,7 +51,7 @@ func TestRuntimeTurnObservationScope(t *testing.T) {
 	if _, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, own.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, peer.session, unrelated.TurnID); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, unrelatedPeer.session, unrelated.TurnID); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("MCP unrelated: %v", err)
 	}
 }
@@ -60,7 +61,7 @@ func TestRuntimeTurnObservationCreatedWorkAndFinalizing(t *testing.T) {
 		t.Run(relationship, func(t *testing.T) {
 			f := newFixture(t)
 			caller := runtimeReadCaller(t, f)
-			peer := f.peer(t)
+			peer := f.requestedPeer(t)
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET requester_session_id=$1,causal_depth=1 WHERE id=$2`, f.session, peer.session)
 			if relationship == "owned" {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET parent_session_id=$1,root_session_id=$1 WHERE id=$2`, f.session, peer.session)
@@ -106,7 +107,7 @@ func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			f := newFixture(t)
 			caller := runtimeReadCaller(t, f)
-			peer := f.peer(t)
+			peer := f.requestedPeer(t)
 			a, err := session.Enqueue(t.Context(), f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "own", Input: json.RawMessage(`[]`)})
 			if err != nil {
 				t.Fatal(err)

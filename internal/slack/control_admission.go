@@ -102,7 +102,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		if gesture.Control.Actor != "" && gesture.Control.Actor != actor {
 			return reject("control_actor_mismatch")
 		}
-		user, code, err := linkedHuman(ctx, tx, team, actor, target.Environment, source, answering)
+		user, code, err := linkedSessionHuman(ctx, tx, team, actor, target.Environment, target.Session, source)
 		if err != nil {
 			return err
 		}
@@ -111,7 +111,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		}
 		var askID *uuid.UUID
 		err = db.RunTx(ctx, tx, func(coreTx pgx.Tx) error {
-			caller := session.Caller{Kind: "user", ID: user}
+			caller := session.Caller{Kind: "user", ID: user, SlackThreadID: target.Thread}
 			if lifecycleAction(gesture.Control.Action) {
 				receipt, err := applyLifecycleControl(ctx, coreTx, caller, target, gesture.Control, id)
 				if err != nil {
