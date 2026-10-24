@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -10,6 +11,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
+
+var ErrConversationVerificationUnavailable = fmt.Errorf("slack input verification is not configured: %w", ErrNotReady)
 
 // ConversationVerifier checks current external participation without holding SQL
 // locks. A temporary provider failure differs from a confirmed denial.
@@ -91,7 +94,7 @@ func checkInputConversation(ctx context.Context, pool db.TxBeginner, host worker
 		return check, nil
 	}
 	if verifier == nil {
-		return check, ErrNotReady
+		return check, ErrConversationVerificationUnavailable
 	}
 	check.allowed, err = verifier.VerifyInputConversation(ctx, installation, revision, team, channel, actor)
 	if err != nil {

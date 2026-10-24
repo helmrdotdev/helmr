@@ -154,7 +154,7 @@ func TestSlackQueuedInputRechecksExactActorLinkAfterVerification(t *testing.T) {
 }
 
 func TestSlackQueuedInputWaitsBeforeExternalVerification(t *testing.T) {
-	for _, blocked := range []string{"hold", "storage", "control", "attachment", "temporary"} {
+	for _, blocked := range []string{"hold", "storage", "control", "attachment", "temporary", "unconfigured"} {
 		t.Run(blocked, func(t *testing.T) {
 			f := newStatusFixture(t)
 			ctx := t.Context()
@@ -178,7 +178,14 @@ func TestSlackQueuedInputWaitsBeforeExternalVerification(t *testing.T) {
 			}
 			calls := 0
 			verifier := callbackConversationVerifier(func() (bool, error) { calls++; return false, errors.New("provider rate limited") })
-			result, err := session.DispatchRuntimeTurn(ctx, f.Pool, host, e, attachment, verifier)
+			var inputVerifier session.ConversationVerifier = verifier
+			if blocked == "unconfigured" {
+				inputVerifier = nil
+			}
+			result, err := session.DispatchRuntimeTurn(ctx, f.Pool, host, e, attachment, inputVerifier)
+			if blocked == "unconfigured" && !errors.Is(err, session.ErrConversationVerificationUnavailable) {
+				t.Fatal("missing configuration diagnostic", err)
+			}
 			if result != nil || !(errors.Is(err, session.ErrNotReady) || errors.Is(err, session.ErrDenied)) {
 				t.Fatalf("wait: %+v %v", result, err)
 			}
