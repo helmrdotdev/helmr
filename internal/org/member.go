@@ -10,6 +10,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -39,7 +40,8 @@ type ManagingMember struct {
 	MemberID uuid.UUID
 }
 
-func (m ManagingMember) Authorize(ctx context.Context, q db.Querier) error {
+func (m ManagingMember) Authorize(ctx context.Context, database db.DBTX) error {
+	q := db.New(database)
 	member, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(m.OrgID), UserID: pgvalue.UUID(m.UserID)})
 	if isNoRows(err) {
 		return ErrMemberManagementRequired
@@ -50,12 +52,12 @@ func (m ManagingMember) Authorize(ctx context.Context, q db.Querier) error {
 	if pgvalue.MustUUIDValue(member.ID) != m.MemberID {
 		return ErrMemberManagementRequired
 	}
-	grants, err := q.ListUserPermissionGrants(ctx, db.ListUserPermissionGrantsParams{OrgID: member.OrgID, UserID: member.UserID})
+	grants, err := access.MemberGrants(ctx, database, m.OrgID, m.MemberID)
 	if err != nil {
 		return err
 	}
 	for _, g := range grants {
-		if !g.EnvironmentID.Valid && auth.Permission(g.Permission) == auth.CapabilityAccessManage {
+		if g.EnvironmentID == "" && auth.Permission(g.Permission) == auth.CapabilityAccessManage {
 			return nil
 		}
 	}
@@ -103,8 +105,9 @@ type UpdatedMember struct {
 }
 
 // ListMembers returns every member of the organization, including disabled ones.
-func ListMembers(ctx context.Context, q db.Querier, manager ManagingMember) ([]db.ListOrgMembersRow, error) {
-	if err := manager.Authorize(ctx, q); err != nil {
+func ListMembers(ctx context.Context, database db.DBTX, manager ManagingMember) ([]db.ListOrgMembersRow, error) {
+	q := db.New(database)
+	if err := manager.Authorize(ctx, database); err != nil {
 		return nil, err
 	}
 	members, err := q.ListOrgMembers(ctx, pgvalue.UUID(manager.OrgID))
@@ -116,8 +119,9 @@ func ListMembers(ctx context.Context, q db.Querier, manager ManagingMember) ([]d
 
 // ListInvitations returns up to limit invitations of the organization after
 // the given position and whether more follow.
-func ListInvitations(ctx context.Context, q db.Querier, manager ManagingMember, limit int32, after *InvitationPosition) ([]db.ListInvitationsRow, bool, error) {
-	if err := manager.Authorize(ctx, q); err != nil {
+func ListInvitations(ctx context.Context, database db.DBTX, manager ManagingMember, limit int32, after *InvitationPosition) ([]db.ListInvitationsRow, bool, error) {
+	q := db.New(database)
+	if err := manager.Authorize(ctx, database); err != nil {
 		return nil, false, err
 	}
 	params := db.ListInvitationsParams{OrgID: pgvalue.UUID(manager.OrgID), RowLimit: limit + 1}

@@ -9,7 +9,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -44,11 +43,11 @@ func Principal(ctx context.Context, database db.DBTX, kind string, id, env uuid.
 			}
 			return p, err
 		}
-		grants, err := db.New(database).ListAPIKeyPermissionGrants(ctx, db.ListAPIKeyPermissionGrantsParams{OrgID: pgvalue.UUID(org), ID: pgvalue.UUID(id)})
+		grants, err := APIKeyGrants(ctx, database, org, id)
 		if err != nil {
 			return p, err
 		}
-		p.Grants = APIKeyGrants(grants)
+		p.Grants = grants
 		return p, nil
 	default:
 		return p, ErrDenied
@@ -65,33 +64,14 @@ func OrganizationPrincipal(ctx context.Context, database db.DBTX, org, user uuid
 		}
 		return p, err
 	}
-	rows, err := database.Query(ctx, `SELECT DISTINCT g.permission,e.project_id::text,g.environment_id::text,g.agent_id::text
-      FROM role_grant_permissions g
-      LEFT JOIN environments e ON e.id=g.environment_id
-      WHERE g.org_id=$1 AND EXISTS (SELECT 1 FROM org_members m WHERE m.org_id=$1 AND m.id=$2 AND m.removed_at IS NULL) AND (g.all_members OR g.member_id=$2 OR EXISTS (
-        SELECT 1 FROM permission_group_members gm WHERE (gm.org_id,gm.group_id,gm.member_id)=(g.org_id,g.group_id,$2)))`, org, p.MemberID)
+	grants, err := MemberGrants(ctx, database, org, p.MemberID)
 	if err != nil {
 		return p, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var g auth.PermissionGrant
-		var project, env, agent *string
-		if err := rows.Scan(&g.Permission, &project, &env, &agent); err != nil {
-			return p, err
-		}
-		if project != nil {
-			g.ProjectID = *project
-		}
-		if env != nil {
-			g.EnvironmentID = *env
-		}
-		if agent != nil {
-			g.AgentID = *agent
-		}
-		p.Grants = append(p.Grants, g)
+	for _, g := range grants {
+		p.Grants = append(p.Grants, g.PermissionGrant)
 	}
-	return p, rows.Err()
+	return p, nil
 }
 
 func Check(ctx context.Context, database db.DBTX, kind string, id, env, agent uuid.UUID, permission auth.Permission) error {
@@ -135,18 +115,4 @@ func Current(ctx context.Context, q db.DBTX, prior auth.Principal, scope auth.Sc
 		return auth.Principal{}, ErrDenied
 	}
 	return p, nil
-}
-
-// APIKeyGrants formats the same current Role grants for transport authentication
-// and durable operation admission. Eligibility is enforced when policy is written.
-func APIKeyGrants(rows []db.ListAPIKeyPermissionGrantsRow) []auth.PermissionGrant {
-	grants := make([]auth.PermissionGrant, 0, len(rows))
-	for _, row := range rows {
-		grant := auth.PermissionGrant{ProjectID: pgvalue.UUIDString(row.ProjectID), EnvironmentID: pgvalue.UUIDString(row.EnvironmentID), Permission: auth.Permission(row.Permission)}
-		if row.AgentID.Valid {
-			grant.AgentID = pgvalue.UUIDString(row.AgentID)
-		}
-		grants = append(grants, grant)
-	}
-	return grants
 }

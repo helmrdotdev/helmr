@@ -85,7 +85,6 @@ var tableOwners = map[string]string{
 // queryFileOwners maps each sqlc query file to the owner whose writes it
 // performs; a file consumed by several packages is owned by the writer.
 var queryFileOwners = map[string]string{
-	"role_grants.sql":           "internal/org",
 	"allocation_planning.sql":   "internal/workergroup",
 	"api_keys.sql":              "internal/identity",
 	"auth_identities.sql":       "internal/identity",

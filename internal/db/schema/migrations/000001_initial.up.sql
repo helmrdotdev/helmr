@@ -2450,18 +2450,6 @@ CREATE TABLE role_grant_agents (
     REFERENCES role_grants(id,environment_id,agents_mode) ON DELETE CASCADE,
   FOREIGN KEY (environment_id,agent_id) REFERENCES agents(environment_id,id) ON DELETE CASCADE
 );
--- All Agent actions, including Session viewing and management, keep the same
--- selected targets. Included actions never expand the assignment's Agent scope.
-CREATE VIEW role_grant_permissions AS
-SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.api_key_id,g.all_members,g.environment_id,
-       a.agent_id,p.permission
-FROM role_grants g
-JOIN role_permissions p ON (p.org_id,p.role_id)=(g.org_id,g.role_id)
-LEFT JOIN role_grant_agents a ON a.grant_id=g.id
-  AND p.permission IN ('agents.use','agents.manage','sessions.view','sessions.manage') AND g.agents_mode='selected'
-WHERE p.permission NOT IN ('agents.use','agents.manage','sessions.view','sessions.manage')
-   OR g.agents_mode='all' OR (g.agents_mode='selected' AND a.agent_id IS NOT NULL);
-
 -- Cascading physical Agent deletion must invalidate previously observed targets.
 CREATE FUNCTION bump_grant_target_revision() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN

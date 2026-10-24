@@ -139,3 +139,14 @@ func CapabilityResourceType(permission Permission) string {
 	}
 	return ""
 }
+
+// CapabilityIDsForResource returns the catalog capabilities targeting a resource.
+func CapabilityIDsForResource(resource string) []string {
+	ids := []string{}
+	for _, capability := range CapabilityCatalog() {
+		if capability.ResourceType == resource {
+			ids = append(ids, string(capability.ID))
+		}
+	}
+	return ids
+}

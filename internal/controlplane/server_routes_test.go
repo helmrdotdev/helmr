@@ -17,7 +17,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/slack"
 )
 
-type routeWorkerAuthStore struct{ db.Querier }
+type routeWorkerAuthStore struct {
+	db.Querier
+	db.DBTX
+}
 type routeSlackStore struct{ db.TxBeginner }
 
 func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {

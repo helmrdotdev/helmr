@@ -37,7 +37,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
-	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
+	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 	store, err := secret.New(queries, f.Pool, bytes.Repeat([]byte{17}, 32))
 	if err != nil {
 		t.Fatal(err)

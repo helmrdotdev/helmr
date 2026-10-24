@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -154,55 +153,8 @@ func TestVerificationObservationRejectsQueryInputs(t *testing.T) {
 	}
 }
 
-func TestVerificationObservationAPIKeyScope(t *testing.T) {
+func TestVerificationObservationQuotedLocator(t *testing.T) {
 	f := sessiontest.New(t)
-	var project, environment string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT p.slug,e.slug FROM projects p JOIN environments e ON e.project_id=p.id WHERE e.id=$1`, f.Environment).Scan(&project, &environment); err != nil {
-		t.Fatal(err)
-	}
-	permissions := []string{}
-	for _, c := range auth.CapabilityCatalog() {
-		if auth.IsMachineCapability(c.ID) {
-			permissions = append(permissions, string(c.ID))
-		}
-	}
-	var org, projectID uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &projectID); err != nil {
-		t.Fatal(err)
-	}
-	key := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,'verification','scope-prefix',$5)`, key, org, projectID, f.Environment, dbtest.Hash("observer-key"))
-	dbtest.SetAPIKeyRole(t, f.Pool, key, permissions...)
-	inputs := map[string]any{"key_prefix": "scope-prefix", "project": project, "environment": environment}
-	keys := observe(t, f.Pool, "api-key-scope", inputs).([]any)
-	if len(keys) != 1 || keys[0].(map[string]any)["valid"] != true {
-		t.Fatalf("authorized key=%v", keys)
-	}
-	for _, state := range []string{"expired", "revoked", "missing-grant", "wrong-scope"} {
-		t.Run(state, func(t *testing.T) {
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=NULL,expires_at=NULL WHERE id=$1`, key)
-			dbtest.SetAPIKeyRole(t, f.Pool, key, permissions...)
-			inputs["environment"] = environment
-			switch state {
-			case "expired":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET expires_at=now()-interval '1 minute' WHERE id=$1`, key)
-			case "revoked":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=now() WHERE id=$1`, key)
-			case "missing-grant":
-				dbtest.SetAPIKeyRole(t, f.Pool, key, "sessions.view")
-			case "wrong-scope":
-				inputs["environment"] = "another"
-			}
-			got := observe(t, f.Pool, "api-key-scope", inputs).([]any)
-			if state == "missing-grant" {
-				if len(got) != 1 || got[0].(map[string]any)["valid"] != false {
-					t.Fatalf("missing permission=%v", got)
-				}
-			} else if len(got) != 0 {
-				t.Fatalf("ineligible key=%v", got)
-			}
-		})
-	}
 	// A quoted opaque locator is data; it cannot escape the JSON input literal.
 	malicious := `host\';DELETE FROM sessions;--`
 	if got := observe(t, f.Pool, "worker-state", map[string]any{"resource_ids": []string{malicious}}).([]any); len(got) != 0 {

@@ -121,7 +121,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	log := slog.New(slog.NewJSONHandler(logFile, nil))
 	cfg := completeServerConfig(t)
 	cfg.DB, cfg.TX, cfg.DiagnosticDB, cfg.ReadinessDB = q, pool, pool, pool
-	cfg.Auth, cfg.Allocator, cfg.Log = identity.NewAPIKeyAuthenticator(q), allocator, log
+	cfg.Auth, cfg.Allocator, cfg.Log = identity.NewAPIKeyAuthenticator(pool), allocator, log
 	cfg.ComputerKeys = keys
 	cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission = nativeFaultStore{store}, platform, bundle.Admission{Runtime: runtime}
 	cfg.Secrets, cfg.SecretDelivery, cfg.SecretProxy = secrets, secrets, secrets

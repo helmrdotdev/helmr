@@ -2,11 +2,10 @@ package controlplane
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"net/http"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -42,18 +41,18 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		response.MembershipID = principal.MemberID.String()
 		response.IsOwner = principal.IsOwner
 		response.Permissions = sessionPermissions(principal)
-		grants, err := s.db.ListUserPermissionGrants(r.Context(), db.ListUserPermissionGrantsParams{OrgID: pgvalue.UUID(principal.OrgID), UserID: pgvalue.UUID(principal.UserID)})
+		grants, err := access.MemberGrants(r.Context(), s.tx, principal.OrgID, principal.MemberID)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
 		response.PermissionScopes = []api.PermissionScope{}
 		for _, g := range grants {
-			if !g.EnvironmentID.Valid {
+			if g.EnvironmentID == "" {
 				continue
 			}
 			item := api.PermissionScope{Project: g.ProjectSlug, Environment: g.EnvironmentSlug, Agent: g.AgentKey, Permissions: []string{}}
-			scope := auth.Scope{OrgID: principal.OrgID, ProjectID: pgvalue.UUIDString(g.ProjectID), EnvironmentID: pgvalue.UUIDString(g.EnvironmentID), AgentID: pgvalue.UUIDString(g.AgentID)}
+			scope := auth.Scope{OrgID: principal.OrgID, ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID, AgentID: g.AgentID}
 			for _, operation := range auth.AllPermissions() {
 				if auth.CapabilityAllows(auth.Permission(g.Permission), operation) || (auth.SessionExecutionOperation(operation) && principal.HasPermission(operation, scope)) {
 					item.Permissions = append(item.Permissions, string(operation))

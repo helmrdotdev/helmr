@@ -101,7 +101,6 @@ type Querier interface {
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) (int64, error)
 	InsertWorkerPoolCPUShape(ctx context.Context, arg InsertWorkerPoolCPUShapeParams) (int64, error)
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
-	ListAPIKeyPermissionGrants(ctx context.Context, arg ListAPIKeyPermissionGrantsParams) ([]ListAPIKeyPermissionGrantsRow, error)
 	ListAPIKeyRoleNames(ctx context.Context, arg ListAPIKeyRoleNamesParams) ([]string, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
 	// Only abandoned uploads are retirement candidates. Memberships in any org and
@@ -125,7 +124,6 @@ type Querier interface {
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)
 	ListStaleWorkerFenceCandidates(ctx context.Context, arg ListStaleWorkerFenceCandidatesParams) ([]ListStaleWorkerFenceCandidatesRow, error)
 	ListTriggers(ctx context.Context, arg ListTriggersParams) ([]ListTriggersRow, error)
-	ListUserPermissionGrants(ctx context.Context, arg ListUserPermissionGrantsParams) ([]ListUserPermissionGrantsRow, error)
 	ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error)
 	ListWorkerGroupRetainedProfiles(ctx context.Context, arg ListWorkerGroupRetainedProfilesParams) ([]ListWorkerGroupRetainedProfilesRow, error)
 	ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error)

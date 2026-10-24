@@ -31,7 +31,7 @@ func TestSignInPostgres(t *testing.T) {
 	if want, _ := auth.HashToken(fixture.keys.Session, raw); !bytes.Equal(storedHash, want) {
 		t.Fatal("login session was not hashed with the session key")
 	}
-	principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw)
+	principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw)
 	if err != nil || principal.UserID != adminID || principal.Kind != auth.PrincipalKindSession || !principal.Admin || principal.MemberID != uuid.Nil() {
 		t.Fatalf("principal = %+v, err = %v", principal, err)
 	}
@@ -81,7 +81,7 @@ func TestSignInPostgresFailedSessionRecordsNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstID, admin := fixture.userByEmail(t, "admin@example.test")
-	if principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw); err != nil || principal.UserID != firstID || !admin || !principal.Admin {
+	if principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw); err != nil || principal.UserID != firstID || !admin || !principal.Admin {
 		t.Fatalf("retried principal = %+v admin = %t, err = %v", principal, admin, err)
 	}
 }
@@ -130,10 +130,10 @@ func TestSignInWithInvitationPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, earlier); !errors.Is(err, auth.ErrUnauthenticated) {
+	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, earlier); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatalf("earlier session error = %v", err)
 	}
-	principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw)
+	principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw)
 	if err != nil || principal.UserID != inviteeID || principal.OrgID != orgID || principal.IsOwner {
 		t.Fatalf("invitation principal = %+v, err = %v", principal, err)
 	}
@@ -171,7 +171,7 @@ func TestSignInWithInvitationPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err = AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw)
+	principal, err = AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw)
 	if err != nil || principal.OrgID != orgID || principal.IsOwner {
 		t.Fatalf("re-enabled principal = %+v, err = %v", principal, err)
 	}
@@ -185,12 +185,12 @@ func TestLoginSessionPostgresFollowsSelectedMembership(t *testing.T) {
 	fixture.exec(t, `INSERT INTO org_members (id, org_id, user_id, is_owner, created_at) VALUES (uuidv7(), $1, $3, true, now() - interval '1 day'), (uuidv7(), $2, $3, false, now())`, first, invited, userID)
 
 	pinned := fixture.session(t, userID, invited)
-	principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, pinned)
+	principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, pinned)
 	if err != nil || principal.OrgID != invited || principal.IsOwner {
 		t.Fatalf("pinned principal = %+v, err = %v", principal, err)
 	}
 	unpinned := fixture.session(t, userID, uuid.Nil())
-	principal, err = AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, unpinned)
+	principal, err = AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, unpinned)
 	if err != nil || principal.OrgID != first || !principal.IsOwner {
 		t.Fatalf("unpinned principal = %+v, err = %v", principal, err)
 	}
@@ -198,17 +198,17 @@ func TestLoginSessionPostgresFollowsSelectedMembership(t *testing.T) {
 	// A disabled pinned membership invalidates the session instead of falling
 	// through to another organization.
 	fixture.exec(t, `UPDATE org_members SET removed_at = now() WHERE org_id = $1 AND user_id = $2`, invited, userID)
-	if _, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, pinned); !errors.Is(err, auth.ErrUnauthenticated) {
+	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, pinned); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatalf("disabled pinned membership error = %v", err)
 	}
-	if _, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, unpinned); err != nil {
+	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, unpinned); err != nil {
 		t.Fatalf("unpinned session lost its first membership: %v", err)
 	}
 
 	// Authentication extends the session's lifetime.
 	tokenHash, _ := auth.HashToken(fixture.keys.Session, unpinned)
 	fixture.exec(t, `UPDATE login_sessions SET expires_at = now() + interval '1 minute' WHERE token_hash = $1`, tokenHash)
-	if _, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, unpinned); err != nil {
+	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, unpinned); err != nil {
 		t.Fatal(err)
 	}
 	var expiresAt time.Time
@@ -222,13 +222,13 @@ func TestLoginSessionPostgresFollowsSelectedMembership(t *testing.T) {
 	if err := RevokeLoginSession(ctx, fixture.queries, fixture.cfg, unpinned); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, unpinned); !errors.Is(err, auth.ErrUnauthenticated) {
+	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, unpinned); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatalf("revoked session error = %v", err)
 	}
 	if err := RevokeLoginSession(ctx, fixture.queries, fixture.cfg, " "); err != nil {
 		t.Fatalf("empty token revocation error = %v", err)
 	}
-	if _, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, ""); !errors.Is(err, auth.ErrUnauthenticated) {
+	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, ""); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatalf("empty token error = %v", err)
 	}
 }
@@ -269,7 +269,7 @@ func TestVerifiedLoginAuditAndInitialAdministratorGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := AuthenticateLoginSession(t.Context(), f.queries, f.cfg, token)
+	principal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, token)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestVerifiedIdentitiesShareCaseInsensitiveEmail(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		principal, err := AuthenticateLoginSession(t.Context(), f.queries, f.cfg, raw)
+		principal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -314,7 +314,7 @@ func TestVerifiedIdentitiesShareCaseInsensitiveEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := AuthenticateLoginSession(t.Context(), f.queries, f.cfg, completed.Session)
+	principal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, completed.Session)
 	if err != nil || principal.UserID != userID {
 		t.Fatalf("magic link changed user identity: %v", err)
 	}

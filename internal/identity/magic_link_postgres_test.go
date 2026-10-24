@@ -47,7 +47,7 @@ func TestMagicLinkPostgresLoginIsDeliveredAndConsumedOnce(t *testing.T) {
 	if !admin {
 		t.Fatal("magic link address did not become an administrator")
 	}
-	principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, completed.Session)
+	principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, completed.Session)
 	if err != nil || principal.UserID != userID || principal.OrgID != uuid.Nil() {
 		t.Fatalf("principal = %+v, err = %v", principal, err)
 	}
@@ -125,7 +125,7 @@ func TestMagicLinkPostgresInvitationJoinsOrganization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, completed.Session)
+	principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, completed.Session)
 	if err != nil || principal.OrgID != orgID || principal.IsOwner {
 		t.Fatalf("principal = %+v, err = %v", principal, err)
 	}

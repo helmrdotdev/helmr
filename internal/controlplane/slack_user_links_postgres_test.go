@@ -86,7 +86,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 			cfg := completeServerConfig(t)
 			cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 			queries := db.New(f.Pool)
-			cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
+			cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 			cfg.Slack = &SlackConfig{ControlKey: bytes.Repeat([]byte{2}, 32), Credentials: store, Transport: transport, Client: slack.NewWebClient(store, nil)}
 			handler, err := NewServer(cfg)
 			if err != nil {

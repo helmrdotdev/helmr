@@ -193,7 +193,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		DB:                             queries,
 		TX:                             pool,
 		ReadinessDB:                    pool,
-		Auth:                           identity.NewAPIKeyAuthenticator(queries),
+		Auth:                           identity.NewAPIKeyAuthenticator(pool),
 		CAS:                            casStore,
 		BundleAdmission:                bundleAdmission,
 		PlatformStore:                  platformStore,

@@ -59,14 +59,12 @@ func MemberPermissions(ctx context.Context, database db.TxBeginner, caller auth.
   COALESCE(g.member_id::text,''),COALESCE(g.group_id::text,''),COALESCE(pg.name,''),r.id::text,r.name,
   COALESCE(g.agent_id::text,''),CASE WHEN g.environment_id IS NULL THEN 'organization' WHEN g.agent_id IS NULL THEN 'environment' ELSE 'agent' END,
   ARRAY[g.permission]
-  FROM role_grant_permissions g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
+  FROM (`+MemberPermissionGrantsSQL+`) g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
   LEFT JOIN environments e ON e.id=g.environment_id LEFT JOIN projects p ON p.id=e.project_id
   LEFT JOIN agents a ON (a.environment_id,a.id)=(g.environment_id,g.agent_id)
   LEFT JOIN permission_groups pg ON (pg.org_id,pg.id)=(g.org_id,g.group_id)
-  WHERE g.org_id=$1 AND (g.all_members OR g.member_id=$2 OR EXISTS (
-   SELECT 1 FROM permission_group_members gm WHERE (gm.org_id,gm.group_id,gm.member_id)=(g.org_id,g.group_id,$2)))
-  AND ($3='' OR p.slug=$3) AND ($4='' OR e.slug=$4)
-  AND ($5='' OR a.key=$5 OR (g.environment_id IS NOT NULL AND g.agent_id IS NULL)) ORDER BY g.id`, caller.OrgID, member, filter.Project, filter.Environment, filter.Agent)
+  WHERE ($4='' OR p.slug=$4) AND ($5='' OR e.slug=$5)
+  AND ($6='' OR a.key=$6 OR (g.environment_id IS NOT NULL AND g.agent_id IS NULL)) ORDER BY g.id`, auth.CapabilityIDsForResource("agents"), caller.OrgID, member, filter.Project, filter.Environment, filter.Agent)
 		if err != nil {
 			return err
 		}

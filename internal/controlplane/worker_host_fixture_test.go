@@ -59,7 +59,7 @@ func newPostgresServer(t *testing.T, pool *pgxpool.Pool, configure ...func(*Serv
 		t.Fatal(err)
 	}
 	cfg.Allocator = allocator
-	cfg.Auth = identity.NewAPIKeyAuthenticator(queries)
+	cfg.Auth = identity.NewAPIKeyAuthenticator(pool)
 	for _, apply := range configure {
 		apply(&cfg)
 	}

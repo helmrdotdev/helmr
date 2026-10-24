@@ -82,7 +82,8 @@ func authorizeAPIKeyManagement(manager auth.Principal, scope auth.Scope) error {
 
 // ListAPIKeys returns up to limit API keys of the environment matching the
 // filter after the given position and whether more follow.
-func ListAPIKeys(ctx context.Context, q db.Querier, manager auth.Principal, scope auth.Scope, filter APIKeyFilter, limit int32, after *APIKeyPosition) ([]db.ListAPIKeysRow, bool, error) {
+func ListAPIKeys(ctx context.Context, database db.DBTX, manager auth.Principal, scope auth.Scope, filter APIKeyFilter, limit int32, after *APIKeyPosition) ([]db.ListAPIKeysRow, bool, error) {
+	q := db.New(database)
 	if manager.Kind != auth.PrincipalKindSession {
 		return nil, false, ErrAPIKeyManagementRequired
 	}
@@ -90,13 +91,13 @@ func ListAPIKeys(ctx context.Context, q db.Querier, manager auth.Principal, scop
 	if err != nil || pgvalue.MustUUIDValue(member.ID) != manager.MemberID {
 		return nil, false, ErrAPIKeyManagementRequired
 	}
-	grants, err := q.ListUserPermissionGrants(ctx, db.ListUserPermissionGrantsParams{OrgID: member.OrgID, UserID: member.UserID})
+	grants, err := access.MemberGrants(ctx, database, manager.OrgID, manager.MemberID)
 	if err != nil {
 		return nil, false, err
 	}
 	allowed := false
 	for _, g := range grants {
-		if !g.EnvironmentID.Valid && g.Permission == string(auth.CapabilityAccessManage) || g.EnvironmentID.Valid && pgvalue.UUIDString(g.EnvironmentID) == scope.EnvironmentID && pgvalue.UUIDString(g.ProjectID) == scope.ProjectID && g.Permission == string(auth.CapabilityKeysManage) && !g.AgentID.Valid {
+		if g.EnvironmentID == "" && g.Permission == auth.CapabilityAccessManage || g.EnvironmentID != "" && g.EnvironmentID == scope.EnvironmentID && g.ProjectID == scope.ProjectID && g.Permission == auth.CapabilityKeysManage && g.AgentID == "" {
 			allowed = true
 		}
 	}
@@ -242,12 +243,12 @@ func environmentIDs(scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {
 
 // APIKeyAuthenticator authenticates API keys and records their use.
 type APIKeyAuthenticator struct {
-	q db.Querier
+	database db.DBTX
 }
 
-// NewAPIKeyAuthenticator returns an authenticator over the API keys in q.
-func NewAPIKeyAuthenticator(q db.Querier) APIKeyAuthenticator {
-	return APIKeyAuthenticator{q: q}
+// NewAPIKeyAuthenticator returns an authenticator over the API keys in database.
+func NewAPIKeyAuthenticator(database db.DBTX) APIKeyAuthenticator {
+	return APIKeyAuthenticator{database: database}
 }
 
 // Authenticate resolves a raw API key to its principal and records its use. An
@@ -257,7 +258,7 @@ func (a APIKeyAuthenticator) Authenticate(ctx context.Context, rawKey string) (a
 	if token == "" {
 		return auth.Principal{}, auth.ErrUnauthenticated
 	}
-	row, err := a.q.TouchActiveAPIKeyByTokenHash(ctx, auth.HashAPIKey(token))
+	row, err := db.New(a.database).TouchActiveAPIKeyByTokenHash(ctx, auth.HashAPIKey(token))
 	if isNoRows(err) {
 		return auth.Principal{}, auth.ErrUnauthenticated
 	}
@@ -280,7 +281,7 @@ func (a APIKeyAuthenticator) Authenticate(ctx context.Context, rawKey string) (a
 	if err != nil {
 		return auth.Principal{}, fmt.Errorf("api key id: %w", err)
 	}
-	grants, err := a.q.ListAPIKeyPermissionGrants(ctx, db.ListAPIKeyPermissionGrantsParams{OrgID: row.OrgID, ID: row.ID})
+	grants, err := access.APIKeyGrants(ctx, a.database, orgID, apiKeyID)
 	if err != nil {
 		return auth.Principal{}, fmt.Errorf("read API key roles: %w", err)
 	}
@@ -290,7 +291,7 @@ func (a APIKeyAuthenticator) Authenticate(ctx context.Context, rawKey string) (a
 		ProjectID:     projectID.String(),
 		EnvironmentID: environmentID.String(),
 		Kind:          auth.PrincipalKindAPIKey,
-		Grants:        access.APIKeyGrants(grants),
+		Grants:        grants,
 	}, nil
 }
 

@@ -28,7 +28,7 @@ func TestMemberManagementSeparatesAccessAndOwnership(t *testing.T) {
 		if _, _, err := inviteOne(ctx, f.pool, f.tokenKey, m, org.InvitationInput{Emails: []string{"blocked@example.test"}}); !errors.Is(err, org.ErrMemberManagementRequired) {
 			t.Fatalf("invite without grant: %v", err)
 		}
-		if _, err := org.ListMembers(ctx, f.queries, m); !errors.Is(err, org.ErrMemberManagementRequired) {
+		if _, err := org.ListMembers(ctx, f.pool, m); !errors.Is(err, org.ErrMemberManagementRequired) {
 			t.Fatalf("list without grant: %v", err)
 		}
 	}
@@ -48,7 +48,7 @@ func TestMemberManagementSeparatesAccessAndOwnership(t *testing.T) {
 	if _, err = org.UpdateMemberOwnership(ctx, f.pool, f.owner, f.member.MemberID, false, false); !errors.Is(err, org.ErrMemberRoleChanged) {
 		t.Fatalf("stale ownership: %v", err)
 	}
-	if _, err = org.ListMembers(ctx, f.queries, f.member); !errors.Is(err, org.ErrMemberManagementRequired) {
+	if _, err = org.ListMembers(ctx, f.pool, f.member); !errors.Is(err, org.ErrMemberManagementRequired) {
 		t.Fatalf("ownership granted access: %v", err)
 	}
 	recovered, err := org.RecoverOwnAccess(ctx, f.pool, f.member)
@@ -62,7 +62,7 @@ func TestMemberManagementSeparatesAccessAndOwnership(t *testing.T) {
 	if _, err = org.UpdateMemberOwnership(ctx, f.pool, f.owner, f.member.MemberID, false, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = org.ListMembers(ctx, f.queries, f.member); err != nil {
+	if _, err = org.ListMembers(ctx, f.pool, f.member); err != nil {
 		t.Fatalf("demotion removed explicit grant: %v", err)
 	}
 	invitation, token, err := inviteOne(ctx, f.pool, f.tokenKey, f.admin, org.InvitationInput{Emails: []string{"Teammate@Example.test"}})

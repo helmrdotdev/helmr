@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"uuid"
@@ -239,9 +240,11 @@ func (s *apiKeyCountingStore) reset() {
 	s.transactions.Store(0)
 }
 
-func (s *apiKeyCountingStore) ListAPIKeys(ctx context.Context, arg db.ListAPIKeysParams) ([]db.ListAPIKeysRow, error) {
-	s.statements.Add(1)
-	return s.Querier.ListAPIKeys(ctx, arg)
+func (s *apiKeyCountingStore) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if strings.HasPrefix(sql, "-- name: ListAPIKeys :many") {
+		s.statements.Add(1)
+	}
+	return s.TxDB.Query(ctx, sql, args...)
 }
 
 func (s *apiKeyCountingStore) Begin(ctx context.Context) (pgx.Tx, error) {

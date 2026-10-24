@@ -116,7 +116,7 @@ type GrantInput struct {
 
 // authorizeAccessRead refreshes current authority without locking readers.
 func authorizeAccessRead(ctx context.Context, tx pgx.Tx, m ManagingMember) error {
-	return m.Authorize(ctx, db.New(tx))
+	return m.Authorize(ctx, tx)
 }
 
 // Lock memberships in stable order before changing membership-owned access.
@@ -144,7 +144,7 @@ func lockAccessMembers(ctx context.Context, tx pgx.Tx, m ManagingMember, targets
 	if !active[m.MemberID] {
 		return ErrMemberManagementRequired
 	}
-	if err := m.Authorize(ctx, db.New(tx)); err != nil {
+	if err := m.Authorize(ctx, tx); err != nil {
 		return err
 	}
 	for _, id := range targets {

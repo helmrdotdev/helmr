@@ -170,7 +170,7 @@ func (s *Server) sessionPrincipalFromToken(r *http.Request, rawSession string) (
 	if err := s.userAuthConfigured(); err != nil {
 		return auth.Principal{}, err
 	}
-	return identity.AuthenticateLoginSession(r.Context(), s.db, s.identity, rawSession)
+	return identity.AuthenticateLoginSession(r.Context(), s.tx, s.identity, rawSession)
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {

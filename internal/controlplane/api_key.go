@@ -55,7 +55,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		after = &identity.APIKeyPosition{CreatedAt: createdAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, hasMore, err := identity.ListAPIKeys(r.Context(), s.db, principal, scope, filter, apiKeyListLimit, after)
+	rows, hasMore, err := identity.ListAPIKeys(r.Context(), s.tx, principal, scope, filter, apiKeyListLimit, after)
 	if err != nil {
 		writeError(w, identityError(err))
 		return

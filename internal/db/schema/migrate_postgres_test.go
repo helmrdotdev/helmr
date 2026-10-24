@@ -297,7 +297,7 @@ func assertDatabaseConstraintBoundaries(
 	}
 
 	var viewCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m') AND c.relname <> 'role_grant_permissions'`).Scan(&viewCount); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m')`).Scan(&viewCount); err != nil {
 		t.Fatal(err)
 	}
 	if viewCount != 0 {

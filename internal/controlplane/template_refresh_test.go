@@ -25,7 +25,7 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
-	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
+	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 	handler, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)

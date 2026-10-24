@@ -66,7 +66,7 @@ func (f apiKeyFixture) role(t *testing.T, permissions ...auth.Permission) *APIKe
 func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 	fixture := newAPIKeyFixture(t)
 	ctx := t.Context()
-	store := &apiKeyCountingQuerier{Querier: fixture.queries}
+	store := &apiKeyCountingQuerier{DBTX: fixture.pool}
 	authenticator := NewAPIKeyAuthenticator(store)
 	issued := fixture.issue(t, "  deploy  ", auth.CapabilitySessionsView, auth.CapabilityDeploymentsPublish)
 	if issued.Record.Name != "deploy" || issued.Raw == "" {
@@ -129,7 +129,7 @@ func TestAPIKeyDuplicateNameAndRotation(t *testing.T) {
 	if rotated.Record.ID != original.Record.ID || rotated.Raw == original.Raw {
 		t.Fatal("rotation changed machine identity or permissions")
 	}
-	authenticator := NewAPIKeyAuthenticator(f.queries)
+	authenticator := NewAPIKeyAuthenticator(f.pool)
 	if _, err := authenticator.Authenticate(ctx, original.Raw); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatal("old token survived", err)
 	}
@@ -178,17 +178,17 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	if _, err := IssueAPIKey(ctx, fixture.pool, other, otherScope, APIKeyInput{Name: "other-org"}); err != nil {
 		t.Fatal(err)
 	}
-	if listed, _, err := ListAPIKeys(ctx, fixture.queries, other, fixture.scope, APIKeyFilterAll, 10, nil); !errors.Is(err, ErrAPIKeyManagementRequired) || len(listed) != 0 {
+	if listed, _, err := ListAPIKeys(ctx, fixture.pool, other, fixture.scope, APIKeyFilterAll, 10, nil); !errors.Is(err, ErrAPIKeyManagementRequired) || len(listed) != 0 {
 		t.Fatalf("cross-organization list = %d, err = %v", len(listed), err)
 	}
 
-	first, more, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterActive, 3, nil)
+	first, more, err := ListAPIKeys(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyFilterActive, 3, nil)
 	if err != nil || len(first) != 3 || !more {
 		t.Fatalf("first page = %d/%t, err = %v", len(first), more, err)
 	}
 	last := first[len(first)-1]
 	after := &APIKeyPosition{CreatedAt: last.CreatedAt.Time, ID: pgvalue.MustUUIDValue(last.ID)}
-	second, more, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterActive, 3, after)
+	second, more, err := ListAPIKeys(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyFilterActive, 3, after)
 	if err != nil || len(second) != 2 || more {
 		t.Fatalf("second page = %d/%t, err = %v", len(second), more, err)
 	}
@@ -203,11 +203,11 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	if err := RevokeAPIKey(ctx, fixture.pool, fixture.owner, fixture.scope, revokedID); !errors.Is(err, ErrAPIKeyNotFound) {
 		t.Fatalf("repeated revoke error = %v", err)
 	}
-	revoked, _, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterRevoked, 10, nil)
+	revoked, _, err := ListAPIKeys(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyFilterRevoked, 10, nil)
 	if err != nil || len(revoked) != 1 || revoked[0].ID != second[0].ID {
 		t.Fatalf("revoked list = %+v, err = %v", revoked, err)
 	}
-	active, _, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterActive, 10, nil)
+	active, _, err := ListAPIKeys(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyFilterActive, 10, nil)
 	if err != nil || len(active) != 4 {
 		t.Fatalf("active list = %d, err = %v", len(active), err)
 	}
@@ -218,7 +218,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	expired := fixture.issue(t, "expired", auth.CapabilitySessionsView)
 	fixture.expire(t, "api_keys", expired.Record.ID)
 	permissions := map[string][]string{}
-	all, _, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterAll, 20, nil)
+	all, _, err := ListAPIKeys(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyFilterAll, 20, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 		!slices.Equal(permissions["full"], full.RoleNames) || len(permissions["key-0"]) != 1 {
 		t.Fatalf("all list = %v", permissions)
 	}
-	expiredList, _, err := ListAPIKeys(ctx, fixture.queries, fixture.owner, fixture.scope, APIKeyFilterExpired, 10, nil)
+	expiredList, _, err := ListAPIKeys(ctx, fixture.pool, fixture.owner, fixture.scope, APIKeyFilterExpired, 10, nil)
 	if err != nil || len(expiredList) != 1 || expiredList[0].ID != expired.Record.ID {
 		t.Fatalf("expired list = %+v, err = %v", expiredList, err)
 	}
@@ -247,7 +247,7 @@ func TestAPIKeyPostgresRequiresManagementAndValidInput(t *testing.T) {
 		if _, err := IssueAPIKey(ctx, fixture.pool, principal, fixture.scope, APIKeyInput{Name: "blocked"}); !errors.Is(err, ErrAPIKeyManagementRequired) {
 			t.Fatalf("%s issue error = %v", role, err)
 		}
-		if _, _, err := ListAPIKeys(ctx, fixture.queries, principal, fixture.scope, APIKeyFilterAll, 10, nil); !errors.Is(err, ErrAPIKeyManagementRequired) {
+		if _, _, err := ListAPIKeys(ctx, fixture.pool, principal, fixture.scope, APIKeyFilterAll, 10, nil); !errors.Is(err, ErrAPIKeyManagementRequired) {
 			t.Fatalf("%s list error = %v", role, err)
 		}
 		if err := RevokeAPIKey(ctx, fixture.pool, principal, fixture.scope, uuid.NewV7()); !errors.Is(err, ErrAPIKeyManagementRequired) {
@@ -289,7 +289,7 @@ func TestParseAPIKeyFilter(t *testing.T) {
 }
 
 type apiKeyCountingQuerier struct {
-	db.Querier
+	db.DBTX
 	statements atomic.Int64
 }
 
@@ -298,14 +298,13 @@ func (q *apiKeyCountingQuerier) reset() int64 {
 	return q.statements.Swap(0)
 }
 
-func (q *apiKeyCountingQuerier) TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (db.TouchActiveAPIKeyByTokenHashRow, error) {
+func (q *apiKeyCountingQuerier) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 	q.statements.Add(1)
-	return q.Querier.TouchActiveAPIKeyByTokenHash(ctx, tokenHash)
+	return q.DBTX.QueryRow(ctx, sql, args...)
 }
-
-func (q *apiKeyCountingQuerier) IssueAPIKey(ctx context.Context, arg db.IssueAPIKeyParams) (db.APIKey, error) {
+func (q *apiKeyCountingQuerier) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
 	q.statements.Add(1)
-	return q.Querier.IssueAPIKey(ctx, arg)
+	return q.DBTX.Query(ctx, sql, args...)
 }
 
 func TestAPIKeyEditsAndRotationAuditRollback(t *testing.T) {
@@ -336,7 +335,7 @@ func TestAPIKeyEditsAndRotationAuditRollback(t *testing.T) {
 	if err := RevokeAPIKey(ctx, f.pool, f.owner, f.scope, id); err == nil {
 		t.Fatal("revoke ignored audit failure")
 	}
-	current, err := NewAPIKeyAuthenticator(f.queries).Authenticate(ctx, first.Raw)
+	current, err := NewAPIKeyAuthenticator(f.pool).Authenticate(ctx, first.Raw)
 	if err != nil || !current.HasPermission(auth.CapabilityAgentsUse, f.scope) {
 		t.Fatal("rollback lost original active token or edited policy", err)
 	}
@@ -351,7 +350,7 @@ func TestMachinePrincipalSurvivesCreatorOffboardingAndRejectsStaleManager(t *tes
 	ctx := t.Context()
 	key := f.issue(t, "service", auth.CapabilityAgentsUse)
 	f.exec(t, `UPDATE org_members SET is_owner=false,removed_at=now() WHERE org_id=$1 AND user_id=$2`, f.owner.OrgID, f.owner.UserID)
-	p, err := NewAPIKeyAuthenticator(f.queries).Authenticate(ctx, key.Raw)
+	p, err := NewAPIKeyAuthenticator(f.pool).Authenticate(ctx, key.Raw)
 	if err != nil || !p.HasPermission(auth.PermissionSessionsCreate, f.scope) {
 		t.Fatal("creator offboarding revoked machine identity", err)
 	}
@@ -388,7 +387,7 @@ func TestAPIKeyRotateRacesRevoke(t *testing.T) {
 		if result.err != nil && !errors.Is(result.err, ErrAPIKeyNotFound) {
 			t.Fatal(result.err)
 		}
-		authenticator := NewAPIKeyAuthenticator(f.queries)
+		authenticator := NewAPIKeyAuthenticator(f.pool)
 		if _, err := authenticator.Authenticate(ctx, key.Raw); !errors.Is(err, auth.ErrUnauthenticated) {
 			t.Fatal("old token survived revoke", err)
 		}
@@ -420,7 +419,7 @@ func TestAPIKeyRoleIssuanceIsAtomicAndRequiresAccessManagement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := NewAPIKeyAuthenticator(f.queries).Authenticate(ctx, plain.Raw)
+	p, err := NewAPIKeyAuthenticator(f.pool).Authenticate(ctx, plain.Raw)
 	if err != nil || len(p.Grants) != 0 || p.HasPermission(auth.PermissionSessionsCreate, f.scope) {
 		t.Fatal("unassigned key acquired access", err)
 	}
@@ -441,13 +440,8 @@ func TestAPIKeyRoleIssuanceIsAtomicAndRequiresAccessManagement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err = NewAPIKeyAuthenticator(f.queries).Authenticate(ctx, key.Raw)
+	p, err = NewAPIKeyAuthenticator(f.pool).Authenticate(ctx, key.Raw)
 	if err != nil || !p.HasPermission(auth.PermissionSessionsCreate, f.scope) {
 		t.Fatal("Role not effective", err)
 	}
-}
-
-func (q *apiKeyCountingQuerier) ListAPIKeyPermissionGrants(ctx context.Context, arg db.ListAPIKeyPermissionGrantsParams) ([]db.ListAPIKeyPermissionGrantsRow, error) {
-	q.statements.Add(1)
-	return q.Querier.ListAPIKeyPermissionGrants(ctx, arg)
 }

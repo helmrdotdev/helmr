@@ -56,7 +56,7 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw)
+	principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw)
 	if err != nil || principal.UserID != userID || principal.OrgID != orgID || principal.IsOwner {
 		t.Fatalf("device principal = %+v, err = %v", principal, err)
 	}
@@ -145,7 +145,7 @@ func TestDeviceCodePostgresFailedExchangeKeepsApprovedCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retried exchange error = %v", err)
 	}
-	if principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw); err != nil || principal.UserID != userID || principal.OrgID != orgID {
+	if principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw); err != nil || principal.UserID != userID || principal.OrgID != orgID {
 		t.Fatalf("retried principal = %+v, err = %v", principal, err)
 	}
 	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, started.DeviceCode); !errors.Is(err, ErrInvalidDeviceCode) {

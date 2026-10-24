@@ -1,4 +1,3 @@
-DROP VIEW IF EXISTS role_grant_permissions;
 DROP TABLE IF EXISTS slack_work_items;
 DROP TABLE IF EXISTS computer_controls;
 DROP TABLE IF EXISTS audit_events;

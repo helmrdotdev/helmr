@@ -34,7 +34,7 @@ type invitationListCursor struct {
 
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	rows, err := org.ListMembers(r.Context(), s.db, managingMember(principal))
+	rows, err := org.ListMembers(r.Context(), s.tx, managingMember(principal))
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -67,7 +67,7 @@ func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 		}
 		after = &org.InvitationPosition{CreatedAt: createdAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, hasMore, err := org.ListInvitations(r.Context(), s.db, managingMember(principal), invitationListLimit, after)
+	rows, hasMore, err := org.ListInvitations(r.Context(), s.tx, managingMember(principal), invitationListLimit, after)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -131,7 +131,7 @@ func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	manager := managingMember(principal)
-	if err := manager.Authorize(r.Context(), s.db); err != nil {
+	if err := manager.Authorize(r.Context(), s.tx); err != nil {
 		writeError(w, orgError(err))
 		return
 	}
