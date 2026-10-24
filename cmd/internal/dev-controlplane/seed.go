@@ -31,6 +31,9 @@ func seedDevData(ctx context.Context, pool *pgxpool.Pool, cfg devConfig) error {
 	if err := seedDemoEnvironmentData(ctx, tx); err != nil {
 		return err
 	}
+	if err := seedPermissionData(ctx, tx); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -41,8 +44,8 @@ VALUES ('00000000-0000-7000-8000-000000000101', 'Local Developer', 'dev@helmr.lo
 INSERT INTO organizations (id, name, slug)
 VALUES ('00000000-0000-7000-8000-000000000201', 'Helmr Local', 'local-dev');
 
-INSERT INTO org_members (org_id, user_id, role, display_name)
-VALUES ('00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000101', 'owner', 'Local Developer');
+INSERT INTO org_members (id, org_id, user_id, is_owner, display_name)
+VALUES ('00000000-0000-7000-8000-000000001101', '00000000-0000-7000-8000-000000000201', '00000000-0000-7000-8000-000000000101', true, 'Local Developer');
 
 INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default)
 VALUES ('00000000-0000-7000-8000-000000000301', '00000000-0000-7000-8000-000000000201', current_setting('helmr.seed_region_id'), 'console-demo', 'Console Demo', true);

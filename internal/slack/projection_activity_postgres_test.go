@@ -3,6 +3,7 @@ package slack
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"strings"
@@ -495,5 +496,55 @@ func TestOwnedActivitySessionCallerSuccessorsUseTheirOwnAdmission(t *testing.T) 
 	projectAllActivity(t, f)
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_work_items WHERE turn_id=$1`, later.TurnID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("inactive front attached: %d %v", count, err)
+	}
+}
+
+func TestDirectActivityRechecksEveryRepresentedAgent(t *testing.T) {
+	for _, beforeProjection := range []bool{true, false} {
+		t.Run(fmt.Sprintf("before_projection=%v", beforeProjection), func(t *testing.T) {
+			f := newSlackAdmissionFixture(t)
+			f.link(t)
+			f.grantDirect(t)
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) SELECT $3,environment_id,connection_id,installation_id,org_id,team_id,'D1' FROM slack_channel_bindings WHERE id=$1; UPDATE slack_threads SET slack_channel_binding_id=$3,slack_channel_id='D1',recipient_team_id='team',recipient_user_id='human' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.channel, f.thread, uuid.NewV7())
+			write := f.outputWriter(t)
+			child, turn := activityChild(t, f, false)
+			otherAgent := uuid.NewV7()
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'private-child-agent');
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
+ UPDATE sessions SET agent_id=$2 WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.Environment, otherAgent, f.Agent, child.Session)
+			revoke := func() {
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET all_agents=false WHERE environment_id=$1;
+ INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1 ON CONFLICT DO NOTHING`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Agent)
+			}
+			write("Visible parent explanation.")
+			if beforeProjection {
+				revoke()
+			}
+			projectAllActivity(t, f)
+			post, body, _ := activitySnapshot(t, f)
+			if beforeProjection {
+				if strings.Contains(body.Text, "private-child-agent") {
+					t.Fatal("unauthorized Agent metadata projected", body)
+				}
+				for _, block := range body.Blocks {
+					if block.TaskID == turn.TurnID.String() {
+						t.Fatal("unauthorized child projected")
+					}
+				}
+			} else {
+				if !strings.Contains(body.Text, "private-child-agent") {
+					t.Fatal("missing authorized baseline", body)
+				}
+				revoke()
+				claim, err := ClaimPost(t.Context(), f.Pool, post)
+				if err != nil || claim != nil {
+					t.Fatalf("revoked child metadata claimed: %+v %v", claim, err)
+				}
+				var suppressed bool
+				if err := f.Pool.QueryRow(t.Context(), `SELECT status='suppressed' AND error='publication_authority_unavailable' FROM slack_posts WHERE id=$1`, post).Scan(&suppressed); err != nil || !suppressed {
+					t.Fatal("queued composite not suppressed", suppressed, err)
+				}
+			}
+		})
 	}
 }

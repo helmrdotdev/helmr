@@ -36,7 +36,7 @@ func JoinRootThread(ctx context.Context, tx pgx.Tx, env, session, thread uuid.UU
 // membership.
 func AddMember(ctx context.Context, tx pgx.Tx, env, thread, session uuid.UUID) (uuid.UUID, error) {
 	id := uuid.NewV7()
-	_, err := tx.Exec(ctx, `INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($1,$2,$3,$4)`, id, thread, env, session)
+	err := tx.QueryRow(ctx, `INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) SELECT $1,$2,$3,$4 FROM sessions WHERE environment_id=$3 AND id=$4 RETURNING id`, id, thread, env, session).Scan(&id)
 	return id, err
 }
 

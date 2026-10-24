@@ -34,9 +34,9 @@ type AttentionItem struct {
 // the returned page. SlackReauthorization is present only for callers who
 // manage Slack connections.
 type AttentionCounts struct {
-	Question             int64  `json:"question"`
-	Hold                 int64  `json:"hold"`
-	FailedTurn           int64  `json:"failed_turn"`
+	Question             *int64 `json:"question,omitempty"`
+	Hold                 *int64 `json:"hold,omitempty"`
+	FailedTurn           *int64 `json:"failed_turn,omitempty"`
 	SlackReauthorization *int64 `json:"slack_reauthorization,omitempty"`
 }
 

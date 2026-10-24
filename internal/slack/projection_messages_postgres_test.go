@@ -37,7 +37,7 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 				t.Fatal(err)
 			}
 			if kind != "not-started" {
-				m, err := session.ClaimRuntimeMessage(t.Context(), f.Pool, host, execution, attachment.Sequence, turn)
+				m, err := session.ClaimRuntimeMessage(t.Context(), f.Pool, host, execution, attachment.Sequence, turn, fixtureConversationVerifier(true))
 				if err != nil || m == nil || m.ID != message {
 					t.Fatal(m, err)
 				}

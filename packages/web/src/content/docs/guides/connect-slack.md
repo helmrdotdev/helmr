@@ -14,7 +14,7 @@ how Slack conversations map to Sessions, see [Slack](/docs/concepts/slack).
 
 - The Agent is deployed to the Environment you want to connect. See
   [Deploy](/docs/guides/deploy).
-- You are an owner or admin of the organization. Connecting an Agent is done in
+- You have `agents.manage` on this Agent or its environment. Connecting an Agent is done in
   the Console; there is no CLI command or `/v1` API for it.
 - The deployment operator has enabled Slack. The Console shows the delivery
   mode selected for the deployment: **HTTP callbacks** or **Socket Mode**.

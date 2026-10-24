@@ -70,11 +70,11 @@ INSERT INTO deployment_events(environment_id,deployment_id,kind,message,accepted
 ($1::uuid,$2::uuid,'deployment.promoted','Deployment promoted',now()-interval '3 days');
 INSERT INTO computers(environment_id,id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,storage_reservation_bytes,image_spec_id,preparation_deadline_at,preparation_failed_at)
 VALUES($1::uuid,$6::uuid,$3::uuid,$2::uuid,1000,536870912,34359738368,$3::uuid,now()-interval '1 hour',now()-interval '1 hour');
-INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at) VALUES
-($1::uuid,$7::uuid,$4::uuid,$2::uuid,$6::uuid,$7::uuid,0,'closed',2,2,4,now()-interval '2 hours'),
-($1::uuid,$12::uuid,$10::uuid,$2::uuid,$6::uuid,$12::uuid,0,'open',1,1,1,now()-interval '90 minutes'),
-($1::uuid,$13::uuid,$11::uuid,$2::uuid,$6::uuid,$13::uuid,0,'open',1,2,3,now()-interval '50 minutes'),
-($1::uuid,$14::uuid,$10::uuid,$2::uuid,$6::uuid,$14::uuid,0,'closed',2,2,4,now()-interval '1 day');
+INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at,origin_user_id) VALUES
+($1::uuid,$7::uuid,$4::uuid,$2::uuid,$6::uuid,$7::uuid,0,'closed',2,2,4,now()-interval '2 hours','00000000-0000-7000-8000-000000000101'),
+($1::uuid,$12::uuid,$10::uuid,$2::uuid,$6::uuid,$12::uuid,0,'open',1,1,1,now()-interval '90 minutes','00000000-0000-7000-8000-000000000101'),
+($1::uuid,$13::uuid,$11::uuid,$2::uuid,$6::uuid,$13::uuid,0,'open',1,2,3,now()-interval '50 minutes','00000000-0000-7000-8000-000000000101'),
+($1::uuid,$14::uuid,$10::uuid,$2::uuid,$6::uuid,$14::uuid,0,'closed',2,2,4,now()-interval '1 day','00000000-0000-7000-8000-000000000101');
 INSERT INTO session_holds(environment_id,id,session_id,scope,reason,created_at)
 VALUES($1::uuid,$17::uuid,$12::uuid,'local','Waiting for approval before changing the demo billing plan',now()-interval '80 minutes');
 INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,error_code,error_message,processing_closed_at,terminal_at) VALUES

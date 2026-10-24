@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
@@ -58,7 +59,7 @@ func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, c
 	if actor == bot || source.Before(authorized) || source.Before(connected) {
 		return empty, 0, errControlInvalid
 	}
-	_, code, err := linkedHuman(ctx, tx, team, actor, target.Environment, source, true)
+	user, code, err := linkedSessionHuman(ctx, tx, team, actor, target.Environment, target.Session, source)
 	if err != nil {
 		return empty, 0, err
 	}
@@ -67,6 +68,9 @@ func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, c
 			return empty, 0, errFormIdentityUnlinked
 		}
 		return empty, 0, errControlInvalid
+	}
+	if err := session.AuthorizeSessionOperation(ctx, tx, session.Caller{Kind: "user", ID: user, SlackThreadID: target.Thread}, target.Environment, target.Session, auth.PermissionAsksAnswer); err != nil {
+		return empty, 0, err
 	}
 	var view session.AskView
 	err = tx.QueryRow(ctx, `SELECT id,status,question FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4`, target.Environment, target.Session, target.Turn, target.Ask).Scan(&view.ID, &view.Status, &view.Question)

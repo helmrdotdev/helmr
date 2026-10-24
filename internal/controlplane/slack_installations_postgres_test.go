@@ -35,7 +35,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE org_id=$1 AND user_id=$2`, org, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
 	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{3}, 32), slack.TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	queries := db.New(f.Pool)
-	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
+	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 	cfg.Slack = &SlackConfig{ControlKey: bytes.Repeat([]byte{4}, 32), Credentials: store, Transport: transport, Client: slack.NewWebClient(store, nil)}
 	handler, err := NewServer(cfg)
 	if err != nil {
@@ -125,7 +125,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 		t.Fatal("wrong state exchanged code")
 	}
 	other := h.user(t, "Other admin")
-	h.member(t, org, other, db.OrgMemberRoleAdmin)
+	h.member(t, org, other, "admin")
 	otherToken := h.session(t, other, org)
 	if w := finish(state, otherToken, cookies); w.Code != 400 || exchanges != 0 {
 		t.Fatal("switched user exchanged code")
@@ -158,11 +158,11 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	if w := call("GET", base, owner, nil, nil); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(`"status":"connected"`)) {
 		t.Fatal("missing connection state", w.Body.String())
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='developer' WHERE org_id=$1 AND user_id=$2`, org, f.User)
+	f.SetPermissions(t, "agents.use", "deployments.publish", "deployments.promote", "sessions.view", "sessions.manage", "computers.operate", "secrets.manage", "keys.manage")
 	if w := call("DELETE", base+"/"+publication.ID.String(), owner, nil, nil); w.Code != 403 {
 		t.Fatal("non-manager disconnected")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE org_id=$1 AND user_id=$2`, org, f.User)
+	f.SetPermissions(t, "agents.manage", "sessions.view", "sessions.manage", "agents.use")
 	if w := call("DELETE", base+"/"+publication.ID.String(), owner, nil, nil); w.Code != 204 {
 		t.Fatal("disconnect failed", w.Code, w.Body.String())
 	}

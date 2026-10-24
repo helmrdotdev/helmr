@@ -16,7 +16,7 @@ func TestTurnDispatchRetainsAdmissionTimeAndExactOrigin(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	peer := f.peer(t)
+	peer := f.requestedPeer(t)
 	caller := session.Caller{Kind: "session", ID: f.session, TurnID: origin.TurnID, Execution: f.execution(), Host: f.host()}
 	admission, err := session.Enqueue(t.Context(), f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer-input", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"retained\"}"}]`)})
 	if err != nil {

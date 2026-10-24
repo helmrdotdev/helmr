@@ -7,6 +7,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
@@ -100,10 +102,18 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 		if private && (action == "sleep" || action == "close") {
 			var scope session.ExecutionScope
 			var err error
+			var user uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT l.user_id FROM slack_user_links l JOIN slack_threads t ON t.team_id=l.team_id WHERE t.id=$1 AND l.slack_user_id=$2`, target.Thread, actor).Scan(&user); err != nil {
+				return "", nil, err
+			}
+			caller := session.Caller{Kind: "user", ID: user, SlackThreadID: target.Thread}
 			if action == "sleep" && computerID != nil {
+				if err := access.Check(ctx, tx, "user", user, target.Environment, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+					return "", nil, err
+				}
 				scope, err = session.ReadComputerExecutionScope(ctx, tx, target.Environment, *computerID)
 			} else if action == "close" {
-				scope, err = session.ReadSessionCloseScope(ctx, tx, target.Environment, target.Session)
+				scope, err = session.SessionCloseScope(ctx, tx, caller, target.Environment, target.Session)
 			} else {
 				return text, blocks, nil
 			}

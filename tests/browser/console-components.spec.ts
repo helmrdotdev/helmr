@@ -26,7 +26,7 @@ type Fixture = {
   holdSessions: Promise<void> | null;
 };
 
-async function fixture(page: Page): Promise<Fixture> {
+async function fixture(page: Page, accessAdmin = false): Promise<Fixture> {
   const state: Fixture = { revocations: 0, apiKeyRequests: [], sessionCursors: [], secretWrites: [], deletions: [], invitations: [], failSessions: false, failNextSessions: false, holdSessions: null };
   const session = (index: number) => ({ id: `00000000-0000-7000-8000-00000000060${index}`, agent: "assistant", template: "browser", deployment_id: deploymentID, computer_id: null, status: "open", holds: [], created_at: now });
   const environment = { environment: environmentID, project: projectID, name: "Production", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
@@ -37,7 +37,9 @@ async function fixture(page: Page): Promise<Fixture> {
     const path = url.pathname;
     const method = route.request().method();
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: "owner", permissions: ["projects.manage", "secrets.read", "secrets.write", "secrets.revoke", "deployments.read"], admin: false, organization_required: false, project_required: false, email_delivery: true };
+    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: "owner", permissions: [...(accessAdmin ? ["access.manage"] : []), "projects.manage", "keys.manage", "secrets.read", "secrets.write", "secrets.revoke", "deployments.read"], admin: false, organization_required: false, project_required: false, email_delivery: true };
+    else if (path === "/api/roles") json = { roles: [{id:"viewer",name:"Session viewer",permissions:["sessions.view"],api_key_assignable:true,revision:7}], catalog:[{id:"sessions.view",name:"View all sessions",resource_type:"agents",included:["sessions.view"]}] };
+    else if (path === `/api/projects/${projectID}/access-targets`) json = {project_id:projectID,targets:[{environment_id:environmentID,environment:environmentID,name:"Production",agents:[{id:"agent-1",key:"assistant"}]}]};
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === `/api/projects/${projectID}/settings`) json = { history_retention: "30d" };
@@ -52,13 +54,13 @@ async function fixture(page: Page): Promise<Fixture> {
     else if (path === `${base}/secrets/${secretID}/revoke` && method === "POST") { state.revocations++; json = { secret: secretID, status: "revoked", created_at: now }; }
     else if (path === `${base}/api-keys` && method === "POST") {
       state.apiKeyRequests.push(route.request().postDataJSON());
-      json = { id: "key-1", name: "Deploy bot", key_prefix: "hk_test", project: projectID, environment: environmentID, permissions: [], status: "active", created_at: now, last_used_at: null, expires_at: null, revoked_at: null, raw_key: rawKey };
+      json = { id: "key-1", name: "Deploy bot", key_prefix: "hk_test", project: projectID, environment: environmentID, role_names: [], status: "active", created_at: now, last_used_at: null, expires_at: null, revoked_at: null, raw_key: rawKey };
     }
     else if (method === "DELETE") { state.deletions.push(path); await route.fulfill({ json: {} }); return; }
-    else if (path === `${base}/api-keys`) json = { api_keys: [{ id: "key-1", name: "Deploy bot", key_prefix: "hk_test", project: projectID, environment: environmentID, permissions: [{ scopes: ["sessions:read"] }], status: "active", created_at: now, last_used_at: null, expires_at: null, revoked_at: null }] };
+    else if (path === `${base}/api-keys`) json = { api_keys: [{ id: "key-1", name: "Deploy bot", key_prefix: "hk_test", project: projectID, environment: environmentID, role_names: ["Session viewer"], status: "active", created_at: now, last_used_at: null, expires_at: null, revoked_at: null }] };
     else if (path === "/api/members") json = { members: [
       { user_id: "local", display_name: "Local", email: "local@example.test", role: "owner", status: "active", created_at: now, updated_at: now },
-      { user_id: "member-2", display_name: "Second Member", email: "second@example.test", role: "developer", status: "active", created_at: now, updated_at: now },
+      { user_id: "member-2", display_name: "Second Member", email: "second@example.test", role: "member", status: "active", created_at: now, updated_at: now },
     ] };
     else if (path === "/api/invitations" && method === "POST") {
       const body = route.request().postDataJSON() as Fixture["invitations"][number];
@@ -70,7 +72,7 @@ async function fixture(page: Page): Promise<Fixture> {
     }
     else if (path === "/api/invitations") {
       const created = state.invitations.flatMap(body => body.emails.filter(email => email !== "second@example.test").map(email => ({ id: `inv-${email}`, email, role: body.role, status: "pending", created_at: now, expires_at: now })));
-      json = { invitations: [...created, { id: "inv-1", email: "pending@example.test", role: "viewer", status: "pending", created_at: now, expires_at: now }] };
+      json = { invitations: [...created, { id: "inv-1", email: "pending@example.test", role: "member", status: "pending", created_at: now, expires_at: now }] };
     }
     else if (path === `${base}/sessions`) {
       const cursor = url.searchParams.get("cursor");
@@ -315,12 +317,8 @@ test("a generated API key is revealed once in a dialog with Copy", async ({ page
   await page.getByRole("button", { name: "Generate API key in Production", exact: true }).click();
   const form = page.getByRole("dialog", { name: "Generate API key" });
   await form.getByLabel("Name", { exact: true }).fill("Deploy bot");
-  const readSessions = form.getByRole("checkbox", { name: "Read sessions", exact: true });
-  await expect(readSessions).toBeChecked();
-  await expect(readSessions).toHaveAccessibleDescription("Read sessions and their history.");
-  await expect(form.getByText("Delete computers and their disks.", { exact: true })).toBeVisible();
-  await form.getByRole("checkbox", { name: "Select all computers" }).check();
-  // The long form scrolls inside the dialog; its actions stay in view.
+  await expect(form).toContainText("access administrator");
+  await expect(form.getByRole("checkbox")).toHaveCount(0);
   await page.setViewportSize({ width: 1280, height: 600 });
   await expect(form.getByRole("button", { name: "Generate key", exact: true })).toBeInViewport();
   await form.getByRole("button", { name: "Generate key", exact: true }).click();
@@ -335,7 +333,6 @@ test("a generated API key is revealed once in a dialog with Copy", async ({ page
   expect(state.apiKeyRequests).toEqual([{
     name: "Deploy bot",
     expires_in_days: null,
-    permissions: [{ scopes: ["sessions:create", "sessions:read", "computers:read", "computers:create", "computers:update", "computers:delete", "computer-exec:create"] }],
   }]);
   await reveal.getByRole("button", { name: "Done", exact: true }).click();
   await expect(reveal).toHaveCount(0);
@@ -574,7 +571,7 @@ test("members and pending invitations share one table told apart by status", asy
   // The invitation follows the members: its invited email is the member, its
   // status Invited.
   await expect(rows.nth(3).getByRole("cell").nth(0)).toHaveText("pending@example.test");
-  await expect(rows.nth(3).getByRole("cell").nth(1)).toHaveText("Viewer");
+  await expect(rows.nth(3).getByRole("cell").nth(1)).toHaveText("Member");
   await expect(rows.nth(3).getByRole("cell").nth(2)).toHaveText("Invited");
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Load more invitations", exact: true })).toHaveCount(0);
@@ -596,8 +593,8 @@ test("the members table footer loads more invitations and counts every row", asy
     const url = new URL(route.request().url());
     if (route.request().method() !== "GET" || url.pathname !== "/api/invitations") return route.fallback();
     await route.fulfill({ json: url.searchParams.get("cursor") === "invitations-2"
-      ? { invitations: [{ id: "inv-3", email: "earlier@example.test", role: "developer", status: "pending", created_at: earlier, expires_at: earlier }] }
-      : { invitations: [{ id: "inv-1", email: "pending@example.test", role: "viewer", status: "pending", created_at: now, expires_at: now }], next_cursor: "invitations-2" } });
+      ? { invitations: [{ id: "inv-3", email: "earlier@example.test", role: "member", status: "pending", created_at: earlier, expires_at: earlier }] }
+      : { invitations: [{ id: "inv-1", email: "pending@example.test", role: "member", status: "pending", created_at: now, expires_at: now }], next_cursor: "invitations-2" } });
   });
   await page.goto(`/settings/members?${scope}`);
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
@@ -618,7 +615,7 @@ test("invitations that fail to load leave the members and offer Retry", async ({
   await page.route("**/api/invitations", route => {
     if (route.request().method() !== "GET") return route.fallback();
     if (fail) return route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Unavailable" } } });
-    return route.fulfill({ json: { invitations: [{ id: "inv-1", email: "pending@example.test", role: "viewer", status: "pending", created_at: now, expires_at: now }] } });
+    return route.fulfill({ json: { invitations: [{ id: "inv-1", email: "pending@example.test", role: "member", status: "pending", created_at: now, expires_at: now }] } });
   });
   await page.goto(`/settings/members?${scope}`);
   const notice = page.getByRole("alert").filter({ hasText: "Could not load invitations." });
@@ -634,7 +631,7 @@ test("invitations that fail to load leave the members and offer Retry", async ({
 
 test("a member's role changes from the row menu and a conflicting change can be retried", async ({ page }) => {
   await fixture(page);
-  let role = "developer";
+  let role = "member";
   const patches: unknown[] = [];
   await page.route("**/api/members**", async route => {
     const request = route.request();
@@ -655,8 +652,8 @@ test("a member's role changes from the row menu and a conflicting change can be 
   await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
   await page.getByRole("menuitem", { name: "Change role", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Change role" });
-  // Someone else makes them a viewer while the dialog is open.
-  role = "viewer";
+  // Someone else makes them an owner while the dialog is open.
+  role = "owner";
   await dialog.getByRole("combobox").click();
   await page.getByRole("option", { name: "Admin", exact: true }).click();
   await dialog.getByRole("button", { name: "Change role", exact: true }).click();
@@ -664,7 +661,7 @@ test("a member's role changes from the row menu and a conflicting change can be 
   // The retry expects the role they now have.
   await dialog.getByRole("button", { name: "Change role", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  expect(patches).toEqual([{ role: "admin", expected_role: "developer" }, { role: "admin", expected_role: "viewer" }]);
+  expect(patches).toEqual([{ role: "admin", expected_role: "member" }, { role: "admin", expected_role: "owner" }]);
   await expect(page.getByRole("table").getByRole("row").nth(2).getByRole("cell").nth(1)).toHaveText("Admin");
 });
 
@@ -728,13 +725,11 @@ test("inviting several members summarizes who was invited and who was not, then 
   await page.getByRole("button", { name: "Invite members", exact: true }).click();
   const form = page.getByRole("dialog", { name: "Invite members" });
   await form.getByLabel("Emails", { exact: true }).fill("ada@example.test\nlin@team.test, second@example.test grace@team.test bad-address");
-  await form.getByRole("combobox", { name: "Role", exact: true }).click();
-  await page.getByRole("option", { name: "Viewer", exact: true }).click();
   await form.getByRole("button", { name: "Invite", exact: true }).click();
 
   const results = page.getByRole("dialog", { name: "Invitations" });
   await expect(form).toHaveCount(0);
-  expect(state.invitations).toEqual([{ emails: ["ada@example.test", "lin@team.test", "second@example.test", "grace@team.test"], role: "viewer" }]);
+  expect(state.invitations).toEqual([{ emails: ["ada@example.test", "lin@team.test", "second@example.test", "grace@team.test"], role: "member" }]);
   await expect(results.getByText("Invited 3 people.", { exact: true })).toBeVisible();
   await expect(results.getByText("Couldn't invite 1:", { exact: true })).toBeVisible();
   await expect(results.getByRole("list", { name: "Not invited" }).getByRole("listitem")).toHaveText(["second@example.test · Already a member"]);
@@ -781,3 +776,25 @@ test("without email delivery, inviting members is unavailable and says why", asy
   await expect(page.getByRole("button", { name: "Invite members", exact: true })).toBeDisabled();
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
 });
+
+for (const withRole of [false, true]) {
+  test(`an access administrator creates a key ${withRole ? "with a selected Agent Role" : "without access"}`, async ({ page }) => {
+    const state = await fixture(page, true);
+    await page.goto(`/settings/api-keys?${scope}`);
+    await page.getByRole("button", { name: "Generate API key in Production", exact: true }).click();
+    const form = page.getByRole("dialog", {name:"Generate API key"});
+    await form.getByLabel("Name", {exact:true}).fill("Automation");
+    await expect(form.getByRole("combobox",{name:"Role",exact:true})).toContainText("No access");
+    if (withRole) {
+      await form.getByRole("combobox",{name:"Role",exact:true}).click();
+      await page.getByRole("option",{name:"Session viewer",exact:true}).click();
+      await form.getByRole("button",{name:"Generate key",exact:true}).click();
+      await expect(form).toContainText("Choose a Role and its targets");
+      expect(state.apiKeyRequests).toHaveLength(0);
+      await form.getByRole("checkbox",{name:"assistant",exact:true}).check();
+    }
+    await form.getByRole("button",{name:"Generate key",exact:true}).click();
+    await expect(page.getByRole("dialog",{name:"API key generated"})).toBeVisible();
+    expect(state.apiKeyRequests).toEqual([{name:"Automation",expires_in_days:null,...(withRole ? {role:{role_id:"viewer",expected_role_revision:7,agents_mode:"selected",agent_ids:["agent-1"]}} : {})}]);
+  });
+}

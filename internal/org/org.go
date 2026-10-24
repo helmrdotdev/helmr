@@ -28,8 +28,6 @@ var (
 	ErrMemberManagementRequired = errors.New("member management permission is required")
 	ErrOwnerRoleRequired        = errors.New("owner role is required to manage owners")
 	ErrLastActiveOwner          = errors.New("cannot remove or demote the last active owner")
-	ErrSelfMemberManagement     = errors.New("cannot remove your own member management access")
-	ErrSelfMemberRemoval        = errors.New("cannot remove your own member access")
 	ErrInvitationNotFound       = errors.New("invitation not found")
 	ErrInvitationPending        = errors.New("pending invitation already exists for email")
 	ErrInvitationActiveMember   = errors.New("active member already exists for email")

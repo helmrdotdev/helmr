@@ -5,28 +5,29 @@ import "time"
 type MemberStatus string
 
 const (
-	MemberStatusActive   MemberStatus = "active"
-	MemberStatusDisabled MemberStatus = "disabled"
+	MemberStatusActive  MemberStatus = "active"
+	MemberStatusRemoved MemberStatus = "removed"
 )
 
 type MemberSummary struct {
-	UserID      string       `json:"user_id"`
-	DisplayName string       `json:"display_name"`
-	Email       string       `json:"email,omitempty"`
-	Role        string       `json:"role"`
-	Status      MemberStatus `json:"status"`
-	CreatedAt   time.Time    `json:"created_at"`
-	UpdatedAt   time.Time    `json:"updated_at"`
-	DisabledAt  *time.Time   `json:"disabled_at,omitempty"`
+	UserID       string       `json:"user_id"`
+	DisplayName  string       `json:"display_name"`
+	Email        string       `json:"email,omitempty"`
+	MembershipID string       `json:"membership_id"`
+	IsOwner      bool         `json:"is_owner"`
+	Status       MemberStatus `json:"status"`
+	CreatedAt    time.Time    `json:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at"`
+	RemovedAt    *time.Time   `json:"removed_at,omitempty"`
 }
 
 type ListMembersResponse struct {
 	Members []MemberSummary `json:"members"`
 }
 
-type UpdateMemberRoleRequest struct {
-	Role         string `json:"role"`
-	ExpectedRole string `json:"expected_role"`
+type UpdateMemberOwnershipRequest struct {
+	IsOwner         bool `json:"is_owner"`
+	ExpectedIsOwner bool `json:"expected_is_owner"`
 }
 
 type InvitationStatus string
@@ -39,17 +40,16 @@ const (
 )
 
 type InvitationSummary struct {
-	ID               string           `json:"id"`
-	Email            string           `json:"email"`
-	Role             string           `json:"role"`
-	Status           InvitationStatus `json:"status"`
-	InvitedByUserID  string           `json:"invited_by_user_id,omitempty"`
-	AcceptedByUserID string           `json:"accepted_by_user_id,omitempty"`
-	RevokedByUserID  string           `json:"revoked_by_user_id,omitempty"`
-	CreatedAt        time.Time        `json:"created_at"`
-	ExpiresAt        time.Time        `json:"expires_at"`
-	AcceptedAt       *time.Time       `json:"accepted_at,omitempty"`
-	RevokedAt        *time.Time       `json:"revoked_at,omitempty"`
+	ID                 string           `json:"id"`
+	Email              string           `json:"email"`
+	Status             InvitationStatus `json:"status"`
+	InvitedByMemberID  string           `json:"invited_by_member_id,omitempty"`
+	AcceptedByMemberID string           `json:"accepted_by_member_id,omitempty"`
+	RevokedByMemberID  string           `json:"revoked_by_member_id,omitempty"`
+	CreatedAt          time.Time        `json:"created_at"`
+	ExpiresAt          time.Time        `json:"expires_at"`
+	AcceptedAt         *time.Time       `json:"accepted_at,omitempty"`
+	RevokedAt          *time.Time       `json:"revoked_at,omitempty"`
 }
 
 type ListInvitationsResponse struct {
@@ -61,7 +61,6 @@ type ListInvitationsResponse struct {
 // expiry.
 type CreateInvitationsRequest struct {
 	Emails        []string `json:"emails"`
-	Role          string   `json:"role"`
 	ExpiresInDays *int     `json:"expires_in_days,omitempty"`
 }
 

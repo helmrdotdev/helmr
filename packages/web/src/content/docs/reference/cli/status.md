@@ -61,13 +61,13 @@ For API keys, this is a bounded view, not
 an Environment-wide health guarantee. Questions awaiting a reply are reported as
 state, not failures.
 
-Owners and admins using a saved login can inspect Slack connections for retained
-Agents, including Agents absent from the current deployment. Existing incomplete, disconnected or unauthorized connections need a
+Members with Manage agents using a saved login can inspect Slack connections for
+permitted retained Agents, including Agents absent from the current deployment. Existing incomplete, disconnected or unauthorized connections need a
 human to complete or repair them. A missing connection is not a failure. Where a
 workspace connection exists, `doctor` reports the caller's Slack identity link.
 A missing personal link is optional and does not fail the check; link it through
 the Agent's first-mention prompt when you want to use that Agent.
-Other roles, API keys and servers without Slack management available explicitly
+Members without that permission, API keys and servers without Slack management available explicitly
 skip Slack management inspection.
 
 The existing server readiness probe checks database readiness. It does not prove

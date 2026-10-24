@@ -11,13 +11,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (f deploymentFinalizePostgresFixture) principal() auth.Principal {
-	return auth.Principal{OrgID: f.request.orgID, Kind: auth.PrincipalKindAPIKey, APIKeyID: uuid.NewV7(), Role: auth.RoleDeveloper, ProjectID: pgvalue.UUIDString(f.request.projectID), EnvironmentID: pgvalue.UUIDString(f.request.environmentID), Permissions: []auth.Permission{auth.PermissionDeploymentsWrite}}
+	return f.request.principal
 }
 func (f deploymentFinalizePostgresFixture) scope() auth.Scope {
 	p := f.principal()

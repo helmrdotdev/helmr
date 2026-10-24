@@ -18,26 +18,18 @@ const (
 	PrincipalKindSession PrincipalKind = "session"
 )
 
-type Role string
-
-const (
-	RoleOwner     Role = "owner"
-	RoleAdmin     Role = "admin"
-	RoleDeveloper Role = "developer"
-	RoleViewer    Role = "viewer"
-)
-
 type Principal struct {
 	OrgID         uuid.UUID
 	UserID        uuid.UUID
+	MemberID      uuid.UUID
+	IsOwner       bool
 	APIKeyID      uuid.UUID
 	SessionID     uuid.UUID
 	ProjectID     string
 	EnvironmentID string
 	Kind          PrincipalKind
-	Role          Role
 	Admin         bool
-	Permissions   []Permission
+	Grants        []PermissionGrant
 }
 
 type Authenticator interface {

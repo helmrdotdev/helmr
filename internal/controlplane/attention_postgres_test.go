@@ -24,7 +24,7 @@ import (
 func attentionSession(t *testing.T, f sessiontest.Fixture) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES($1,$2,$3,$4,$5,$2,0)`, f.Environment, id, f.Agent, f.Deployment, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1))`, f.Environment, id, f.Agent, f.Deployment, f.Computer)
 	return id
 }
 
@@ -100,7 +100,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
-	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
+	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
@@ -136,12 +136,12 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 		return out
 	}
 
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE user_id=$1`, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User)
 	owner := read(h.session(t, f.User, org))
 	if got := kinds(owner); len(got) != 4 || got[0] != "hold" || got[1] != "failed_turn" || got[2] != "slack_reauthorization" || got[3] != "question" {
 		t.Fatalf("owner order: %v", got)
 	}
-	if c := owner.Counts; c.Question != 1 || c.Hold != 1 || c.FailedTurn != 1 || c.SlackReauthorization == nil || *c.SlackReauthorization != 1 {
+	if c := owner.Counts; (c.Question == nil || *c.Question != 1) || (c.Hold == nil || *c.Hold != 1) || (c.FailedTurn == nil || *c.FailedTurn != 1) || c.SlackReauthorization == nil || *c.SlackReauthorization != 1 {
 		t.Fatalf("owner counts: %+v", c)
 	}
 	if item := owner.Items[0]; item.ID != hold.String() || *item.SessionID != held.String() || *item.Reason != "Approve the deploy" || item.Agent != "agent" || item.TurnID != nil {
@@ -168,11 +168,12 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($1,$4,$4,$4,1000,536870912,NULL);
  INSERT INTO agents(environment_id,id,key) VALUES($1,$6,'second-agent');
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES($1,$6,$4,$4,false);
- INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth) VALUES($1,$7,$6,$4,$7,0);
+ INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$7,$6,$4,$7,0,$12);
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$8,$7,'local','Second hold');
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$9,$2,'second-app','second-client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$12);
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id,authorization_lost_at) VALUES($10,$9,$2,'second-app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$12,clock_timestamp());
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($11,$1,$6,$9,$10,$12)`, pgx.QueryExecModeSimpleProtocol, second, org, project, secondDeployment, "sha256:"+strings.Repeat("2", 64), secondAgent, secondSession, secondHold, secondRegistration, secondInstallation, secondConnection, f.User)
+	dbtest.GrantMember(t, f.Pool, org, f.User, &second, "sessions.view", "agents.manage")
 	ownerToken := h.session(t, f.User, org)
 	other := func(token, path string) api.Attention {
 		t.Helper()
@@ -187,26 +188,32 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 		return result
 	}
 	secondView := other(ownerToken, "/api/projects/project/environments/second/attention")
-	if c := secondView.Counts; c.Question != 0 || c.Hold != 1 || c.FailedTurn != 0 || c.SlackReauthorization == nil || *c.SlackReauthorization != 1 || len(secondView.Items) != 2 ||
+	if c := secondView.Counts; (c.Question == nil || *c.Question != 0) || (c.Hold == nil || *c.Hold != 1) || (c.FailedTurn == nil || *c.FailedTurn != 0) || c.SlackReauthorization == nil || *c.SlackReauthorization != 1 || len(secondView.Items) != 2 ||
 		secondView.Items[0].ID != secondHold.String() || secondView.Items[1].ID != secondConnection.String() {
 		t.Fatalf("second Environment: %+v", secondView)
 	}
-	if c := read(ownerToken).Counts; c.Question != 1 || c.Hold != 1 || c.FailedTurn != 1 || *c.SlackReauthorization != 1 {
+	if c := read(ownerToken).Counts; (c.Question == nil || *c.Question != 1) || (c.Hold == nil || *c.Hold != 1) || (c.FailedTurn == nil || *c.FailedTurn != 1) || *c.SlackReauthorization != 1 {
 		t.Fatalf("first Environment counts changed: %+v", c)
 	}
 	// Another organization whose Project and Environment share the same IDs sees
 	// none of it.
 	otherOrg, otherOwner := h.organizationOwner(t, "elsewhere-same-ids")
+	otherEnv := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($2,$1,'test','project','Project');
- INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($3,$1,$2,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, otherOrg, uuid.NewV7(), uuid.NewV7())
-	if view := other(otherOwner, path); len(view.Items) != 0 || view.Counts.Question != 0 || view.Counts.Hold != 0 || view.Counts.FailedTurn != 0 || view.Counts.SlackReauthorization == nil || *view.Counts.SlackReauthorization != 0 {
+ INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($3,$1,$2,'test','Test','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, otherOrg, uuid.NewV7(), otherEnv)
+	var otherUser uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id=$1`, otherOrg).Scan(&otherUser); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.GrantMember(t, f.Pool, otherOrg, otherUser, &otherEnv, "sessions.view", "agents.manage")
+	if view := other(otherOwner, path); len(view.Items) != 0 || (view.Counts.Question == nil || *view.Counts.Question != 0) || (view.Counts.Hold == nil || *view.Counts.Hold != 0) || (view.Counts.FailedTurn == nil || *view.Counts.FailedTurn != 0) || view.Counts.SlackReauthorization == nil || *view.Counts.SlackReauthorization != 0 {
 		t.Fatalf("other organization: %+v", view)
 	}
 
 	// Members who do not manage Slack read every other kind; the Slack kind and
 	// its count are absent rather than zero.
-	for _, role := range []string{"developer", "viewer"} {
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role=$2 WHERE user_id=$1`, f.User, role)
+	for _, role := range []string{"member"} {
+		f.SetPermissions(t, "agents.use", "sessions.view", "sessions.manage", "keys.manage")
 		w := h.request(t, http.MethodGet, path, h.session(t, f.User, org), "")
 		if w.Code != http.StatusOK || bytes.Contains(w.Body.Bytes(), []byte("slack_reauthorization")) {
 			t.Fatalf("%s: %d %s", role, w.Code, w.Body.String())
@@ -218,9 +225,10 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 
 	// An owner whose management authority is withdrawn after sign-in no longer
 	// sees the Slack kind.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE user_id=$1`, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User)
+	f.SetPermissions(t, "agents.manage", "sessions.view", "sessions.manage", "keys.manage")
 	stillOwner := h.session(t, f.User, org)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='developer' WHERE user_id=$1`, f.User)
+	f.SetPermissions(t, "agents.use", "sessions.view", "sessions.manage", "keys.manage")
 	if w := h.request(t, http.MethodGet, path, stillOwner, ""); w.Code != http.StatusOK || bytes.Contains(w.Body.Bytes(), []byte("slack_reauthorization")) {
 		t.Fatalf("withdrawn owner: %d %s", w.Code, w.Body.String())
 	}
@@ -229,7 +237,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	if _, err := session.AnswerAsk(t.Context(), f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: question, AnswerID: "answer", Answer: json.RawMessage(`"ship"`)}); err != nil {
 		t.Fatal(err)
 	}
-	if after := read(h.session(t, f.User, org)); after.Counts.Question != 0 || len(after.Items) != 2 {
+	if after := read(h.session(t, f.User, org)); (after.Counts.Question == nil || *after.Counts.Question != 0) || len(after.Items) != 2 {
 		t.Fatalf("answered Question still waiting: %+v", after)
 	}
 
@@ -239,13 +247,13 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 		t.Fatalf("outsider read attention: %s", w.Body.String())
 	}
 	member := h.session(t, f.User, org)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
 	if w := h.request(t, http.MethodGet, path, member, ""); w.Code == http.StatusOK {
 		t.Fatalf("disabled member read attention: %s", w.Body.String())
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET disabled_at=NULL,role='owner' WHERE user_id=$1`, f.User)
-	issuer := auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
-	key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "attention read", Permissions: []auth.Permission{auth.PermissionSessionsRead}})
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=NULL,is_owner=true WHERE user_id=$1`, f.User)
+	issuer := f.Principal(t)
+	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, testAPIKeyInput{Name: "attention read", RolePermissions: []auth.Permission{auth.CapabilitySessionsView}})
 	if err != nil {
 		t.Fatal(err)
 	}

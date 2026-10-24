@@ -51,7 +51,7 @@ on fresh initialization.
 
 ### Demo environment fixtures
 
-Production and Staging are empty by default (CLI onboarding on Overview). A third **Demo**
+Production and Staging include non-executable Agent registrations and permission examples. The custom **Agent and secrets operator** Role targets internal-faq in Production and invoice-checker in Staging for the Release team, with environment-wide Secrets permissions in each. Use Settings → Groups → Release team to inspect or edit the independent targets. All members starts without assignments; an Agent’s Access dialog supports explicit share/unshare. A third **Demo**
 environment contains a synthetic Agent definition, an unpromoted Deployment, a Computer with
 failed preparation, and a closed Session with one failed Turn. Select **Demo** under
 Settings → Environments to browse its retained input and events.

@@ -7,7 +7,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/db"
 )
 
 func TestOrganizationCreationAdminOnly(t *testing.T) {
@@ -15,15 +14,14 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 		name      string
 		adminOnly bool
 		admin     bool
-		role      db.OrgMemberRole
+		role      string
 		want      int
 	}{
 		{name: "ordinary signup", want: http.StatusCreated},
 		{name: "unaffiliated user", adminOnly: true, want: http.StatusForbidden},
-		{name: "organization owner", adminOnly: true, role: db.OrgMemberRoleOwner, want: http.StatusForbidden},
-		{name: "organization admin", adminOnly: true, role: db.OrgMemberRoleAdmin, want: http.StatusForbidden},
-		{name: "developer", adminOnly: true, role: db.OrgMemberRoleDeveloper, want: http.StatusForbidden},
-		{name: "viewer", adminOnly: true, role: db.OrgMemberRoleViewer, want: http.StatusForbidden},
+		{name: "organization owner", adminOnly: true, role: "owner", want: http.StatusForbidden},
+		{name: "organization access administrator", adminOnly: true, role: "admin", want: http.StatusForbidden},
+		{name: "ordinary member", adminOnly: true, role: "member", want: http.StatusForbidden},
 		{name: "installation admin", adminOnly: true, admin: true, want: http.StatusCreated},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -56,7 +54,7 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 				if w := fixture.request(t, http.MethodGet, "/api/members", token, ""); w.Code != http.StatusForbidden {
 					t.Fatalf("unaffiliated member access: %d %s", w.Code, w.Body.String())
 				}
-			} else if account.OrgID != orgID.String() || account.Role != string(tc.role) || account.AccessRequired || account.OrganizationRequired {
+			} else if account.OrgID != orgID.String() || account.IsOwner != (tc.role == "owner") || account.MembershipID == "" || account.AccessRequired || account.OrganizationRequired {
 				t.Fatalf("existing member: %+v", account)
 			}
 
@@ -78,9 +76,9 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 			if count != 2 || json.Unmarshal(w.Body.Bytes(), &organization) != nil {
 				t.Fatalf("created organization: count=%d body=%s", count, w.Body.String())
 			}
-			var role string
-			if err := fixture.pool.QueryRow(t.Context(), "SELECT role FROM org_members WHERE org_id = $1 AND user_id = $2", organization.ID, user).Scan(&role); err != nil || role != "owner" {
-				t.Fatalf("created owner: role=%s error=%v", role, err)
+			var isOwner bool
+			if err := fixture.pool.QueryRow(t.Context(), "SELECT is_owner FROM org_members WHERE org_id = $1 AND user_id = $2", organization.ID, user).Scan(&isOwner); err != nil || !isOwner {
+				t.Fatalf("created owner: is_owner=%t error=%v", isOwner, err)
 			}
 		})
 	}

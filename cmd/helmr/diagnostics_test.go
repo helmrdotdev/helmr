@@ -121,7 +121,7 @@ func diagnosticFixture(t *testing.T, attention api.AttentionCounts, role string,
 			}
 			_, _ = w.Write([]byte(`{"status":"ready"}`))
 		case "/api/me":
-			_ = json.NewEncoder(w).Encode(api.MeResponse{UserID: "user", Role: role})
+			_ = json.NewEncoder(w).Encode(api.MeResponse{UserID: "user", IsOwner: role == "owner"})
 		case "/api/projects/project":
 			_ = json.NewEncoder(w).Encode(api.ProjectSummary{Project: "project", Environments: []api.EnvironmentSummary{{Environment: "environment", Project: "project"}}})
 		case "/api/projects/project/environments/environment/deployments/current", "/v1/deployments/current":
@@ -168,14 +168,14 @@ func TestDiagnosticEmptyEnvironmentIsHealthy(t *testing.T) {
 
 func TestDiagnosticStatusReportsProblemButDoctorFails(t *testing.T) {
 	clearDiagnosticEnvironment(t)
-	server := diagnosticFixture(t, api.AttentionCounts{Hold: 1, FailedTurn: 2}, "member", nil)
+	server := diagnosticFixture(t, api.AttentionCounts{Hold: new(int64(1)), FailedTurn: new(int64(2))}, "member", nil)
 	useDiagnosticLogin(t, server)
 	for _, command := range []string{"status", "doctor"} {
 		report, _, err := runDiagnosticTest(t, command, "--project", "project", "--env", "environment")
 		if (err != nil) != (command == "doctor") {
 			t.Fatalf("%s err=%v", command, err)
 		}
-		if report.Live.Attention.Hold != 1 || report.Live.Attention.FailedTurn != 2 {
+		if (report.Live.Attention.Hold == nil || *report.Live.Attention.Hold != 1) || (report.Live.Attention.FailedTurn == nil || *report.Live.Attention.FailedTurn != 2) {
 			t.Fatalf("attention=%+v", report.Live.Attention)
 		}
 	}
@@ -221,7 +221,7 @@ func TestDiagnosticReadFailureNeverEchoesResponseBody(t *testing.T) {
 
 func TestDiagnosticJSONAndHumanExitParity(t *testing.T) {
 	clearDiagnosticEnvironment(t)
-	server := diagnosticFixture(t, api.AttentionCounts{Hold: 1}, "member", nil)
+	server := diagnosticFixture(t, api.AttentionCounts{Hold: new(int64(1))}, "member", nil)
 	useDiagnosticLogin(t, server)
 	for _, command := range []string{"status", "doctor"} {
 		_, _, jsonErr := runDiagnosticTest(t, command, "--project", "project", "--env", "environment")

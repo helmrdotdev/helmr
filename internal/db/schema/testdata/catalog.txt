@@ -21,7 +21,7 @@ column agents.environment_id uuid not null
 column agents.id uuid not null
 column agents.key text not null
 column api_keys.created_at timestamp with time zone not null default now()
-column api_keys.created_by_user_id uuid
+column api_keys.created_by_member_id uuid
 column api_keys.environment_id uuid not null
 column api_keys.expires_at timestamp with time zone
 column api_keys.id uuid not null
@@ -29,10 +29,8 @@ column api_keys.key_prefix text not null
 column api_keys.last_used_at timestamp with time zone
 column api_keys.name text not null
 column api_keys.org_id uuid not null
-column api_keys.permissions text[] not null
 column api_keys.project_id uuid not null
 column api_keys.revoked_at timestamp with time zone
-column api_keys.role org_member_role not null
 column api_keys.token_hash bytea not null
 column audit_events.action text not null
 column audit_events.actor_credential_id uuid
@@ -325,7 +323,7 @@ column deployments.id uuid not null
 column device_codes.consumed_at timestamp with time zone
 column device_codes.created_at timestamp with time zone not null default now()
 column device_codes.decided_at timestamp with time zone
-column device_codes.decided_by_user_id uuid
+column device_codes.decided_by_member_id uuid
 column device_codes.device_code_hash bytea not null
 column device_codes.expires_at timestamp with time zone not null
 column device_codes.id uuid not null
@@ -535,16 +533,15 @@ column images.published_at timestamp with time zone not null default clock_times
 column images.root_id uuid
 column images.seq bigint not null
 column invitations.accepted_at timestamp with time zone
-column invitations.accepted_by_user_id uuid
+column invitations.accepted_by_member_id uuid
 column invitations.created_at timestamp with time zone not null default now()
 column invitations.expires_at timestamp with time zone not null
 column invitations.id uuid not null
-column invitations.invited_by_user_id uuid
+column invitations.invited_by_member_id uuid
 column invitations.invitee_email text not null
 column invitations.org_id uuid not null
 column invitations.revoked_at timestamp with time zone
-column invitations.revoked_by_user_id uuid
-column invitations.role org_member_role not null
+column invitations.revoked_by_member_id uuid
 column invitations.token_hash bytea not null
 column login_sessions.created_at timestamp with time zone not null default now()
 column login_sessions.expires_at timestamp with time zone not null
@@ -569,10 +566,11 @@ column magic_links.revoked_at timestamp with time zone
 column magic_links.sent_at timestamp with time zone
 column magic_links.token_hash bytea not null
 column org_members.created_at timestamp with time zone not null default now()
-column org_members.disabled_at timestamp with time zone
 column org_members.display_name text
+column org_members.id uuid not null
+column org_members.is_owner boolean not null default false
 column org_members.org_id uuid not null
-column org_members.role org_member_role not null
+column org_members.removed_at timestamp with time zone
 column org_members.updated_at timestamp with time zone not null default now()
 column org_members.user_id uuid not null
 column organizations.created_at timestamp with time zone not null default now()
@@ -580,6 +578,14 @@ column organizations.id uuid not null
 column organizations.name text not null
 column organizations.slug text not null
 column organizations.updated_at timestamp with time zone not null default now()
+column permission_group_members.group_id uuid not null
+column permission_group_members.member_id uuid not null
+column permission_group_members.org_id uuid not null
+column permission_groups.id uuid not null
+column permission_groups.name text not null
+column permission_groups.org_id uuid not null
+column permission_groups.revision bigint not null default 1
+column permission_groups.updated_at timestamp with time zone not null default now()
 column projects.created_at timestamp with time zone not null default now()
 column projects.default_region_id text not null
 column projects.history_retention_seconds bigint default 2592000
@@ -594,6 +600,29 @@ column regions.display_name text not null
 column regions.id text not null
 column regions.location text not null default ''::text
 column regions.updated_at timestamp with time zone not null default now()
+column role_grant_agents.agent_id uuid not null
+column role_grant_agents.environment_id uuid not null
+column role_grant_agents.grant_id uuid not null
+column role_grants.all_agents boolean not null default false
+column role_grants.all_members boolean not null default false
+column role_grants.api_key_id uuid
+column role_grants.created_at timestamp with time zone not null default now()
+column role_grants.created_by uuid
+column role_grants.environment_id uuid
+column role_grants.group_id uuid
+column role_grants.id uuid not null
+column role_grants.member_id uuid
+column role_grants.org_id uuid not null
+column role_grants.revision bigint not null default 1
+column role_grants.role_id uuid not null
+column roles.builtin_key text
+column roles.description text not null default ''::text
+column roles.id uuid not null
+column roles.name text not null
+column roles.org_id uuid not null
+column roles.permissions text[] not null
+column roles.revision bigint not null default 1
+column roles.updated_at timestamp with time zone not null default now()
 column secret_bindings.allowed_origins text[] not null default '{}'::text[]
 column secret_bindings.computer_id uuid
 column secret_bindings.deployment_id uuid
@@ -721,7 +750,11 @@ column sessions.idle_since timestamp with time zone
 column sessions.key text
 column sessions.next_event_seq bigint not null default 1
 column sessions.next_turn_seq bigint not null default 1
+column sessions.origin_activation_id uuid
+column sessions.origin_api_key_id uuid
+column sessions.origin_slack_connection_id uuid
 column sessions.origin_turn_id uuid
+column sessions.origin_user_id uuid
 column sessions.parent_session_id uuid
 column sessions.requester_session_id uuid
 column sessions.root_session_id uuid not null
@@ -1169,12 +1202,12 @@ constraint agents p PRIMARY KEY (environment_id, id)
 constraint agents u UNIQUE (environment_id, key)
 constraint api_keys c CHECK (btrim(key_prefix) <> ''::text)
 constraint api_keys c CHECK (btrim(name) <> ''::text)
-constraint api_keys c CHECK (cardinality(permissions) > 0)
 constraint api_keys f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
-constraint api_keys f FOREIGN KEY (org_id, created_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (created_by_user_id)
+constraint api_keys f FOREIGN KEY (org_id, created_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (created_by_member_id)
 constraint api_keys f FOREIGN KEY (org_id, project_id) REFERENCES projects(org_id, id) ON DELETE CASCADE
 constraint api_keys f FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE CASCADE
 constraint api_keys p PRIMARY KEY (id)
+constraint api_keys u UNIQUE (environment_id, id)
 constraint api_keys u UNIQUE (token_hash)
 constraint audit_events c CHECK (action <> ''::text)
 constraint audit_events c CHECK (actor_kind = 'login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'api_key'::text AND actor_user_id IS NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'verified_login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NULL AND actor_source <> ''::text OR actor_kind = 'capacity'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source = ''::text OR actor_kind = 'system'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source <> ''::text)
@@ -1282,7 +1315,7 @@ constraint commands c CHECK ((terminal_at IS NULL) = (terminal_reason_code IS NU
 constraint commands c CHECK (NOT output_fenced OR terminal_at IS NOT NULL)
 constraint commands c CHECK (NOT stderr_end_complete OR stderr_ended)
 constraint commands c CHECK (NOT stdout_end_complete OR stdout_ended)
-constraint commands c CHECK (caller_kind = ANY (ARRAY['api_key'::text, 'session'::text]))
+constraint commands c CHECK (caller_kind = ANY (ARRAY['api_key'::text, 'user'::text]))
 constraint commands c CHECK (cardinality(argv) > 0 AND array_position(argv, NULL::text) IS NULL)
 constraint commands c CHECK (computer_lease_epoch > 0)
 constraint commands c CHECK (failure_reason = ANY (ARRAY['guest_failure'::text, 'dispatch_failed'::text, 'scope_termination_failed'::text]))
@@ -1413,7 +1446,7 @@ constraint deployments u UNIQUE (environment_id, bundle_digest)
 constraint device_codes c CHECK (poll_interval_seconds > 0)
 constraint device_codes c CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'consumed'::text]))
 constraint device_codes f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
-constraint device_codes f FOREIGN KEY (org_id, decided_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (decided_by_user_id)
+constraint device_codes f FOREIGN KEY (org_id, decided_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (decided_by_member_id)
 constraint device_codes p PRIMARY KEY (id)
 constraint device_codes u UNIQUE (device_code_hash)
 constraint device_codes u UNIQUE (user_code_hash)
@@ -1495,6 +1528,7 @@ constraint environments c CHECK (preparation_timeout_ms > 0)
 constraint environments f FOREIGN KEY (id, current_deployment_id) REFERENCES deployments(environment_id, id)
 constraint environments f FOREIGN KEY (org_id, project_id) REFERENCES projects(org_id, id) ON DELETE CASCADE
 constraint environments p PRIMARY KEY (id)
+constraint environments u UNIQUE (org_id, id)
 constraint environments u UNIQUE (org_id, project_id, id)
 constraint environments u UNIQUE (org_id, project_id, slug)
 constraint idempotency_receipts c CHECK (((operation = ANY (ARRAY['deployment.finalize'::text, 'template.refresh'::text])) AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key) = 0 OR operation = 'secret.create'::text AND scope_secret_name IS NOT NULL AND octet_length(scope_secret_name) > 0 AND num_nonnulls(scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key) = 0 OR (operation = ANY (ARRAY['secret.rotate'::text, 'secret.revoke'::text])) AND scope_secret_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key) = 0 OR operation = 'computer.create'::text AND scope_caller_kind = 'external'::text AND scope_computer_key IS NOT NULL AND octet_length(scope_computer_key) > 0 AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id) = 0 OR (operation = ANY (ARRAY['computer.delete'::text, 'computer.exec'::text])) AND scope_computer_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_command_id, scope_caller_kind, scope_computer_key) = 0 OR operation = 'command.cancel'::text AND scope_command_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_caller_kind, scope_computer_key) = 0) IS TRUE)
@@ -1586,9 +1620,9 @@ constraint images u UNIQUE (environment_id, image_build_id)
 constraint images u UNIQUE (environment_id, image_spec_id, id)
 constraint images u UNIQUE (environment_id, image_spec_id, seq)
 constraint invitations f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
-constraint invitations f FOREIGN KEY (org_id, accepted_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (accepted_by_user_id) DEFERRABLE INITIALLY DEFERRED
-constraint invitations f FOREIGN KEY (org_id, invited_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (invited_by_user_id)
-constraint invitations f FOREIGN KEY (org_id, revoked_by_user_id) REFERENCES org_members(org_id, user_id) ON DELETE SET NULL (revoked_by_user_id)
+constraint invitations f FOREIGN KEY (org_id, accepted_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (accepted_by_member_id) DEFERRABLE INITIALLY DEFERRED
+constraint invitations f FOREIGN KEY (org_id, invited_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (invited_by_member_id)
+constraint invitations f FOREIGN KEY (org_id, revoked_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (revoked_by_member_id)
 constraint invitations p PRIMARY KEY (id)
 constraint invitations u UNIQUE (token_hash)
 constraint login_sessions f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE SET NULL
@@ -1600,13 +1634,23 @@ constraint magic_links f FOREIGN KEY (invitation_id) REFERENCES invitations(id) 
 constraint magic_links f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint magic_links p PRIMARY KEY (id)
 constraint magic_links u UNIQUE (token_hash)
+constraint org_members c CHECK (NOT is_owner OR removed_at IS NULL)
 constraint org_members f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint org_members f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-constraint org_members p PRIMARY KEY (org_id, user_id)
+constraint org_members p PRIMARY KEY (id)
+constraint org_members u UNIQUE (org_id, id)
 constraint organizations c CHECK (btrim(name) <> ''::text)
 constraint organizations c CHECK (btrim(slug) <> ''::text)
 constraint organizations p PRIMARY KEY (id)
 constraint organizations u UNIQUE (slug)
+constraint permission_group_members f FOREIGN KEY (org_id, group_id) REFERENCES permission_groups(org_id, id) ON DELETE CASCADE
+constraint permission_group_members f FOREIGN KEY (org_id, member_id) REFERENCES org_members(org_id, id) ON DELETE CASCADE
+constraint permission_group_members p PRIMARY KEY (org_id, group_id, member_id)
+constraint permission_groups c CHECK (name = btrim(name) AND name <> ''::text)
+constraint permission_groups c CHECK (revision > 0)
+constraint permission_groups f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+constraint permission_groups p PRIMARY KEY (id)
+constraint permission_groups u UNIQUE (org_id, id)
 constraint projects c CHECK (btrim(name) <> ''::text)
 constraint projects c CHECK (btrim(slug) <> ''::text)
 constraint projects c CHECK (history_retention_seconds > 0)
@@ -1618,6 +1662,32 @@ constraint projects u UNIQUE (org_id, slug)
 constraint regions c CHECK (btrim(display_name) <> ''::text)
 constraint regions c CHECK (id = btrim(id) AND octet_length(id) >= 1 AND octet_length(id) <= 255 AND id !~ '[[:cntrl:]]'::text AND id !~ '(^[[:space:]])|([[:space:]]$)'::text)
 constraint regions p PRIMARY KEY (id)
+constraint role_grant_agents f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id) ON DELETE RESTRICT
+constraint role_grant_agents f FOREIGN KEY (grant_id, environment_id) REFERENCES role_grants(id, environment_id) ON DELETE CASCADE
+constraint role_grant_agents p PRIMARY KEY (grant_id, agent_id)
+constraint role_grants c CHECK ((num_nonnulls(member_id, group_id, api_key_id) + all_members::integer) = 1)
+constraint role_grants c CHECK (NOT all_agents OR environment_id IS NOT NULL)
+constraint role_grants c CHECK (NOT all_members OR environment_id IS NOT NULL AND NOT all_agents)
+constraint role_grants c CHECK (api_key_id IS NULL OR environment_id IS NOT NULL)
+constraint role_grants c CHECK (revision > 0)
+constraint role_grants f FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+constraint role_grants f FOREIGN KEY (environment_id, api_key_id) REFERENCES api_keys(environment_id, id) ON DELETE RESTRICT
+constraint role_grants f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+constraint role_grants f FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id) ON DELETE CASCADE
+constraint role_grants f FOREIGN KEY (org_id, group_id) REFERENCES permission_groups(org_id, id) ON DELETE CASCADE
+constraint role_grants f FOREIGN KEY (org_id, member_id) REFERENCES org_members(org_id, id) ON DELETE CASCADE
+constraint role_grants f FOREIGN KEY (org_id, role_id) REFERENCES roles(org_id, id) ON DELETE RESTRICT
+constraint role_grants p PRIMARY KEY (id)
+constraint role_grants u UNIQUE (id, environment_id)
+constraint role_grants u UNIQUE NULLS NOT DISTINCT (org_id, role_id, environment_id, member_id, group_id, api_key_id, all_members)
+constraint roles c CHECK (builtin_key IS NULL OR builtin_key <> ''::text)
+constraint roles c CHECK (cardinality(permissions) > 0 AND array_ndims(permissions) = 1 AND array_position(permissions, NULL::text) IS NULL)
+constraint roles c CHECK (name = btrim(name) AND name <> ''::text)
+constraint roles c CHECK (revision > 0)
+constraint roles f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+constraint roles p PRIMARY KEY (id)
+constraint roles u UNIQUE (org_id, builtin_key)
+constraint roles u UNIQUE (org_id, id)
 constraint secret_bindings c CHECK ((deployment_id IS NULL) = (template_id IS NULL))
 constraint secret_bindings c CHECK (mode = 'protected'::text AND placeholder IS NOT NULL AND placeholder ~ '^hlmr_protected_[0-9a-f]{64}$'::text OR mode = 'raw'::text AND placeholder IS NULL)
 constraint secret_bindings c CHECK (mode = 'protected'::text AND placement_kind = 'env'::text AND cardinality(allowed_origins) >= 1 AND cardinality(allowed_origins) <= 16 OR mode = 'raw'::text AND cardinality(allowed_origins) = 0)
@@ -1730,21 +1800,27 @@ constraint sessions c CHECK (history_expired_at IS NULL OR history_eligible_at I
 constraint sessions c CHECK (next_event_seq > 0)
 constraint sessions c CHECK (next_turn_seq > 0)
 constraint sessions c CHECK (num_nonnulls(creation_caller_kind, creation_caller_id, creation_method, creation_digest) = ANY (ARRAY[0, 4]))
+constraint sessions c CHECK (num_nonnulls(origin_user_id, origin_api_key_id, origin_activation_id) = 1)
 constraint sessions c CHECK (octet_length(creation_digest) = 32)
 constraint sessions c CHECK (octet_length(creation_idempotency_key) >= 1 AND octet_length(creation_idempotency_key) <= 512)
 constraint sessions c CHECK (octet_length(key) >= 1 AND octet_length(key) <= 512)
+constraint sessions c CHECK (origin_slack_connection_id IS NULL OR origin_user_id IS NOT NULL)
 constraint sessions c CHECK (origin_turn_id IS NULL OR requester_session_id IS NOT NULL)
 constraint sessions c CHECK (parent_session_id IS NULL AND root_session_id = id OR parent_session_id IS NOT NULL AND root_session_id = parent_session_id AND root_session_id <> id AND requester_session_id IS NOT NULL AND requester_session_id = parent_session_id)
 constraint sessions c CHECK (requester_session_id IS NULL AND causal_depth = 0 OR requester_session_id IS NOT NULL AND causal_depth > 0)
 constraint sessions c CHECK (status = ANY (ARRAY['open'::text, 'closing'::text, 'closed'::text, 'cancelled'::text]))
 constraint sessions c CHECK (suspension_after_seq >= 0)
 constraint sessions f FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
+constraint sessions f FOREIGN KEY (environment_id, agent_id, origin_slack_connection_id) REFERENCES slack_connections(environment_id, agent_id, id)
 constraint sessions f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
 constraint sessions f FOREIGN KEY (environment_id, id, creation_turn_id) REFERENCES turns(environment_id, session_id, id) DEFERRABLE INITIALLY DEFERRED
+constraint sessions f FOREIGN KEY (environment_id, origin_activation_id) REFERENCES trigger_activations(environment_id, id)
+constraint sessions f FOREIGN KEY (environment_id, origin_api_key_id) REFERENCES api_keys(environment_id, id)
 constraint sessions f FOREIGN KEY (environment_id, parent_session_id, root_session_id) REFERENCES sessions(environment_id, id, root_session_id)
 constraint sessions f FOREIGN KEY (environment_id, requester_session_id) REFERENCES sessions(environment_id, id)
 constraint sessions f FOREIGN KEY (environment_id, requester_session_id, origin_turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint sessions f FOREIGN KEY (environment_id, root_session_id) REFERENCES sessions(environment_id, id)
+constraint sessions f FOREIGN KEY (origin_user_id) REFERENCES users(id)
 constraint sessions p PRIMARY KEY (environment_id, id)
 constraint sessions u UNIQUE (environment_id, agent_id, key)
 constraint sessions u UNIQUE (environment_id, creation_caller_kind, creation_caller_id, creation_method, agent_id, creation_idempotency_key)
@@ -1775,8 +1851,10 @@ constraint slack_connections f FOREIGN KEY (environment_id, agent_id) REFERENCES
 constraint slack_connections f FOREIGN KEY (slack_app_registration_id) REFERENCES slack_app_registrations(id)
 constraint slack_connections f FOREIGN KEY (slack_installation_id, slack_app_registration_id) REFERENCES slack_installations(id, app_registration_id)
 constraint slack_connections p PRIMARY KEY (environment_id, id)
+constraint slack_connections u UNIQUE (environment_id, agent_id, id)
 constraint slack_connections u UNIQUE (id)
 constraint slack_connections u UNIQUE (id, environment_id, slack_installation_id)
+constraint slack_connections u UNIQUE (slack_app_registration_id)
 constraint slack_delivery_limits f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
 constraint slack_delivery_limits p PRIMARY KEY (installation_id, channel_id)
 constraint slack_installations c CHECK ((credential_ciphertext IS NULL) = (credential_nonce IS NULL))
@@ -2121,7 +2199,6 @@ constraint worker_scale_in_operations f FOREIGN KEY (worker_group_id, worker_poo
 constraint worker_scale_in_operations f FOREIGN KEY (worker_host_id, worker_group_id) REFERENCES worker_hosts(id, worker_group_id) ON DELETE RESTRICT
 constraint worker_scale_in_operations p PRIMARY KEY (worker_group_id, operation_key)
 enum magic_link_purpose (login,invite_accept)
-enum org_member_role (owner,admin,developer,viewer)
 index CREATE INDEX agent_definitions_deployment ON public.agent_definitions USING btree (environment_id, deployment_id, agent_id)
 index CREATE INDEX api_keys_org_active_idx ON public.api_keys USING btree (org_id, created_at DESC) WHERE (revoked_at IS NULL)
 index CREATE INDEX api_keys_scope_created_idx ON public.api_keys USING btree (org_id, project_id, environment_id, created_at DESC, id DESC)
@@ -2163,7 +2240,12 @@ index CREATE INDEX login_sessions_user_active_idx ON public.login_sessions USING
 index CREATE INDEX magic_links_active_token_idx ON public.magic_links USING btree (token_hash) WHERE ((sent_at IS NOT NULL) AND (consumed_at IS NULL) AND (revoked_at IS NULL))
 index CREATE INDEX magic_links_email_purpose_recent_idx ON public.magic_links USING btree (email, purpose, created_at DESC) WHERE (delivery_failed_at IS NULL)
 index CREATE INDEX magic_links_invitation_active_idx ON public.magic_links USING btree (invitation_id, created_at DESC) WHERE ((invitation_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (consumed_at IS NULL) AND (revoked_at IS NULL))
-index CREATE INDEX org_members_user_active ON public.org_members USING btree (user_id, org_id) WHERE (disabled_at IS NULL)
+index CREATE INDEX org_members_user_active ON public.org_members USING btree (user_id, org_id) WHERE (removed_at IS NULL)
+index CREATE INDEX permission_group_members_member ON public.permission_group_members USING btree (org_id, member_id, group_id)
+index CREATE INDEX role_grants_api_key ON public.role_grants USING btree (org_id, api_key_id) WHERE (api_key_id IS NOT NULL)
+index CREATE INDEX role_grants_environment ON public.role_grants USING btree (org_id, environment_id)
+index CREATE INDEX role_grants_group ON public.role_grants USING btree (org_id, group_id) WHERE (group_id IS NOT NULL)
+index CREATE INDEX role_grants_member ON public.role_grants USING btree (org_id, member_id) WHERE (member_id IS NOT NULL)
 index CREATE INDEX secret_bindings_secret ON public.secret_bindings USING btree (environment_id, secret_id)
 index CREATE INDEX secret_exposures_secret ON public.secret_exposures USING btree (environment_id, secret_id)
 index CREATE INDEX session_events_expired_floor ON public.session_events USING btree (environment_id, session_id, seq) WHERE (payload_expired_at IS NOT NULL)
@@ -2173,6 +2255,8 @@ index CREATE INDEX session_processes_stop_due ON public.session_processes USING 
 index CREATE INDEX sessions_children ON public.sessions USING btree (environment_id, parent_session_id) WHERE (parent_session_id IS NOT NULL)
 index CREATE INDEX sessions_closing ON public.sessions USING btree (environment_id, id) WHERE (status = 'closing'::text)
 index CREATE INDEX sessions_idle_policy ON public.sessions USING btree (environment_id, id) WHERE ((status = 'open'::text) AND (close_after_idle_ms IS NOT NULL))
+index CREATE INDEX sessions_key_origin ON public.sessions USING btree (environment_id, origin_api_key_id, id) WHERE (origin_api_key_id IS NOT NULL)
+index CREATE INDEX sessions_user_origin ON public.sessions USING btree (environment_id, origin_user_id, id) WHERE ((origin_user_id IS NOT NULL) AND (origin_slack_connection_id IS NULL))
 index CREATE INDEX slack_channel_bindings_environment ON public.slack_channel_bindings USING btree (environment_id, id)
 index CREATE INDEX slack_posts_claims ON public.slack_posts USING btree (claimed_until, id) WHERE (status = 'sending'::text)
 index CREATE INDEX slack_posts_due ON public.slack_posts USING btree (next_attempt_at, id) WHERE (status = 'pending'::text)
@@ -2209,7 +2293,10 @@ index CREATE UNIQUE INDEX environments_one_default ON public.environments USING 
 index CREATE UNIQUE INDEX idempotency_receipts_command_creation ON public.idempotency_receipts USING btree (environment_id, command_id) WHERE (operation = 'computer.exec'::text)
 index CREATE UNIQUE INDEX image_builds_exclusive ON public.image_builds USING btree (environment_id, image_spec_id) WHERE ((status = ANY (ARRAY['queued'::text, 'running'::text])) OR ((worker_host_id IS NOT NULL) AND (fenced_at IS NULL)))
 index CREATE UNIQUE INDEX invitations_pending_invitee_idx ON public.invitations USING btree (org_id, invitee_email) WHERE ((accepted_at IS NULL) AND (revoked_at IS NULL))
+index CREATE UNIQUE INDEX org_members_active ON public.org_members USING btree (org_id, user_id) WHERE (removed_at IS NULL)
+index CREATE UNIQUE INDEX permission_groups_name ON public.permission_groups USING btree (org_id, lower(name))
 index CREATE UNIQUE INDEX projects_one_default ON public.projects USING btree (org_id) WHERE is_default
+index CREATE UNIQUE INDEX roles_name ON public.roles USING btree (org_id, lower(name))
 index CREATE UNIQUE INDEX secret_exposures_command ON public.secret_exposures USING btree (environment_id, command_id, secret_id) WHERE (command_id IS NOT NULL)
 index CREATE UNIQUE INDEX secret_exposures_image_build ON public.secret_exposures USING btree (environment_id, image_build_id, secret_id) WHERE (image_build_id IS NOT NULL)
 index CREATE UNIQUE INDEX secret_exposures_process ON public.secret_exposures USING btree (environment_id, session_id, process_epoch, secret_id) WHERE (session_id IS NOT NULL)

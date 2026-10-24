@@ -10,12 +10,13 @@ import (
 var environmentColorHexPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 
 type ProjectSummary struct {
+	ID              string               `json:"id"`
 	Project         string               `json:"project"`
 	Name            string               `json:"name"`
-	DefaultRegionID string               `json:"default_region_id"`
-	IsDefault       bool                 `json:"is_default"`
-	CreatedAt       time.Time            `json:"created_at"`
-	UpdatedAt       time.Time            `json:"updated_at"`
+	DefaultRegionID string               `json:"default_region_id,omitempty"`
+	IsDefault       bool                 `json:"is_default,omitempty"`
+	CreatedAt       time.Time            `json:"created_at,omitzero"`
+	UpdatedAt       time.Time            `json:"updated_at,omitzero"`
 	Environments    []EnvironmentSummary `json:"environments,omitempty"`
 }
 
@@ -24,13 +25,14 @@ type ProjectSettings struct {
 }
 
 type EnvironmentSummary struct {
+	ID          string    `json:"id"`
 	Environment string    `json:"environment"`
 	Project     string    `json:"project"`
 	Name        string    `json:"name"`
-	ColorHex    string    `json:"color_hex"`
-	IsDefault   bool      `json:"is_default"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ColorHex    string    `json:"color_hex,omitempty"`
+	IsDefault   bool      `json:"is_default,omitempty"`
+	CreatedAt   time.Time `json:"created_at,omitzero"`
+	UpdatedAt   time.Time `json:"updated_at,omitzero"`
 }
 
 type ListProjectsResponse struct {

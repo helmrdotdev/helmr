@@ -7,8 +7,10 @@ export type Me = {
   org_id?: string | null;
   org_name?: string;
   app_origin?: string;
-  role?: string | null;
+  membership_id?: string;
+  is_owner?: boolean;
   permissions: string[];
+  permission_scopes?: {project:string;environment:string;agent?:string;permissions:string[]}[];
   admin: boolean;
   organization_required: boolean;
   project_required: boolean;
@@ -22,8 +24,9 @@ export async function getMe(): Promise<Me> {
   return request<Me>("/api/me", { redirectOnUnauthorized: false });
 }
 
-export function hasPermission(me: Me | undefined, permission: string): boolean {
-  return me?.permissions.includes(permission) ?? false;
+export function hasPermission(me: Me | undefined, permission: string, scope?: {projectID:string;environmentID:string;agent?:string}): boolean {
+ if(me?.permissions.includes(permission)) return true;
+ return !!scope && (me?.permission_scopes??[]).some(g=>g.project===scope.projectID && g.environment===scope.environmentID && (!g.agent || g.agent===scope.agent) && g.permissions.includes(permission));
 }
 
 export type AuthRequirement = "session" | "organization" | "project";

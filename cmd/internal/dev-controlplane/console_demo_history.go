@@ -346,8 +346,8 @@ func (h *demoHistory) write(ctx context.Context, tx pgx.Tx, environment string, 
 		if root == "" {
 			root = s.id
 		}
-		b.Queue(`INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at,close_after_idle_ms,history_eligible_at,history_expired_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		b.Queue(`INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at,close_after_idle_ms,history_eligible_at,history_expired_at,origin_user_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'00000000-0000-7000-8000-000000000101')`,
 			environment, s.id, s.agent, demoSeedDeploymentID, s.computer, root, demoNullable(s.parent), s.depth, s.status, s.generation,
 			s.nextTurn, s.nextEvent, s.createdAt, demoNullableInt(s.closeAfterIdleMS), demoTime(s.eligibleAt), demoTime(s.expiredAt))
 	}

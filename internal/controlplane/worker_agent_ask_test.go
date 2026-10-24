@@ -18,7 +18,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -74,14 +73,14 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 		t.Fatal(err)
 	}
 	hf := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
-	if _, err := f.Pool.Exec(t.Context(), `UPDATE org_members SET role='owner' WHERE user_id=$1`, f.User); err != nil {
+	if _, err := f.Pool.Exec(t.Context(), `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User); err != nil {
 		t.Fatal(err)
 	}
-	issuer := auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
+	issuer := f.Principal(t)
 	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}
 	issue := func(name string, permissions ...auth.Permission) (string, uuid.UUID) {
 		t.Helper()
-		key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: name, Permissions: permissions})
+		key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: name, RolePermissions: permissions})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,9 +90,9 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 		}
 		return key.Raw, id
 	}
-	reader, _ := issue("reader", auth.PermissionSessionsRead)
-	responder, responderID := issue("responder", auth.PermissionAsksAnswer)
-	both, _ := issue("sdk", auth.PermissionSessionsRead, auth.PermissionAsksAnswer)
+	reader, _ := issue("reader", auth.CapabilitySessionsView)
+	responder, responderID := issue("responder", auth.CapabilityAgentsUse, auth.CapabilitySessionsManage)
+	both, _ := issue("sdk", auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage)
 	base := fmt.Sprintf("/v1/sessions/%s/turns/%s/asks", f.Session, admission.TurnID)
 	call := func(method, path, token, body string, want int) map[string]json.RawMessage {
 		t.Helper()
@@ -108,8 +107,8 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 		return value
 	}
 	exact := base + "/" + ids[0].String()
-	call(http.MethodGet, exact, responder, "", http.StatusForbidden)
-	call(http.MethodPost, exact+"/answer", reader, `{"answer":null,"answer_id":"answer"}`, http.StatusForbidden)
+	call(http.MethodGet, exact, responder, "", http.StatusOK)
+	call(http.MethodPost, exact+"/answer", reader, `{"answer":"","answer_id":"answer"}`, http.StatusForbidden)
 	for _, body := range []string{`{"answer_id":"answer"}`, `{"answer":null}`, `{"answer":null,"answer_id":"answer","answered_by_user_id":"fake"}`, `{"answer":null,"answer":false,"answer_id":"answer"}`} {
 		call(http.MethodPost, exact+"/answer", responder, body, http.StatusBadRequest)
 	}
@@ -153,10 +152,8 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 	if result := operation(workerapi.AgentMethodWithdrawAsk, map[string]any{"askId": ids[0]}); result.Error != nil {
 		t.Fatal(result.Error)
 	}
-	// Human Viewer answers use membership, independently of service role rules.
-	if _, err := f.Pool.Exec(t.Context(), `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.User); err != nil {
-		t.Fatal(err)
-	}
+	// A human operator can answer with explicit run permissions.
+	f.SetPermissions(t, "agents.use", "sessions.view", "sessions.manage")
 	login := hf.session(t, f.User, org)
 	humanPath := fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/turns/%s/asks/%s", f.Session, admission.TurnID, ids[1])
 	call(http.MethodGet, humanPath, login, "", http.StatusOK)

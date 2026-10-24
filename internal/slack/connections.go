@@ -28,7 +28,7 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environ
 	}
 	setup := ConnectionSetup{ID: uuid.NewV7(), RegistrationID: uuid.NewV7()}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
+		if err := lockAgentManager(ctx, tx, org, user, environment, agent); err != nil {
 			return err
 		}
 		var id uuid.UUID
@@ -86,14 +86,14 @@ type ConnectionView struct {
 func ConnectionAgent(ctx context.Context, pool db.TxBeginner, org, user, environment uuid.UUID, name string) (uuid.UUID, error) {
 	var agent uuid.UUID
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
-			return err
-		}
 		err := tx.QueryRow(ctx, `SELECT a.id FROM agents a JOIN environments e ON e.id=a.environment_id WHERE a.environment_id=$1 AND a.key=$2 AND e.org_id=$3`, environment, name, org).Scan(&agent)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrConnectionUnavailable
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		return lockAgentManager(ctx, tx, org, user, environment, agent)
 	})
 	return agent, err
 }
@@ -101,7 +101,7 @@ func ConnectionAgent(ctx context.Context, pool db.TxBeginner, org, user, environ
 func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID) (*ConnectionView, error) {
 	var view *ConnectionView
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
+		if err := lockAgentManager(ctx, tx, org, user, environment, agent); err != nil {
 			return err
 		}
 		var value ConnectionView
@@ -145,7 +145,7 @@ func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environme
 // Running work remains available through Console/API and is not cancelled.
 func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.Actor, org, user, environment, connection uuid.UUID) error {
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockInstallationManager(ctx, tx, org, user); err != nil {
+		if err := lockConnectionManager(ctx, tx, org, user, connection); err != nil {
 			return err
 		}
 		var registration uuid.UUID

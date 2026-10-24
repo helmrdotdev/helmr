@@ -2,34 +2,21 @@ import { ApiError, del, postJson, request } from "./api";
 
 type ApiKeyStatus = "active" | "expired" | "revoked";
 
-export type ApiKeyScope =
-  | "asks:answer"
-  | "sessions:read"
-  | "sessions:create"
-  | "sessions:send"
-  | "sessions:interrupt"
-  | "sessions:resume"
-  | "sessions:close"
-  | "sessions:cancel"
-  | "computers:create"
-  | "computers:read"
-  | "computers:delete"
-  | "computers:update"
-  | "computer-exec:create"
-  | "secrets:write"
-  | "deployments:write";
-
-type ApiKeyPermissionGrant = {
-  scopes: ApiKeyScope[];
+export type ApiKeyRoleAssignment = {
+ role_id: string;
+ expected_role_revision: number;
+ agents_mode: "none" | "selected" | "all";
+ agent_ids: string[];
 };
 
 export type ApiKeySummary = {
+  created_by_member_id: string | null;
   id: string;
   name: string;
   key_prefix: string;
   project: string;
   environment: string;
-  permissions?: ApiKeyPermissionGrant[];
+  role_names: string[];
   status: ApiKeyStatus;
   created_at: string;
   last_used_at: string | null;
@@ -46,7 +33,7 @@ type ListResponse = { api_keys: ApiKeySummary[]; next_cursor?: string };
 type IssueInput = {
   name: string;
   expires_in_days: number | null;
-  permissions: ApiKeyPermissionGrant[];
+  role?: ApiKeyRoleAssignment;
 };
 
 export async function listApiKeys(
@@ -77,4 +64,17 @@ export async function revokeApiKey(projectID: string, environmentID: string, id:
 
 function apiKeysPath(projectID: string, environmentID: string): string {
   return `/api/projects/${encodeURIComponent(projectID)}/environments/${encodeURIComponent(environmentID)}/api-keys`;
+}
+
+export function rotateApiKey(project: string, environment: string, id: string): Promise<ApiKeyIssued> {
+ return postJson(`${apiKeysPath(project,environment)}/${encodeURIComponent(id)}/rotate`, {});
+}
+export function updateApiKey(project: string, environment: string, id: string, input: {name:string;expires_at:string|null}): Promise<ApiKeySummary> {
+ return request(`${apiKeysPath(project,environment)}/${encodeURIComponent(id)}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(input)});
+}
+
+export async function listAllApiKeys(project: string, environment: string): Promise<ApiKeySummary[]> {
+ const result: ApiKeySummary[] = []; let cursor: string | undefined;
+ do { const page = await listApiKeys(project, environment, "active", cursor); result.push(...page.api_keys); cursor = page.next_cursor; } while (cursor);
+ return result;
 }

@@ -79,7 +79,7 @@ func authorizeDeploy(principal auth.Principal, scope auth.Scope) error {
 }
 
 func authorizeRead(principal auth.Principal, scope auth.Scope) error {
-	return authorize(principal, scope, auth.PermissionDeploymentsWrite, auth.PermissionSessionsRead)
+	return authorize(principal, scope, auth.PermissionDeploymentMetadataRead)
 }
 
 func scopeIDs(scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {

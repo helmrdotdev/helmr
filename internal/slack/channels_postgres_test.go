@@ -67,6 +67,9 @@ func (admissionCredentials) BotToken(context.Context, uuid.UUID, int64) (string,
 func (f statusFixture) admissionClient(t *testing.T) *WebClient {
 	t.Helper()
 	return NewWebClient(admissionCredentials{}, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == "GET" && r.URL.Path == "/api/conversations.members" {
+			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"ok":true,"members":["human","second-human","peer"]}`))}, nil
+		}
 		if r.Method == "GET" && r.URL.Path == "/api/conversations.history" {
 			raw, _ := json.Marshal(map[string]any{"ok": true, "messages": []any{map[string]any{"ts": r.URL.Query().Get("latest"), "user": "human", "text": "original request"}}})
 			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(raw)))}, nil

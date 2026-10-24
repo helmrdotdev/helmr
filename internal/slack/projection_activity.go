@@ -94,6 +94,13 @@ func projectActivity(ctx context.Context, tx pgx.Tx, o projectionOwner, authoriz
 	grouped := map[uuid.UUID][]activityTask{}
 	omitted := map[uuid.UUID]int{}
 	for _, task := range tasks {
+		allowed, err := directRecipientCanReadSession(ctx, tx, o.thread, task.Session)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			continue
+		}
 		var post uuid.UUID
 		var hidden bool
 		err = tx.QueryRow(ctx, `SELECT post_id,omitted FROM slack_work_items WHERE thread_id=$1 AND turn_id=$2`, o.thread, task.ID).Scan(&post, &hidden)

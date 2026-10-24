@@ -48,7 +48,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 			t.Fatalf("Computer status=%s want=%s error=%v", snapshot.Status, want, err)
 		}
 	}
-	deletion := computer.Deletion{Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete"}
+	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete"}
 	if _, err := computer.Delete(t.Context(), f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("live Session allowed deletion: %v", err)
 	}
@@ -124,14 +124,14 @@ func TestComputerDeletionReleasesUninitializedStorage(t *testing.T) {
 			// Leave the original live Computer in place and make one free slot.
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET max_reserved_storage_bytes=$2 WHERE id=$1`, f.Environment, 2*disk.SeedCapacity)
 			creator := computer.NewCreator(nil)
-			created, err := creator.Create(t.Context(), f.Pool, computer.Request{Scope: scope, DefinitionKey: "fixture-computer", IdempotencyKey: "first"})
+			created, err := creator.Create(t.Context(), f.Pool, computer.Request{Principal: f.Principal(t), Scope: scope, DefinitionKey: "fixture-computer", IdempotencyKey: "first"})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if failed {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET preparation_failed_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.Environment, created.ComputerID)
 			}
-			if _, err := computer.Delete(t.Context(), f.Pool, computer.Deletion{Scope: scope, ComputerID: created.ComputerID, IdempotencyKey: "delete"}); err != nil {
+			if _, err := computer.Delete(t.Context(), f.Pool, computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: created.ComputerID, IdempotencyKey: "delete"}); err != nil {
 				t.Fatal(err)
 			}
 			if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {
@@ -141,7 +141,7 @@ func TestComputerDeletionReleasesUninitializedStorage(t *testing.T) {
 			if err != nil || snapshot.Status != computer.StatusDeleted {
 				t.Fatalf("uninitialized deletion: %+v %v", snapshot, err)
 			}
-			if _, err := creator.Create(t.Context(), f.Pool, computer.Request{Scope: scope, DefinitionKey: "fixture-computer", IdempotencyKey: "second"}); err != nil {
+			if _, err := creator.Create(t.Context(), f.Pool, computer.Request{Principal: f.Principal(t), Scope: scope, DefinitionKey: "fixture-computer", IdempotencyKey: "second"}); err != nil {
 				t.Fatalf("uninitialized Computer kept reservation: %v", err)
 			}
 			var originalRetained bool

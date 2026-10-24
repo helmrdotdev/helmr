@@ -39,7 +39,7 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	channel := "C1"
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$7::text) WHERE environment_id=$5;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$5;
- UPDATE org_members SET role='owner' WHERE user_id=$4;
+ UPDATE org_members SET is_owner=true WHERE user_id=$4;
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id)
  SELECT 'http',$2,org_id,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$4 FROM environments WHERE id=$5;
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id)
@@ -52,7 +52,7 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
-	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
+	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
@@ -97,14 +97,14 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 		call("POST", base+"/sessions", owner, `{"agent":"agent","input":[{"type":"text","text":"work"}],"slack":`+slack+`}`, 400)
 	}
 	viewerID := h.user(t, "Viewer")
-	h.member(t, orgID, viewerID, db.OrgMemberRoleViewer)
+	h.member(t, orgID, viewerID, "member")
 	viewer := h.session(t, viewerID, orgID)
 	call("GET", base+"/slack/channels", viewer, "", 404)
 	call("GET", base+"/slack/channels/"+channel, viewer, "", 404)
-	call("POST", base+"/sessions", viewer, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"slack":{"channel_id":%q}}`, channel), 404)
-	issuer := auth.Principal{OrgID: orgID, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
+	call("POST", base+"/sessions", viewer, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"slack":{"channel_id":%q}}`, channel), 403)
+	issuer := f.Principal(t)
 	scope := auth.Scope{OrgID: orgID, ProjectID: projectID.String(), EnvironmentID: f.Environment.String()}
-	key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: "Slack SDK", Permissions: []auth.Permission{auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend}})
+	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "Slack SDK", RolePermissions: []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	call(http.MethodGet, "/v1/slack/channels/"+channel, key.Raw, "", 404)
 	call("POST", base+"/sessions", owner, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-first","slack":{"channel_id":%q}}`, channel), 200)
 	expectCode(call("POST", base+"/sessions", owner, `{"agent":"agent","input":[{"type":"text","text":"work"}],"key":"http-route","idempotency_key":"http-continue"}`, 409), "idempotency_conflict")
-	expectCode(call(http.MethodPost, "/v1/sessions", key.Raw, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"slack":{"channel_id":%q}}`, channel), 409), "target_not_published")
+	expectCode(call(http.MethodPost, "/v1/sessions", key.Raw, fmt.Sprintf(`{"agent":"agent","idempotency_key":"retired-channel","input":[{"type":"text","text":"work"}],"slack":{"channel_id":%q}}`, channel), 409), "target_not_published")
 	if preflights != before {
 		t.Fatal("retired publication triggered another preflight")
 	}

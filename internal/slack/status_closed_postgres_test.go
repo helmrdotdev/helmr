@@ -110,8 +110,7 @@ func TestSlackClosedStatusWaitsForAllContributorsAndFinalDelivery(t *testing.T) 
 	peer := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed' WHERE id=$1;
  UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1;
- INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
- SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Session, peer)
+ INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Session, peer)
 	projectAllActivity(t, f)
 	// Another Session on the same Computer does not keep this Slack thread open.
 	f.assertAggregate(t, "closed")

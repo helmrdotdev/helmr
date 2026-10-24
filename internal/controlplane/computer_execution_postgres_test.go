@@ -10,7 +10,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -21,7 +20,7 @@ func TestComputerExecutionHTTPUsesCurrentAuthorityAndConfirmedScope(t *testing.T
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
-	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
+	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 	handler, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +58,7 @@ func TestComputerExecutionHTTPUsesCurrentAuthorityAndConfirmedScope(t *testing.T
 	if !strings.Contains(string(read), `"execution_control"`) || !strings.Contains(string(read), `"hibernate"`) {
 		t.Fatalf("missing operation state: %s", read)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.User)
+	f.SetPermissions(t, "sessions.view")
 	call("POST", base+"/hibernate", string(request), http.StatusForbidden)
 	call("POST", base+"/wake", `{}`, http.StatusForbidden)
 	call("GET", base+"/execution-scope", "", http.StatusForbidden)

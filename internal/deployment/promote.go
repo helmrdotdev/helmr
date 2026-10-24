@@ -25,7 +25,7 @@ import (
 // intervals and recomputes background preparation cadence. Existing Sessions keep
 // their deployment pins. Re-promotion starts new intervals, never reopens old ones.
 func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight slackroute.StartPreflight) (Record, error) {
-	if err := authorizeDeploy(principal, scope); err != nil {
+	if err := authorize(principal, scope, auth.PermissionDeploymentsPromote); err != nil {
 		return Record{}, err
 	}
 	project, env, err := scopeIDs(scope)
@@ -48,6 +48,9 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 			return ErrNotDeployable
 		}
 		if err != nil {
+			return err
+		}
+		if err := authorizeCurrent(ctx, tx, principal, scope, auth.PermissionDeploymentsPromote); err != nil {
 			return err
 		}
 		// Verify that the selected Deployment belongs to this Environment.

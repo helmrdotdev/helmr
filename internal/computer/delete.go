@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -12,6 +13,7 @@ import (
 )
 
 type Deletion struct {
+	Principal      auth.Principal
 	Scope          Scope
 	ComputerID     uuid.UUID
 	IdempotencyKey string
@@ -44,6 +46,9 @@ func Delete(ctx context.Context, txb db.TxBeginner, deletion Deletion) (Deleted,
 			if err != nil {
 				return err
 			}
+		}
+		if err := authorizeOperator(ctx, tx, deletion.Principal, deletion.Scope); err != nil {
+			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 			if !acquired.New {

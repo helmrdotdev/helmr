@@ -12,7 +12,7 @@ import { ApiError } from "../lib/api";
 import { hasPermission } from "../lib/auth";
 import { agentHref } from "../lib/definitions";
 import { errorMessage, loadError } from "../lib/error";
-import { isOrganizationAdmin, useMe } from "../lib/me";
+import { useMe } from "../lib/me";
 import { useScope } from "../lib/scope";
 import {
   askConsolePath,
@@ -75,7 +75,7 @@ function SessionDetailContent() {
   });
   const enabled = () => !!sessionID() && !!projectID() && !!environmentID();
   const me = useMe();
-  const can = (permission: string) => hasPermission(me.data, permission);
+  const can = (permission: string): boolean => session.data?.permissions?.includes(permission) ?? hasPermission(me.data, permission, {projectID:projectID(),environmentID:environmentID()});
   const session = createQuery(() => ({
     queryKey: ["session", sessionID(), projectID(), environmentID()],
     queryFn: () => getSession(address()),
@@ -175,7 +175,7 @@ function SessionDetailContent() {
                 canInterrupt={can("sessions.interrupt")}
                 onInterruptTurn={(turnID) => setControl({ kind: "turn_interrupt", turnID })}
               />
-              <Show when={current().slack_channel_id}><SessionDelivery address={address()} live={live()} canManage={isOrganizationAdmin(me.data?.role)} /></Show>
+              <Show when={current().slack_channel_id}><SessionDelivery address={address()} live={live()} canManage={hasPermission(me.data, "sessions.manage", { ...address(), agent: current().agent })} /></Show>
               <Show when={can("sessions.cancel") && live()}>
                 <DangerZone
                   class="mt-3"
@@ -320,12 +320,12 @@ function NeedsYou(props: { session: Session; log: SessionLog; address: SessionAd
               <Show when={hold.kind === "recovery_gap" && hold.session_id === props.session.id} fallback={<>Held: {hold.reason || "paused"} ({hold.scope === "subtree" ? "this session and its children" : "this session"}).</>}>
                 {hold.recovery_gap ? recoveryGapNotice(hold.recovery_gap) : hold.reason}
               </Show>
-              <Show when={hold.session_id !== props.session.id}> Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id)} />.</Show>
+              <Show when={hold.session_id !== "00000000-0000-0000-0000-000000000000" && hold.session_id !== props.session.id}> Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id)} />.</Show>
               <Show when={hold.kind === "storage_pressure"}>{" "}Queued work resumes when space is available. Stopped requests will not restart automatically.</Show>
               <Show when={hold.kind === "recovery_gap" && hold.session_id === props.session.id && props.canResume}>
                 {" "}<button type="button" class={ui.secondaryButton} onClick={() => props.onResume(hold.id)}>Resume</button>
               </Show>
-              <Show when={hold.kind !== "storage_pressure" && !(hold.kind === "recovery_gap" && hold.session_id === props.session.id && props.canResume)}>{" "}Resume held work from the CLI.</Show>
+              <Show when={hold.session_id !== "00000000-0000-0000-0000-000000000000" && hold.kind !== "storage_pressure" && !(hold.kind === "recovery_gap" && hold.session_id === props.session.id && props.canResume)}>{" "}Resume held work from the CLI.</Show>
             </span>
           </Notice>
         )}

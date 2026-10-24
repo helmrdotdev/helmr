@@ -31,7 +31,8 @@ func ReadProcessAllocation(ctx context.Context, q db.DBTX, env, session uuid.UUI
 // AdmitProcess assigns the next process of a Session on its Computer's live
 // lease, or returns the retained assignment for the same epoch. The caller
 // holds the worker supply gate; admitting reports whether supply still admits
-// continuation work.
+// continuation work. An empty successful result means no process was assigned;
+// the caller must commit any queued-work settlement before reporting not ready.
 func AdmitProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch int64, admitting bool) (ProcessAllocation, error) {
 	o, err := lockSession(ctx, tx, env, session)
 	if err != nil {
@@ -50,7 +51,9 @@ func AdmitProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch 
 		return ProcessAllocation{}, err
 	}
 	if !assigned {
-		return ProcessAllocation{}, ErrNotReady
+		// An empty result commits any denial settlement written by AssignProcess.
+		// Errors after assignment must still roll the entire admission back.
+		return ProcessAllocation{}, nil
 	}
 	result, err := ReadProcessAllocation(ctx, tx, env, session, epoch)
 	if err != nil {
@@ -64,6 +67,11 @@ func AdmitProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch 
 // freshLease is nonzero only inside the transaction creating that acquiring lease.
 // Assignment does not authorize attachment or setup before VM readiness.
 func AssignProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch, freshLease int64) (bool, error) {
+	if err := authorizeRuntimeOrigin(ctx, tx, env, session); errors.Is(err, ErrDenied) {
+		return false, failQueuedPermission(ctx, tx, env, session)
+	} else if err != nil {
+		return false, err
+	}
 	changed, err := tx.Exec(ctx, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status)
  SELECT s.environment_id,s.id,$3,c.id,l.epoch,'starting' FROM sessions s
  JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
@@ -122,6 +130,25 @@ func LockInitialSessions(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID
 		return nil, ErrNotReady
 	}
 	return sessions, nil
+}
+
+// AuthorizeInitialSessions settles revoked queued work before reserving a VM.
+// A false result means every Session in this cohort lost current authority.
+func AuthorizeInitialSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, sessions []uuid.UUID) (bool, error) {
+	allowed := len(sessions) == 0
+	for _, id := range sessions {
+		err := authorizeRuntimeOrigin(ctx, tx, env, id)
+		if errors.Is(err, ErrDenied) {
+			if err := failQueuedPermission(ctx, tx, env, id); err != nil {
+				return false, err
+			}
+		} else if err != nil {
+			return false, err
+		} else {
+			allowed = true
+		}
+	}
+	return allowed, nil
 }
 
 func AssignInitialProcesses(ctx context.Context, tx pgx.Tx, r computer.ComputerAllocation, sessions []uuid.UUID) error {

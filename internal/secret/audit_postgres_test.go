@@ -22,6 +22,8 @@ func TestSecretAuditCommitsOnceAndRollsBackMutationOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $1,org_id,project_id,id,'fixture','fixture',convert_to('fixture','UTF8') FROM environments WHERE id=$2`, key, env)
+	dbtest.SetAPIKeyRole(t, d.Pool, key, "secrets.manage")
 	actor := audit.Actor{Kind: "api_key", CredentialID: key}
 	created, err := store.Create(t.Context(), actor, env, "TOKEN", []byte("private-value"), "create")
 	if err != nil {

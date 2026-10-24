@@ -5,6 +5,7 @@ import { postJson, request } from "./api";
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled";
 type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
 export type Session = {
+  permissions?: string[];
   agent: string;
   template: string;
   activity: {

@@ -230,7 +230,7 @@ func TestAcknowledgedRecoveryGapSurvivesPhysicalFenceAndNewEpochLoss(t *testing.
 		t.Fatal(err)
 	}
 	acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
-	next, err := session.DispatchRuntimeTurn(t.Context(), f.pool, *f.host(), e, attachment.Sequence)
+	next, err := session.DispatchRuntimeTurn(t.Context(), f.pool, *f.host(), e, attachment.Sequence, nil)
 	if err != nil || next == nil || next.TurnID != queued.TurnID {
 		t.Fatalf("new epoch dispatch %+v %v", next, err)
 	}
@@ -305,7 +305,7 @@ func TestComputerNoGapRecoveryCreatesNewLeaseAndProcessWithoutReplay(t *testing.
 		t.Fatal(err)
 	}
 	acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
-	next, err := session.DispatchRuntimeTurn(t.Context(), f.pool, *f.host(), e, attachment.Sequence)
+	next, err := session.DispatchRuntimeTurn(t.Context(), f.pool, *f.host(), e, attachment.Sequence, nil)
 	if err != nil || next == nil || next.TurnID != queued.TurnID {
 		t.Fatalf("recovered dispatch %+v %v", next, err)
 	}

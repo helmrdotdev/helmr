@@ -23,7 +23,7 @@ SELECT *
 UPDATE device_codes
    SET status = 'approved',
        org_id = sqlc.arg(org_id),
-       decided_by_user_id = sqlc.arg(user_id),
+       decided_by_member_id = sqlc.arg(member_id),
        decided_at = now()
  WHERE user_code_hash = sqlc.arg(user_code_hash)
    AND status = 'pending'
@@ -34,7 +34,7 @@ RETURNING *;
 UPDATE device_codes
    SET status = 'denied',
        org_id = sqlc.arg(org_id),
-       decided_by_user_id = sqlc.arg(user_id),
+       decided_by_member_id = sqlc.arg(member_id),
        decided_at = now()
  WHERE user_code_hash = sqlc.arg(user_code_hash)
    AND status = 'pending'

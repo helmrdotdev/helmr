@@ -383,6 +383,70 @@ func (q *Queries) GetProjectBySlug(ctx context.Context, arg GetProjectBySlugPara
 	return i, err
 }
 
+const listAuthorizedProjects = `-- name: ListAuthorizedProjects :many
+SELECT id, org_id, default_region_id, slug, name, is_default, history_retention_seconds, created_at, updated_at
+  FROM projects
+ WHERE org_id = $1
+   AND ($2::boolean OR id=ANY($3::uuid[]))
+   AND (
+       NOT $4::boolean
+       OR ((NOT is_default), slug, id) >
+          ((NOT $5::boolean), $6::text, $7::uuid)
+   )
+ ORDER BY is_default DESC, slug ASC, id ASC
+ LIMIT $8
+`
+
+type ListAuthorizedProjectsParams struct {
+	OrgID          pgtype.UUID   `json:"org_id"`
+	AllProjects    bool          `json:"all_projects"`
+	ProjectIds     []pgtype.UUID `json:"project_ids"`
+	HasAfter       bool          `json:"has_after"`
+	AfterIsDefault bool          `json:"after_is_default"`
+	AfterSlug      string        `json:"after_slug"`
+	AfterID        pgtype.UUID   `json:"after_id"`
+	RowLimit       int32         `json:"row_limit"`
+}
+
+func (q *Queries) ListAuthorizedProjects(ctx context.Context, arg ListAuthorizedProjectsParams) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listAuthorizedProjects,
+		arg.OrgID,
+		arg.AllProjects,
+		arg.ProjectIds,
+		arg.HasAfter,
+		arg.AfterIsDefault,
+		arg.AfterSlug,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Project
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.DefaultRegionID,
+			&i.Slug,
+			&i.Name,
+			&i.IsDefault,
+			&i.HistoryRetentionSeconds,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironments = `-- name: ListEnvironments :many
 SELECT id, org_id, project_id, slug, name, color_hex, is_default, created_at, updated_at, current_deployment_id, max_outstanding_admissions, max_causal_depth, max_resident_computers, max_cpu_millis, max_memory_bytes, max_reserved_storage_bytes, preparation_timeout_ms, admission_rate_per_second, admission_burst, admission_tokens, admission_refilled_at
   FROM environments

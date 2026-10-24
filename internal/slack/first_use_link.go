@@ -90,7 +90,7 @@ func ResolveFirstUseLink(ctx context.Context, pool db.TxBeginner, key []byte, to
 		if err != nil {
 			return err
 		}
-		if err := lockLinkUser(ctx, tx, result.OrganizationID, user); err != nil {
+		if _, err := lockLinkUser(ctx, tx, result.OrganizationID, user); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `SELECT u.display_name,EXISTS(SELECT 1 FROM slack_user_links l WHERE l.team_id=$2 AND l.slack_user_id=$3 AND l.user_id=u.id) FROM users u WHERE u.id=$1`, user, result.TeamID, result.SlackUserID).Scan(&result.HelmrDisplayName, &result.Linked)

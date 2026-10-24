@@ -8,18 +8,11 @@ export function useMe() {
   return createQuery(() => ({ queryKey: ME_QUERY_KEY, queryFn: getMe, retry: false, staleTime: 60_000 }));
 }
 
-// Organization owners and admins manage members and connections.
-export function isOrganizationAdmin(role: string | null | undefined): boolean {
-  return role === "owner" || role === "admin";
-}
-
 export function usePermission() {
   const me = useMe();
   return {
     me,
-    role: () => me.data?.role ?? null,
-    isOwner: () => me.data?.role === "owner",
-    isOrganizationAdmin: () => isOrganizationAdmin(me.data?.role),
-    has: (permission: string) => hasPermission(me.data, permission),
+    isOwner: () => me.data?.is_owner === true,
+    has: (permission: string, scope?: Parameters<typeof hasPermission>[2]) => hasPermission(me.data, permission, scope),
   };
 }

@@ -345,6 +345,7 @@ func getControlPlane(addr string) (*http.Response, error) {
 }
 
 type emptyStore struct {
+	db.DBTX
 	db.Querier
 }
 

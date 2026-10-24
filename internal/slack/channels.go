@@ -132,6 +132,11 @@ func (c *WebClient) verifyConversation(ctx context.Context, installation uuid.UU
 	if v.Team != team || v.Name == "" || (!v.Channel && !v.Group) || v.IM || !v.Member {
 		return "", ErrChannelVerification
 	}
+	if peer != "" {
+		if err := c.verifyChannelMember(ctx, token, channel, peer); err != nil {
+			return "", err
+		}
+	}
 	return v.Name, nil
 }
 
@@ -144,4 +149,78 @@ func channelRateLimit(header http.Header) DeliveryResult {
 	result := rateLimitResult(header)
 	result.RateLimitMethod = "conversations.info"
 	return result
+}
+
+// Channel presence is checked against Slack, not inferred from a historical post
+// or possession of a channel-visible control token.
+func (c *WebClient) verifyChannelMember(ctx context.Context, token, channel, actor string) error {
+	cursor := ""
+	for {
+		values := url.Values{"channel": {channel}, "limit": {"200"}}
+		if cursor != "" {
+			values.Set("cursor", cursor)
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://slack.com/api/conversations.members?"+values.Encode(), nil)
+		if err != nil {
+			return channelReadUnavailable()
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := c.http.Do(request)
+		if err != nil {
+			return channelReadUnavailable()
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 1024*1024+1))
+		response.Body.Close()
+		if response.StatusCode == http.StatusTooManyRequests {
+			result := rateLimitResult(response.Header)
+			result.RateLimitMethod = "conversations.members"
+			return &channelVerificationFailure{result}
+		}
+		if response.StatusCode != http.StatusOK || readErr != nil || len(body) > 1024*1024 {
+			return channelReadUnavailable()
+		}
+		var result struct {
+			OK       *bool    `json:"ok"`
+			Members  []string `json:"members"`
+			Metadata struct {
+				Cursor   string   `json:"next_cursor"`
+				Warnings []string `json:"warnings"`
+			} `json:"response_metadata"`
+		}
+		if json.Unmarshal(body, &result) != nil || result.OK == nil || !*result.OK || len(result.Metadata.Warnings) > 0 {
+			return channelReadUnavailable()
+		}
+		for _, member := range result.Members {
+			if member == actor {
+				return nil
+			}
+		}
+		if result.Metadata.Cursor == "" {
+			return ErrChannelVerification
+		}
+		if result.Metadata.Cursor == cursor {
+			return channelReadUnavailable()
+		}
+		cursor = result.Metadata.Cursor
+	}
+}
+
+// VerifyInputConversation is used immediately before dispatching queued Slack
+// input. Confirmed loss of participation rejects work; unavailable reads retry.
+func (c *WebClient) VerifyInputConversation(ctx context.Context, installation uuid.UUID, revision int64, team, channel, actor string) (bool, error) {
+	err := c.VerifyConversation(ctx, installation, revision, team, channel, actor)
+	if err == nil {
+		return true, nil
+	}
+	var failure *channelVerificationFailure
+	if errors.As(err, &failure) {
+		if failure.result.Disposition == Rejected {
+			return false, nil
+		}
+		return false, err
+	}
+	if errors.Is(err, ErrChannelVerification) {
+		return false, nil
+	}
+	return false, err
 }

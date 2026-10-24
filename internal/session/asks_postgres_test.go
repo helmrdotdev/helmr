@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"sync"
 	"testing"
 	"time"
@@ -48,13 +49,13 @@ func TestAskDurableIdentityAndFinalization(t *testing.T) {
 	if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), q); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("late ask: %v", err)
 	}
-	if _, err := f.pool.Exec(t.Context(), `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.user); err != nil {
+	if _, err := f.pool.Exec(t.Context(), `UPDATE org_members SET is_owner=false WHERE user_id=$1`, f.user); err != nil {
 		t.Fatal(err)
 	}
 	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "reply", Answer: json.RawMessage(`""`)}
 	view, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req)
 	if err != nil || view.Status != "answered" || string(view.Answer) != `""` || view.AnsweredByUserID == nil || *view.AnsweredByUserID != f.user {
-		t.Fatalf("viewer reply after close: %+v %v", view, err)
+		t.Fatalf("operator reply after close: %+v %v", view, err)
 	}
 	if err := session.RuntimeWithdrawAsk(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, id); err != nil {
 		t.Fatal(err)
@@ -80,7 +81,7 @@ func TestAskDurableIdentityAndFinalization(t *testing.T) {
 	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed reply: %v", err)
 	}
-	if _, err := f.pool.Exec(t.Context(), `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.user); err != nil {
+	if _, err := f.pool.Exec(t.Context(), `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.user); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
@@ -167,37 +168,37 @@ func TestAskTerminalCancellationAndBudget(t *testing.T) {
 	}
 }
 
-func askKey(t *testing.T, f fixture, role string, permissions []string) session.Caller {
+func askKey(t *testing.T, f fixture, permissions []string) session.Caller {
 	t.Helper()
 	id := uuid.NewV7()
-	_, err := f.pool.Exec(t.Context(), `INSERT INTO api_keys(id,org_id,project_id,environment_id,role,permissions,name,key_prefix,token_hash) SELECT $2,org_id,project_id,id,$3,$4,$2::uuid::text,'test',$5 FROM environments WHERE id=$1`, f.env, id, role, permissions, id[:])
+	_, err := f.pool.Exec(t.Context(), `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $2,org_id,project_id,id,$2::uuid::text,'test',$3 FROM environments WHERE id=$1`, f.env, id, id[:])
 	if err != nil {
 		t.Fatal(err)
 	}
+	dbtest.SetAPIKeyRole(t, f.pool, id, permissions...)
 	return session.Caller{Kind: "api_key", ID: id}
 }
 func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 	f, a, id, _ := askFixture(t)
-	reader := askKey(t, f, "admin", []string{"sessions.read"})
-	answerer := askKey(t, f, "admin", []string{"asks.answer"})
-	developer := askKey(t, f, "developer", []string{"asks.answer"})
-	cross := askKey(t, f, "admin", []string{"asks.answer"})
+	reader := askKey(t, f, []string{"sessions.view"})
+	answerer := askKey(t, f, []string{"agents.use", "sessions.manage"})
+	scoped := askKey(t, f, []string{"agents.use"})
 	otherEnv := uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, otherEnv); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.pool.Exec(t.Context(), `UPDATE api_keys SET environment_id=$2 WHERE id=$1`, cross.ID, otherEnv); err != nil {
-		t.Fatal(err)
-	}
+	otherFixture := f
+	otherFixture.env = otherEnv
+	cross := askKey(t, otherFixture, []string{"agents.use", "sessions.manage"})
 
 	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "response", Answer: json.RawMessage(`""`)}
-	for _, caller := range []session.Caller{reader, developer, cross, {Kind: "session", ID: f.session}} {
+	for _, caller := range []session.Caller{reader, scoped, cross, {Kind: "session", ID: f.session}} {
 		if _, err := session.AnswerAsk(t.Context(), f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
 			t.Fatalf("ungranted answer %+v: %v", caller, err)
 		}
 	}
-	if _, err := session.GetAsk(t.Context(), f.pool, answerer, f.env, f.session, a.TurnID, id); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("answer implies read: %v", err)
+	if _, err := session.GetAsk(t.Context(), f.pool, answerer, f.env, f.session, a.TurnID, id); err != nil {
+		t.Fatalf("operate includes read: %v", err)
 	}
 	if _, err := session.GetAsk(t.Context(), f.pool, reader, f.env, f.session, a.TurnID, id); err != nil {
 		t.Fatal(err)
@@ -218,7 +219,7 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 }
 func TestAskKeyExpiresWhileWaitingForSession(t *testing.T) {
 	f, a, id, _ := askFixture(t)
-	key := askKey(t, f, "admin", []string{"asks.answer"})
+	key := askKey(t, f, []string{"agents.use", "sessions.manage"})
 	var expires time.Time
 	if err := f.pool.QueryRow(t.Context(), `UPDATE api_keys SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1 RETURNING expires_at`, key.ID).Scan(&expires); err != nil {
 		t.Fatal(err)

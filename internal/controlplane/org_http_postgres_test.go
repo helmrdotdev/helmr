@@ -136,17 +136,21 @@ func TestHistoryRetentionHTTPPolicy(t *testing.T) {
 	if r.Code != http.StatusOK || !strings.Contains(r.Body.String(), `"history_retention":"30d"`) {
 		t.Fatalf("default: %d %s", r.Code, r.Body.String())
 	}
-	for _, role := range []db.OrgMemberRole{db.OrgMemberRoleAdmin, db.OrgMemberRoleDeveloper, db.OrgMemberRoleViewer} {
-		user := f.user(t, string(role))
+	for _, role := range []string{"admin", "member"} {
+		user := f.user(t, role)
 		f.member(t, orgID, user, role)
 		login := f.session(t, user, orgID)
 		read := f.request(t, http.MethodGet, path, login, "")
-		if read.Code != http.StatusOK {
+		wantRead := http.StatusNotFound
+		if role == "admin" {
+			wantRead = http.StatusOK
+		}
+		if read.Code != wantRead {
 			t.Fatalf("%s read: %d", role, read.Code)
 		}
 		write := f.request(t, http.MethodPatch, path, login, `{"history_retention":"30d"}`)
 		want := http.StatusForbidden
-		if role == db.OrgMemberRoleAdmin {
+		if role == "admin" {
 			want = http.StatusOK
 		}
 		if write.Code != want {

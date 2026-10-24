@@ -25,7 +25,7 @@ export function ProjectSettings() {
 
   const project = createMemo(() => scope.selectedProject());
   const regions = createQuery(() => ({ queryKey: ["regions"], queryFn: listRegions, retry: false }));
-  const regionName = (id: string) => {
+  const regionName = (id: string | undefined) => {
     const region = regions.data?.regions.find((candidate) => candidate.id === id);
     return region?.display_name || id || "—";
   };
@@ -178,7 +178,7 @@ function ProjectHistorySettings(props: { project: string }) {
             <fieldset class="m-0 border-0 p-0" disabled={!canManage() || saving()}>
               <HistoryRetentionFields value={draft()} onChange={value => { setDraft(value); setSaved(false); }} />
             </fieldset>
-            <Show when={!canManage()}><p class={ui.muted}>Only owners and admins can change this setting.</p></Show>
+            <Show when={!canManage()}><p class={ui.muted}>Manage organization permission is required to change this setting.</p></Show>
             <Show when={error()}>{(message) => <Notice tone="danger">{message()}</Notice>}</Show>
             <Show when={canManage()}>
               <div class="flex flex-wrap items-center justify-end gap-3">

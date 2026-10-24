@@ -44,6 +44,11 @@ func ClaimStatus(ctx context.Context, pool db.TxBeginner, thread uuid.UUID) (*St
 		if err != nil {
 			return err
 		}
+		recipient, err := directRecipientAuthorized(ctx, tx, thread)
+		if err != nil {
+			return err
+		}
+		active = active && recipient
 		var credential int64
 		var authorized time.Time
 		if err = tx.QueryRow(ctx, `SELECT credential_revision,authorized_at FROM slack_installations WHERE id=$1 FOR NO KEY UPDATE`, installation).Scan(&credential, &authorized); err != nil {

@@ -152,7 +152,7 @@ turn.asks.answer(
 
 `AskAnswerReceipt` is `AskState` without `question`.
 
-An API key needs explicit answer permission to respond; see
+An API key needs current Role access to answer in the target Session; see
 [Authentication](/docs/reference/api/authentication). The CLI equivalents are
 `helmr session turn ask list|get|answer`; see
 [`helmr session`](/docs/reference/cli/session#questions).

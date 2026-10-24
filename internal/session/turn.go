@@ -18,6 +18,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -40,8 +42,11 @@ var (
 // Caller is transport-authenticated identity. Runtime requests carry the stable
 // Session and its current authority generation; a transport request ID is not identity.
 type Caller struct {
-	Kind string
-	ID   uuid.UUID
+	// Slack route provenance is supplied only by verified Slack admission, never request JSON.
+	SlackThreadID     uuid.UUID
+	SlackConnectionID uuid.UUID
+	Kind              string
+	ID                uuid.UUID
 	// TurnID is present only for direct Turn-scoped native requests. MCP uses
 	// Session authority without guessing a currently running Turn.
 	TurnID    uuid.UUID
@@ -199,6 +204,9 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 				return err
 			}
 		}
+		if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, req.SessionID, auth.PermissionSessionsSend); err != nil {
+			return err
+		}
 		if caller.Kind != "session" {
 			if err := authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, owners{}); err != nil {
 				return err
@@ -236,6 +244,9 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 				return err
 			}
 		} else if err = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, locked[caller.ID]); err != nil {
+			return err
+		}
+		if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, req.SessionID, auth.PermissionSessionsSend); err != nil {
 			return err
 		}
 		if req.IdempotencyKey != "" {
@@ -323,6 +334,9 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 		if err = authorizeEnqueue(ctx, tx, caller, req.EnvironmentID, locked[caller.ID]); err != nil {
 			return err
 		}
+		if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, req.SessionID, auth.PermissionSessionsSend); err != nil {
+			return err
+		}
 		if err = consumeAdmission(ctx, tx, req.EnvironmentID, policy); err != nil {
 			return err
 		}
@@ -364,20 +378,13 @@ func authorizeEnqueue(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UU
 func authorizeSessionInput(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID, o owners, steering bool) error {
 	var allowed bool
 	switch caller.Kind {
-	case "user":
-		err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id
-          WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
-		if err != nil {
-			return err
-		}
-	case "api_key":
-		err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id)
-          WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
-          AND k.role IN ('owner','admin','developer') AND 'sessions.send'=ANY(k.permissions))`, env, caller.ID).Scan(&allowed)
-		if err != nil {
-			return err
-		}
+	case "user", "api_key":
+		_, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+		return accessError(err)
 	case "session":
+		if err := authorizeRuntimeOrigin(ctx, tx, env, caller.ID); err != nil {
+			return err
+		}
 		// Enqueue may address any Session in the same Environment. Exact-Turn
 		// steering additionally requires owned ancestry before target admission.
 		if caller.Execution.EnvironmentID != env || caller.Execution.SessionID != caller.ID {
@@ -497,16 +504,16 @@ type TurnDispatch struct {
 	Source    TurnSource
 }
 
-func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispatch) error {
+func dispatchReady(ctx context.Context, tx pgx.Tx, e Execution) (owners, error) {
 	o, err := lockSession(ctx, tx, e.EnvironmentID, e.SessionID)
 	if err != nil {
-		return err
+		return o, err
 	}
 	if o.lifecycle != "open" && o.lifecycle != "closing" {
-		return ErrNotReady
+		return o, ErrNotReady
 	}
 	if err = executionReady(ctx, tx, e, o); err != nil {
-		return err
+		return o, err
 	}
 	var blocked bool
 	err = tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
@@ -515,22 +522,16 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
         ) SELECT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
         OR EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$3 AND computer_lease_epoch<>$4 AND status IN ('requested','captured'))`, e.EnvironmentID, e.SessionID, o.computer, e.LeaseEpoch).Scan(&blocked)
 	if err != nil {
-		return err
+		return o, err
 	}
 	if blocked {
-		return ErrNotReady
+		return o, ErrNotReady
 	}
-	var process int64
-	err = tx.QueryRow(ctx, `SELECT id,status,process_epoch FROM turns WHERE environment_id=$1 AND session_id=$2 AND status IN ('running') FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID).Scan(&result.TurnID, &result.Status, &process)
-	if err == nil {
-		if process != e.ProcessEpoch {
-			return ErrNotReady
-		}
-		return loadTurnDispatch(ctx, tx, e.EnvironmentID, result)
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
+	return o, nil
+}
+
+func newTurnReady(ctx context.Context, tx pgx.Tx, e Execution, o owners) error {
+	var err error
 	var pressure bool
 	if err = tx.QueryRow(ctx, `SELECT storage_pressure_since IS NOT NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, e.EnvironmentID, o.computer, e.LeaseEpoch).Scan(&pressure); err != nil {
 		return err
@@ -548,12 +549,50 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
 	if !applied {
 		return ErrNotReady
 	}
+	return nil
+}
+
+func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispatch, check inputAuthorityCheck) error {
+	o, err := dispatchReady(ctx, tx, e)
+	if err != nil {
+		return err
+	}
+	var process int64
+	err = tx.QueryRow(ctx, `SELECT id,status,process_epoch FROM turns WHERE environment_id=$1 AND session_id=$2 AND status IN ('running') FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID).Scan(&result.TurnID, &result.Status, &process)
+	if err == nil {
+		if process != e.ProcessEpoch {
+			return ErrNotReady
+		}
+		return loadTurnDispatch(ctx, tx, e.EnvironmentID, result)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if err = newTurnReady(ctx, tx, e, o); err != nil {
+		return err
+	}
 	err = tx.QueryRow(ctx, `SELECT id FROM turns WHERE environment_id=$1 AND session_id=$2 AND status='queued' ORDER BY seq LIMIT 1 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID).Scan(&result.TurnID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotReady
 	}
 	if err != nil {
 		return err
+	}
+	var inputCaller Caller
+	if err = tx.QueryRow(ctx, `SELECT caller_kind,caller_id FROM turns WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID).Scan(&inputCaller.Kind, &inputCaller.ID); err != nil {
+		return err
+	}
+	if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller, result.TurnID, false, check); err != nil {
+		if !errors.Is(err, ErrDenied) {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp(),error_code='permission_revoked',error_message=$3 WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID, []byte("Permission was revoked before dispatch")); err != nil {
+			return err
+		}
+		if err = eventData(ctx, tx, e.EnvironmentID, e.SessionID, result.TurnID, "turn.failed", []byte(`{"code":"permission_revoked"}`)); err != nil {
+			return err
+		}
+		return ErrNotReady
 	}
 	_, err = tx.Exec(ctx, `UPDATE turns SET status='running',process_epoch=$3,started_at=clock_timestamp(),
           deadline_at=CASE WHEN d.max_turn_duration_ms IS NOT NULL THEN clock_timestamp()+d.max_turn_duration_ms*interval '1 millisecond' END

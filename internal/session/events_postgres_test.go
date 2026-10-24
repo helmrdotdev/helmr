@@ -63,7 +63,7 @@ func TestSessionEventPagesAndRetention(t *testing.T) {
 		t.Fatalf("foreign environment: %v", err)
 	}
 	req.EnvironmentID = f.env
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.caller().ID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.caller().ID)
 	if _, err = session.ListEvents(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked reader: %v", err)
 	}

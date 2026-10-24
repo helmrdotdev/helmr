@@ -37,6 +37,17 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
+	// The CLI's default deploy activates after uploading. Reject that workflow
+	// before writing content when activation authority is missing.
+	promote := r.URL.Query().Get("promote")
+	if promote != "" && promote != "true" && promote != "false" {
+		writeError(w, badRequest(errors.New("promote must be true or false")))
+		return
+	}
+	if promote == "true" && !principal.HasPermission(auth.PermissionDeploymentsPromote, scope) {
+		writeError(w, forbidden(errors.New("deployments.promote is required; use --skip-promotion to register only")))
+		return
+	}
 	mediaType, parameters, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != bundle.MediaType || len(parameters) != 0 {
 		writeError(w, badRequest(errors.New("deployment bundle Content-Type is invalid")))

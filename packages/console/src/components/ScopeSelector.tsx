@@ -173,7 +173,7 @@ export function ScopeSelector() {
         trigger={
           <Show when={!scope.isLoading()} fallback={<Delayed><SkeletonBar width="72px" /></Delayed>}>
             <span class="max-w-40 truncate max-sm:max-w-22">
-              {noProjects() ? "No projects yet" : scope.selectedProject()?.name ?? "—"}
+              {noProjects() ? "No accessible projects" : scope.selectedProject()?.name ?? "—"}
             </span>
           </Show>
         }
@@ -181,7 +181,7 @@ export function ScopeSelector() {
         search={{
           label: allLoaded() ? "Find a project" : "Find loaded projects",
           placeholder: allLoaded() ? "Find a project…" : "Find loaded projects…",
-          empty: projects().length === 0 ? "No projects yet" : "No matching projects",
+          empty: projects().length === 0 ? "No accessible projects" : "No matching projects",
         }}
         footer={
           <>

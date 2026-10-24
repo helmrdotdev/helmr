@@ -48,5 +48,8 @@ func (a *Allocator) AllocateSessionProcess(ctx context.Context, env, sessionID u
 	if err != nil {
 		return session.ProcessAllocation{}, allocationError(err)
 	}
+	if result.SessionID == uuid.Nil() {
+		return session.ProcessAllocation{}, session.ErrNotReady
+	}
 	return result, nil
 }

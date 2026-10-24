@@ -14,7 +14,7 @@ import (
 const acceptInvitation = `-- name: AcceptInvitation :execrows
 UPDATE invitations
    SET accepted_at = now(),
-       accepted_by_user_id = $1
+       accepted_by_member_id = $1
  WHERE org_id = $2
    AND id = $3
    AND accepted_at IS NULL
@@ -23,13 +23,13 @@ UPDATE invitations
 `
 
 type AcceptInvitationParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	OrgID  pgtype.UUID `json:"org_id"`
-	ID     pgtype.UUID `json:"id"`
+	MemberID pgtype.UUID `json:"member_id"`
+	OrgID    pgtype.UUID `json:"org_id"`
+	ID       pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error) {
-	result, err := q.db.Exec(ctx, acceptInvitation, arg.UserID, arg.OrgID, arg.ID)
+	result, err := q.db.Exec(ctx, acceptInvitation, arg.MemberID, arg.OrgID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -43,40 +43,38 @@ WITH active_invitee AS (
       JOIN users ON users.id = org_members.user_id
      WHERE org_members.org_id = $2
        AND lower(users.primary_email) = $3
-       AND org_members.disabled_at IS NULL
+       AND org_members.removed_at IS NULL
     UNION
     SELECT 1
       FROM invitations AS accepted_invitation
       JOIN org_members
         ON org_members.org_id = accepted_invitation.org_id
-       AND org_members.user_id = accepted_invitation.accepted_by_user_id
+       AND org_members.id = accepted_invitation.accepted_by_member_id
       JOIN users ON users.id = org_members.user_id
      WHERE accepted_invitation.org_id = $2
        AND accepted_invitation.invitee_email = $3
        AND accepted_invitation.accepted_at IS NOT NULL
-       AND org_members.disabled_at IS NULL
+       AND org_members.removed_at IS NULL
 )
-INSERT INTO invitations (id, org_id, invitee_email, role, invited_by_user_id, token_hash, expires_at)
+INSERT INTO invitations (id, org_id, invitee_email, invited_by_member_id, token_hash, expires_at)
 SELECT
     $1,
     $2,
     $3,
-    $4::org_member_role,
+    $4,
     $5,
-    $6,
-    $7
+    $6
 WHERE NOT EXISTS (SELECT 1 FROM active_invitee)
-RETURNING id, org_id, invitee_email, role, invited_by_user_id, token_hash, created_at, expires_at, accepted_at, accepted_by_user_id, revoked_at, revoked_by_user_id
+RETURNING id, org_id, invitee_email, invited_by_member_id, token_hash, created_at, expires_at, accepted_at, accepted_by_member_id, revoked_at, revoked_by_member_id
 `
 
 type CreateInvitationParams struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	InviteeEmail    string             `json:"invitee_email"`
-	Role            OrgMemberRole      `json:"role"`
-	InvitedByUserID pgtype.UUID        `json:"invited_by_user_id"`
-	TokenHash       []byte             `json:"token_hash"`
-	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             pgtype.UUID        `json:"org_id"`
+	InviteeEmail      string             `json:"invitee_email"`
+	InvitedByMemberID pgtype.UUID        `json:"invited_by_member_id"`
+	TokenHash         []byte             `json:"token_hash"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
 }
 
 func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error) {
@@ -84,8 +82,7 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 		arg.ID,
 		arg.OrgID,
 		arg.InviteeEmail,
-		arg.Role,
-		arg.InvitedByUserID,
+		arg.InvitedByMemberID,
 		arg.TokenHash,
 		arg.ExpiresAt,
 	)
@@ -94,21 +91,20 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 		&i.ID,
 		&i.OrgID,
 		&i.InviteeEmail,
-		&i.Role,
-		&i.InvitedByUserID,
+		&i.InvitedByMemberID,
 		&i.TokenHash,
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.AcceptedAt,
-		&i.AcceptedByUserID,
+		&i.AcceptedByMemberID,
 		&i.RevokedAt,
-		&i.RevokedByUserID,
+		&i.RevokedByMemberID,
 	)
 	return i, err
 }
 
 const getActiveInvitation = `-- name: GetActiveInvitation :one
-SELECT id, org_id, invitee_email, role
+SELECT id, org_id, invitee_email
   FROM invitations
  WHERE token_hash = $1
    AND accepted_at IS NULL
@@ -117,26 +113,20 @@ SELECT id, org_id, invitee_email, role
 `
 
 type GetActiveInvitationRow struct {
-	ID           pgtype.UUID   `json:"id"`
-	OrgID        pgtype.UUID   `json:"org_id"`
-	InviteeEmail string        `json:"invitee_email"`
-	Role         OrgMemberRole `json:"role"`
+	ID           pgtype.UUID `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	InviteeEmail string      `json:"invitee_email"`
 }
 
 func (q *Queries) GetActiveInvitation(ctx context.Context, tokenHash []byte) (GetActiveInvitationRow, error) {
 	row := q.db.QueryRow(ctx, getActiveInvitation, tokenHash)
 	var i GetActiveInvitationRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.InviteeEmail,
-		&i.Role,
-	)
+	err := row.Scan(&i.ID, &i.OrgID, &i.InviteeEmail)
 	return i, err
 }
 
 const getActiveInvitationByID = `-- name: GetActiveInvitationByID :one
-SELECT id, org_id, invitee_email, role
+SELECT id, org_id, invitee_email
   FROM invitations
  WHERE id = $1
    AND accepted_at IS NULL
@@ -145,26 +135,20 @@ SELECT id, org_id, invitee_email, role
 `
 
 type GetActiveInvitationByIDRow struct {
-	ID           pgtype.UUID   `json:"id"`
-	OrgID        pgtype.UUID   `json:"org_id"`
-	InviteeEmail string        `json:"invitee_email"`
-	Role         OrgMemberRole `json:"role"`
+	ID           pgtype.UUID `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	InviteeEmail string      `json:"invitee_email"`
 }
 
 func (q *Queries) GetActiveInvitationByID(ctx context.Context, id pgtype.UUID) (GetActiveInvitationByIDRow, error) {
 	row := q.db.QueryRow(ctx, getActiveInvitationByID, id)
 	var i GetActiveInvitationByIDRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.InviteeEmail,
-		&i.Role,
-	)
+	err := row.Scan(&i.ID, &i.OrgID, &i.InviteeEmail)
 	return i, err
 }
 
 const getPendingInvitationByEmail = `-- name: GetPendingInvitationByEmail :one
-SELECT id, org_id, invitee_email, role
+SELECT id, org_id, invitee_email
   FROM invitations
  WHERE org_id = $1
    AND invitee_email = $2
@@ -180,26 +164,20 @@ type GetPendingInvitationByEmailParams struct {
 }
 
 type GetPendingInvitationByEmailRow struct {
-	ID           pgtype.UUID   `json:"id"`
-	OrgID        pgtype.UUID   `json:"org_id"`
-	InviteeEmail string        `json:"invitee_email"`
-	Role         OrgMemberRole `json:"role"`
+	ID           pgtype.UUID `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	InviteeEmail string      `json:"invitee_email"`
 }
 
 func (q *Queries) GetPendingInvitationByEmail(ctx context.Context, arg GetPendingInvitationByEmailParams) (GetPendingInvitationByEmailRow, error) {
 	row := q.db.QueryRow(ctx, getPendingInvitationByEmail, arg.OrgID, arg.InviteeEmail)
 	var i GetPendingInvitationByEmailRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.InviteeEmail,
-		&i.Role,
-	)
+	err := row.Scan(&i.ID, &i.OrgID, &i.InviteeEmail)
 	return i, err
 }
 
 const getRevocableInvitation = `-- name: GetRevocableInvitation :one
-SELECT id, org_id, invitee_email, role
+SELECT id, org_id, invitee_email
   FROM invitations
  WHERE org_id = $1
    AND id = $2
@@ -213,21 +191,15 @@ type GetRevocableInvitationParams struct {
 }
 
 type GetRevocableInvitationRow struct {
-	ID           pgtype.UUID   `json:"id"`
-	OrgID        pgtype.UUID   `json:"org_id"`
-	InviteeEmail string        `json:"invitee_email"`
-	Role         OrgMemberRole `json:"role"`
+	ID           pgtype.UUID `json:"id"`
+	OrgID        pgtype.UUID `json:"org_id"`
+	InviteeEmail string      `json:"invitee_email"`
 }
 
 func (q *Queries) GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error) {
 	row := q.db.QueryRow(ctx, getRevocableInvitation, arg.OrgID, arg.ID)
 	var i GetRevocableInvitationRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.InviteeEmail,
-		&i.Role,
-	)
+	err := row.Scan(&i.ID, &i.OrgID, &i.InviteeEmail)
 	return i, err
 }
 
@@ -235,14 +207,13 @@ const listInvitations = `-- name: ListInvitations :many
 SELECT id,
        org_id,
        invitee_email,
-       role,
-       invited_by_user_id,
+       invited_by_member_id,
        created_at,
        expires_at,
        accepted_at,
-       accepted_by_user_id,
+       accepted_by_member_id,
        revoked_at,
-       revoked_by_user_id
+       revoked_by_member_id
   FROM invitations
  WHERE org_id = $1
    AND accepted_at IS NULL
@@ -264,17 +235,16 @@ type ListInvitationsParams struct {
 }
 
 type ListInvitationsRow struct {
-	ID               pgtype.UUID        `json:"id"`
-	OrgID            pgtype.UUID        `json:"org_id"`
-	InviteeEmail     string             `json:"invitee_email"`
-	Role             OrgMemberRole      `json:"role"`
-	InvitedByUserID  pgtype.UUID        `json:"invited_by_user_id"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
-	AcceptedAt       pgtype.Timestamptz `json:"accepted_at"`
-	AcceptedByUserID pgtype.UUID        `json:"accepted_by_user_id"`
-	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	RevokedByUserID  pgtype.UUID        `json:"revoked_by_user_id"`
+	ID                 pgtype.UUID        `json:"id"`
+	OrgID              pgtype.UUID        `json:"org_id"`
+	InviteeEmail       string             `json:"invitee_email"`
+	InvitedByMemberID  pgtype.UUID        `json:"invited_by_member_id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	AcceptedAt         pgtype.Timestamptz `json:"accepted_at"`
+	AcceptedByMemberID pgtype.UUID        `json:"accepted_by_member_id"`
+	RevokedAt          pgtype.Timestamptz `json:"revoked_at"`
+	RevokedByMemberID  pgtype.UUID        `json:"revoked_by_member_id"`
 }
 
 func (q *Queries) ListInvitations(ctx context.Context, arg ListInvitationsParams) ([]ListInvitationsRow, error) {
@@ -295,14 +265,13 @@ func (q *Queries) ListInvitations(ctx context.Context, arg ListInvitationsParams
 			&i.ID,
 			&i.OrgID,
 			&i.InviteeEmail,
-			&i.Role,
-			&i.InvitedByUserID,
+			&i.InvitedByMemberID,
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.AcceptedAt,
-			&i.AcceptedByUserID,
+			&i.AcceptedByMemberID,
 			&i.RevokedAt,
-			&i.RevokedByUserID,
+			&i.RevokedByMemberID,
 		); err != nil {
 			return nil, err
 		}
@@ -321,7 +290,7 @@ UPDATE invitations
    AND invitee_email = $2
    AND accepted_at IS NULL
    AND revoked_at IS NULL
-   AND expires_at <= now() RETURNING id,role
+   AND expires_at <= now() RETURNING id
 `
 
 type RevokeExpiredInvitationsByEmailParams struct {
@@ -329,24 +298,19 @@ type RevokeExpiredInvitationsByEmailParams struct {
 	InviteeEmail string      `json:"invitee_email"`
 }
 
-type RevokeExpiredInvitationsByEmailRow struct {
-	ID   pgtype.UUID   `json:"id"`
-	Role OrgMemberRole `json:"role"`
-}
-
-func (q *Queries) RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]RevokeExpiredInvitationsByEmailRow, error) {
+func (q *Queries) RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, revokeExpiredInvitationsByEmail, arg.OrgID, arg.InviteeEmail)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RevokeExpiredInvitationsByEmailRow
+	var items []pgtype.UUID
 	for rows.Next() {
-		var i RevokeExpiredInvitationsByEmailRow
-		if err := rows.Scan(&i.ID, &i.Role); err != nil {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		items = append(items, i)
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -357,7 +321,7 @@ func (q *Queries) RevokeExpiredInvitationsByEmail(ctx context.Context, arg Revok
 const revokeInvitation = `-- name: RevokeInvitation :execrows
 UPDATE invitations
    SET revoked_at = now(),
-       revoked_by_user_id = $1
+       revoked_by_member_id = $1
  WHERE org_id = $2
    AND id = $3
    AND accepted_at IS NULL
@@ -365,13 +329,13 @@ UPDATE invitations
 `
 
 type RevokeInvitationParams struct {
-	RevokedByUserID pgtype.UUID `json:"revoked_by_user_id"`
-	OrgID           pgtype.UUID `json:"org_id"`
-	ID              pgtype.UUID `json:"id"`
+	RevokedByMemberID pgtype.UUID `json:"revoked_by_member_id"`
+	OrgID             pgtype.UUID `json:"org_id"`
+	ID                pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revokeInvitation, arg.RevokedByUserID, arg.OrgID, arg.ID)
+	result, err := q.db.Exec(ctx, revokeInvitation, arg.RevokedByMemberID, arg.OrgID, arg.ID)
 	if err != nil {
 		return 0, err
 	}

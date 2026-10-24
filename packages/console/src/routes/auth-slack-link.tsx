@@ -36,7 +36,7 @@ function NextStep(props: { failure: Failure & { code: string }; inline?: boolean
       {action("My account", "/settings/account")}
     </Match>
     <Match when={props.failure.code === "forbidden" || props.failure.code === "service_unavailable"}>
-      <AuthCopy>Ask an organization owner or admin for help.</AuthCopy>
+      <AuthCopy>Ask an access administrator for help.</AuthCopy>
       {action("My account", "/settings/account")}
     </Match>
   </Switch>;

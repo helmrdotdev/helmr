@@ -86,7 +86,7 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			if err := uploadDeploymentBundleObjects(
-				cmd.Context(), controlPlane, directory, scope, reporter,
+				cmd.Context(), controlPlane, directory, scope, !skipPromotion, reporter,
 			); err != nil {
 				return err
 			}
@@ -137,9 +137,10 @@ func uploadDeploymentBundleObjects(
 	controlPlane *client.Client,
 	directory bundle.Directory,
 	scope client.EnvironmentScopeOptions,
+	requirePromotion bool,
 	reporter deployReporter,
 ) error {
-	uploads, err := planDeploymentBundleObjectUploads(ctx, controlPlane, directory, scope)
+	uploads, err := planDeploymentBundleObjectUploads(ctx, controlPlane, directory, scope, requirePromotion)
 	if err != nil {
 		return err
 	}
@@ -174,7 +175,7 @@ func uploadDeploymentBundleObjects(
 		if err := reporter.Step("Reconciling deployment upload"); err != nil {
 			return errors.Join(originalErr, err)
 		}
-		replanned, planErr := planDeploymentBundleObjectUploads(ctx, controlPlane, directory, scope)
+		replanned, planErr := planDeploymentBundleObjectUploads(ctx, controlPlane, directory, scope, requirePromotion)
 		if planErr != nil {
 			return errors.Join(originalErr, fmt.Errorf("reconcile deployment upload: %w", planErr))
 		}
@@ -245,8 +246,9 @@ func planDeploymentBundleObjectUploads(
 	controlPlane *client.Client,
 	directory bundle.Directory,
 	scope client.EnvironmentScopeOptions,
+	requirePromotion bool,
 ) ([]api.DeploymentBundleUpload, error) {
-	plan, err := controlPlane.PlanDeploymentBundleUploads(ctx, directory.BundleJSON, scope)
+	plan, err := controlPlane.PlanDeploymentBundleUploads(ctx, directory.BundleJSON, scope, requirePromotion)
 	if err != nil {
 		return nil, err
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"path"
 	"regexp"
 	"strings"
@@ -76,8 +77,9 @@ func tooLarge(format string, args ...any) InputError {
 
 // Creator is the API key or session that creates a Command.
 type Creator struct {
-	Kind string
-	ID   uuid.UUID
+	UserID uuid.UUID
+	Kind   string
+	ID     uuid.UUID
 }
 
 // CreateRequest asks to run a process on a Computer, once per idempotency
@@ -254,6 +256,16 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 	if !scoped {
 		return db.Command{}, computer.ErrNotFound
 	}
+	kind, id := request.Creator.Kind, request.Creator.ID
+	if kind == string(auth.PrincipalKindSession) {
+		kind, id = "user", request.Creator.UserID
+	}
+	if err := access.Check(ctx, tx, kind, id, request.EnvironmentID, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+		if errors.Is(err, access.ErrDenied) {
+			return db.Command{}, computer.ErrDenied
+		}
+		return db.Command{}, err
+	}
 	var result db.Command
 	err := idempotency.Run(ctx, tx, claimRequest, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 		q := db.New(tx)
@@ -345,8 +357,8 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 			Env:           normalized.envJSON,
 			TimeoutMs:     normalized.timeoutMS,
 			Stdin:         normalized.stdin,
-			CallerKind:    request.Creator.Kind,
-			CallerID:      pgvalue.UUID(request.Creator.ID),
+			CallerKind:    kind,
+			CallerID:      pgvalue.UUID(id),
 		})
 		if err != nil {
 			return idempotency.Completion{}, fmt.Errorf("create computer exec: %w", err)

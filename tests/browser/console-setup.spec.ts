@@ -38,7 +38,7 @@ async function secrets(page: Page, initial: SecretState, options: { manage?: boo
     await page.route("**/api/me", async (route) => {
       const response = await route.fetch();
       const me = await response.json() as { permissions: string[] };
-      await route.fulfill({ response, json: { ...me, role: "developer", permissions: me.permissions.filter((permission) => permission !== "secrets.write") } });
+      await route.fulfill({ response, json: { ...me, role: "member", permissions: me.permissions.filter((permission) => permission !== "secrets.write") } });
     });
   }
   return writes;

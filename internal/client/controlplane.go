@@ -144,10 +144,14 @@ func (c *Client) PlanDeploymentBundleUploads(
 	ctx context.Context,
 	bundleJSON []byte,
 	scope EnvironmentScopeOptions,
+	requirePromotion bool,
 ) (api.DeploymentBundleUploadPlanResponse, error) {
 	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/deployment-bundles/upload-plan")
 	if err != nil {
 		return api.DeploymentBundleUploadPlanResponse{}, err
+	}
+	if requirePromotion {
+		path += "?promote=true"
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, path, bytes.NewReader(bundleJSON))
 	if err != nil {

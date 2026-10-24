@@ -103,9 +103,7 @@ func orgError(err error) error {
 		return badRequest(err)
 	case errors.Is(err, org.ErrMemberManagementRequired),
 		errors.Is(err, org.ErrOwnerRoleRequired),
-		errors.Is(err, org.ErrLastActiveOwner),
-		errors.Is(err, org.ErrSelfMemberManagement),
-		errors.Is(err, org.ErrSelfMemberRemoval):
+		errors.Is(err, org.ErrLastActiveOwner):
 		return forbidden(err)
 	case errors.Is(err, org.ErrProjectNotFound),
 		errors.Is(err, org.ErrEnvironmentNotFound),

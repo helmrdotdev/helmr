@@ -84,7 +84,7 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	deletion := computer.Deletion{Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete"}
+	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete"}
 	if _, err := computer.Delete(t.Context(), f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("live member deletion: %v", err)
 	}

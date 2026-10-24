@@ -68,7 +68,7 @@ If it expires, start a fresh login and repeat the hand-off.
 **HAND-OFF:** Ask the human to confirm that Secret `{{.Binding.Provider.Secret}}`
 exists and is active in the selected Environment. Direct them to
 `<server>/settings/secrets?project=<project>&environment=<environment>`.
-If needed, an owner or admin creates it or rotates its value there. A revoked ID
+If needed, a secret manager for the environment creates it or rotates its value there. A revoked ID
 is reserved; do not suggest recreating it. Explain that this key is sent only to
 `{{.Binding.Provider.Origin}}`. Wait for "done" without asking for the key.
 
@@ -101,11 +101,11 @@ the diagnostic rule above; do not report the Agent as ready from local files alo
 Agent name and URL-encoding all values:
 `<server>/agents/<agent>/slack?project=<project>&environment=<environment>`.
 Ask them to connect Slack there and say "done". If their role cannot connect it,
-ask them to involve the owner/admin; do not change their permissions.
+ask them to involve someone with Manage agents on this Agent; do not change their permissions.
 
 **HAND-OFF:** Explain that Slack conversations, including DMs, create Sessions
-shared with organization members in Helmr, including viewers. Owners, admins and
-developers can continue or control the work; viewers can answer Agent questions.
+readable by members with View all sessions in this environment. Members with Manage all sessions
+can continue or control the work and answer Agent questions.
 Other authorized input can produce replies in the original Slack DM. The human can open the app’s
 Messages tab and send a new message without a mention, then reply in its thread
 to continue. If linking is requested, link the account and send a new top-level

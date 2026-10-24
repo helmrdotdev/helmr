@@ -3,6 +3,11 @@ DROP TABLE IF EXISTS computer_controls;
 DROP TABLE IF EXISTS audit_events;
 -- Drop the owned table set together to resolve internal foreign-key cycles.
 DROP TABLE IF EXISTS
+    role_grant_agents,
+    role_grants,
+    roles,
+    permission_group_members,
+    permission_groups,
     boot_seed_objects,
     boot_seed_builds,
     slack_delivery_limits,
@@ -80,4 +85,4 @@ DROP TABLE IF EXISTS
     users,
     regions,
     organizations;
-DROP TYPE IF EXISTS org_member_role, magic_link_purpose;
+DROP TYPE IF EXISTS magic_link_purpose;

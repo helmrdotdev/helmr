@@ -20,12 +20,12 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE user_id=$1`, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE template_definitions SET prepare=true WHERE environment_id=$1`, f.Environment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
-	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
+	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 	handler, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -35,17 +35,17 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
-	issuer := auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
+	issuer := f.Principal(t)
 	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}
 	issue := func(permission auth.Permission) string {
 		t.Helper()
-		key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: string(permission), Permissions: []auth.Permission{permission}})
+		key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: string(permission) + uuid.NewV7().String(), RolePermissions: []auth.Permission{permission}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return key.Raw
 	}
-	writer, reader := issue(auth.PermissionDeploymentsWrite), issue(auth.PermissionSessionsRead)
+	writer, reader := issue(auth.CapabilityDeploymentsPublish), issue(auth.CapabilitySessionsView)
 	path := "/v1/templates/fixture-computer/refresh"
 	for _, tc := range []struct {
 		token, body string
@@ -62,6 +62,10 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 		t.Fatalf("receipt %s: %v", response.Body.String(), err)
 	}
 	readPath := "/v1/templates/fixture-computer/builds/" + build.ImageBuildID + "?deployment_id=" + build.DeploymentID
+	response = h.request(t, http.MethodGet, readPath, issue(auth.CapabilityAgentsUse), "")
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("Use-only build read HTTP %d: %s", response.Code, response.Body.String())
+	}
 	response = h.request(t, http.MethodGet, readPath, reader, "")
 	if response.Code != http.StatusOK {
 		t.Fatalf("read HTTP %d: %s", response.Code, response.Body.String())

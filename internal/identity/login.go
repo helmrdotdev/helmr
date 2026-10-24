@@ -7,6 +7,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -210,7 +211,8 @@ func issueLoginSession(ctx context.Context, q db.Querier, cfg Config, userID pgt
 // session or a session whose selected membership is no
 // longer active is auth.ErrUnauthenticated. A session that selects no
 // organization takes the user's first active membership.
-func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, rawSession string) (auth.Principal, error) {
+func AuthenticateLoginSession(ctx context.Context, database db.DBTX, cfg Config, rawSession string) (auth.Principal, error) {
+	q := db.New(database)
 	tokenHash, err := auth.HashToken(cfg.sessionKey, rawSession)
 	if err != nil {
 		return auth.Principal{}, err
@@ -248,7 +250,15 @@ func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, raw
 			return auth.Principal{}, fmt.Errorf("login session org id: %w", err)
 		}
 		principal.OrgID = orgID
-		principal.Role = auth.Role(row.Role)
+		principal.MemberID = pgvalue.MustUUIDValue(row.MemberID)
+		principal.IsOwner = row.IsOwner
+		grants, err := access.MemberGrants(ctx, database, orgID, principal.MemberID)
+		if err != nil {
+			return auth.Principal{}, fmt.Errorf("load permission grants: %w", err)
+		}
+		for _, grant := range grants {
+			principal.Grants = append(principal.Grants, grant.PermissionGrant)
+		}
 	}
 	return principal, nil
 }

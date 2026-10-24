@@ -1,20 +1,29 @@
 package api
 
+type PermissionScope struct {
+	Project     string   `json:"project"`
+	Environment string   `json:"environment"`
+	Agent       string   `json:"agent,omitempty"`
+	Permissions []string `json:"permissions"`
+}
+
 type MeResponse struct {
-	UserID               string   `json:"user_id"`
-	DisplayName          string   `json:"display_name"`
-	ProfileImageURL      string   `json:"profile_image_url"`
-	AppOrigin            string   `json:"app_origin,omitempty"`
-	OrgID                string   `json:"org_id,omitempty"`
-	OrgName              string   `json:"org_name,omitempty"`
-	OrgSlug              string   `json:"org_slug,omitempty"`
-	Role                 string   `json:"role,omitempty"`
-	Admin                bool     `json:"admin"`
-	Permissions          []string `json:"permissions"`
-	OrganizationRequired bool     `json:"organization_required"`
-	ProjectRequired      bool     `json:"project_required"`
-	AccessRequired       bool     `json:"access_required"`
-	SetupTokenRequired   bool     `json:"setup_token_required"`
+	PermissionScopes     []PermissionScope `json:"permission_scopes"`
+	UserID               string            `json:"user_id"`
+	DisplayName          string            `json:"display_name"`
+	ProfileImageURL      string            `json:"profile_image_url"`
+	AppOrigin            string            `json:"app_origin,omitempty"`
+	OrgID                string            `json:"org_id,omitempty"`
+	OrgName              string            `json:"org_name,omitempty"`
+	OrgSlug              string            `json:"org_slug,omitempty"`
+	MembershipID         string            `json:"membership_id,omitempty"`
+	IsOwner              bool              `json:"is_owner"`
+	Admin                bool              `json:"admin"`
+	Permissions          []string          `json:"permissions"`
+	OrganizationRequired bool              `json:"organization_required"`
+	ProjectRequired      bool              `json:"project_required"`
+	AccessRequired       bool              `json:"access_required"`
+	SetupTokenRequired   bool              `json:"setup_token_required"`
 	// EmailDelivery reports whether this installation can send email, which
 	// inviting members requires.
 	EmailDelivery bool `json:"email_delivery"`

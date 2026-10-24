@@ -163,6 +163,9 @@ func agentOperationFailure(id, code, message string) workerapi.AgentOperationRes
 }
 func (server *Server) writeAgentWorkerError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, session.ErrConversationVerificationUnavailable):
+		server.log.Warn("Slack input is waiting because conversation verification is not configured")
+		writeError(w, conflict(errors.New("session execution authority is unavailable")))
 	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, dispatch.ErrInvalidInput):
 		writeError(w, badRequest(errors.New("invalid Session worker operation")))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict), errors.Is(err, dispatch.ErrConflict):

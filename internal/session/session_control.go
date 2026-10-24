@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -88,7 +89,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 			if err := lockRuntimeHost(ctx, tx, caller); err != nil {
 				return err
 			}
-		} else if err := authorizeExternalControl(ctx, tx, caller, req.EnvironmentID, req.Kind); err != nil {
+		} else if err := authorizeExternalControl(ctx, tx, caller, req.EnvironmentID, req.SessionID, req.Kind); err != nil {
 			return err
 		}
 		if caller.Kind == "session" {
@@ -121,8 +122,13 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 			if err = executionReceipt(ctx, tx, caller.Execution, locked[caller.ID]); err != nil {
 				return err
 			}
-		} else if err = authorizeExternalControl(ctx, tx, caller, req.EnvironmentID, req.Kind); err != nil {
+		} else if err = authorizeExternalControl(ctx, tx, caller, req.EnvironmentID, req.SessionID, req.Kind); err != nil {
 			return err
+		}
+		for _, id := range ids {
+			if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, id, controlPermission(req.Kind)); err != nil {
+				return err
+			}
 		}
 		var prior []byte
 		var hold *uuid.UUID
@@ -396,30 +402,8 @@ func drainClosingSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []u
 	return nil
 }
 
-func authorizeExternalControl(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID, kind string) error {
-	if kind == "turn_interrupt" {
-		kind = "interrupt"
-	}
-	var allowed bool
-	var err error
-	switch caller.Kind {
-	case "user":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM environments e JOIN org_members m ON m.org_id=e.org_id
- WHERE e.id=$1 AND m.user_id=$2 AND m.disabled_at IS NULL AND m.role IN ('owner','admin','developer'))`, env, caller.ID).Scan(&allowed)
-	case "api_key":
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM api_keys k JOIN environments e ON (e.id,e.project_id,e.org_id)=(k.environment_id,k.project_id,k.org_id)
- WHERE e.id=$1 AND k.id=$2 AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
- AND k.role IN ('owner','admin','developer') AND $3=ANY(k.permissions))`, env, caller.ID, "sessions."+kind).Scan(&allowed)
-	default:
-		return ErrDenied
-	}
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return ErrDenied
-	}
-	return nil
+func authorizeExternalControl(ctx context.Context, tx pgx.Tx, caller Caller, env, target uuid.UUID, kind string) error {
+	return authorizeTarget(ctx, tx, caller, env, target, controlPermission(kind))
 }
 
 // Lock every involved root before enumerating descendants. Locking the target
@@ -560,4 +544,17 @@ func (e TurnNotInterruptibleError) ErrorDetails() map[string]json.RawMessage {
 	status, _ := json.Marshal(e.Status)
 	reason, _ := json.Marshal(e.Reason())
 	return map[string]json.RawMessage{"status": status, "reason": reason}
+}
+
+func controlPermission(kind string) auth.Permission {
+	switch kind {
+	case "close":
+		return auth.PermissionSessionsClose
+	case "cancel":
+		return auth.PermissionSessionsCancel
+	case "resume":
+		return auth.PermissionSessionsResume
+	default:
+		return auth.PermissionSessionsInterrupt
+	}
 }

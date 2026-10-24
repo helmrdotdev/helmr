@@ -26,7 +26,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 		t.Fatal(err)
 	}
 	installation, channel, publication, thread, participant, registration := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE user_id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE user_id=$1;
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$11,$3,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$1);
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($2,$11,$3,'app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$1);
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($6,$5,$7,$11,$2,$1);
@@ -55,7 +55,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
-	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(queries)
+	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
@@ -99,12 +99,13 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	call(http.MethodPost, action+"/check", owner, string(input), 409)
 	call(http.MethodGet, fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/slack-delivery", uuid.NewV7()), owner, "", 404)
 	viewerID := h.user(t, "Viewer")
-	h.member(t, org, viewerID, db.OrgMemberRoleViewer)
+	h.member(t, org, viewerID, "member")
+	h.grant(t, org, viewerID, f.Environment, "sessions.view")
 	viewer := h.session(t, viewerID, org)
 	call(http.MethodGet, base, viewer, "", 200)
 	call(http.MethodPost, action+"/abandon", viewer, string(input), 403)
-	issuer := auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}
-	key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "delivery read", Permissions: []auth.Permission{auth.PermissionSessionsRead}})
+	issuer := f.Principal(t)
+	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, testAPIKeyInput{Name: "delivery read", RolePermissions: []auth.Permission{auth.CapabilitySessionsView}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,6 +116,6 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	if !bytes.Contains(raw, []byte(`"disposed_by":"`+f.User.String()+`"`)) || !bytes.Contains(raw, []byte(`"status":"failed"`)) {
 		t.Fatal("disposition not visible", string(raw))
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='developer' WHERE user_id=$1`, f.User)
+	f.SetPermissions(t, "sessions.view")
 	call(http.MethodPost, action+"/check", owner, string(input), 403)
 }

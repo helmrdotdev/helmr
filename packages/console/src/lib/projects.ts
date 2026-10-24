@@ -6,19 +6,19 @@ export type Environment = {
   environment: string;
   project: string;
   name: string;
-  color_hex: string;
-  is_default: boolean;
-  created_at: string;
-  updated_at: string;
+  color_hex?: string;
+  is_default?: boolean;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type Project = {
   project: string;
   name: string;
-  default_region_id: string;
-  is_default: boolean;
-  created_at: string;
-  updated_at: string;
+  default_region_id?: string;
+  is_default?: boolean;
+  created_at?: string;
+  updated_at?: string;
   environments?: Environment[];
 };
 

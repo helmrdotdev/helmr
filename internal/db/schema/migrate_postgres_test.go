@@ -218,14 +218,13 @@ func assertPrimitiveLifecycleSchema(
 		SELECT count(*)
 		  FROM pg_type
 		 WHERE typname = ANY(ARRAY[
-		     'org_member_role',
 		     'magic_link_purpose'
 		 ])
 	`).Scan(&categoricalEnums); err != nil {
 		t.Fatal(err)
 	}
-	if categoricalEnums != 2 {
-		t.Fatalf("categorical enum sentinels = %d, want 2", categoricalEnums)
+	if categoricalEnums != 1 {
+		t.Fatalf("categorical enum sentinels = %d, want 1", categoricalEnums)
 	}
 
 	queryFiles, err := filepath.Glob("../query/*.sql")
@@ -256,6 +255,7 @@ func assertDatabaseConstraintBoundaries(
 	if deferredRetryReferences != 0 {
 		t.Fatalf("deferred retry references = %d, want 0", deferredRetryReferences)
 	}
+	// Policy evaluation, revisions and audit are owned by application transactions.
 	var triggerCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)

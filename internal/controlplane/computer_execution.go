@@ -76,7 +76,7 @@ func (s *Server) executionScopeHTTP(w http.ResponseWriter, r *http.Request, clos
 	if close {
 		permission, param = auth.PermissionSessionsClose, "sessionID"
 	}
-	_, env, err := s.agentRequestAuthority(r, permission)
+	caller, env, err := s.agentRequestAuthority(r, permission)
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
 		return
@@ -88,23 +88,19 @@ func (s *Server) executionScopeHTTP(w http.ResponseWriter, r *http.Request, clos
 	}
 	var scope session.ExecutionScope
 	err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
-		var exists bool
 		if close {
-			err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND id=$2)`, env, id).Scan(&exists)
-		} else {
-			err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2)`, env, id).Scan(&exists)
+			scope, err = session.SessionCloseScope(r.Context(), tx, caller, env, id)
+			return err
 		}
+		var exists bool
+		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2)`, env, id).Scan(&exists)
 		if err != nil {
 			return err
 		}
 		if !exists {
 			return session.ErrNotReady
 		}
-		if close {
-			scope, err = session.ReadSessionCloseScope(r.Context(), tx, env, id)
-		} else {
-			scope, err = session.ReadComputerExecutionScope(r.Context(), tx, env, id)
-		}
+		scope, err = session.ReadComputerExecutionScope(r.Context(), tx, env, id)
 		return err
 	})
 	if err != nil {

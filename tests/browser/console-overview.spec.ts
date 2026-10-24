@@ -53,7 +53,7 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
     if (method !== "GET") state.writes.push(`${method} ${path}`);
     const ask = path.match(/\/sessions\/([^/]+)\/turns\/([^/]+)\/asks\/([^/]+)$/);
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: state.slack ? "owner" : "developer", permissions: ["sessions.read"], admin: false, organization_required: false, project_required: false };
+    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: state.slack ? "owner" : "member", permissions: ["sessions.read"], admin: false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === base) json = environment;

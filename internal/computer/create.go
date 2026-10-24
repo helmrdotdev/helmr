@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/lifetime"
@@ -23,6 +24,7 @@ type Creator struct{ ca TrustIssuer }
 func NewCreator(ca TrustIssuer) Creator { return Creator{ca: ca} }
 
 type Request struct {
+	Principal         auth.Principal
 	DeleteAfterUnused lifetime.Policy
 	Scope             Scope
 	DefinitionKey     string
@@ -72,6 +74,9 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		var deployment *uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 FOR NO KEY UPDATE`, request.Scope.EnvironmentID, request.Scope.OrgID, request.Scope.ProjectID).Scan(&deployment); err != nil {
+			return err
+		}
+		if err := authorizeOperator(ctx, tx, request.Principal, request.Scope); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, retry, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {

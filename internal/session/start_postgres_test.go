@@ -311,16 +311,17 @@ func TestRuntimeCreationRechecksTurnAfterLockWait(t *testing.T) {
 func TestStartAPIKeyCreationAndContinuationPermissions(t *testing.T) {
 	f := newAdmissionFixture(t)
 	key := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,role,permissions,name,key_prefix,token_hash) SELECT $1,org_id,project_id,id,'developer',ARRAY['sessions.send'],'test','test',$2 FROM environments WHERE id=$3`, key, []byte(key.String()), f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $1,org_id,project_id,id,'test','test',$2 FROM environments WHERE id=$3`, key, []byte(key.String()), f.env)
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.view")
 	caller := session.Caller{Kind: "api_key", ID: key}
 	sessionKey := "conversation"
 	req := f.startRequest("first")
 	req.SessionKey = &sessionKey
 	req.ComputerID = f.computer
 	if _, err := session.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("send grant created work: %v", err)
+		t.Fatalf("view grant created work: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET permissions=ARRAY['sessions.create'] WHERE id=$1`, key)
+	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.manage", "computers.operate")
 	first, err := session.Start(t.Context(), f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
@@ -329,7 +330,7 @@ func TestStartAPIKeyCreationAndContinuationPermissions(t *testing.T) {
 	if _, err := session.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("duplicate creation reused a Session: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET permissions=ARRAY['sessions.create','sessions.send'] WHERE id=$1`, key)
+	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.manage", "computers.operate")
 	if _, err := session.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("send permission bypassed key conflict: %v", err)
 	}

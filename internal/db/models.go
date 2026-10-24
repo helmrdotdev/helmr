@@ -53,65 +53,19 @@ func (ns NullMagicLinkPurpose) Value() (driver.Value, error) {
 	return string(ns.MagicLinkPurpose), nil
 }
 
-type OrgMemberRole string
-
-const (
-	OrgMemberRoleOwner     OrgMemberRole = "owner"
-	OrgMemberRoleAdmin     OrgMemberRole = "admin"
-	OrgMemberRoleDeveloper OrgMemberRole = "developer"
-	OrgMemberRoleViewer    OrgMemberRole = "viewer"
-)
-
-func (e *OrgMemberRole) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = OrgMemberRole(s)
-	case string:
-		*e = OrgMemberRole(s)
-	default:
-		return fmt.Errorf("unsupported scan type for OrgMemberRole: %T", src)
-	}
-	return nil
-}
-
-type NullOrgMemberRole struct {
-	OrgMemberRole OrgMemberRole `json:"org_member_role"`
-	Valid         bool          `json:"valid"` // Valid is true if OrgMemberRole is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullOrgMemberRole) Scan(value interface{}) error {
-	if value == nil {
-		ns.OrgMemberRole, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.OrgMemberRole.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullOrgMemberRole) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.OrgMemberRole), nil
-}
-
 type APIKey struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	CreatedByUserID pgtype.UUID        `json:"created_by_user_id"`
-	Role            OrgMemberRole      `json:"role"`
-	Permissions     []string           `json:"permissions"`
-	Name            string             `json:"name"`
-	KeyPrefix       string             `json:"key_prefix"`
-	TokenHash       []byte             `json:"token_hash"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
-	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
-	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
+	ID                pgtype.UUID        `json:"id"`
+	OrgID             pgtype.UUID        `json:"org_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	EnvironmentID     pgtype.UUID        `json:"environment_id"`
+	CreatedByMemberID pgtype.UUID        `json:"created_by_member_id"`
+	Name              string             `json:"name"`
+	KeyPrefix         string             `json:"key_prefix"`
+	TokenHash         []byte             `json:"token_hash"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt        pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type CasObject struct {
@@ -182,7 +136,7 @@ type DeviceCode struct {
 	OrgID               pgtype.UUID        `json:"org_id"`
 	UserCodeHash        []byte             `json:"user_code_hash"`
 	DeviceCodeHash      []byte             `json:"device_code_hash"`
-	DecidedByUserID     pgtype.UUID        `json:"decided_by_user_id"`
+	DecidedByMemberID   pgtype.UUID        `json:"decided_by_member_id"`
 	Status              string             `json:"status"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	PollIntervalSeconds int32              `json:"poll_interval_seconds"`
@@ -254,18 +208,17 @@ type IdempotencyReceipt struct {
 }
 
 type Invitation struct {
-	ID               pgtype.UUID        `json:"id"`
-	OrgID            pgtype.UUID        `json:"org_id"`
-	InviteeEmail     string             `json:"invitee_email"`
-	Role             OrgMemberRole      `json:"role"`
-	InvitedByUserID  pgtype.UUID        `json:"invited_by_user_id"`
-	TokenHash        []byte             `json:"token_hash"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
-	AcceptedAt       pgtype.Timestamptz `json:"accepted_at"`
-	AcceptedByUserID pgtype.UUID        `json:"accepted_by_user_id"`
-	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	RevokedByUserID  pgtype.UUID        `json:"revoked_by_user_id"`
+	ID                 pgtype.UUID        `json:"id"`
+	OrgID              pgtype.UUID        `json:"org_id"`
+	InviteeEmail       string             `json:"invitee_email"`
+	InvitedByMemberID  pgtype.UUID        `json:"invited_by_member_id"`
+	TokenHash          []byte             `json:"token_hash"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	AcceptedAt         pgtype.Timestamptz `json:"accepted_at"`
+	AcceptedByMemberID pgtype.UUID        `json:"accepted_by_member_id"`
+	RevokedAt          pgtype.Timestamptz `json:"revoked_at"`
+	RevokedByMemberID  pgtype.UUID        `json:"revoked_by_member_id"`
 }
 
 type LoginSession struct {
@@ -297,11 +250,12 @@ type MagicLink struct {
 }
 
 type OrgMember struct {
+	ID          pgtype.UUID        `json:"id"`
 	OrgID       pgtype.UUID        `json:"org_id"`
 	UserID      pgtype.UUID        `json:"user_id"`
-	Role        OrgMemberRole      `json:"role"`
+	IsOwner     bool               `json:"is_owner"`
 	DisplayName pgtype.Text        `json:"display_name"`
-	DisabledAt  pgtype.Timestamptz `json:"disabled_at"`
+	RemovedAt   pgtype.Timestamptz `json:"removed_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }

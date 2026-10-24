@@ -26,18 +26,18 @@ const MANIFEST_OPEN: ReadonlySet<string> = new Set(["oauth_config", "oauth_confi
 
 type Credentials = import("../../lib/slack").SlackAppCredentials;
 
-const MANAGERS = "Organization owners and admins";
+const MANAGERS = "Members with Manage agents access";
 
-// An Agent's Slack connection in the tab's Environment. Owners and admins set it
-// up in numbered steps on the page and manage it once connected; everyone else
-// sees who manages it, since only they can read the connection.
+// An Agent's Slack connection in the tab's Environment. Members with Manage
+// agents set it up and manage it once connected. Other members see the required
+// permission without receiving connection details.
 export function AgentSlackConnection(props: { agentName: string }) {
   const permission = usePermission();
   const scope = useScope();
   const environmentName = () => scope.selectedEnvironment()?.name ?? "this environment";
   return (
     <Show
-      when={permission.isOrganizationAdmin()}
+      when={permission.has("agents.manage", {projectID:scope.selectedProjectID(), environmentID:scope.selectedEnvironmentID(), agent:props.agentName})}
       fallback={
         <DetailLayout rail={<ConnectionFacts environmentName={environmentName()} />}>
           <Panel title="Slack connection">
@@ -277,7 +277,7 @@ function InstalledConnection(props: {
       <Show when={props.connection.status === "connected" && !props.connection.direct_messages_authorized}>
         <Notice tone="warning">Direct messages need additional Slack permissions. Update this app’s manifest below, then choose Reauthorize in Slack for the same workspace. Channel conversations remain available.</Notice>
       </Show>
-      <p class={ui.muted}>Slack conversations, including DMs, create shared sessions. Organization members, including viewers, can read their input and output. Owners, admins and developers can continue or control the work; viewers can answer Agent questions. Other authorized input can produce replies in the original DM. The app’s online indicator shows availability in Slack, not server health.</p>
+      <p class={ui.muted}>Channel conversations are shared with linked members who can use this Agent and participate in the channel. DMs are personal conversations. Members assigned View all sessions or Manage all sessions for this Agent can access their history. Sending input, answering questions or resuming another person’s session also requires Use agents. Authorized input can produce replies in the original DM. The app’s online indicator shows availability in Slack, not server health.</p>
       <Show when={props.connection.status === "reauthorization_required"}>
         <Notice tone="warning" action={reauthorize()}>Slack authorization needs repair. Update this app’s manifest below first. Reauthorize this same app and workspace to continue. Earlier unsent output will not be backfilled.</Notice>
       </Show>

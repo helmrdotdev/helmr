@@ -22,8 +22,7 @@ func TestSlackDeliveryRunProgressesPeerWhileAnotherRequestIsInFlight(t *testing.
 	first := f.post(t, 1, "slow", "lifecycle", nil)
 	peer := f
 	peer.Session, peer.thread, peer.participant = uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth)
- SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE id=$1;
  INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $3,$6,$2,$4,org_id,team_id,slack_channel_id,'456.789','peer-opening' FROM slack_channel_bindings WHERE id=$4;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($5,$3,$6,$2);
  UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour'`, pgx.QueryExecModeSimpleProtocol, f.Session, peer.Session, peer.thread, f.channel, peer.participant, f.Environment)

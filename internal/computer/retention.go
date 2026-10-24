@@ -3,6 +3,7 @@ package computer
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"log/slog"
 	"time"
 	"uuid"
@@ -113,7 +114,7 @@ func reconcileUnused(ctx context.Context, database db.TxBeginner, env, id uuid.U
 
 // UpdateRetention serializes preservation with deletion. The current continuous
 // unused interval remains valid when a policy changes; deleted data cannot be revived.
-func UpdateRetention(ctx context.Context, database db.TxBeginner, scope Scope, id uuid.UUID, policy lifetime.Policy) (Snapshot, error) {
+func UpdateRetention(ctx context.Context, database db.TxBeginner, principal auth.Principal, scope Scope, id uuid.UUID, policy lifetime.Policy) (Snapshot, error) {
 	if !policy.Set || !policy.Valid() {
 		return Snapshot{}, invalidInput("delete_after_unused_ms must be null or positive safe integer milliseconds")
 	}
@@ -125,6 +126,9 @@ func UpdateRetention(ctx context.Context, database db.TxBeginner, scope Scope, i
 		}
 		if deleted {
 			return ErrNotFound
+		}
+		if err := authorizeOperator(ctx, tx, principal, scope); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE computers SET delete_after_unused_ms=$3,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, scope.EnvironmentID, id, policy.Milliseconds); err != nil {
 			return err

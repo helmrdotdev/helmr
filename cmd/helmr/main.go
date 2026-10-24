@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	if err := newRootCommand().Execute(); err != nil {
+	if err := executeCommand(newRootCommand(), os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		var exitErr exitCodeError
 		if errors.As(err, &exitErr) {
@@ -48,6 +48,9 @@ func newRootCommand() *cobra.Command {
 		projectCommand(),
 		envCommand(),
 		secretCommand(),
+		roleCommand(),
+		groupCommand(),
+		memberCommand(),
 	)
 	return root
 }

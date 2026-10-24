@@ -139,7 +139,7 @@ func (r *diagnosticReport) readError(id string, err error) {
 		remedy = &diagnosticRemedy{"Sign in with helmr login for this server, or replace the configured API key.", true}
 	case httpclient.IsStatus(err, http.StatusForbidden):
 		message = "The credential cannot read this state."
-		remedy = &diagnosticRemedy{"Ask an owner or admin to confirm the required access.", true}
+		remedy = &diagnosticRemedy{"Ask an access administrator to confirm the required access.", true}
 	case httpclient.IsStatus(err, http.StatusNotFound):
 		message = "The requested resource or API route was not found."
 		remedy = &diagnosticRemedy{"Check the explicit target and that the server supports this operation.", false}
@@ -248,8 +248,12 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 			report.Live.Attention = &attention.Counts
 			report.check("runtime.attention", "pass", "Environment attention counts are readable.", nil)
 			if doctor {
-				diagnosticCount(&report, "sessions.holds", attention.Counts.Hold, "Sessions on hold", "Inspect held Sessions and resolve the recorded hold reason.", true)
-				diagnosticCount(&report, "turns.failed", attention.Counts.FailedTurn, "failed Turns requiring attention", "Read the affected Session events before retrying.", false)
+				if attention.Counts.Hold != nil {
+					diagnosticCount(&report, "sessions.holds", *attention.Counts.Hold, "Sessions on hold", "Inspect held Sessions and resolve the recorded hold reason.", true)
+				}
+				if attention.Counts.FailedTurn != nil {
+					diagnosticCount(&report, "turns.failed", *attention.Counts.FailedTurn, "failed Turns requiring attention", "Read the affected Session events before retrying.", false)
+				}
 				if attention.Counts.SlackReauthorization != nil {
 					diagnosticCount(&report, "slack.authorization", *attention.Counts.SlackReauthorization, "Slack connections needing authorization", "Reauthorize the existing Slack connection in the Console.", true)
 				}
@@ -261,7 +265,7 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 			collectDiagnosticRecentTurns(ctx, cp, scope, sessions.Sessions, &report)
 		}
 	}
-	if report.Identity != nil && (report.Identity.Role == "owner" || report.Identity.Role == "admin") && report.Live.Attention != nil && report.Live.Attention.SlackReauthorization != nil {
+	if report.Identity != nil && report.Live.Attention != nil && report.Live.Attention.SlackReauthorization != nil {
 		collectDiagnosticSlack(ctx, cp, scope, doctor, &report)
 	} else {
 		report.check("slack.connections", "skip", "Slack management inspection is not available for this server or credential.", nil)
@@ -385,7 +389,7 @@ func printDiagnostics(cmd *cobra.Command, report diagnosticReport) {
 	}
 	fmt.Fprintf(out, "Credential: %s, present=%s (%s); expiry unknown\n", report.Credential.Kind, presence, report.Credential.Source)
 	if report.Identity != nil {
-		fmt.Fprintf(out, "Identity: %s · %s · %s\n", report.Identity.DisplayName, report.Identity.OrgName, report.Identity.Role)
+		fmt.Fprintf(out, "Identity: %s · %s · membership %s (owner=%t)\n", report.Identity.DisplayName, report.Identity.OrgName, report.Identity.MembershipID, report.Identity.IsOwner)
 	}
 	if live := report.Live; live != nil {
 		if live.Deployment == nil {

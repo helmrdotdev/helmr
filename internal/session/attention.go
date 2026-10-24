@@ -47,11 +47,14 @@ type Attention struct {
 // there is no separate dismissal.
 const attentionFailedTurnWindow = `interval '24 hours'`
 
+const attentionAccessSQL = `($3::boolean OR s.agent_id=ANY($8::uuid[]) OR (s.origin_slack_connection_id IS NULL AND (s.origin_user_id=$4 OR s.origin_api_key_id=$5) AND ($6::boolean OR s.agent_id=ANY($7::uuid[]))))`
+
 const attentionQuestionsSQL = `SELECT a.id,a.session_id,a.turn_id,ag.key,a.created_at,a.question,count(*) OVER ()
  FROM turn_asks a
  JOIN sessions s ON (s.environment_id,s.id)=(a.environment_id,a.session_id)
  JOIN agents ag ON (ag.environment_id,ag.id)=(s.environment_id,s.agent_id)
  WHERE a.environment_id=$1 AND a.status='pending'
+ AND ` + attentionAccessSQL + `
  ORDER BY a.created_at,a.id LIMIT $2`
 
 const attentionHoldsSQL = `SELECT h.id,h.session_id,ag.key,h.created_at,h.reason,count(*) OVER ()
@@ -59,6 +62,7 @@ const attentionHoldsSQL = `SELECT h.id,h.session_id,ag.key,h.created_at,h.reason
  JOIN sessions s ON (s.environment_id,s.id)=(h.environment_id,h.session_id)
  JOIN agents ag ON (ag.environment_id,ag.id)=(s.environment_id,s.agent_id)
  WHERE h.environment_id=$1 AND h.released_at IS NULL AND s.status='open'
+ AND ` + attentionAccessSQL + `
  ORDER BY h.created_at,h.id LIMIT $2`
 
 const attentionFailedTurnsSQL = `SELECT t.id,t.session_id,ag.key,t.terminal_at,t.seq,t.error_code,count(*) OVER ()
@@ -67,6 +71,7 @@ const attentionFailedTurnsSQL = `SELECT t.id,t.session_id,ag.key,t.terminal_at,t
  JOIN agents ag ON (ag.environment_id,ag.id)=(s.environment_id,s.agent_id)
  WHERE t.environment_id=$1 AND t.status='failed' AND t.terminal_at>clock_timestamp()-` + attentionFailedTurnWindow + ` AND s.status='open'
  AND NOT EXISTS(SELECT 1 FROM turns later WHERE later.environment_id=t.environment_id AND later.session_id=t.session_id AND later.seq>t.seq)
+ AND ` + attentionAccessSQL + `
  ORDER BY t.terminal_at,t.id LIMIT $2`
 
 // ListAttention reads the Environment's waiting work with the same authority as
@@ -74,8 +79,14 @@ const attentionFailedTurnsSQL = `SELECT t.id,t.session_id,ag.key,t.terminal_at,t
 func ListAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env uuid.UUID) (Attention, error) {
 	result := Attention{Questions: []AttentionItem{}, Holds: []AttentionItem{}, FailedTurns: []AttentionItem{}}
 	err := readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error {
-		var err error
-		result.Questions, result.QuestionCount, err = attentionRows(ctx, tx, attentionQuestionsSQL, env, func(row pgx.Rows, item *AttentionItem, count *int64) error {
+		filter, err := readScopeFor(ctx, tx, caller, env)
+		if err != nil {
+			return err
+		}
+		if !filter.All && !filter.AllAgents && len(filter.Agents) == 0 && len(filter.ViewAgents) == 0 {
+			return ErrDenied
+		}
+		result.Questions, result.QuestionCount, err = attentionRows(ctx, tx, attentionQuestionsSQL, env, filter, func(row pgx.Rows, item *AttentionItem, count *int64) error {
 			var turn uuid.UUID
 			var question []byte
 			if err := row.Scan(&item.ID, &item.SessionID, &turn, &item.Agent, &item.At, &question, count); err != nil {
@@ -88,13 +99,13 @@ func ListAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env u
 		if err != nil {
 			return err
 		}
-		result.Holds, result.HoldCount, err = attentionRows(ctx, tx, attentionHoldsSQL, env, func(row pgx.Rows, item *AttentionItem, count *int64) error {
+		result.Holds, result.HoldCount, err = attentionRows(ctx, tx, attentionHoldsSQL, env, filter, func(row pgx.Rows, item *AttentionItem, count *int64) error {
 			return row.Scan(&item.ID, &item.SessionID, &item.Agent, &item.At, &item.Summary, count)
 		})
 		if err != nil {
 			return err
 		}
-		result.FailedTurns, result.FailedTurnCount, err = attentionRows(ctx, tx, attentionFailedTurnsSQL, env, func(row pgx.Rows, item *AttentionItem, count *int64) error {
+		result.FailedTurns, result.FailedTurnCount, err = attentionRows(ctx, tx, attentionFailedTurnsSQL, env, filter, func(row pgx.Rows, item *AttentionItem, count *int64) error {
 			var sequence int64
 			var code *string
 			if err := row.Scan(&item.ID, &item.SessionID, &item.Agent, &item.At, &sequence, &code, count); err != nil {
@@ -112,10 +123,10 @@ func ListAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env u
 	return result, err
 }
 
-func attentionRows(ctx context.Context, tx pgx.Tx, sql string, env uuid.UUID, scan func(pgx.Rows, *AttentionItem, *int64) error) ([]AttentionItem, int64, error) {
+func attentionRows(ctx context.Context, tx pgx.Tx, sql string, env uuid.UUID, filter sessionReadScope, scan func(pgx.Rows, *AttentionItem, *int64) error) ([]AttentionItem, int64, error) {
 	items := []AttentionItem{}
 	var count int64
-	rows, err := tx.Query(ctx, sql, env, AttentionLimit)
+	rows, err := tx.Query(ctx, sql, env, AttentionLimit, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents)
 	if err != nil {
 		return items, 0, err
 	}

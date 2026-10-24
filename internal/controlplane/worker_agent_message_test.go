@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -44,7 +43,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	}
 	parent := f
 	parent.Session = uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) VALUES($1,$2,$3,$4,$5,$2,0);
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
  INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) VALUES($1,$2,1,$5,1,'ready');
  UPDATE sessions SET parent_session_id=$2,requester_session_id=$2,root_session_id=$2,causal_depth=1 WHERE environment_id=$1 AND id=$6`, pgx.QueryExecModeSimpleProtocol, f.Environment, parent.Session, f.Agent, f.Deployment, f.Computer, f.Session)
 	sendOp := op
@@ -69,10 +68,10 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.Pool.Exec(t.Context(), `UPDATE org_members SET role='owner' WHERE user_id=$1`, f.User); err != nil {
+	if _, err := f.Pool.Exec(t.Context(), `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User); err != nil {
 		t.Fatal(err)
 	}
-	key, err := identity.IssueAPIKey(t.Context(), f.Pool, auth.Principal{OrgID: org, UserID: f.User, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Role: auth.RoleOwner}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "SDK messages", Permissions: []auth.Permission{auth.PermissionSessionsSend}})
+	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, f.Principal(t), auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, testAPIKeyInput{Name: "SDK messages", RolePermissions: []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}

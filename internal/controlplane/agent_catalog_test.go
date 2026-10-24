@@ -9,7 +9,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 )
@@ -18,7 +17,8 @@ func assertRetainedAgentCatalog(t *testing.T, h httpPostgresFixture, org, projec
 	t.Helper()
 	base := "/api/projects/project/environments/test/agents"
 	viewer := h.user(t, "agent-viewer")
-	h.member(t, org, viewer, db.OrgMemberRoleViewer)
+	h.member(t, org, viewer, "member")
+	h.grant(t, org, viewer, environment, "sessions.view")
 	token := h.session(t, viewer, org)
 	get := func(path, bearer string, status int) []byte {
 		t.Helper()

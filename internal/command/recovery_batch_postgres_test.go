@@ -25,7 +25,7 @@ func revokedCommands(t *testing.T, f sessiontest.Fixture, count int) []uuid.UUID
 	for i := range count {
 		id := uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id,status,updated_at)
- VALUES($1,$2,$3,1,ARRAY['true'],'{}','',60000,'session',uuidv7(),'running',clock_timestamp()+($4::int*interval '1 microsecond'))`, f.Environment, id, f.Computer, i)
+ VALUES($1,$2,$3,1,ARRAY['true'],'{}','',60000,'user',uuidv7(),'running',clock_timestamp()+($4::int*interval '1 microsecond'))`, f.Environment, id, f.Computer, i)
 		ids = append(ids, id)
 	}
 	return ids

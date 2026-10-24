@@ -9,6 +9,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"io"
 	"strings"
 	"unicode"
@@ -140,6 +142,9 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, na
 				return err
 			}
 		}
+		if err := authorizeMutation(ctx, tx, actor, env); err != nil {
+			return err
+		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 			q := db.New(tx)
 			if !acquired.New {
@@ -180,6 +185,9 @@ func (s *Store) Rotate(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 	err = db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
 		request, err := idempotency.NewSecretRotateRequest(env, id, key)
 		if err != nil {
+			return err
+		}
+		if err := authorizeMutation(ctx, tx, actor, env); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -239,6 +247,9 @@ func (s *Store) Revoke(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 			if err != nil {
 				return err
 			}
+		}
+		if err := authorizeMutation(ctx, tx, actor, env); err != nil {
+			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 			record, err := lockMutationSecret(ctx, tx, env, id)
@@ -336,4 +347,18 @@ func envelopeAAD(environmentID uuid.UUID, secretID uuid.UUID, versionID uuid.UUI
 
 func secretFromCreate(row db.CreateSecretRow) db.Secret {
 	return db.Secret(row)
+}
+
+func authorizeMutation(ctx context.Context, tx pgx.Tx, actor audit.Actor, env uuid.UUID) error {
+	switch actor.Kind {
+	case "system":
+		if actor.Source != "" {
+			return nil
+		}
+	case "login":
+		return access.Check(ctx, tx, "user", actor.UserID, env, uuid.Nil(), auth.CapabilitySecretsManage)
+	case "api_key":
+		return access.Check(ctx, tx, "api_key", actor.CredentialID, env, uuid.Nil(), auth.CapabilitySecretsManage)
+	}
+	return access.ErrDenied
 }

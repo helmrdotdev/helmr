@@ -1,107 +1,31 @@
 -- name: EnsureOrgMember :one
-INSERT INTO org_members (org_id, user_id, role, display_name)
-VALUES (
-    sqlc.arg(org_id),
-    sqlc.arg(user_id),
-    sqlc.arg(role)::org_member_role,
-    sqlc.arg(display_name)
-)
-ON CONFLICT (org_id, user_id) DO UPDATE
-   SET role = EXCLUDED.role,
-       display_name = EXCLUDED.display_name,
-       disabled_at = NULL,
-       updated_at = now()
+INSERT INTO org_members (id,org_id,user_id,is_owner,display_name)
+VALUES (sqlc.arg(id),sqlc.arg(org_id),sqlc.arg(user_id),sqlc.arg(is_owner),sqlc.arg(display_name))
+ON CONFLICT (org_id,user_id) WHERE removed_at IS NULL DO UPDATE
+SET display_name=EXCLUDED.display_name, updated_at=now()
 RETURNING *;
 
 -- name: ListOrgMembers :many
-SELECT org_members.org_id,
-       org_members.user_id,
-       org_members.role,
-       COALESCE(org_members.display_name, users.display_name) AS display_name,
-       users.primary_email,
-       org_members.disabled_at,
-       org_members.created_at,
-       org_members.updated_at
-  FROM org_members
-  JOIN users ON users.id = org_members.user_id
- WHERE org_members.org_id = sqlc.arg(org_id)
- ORDER BY org_members.disabled_at IS NULL DESC,
-          org_members.created_at ASC;
+SELECT m.*, COALESCE(m.display_name,u.display_name)::text AS effective_display_name,u.primary_email
+FROM org_members m JOIN users u ON u.id=m.user_id
+WHERE m.org_id=$1
+ORDER BY m.removed_at IS NULL DESC,m.created_at;
 
 -- name: GetOrgMemberForManagement :one
-SELECT org_members.org_id,
-       org_members.user_id,
-       org_members.role,
-       org_members.display_name,
-       users.primary_email,
-       org_members.disabled_at,
-       org_members.created_at,
-       org_members.updated_at
-  FROM org_members
-  JOIN users ON users.id = org_members.user_id
- WHERE org_members.org_id = sqlc.arg(org_id)
-   AND org_members.user_id = sqlc.arg(user_id);
+SELECT m.*,u.primary_email
+FROM org_members m JOIN users u ON u.id=m.user_id
+WHERE m.org_id=$1 AND m.id=$2;
 
--- name: UpdateOrgMemberRole :one
-WITH locked_active_owners AS (
-    SELECT org_members.user_id
-      FROM org_members
-      JOIN users ON users.id = org_members.user_id
-     WHERE org_members.org_id = sqlc.arg(org_id)
-       AND org_members.role = 'owner'
-       AND org_members.disabled_at IS NULL
-     FOR UPDATE OF org_members
-)
-UPDATE org_members
-   SET role = sqlc.arg(role)::org_member_role,
-       updated_at = now()
- WHERE org_members.org_id = sqlc.arg(org_id)
-   AND org_members.user_id = sqlc.arg(user_id)
-   AND org_members.role = sqlc.arg(expected_role)::org_member_role
-   AND org_members.disabled_at IS NULL
-   AND (
-       sqlc.arg(actor_is_owner)::boolean
-       OR (
-           org_members.role <> 'owner'
-           AND sqlc.arg(role)::org_member_role <> 'owner'
-       )
-   )
-   AND (
-       org_members.role <> 'owner'
-       OR sqlc.arg(role)::org_member_role = 'owner'
-       OR EXISTS (
-           SELECT 1 FROM locked_active_owners
-            WHERE locked_active_owners.user_id <> org_members.user_id
-       )
-   )
+-- name: GetActiveOrgMemberByUser :one
+SELECT * FROM org_members WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL;
+
+-- name: UpdateOrgMemberOwnership :one
+UPDATE org_members SET is_owner=sqlc.arg(is_owner),updated_at=now()
+WHERE org_id=sqlc.arg(org_id) AND id=sqlc.arg(id)
+AND removed_at IS NULL AND is_owner=sqlc.arg(expected_is_owner)
 RETURNING *;
 
--- name: DisableOrgMember :one
-WITH locked_active_owners AS (
-    SELECT org_members.user_id
-      FROM org_members
-      JOIN users ON users.id = org_members.user_id
-     WHERE org_members.org_id = sqlc.arg(org_id)
-       AND org_members.role = 'owner'
-       AND org_members.disabled_at IS NULL
-     FOR UPDATE OF org_members
-)
-UPDATE org_members
-   SET disabled_at = now(),
-       updated_at = now()
- WHERE org_members.org_id = sqlc.arg(org_id)
-   AND org_members.user_id = sqlc.arg(user_id)
-   AND org_members.role = sqlc.arg(expected_role)::org_member_role
-   AND org_members.disabled_at IS NULL
-   AND (
-       sqlc.arg(actor_is_owner)::boolean
-       OR org_members.role <> 'owner'
-   )
-   AND (
-       org_members.role <> 'owner'
-       OR EXISTS (
-           SELECT 1 FROM locked_active_owners
-            WHERE locked_active_owners.user_id <> org_members.user_id
-       )
-   )
+-- name: RemoveOrgMember :one
+UPDATE org_members SET removed_at=now(),updated_at=now()
+WHERE org_id=$1 AND id=$2 AND removed_at IS NULL AND NOT is_owner
 RETURNING *;

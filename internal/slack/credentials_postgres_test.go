@@ -31,7 +31,7 @@ func credentialFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID
 		t.Fatal(err)
 	}
 	registration := f.registration
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE org_id=$1 AND user_id=$2`, org, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_app_registrations SET credential_revision=0,client_id=NULL,credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, registration)
 	if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, registration, AppCredentials{ClientID: "client", ClientSecret: "secret", SigningSecret: "signing-secret"}); err != nil {
 		t.Fatal(err)
@@ -43,7 +43,7 @@ func credentialFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET credential_ciphertext=$2,credential_nonce=$3,credential_expires_at=$4 WHERE id=$1`, f.installation, ciphertext, nonce, expires)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE org_id=$1 AND user_id=$2`, org, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
 	return f, store, org
 }
 
@@ -191,7 +191,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if err != nil || next == f.installation {
 		t.Fatal("reconnect did not create generation", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='developer' WHERE org_id=$1 AND user_id=$2`, org, f.User)
+	f.SetPermissions(t, "agents.use", "deployments.publish", "deployments.promote", "sessions.view", "sessions.manage", "computers.operate", "secrets.manage", "keys.manage")
 	if _, err = f.reauthorize(t, store, org, grant); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("non-manager reauthorized", err)
 	}

@@ -143,7 +143,7 @@ func TestTriggerHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	cfg.DB = q
 	cfg.TX = f.Pool
-	cfg.Auth = identity.NewAPIKeyAuthenticator(q)
+	cfg.Auth = identity.NewAPIKeyAuthenticator(f.Pool)
 	handler, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -15,7 +15,7 @@ between Slack messages and Turns.
 ## Connections
 
 Each Agent has its own Slack app and one Slack connection in each Environment.
-An organization owner or admin creates the app from a manifest Helmr provides,
+A person with `agents.manage` on the Agent creates the app from a manifest Helmr provides,
 saves its credentials and installs it in the workspace from the Console. See
 [Connect Slack](/docs/guides/connect-slack).
 
@@ -24,20 +24,33 @@ channel to use it. One-to-one direct messages with the app are also supported;
 mentions are not required there. Group direct messages, shared channels and
 Slack Connect channels are not supported.
 
-DM Sessions use the same organization roles as other Sessions. Organization
-members, including viewers, can read their input and output in Console. Owners,
-admins and developers can continue or control the work; viewers can answer Agent
-questions. Other authorized input can produce replies in the original Slack DM.
-A private Slack DM does not create a user-private Helmr Session.
+Each person links their Slack account to their Helmr account once. Linking does
+not grant organization membership or Agent access. An explicit attempt from an
+unlinked person receives a private linking prompt; after linking, they send the
+message again. Rejected input is never replayed.
 
-Each person who talks to the Agent links their Slack account to their Helmr
-account once. A message from an unlinked person is not accepted: Helmr replies
-with a message only that person can see, containing a link to connect the
-account. After linking, they send the message again; nothing is replayed.
-Linked members with the owner, admin or developer role can request work.
-Viewers can answer questions but not request work. These checks also apply to
-unmentioned replies in an accepted Session thread: an unlinked person receives
-the linking notice, and a Viewer receives a private permission notice.
+Use agents for the connected Agent allows starting a DM or participating in a
+shared conversation started by mentioning the Agent in a channel. Channel input
+also requires current channel membership. Other eligible participants may continue
+the shared conversation without being its creator, including stopping, closing or
+resuming that conversation through its Slack controls. Sharing does not give them
+Console access to another person's personal Sessions. A personal Session projected
+into a channel by an operator keeps its original authorization.
+
+DM Sessions belong to their initiating user. View all sessions for that Agent
+allows reading their input and output in Console, including other people's DMs.
+Manage all sessions allows viewing, stopping and closing; adding input, answering
+questions or resuming additionally requires Use agents for the same Agent and
+valid runtime authority. Input supplied through Console or the API can produce
+output in the Session's original Slack destination.
+
+Explicit unauthorized attempts receive private access guidance. Incidental
+unauthorized replies in a channel are ignored. Helmr checks current permissions
+again before dispatching queued input, and verifies that its Slack author can
+still participate. A shared conversation runs under its connected Agent's
+scope, without inheriting its creator's administrative permissions. A revoked DM
+recipient stops receiving new deliveries; already published messages cannot be
+retracted by permission changes.
 
 Structured-input Agents require a conversational front for Slack. The front can
 spawn typed child work and deliberately summarize its result.
@@ -59,7 +72,7 @@ connection (`target_not_published`) or the channel cannot be used
 (`channel_unavailable`). A Session stays bound to its original channel. Creating another Session with
 an occupied `key` conflicts; enqueue follow-up work using the existing Session ID.
 
-When a Slack-bound Session creates independent work for another Agent through
+When an authorized operator's Slack-bound Session creates independent work for another Agent through
 [delegation](/docs/concepts/delegation), the new Session also starts in a
 thread of the same channel, linked to the requesting thread. The target Agent
 needs its own Slack connection in the same Slack workspace; otherwise the
@@ -100,8 +113,9 @@ Use these in the Session thread, optionally after the Agent's mention:
 `!mute` and `!unmute` must be the whole message. Quoted commands and commands
 inside code are ordinary text. Wait for the command confirmation before relying
 on the changed state. A command does not start a Session, create Agent work or
-release a Stop hold. Only linked Owners, Admins and Developers can change input
-state; a DM also retains its original peer boundary.
+release a Stop hold. Linked participants with current Agent use can change input state in their own
+DMs or connected shared channels. Session managers can control sessions of their
+assigned Agents; a DM also retains its original peer boundary.
 
 While muted, an explicit Agent mention with work submits only that message and
 leaves the thread muted. A bare mention is not work. `!aside` wins even if the
@@ -236,8 +250,8 @@ output, a question or a response, the Session records a
 running. The full output remains in the Session's events. See
 [Events](/docs/reference/events).
 
-When a post's delivery is uncertain or has failed, organization owners and
-admins can recheck it against Slack or stop delivering it from the Session's
+When a post's delivery is uncertain or has failed, members with Manage all sessions in
+the environment can recheck it against Slack or stop delivering it from the Session's
 page in the Console. Neither action resends content.
 
 Reconnecting an Agent's Slack app creates a new connection. Threads from the

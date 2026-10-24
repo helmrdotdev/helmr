@@ -1,6 +1,6 @@
 import { request } from "./api";
 
-type AgentListItem = { agent: string; template: string };
+type AgentListItem = { agent: string; template?: string };
 type TemplateListItem = { template: string; resources: { milliCpu: number; memoryMiB: number; diskMiB?: number } };
 type AgentDefinition = AgentListItem & { deployment_id: string };
 

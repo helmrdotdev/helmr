@@ -37,7 +37,7 @@ func commandFixture(t *testing.T) fixture {
 	return f
 }
 func (f fixture) request(key string) CreateRequest {
-	return CreateRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: Creator{Kind: string(auth.PrincipalKindSession), ID: f.User}, Argv: []string{"true"}, IdempotencyKey: key}
+	return CreateRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: Creator{Kind: string(auth.PrincipalKindSession), ID: f.User, UserID: f.User}, Argv: []string{"true"}, IdempotencyKey: key}
 }
 func (f fixture) ref(id uuid.UUID) Ref {
 	return Ref{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment, CommandID: id}
@@ -481,7 +481,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	creator := computer.NewCreator(store)
 	key := "repair-shell"
 	scope := computer.Scope{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment}
-	request := computer.Request{Scope: scope, DefinitionKey: "fixture-computer", Key: &key, Secrets: []secretbinding.Reference{{Secret: "COMMAND_TOKEN", Env: &secretbinding.ReferenceEnv{Name: "TOKEN", Mode: "raw"}}}, IdempotencyKey: "create"}
+	request := computer.Request{Principal: f.Principal(t), Scope: scope, DefinitionKey: "fixture-computer", Key: &key, Secrets: []secretbinding.Reference{{Secret: "COMMAND_TOKEN", Env: &secretbinding.ReferenceEnv{Name: "TOKEN", Mode: "raw"}}}, IdempotencyKey: "create"}
 	first, err := creator.Create(t.Context(), f.Pool, request)
 	if err != nil {
 		t.Fatal(err)
@@ -513,7 +513,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deletion := computer.Deletion{Scope: scope, ComputerID: first.ComputerID, IdempotencyKey: "delete"}
+	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: first.ComputerID, IdempotencyKey: "delete"}
 	if _, err = computer.Delete(t.Context(), f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("delete live Command: %v", err)
 	}

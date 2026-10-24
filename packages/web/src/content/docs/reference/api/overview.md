@@ -11,6 +11,10 @@ authenticates an Environment-bound API key with `Authorization: Bearer <key>`;
 see [Authentication](/docs/reference/api/authentication). The TypeScript
 [`HelmrClient`](/docs/reference/sdk/client) wraps these routes.
 
+Human-session [permission management](/docs/reference/api/permissions) uses the
+`/api` Roles, Groups, Role Grants and member-permissions routes. These routes are
+shared by the Console and CLI and do not accept workload API keys.
+
 ## Routes
 
 | Method | Path |

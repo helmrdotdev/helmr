@@ -15,16 +15,16 @@ func TestDetailsPreserveActionFacts(t *testing.T) {
 		details Details
 		want    string
 	}{
-		{"member.role_changed", RoleChangedDetails{OldRole: "developer", NewRole: "viewer"}, `{"old_role":"developer","new_role":"viewer"}`},
-		{"member.granted", RoleGrantedDetails{NewRole: "owner"}, `{"new_role":"owner"}`},
+		{"member.role_changed", RoleChangedDetails{OldRole: "admin", NewRole: "member"}, `{"old_role":"admin","new_role":"member"}`},
+		{"member.granted", MembershipDetails{MembershipID: "member", IsOwner: true}, `{"membership_id":"member","is_owner":true}`},
 		{"installation_admin.granted", RoleGrantedDetails{NewRole: "admin"}, `{"new_role":"admin"}`},
-		{"invitation.accepted", RoleGrantedDetails{NewRole: "viewer"}, `{"new_role":"viewer"}`},
-		{"member.removed", RoleRemovedDetails{OldRole: "developer"}, `{"old_role":"developer"}`},
-		{"invitation.revoked", RoleRemovedDetails{OldRole: "viewer"}, `{"old_role":"viewer"}`},
-		{"invitation.expired", RoleRemovedDetails{OldRole: "viewer"}, `{"old_role":"viewer"}`},
-		{"invitation.created", InvitationCreatedDetails{NewRole: "viewer", ExpiresAt: &expires}, `{"new_role":"viewer","expires_at":"2026-10-14T12:00:00Z"}`},
-		{"api_key.issued", APIKeyIssuedDetails{NewRole: "owner", Permissions: []string{"sessions.read"}}, `{"new_role":"owner","permissions":["sessions.read"],"expires_at":null}`},
-		{"api_key.issued", APIKeyIssuedDetails{NewRole: "viewer", Permissions: []string{"sessions.read"}, ExpiresAt: &expires}, `{"new_role":"viewer","permissions":["sessions.read"],"expires_at":"2026-10-14T12:00:00Z"}`},
+		{"invitation.accepted", MembershipDetails{MembershipID: "member"}, `{"membership_id":"member","is_owner":false}`},
+		{"member.removed", MembershipDetails{MembershipID: "member"}, `{"membership_id":"member","is_owner":false}`},
+		{"invitation.revoked", InvitationStateDetails{}, `{}`},
+		{"invitation.expired", InvitationStateDetails{}, `{}`},
+		{"invitation.created", InvitationCreatedDetails{ExpiresAt: &expires}, `{"expires_at":"2026-10-14T12:00:00Z"}`},
+		{"api_key.issued", APIKeyIssuedDetails{Name: "automation"}, `{"name":"automation","expires_at":null}`},
+		{"api_key.issued", APIKeyIssuedDetails{Name: "automation", ExpiresAt: &expires}, `{"name":"automation","expires_at":"2026-10-14T12:00:00Z"}`},
 		{"slack_connection.authorized", PermissionsDetails{Permissions: []string{"chat:write"}}, `{"permissions":["chat:write"]}`},
 		{"project.retention_changed", RetentionChangedDetails{OldRetentionSeconds: &seconds}, `{"old_retention_seconds":86400,"new_retention_seconds":null}`},
 		{"secret.rotated", nil, `{}`},
@@ -60,20 +60,19 @@ func TestDetailsRejectInvalidActionFacts(t *testing.T) {
 	}{
 		{"missing details", "member.role_changed", nil},
 		{"typed nil", "member.role_changed", typedNil},
-		{"wrong shape", "member.role_changed", RoleGrantedDetails{NewRole: "viewer"}},
-		{"missing before", "member.role_changed", RoleChangedDetails{NewRole: "viewer"}},
+		{"wrong shape", "member.role_changed", RoleGrantedDetails{NewRole: "member"}},
+		{"missing before", "member.role_changed", RoleChangedDetails{NewRole: "member"}},
 		{"missing grant", "member.granted", RoleGrantedDetails{}},
 		{"missing revoked role", "member.removed", RoleRemovedDetails{}},
-		{"missing invitation expiry", "invitation.created", InvitationCreatedDetails{NewRole: "viewer"}},
-		{"zero invitation expiry", "invitation.created", InvitationCreatedDetails{NewRole: "viewer", ExpiresAt: &zero}},
-		{"missing key role", "api_key.issued", APIKeyIssuedDetails{}},
-		{"missing key permissions", "api_key.issued", APIKeyIssuedDetails{NewRole: "owner"}},
+		{"missing invitation expiry", "invitation.created", InvitationCreatedDetails{}},
+		{"zero invitation expiry", "invitation.created", InvitationCreatedDetails{ExpiresAt: &zero}},
+		{"missing key name", "api_key.issued", APIKeyIssuedDetails{}},
 		{"empty permission", "slack_connection.authorized", PermissionsDetails{Permissions: []string{""}}},
 		{"missing permissions object", "slack_connection.authorized", nil},
 		{"negative retention duration", "project.retention_changed", RetentionChangedDetails{OldRetentionSeconds: &negative}},
 		{"unexpected retention duration", "project.retention_changed", RetentionChangedDetails{NewRetentionSeconds: &negative}},
 		{"unapproved facts", "secret.rotated", RoleGrantedDetails{NewRole: "owner"}},
-		{"invalid timestamp encoding", "api_key.issued", APIKeyIssuedDetails{NewRole: "owner", Permissions: []string{"sessions.read"}, ExpiresAt: &unencodable}},
+		{"invalid timestamp encoding", "api_key.issued", APIKeyIssuedDetails{Name: "automation", ExpiresAt: &unencodable}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,8 +89,8 @@ func TestDetailsNormalizeExpiryToUTC(t *testing.T) {
 		action  string
 		details Details
 	}{
-		{"invitation.created", InvitationCreatedDetails{NewRole: "viewer", ExpiresAt: &expires}},
-		{"api_key.issued", APIKeyIssuedDetails{NewRole: "viewer", Permissions: []string{"sessions.read"}, ExpiresAt: &expires}},
+		{"invitation.created", InvitationCreatedDetails{ExpiresAt: &expires}},
+		{"api_key.issued", APIKeyIssuedDetails{Name: "automation", ExpiresAt: &expires}},
 	} {
 		t.Run(tc.action, func(t *testing.T) {
 			data, err := marshalDetails(tc.action, tc.details)

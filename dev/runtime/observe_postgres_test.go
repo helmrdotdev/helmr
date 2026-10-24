@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -154,51 +153,8 @@ func TestVerificationObservationRejectsQueryInputs(t *testing.T) {
 	}
 }
 
-func TestVerificationObservationAPIKeyScope(t *testing.T) {
+func TestVerificationObservationQuotedLocator(t *testing.T) {
 	f := sessiontest.New(t)
-	var project, environment string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT p.slug,e.slug FROM projects p JOIN environments e ON e.project_id=p.id WHERE e.id=$1`, f.Environment).Scan(&project, &environment); err != nil {
-		t.Fatal(err)
-	}
-	permissions := []string{}
-	for _, p := range auth.AllPermissions() {
-		permissions = append(permissions, string(p))
-	}
-	var org, projectID uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &projectID); err != nil {
-		t.Fatal(err)
-	}
-	key := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,role,permissions,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,'admin',$5,'verification','scope-prefix',$6)`, key, org, projectID, f.Environment, permissions, dbtest.Hash("observer-key"))
-	inputs := map[string]any{"key_prefix": "scope-prefix", "project": project, "environment": environment}
-	keys := observe(t, f.Pool, "api-key-scope", inputs).([]any)
-	if len(keys) != 1 || keys[0].(map[string]any)["valid"] != true {
-		t.Fatalf("authorized key=%v", keys)
-	}
-	for _, state := range []string{"expired", "revoked", "missing-grant", "wrong-scope"} {
-		t.Run(state, func(t *testing.T) {
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=NULL,expires_at=NULL,permissions=$2 WHERE id=$1`, key, permissions)
-			inputs["environment"] = environment
-			switch state {
-			case "expired":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET expires_at=now()-interval '1 minute' WHERE id=$1`, key)
-			case "revoked":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=now() WHERE id=$1`, key)
-			case "missing-grant":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET permissions=ARRAY['sessions.read'] WHERE id=$1`, key)
-			case "wrong-scope":
-				inputs["environment"] = "another"
-			}
-			got := observe(t, f.Pool, "api-key-scope", inputs).([]any)
-			if state == "missing-grant" {
-				if len(got) != 1 || got[0].(map[string]any)["valid"] != false {
-					t.Fatalf("missing permission=%v", got)
-				}
-			} else if len(got) != 0 {
-				t.Fatalf("ineligible key=%v", got)
-			}
-		})
-	}
 	// A quoted opaque locator is data; it cannot escape the JSON input literal.
 	malicious := `host\';DELETE FROM sessions;--`
 	if got := observe(t, f.Pool, "worker-state", map[string]any{"resource_ids": []string{malicious}}).([]any); len(got) != 0 {
@@ -259,7 +215,7 @@ func TestVerificationObservationCheckpointMembership(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,1,1)`, f.Environment, save, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO checkpoints(environment_id,id,computer_id,source_lease_epoch,control_version,disk_save_id,status,capture_request,capture_expires_at,capture_digest) VALUES($1,$2,$3,1,1,$4,'capturing','request',now()+interval '1 hour',decode(repeat('01',32),'hex'))`, f.Environment, checkpoint, f.Computer, save)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO checkpoint_processes(environment_id,checkpoint_id,session_id,process_epoch,computer_id) VALUES($1,$2,$3,1,$4)`, f.Environment, checkpoint, f.Session, f.Computer)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth) SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0 FROM sessions WHERE id=$1`, f.Session, peer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0,origin_user_id FROM sessions WHERE id=$1`, f.Session, peer)
 	sessionPath := func(id uuid.UUID) map[string]any {
 		return observe(t, f.Pool, "session-path", map[string]any{"session_id": id.String()}).(map[string]any)
 	}
@@ -305,7 +261,7 @@ func TestVerificationObservationCheckpointMembership(t *testing.T) {
 		}
 	}
 	command := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$3,ARRAY['true'],'{}','',1000,'session',uuidv7())`, f.Environment, command, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$3,ARRAY['true'],'{}','',1000,'user',$4)`, f.Environment, command, f.Computer, f.User)
 	commands := func() []any {
 		return observe(t, f.Pool, "computer-path", map[string]any{"computer_id": f.Computer.String()}).(map[string]any)["commands"].([]any)
 	}

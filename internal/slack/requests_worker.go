@@ -72,7 +72,7 @@ func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.Tr
 		err = errGestureInvalid
 	} else if payload.NativeStop && !nonnullJSON(payload.Control) && payload.Timestamp == "" {
 		var allowed bool
-		allowed, err = verifyDirectControl(ctx, pool, client, id, uuid.Nil())
+		allowed, err = verifyControlConversation(ctx, pool, client, id, uuid.Nil())
 		if err == nil && allowed {
 			err = admitNativeStop(ctx, pool, id)
 		}
@@ -84,7 +84,7 @@ func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.Tr
 			err = errControlInvalid
 		} else {
 			var allowed bool
-			allowed, err = verifyDirectControl(ctx, pool, client, id, control.Target.Thread)
+			allowed, err = verifyControlConversation(ctx, pool, client, id, control.Target.Thread)
 			if err == nil && allowed {
 				err = admitControl(ctx, pool, id)
 			}

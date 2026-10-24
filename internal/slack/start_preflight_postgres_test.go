@@ -175,7 +175,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 					if err = f.Pool.QueryRow(t.Context(), `SELECT org_id FROM slack_installations WHERE id=$1`, f.installation).Scan(&org); err != nil {
 						t.Fatal(err)
 					}
-					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='owner' WHERE org_id=$1 AND user_id=$2`, org, f.User)
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
 					if err = store.DisconnectConnection(t.Context(), audit.System("test-fixture"), org, f.User, f.Environment, f.publication); err != nil {
 						t.Fatal(err)
 					}

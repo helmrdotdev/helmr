@@ -21,7 +21,7 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET primary_pool_id=$2 WHERE id=$1`, f.Group, pool)
 	for _, key := range []string{"first", "second"} {
-		if _, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{Kind: string(auth.PrincipalKindSession), ID: f.User}, Argv: []string{"true"}, IdempotencyKey: key}); err != nil {
+		if _, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{Kind: string(auth.PrincipalKindSession), ID: f.User, UserID: f.User}, Argv: []string{"true"}, IdempotencyKey: key}); err != nil {
 			t.Fatal(err)
 		}
 	}

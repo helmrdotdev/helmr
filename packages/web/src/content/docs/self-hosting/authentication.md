@@ -27,15 +27,16 @@ Use the exact `controlplane_url` output, including scheme and any configured hos
 
 Self-hosted mode requires a high-entropy `setup_token`. The bootstrap helper generates it and stores it in Secrets Manager without writing it to Terraform state.
 
-Once `/readyz` succeeds, sign in through GitHub. If the environment has no organization, enter the setup token to create the first organization. The self-hosted instance supports a single organization; after it exists, an owner must invite additional users.
+Once `/readyz` succeeds, sign in through GitHub. If the environment has no organization, enter the setup token to create the first organization. The self-hosted instance supports a single organization; after it exists, a member with Manage access must invite additional users.
 
 The setup token is a bootstrap credential, not a substitute for user authentication. Restrict access to its secret and logs. The checked-in helper initializes missing secret values only; it does not rotate an existing setup token.
 
 ## Invite members
 
-Owners and admins invite people from **Members** in the Console. Paste up to 50
-email addresses at once, separated by commas, semicolons, spaces or new lines, and choose one
-role for all of them; only owners can invite owners. Each invitee receives an
+Members with Manage access invite people from **Members** in the Console. Paste up to 50
+email addresses at once, separated by commas, semicolons, spaces or new lines.
+Invitees join without access; assign Roles directly or through Groups after they join.
+Owners appoint other owners separately. Each invitee receives an
 email with their invitation link, which expires after 7 days. An address that is
 invalid, already belongs to an active member or already has a pending invitation
 is reported without blocking the others. If the invitation emails cannot be

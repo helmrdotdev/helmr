@@ -73,7 +73,7 @@ func TestRetainedWorkReads(t *testing.T) {
 	if err != nil || len(sessions.Sessions) == 0 {
 		t.Fatalf("sessions: %+v %v", sessions, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET disabled_at=clock_timestamp() WHERE user_id=$1`, f.caller().ID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.caller().ID)
 	if _, err := session.GetSession(t.Context(), f.pool, f.caller(), f.env, f.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("stale user: %v", err)
 	}

@@ -31,7 +31,7 @@ func TestAuthContinuationUsesEffectiveOrganization(t *testing.T) {
 		}
 	}
 	exec("INSERT INTO organizations (id, name, slug) VALUES ($1, 'First org', 'first'), ($2, 'Invited org', 'invited')", orgA.String(), orgB.String())
-	exec("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES ($1, $3, 'owner', now() - interval '1 day'), ($2, $3, 'viewer', now())", orgA.String(), orgB.String(), user.String())
+	exec("INSERT INTO org_members (id, org_id, user_id, is_owner, created_at) VALUES (uuidv7(), $1, $3, true, now() - interval '1 day'), (uuidv7(), $2, $3, false, now())", orgA.String(), orgB.String(), user.String())
 	exec("INSERT INTO regions (id, display_name) VALUES ('local', 'Local')")
 	exec("INSERT INTO projects (id, org_id, default_region_id, slug, name) VALUES ($1, $2, 'local', 'first', 'First')", uuid.NewV7().String(), orgA.String())
 	me := func(token string) (int, api.MeResponse) {
@@ -46,11 +46,11 @@ func TestAuthContinuationUsesEffectiveOrganization(t *testing.T) {
 
 	pinned := fixture.session(t, user, orgB)
 	if status, response := me(pinned); status != http.StatusOK || response.OrgID != orgB.String() || response.OrgName != "Invited org" ||
-		response.Role != "viewer" || !response.ProjectRequired || response.OrganizationRequired {
+		response.IsOwner || response.ProjectRequired || response.OrganizationRequired {
 		t.Fatalf("me used another membership: %d %+v", status, response)
 	} else {
 		for _, permission := range response.Permissions {
-			if permission == "deployments.write" {
+			if permission == "deployments.publish" {
 				t.Fatal("advertised first org owner permission")
 			}
 		}
@@ -58,7 +58,7 @@ func TestAuthContinuationUsesEffectiveOrganization(t *testing.T) {
 
 	// Ordinary unpinned login retains the existing first-membership selection.
 	unpinned := fixture.session(t, user, uuid.Nil())
-	if status, response := me(unpinned); status != http.StatusOK || response.OrgID != orgA.String() || response.Role != "owner" || response.ProjectRequired {
+	if status, response := me(unpinned); status != http.StatusOK || response.OrgID != orgA.String() || !response.IsOwner || response.ProjectRequired {
 		t.Fatalf("ordinary login: %d %+v", status, response)
 	}
 
@@ -123,7 +123,7 @@ func TestAuthContinuationUsesEffectiveOrganization(t *testing.T) {
 	if w := fixture.request(t, http.MethodPost, "/api/auth/device/approve", newToken, consent(newcomer.String(), "")); w.Code != http.StatusForbidden {
 		t.Fatalf("no org approved: %d", w.Code)
 	}
-	exec("UPDATE org_members SET disabled_at = now() WHERE org_id = $1 AND user_id = $2", orgB.String(), user.String())
+	exec("UPDATE org_members SET is_owner=false,removed_at = now() WHERE org_id = $1 AND user_id = $2", orgB.String(), user.String())
 	if status, _ := me(pinned); status != http.StatusUnauthorized {
 		t.Fatalf("revoked pinned org accepted: %d", status)
 	}

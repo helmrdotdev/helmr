@@ -5,6 +5,7 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/jackc/pgx/v5"
@@ -24,6 +25,9 @@ func RuntimeObserveTurn(ctx context.Context, pool db.TxBeginner, caller Caller, 
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := LockRuntimeCaller(ctx, tx, caller); err != nil {
+			return err
+		}
+		if err := authorizeTarget(ctx, tx, caller, caller.Execution.EnvironmentID, session, auth.PermissionSessionsRead); err != nil {
 			return err
 		}
 		var err error

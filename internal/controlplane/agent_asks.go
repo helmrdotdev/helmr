@@ -8,7 +8,6 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -16,18 +15,9 @@ import (
 
 func (s *Server) askHTTPAuthority(r *http.Request, respond bool) (session.Caller, uuid.UUID, error) {
 	principal := principalFromContext(r.Context())
-	scope, _, environment, err := s.requestEnvironmentScopeFromRequest(r, principal)
+	_, _, environment, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		return session.Caller{}, uuid.Nil(), err
-	}
-	permission := auth.PermissionSessionsRead
-	if respond {
-		permission = auth.PermissionAsksAnswer
-	}
-	// The ask owner verifies current human membership, including Viewer. A service
-	// key must carry its own explicit scope and never borrows that human rule.
-	if principal.Kind == auth.PrincipalKindAPIKey && !principal.HasPermission(permission, scope) {
-		return session.Caller{}, uuid.Nil(), session.ErrDenied
 	}
 	caller, err := externalAgentCaller(principal)
 	return caller, pgvalue.MustUUIDValue(environment), err

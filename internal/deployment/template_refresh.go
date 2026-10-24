@@ -108,6 +108,9 @@ func ReadTemplateBuild(ctx context.Context, q db.DBTX, principal auth.Principal,
 	if !definition.ValidDeclaredID(template) || build == uuid.Nil() {
 		return TemplateBuild{}, invalidInput(errors.New("invalid Template build"))
 	}
+	if err := authorizeCurrent(ctx, q, principal, scope, auth.PermissionDeploymentMetadataRead); err != nil {
+		return TemplateBuild{}, err
+	}
 	deployment, err := definitionDeployment(ctx, q, principal, scope, selected)
 	if err != nil {
 		return TemplateBuild{}, err

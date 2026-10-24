@@ -15,29 +15,29 @@ const approveDeviceCode = `-- name: ApproveDeviceCode :one
 UPDATE device_codes
    SET status = 'approved',
        org_id = $1,
-       decided_by_user_id = $2,
+       decided_by_member_id = $2,
        decided_at = now()
  WHERE user_code_hash = $3
    AND status = 'pending'
    AND expires_at > now()
-RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_user_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
+RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
 `
 
 type ApproveDeviceCodeParams struct {
 	OrgID        pgtype.UUID `json:"org_id"`
-	UserID       pgtype.UUID `json:"user_id"`
+	MemberID     pgtype.UUID `json:"member_id"`
 	UserCodeHash []byte      `json:"user_code_hash"`
 }
 
 func (q *Queries) ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodeParams) (DeviceCode, error) {
-	row := q.db.QueryRow(ctx, approveDeviceCode, arg.OrgID, arg.UserID, arg.UserCodeHash)
+	row := q.db.QueryRow(ctx, approveDeviceCode, arg.OrgID, arg.MemberID, arg.UserCodeHash)
 	var i DeviceCode
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
 		&i.UserCodeHash,
 		&i.DeviceCodeHash,
-		&i.DecidedByUserID,
+		&i.DecidedByMemberID,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.PollIntervalSeconds,
@@ -56,7 +56,7 @@ UPDATE device_codes
    AND status = 'approved'
    AND consumed_at IS NULL
    AND expires_at > now()
-RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_user_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
+RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
 `
 
 func (q *Queries) ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error) {
@@ -67,7 +67,7 @@ func (q *Queries) ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) 
 		&i.OrgID,
 		&i.UserCodeHash,
 		&i.DeviceCodeHash,
-		&i.DecidedByUserID,
+		&i.DecidedByMemberID,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.PollIntervalSeconds,
@@ -92,7 +92,7 @@ INSERT INTO device_codes (
     $4,
     $5
 )
-RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_user_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
+RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
 `
 
 type CreateDeviceCodeParams struct {
@@ -117,7 +117,7 @@ func (q *Queries) CreateDeviceCode(ctx context.Context, arg CreateDeviceCodePara
 		&i.OrgID,
 		&i.UserCodeHash,
 		&i.DeviceCodeHash,
-		&i.DecidedByUserID,
+		&i.DecidedByMemberID,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.PollIntervalSeconds,
@@ -132,29 +132,29 @@ const denyDeviceCode = `-- name: DenyDeviceCode :one
 UPDATE device_codes
    SET status = 'denied',
        org_id = $1,
-       decided_by_user_id = $2,
+       decided_by_member_id = $2,
        decided_at = now()
  WHERE user_code_hash = $3
    AND status = 'pending'
    AND expires_at > now()
-RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_user_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
+RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
 `
 
 type DenyDeviceCodeParams struct {
 	OrgID        pgtype.UUID `json:"org_id"`
-	UserID       pgtype.UUID `json:"user_id"`
+	MemberID     pgtype.UUID `json:"member_id"`
 	UserCodeHash []byte      `json:"user_code_hash"`
 }
 
 func (q *Queries) DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error) {
-	row := q.db.QueryRow(ctx, denyDeviceCode, arg.OrgID, arg.UserID, arg.UserCodeHash)
+	row := q.db.QueryRow(ctx, denyDeviceCode, arg.OrgID, arg.MemberID, arg.UserCodeHash)
 	var i DeviceCode
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
 		&i.UserCodeHash,
 		&i.DeviceCodeHash,
-		&i.DecidedByUserID,
+		&i.DecidedByMemberID,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.PollIntervalSeconds,
@@ -166,7 +166,7 @@ func (q *Queries) DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) 
 }
 
 const getDeviceCodeByUserCodeHash = `-- name: GetDeviceCodeByUserCodeHash :one
-SELECT id, org_id, user_code_hash, device_code_hash, decided_by_user_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
+SELECT id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
   FROM device_codes
  WHERE user_code_hash = $1
 `
@@ -179,7 +179,7 @@ func (q *Queries) GetDeviceCodeByUserCodeHash(ctx context.Context, userCodeHash 
 		&i.OrgID,
 		&i.UserCodeHash,
 		&i.DeviceCodeHash,
-		&i.DecidedByUserID,
+		&i.DecidedByMemberID,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.PollIntervalSeconds,
@@ -191,7 +191,7 @@ func (q *Queries) GetDeviceCodeByUserCodeHash(ctx context.Context, userCodeHash 
 }
 
 const getDeviceCodeForPoll = `-- name: GetDeviceCodeForPoll :one
-SELECT id, org_id, user_code_hash, device_code_hash, decided_by_user_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
+SELECT id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at
   FROM device_codes
  WHERE device_code_hash = $1
 `
@@ -204,7 +204,7 @@ func (q *Queries) GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byt
 		&i.OrgID,
 		&i.UserCodeHash,
 		&i.DeviceCodeHash,
-		&i.DecidedByUserID,
+		&i.DecidedByMemberID,
 		&i.Status,
 		&i.ExpiresAt,
 		&i.PollIntervalSeconds,

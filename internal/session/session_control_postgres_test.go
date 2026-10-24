@@ -279,18 +279,20 @@ func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
 func TestSessionControlAPIKeyRequiresExactPermissionAndHumanAttribution(t *testing.T) {
 	f := newFixture(t)
 	key := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,role,permissions,name,key_prefix,token_hash)
- SELECT $1,org_id,project_id,id,'developer',ARRAY['sessions.send'],'test','test',$2 FROM environments WHERE id=$3`, key, []byte(key.String()), f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash)
+ SELECT $1,org_id,project_id,id,'test','test',$2 FROM environments WHERE id=$3`, key, []byte(key.String()), f.env)
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.view")
 	caller := session.Caller{Kind: "api_key", ID: key}
 	req := controlRequest(f, "interrupt", "interrupt")
 	if _, err := session.ControlSession(t.Context(), f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("input permission authorized interrupt: %v", err)
+		t.Fatalf("view permission authorized interrupt: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET permissions=ARRAY['sessions.interrupt','sessions.resume'] WHERE id=$1`, key)
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.manage")
 	r, err := session.ControlSession(t.Context(), f.pool, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
+	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.manage")
 	resume := controlRequest(f, "resume", "resume")
 	resume.HoldID = r.HoldID
 	if _, err := session.ControlSession(t.Context(), f.pool, caller, resume); err != nil {

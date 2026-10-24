@@ -128,7 +128,7 @@ func TestSlackThreadInputControlsDoNotReleaseStopOrChangeCoreWork(t *testing.T) 
 }
 
 func TestSlackThreadInputControlAuthorityAndTerminalState(t *testing.T) {
-	for _, scenario := range []string{"unlinked", "viewer", "closed", "unbound", "expired"} {
+	for _, scenario := range []string{"unlinked", "read-only", "closed", "unbound", "expired"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newStatusFixture(t)
 			if scenario != "unlinked" {
@@ -136,8 +136,8 @@ func TestSlackThreadInputControlAuthorityAndTerminalState(t *testing.T) {
 			}
 			id := f.threadMessage(t, "mute", "!mute", time.Now())
 			switch scenario {
-			case "viewer":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.User)
+			case "read-only":
+				f.SetPermissions(t, "sessions.view")
 			case "closed":
 				if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
@@ -300,24 +300,20 @@ func TestSlackDirectThreadInputCommandWaitsForItsRoot(t *testing.T) {
 	f.assertThreadInput(t, true, 0)
 }
 
-func TestSlackThreadInputUnmentionedRejectionKeepsPrivateGuidance(t *testing.T) {
-	for _, role := range []string{"unlinked", "viewer"} {
+func TestSlackThreadInputUnmentionedRejectionStaysQuiet(t *testing.T) {
+	for _, role := range []string{"unlinked", "read-only"} {
 		t.Run(role, func(t *testing.T) {
 			f := newStatusFixture(t)
-			if role == "viewer" {
+			if role == "read-only" {
 				f.link(t)
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET role='viewer' WHERE user_id=$1`, f.User)
+				f.SetPermissions(t, "sessions.view")
 			}
 			id := f.threadMessage(t, "ordinary", "please continue", time.Now())
 			f.admitThreadMessage(t, id)
 			f.receiptStatus(t, id, "rejected")
 			feedback, found, err := takeRejectedFeedback(t.Context(), f.Pool, testProjectionConfig())
-			if err != nil || !found || feedback == nil {
-				t.Fatalf("missing private guidance: %v %v", found, err)
-			}
-			var body map[string]any
-			if err = json.Unmarshal(feedback.payload, &body); err != nil || body["user"] != "human" {
-				t.Fatalf("guidance: %s %v", feedback.payload, err)
+			if err != nil || !found || feedback != nil {
+				t.Fatalf("incidental reply generated feedback: %+v %v %v", feedback, found, err)
 			}
 			f.assertThreadInput(t, false, 0)
 		})

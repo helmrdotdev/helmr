@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -41,7 +42,7 @@ func newHTTPPostgresFixture(t *testing.T, configure ...func(*ServerConfig)) http
 	cfg.DB = queries
 	cfg.TX = database.Pool
 	cfg.DiagnosticDB = database.Pool
-	cfg.Auth = identity.NewAPIKeyAuthenticator(queries)
+	cfg.Auth = identity.NewAPIKeyAuthenticator(database.Pool)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	for _, apply := range configure {
 		apply(&cfg)
@@ -68,7 +69,7 @@ func (f httpPostgresFixture) organizationOwner(t *testing.T, slug string) (uuid.
 		t.Fatal(err)
 	}
 	userID := f.user(t, "Owner")
-	f.member(t, orgID, userID, db.OrgMemberRoleOwner)
+	f.member(t, orgID, userID, "owner")
 	return orgID, f.session(t, userID, orgID)
 }
 
@@ -81,13 +82,18 @@ func (f httpPostgresFixture) user(t *testing.T, name string) uuid.UUID {
 	return userID
 }
 
-func (f httpPostgresFixture) member(t *testing.T, orgID uuid.UUID, userID uuid.UUID, role db.OrgMemberRole) {
+func (f httpPostgresFixture) member(t *testing.T, orgID uuid.UUID, userID uuid.UUID, role string) uuid.UUID {
 	t.Helper()
-	if _, err := f.queries.EnsureOrgMember(t.Context(), db.EnsureOrgMemberParams{
-		OrgID: pgvalue.UUID(orgID), UserID: pgvalue.UUID(userID), Role: role,
-	}); err != nil {
+	record, err := f.queries.EnsureOrgMember(t.Context(), db.EnsureOrgMemberParams{ID: pgvalue.NewUUIDv7(),
+		OrgID: pgvalue.UUID(orgID), UserID: pgvalue.UUID(userID), IsOwner: role == "owner",
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	if role == "owner" || role == "admin" {
+		dbtest.GrantMember(t, f.pool, orgID, userID, nil, "access.manage", "organization.manage")
+	}
+	return pgvalue.MustUUIDValue(record.ID)
 }
 
 // session creates a login session for the user that selects orgID, or no
@@ -129,4 +135,30 @@ func (f httpPostgresFixture) request(t *testing.T, method string, path string, t
 	recorder := httptest.NewRecorder()
 	f.handler.ServeHTTP(recorder, request)
 	return recorder
+}
+
+func (f httpPostgresFixture) grant(t *testing.T, org, user, env uuid.UUID, permission string) {
+	t.Helper()
+	dbtest.GrantMember(t, f.pool, org, user, &env, permission)
+}
+
+// testAPIKeyInput gives workload fixtures an explicit custom Role. Production
+// issuance and role-assignment authorization are covered by their own tests.
+type testAPIKeyInput struct {
+	Name            string
+	RolePermissions []auth.Permission
+}
+
+func issueAPIKeyWithRole(t *testing.T, ctx context.Context, database db.TxDB, issuer auth.Principal, scope auth.Scope, input testAPIKeyInput) (identity.IssuedAPIKey, error) {
+	t.Helper()
+	issued, err := identity.IssueAPIKey(ctx, database, issuer, scope, identity.APIKeyInput{Name: input.Name})
+	if err != nil {
+		return issued, err
+	}
+	values := make([]string, 0, len(input.RolePermissions))
+	for _, p := range input.RolePermissions {
+		values = append(values, string(p))
+	}
+	dbtest.SetAPIKeyRole(t, database, pgvalue.MustUUIDValue(issued.Record.ID), values...)
+	return issued, nil
 }

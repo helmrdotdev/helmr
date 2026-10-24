@@ -30,7 +30,7 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
+	if !principal.HasPermission(auth.PermissionRunMetadataRead, scope) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
@@ -51,7 +51,11 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, unavailable(codedError{code: "computer_authority_unavailable", message: "computer authority is unavailable", retryable: true}))
 			return
 		}
-		response.Computers = append(response.Computers, apiComputerListItem(item))
+		view := apiComputerListItem(item)
+		if !principal.HasPermission(auth.PermissionComputersRead, scope) {
+			view.Error = nil
+		}
+		response.Computers = append(response.Computers, view)
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
@@ -65,7 +69,11 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, item := range listing.Items {
-		response.Computers = append(response.Computers, apiComputerListItem(item))
+		view := apiComputerListItem(item)
+		if !principal.HasPermission(auth.PermissionComputersRead, scope) {
+			view.Error = nil
+		}
+		response.Computers = append(response.Computers, view)
 	}
 	if listing.More {
 		last := listing.Items[len(listing.Items)-1]

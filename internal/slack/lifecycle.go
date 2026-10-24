@@ -6,6 +6,8 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -32,7 +34,7 @@ func admitLifecycleMessage(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *mess
 	}
 	target := controlTarget{Installation: p.installation, Thread: p.thread, Participant: p.source, Environment: p.route.Target.EnvironmentID, Session: p.session}
 	err := db.RunTx(ctx, tx, func(core pgx.Tx) error {
-		_, err := applyLifecycleControl(ctx, core, session.Caller{Kind: "user", ID: p.user}, target, controlEnvelope{Action: action}, id)
+		_, err := applyLifecycleControl(ctx, core, session.Caller{Kind: "user", ID: p.user, SlackThreadID: p.thread}, target, controlEnvelope{Action: action}, id)
 		if err != nil {
 			return err
 		}
@@ -74,6 +76,14 @@ func admitLifecycleMessage(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *mess
 }
 
 func applyLifecycleControl(ctx context.Context, tx pgx.Tx, caller session.Caller, target controlTarget, c controlEnvelope, id uuid.UUID) (json.RawMessage, error) {
+	operation := auth.PermissionSessionsRead
+	if c.Action == "mute" || c.Action == "unmute" {
+		operation = auth.PermissionSessionsInterrupt
+	}
+	if err := session.AuthorizeSessionOperation(ctx, tx, caller, target.Environment, target.Session, operation); err != nil {
+		return nil, err
+	}
+
 	var computerID *uuid.UUID
 	var status string
 	if err := tx.QueryRow(ctx, `SELECT computer_id,status FROM sessions WHERE environment_id=$1 AND id=$2`, target.Environment, target.Session).Scan(&computerID, &status); err != nil {
@@ -81,6 +91,20 @@ func applyLifecycleControl(ctx context.Context, tx pgx.Tx, caller session.Caller
 	}
 	if status != "open" && c.Action != "help" {
 		return nil, session.ErrTerminal
+	}
+	if c.Action == "sleep" {
+		err := access.Check(ctx, tx, caller.Kind, caller.ID, target.Environment, uuid.Nil(), auth.CapabilityComputersOperate)
+		if errors.Is(err, access.ErrDenied) {
+			return nil, session.ErrDenied
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	if c.Action == "close" {
+		if _, err := session.SessionCloseScope(ctx, tx, caller, target.Environment, target.Session); err != nil {
+			return nil, err
+		}
 	}
 	switch c.Action {
 	case "wake", "hibernate":
