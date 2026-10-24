@@ -91,7 +91,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
-	staleHostFencer, err := workergroup.NewStaleHostFencer(pool, cfg.ControlPlaneURL, config.AccessHTTPClient, workergroup.WithStaleHostFenceLogger(log))
+	staleHostFencer, err := workergroup.NewStaleHostFencer(pool, cfg.ControlPlaneURL, workergroup.WithStaleHostFenceLogger(log))
 	if err != nil {
 		return fmt.Errorf("configure stale worker fencer: %w", err)
 	}

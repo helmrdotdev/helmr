@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"sync"
 	"time"
 
@@ -116,11 +115,11 @@ func WithStaleHostFenceClock(clock StaleHostFenceClock) StaleHostFencerOption {
 	return func(fencer *StaleHostFencer) { fencer.clock = clock }
 }
 
-func NewStaleHostFencer(pool *pgxpool.Pool, controlPlaneURL string, configureClient func(*http.Client) (*http.Client, error), opts ...StaleHostFencerOption) (*StaleHostFencer, error) {
+func NewStaleHostFencer(pool *pgxpool.Pool, controlPlaneURL string, opts ...StaleHostFencerOption) (*StaleHostFencer, error) {
 	if pool == nil {
 		return nil, errors.New("database pool is required")
 	}
-	probe, err := controlPlaneServingProbe(controlPlaneURL, configureClient)
+	probe, err := controlPlaneServingProbe(controlPlaneURL)
 	if err != nil {
 		return nil, err
 	}

@@ -111,7 +111,7 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 					t.Fatal(err)
 				}
 				clock := &servingTestClock{now: time.Now()}
-				fencer, err := workergroup.NewStaleHostFencer(fixture.Pool, server.URL, nil, workergroup.WithStaleHostFenceClock(clock), workergroup.WithStaleHostFenceLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+				fencer, err := workergroup.NewStaleHostFencer(fixture.Pool, server.URL, workergroup.WithStaleHostFenceClock(clock), workergroup.WithStaleHostFenceLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 				if err != nil {
 					t.Fatal(err)
 				}

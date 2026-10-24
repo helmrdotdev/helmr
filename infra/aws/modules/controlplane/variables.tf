@@ -635,31 +635,3 @@ variable "outbound_proxy_url" {
     error_message = "outbound_proxy_url must be empty or an HTTP(S) origin without credentials, path, query or fragment."
   }
 }
-
-variable "dispatcher_access_service_token" {
-  description = "Optional Cloudflare Access identity for dispatcher control-plane readiness requests."
-  type = object({
-    origin            = string
-    client_id         = string
-    client_secret_arn = string
-    kms_key_arns      = optional(list(string), [])
-  })
-  default = null
-}
-
-variable "origin_authentication" {
-  description = "Optional HTTPS origin protection. The secret is a proxy-injected header value, read at the exact version."
-  type = object({
-    secret_arn         = string
-    secret_version_id  = string
-    allowed_ipv4_cidrs = set(string)
-  })
-  default = null
-  validation {
-    condition = var.origin_authentication == null ? true : (
-      length(var.origin_authentication.allowed_ipv4_cidrs) > 0 &&
-      alltrue([for cidr in var.origin_authentication.allowed_ipv4_cidrs : can(cidrnetmask(cidr)) && cidr != "0.0.0.0/0"])
-    )
-    error_message = "Protected origins require explicit restricted IPv4 source CIDRs."
-  }
-}
