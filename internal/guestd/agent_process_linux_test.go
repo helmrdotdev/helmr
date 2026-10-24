@@ -119,7 +119,7 @@ func TestAgentComputerCheckpointRetainsTwoActualProcesses(t *testing.T) {
 func TestAgentComputerStopsCaptureFrozenActualProcess(t *testing.T) {
 	testAgentProcessRetainedRuntime(t, true, false, true)
 }
-func testAgentProcessRetainedRuntime(t *testing.T, checkpoint, computerCapture, stopCaptured bool) {
+func testAgentProcessRetainedRuntime(t *testing.T, checkpoint, withPeer, stopCaptured bool) {
 	assets := os.Getenv("HELMR_AGENT_TEST_RUNTIME")
 	if assets == "" {
 		t.Skip("requires built Agent runtime assets in disposable Linux guest")
@@ -296,52 +296,11 @@ export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"comput
 	rootPID := process.cmd.Process.Pid
 	guestPID := 0
 	for index := 1; index <= 2; index++ {
-		if index == 2 && computerCapture {
-			actualAgentComputerContinuation(t, session, process, read)
-		} else if index == 2 && checkpoint {
-			relay := newAgentRelay(t.Context(), session, nil)
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			prepared := make(chan error, 1)
-			go func() { prepared <- relay.prepareCapture(ctx, "actual-runtime-checkpoint") }()
-			if _, _, err := session.receive(read()); err != nil {
-				t.Fatal(err)
-			}
-			relay.mu.Lock()
-			relay.notifyLocked()
-			relay.mu.Unlock()
-			if err := <-prepared; err != nil {
-				t.Fatal(err)
-			}
-			if err := relay.freezeForCapture(ctx); err != nil {
-				t.Fatal(err)
-			}
+		if index == 2 && checkpoint {
+			actualAgentComputerContinuation(t, session, process, read, withPeer, stopCaptured)
 			if stopCaptured {
-				if err := process.verifyFrozen(); err != nil {
-					t.Fatal(err)
-				}
-				capture := &agentComputerCapture{members: []*agentRelay{relay}, stopped: map[*agentRelay]bool{relay: true}, activationStarted: true}
-				if err := stopAgentComputerMembers(capture); err != nil {
-					t.Fatal(err)
-				}
-				if !session.physicalClosed || !process.closed {
-					t.Fatal("frozen Session did not physically close")
-				}
-				if _, err := os.Stat(process.group.path); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("Session cgroup was not empty and removed: %v", err)
-				}
-				select {
-				case <-process.waitDone:
-				default:
-					t.Fatal("frozen runtime was not joined")
-				}
 				return
 			}
-			host := attachAgentRelay(t, relay, 1, session.grant)
-			if err := relay.activateAfterCapture(ctx); err != nil {
-				t.Fatal(err)
-			}
-			_ = host.Close()
 		} else if index == 2 {
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			if err := process.freeze(ctx); err != nil {
@@ -554,56 +513,66 @@ export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"comput
 
 }
 
-func actualAgentComputerContinuation(t *testing.T, session *agentSession, process *agentProcess, read func() *agentv1.ProgramEvent) {
+func actualAgentComputerContinuation(t *testing.T, session *agentSession, process *agentProcess, read func() *agentv1.ProgramEvent, withPeer, stopCaptured bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	peerGrant := proto.Clone(session.grant).(*agentv1.SessionGrant)
-	peerGrant.Identity.SessionId = "peer"
-	peerProcess, err := newAgentProcess(ctx, session.entry, agentProcessOptions{Program: bootProgramMounts(), Identity: peerGrant.Identity})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		stopCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-		defer stop()
-		if err := peerProcess.close(stopCtx); err != nil {
-			t.Error(err)
-		}
-		closeAgentFiles(peerProcess.stdout, peerProcess.stderr)
-	}()
-	if err := peerProcess.start(ctx); err != nil {
-		t.Fatal(err)
-	}
-	peer, err := newAgentSession(session.entry, peerGrant, session.start, peerProcess, session.entry.authorityNow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := peer.send(&agentv1.GuestCommand{Identity: peerGrant.Identity, Command: &agentv1.GuestCommand_Start{Start: peer.start}}); err != nil {
-		t.Fatal(err)
-	}
-	peerRead := func() *agentv1.ProgramEvent {
-		t.Helper()
-		_ = peerProcess.events.SetReadDeadline(time.Now().Add(5 * time.Second))
-		event, err := peerProcess.read()
+	var peer *agentSession
+	var peerProcess *agentProcess
+	var peerRead func() *agentv1.ProgramEvent
+	if withPeer {
+		var err error
+		peerGrant := proto.Clone(session.grant).(*agentv1.SessionGrant)
+		peerGrant.Identity.SessionId = "peer"
+		peerProcess, err = newAgentProcess(ctx, session.entry, agentProcessOptions{Program: bootProgramMounts(), Identity: peerGrant.Identity})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return event
-	}
-	if event := peerRead(); event.GetReady() == nil {
-		t.Fatal("peer setup did not finish")
-	} else if _, _, err := peer.receive(event); err != nil {
-		t.Fatal(err)
-	}
-	if err := peer.send(&agentv1.GuestCommand{Identity: peerGrant.Identity, DeliveryId: "hold", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := peer.receive(peerRead()); err != nil {
-		t.Fatal(err)
+		defer func() {
+			stopCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			if err := peerProcess.close(stopCtx); err != nil {
+				t.Error(err)
+			}
+			closeAgentFiles(peerProcess.stdout, peerProcess.stderr)
+		}()
+		if err := peerProcess.start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		peer, err = newAgentSession(session.entry, peerGrant, session.start, peerProcess, session.entry.authorityNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := peer.send(&agentv1.GuestCommand{Identity: peerGrant.Identity, Command: &agentv1.GuestCommand_Start{Start: peer.start}}); err != nil {
+			t.Fatal(err)
+		}
+		peerRead = func() *agentv1.ProgramEvent {
+			t.Helper()
+			_ = peerProcess.events.SetReadDeadline(time.Now().Add(5 * time.Second))
+			event, err := peerProcess.read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			return event
+		}
+		if event := peerRead(); event.GetReady() == nil {
+			t.Fatal("peer setup did not finish")
+		} else if _, _, err := peer.receive(event); err != nil {
+			t.Fatal(err)
+		}
+		if err := peer.send(&agentv1.GuestCommand{Identity: peerGrant.Identity, DeliveryId: "hold", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold"}}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := peer.receive(peerRead()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	session.clock = session.entry.authorityNow
-	primaryPID, peerPID := process.cmd.Process.Pid, peerProcess.cmd.Process.Pid
+	primaryPID := process.cmd.Process.Pid
+	peerPID := 0
+	if withPeer {
+		peerPID = peerProcess.cmd.Process.Pid
+	}
 	r := newComputerOperationRegistry()
 	r.setWallClock = func(time.Time) error { return nil }
 	session.entry.baseComputerDiskVersionID = "disk-v1"
@@ -615,56 +584,119 @@ func actualAgentComputerContinuation(t *testing.T, session *agentSession, proces
 	defer root.Close()
 	r.writeback = &computerWriteback{syncFilesystem: func() error { return unix.Syncfs(int(root.Fd())) }}
 	primaryRelay := newAgentRelay(t.Context(), session, nil)
-	peerRelay := newAgentRelay(t.Context(), peer, nil)
 	r.agentSessions[session.grant.Identity.SessionId] = primaryRelay
-	r.agentSessions[peer.grant.Identity.SessionId] = peerRelay
-	request := &agentv1.ComputerSessionCapture{Envelope: &computerv0.ComputerOperationEnvelope{OperationId: "capture-op", ComputerId: session.grant.ComputerId, ComputerInstanceId: session.grant.ComputerInstanceId, WriterGeneration: uint64(session.grant.WriterGeneration), ChannelCredential: session.grant.ChannelCredential, OperationExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano()}, CheckpointId: "two-process-checkpoint", DesiredVersion: 1, MembershipRevision: 2, Sessions: []*agentv1.SessionIdentity{session.grant.Identity, peer.grant.Identity}}
+	if withPeer {
+		r.agentSessions[peer.grant.Identity.SessionId] = newAgentRelay(t.Context(), peer, nil)
+	}
+	request := &agentv1.ComputerSessionCapture{Envelope: &computerv0.ComputerOperationEnvelope{OperationId: "capture-op", ComputerId: session.grant.ComputerId, ComputerInstanceId: session.grant.ComputerInstanceId, WriterGeneration: uint64(session.grant.WriterGeneration), ChannelCredential: session.grant.ChannelCredential, OperationExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano()}, CheckpointId: "actual-runtime-checkpoint", DesiredVersion: 1, MembershipRevision: 1, Sessions: []*agentv1.SessionIdentity{session.grant.Identity}}
+	if withPeer {
+		request.Sessions = append(request.Sessions, peer.grant.Identity)
+		request.MembershipRevision++
+	}
 	captured := make(chan error, 1)
 	go func() { _, err := r.captureAgentComputer(ctx, request); captured <- err }()
+	joined := false
+	defer func() {
+		cancel()
+		if !joined {
+			<-captured
+		}
+	}()
 	if _, _, err := session.receive(read()); err != nil {
 		t.Fatal(err)
 	}
 	primaryRelay.mu.Lock()
 	primaryRelay.notifyLocked()
 	primaryRelay.mu.Unlock()
-	if _, _, err := peer.receive(peerRead()); err != nil {
-		t.Fatal(err)
+	if withPeer {
+		peerRelay := r.agentSessions[peer.grant.Identity.SessionId]
+		if _, _, err := peer.receive(peerRead()); err != nil {
+			t.Fatal(err)
+		}
+		peerRelay.mu.Lock()
+		peerRelay.notifyLocked()
+		peerRelay.mu.Unlock()
 	}
-	peerRelay.mu.Lock()
-	peerRelay.notifyLocked()
-	peerRelay.mu.Unlock()
-	if err := <-captured; err != nil {
+	err = <-captured
+	joined = true
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := process.verifyFrozen(); err != nil {
 		t.Fatal(err)
 	}
-	if err := peerProcess.verifyFrozen(); err != nil {
-		t.Fatal(err)
+	if withPeer {
+		if err := peerProcess.verifyFrozen(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	installation := agentComputerInstallation(r, request, false)
 	if _, err := r.installAgentComputer(ctx, installation, false, testComputerAuthorityClock()); err != nil {
 		t.Fatal(err)
 	}
-	applyAgentComputerTestControls(t, r)
-	primaryHost := attachAgentRelay(t, primaryRelay, 1, installation.Grants[0])
-	defer primaryHost.Close()
-	if _, err := r.installAgentComputer(ctx, installation, true, testComputerAuthorityClock()); err == nil {
-		t.Fatal("actual Computer thawed before peer attachment")
+	controls := currentAgentComputerTestControls(r)
+	if stopCaptured {
+		for _, control := range controls.Sessions {
+			if control.Identity.SessionId == session.grant.Identity.SessionId {
+				control.AuthorityGeneration++
+				control.Held = true
+				control.Stopped = true
+			}
+		}
+	}
+	if _, err := r.applyAgentComputerControls(controls); err != nil {
+		t.Fatal(err)
+	}
+	if stopCaptured {
+		if receipt, err := r.installAgentComputer(ctx, installation, true, nil); err != nil || !receipt.GetActivated() {
+			t.Fatalf("stopped Computer activation: %v %v", receipt, err)
+		}
+		if !session.physicalClosed || !process.closed {
+			t.Fatal("frozen Session did not physically close")
+		}
+		if _, err := os.Stat(process.group.path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Session cgroup was not empty and removed: %v", err)
+		}
+		select {
+		case <-process.waitDone:
+		default:
+			t.Fatal("frozen runtime was not joined")
+		}
+		return
+	}
+	if withPeer {
+		primaryHost := attachAgentRelay(t, primaryRelay, 1, session.grant)
+		defer primaryHost.Close()
+	}
+	if receipt, err := r.installAgentComputer(ctx, installation, true, nil); err == nil || receipt.GetActivationStarted() {
+		t.Fatalf("actual Computer thawed before all attachments: %v %v", receipt, err)
 	}
 	if err := process.verifyFrozen(); err != nil {
 		t.Fatal(err)
 	}
-	peerHost := attachAgentRelay(t, peerRelay, 1, installation.Grants[1])
-	defer peerHost.Close()
-	if _, err := r.installAgentComputer(ctx, installation, true, testComputerAuthorityClock()); err != nil {
-		t.Fatal(err)
+	if withPeer {
+		if err := peerProcess.verifyFrozen(); err != nil {
+			t.Fatal(err)
+		}
+		peerHost := attachAgentRelay(t, r.agentSessions[peer.grant.Identity.SessionId], 1, peer.grant)
+		defer peerHost.Close()
+	} else {
+		primaryHost := attachAgentRelay(t, primaryRelay, 1, session.grant)
+		defer primaryHost.Close()
 	}
-	if !peer.held || session.held || process.cmd.Process.Pid != primaryPID || peerProcess.cmd.Process.Pid != peerPID {
-		t.Fatal("Computer continuation lost process identity or hold")
+	if receipt, err := r.installAgentComputer(ctx, installation, true, nil); err != nil || !receipt.GetActivated() {
+		t.Fatalf("actual Computer activation: %v %v", receipt, err)
 	}
-	if err := peerProcess.verifyFrozen(); err == nil {
-		t.Fatal("peer remained frozen")
+	if session.held || process.cmd.Process.Pid != primaryPID {
+		t.Fatal("Computer continuation changed primary process identity or hold")
+	}
+	if withPeer {
+		if !peer.held || peerProcess.cmd.Process.Pid != peerPID {
+			t.Fatal("Computer continuation lost peer process identity or hold")
+		}
+		if err := peerProcess.verifyFrozen(); err == nil {
+			t.Fatal("peer remained frozen")
+		}
 	}
 }
 

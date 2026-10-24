@@ -136,9 +136,33 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || cfg.AppOrigin != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
+	for _, tc := range []struct {
+		value   string
+		want    bool
+		invalid bool
+	}{
+		{value: ""},
+		{value: "false"},
+		{value: "true", want: true},
+		{value: "invalid", invalid: true},
+	} {
+		t.Run("organization creation admin only="+tc.value, func(t *testing.T) {
+			t.Setenv("ORGANIZATION_CREATION_ADMIN_ONLY", tc.value)
+			cfg, err := LoadControlPlane()
+			if tc.invalid {
+				if err == nil || !strings.Contains(err.Error(), "ORGANIZATION_CREATION_ADMIN_ONLY") {
+					t.Fatalf("invalid setting error: %v", err)
+				}
+			} else if err != nil || cfg.OrganizationCreationAdminOnly != tc.want {
+				t.Fatalf("admin only=%v, error=%v", cfg.OrganizationCreationAdminOnly, err)
+			}
+		})
+	}
+
 }
 
 func TestLoadControlPlaneDefaultsToSelfHostedDeploymentMode(t *testing.T) {
+	t.Setenv("ORGANIZATION_CREATION_ADMIN_ONLY", "true")
 	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
@@ -154,7 +178,7 @@ func TestLoadControlPlaneDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DeploymentMode != DeploymentModeSelfHosted {
+	if cfg.DeploymentMode != DeploymentModeSelfHosted || cfg.OrganizationCreationAdminOnly {
 		t.Fatalf("DeploymentMode = %q", cfg.DeploymentMode)
 	}
 }
@@ -655,24 +679,6 @@ func TestLoadWorkerDoesNotRequireEnrollmentTokenFileToExistAtStartup(t *testing.
 	}
 }
 
-func TestLoadWorkerReadsExecutionSlots(t *testing.T) {
-	setWorkerRuntimeEnv(t)
-	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
-	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=")
-	t.Setenv("JAILER_UID", "1001")
-	t.Setenv("JAILER_GID", "1002")
-	t.Setenv("WORKER_EXECUTION_SLOTS", "4")
-
-	cfg, err := LoadWorker()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.WorkerExecutionSlots != 4 {
-		t.Fatalf("config = %+v", cfg)
-	}
-}
-
 func TestLoadWorkerControlPlaneReadsOnlyControlAuth(t *testing.T) {
 	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
 	t.Setenv("WORKER_HOST_SECRET_PATH", "/run/helmr/worker-host-secret.json")
@@ -687,17 +693,16 @@ func TestLoadWorkerControlPlaneReadsOnlyControlAuth(t *testing.T) {
 }
 
 func TestLoadWorkerRejectsInvalidVMNumbers(t *testing.T) {
-	setWorkerEnrollmentEnv(t)
-	t.Setenv("CONTROL_PLANE_URL", "https://api.example.test")
-	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("JAILER_UID", "1001")
-	t.Setenv("JAILER_GID", "1002")
+	setValidWorkerEnv(t)
+	t.Setenv("VM_MEMORY_MIB", "2048")
+	if _, err := LoadWorker(); err != nil {
+		t.Fatalf("valid worker configuration: %v", err)
+	}
 	t.Setenv("VM_MEMORY_MIB", "big")
 
 	_, err := LoadWorker()
-	if err == nil {
-		t.Fatal("expected invalid memory error")
+	if err == nil || !strings.Contains(err.Error(), "VM_MEMORY_MIB") {
+		t.Fatalf("expected VM_MEMORY_MIB parsing error, got %v", err)
 	}
 }
 

@@ -694,94 +694,69 @@ func TestComputerCheckpointPublicationDoesNotHoldCaptureQueue(t *testing.T) {
 	o.checkpointCut.Release()
 }
 
-func TestComputerCheckpointRetainsPublishedSourceUntilPolicyReclaims(t *testing.T) {
-	o, _, m, cut := checkpointPipelineFixture(t, "", "")
-	optional, policy, shape := optionalMachines(t)
-	o.machines.Reservations = optional.Reservations
-	o.machines.HostSlot = optional.HostSlot
-	o.machines.ApplyResourcePolicy(policy)
-	key := instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)
-	if _, err := o.machines.Reservations.Reserve(key, shape); err != nil {
-		t.Fatal(err)
+func TestComputerCheckpointRetainsPublishedSourceUntilReclaimed(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		trigger func(*ComputerAllocationOwner, *checkpointPipelineClient, workerapi.ResourcePolicy)
+	}{
+		{
+			name: "policy reclaim",
+			trigger: func(o *ComputerAllocationOwner, _ *checkpointPipelineClient, policy workerapi.ResourcePolicy) {
+				policy.Revision++
+				policy.Optional = workerapi.OptionalResources{}
+				o.machines.ApplyResourcePolicy(policy)
+			},
+		},
+		{
+			name: "closed source",
+			trigger: func(_ *ComputerAllocationOwner, client *checkpointPipelineClient, _ workerapi.ResourcePolicy) {
+				client.releaseSource.Store(true)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			o, client, m, cut := checkpointPipelineFixture(t, "", "")
+			optional, policy, shape := optionalMachines(t)
+			o.machines.Reservations = optional.Reservations
+			o.machines.HostSlot = optional.HostSlot
+			o.machines.ApplyResourcePolicy(policy)
+			key := instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)
+			if _, err := o.machines.Reservations.Reserve(key, shape); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				done <- o.captureIdle(ctx, workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} })
+			}()
+			deadline := time.After(3 * time.Second)
+			for len(o.machines.Reservations.Snapshot().Optional) == 0 {
+				select {
+				case err := <-done:
+					t.Fatalf("source stopped before retention: %v", err)
+				case <-deadline:
+					t.Fatal("published source was not retained")
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+			if o.machines.Reservations.Snapshot().Used != shape {
+				t.Fatal("retention released physical charge")
+			}
+			test.trigger(o, client, policy)
+			o.Wake()
+			select {
+			case err := <-done:
+				if !errors.Is(err, errComputerHibernated) {
+					t.Fatal(err)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("source ignored reclaim")
+			}
+			if o.machines.Reservations.Snapshot().Used != shape || m.snapshots != 1 || m.resumes != 0 || !reflect.DeepEqual(cut.steps, []string{"objects"}) {
+				t.Fatal("source charge or cut released before joined teardown")
+			}
+			o.checkpointCut.Release()
+		})
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- o.captureIdle(ctx, workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} })
-	}()
-	deadline := time.After(3 * time.Second)
-	for len(o.machines.Reservations.Snapshot().Optional) == 0 {
-		select {
-		case err := <-done:
-			t.Fatalf("source stopped before retention: %v", err)
-		case <-deadline:
-			t.Fatal("published source was not retained")
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-	if o.machines.Reservations.Snapshot().Used != shape {
-		t.Fatal("retention released physical charge")
-	}
-	policy.Revision++
-	policy.Optional = workerapi.OptionalResources{}
-	o.machines.ApplyResourcePolicy(policy)
-	o.Wake()
-	select {
-	case err := <-done:
-		if !errors.Is(err, errComputerHibernated) {
-			t.Fatal(err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("source ignored reclaim")
-	}
-	if o.machines.Reservations.Snapshot().Used != shape || m.snapshots != 1 || m.resumes != 0 || !reflect.DeepEqual(cut.steps, []string{"objects"}) {
-		t.Fatal("source charge or cut released before joined teardown")
-	}
-	o.checkpointCut.Release()
-}
-
-func TestComputerCheckpointReleasesClosedSourceWithoutResume(t *testing.T) {
-	o, client, m, cut := checkpointPipelineFixture(t, "", "")
-	optional, policy, shape := optionalMachines(t)
-	o.machines.Reservations = optional.Reservations
-	o.machines.HostSlot = optional.HostSlot
-	o.machines.ApplyResourcePolicy(policy)
-	key := instanceReservationKey(o.identity.AllocationID, o.identity.Epoch)
-	if _, err := o.machines.Reservations.Reserve(key, shape); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- o.captureIdle(ctx, workerapi.ComputerAllocationDelivery{ChannelCredential: "private"}, func() func() { return func() {} })
-	}()
-	deadline := time.After(3 * time.Second)
-	for len(o.machines.Reservations.Snapshot().Optional) == 0 {
-		select {
-		case err := <-done:
-			t.Fatalf("source stopped before retention: %v", err)
-		case <-deadline:
-			t.Fatal("published source was not retained")
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
-	if o.machines.Reservations.Snapshot().Used != shape {
-		t.Fatal("retention released physical charge")
-	}
-	client.releaseSource.Store(true)
-	o.Wake()
-	select {
-	case err := <-done:
-		if !errors.Is(err, errComputerHibernated) {
-			t.Fatal(err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("source ignored reclaim")
-	}
-	if o.machines.Reservations.Snapshot().Used != shape || m.snapshots != 1 || m.resumes != 0 || !reflect.DeepEqual(cut.steps, []string{"objects"}) {
-		t.Fatal("source charge or cut released before joined teardown")
-	}
-	o.checkpointCut.Release()
 }

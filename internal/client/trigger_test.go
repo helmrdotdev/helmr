@@ -3,8 +3,10 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -89,21 +91,41 @@ func testTriggerReads(
 }
 
 func TestTriggerReadsValidateInput(t *testing.T) {
-	controlPlane, err := New("http://127.0.0.1")
+	transportCalls := 0
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		transportCalls++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})
+	controlPlane, err := New("https://control.example", WithHTTPClient(&http.Client{Transport: transport}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := controlPlane.ListTriggers(
-		context.Background(),
-		ListTriggersOptions{Limit: 101},
-	); err == nil {
-		t.Fatal("ListTriggers() accepted an oversized limit")
-	}
-	if _, err := controlPlane.GetTrigger(
-		context.Background(),
-		"trigger",
-		EnvironmentScopeOptions{},
-	); err == nil {
-		t.Fatal("GetTrigger() accepted an invalid ID")
+	for _, tc := range []struct {
+		name      string
+		limit     int32
+		triggerID string
+		wantError string
+	}{
+		{name: "valid limit", limit: 25},
+		{name: "oversized limit", limit: 101, wantError: "trigger list limit"},
+		{name: "valid ID", triggerID: testTriggerID},
+		{name: "invalid ID", triggerID: "trigger", wantError: "invalid trigger ID"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			transportCalls = 0
+			var err error
+			if tc.triggerID == "" {
+				_, err = controlPlane.ListTriggers(t.Context(), ListTriggersOptions{Limit: tc.limit})
+			} else {
+				_, err = controlPlane.GetTrigger(t.Context(), tc.triggerID, EnvironmentScopeOptions{})
+			}
+			if tc.wantError == "" {
+				if err != nil || transportCalls != 1 {
+					t.Fatalf("valid input: transport calls=%d err=%v", transportCalls, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) || transportCalls != 0 {
+				t.Fatalf("want %q before transport, got calls=%d err=%v", tc.wantError, transportCalls, err)
+			}
+		})
 	}
 }

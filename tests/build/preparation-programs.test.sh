@@ -89,4 +89,9 @@ docker run --rm --platform linux/amd64 --user 0:0 --entrypoint /bin/bash \
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go -C "$repo_root" test -c -o "$work/builder.test" ./internal/builder
 docker run --rm --platform linux/amd64 --user 0:0 --entrypoint /fixture/builder.test \
  -e TMPDIR=/tmp -e HELMR_PREPARATION_PROGRAM_FIXTURE=/fixture -v "$work:/fixture:ro" "$image" \
- -test.run '^TestIndependentPreparationPrograms$' -test.v -test.count=1
+ -test.run '^TestIndependentPreparationPrograms$' -test.v -test.count=1 | tee "$work/finalization.log"
+grep -E '^--- PASS: TestIndependentPreparationPrograms ' "$work/finalization.log" >/dev/null
+if grep -E '^\s*--- (SKIP|FAIL)' "$work/finalization.log"; then
+ echo "independent preparation finalization test did not run every case" >&2
+ exit 1
+fi

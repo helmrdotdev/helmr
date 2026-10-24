@@ -97,6 +97,8 @@ type Server struct {
 	magicLinkDebugURLs         bool
 	identity                   identity.Config
 	deploymentFinalizer        *deployment.Finalizer
+
+	organizationCreationAdminOnly bool
 }
 
 const (
@@ -144,6 +146,8 @@ type ServerConfig struct {
 	MagicLinkTTL       time.Duration
 	DeviceCodeTTL      time.Duration
 	DevicePollEvery    time.Duration
+
+	OrganizationCreationAdminOnly bool
 }
 
 func NewServer(cfg ServerConfig) (http.Handler, error) {
@@ -249,6 +253,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		return nil, errors.New("allocation owner is required")
 	}
 	server := &Server{
+		organizationCreationAdminOnly: cfg.OrganizationCreationAdminOnly,
+
 		changes:                    cfg.Changes,
 		slackConfig:                cfg.Slack,
 		allocator:                  cfg.Allocator,

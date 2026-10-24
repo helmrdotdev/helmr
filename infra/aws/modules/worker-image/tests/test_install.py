@@ -73,6 +73,16 @@ class InstallArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('verified Worker host and runtime artifacts', result.stdout)
 
+    def test_runtime_contract_mismatch(self):
+        self.runtime_manifest['vm_runtime_contract'] = 'unsupported.runtime-contract'
+        raw = json.dumps(self.runtime_manifest).encode()
+        self.runtime['runtime-artifacts.json'] = (raw, 0o444)
+        self.runtime_manifest_digest = digest(raw)
+        # Recompute transport and manifest digests so rejection reaches validation.
+        result = self.verify()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn('verified Worker host and runtime artifacts', result.stdout)
+
     def test_restrictive_operator_umask(self):
         result = self.verify(umask=0o077)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

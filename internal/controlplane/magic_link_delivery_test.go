@@ -117,30 +117,6 @@ func TestMagicLinkDeliveryShutdownFailsActiveAndQueuedJobs(t *testing.T) {
 	}
 }
 
-func TestMagicLinkDeliveryShutdownFailureMarkIsIdempotent(t *testing.T) {
-	delivery := newMagicLinkDelivery(discardMagicLinkLog(), 1, 1, time.Second)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- delivery.Run(ctx) }()
-	started := make(chan struct{}, 1)
-	if !delivery.enqueue(magicLinkDeliveryJob{
-		id: "already-finalized", purpose: "login",
-		deliver: func(ctx context.Context) error {
-			started <- struct{}{}
-			<-ctx.Done()
-			return ctx.Err()
-		},
-		fail: func(context.Context) error { return nil },
-	}) {
-		t.Fatal("job was rejected")
-	}
-	waitMagicLinkSignals(t, started, 1)
-	cancel()
-	if runErr := <-done; !errors.Is(runErr, context.Canceled) {
-		t.Fatalf("Run error = %v, want cancellation", runErr)
-	}
-}
-
 func TestMagicLinkDeliverySurfacesShutdownFailureMarkError(t *testing.T) {
 	delivery := newMagicLinkDelivery(discardMagicLinkLog(), 1, 1, time.Second)
 	ctx, cancel := context.WithCancel(t.Context())

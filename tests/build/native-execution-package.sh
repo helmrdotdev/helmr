@@ -96,6 +96,7 @@ scripts/build-npm-packages.sh >> "$output/dependencies.log" 2>&1
 (cd starters/pi && bun install --frozen-lockfile --ignore-scripts) >> "$output/dependencies.log" 2>&1
 (cd tests/fixtures/native-continuation && npm ci --ignore-scripts --no-audit --no-fund) >> "$output/dependencies.log" 2>&1
 bun x tsc --noEmit -p tests/fixtures/native-continuation/tsconfig.json >> "$output/dependencies.log" 2>&1
+bun test ./tests/fixtures/native-continuation/production.test.ts >> "$output/dependencies.log" 2>&1
 make platform-entries > "$output/entries.log" 2>&1
 go build -trimpath -ldflags="-X main.deploymentBundleBuilderImage=$endpoint/builder@$digest" -o "$tmp/helmr" ./cmd/helmr
 mkdir -p "$tmp/project/agents"

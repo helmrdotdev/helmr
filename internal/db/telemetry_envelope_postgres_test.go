@@ -33,7 +33,13 @@ func TestTelemetryClaimEnvelopeMeasurement(t *testing.T) {
 				writer := clickhouse.NewWriter(client)
 				ctx := ch.Context(t.Context(), ch.WithSettings(ch.Settings{"async_insert": 0}))
 
-				dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO diagnostic_chunks(environment_id,session_id,process_epoch,stream,sequence,through_sequence,byte_offset,through_byte_offset,kind,observed_at_unix_nano,data,dropped_bytes,complete,accepted_at,expires_at) SELECT $1,$2,1,'diagnostic','stdout',n,n,(n-1)*196608,n*196608,'data',1,convert_to(repeat('x',196608),'UTF8'),0,false,now(),now()+interval '2160 hours' FROM generate_series(1,256)n`, f.Environment, f.Session)
+				// Seed a synthetic, compressible export workload directly; this measurement
+				// exercises claim/send behavior, not diagnostic admission.
+				const chunkBytes = 192 << 10
+				dbtest.MustExec(t, ctx, f.Pool, `
+					INSERT INTO diagnostic_chunks(environment_id,session_id,process_epoch,stream,sequence,through_sequence,byte_offset,through_byte_offset,kind,observed_at_unix_nano,data,dropped_bytes,complete,accepted_at)
+					SELECT $1,$2,1,'stdout',n,n,(n-1)*$3,n*$3,'data',1,convert_to(repeat('x',$3),'UTF8'),0,false,now()
+					FROM generate_series(1,256)n`, f.Environment, f.Session, chunkBytes)
 				start := time.Now()
 				var claimTime time.Duration
 				var count, total int
@@ -46,6 +52,10 @@ func TestTelemetryClaimEnvelopeMeasurement(t *testing.T) {
 				for _, r := range claims.Records {
 					total += len(r.Record.Data)
 				}
+				wantCount := (mib << 20) / chunkBytes
+				if count != wantCount || total != wantCount*chunkBytes {
+					t.Fatalf("claimed rows=%d payload_bytes=%d, want rows=%d payload_bytes=%d", count, total, wantCount, wantCount*chunkBytes)
+				}
 				if reject, err := writer.WriteDiagnostics(ctx, "session", claims.Records); err != nil || len(reject) > 0 {
 					t.Fatalf("write: %v %v", reject, err)
 				}
@@ -53,7 +63,7 @@ func TestTelemetryClaimEnvelopeMeasurement(t *testing.T) {
 
 				elapsed := time.Since(start)
 				t.Logf("rows=%d payload_bytes=%d claim=%s claim_and_send=%s", count, total, claimTime, elapsed)
-				if count == 0 || total > mib<<20 || elapsed > 25*time.Second {
+				if elapsed > 25*time.Second {
 					t.Fatal("claim envelope or lease budget exceeded")
 				}
 			})

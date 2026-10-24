@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -62,6 +63,15 @@ describe("declaration discovery", () => {
   test("deduplicates overlapping dirs and ignores directory symlinks", async () => {
     const root = await project()
     await writeModule(root, "agents/nested/agent.js", agentModule("nested"))
+    await writeModule(root, "linked-only/agent.js", agentModule("linked"))
+    const direct = await analyzeProject({
+      root,
+      architecture: "x86_64",
+      config: normalizedConfig({ dirs: ["./linked-only"] }),
+    })
+    expect(direct.modules).toEqual(["linked-only/agent.js"])
+    expect(direct.buildPlan.definitions.filter((item) => item.kind === "agent").map((item) => item.declaredId)).toEqual(["linked"])
+    await symlink("../linked-only", resolve(root, "agents/linked"), "dir")
     const config = normalizedConfig({
       dirs: ["./agents", "./agents/nested"],
     })

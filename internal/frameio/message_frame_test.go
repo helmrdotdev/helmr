@@ -2,6 +2,9 @@ package frameio
 
 import (
 	"bytes"
+	"encoding/binary"
+	"fmt"
+	"io"
 	"testing"
 
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -22,24 +25,44 @@ func TestMessageFrameRoundTrip(t *testing.T) {
 }
 
 func TestReadMessageFrameRejectsOversizedBody(t *testing.T) {
-	var buf bytes.Buffer
-	buf.Write([]byte{0x10, 0x00, 0x00, 0x01})
-	_, err := ReadMessageFrame(&buf)
-	if err == nil {
-		t.Fatal("expected oversized frame error")
-	}
+	assertFrameRejectedBeforeBodyRead(t, ReadMessageFrame, MaxFrameBytes+1, MaxFrameBytes)
 }
 
 func TestReadMessageFrameBoundedRejectsBeforeBodyRead(t *testing.T) {
-	var buf bytes.Buffer
-	buf.Write([]byte{0, 0, 0, 5})
-	_, err := ReadMessageFrameBounded(&buf, 4)
-	if err == nil {
-		t.Fatal("expected bounded frame error")
+	assertFrameRejectedBeforeBodyRead(t, func(reader io.Reader) ([]byte, error) {
+		return ReadMessageFrameBounded(reader, 4)
+	}, 5, 4)
+}
+
+func assertFrameRejectedBeforeBodyRead(t *testing.T, read func(io.Reader) ([]byte, error), size, limit uint32) {
+	t.Helper()
+	var header [4]byte
+	binary.BigEndian.PutUint32(header[:], size)
+	reader := &frameBodyReadSentinel{header: bytes.NewReader(header[:])}
+	_, err := read(reader)
+	want := fmt.Sprintf("frameio message frame length %d exceeds max %d", size, limit)
+	if err == nil || err.Error() != want {
+		t.Errorf("frame error = %v, want %q", err, want)
 	}
-	if buf.Len() != 0 {
-		t.Fatalf("reader retained %d header bytes", buf.Len())
+	if reader.bodyReads != 0 {
+		t.Errorf("oversized frame attempted %d body reads", reader.bodyReads)
 	}
+	if reader.header.Len() != 0 {
+		t.Errorf("reader retained %d header bytes", reader.header.Len())
+	}
+}
+
+type frameBodyReadSentinel struct {
+	header    *bytes.Reader
+	bodyReads int
+}
+
+func (r *frameBodyReadSentinel) Read(p []byte) (int, error) {
+	if r.header.Len() != 0 {
+		return r.header.Read(p)
+	}
+	r.bodyReads++
+	return 0, io.EOF
 }
 
 func TestProtoFrameRoundTrip(t *testing.T) {

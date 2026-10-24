@@ -33,6 +33,7 @@ type ControlPlane struct {
 	EnvironmentExecutionLimits      EnvironmentExecutionLimits
 	Addr                            string
 	DeploymentMode                  string
+	OrganizationCreationAdminOnly   bool
 	DatabaseURL                     string
 	ClickHouseURL                   string
 	ClickHouseUser                  string

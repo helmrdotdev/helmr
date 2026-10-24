@@ -1,25 +1,14 @@
 package artifact
 
 import (
-	"encoding/hex"
+	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"runtime"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/definition/definitiontest"
 )
-
-type contractFixture struct {
-	Manifest struct {
-		Input     string `json:"input"`
-		Canonical string `json:"canonical"`
-		DigestHex string `json:"digestHex"`
-	} `json:"manifest"`
-}
 
 func TestProgramMetadataCanonicalRoundTrip(t *testing.T) {
 	index := testProgramMetadata(t)
@@ -121,17 +110,36 @@ func TestProgramMetadataParserEnforcesSizeBound(t *testing.T) {
 	}
 }
 
-func TestManifestDigestMatchesSharedGoldenFixture(t *testing.T) {
-	fixture := loadContractFixture(t)
-	canonical, manifestDigest, err := definitiontest.CanonicalManifestAndDigest([]byte(fixture.Manifest.Input))
+func TestPayloadDigestMatchesFixedVector(t *testing.T) {
+	files := map[string]string{
+		"helmr/app/main.mjs": "export const value = 42;\n",
+		"package.json":       "{\"type\":\"module\"}\n",
+	}
+	// Deliberately unordered; metadata is excluded while application files,
+	// directory modes and symbolic-link targets contribute to the payload.
+	entries := []Entry{
+		{Path: "package.json", Kind: EntryRegular, Mode: 0o644, SizeBytes: 18},
+		{Path: "helmr/config.json", Kind: EntryRegular, Mode: 0o644, SizeBytes: 2},
+		{Path: "main.mjs", Kind: EntrySymlink, Mode: 0o777, LinkTarget: "helmr/app/main.mjs"},
+		{Path: "helmr/app/main.mjs", Kind: EntryRegular, Mode: 0o644, SizeBytes: 25},
+		{Path: "helmr", Kind: EntryDirectory, Mode: 0o755},
+		{Path: "helmr/app", Kind: EntryDirectory, Mode: 0o755},
+	}
+	digest, err := PayloadDigest(t.Context(), entries, func(_ context.Context, path string) (io.ReadCloser, error) {
+		content, ok := files[path]
+		if !ok {
+			t.Fatalf("unexpected payload read: %s", path)
+		}
+		return io.NopCloser(strings.NewReader(content)), nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(canonical) != fixture.Manifest.Canonical {
-		t.Fatalf("manifest canonical JSON = %q, want %q", canonical, fixture.Manifest.Canonical)
-	}
-	if hex.EncodeToString(manifestDigest[:]) != fixture.Manifest.DigestHex {
-		t.Fatalf("manifest digest = %x, want %s", manifestDigest, fixture.Manifest.DigestHex)
+	// Fixed SHA-256 of the payload domain and canonical entry records, derived
+	// independently of PayloadDigest and the production canonicalizer.
+	const want = "sha256:065015dd2e502284542698c859fe2b828745d2a311f4bf7a0562204c52026ac4"
+	if digest != want {
+		t.Fatalf("payload digest = %s, want %s", digest, want)
 	}
 }
 
@@ -157,30 +165,4 @@ func testProgramMetadata(t *testing.T) ProgramMetadata {
 		t.Fatal(err)
 	}
 	return index
-}
-
-func loadContractFixture(t *testing.T) contractFixture {
-	t.Helper()
-	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test source path")
-	}
-	raw, err := os.ReadFile(filepath.Join(
-		filepath.Dir(source),
-		"..",
-		"..",
-		"tests",
-		"fixtures",
-		"contracts",
-		"deployment-v0",
-		"golden.json",
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fixture contractFixture
-	if err := json.Unmarshal(raw, &fixture); err != nil {
-		t.Fatal(err)
-	}
-	return fixture
 }

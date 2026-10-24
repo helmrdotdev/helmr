@@ -167,32 +167,63 @@ func TestBackgroundSaveDeclinesOptionalWorkButDiscoversPending(t *testing.T) {
 }
 
 func TestBackgroundSaveAndCheckpointAdmissionSerialize(t *testing.T) {
-	for range 6 {
-		f := newFixture(t)
-		start := make(chan struct{})
-		var wg sync.WaitGroup
-		var save *computer.SaveRequest
-		var saveErr, captureErr error
-		wg.Go(func() {
-			<-start
-			save, saveErr = computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil)
-		})
-		wg.Go(func() {
-			<-start
-			_, captureErr = session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest())
-		})
-		close(start)
-		wg.Wait()
-		if saveErr != nil {
-			t.Fatal(saveErr)
-		}
-		if save != nil {
-			if !errors.Is(captureErr, session.ErrNotReady) {
-				t.Fatalf("checkpoint passed optional: %v", captureErr)
+	for _, first := range []string{"save", "capture"} {
+		t.Run(first+" first", func(t *testing.T) {
+			f := newFixture(t)
+			req := f.captureRequest()
+			if control, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
+				t.Fatalf("idle hibernate intent: %+v %v", control, err)
 			}
-		} else if captureErr != nil {
-			t.Fatalf("neither admitted: %v", captureErr)
-		}
+			var saveID uuid.UUID
+			if first == "save" {
+				hold, err := f.pool.Begin(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer hold.Rollback(t.Context())
+				save, err := computer.NextSave(t.Context(), hold, *f.host(), saveIdentity(f), true, true, nil)
+				if err != nil || save == nil || !save.Claimed {
+					t.Fatalf("background save positive control: %+v %v", save, err)
+				}
+				saveID = save.ID
+				var capture session.ComputerCapture
+				err = commitWithBlockedOperation(t, f, hold, func(ctx context.Context) error {
+					var err error
+					capture, err = session.BeginComputerCapture(ctx, f.pool, *f.host(), req)
+					return err
+				})
+				if !errors.Is(err, session.ErrNotReady) || capture.SaveID != uuid.Nil() || len(capture.Request) != 0 {
+					t.Fatalf("checkpoint passed unresolved background save: %+v %v", capture, err)
+				}
+			} else {
+				capture, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), req)
+				if err != nil || capture.SaveID == uuid.Nil() {
+					t.Fatalf("idle capture positive control: %+v %v", capture, err)
+				}
+				saveID = capture.SaveID
+				// The opposite order is a committed control: NextSave's short lock
+				// timeout must not make this assertion depend on polling speed.
+				if save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil); err != nil || save != nil {
+					t.Fatalf("background save bypassed checkpoint: %+v %v", save, err)
+				}
+			}
+			var saves, checkpoints int
+			var requested, owned bool
+			if err := f.pool.QueryRow(t.Context(), `SELECT
+ (SELECT count(*) FROM computer_saves WHERE environment_id=$1 AND computer_id=$2),
+ (SELECT count(*) FROM checkpoints WHERE environment_id=$1 AND computer_id=$2),
+ EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND id=$3 AND status='requested' AND turn_id IS NULL),
+ EXISTS(SELECT 1 FROM checkpoints WHERE environment_id=$1 AND computer_id=$2 AND id=$4 AND disk_save_id=$3 AND status='capturing')`, f.env, f.computer, saveID, req.CheckpointID).Scan(&saves, &checkpoints, &requested, &owned); err != nil {
+				t.Fatal(err)
+			}
+			wantCheckpoints := 0
+			if first == "capture" {
+				wantCheckpoints = 1
+			}
+			if saves != 1 || !requested || checkpoints != wantCheckpoints || owned != (first == "capture") {
+				t.Fatalf("admission left wrong durable owner: saves=%d requested=%v checkpoints=%d owned=%v", saves, requested, checkpoints, owned)
+			}
+		})
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestCommandCompletionRejectsAmbiguousResult(t *testing.T) {
@@ -65,10 +66,23 @@ func TestCommandCompletionNormalizesErrorDocument(t *testing.T) {
 }
 
 func TestCommandReleaseLeavesRecoveryScopesUnreconciled(t *testing.T) {
+	environment := uuid.NewV7()
+	lease := Lease{InstanceID: uuid.NewV7(), Epoch: 1}
+	valid := db.Command{
+		ID: pgvalue.UUID(uuid.NewV7()), Status: "failed", TerminalAt: pgvalue.Timestamptz(time.Now()),
+		TerminalReasonCode: pgvalue.Text("computer_command_failed"), OutputFenced: true,
+		StdoutFinalThrough: pgtype.Int8{Int64: 1, Valid: true}, StderrFinalThrough: pgtype.Int8{Int64: 1, Valid: true},
+	}
+	if report, err := release(valid, environment, lease); err != nil || report == nil {
+		t.Fatalf("allowed terminal reason did not produce a release report: report=%+v err=%v", report, err)
+	}
 	for _, reason := range []string{"secret_revoked", "instance_lost", "worker_lost"} {
-		report, err := release(db.Command{Status: "failed", TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text(reason)}, uuid.NewV7(), Lease{})
-		if err != nil || report != nil {
-			t.Fatalf("recovery reason %s blocked peer claims: %v", reason, err)
-		}
+		t.Run(reason, func(t *testing.T) {
+			command := valid
+			command.TerminalReasonCode = pgvalue.Text(reason)
+			if report, err := release(command, environment, lease); err != nil || report != nil {
+				t.Fatalf("recovery reason must leave the scope for recovery: report=%+v err=%v", report, err)
+			}
+		})
 	}
 }

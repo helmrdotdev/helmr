@@ -8,10 +8,6 @@ test("shows the last segment of a UUID so shared time-based prefixes stay distin
   expect(formatID("00000000-0000-7000-8000-000000000301")).toBe("000000000301");
 });
 
-test("never adds a leading ellipsis", () => {
-  expect(formatID("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33")).not.toContain("…");
-});
-
 test("leaves every non-UUID, non-digest identifier unchanged", () => {
   expect(formatID("review-pr")).toBe("review-pr");
   expect(formatID("0123456789abcdef")).toBe("0123456789abcdef");

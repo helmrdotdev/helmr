@@ -421,18 +421,23 @@ recorded. This injection does not download or modify the memory payload and does
 not permanently delete its version; ordinary reclamation can subsequently do so.
 It is exclusive with every other fault/restart mode.
 
-Both cases use the same assertions. The SDK admits two new native Turns and
-observes local holds on all four Sessions.
-For at least 20 seconds, both inputs remain queued, hold identities stay stable,
-and prior Completed Turn records and their results remain
-unchanged. SQL then requires
-one physically closed restore attempt, a definitively lost checkpoint, no guest
-initialization or reconciled controls, and only the original four process epochs.
-`checkpoint-loss.json` retains the physical lease and process observations.
-The driver cancels Sessions only after recording these observations, and ordinary
-fixture retirement performs the remaining cleanup. Neither case claims
-corruption within the memory payload, transport-failure, incompatible-runtime or
-explicit-resume proof.
+`HELMR_NATIVE_CORRUPT_MEMORY_PROOF=1` selects `TestWorkerAgentCorruptMemory`,
+also exclusive with the other modes. It corrupts the encrypted memory object
+after the restored peer reaches running, exercising pager authentication after
+guest health succeeds. The checkpoint must become lost within the case's
+30-second bound, and the driver then requires the affected Turn to be interrupted.
+The failed VMM must be absent.
+
+The configuration and memory corruption cases require automatic disk recovery:
+a fresh setup nonce and reset in-memory counter, the retained disk marker, no
+recovery holds, and unchanged prior Completed Turns. `checkpoint-loss.json`
+retains the physical lease and process observations. The missing-memory case
+instead requires at least two failed, physically fenced restore owners without
+guest initialization. It removes the injected delete marker, verifies that the
+original object version is current again, and completes both healthy RAM
+continuation cycles using that checkpoint. Ordinary fixture retirement and the
+outer physical audit remain required for every case. These checks do not qualify
+incompatible runtimes or explicit-resume behavior.
 
 
 ## Integrated distinct-host continuation
@@ -637,9 +642,12 @@ before hibernation and after both RAM restorations. Values and selectors are nev
 written to evidence. Rotation while the first checkpoint is released must not
 rewrite the admitted process values or its retained selector.
 
-After both native harnesses complete their eight own-Save Turns, revoking the raw
-Secret must interrupt the active peer, leave its queued successor unstarted and
-inspectable under a hold, and permit explicit Session cancellation of that input.
+After both native harnesses complete their eight own-Save Turns, the driver waits
+for publication receipts for every completed native and model Turn. This isolates
+Secret revocation from the independent recovery hold caused by losing an
+unfinished save. Revoking the raw Secret must interrupt the active peer, leave its
+queued successor unstarted and inspectable under a hold, and permit explicit
+Session cancellation of that input.
 Earlier native outcomes must remain unchanged. `result.json` records the three
 checks, Secret identities and revocation/cancellation observations. The ordinary
 outer retirement still checks physical closure. This case does not exercise

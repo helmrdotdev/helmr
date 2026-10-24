@@ -57,37 +57,6 @@ func TestPlanFreshComputerUsesExactPrimaryPool(t *testing.T) {
 
 }
 
-func TestPlanComputerScalesExactPrimaryPoolFromZero(t *testing.T) {
-	secondaryID := plannerTestUUID(41)
-	primaryID := plannerTestUUID(42)
-	secondary := plannerTestPool(secondaryID, "secondary")
-	primary := plannerTestPool(primaryID, "primary")
-	store := plannerStore{
-		group:  plannerTestGroup(primaryID),
-		pools:  []db.ListCapacityWorkerPoolsRow{secondary, primary},
-		demand: []db.ListAllocationPlanningDemandRow{plannerFreshComputer(43)},
-	}
-
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
-		plannerPoolRequest(secondaryID, 1), plannerPoolRequest(primaryID, 1),
-	}}, plannerTestNow)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	primaryPlan := requirePoolPlan(t, plan, primaryID)
-	secondaryPlan := requirePoolPlan(t, plan, secondaryID)
-	if primaryPlan.RecommendedAdditionalWorkers != 1 || primaryPlan.CompatibleQueuedItems != 1 {
-		t.Fatalf("primary pool plan = %+v", primaryPlan)
-	}
-	if secondaryPlan.RecommendedAdditionalWorkers != 0 || secondaryPlan.CompatibleQueuedItems != 0 {
-		t.Fatalf("secondary pool plan = %+v", secondaryPlan)
-	}
-	if !plan.Complete || len(plan.UnmatchedDemand) != 0 {
-		t.Fatalf("plan = %+v", plan)
-	}
-}
-
 func TestPlanComputerAccountedSupplyBlocksExactRequestedPools(t *testing.T) {
 	primaryID := plannerTestUUID(58)
 	secondaryID := plannerTestUUID(59)

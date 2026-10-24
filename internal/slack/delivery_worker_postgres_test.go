@@ -272,11 +272,10 @@ func TestSlackDeliveryWorkerQuestionGetsBudgetBeforeUnrelatedRoots(t *testing.T)
 	}
 }
 
-func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testing.T) {
+func TestSlackDeliveryWorkerRefreshesChangedStatusWithoutReplayingContent(t *testing.T) {
 	f := newStatusFixture(t)
 	post := f.post(t, 1, "waiting", "lifecycle", nil)
-	// Let the first assertion precede content. Only successful service should
-	// change that precedence; retry eligibility must not erase the waiting age.
+	// Deliver initial status and content before observing a core status change.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET refresh_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, f.thread)
 	var methods []string
 	client := deliveryTestClient(func(r *http.Request) string {
@@ -309,7 +308,57 @@ func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testin
 	}
 	var posted bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='posted' FROM slack_posts WHERE id=$1`, post).Scan(&posted); err != nil || !posted || len(methods) != 3 || !strings.HasSuffix(methods[2], "agents.sessions.setStatus") {
-		t.Fatal("changing status starved waiting content", posted, methods, err)
+		t.Fatal("changed status was not refreshed or posted content was replayed", posted, methods, err)
+	}
+}
+
+func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testing.T) {
+	f := newStatusFixture(t)
+	post := f.post(t, 1, "waiting", "lifecycle", nil)
+	// Status and posting have independent budgets. Keep content pending while
+	// the older status assertion succeeds, without changing publication age.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET refresh_at=clock_timestamp()-interval '1 hour' WHERE id=$1;
+ UPDATE slack_posts SET created_at=(SELECT refresh_at+interval '15 seconds' FROM slack_threads WHERE id=$1) WHERE id=$2;
+ INSERT INTO slack_delivery_limits(installation_id,channel_id,next_post_at) VALUES($3,'C1',clock_timestamp()+interval '1 hour')`, pgx.QueryExecModeSimpleProtocol, f.thread, post, f.installation)
+	var methods []string
+	client := deliveryTestClient(func(r *http.Request) string {
+		methods = append(methods, r.URL.Path)
+		if r.URL.Path == "/api/agents.sessions.setStatus" {
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			result, _ := json.Marshal(map[string]any{"ok": true, "agent_status": body["status"]})
+			return string(result)
+		}
+		return `{"ok":true,"ts":"123.789","channel":"C1"}`
+	})
+	if n, err := ReconcileDelivery(t.Context(), f.Pool, client, 2); err != nil || n != 2 {
+		t.Fatalf("blocked content pass: %d %v", n, err)
+	}
+	var waiting bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT p.status='pending' AND p.attempt_count=0 AND t.status_confirmation='acknowledged' AND t.last_acknowledged_status=t.desired_status AND p.created_at<t.refresh_at-interval '30 seconds' FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id WHERE p.id=$1`, post).Scan(&waiting); err != nil || !waiting || len(methods) != 1 || methods[0] != "/api/agents.sessions.setStatus" {
+		t.Fatal("content did not remain pending across successful status service", waiting, methods, err)
+	}
+	// Observe a new core status while sending is deferred. Its old service age
+	// preceded this publication; successful service must move it behind content.
+	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, f.thread)
+	if claim, err := ClaimStatus(t.Context(), f.Pool, f.thread); err != nil || claim != nil {
+		t.Fatal("expected deferred status change", claim, err)
+	}
+	// Release both lanes and rotation delays, preserving the successful refresh.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1;
+ UPDATE slack_threads SET next_attempt_at=clock_timestamp() WHERE id=$2;
+ UPDATE slack_posts SET next_attempt_at=clock_timestamp() WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.installation, f.thread, post)
+	if n, err := ReconcileDelivery(t.Context(), f.Pool, client, 2); err != nil || n != 2 {
+		t.Fatalf("released content pass: %d %v", n, err)
+	}
+	var exact bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT p.status='posted' AND p.attempt_count=1 AND t.status_confirmation='acknowledged' AND t.desired_status='processing' AND t.last_acknowledged_status=t.desired_status FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id WHERE p.id=$1`, post).Scan(&exact); err != nil || !exact || len(methods) != 3 || methods[1] != "/api/chat.postMessage" || methods[2] != "/api/agents.sessions.setStatus" {
+		t.Fatal("successful status service displaced waiting content", exact, methods, err)
 	}
 }
 
@@ -447,7 +496,7 @@ func TestSlackDeliveryWorkerBlockedContinuationsDoNotHideReadyStream(t *testing.
 }
 
 func TestSlackDeliveryWorkerSuppressesBlockedTailWhenConnectionAuthorityEnds(t *testing.T) {
-	for _, reason := range []string{"channel", "speaker", "disconnected", "authorization"} {
+	for _, reason := range []string{"connection-revoked", "disconnected", "authorization"} {
 		t.Run(reason, func(t *testing.T) {
 			f := newStatusFixture(t)
 			first := f.post(t, 1, "chain", "lifecycle", nil)
@@ -459,9 +508,7 @@ func TestSlackDeliveryWorkerSuppressesBlockedTailWhenConnectionAuthorityEnds(t *
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET reconciliation_paused_at=clock_timestamp() WHERE id=$1;
  UPDATE slack_posts SET post_key='chain',continuation_ordinal=1 WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, first, tail)
 			switch reason {
-			case "channel":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
-			case "speaker":
+			case "connection-revoked":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
 			case "disconnected":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET disconnected_at=clock_timestamp(),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, f.installation)

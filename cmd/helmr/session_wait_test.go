@@ -91,7 +91,7 @@ func TestSessionTurnWaitCancellationAndIdentity(t *testing.T) {
 	}
 }
 
-func TestSessionTurnWaitIncludesFinalizingBeforeSettlement(t *testing.T) {
+func TestSessionTurnWaitObservesQueuedAndRunningBeforeSettlement(t *testing.T) {
 	const turn = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

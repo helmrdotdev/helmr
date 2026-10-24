@@ -265,11 +265,11 @@ func TestListProjectsPostgresCandidateScale(t *testing.T) {
 			if projectCount == 1000 {
 				detailElapsed := make([]time.Duration, 0, 5)
 				detailStatements := make([]int64, 0, 5)
-				fixture.detail(t, fixture.projectIDs[0].String(), fixture.orgID)
+				fixture.detail(t, "project-0001", fixture.orgID)
 				for range 5 {
 					fixture.store.statements.Store(0)
 					started := time.Now()
-					fixture.detail(t, fixture.projectIDs[0].String(), fixture.orgID)
+					fixture.detail(t, "project-0001", fixture.orgID)
 					detailElapsed = append(detailElapsed, time.Since(started))
 					detailStatements = append(detailStatements, fixture.store.statements.Load())
 				}

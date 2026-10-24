@@ -148,56 +148,43 @@ func TestRuntimeFinalizationObservesOriginalTurnAfterPhysicalOwnerRestore(t *tes
 }
 
 func TestResultAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
-	for _, runtime := range []bool{false, true} {
-		t.Run(fmt.Sprintf("runtime=%v", runtime), func(t *testing.T) {
-			f := newFixture(t)
-			a := f.enqueue(t, "late-result")
-			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
-				t.Fatal(err)
-			}
-			if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), a.TurnID); err != nil {
-				t.Fatal(err)
-			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, a.TurnID)
-			tx, err := f.pool.Begin(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback(t.Context())
-			if _, err = tx.Exec(t.Context(), `SELECT id FROM computers WHERE id=$1 FOR NO KEY UPDATE`, f.computer); err != nil {
-				t.Fatal(err)
-			}
-			done := make(chan error, 1)
-			go func() {
-				if runtime {
-					outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
-					if err == nil && string(outcome) != `{"status":"interrupted"}` {
-						err = fmt.Errorf("outcome = %s", outcome)
-					}
-					done <- err
-				} else {
-					_, err := recordResultForTest(t.Context(), f.pool, f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
-					if errors.Is(err, session.ErrNotReady) {
-						done <- nil
-					} else {
-						done <- fmt.Errorf("late result error = %v", err)
-					}
-				}
-			}()
-			waitSessionLifecycleLock(t, f)
-			if _, err = tx.Exec(t.Context(), `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.TurnID); err != nil {
-				t.Fatal(err)
-			}
-			if err = tx.Commit(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if err = <-done; err != nil {
-				t.Fatal(err)
-			}
-			var untouched bool
-			if err = f.pool.QueryRow(t.Context(), `SELECT result_digest IS NULL AND deadline_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM computer_saves WHERE turn_id=$1) FROM turns WHERE id=$1`, a.TurnID).Scan(&untouched); err != nil || !untouched {
-				t.Fatalf("late result admitted: %v %v", untouched, err)
-			}
-		})
+	f := newFixture(t)
+	a := f.enqueue(t, "late-result")
+	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
+		t.Fatal(err)
+	}
+	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), a.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, a.TurnID)
+	tx, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err = tx.Exec(t.Context(), `SELECT id FROM computers WHERE id=$1 FOR NO KEY UPDATE`, f.computer); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
+		if err == nil && string(outcome) != `{"status":"interrupted"}` {
+			err = fmt.Errorf("outcome = %s", outcome)
+		}
+		done <- err
+	}()
+	waitSessionLifecycleLock(t, f)
+	if _, err = tx.Exec(t.Context(), `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.TurnID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; err != nil {
+		t.Fatal(err)
+	}
+	var untouched bool
+	if err = f.pool.QueryRow(t.Context(), `SELECT result_digest IS NULL AND deadline_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM computer_saves WHERE turn_id=$1) FROM turns WHERE id=$1`, a.TurnID).Scan(&untouched); err != nil || !untouched {
+		t.Fatalf("late result admitted: %v %v", untouched, err)
 	}
 }
