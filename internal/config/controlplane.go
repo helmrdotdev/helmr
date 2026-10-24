@@ -105,6 +105,10 @@ func LoadControlPlane() (ControlPlane, error) {
 		return cfg, errors.New("SETUP_TOKEN is required when DEPLOYMENT_MODE is self-hosted")
 	}
 	if cfg.DeploymentMode == DeploymentModeManagedCloud {
+		cfg.OrganizationCreationAdminOnly, err = envBool("ORGANIZATION_CREATION_ADMIN_ONLY", false)
+		if err != nil {
+			return cfg, err
+		}
 		cfg.ComputerKMSKeyARN = envText("COMPUTER_KMS_KEY_ARN")
 		if cfg.ComputerKMSKeyARN == "" {
 			return cfg, errors.New("COMPUTER_KMS_KEY_ARN is required when DEPLOYMENT_MODE is managed-cloud")

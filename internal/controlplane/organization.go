@@ -29,6 +29,10 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	initialSetup := s.selfHostedMode()
+	if !initialSetup && s.organizationCreationAdminOnly && !principal.Admin {
+		writeError(w, forbidden(errors.New("organization creation requires an installation administrator")))
+		return
+	}
 	if initialSetup && !s.initialSetupTokenMatches(request.SetupToken) {
 		writeError(w, forbidden(errors.New("invalid setup token")))
 		return

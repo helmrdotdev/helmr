@@ -136,9 +136,33 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || cfg.AppOrigin != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
+	for _, tc := range []struct {
+		value   string
+		want    bool
+		invalid bool
+	}{
+		{value: ""},
+		{value: "false"},
+		{value: "true", want: true},
+		{value: "invalid", invalid: true},
+	} {
+		t.Run("organization creation admin only="+tc.value, func(t *testing.T) {
+			t.Setenv("ORGANIZATION_CREATION_ADMIN_ONLY", tc.value)
+			cfg, err := LoadControlPlane()
+			if tc.invalid {
+				if err == nil || !strings.Contains(err.Error(), "ORGANIZATION_CREATION_ADMIN_ONLY") {
+					t.Fatalf("invalid setting error: %v", err)
+				}
+			} else if err != nil || cfg.OrganizationCreationAdminOnly != tc.want {
+				t.Fatalf("admin only=%v, error=%v", cfg.OrganizationCreationAdminOnly, err)
+			}
+		})
+	}
+
 }
 
 func TestLoadControlPlaneDefaultsToSelfHostedDeploymentMode(t *testing.T) {
+	t.Setenv("ORGANIZATION_CREATION_ADMIN_ONLY", "true")
 	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
@@ -154,7 +178,7 @@ func TestLoadControlPlaneDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DeploymentMode != DeploymentModeSelfHosted {
+	if cfg.DeploymentMode != DeploymentModeSelfHosted || cfg.OrganizationCreationAdminOnly {
 		t.Fatalf("DeploymentMode = %q", cfg.DeploymentMode)
 	}
 }

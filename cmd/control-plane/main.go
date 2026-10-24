@@ -241,6 +241,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		ComputerKeys:                   computerKeys,
 		Log:                            log,
 		DeploymentMode:                 cfg.DeploymentMode,
+		OrganizationCreationAdminOnly:  cfg.OrganizationCreationAdminOnly,
 		DB:                             queries,
 		TX:                             pool,
 		ReadinessDB:                    pool,

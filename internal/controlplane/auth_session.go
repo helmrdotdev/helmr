@@ -43,6 +43,8 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		response.OrganizationRequired = !account.OrganizationExists
 		response.AccessRequired = account.OrganizationExists
 		response.SetupTokenRequired = !account.OrganizationExists
+	case s.organizationCreationAdminOnly && !principal.Admin:
+		response.AccessRequired = true
 	default:
 		response.OrganizationRequired = true
 	}
