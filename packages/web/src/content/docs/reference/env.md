@@ -124,7 +124,7 @@ check does not prove full startup or availability. Runtime sink failures and que
 exhaustion continue to use bounded retry and backpressure; separate pools do not
 isolate a shared PostgreSQL outage. Accepted records retain their configured expiry.
 
-Deployment mode: `DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token. Set `ORGANIZATION_CREATION_ADMIN_ONLY=true` to limit creation to installation administrators. The default is `false`; this setting is ignored in self-hosted mode. Organization owners and admins can still invite members, and unaffiliated users see the Access required screen until invited. Installation administrator authority is separate from an organization’s admin role.
+Deployment mode: `DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
 Regions and Worker Groups are PostgreSQL resources managed through the Admin
 API and Console. Control Plane startup does not reconcile them from process
