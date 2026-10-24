@@ -92,7 +92,7 @@ func TestComputerCommandGETRequiresExecPermissionNotComputerRead(t *testing.T) {
 	createOnly := auth.Principal{
 		Kind: auth.PrincipalKindAPIKey, OrgID: orgID,
 		ProjectID: "project", EnvironmentID: "environment",
-		Permissions: []auth.Permission{auth.CapabilityComputersOperate},
+		Grants: []auth.PermissionGrant{{ProjectID: "project", EnvironmentID: "environment", Permission: auth.CapabilityComputersOperate}},
 	}
 	if !canAccessComputerCommandOutput(createOnly, scope) {
 		t.Fatal("create-only API key was unable to poll its Computer Exec")

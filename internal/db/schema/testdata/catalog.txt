@@ -29,7 +29,6 @@ column api_keys.key_prefix text not null
 column api_keys.last_used_at timestamp with time zone
 column api_keys.name text not null
 column api_keys.org_id uuid not null
-column api_keys.permissions text[] not null
 column api_keys.project_id uuid not null
 column api_keys.revoked_at timestamp with time zone
 column api_keys.token_hash bytea not null
@@ -609,6 +608,7 @@ column role_grant_agents.environment_id uuid not null
 column role_grant_agents.grant_id uuid not null
 column role_grants.agents_mode text not null default 'none'::text
 column role_grants.all_members boolean not null default false
+column role_grants.api_key_id uuid
 column role_grants.created_at timestamp with time zone not null default now()
 column role_grants.created_by uuid
 column role_grants.environment_id uuid
@@ -1208,7 +1208,6 @@ constraint agents c CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'::text)
 constraint agents f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint agents p PRIMARY KEY (environment_id, id)
 constraint agents u UNIQUE (environment_id, key)
-constraint api_keys c CHECK ((revoked_at IS NOT NULL OR cardinality(permissions) > 0) AND permissions <@ ARRAY['agents.use'::text, 'sessions.view'::text, 'sessions.manage'::text, 'deployments.publish'::text, 'deployments.promote'::text, 'computers.operate'::text, 'secrets.manage'::text])
 constraint api_keys c CHECK (btrim(key_prefix) <> ''::text)
 constraint api_keys c CHECK (btrim(name) <> ''::text)
 constraint api_keys f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
@@ -1217,6 +1216,7 @@ constraint api_keys f FOREIGN KEY (org_id, project_id) REFERENCES projects(org_i
 constraint api_keys f FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE CASCADE
 constraint api_keys p PRIMARY KEY (id)
 constraint api_keys u UNIQUE (environment_id, id)
+constraint api_keys u UNIQUE (org_id, environment_id, id)
 constraint api_keys u UNIQUE (token_hash)
 constraint audit_events c CHECK (action <> ''::text)
 constraint audit_events c CHECK (actor_kind = 'login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'api_key'::text AND actor_user_id IS NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'verified_login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NULL AND actor_source <> ''::text OR actor_kind = 'capacity'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source = ''::text OR actor_kind = 'system'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source <> ''::text)
@@ -1675,20 +1675,22 @@ constraint role_grant_agents c CHECK (agents_mode = 'selected'::text)
 constraint role_grant_agents f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id) ON DELETE CASCADE
 constraint role_grant_agents f FOREIGN KEY (grant_id, environment_id, agents_mode) REFERENCES role_grants(id, environment_id, agents_mode) ON DELETE CASCADE
 constraint role_grant_agents p PRIMARY KEY (grant_id, agent_id)
-constraint role_grants c CHECK ((num_nonnulls(member_id, group_id) + all_members::integer) = 1)
+constraint role_grants c CHECK ((num_nonnulls(member_id, group_id, api_key_id) + all_members::integer) = 1)
 constraint role_grants c CHECK (NOT all_members OR agents_mode = 'selected'::text)
 constraint role_grants c CHECK (agents_mode = 'none'::text OR environment_id IS NOT NULL)
 constraint role_grants c CHECK (agents_mode = ANY (ARRAY['none'::text, 'selected'::text, 'all'::text]))
+constraint role_grants c CHECK (api_key_id IS NULL OR environment_id IS NOT NULL)
 constraint role_grants c CHECK (revision > 0)
 constraint role_grants f FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 constraint role_grants f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint role_grants f FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id) ON DELETE CASCADE
+constraint role_grants f FOREIGN KEY (org_id, environment_id, api_key_id) REFERENCES api_keys(org_id, environment_id, id) ON DELETE RESTRICT
 constraint role_grants f FOREIGN KEY (org_id, group_id) REFERENCES permission_groups(org_id, id) ON DELETE CASCADE
 constraint role_grants f FOREIGN KEY (org_id, member_id) REFERENCES org_members(org_id, id) ON DELETE CASCADE
 constraint role_grants f FOREIGN KEY (org_id, role_id) REFERENCES roles(org_id, id) ON DELETE RESTRICT
 constraint role_grants p PRIMARY KEY (id)
 constraint role_grants u UNIQUE (id, environment_id, agents_mode)
-constraint role_grants u UNIQUE NULLS NOT DISTINCT (org_id, role_id, environment_id, member_id, group_id, all_members)
+constraint role_grants u UNIQUE NULLS NOT DISTINCT (org_id, role_id, environment_id, member_id, group_id, api_key_id, all_members)
 constraint role_permissions c CHECK (permission = ANY (ARRAY['agents.use'::text, 'sessions.view'::text, 'sessions.manage'::text, 'deployments.publish'::text, 'deployments.promote'::text, 'computers.operate'::text, 'secrets.manage'::text, 'access.manage'::text, 'organization.manage'::text, 'keys.manage'::text, 'agents.manage'::text]))
 constraint role_permissions f FOREIGN KEY (org_id, role_id) REFERENCES roles(org_id, id) ON DELETE CASCADE
 constraint role_permissions p PRIMARY KEY (org_id, role_id, permission)
@@ -2256,6 +2258,7 @@ index CREATE INDEX magic_links_email_purpose_recent_idx ON public.magic_links US
 index CREATE INDEX magic_links_invitation_active_idx ON public.magic_links USING btree (invitation_id, created_at DESC) WHERE ((invitation_id IS NOT NULL) AND (sent_at IS NOT NULL) AND (consumed_at IS NULL) AND (revoked_at IS NULL))
 index CREATE INDEX org_members_user_active ON public.org_members USING btree (user_id, org_id) WHERE (removed_at IS NULL)
 index CREATE INDEX permission_group_members_member ON public.permission_group_members USING btree (org_id, member_id, group_id)
+index CREATE INDEX role_grants_api_key ON public.role_grants USING btree (org_id, api_key_id) WHERE (api_key_id IS NOT NULL)
 index CREATE INDEX role_grants_environment ON public.role_grants USING btree (org_id, environment_id)
 index CREATE INDEX role_grants_group ON public.role_grants USING btree (org_id, group_id) WHERE (group_id IS NOT NULL)
 index CREATE INDEX role_grants_member ON public.role_grants USING btree (org_id, member_id) WHERE (member_id IS NOT NULL)

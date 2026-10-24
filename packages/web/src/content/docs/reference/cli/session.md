@@ -140,6 +140,6 @@ present. Failed, interrupted and cancelled Turns are settled outcomes.
 text control (`--answer-json '"Approve"'`), or
 `{"selectedIds":["approve"]}` for a choice. `--answer-id`
 is the retry identity for the answer; reuse it with the same answer to retry.
-When omitted, each invocation uses a new identity. A saved login answers with
-current Organization membership; an API key needs explicit answer permission.
+When omitted, each invocation uses a new identity. Saved logins and API keys answer with their current Role access to the Session’s
+Agent. API keys receive permissions through Role assignments.
 Answer shapes and limits are in [Questions](/docs/reference/sdk/questions).

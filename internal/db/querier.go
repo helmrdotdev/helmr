@@ -101,6 +101,8 @@ type Querier interface {
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) (int64, error)
 	InsertWorkerPoolCPUShape(ctx context.Context, arg InsertWorkerPoolCPUShapeParams) (int64, error)
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
+	ListAPIKeyPermissionGrants(ctx context.Context, arg ListAPIKeyPermissionGrantsParams) ([]ListAPIKeyPermissionGrantsRow, error)
+	ListAPIKeyRoleNames(ctx context.Context, arg ListAPIKeyRoleNamesParams) ([]string, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
 	// Only abandoned uploads are retirement candidates. Memberships in any org and
 	// registered owners pin availability with FKs; these NOT EXISTS clauses avoid

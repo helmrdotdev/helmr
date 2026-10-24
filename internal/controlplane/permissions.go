@@ -214,13 +214,13 @@ func (s *Server) setPermissionGroupMember(w http.ResponseWriter, r *http.Request
 func (s *Server) listRoleGrants(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	filter := org.GrantFilter{Project: q.Get("project"), Environment: q.Get("environment"), Agent: q.Get("agent"), SubjectKind: q.Get("subject_kind"), ScopeKind: q.Get("scope_kind"), Limit: 101}
-	if filter.SubjectKind != "" && filter.SubjectKind != "member" && filter.SubjectKind != "group" && filter.SubjectKind != "all_members" {
+	if filter.SubjectKind != "" && filter.SubjectKind != "member" && filter.SubjectKind != "group" && filter.SubjectKind != "api_key" && filter.SubjectKind != "all_members" {
 		writeError(w, badRequest(errors.New("invalid subject_kind")))
 		return
 	}
 	for key, values := range q {
 		switch key {
-		case "project", "environment", "agent", "subject_kind", "scope_kind", "member_id", "group_id", "role_id", "cursor", "limit":
+		case "project", "environment", "agent", "subject_kind", "scope_kind", "member_id", "group_id", "api_key_id", "role_id", "cursor", "limit":
 		default:
 			writeError(w, badRequest(errors.New("unknown query parameter "+key)))
 			return
@@ -234,7 +234,17 @@ func (s *Server) listRoleGrants(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("invalid scope_kind")))
 		return
 	}
-	if (q.Get("member_id") != "" && q.Get("group_id") != "") || (filter.SubjectKind == "all_members" && (q.Get("member_id") != "" || q.Get("group_id") != "")) || (filter.SubjectKind == "member" && q.Get("group_id") != "") || (filter.SubjectKind == "group" && q.Get("member_id") != "") {
+	subjectFilters := 0
+	for kind, field := range map[string]string{"member": "member_id", "group": "group_id", "api_key": "api_key_id"} {
+		if q.Get(field) != "" {
+			subjectFilters++
+			if filter.SubjectKind != "" && filter.SubjectKind != kind {
+				writeError(w, badRequest(errors.New("incompatible subject filters")))
+				return
+			}
+		}
+	}
+	if subjectFilters > 1 {
 		writeError(w, badRequest(errors.New("incompatible subject filters")))
 		return
 	}
@@ -242,7 +252,7 @@ func (s *Server) listRoleGrants(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("organization scope cannot include workload filters")))
 		return
 	}
-	for key, target := range map[string]*uuid.UUID{"member_id": &filter.MemberID, "group_id": &filter.GroupID, "role_id": &filter.RoleID, "cursor": &filter.After} {
+	for key, target := range map[string]*uuid.UUID{"member_id": &filter.MemberID, "group_id": &filter.GroupID, "api_key_id": &filter.APIKeyID, "role_id": &filter.RoleID, "cursor": &filter.After} {
 		if raw := q.Get(key); raw != "" {
 			id, e := ids.Parse(raw)
 			if e != nil || id == uuid.Nil() {

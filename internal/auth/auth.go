@@ -30,7 +30,6 @@ type Principal struct {
 	Kind          PrincipalKind
 	Admin         bool
 	Grants        []PermissionGrant
-	Permissions   []Permission
 }
 
 type Authenticator interface {

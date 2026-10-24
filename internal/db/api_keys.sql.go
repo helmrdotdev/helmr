@@ -12,9 +12,9 @@ import (
 )
 
 const issueAPIKey = `-- name: IssueAPIKey :one
-INSERT INTO api_keys (id,org_id,project_id,environment_id,created_by_member_id,permissions,name,key_prefix,token_hash,expires_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-RETURNING id, org_id, project_id, environment_id, created_by_member_id, permissions, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+INSERT INTO api_keys (id,org_id,project_id,environment_id,created_by_member_id,name,key_prefix,token_hash,expires_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type IssueAPIKeyParams struct {
@@ -23,7 +23,6 @@ type IssueAPIKeyParams struct {
 	ProjectID         pgtype.UUID        `json:"project_id"`
 	EnvironmentID     pgtype.UUID        `json:"environment_id"`
 	CreatedByMemberID pgtype.UUID        `json:"created_by_member_id"`
-	Permissions       []string           `json:"permissions"`
 	Name              string             `json:"name"`
 	KeyPrefix         string             `json:"key_prefix"`
 	TokenHash         []byte             `json:"token_hash"`
@@ -37,7 +36,6 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.CreatedByMemberID,
-		arg.Permissions,
 		arg.Name,
 		arg.KeyPrefix,
 		arg.TokenHash,
@@ -50,7 +48,6 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.CreatedByMemberID,
-		&i.Permissions,
 		&i.Name,
 		&i.KeyPrefix,
 		&i.TokenHash,
@@ -62,35 +59,66 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 	return i, err
 }
 
+const listAPIKeyRoleNames = `-- name: ListAPIKeyRoleNames :many
+SELECT r.name FROM role_grants g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
+WHERE g.org_id=$1 AND g.api_key_id=$2 ORDER BY r.name
+`
+
+type ListAPIKeyRoleNamesParams struct {
+	OrgID    pgtype.UUID `json:"org_id"`
+	ApiKeyID pgtype.UUID `json:"api_key_id"`
+}
+
+func (q *Queries) ListAPIKeyRoleNames(ctx context.Context, arg ListAPIKeyRoleNamesParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listAPIKeyRoleNames, arg.OrgID, arg.ApiKeyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAPIKeys = `-- name: ListAPIKeys :many
-SELECT id, org_id, project_id, environment_id, created_by_member_id, permissions, name, key_prefix, created_at, last_used_at, expires_at, revoked_at
-  FROM api_keys
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
+SELECT k.id, k.org_id, k.project_id, k.environment_id, k.created_by_member_id, k.name, k.key_prefix, k.created_at, k.last_used_at, k.expires_at, k.revoked_at,
+ ARRAY(SELECT r.name FROM role_grants g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id) WHERE g.api_key_id=k.id ORDER BY r.name)::text[] AS role_names
+  FROM api_keys k
+ WHERE k.org_id = $1
+   AND k.project_id = $2
+   AND k.environment_id = $3
    AND (
        $4::text = 'all'
        OR (
            $4::text = 'active'
-           AND revoked_at IS NULL
-           AND (expires_at IS NULL OR expires_at > now())
+           AND k.revoked_at IS NULL
+           AND (k.expires_at IS NULL OR k.expires_at > now())
        )
        OR (
            $4::text = 'expired'
-           AND revoked_at IS NULL
-           AND expires_at IS NOT NULL
-           AND expires_at <= now()
+           AND k.revoked_at IS NULL
+           AND k.expires_at IS NOT NULL
+           AND k.expires_at <= now()
        )
        OR (
            $4::text = 'revoked'
-           AND revoked_at IS NOT NULL
+           AND k.revoked_at IS NOT NULL
        )
    )
    AND (
        $5::timestamptz IS NULL
-       OR (created_at, id) < ($5::timestamptz, $6::uuid)
+       OR (k.created_at, k.id) < ($5::timestamptz, $6::uuid)
    )
- ORDER BY created_at DESC, id DESC
+ ORDER BY k.created_at DESC, k.id DESC
  LIMIT $7
 `
 
@@ -110,13 +138,13 @@ type ListAPIKeysRow struct {
 	ProjectID         pgtype.UUID        `json:"project_id"`
 	EnvironmentID     pgtype.UUID        `json:"environment_id"`
 	CreatedByMemberID pgtype.UUID        `json:"created_by_member_id"`
-	Permissions       []string           `json:"permissions"`
 	Name              string             `json:"name"`
 	KeyPrefix         string             `json:"key_prefix"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt        pgtype.Timestamptz `json:"last_used_at"`
 	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
+	RoleNames         []string           `json:"role_names"`
 }
 
 func (q *Queries) ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error) {
@@ -142,13 +170,13 @@ func (q *Queries) ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]Lis
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.CreatedByMemberID,
-			&i.Permissions,
 			&i.Name,
 			&i.KeyPrefix,
 			&i.CreatedAt,
 			&i.LastUsedAt,
 			&i.ExpiresAt,
 			&i.RevokedAt,
+			&i.RoleNames,
 		); err != nil {
 			return nil, err
 		}
@@ -161,7 +189,7 @@ func (q *Queries) ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]Lis
 }
 
 const lockActiveAPIKey = `-- name: LockActiveAPIKey :one
-SELECT id, org_id, project_id, environment_id, created_by_member_id, permissions, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at FROM api_keys WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
+SELECT id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at FROM api_keys WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
  AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR UPDATE
 `
 
@@ -186,7 +214,6 @@ func (q *Queries) LockActiveAPIKey(ctx context.Context, arg LockActiveAPIKeyPara
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.CreatedByMemberID,
-		&i.Permissions,
 		&i.Name,
 		&i.KeyPrefix,
 		&i.TokenHash,
@@ -231,7 +258,7 @@ func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int
 const rotateActiveAPIKey = `-- name: RotateActiveAPIKey :one
 UPDATE api_keys SET token_hash=$5,key_prefix=$6
 WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
- AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING id, org_id, project_id, environment_id, created_by_member_id, permissions, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+ AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type RotateActiveAPIKeyParams struct {
@@ -259,7 +286,6 @@ func (q *Queries) RotateActiveAPIKey(ctx context.Context, arg RotateActiveAPIKey
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.CreatedByMemberID,
-		&i.Permissions,
 		&i.Name,
 		&i.KeyPrefix,
 		&i.TokenHash,
@@ -278,7 +304,7 @@ WITH matched AS (
      WHERE token_hash = $1
        AND revoked_at IS NULL
        AND (expires_at IS NULL OR expires_at > now())
-     RETURNING id, org_id, project_id, environment_id, created_by_member_id, permissions, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+     RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 )
 SELECT
     matched.id,
@@ -290,8 +316,7 @@ SELECT
     matched.key_prefix,
     matched.created_at,
     matched.last_used_at,
-    matched.expires_at,
-    matched.permissions
+    matched.expires_at
   FROM matched
 `
 
@@ -306,7 +331,6 @@ type TouchActiveAPIKeyByTokenHashRow struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt        pgtype.Timestamptz `json:"last_used_at"`
 	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
-	Permissions       []string           `json:"permissions"`
 }
 
 func (q *Queries) TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error) {
@@ -323,15 +347,14 @@ func (q *Queries) TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []
 		&i.CreatedAt,
 		&i.LastUsedAt,
 		&i.ExpiresAt,
-		&i.Permissions,
 	)
 	return i, err
 }
 
 const updateActiveAPIKey = `-- name: UpdateActiveAPIKey :one
-UPDATE api_keys SET name=$5,permissions=$6,expires_at=$7
+UPDATE api_keys SET name=$5,expires_at=$6
 WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
- AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING id, org_id, project_id, environment_id, created_by_member_id, permissions, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+ AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type UpdateActiveAPIKeyParams struct {
@@ -340,7 +363,6 @@ type UpdateActiveAPIKeyParams struct {
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	ID            pgtype.UUID        `json:"id"`
 	Name          string             `json:"name"`
-	Permissions   []string           `json:"permissions"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 }
 
@@ -351,7 +373,6 @@ func (q *Queries) UpdateActiveAPIKey(ctx context.Context, arg UpdateActiveAPIKey
 		arg.EnvironmentID,
 		arg.ID,
 		arg.Name,
-		arg.Permissions,
 		arg.ExpiresAt,
 	)
 	var i APIKey
@@ -361,7 +382,6 @@ func (q *Queries) UpdateActiveAPIKey(ctx context.Context, arg UpdateActiveAPIKey
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.CreatedByMemberID,
-		&i.Permissions,
 		&i.Name,
 		&i.KeyPrefix,
 		&i.TokenHash,

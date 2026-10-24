@@ -152,6 +152,9 @@ func writeGrantSummary(out io.Writer, v api.RoleGrant) {
 		target = v.TargetKind
 	}
 	subject := v.GroupName
+	if v.SubjectKind == "api_key" {
+		subject = v.APIKeyName
+	}
 	if v.SubjectKind == "member" {
 		subject = v.MemberName
 	}
@@ -666,14 +669,14 @@ func groupMemberCommand(action string) *cobra.Command {
 }
 
 func roleGrantCommand() *cobra.Command {
-	root := &cobra.Command{Use: "grant", Short: "Manage role assignments to people, Groups or All members at an explicit scope."}
+	root := &cobra.Command{Use: "grant", Short: "Manage role assignments to people, Groups, API keys or All members at an explicit scope."}
 	for _, action := range []string{"list", "get", "create", "update", "delete"} {
 		root.AddCommand(roleGrantActionCommand(action))
 	}
 	return root
 }
 func roleGrantActionCommand(action string) *cobra.Command {
-	var id, revision, groupName, groupID, roleName, roleID, project, env, memberEmail, memberID string
+	var id, revision, groupName, groupID, roleName, roleID, project, env, memberEmail, memberID, apiKeyID string
 	var agentKeys []string
 	var allUsers, allAgents, organization bool
 	cmd := &cobra.Command{Use: action, Short: action + " role assignments with targets by resource type."}
@@ -681,6 +684,7 @@ func roleGrantActionCommand(action string) *cobra.Command {
 	cmd.Flags().StringVar(&revision, "if-match", "", "Observed assignment revision; defaults to the fetched revision.")
 	cmd.Flags().StringVar(&memberEmail, "user", "", "Exact active member email.")
 	cmd.Flags().StringVar(&memberID, "member-id", "", "Stable membership ID.")
+	cmd.Flags().StringVar(&apiKeyID, "api-key-id", "", "Stable API key identity ID, not its secret.")
 	cmd.Flags().StringVar(&groupName, "group", "", "Exact group name.")
 	cmd.Flags().StringVar(&groupID, "group-id", "", "Stable group ID.")
 	cmd.Flags().BoolVar(&allUsers, "all-users", false, "All active organization members; selected Agent use only.")
@@ -727,10 +731,10 @@ func roleGrantActionCommand(action string) *cobra.Command {
 				}
 				return permissionOutput(cmd, map[string]any{"deleted": old.ID})
 			}
-			if memberEmail != "" || memberID != "" || groupName != "" || groupID != "" || allUsers || roleName != "" || roleID != "" || project != "" || env != "" || organization {
+			if apiKeyID != "" || memberEmail != "" || memberID != "" || groupName != "" || groupID != "" || allUsers || roleName != "" || roleID != "" || project != "" || env != "" || organization {
 				return errors.New("update preserves recipient, role and environment; supply the complete Agent selection")
 			}
-			input.Subject = api.GrantSubject{Type: old.SubjectKind, MemberID: old.MemberID, GroupID: old.GroupID}
+			input.Subject = api.GrantSubject{Type: old.SubjectKind, MemberID: old.MemberID, GroupID: old.GroupID, APIKeyID: old.APIKeyID}
 			roleID = old.RoleID
 			project = old.Project
 			env = old.Environment
@@ -757,13 +761,22 @@ func roleGrantActionCommand(action string) *cobra.Command {
 				filter.Set("group_id", group.ID)
 				count++
 			}
+			if apiKeyID != "" {
+				key, err := permissionID(apiKeyID, "API key ID")
+				if err != nil {
+					return err
+				}
+				input.Subject = api.GrantSubject{Type: "api_key", APIKeyID: &key}
+				filter.Set("api_key_id", key)
+				count++
+			}
 			if allUsers {
 				input.Subject = api.GrantSubject{Type: "all_members"}
 				filter.Set("subject_kind", "all_members")
 				count++
 			}
 			if count > 1 || action == "create" && count != 1 {
-				return errors.New("select exactly one person, group or --all-users")
+				return errors.New("select exactly one person, group, --api-key-id or --all-users")
 			}
 		}
 		var role api.PermissionRole

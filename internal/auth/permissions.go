@@ -85,15 +85,7 @@ func (a Principal) HasPermission(permission Permission, scope Scope) bool {
 	if scope.OrgID != uuid.Nil() && a.OrgID != uuid.Nil() && scope.OrgID != a.OrgID {
 		return false
 	}
-	if a.Kind == PrincipalKindAPIKey {
-		if !a.matchesEnvironmentScope(scope) {
-			return false
-		}
-		for _, capability := range a.Permissions {
-			if IsMachineCapability(capability) && CapabilityAllows(capability, permission) {
-				return true
-			}
-		}
+	if a.Kind == PrincipalKindAPIKey && !a.matchesEnvironmentScope(scope) {
 		return false
 	}
 	for _, grant := range a.Grants {
@@ -110,11 +102,6 @@ func (a Principal) matchesEnvironmentScope(scope Scope) bool {
 	}
 	return strings.TrimSpace(a.ProjectID) == strings.TrimSpace(scope.ProjectID) &&
 		strings.TrimSpace(a.EnvironmentID) == strings.TrimSpace(scope.EnvironmentID)
-}
-
-func ParseAPIKeyGrant(value string) (Permission, bool) {
-	permission := Permission(strings.TrimSpace(value))
-	return permission, IsMachineCapability(permission)
 }
 
 // AgentPermissionScope returns current Agent targets for an operation. It does

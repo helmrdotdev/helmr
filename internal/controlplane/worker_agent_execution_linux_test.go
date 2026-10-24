@@ -39,7 +39,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
-	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -1152,7 +1151,7 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'native-proof','native-proof','Native proof');
  INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'native-proof','Native proof','#112233',128,8,2,4000,17179869184,137438953472,600000,100,100,100,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, org, user, project, env)
 	memberID := dbtest.GrantMember(t, pool, org, user, &env, "keys.manage")
-	issued, err := identity.IssueAPIKey(t.Context(), pool, auth.Principal{OrgID: org, UserID: user, MemberID: memberID, Grants: []auth.PermissionGrant{{ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.CapabilityKeysManage}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, identity.APIKeyInput{Name: "native proof", Permissions: append([]auth.Permission{auth.CapabilityDeploymentsPublish, auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilitySessionsManage}, extraPermissions...)})
+	issued, err := issueAPIKeyWithRole(t, t.Context(), pool, auth.Principal{OrgID: org, UserID: user, MemberID: memberID, Grants: []auth.PermissionGrant{{ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.CapabilityKeysManage}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, testAPIKeyInput{Name: "native proof", RolePermissions: append([]auth.Permission{auth.CapabilityDeploymentsPublish, auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilitySessionsManage}, extraPermissions...)})
 	if err != nil {
 		t.Fatal(err)
 	}

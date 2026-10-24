@@ -134,7 +134,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	issuer := f.Principal(t)
 	issue := func(permissions ...auth.Permission) string {
 		t.Helper()
-		key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: uuid.NewV7().String(), Permissions: permissions})
+		key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: uuid.NewV7().String(), RolePermissions: permissions})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,7 +146,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	otherScope.EnvironmentID = otherEnvironment.String()
 	dbtest.GrantMember(t, f.Pool, orgID, f.User, &otherEnvironment, "keys.manage")
 	issuer = f.Principal(t)
-	otherKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other", Permissions: []auth.Permission{auth.CapabilitySessionsManage}})
+	otherKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, otherScope, testAPIKeyInput{Name: "other", RolePermissions: []auth.Permission{auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	keyInterruptPath := "/v1/sessions/" + toInterrupt.SessionID + "/interrupt"
 	interruptBody := `{"idempotency_key":"interrupt-retained"}`
 	interrupter := issue(auth.CapabilitySessionsManage)
-	otherInterrupter, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other interrupt", Permissions: []auth.Permission{auth.CapabilitySessionsManage}})
+	otherInterrupter, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, otherScope, testAPIKeyInput{Name: "other interrupt", RolePermissions: []auth.Permission{auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	keyClosePath := "/v1/sessions/" + toClose.SessionID + "/close"
 	closeBody := `{"idempotency_key":"close-retained"}`
 	closer := issue(auth.CapabilitySessionsManage)
-	otherCloser, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, otherScope, identity.APIKeyInput{Name: "other close", Permissions: []auth.Permission{auth.CapabilitySessionsManage}})
+	otherCloser, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, otherScope, testAPIKeyInput{Name: "other close", RolePermissions: []auth.Permission{auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(closer))
 	call(keyClosePath, closer, closeBody, http.StatusUnauthorized)
 
-	sdkKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: "SDK composition", Permissions: []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage}})
+	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "SDK composition", RolePermissions: []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}

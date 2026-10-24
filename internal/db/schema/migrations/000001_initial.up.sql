@@ -197,10 +197,6 @@ CREATE TABLE api_keys (
     project_id uuid NOT NULL,
     environment_id uuid NOT NULL,
     created_by_member_id uuid,
-    permissions text[] NOT NULL CHECK (
-        (revoked_at IS NOT NULL OR cardinality(permissions)>0) AND
-        permissions <@ ARRAY['agents.use','sessions.view','sessions.manage','deployments.publish','deployments.promote','computers.operate','secrets.manage']::text[]
-    ),
     name text NOT NULL CHECK (btrim(name) <> ''),
     key_prefix text NOT NULL CHECK (btrim(key_prefix) <> ''),
     token_hash bytea NOT NULL UNIQUE,
@@ -209,6 +205,7 @@ CREATE TABLE api_keys (
     expires_at timestamptz,
     revoked_at timestamptz,
     UNIQUE (environment_id,id),
+    UNIQUE (org_id,environment_id,id),
     FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
@@ -2424,21 +2421,24 @@ CREATE TABLE role_grants (
   role_id uuid NOT NULL,
   member_id uuid,
   group_id uuid,
+  api_key_id uuid,
   all_members boolean NOT NULL DEFAULT false,
   environment_id uuid,
   agents_mode text NOT NULL DEFAULT 'none' CHECK (agents_mode IN ('none','selected','all')),
   revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
   created_by uuid REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  CHECK (num_nonnulls(member_id,group_id) + all_members::int = 1),
+  CHECK (num_nonnulls(member_id,group_id,api_key_id) + all_members::int = 1),
   CHECK (agents_mode = 'none' OR environment_id IS NOT NULL),
+  CHECK (api_key_id IS NULL OR environment_id IS NOT NULL),
   CHECK (NOT all_members OR agents_mode = 'selected'),
   FOREIGN KEY (org_id,member_id) REFERENCES org_members(org_id,id) ON DELETE CASCADE,
   FOREIGN KEY (org_id,group_id) REFERENCES permission_groups(org_id,id) ON DELETE CASCADE,
   FOREIGN KEY (org_id,role_id) REFERENCES roles(org_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (org_id,environment_id,api_key_id) REFERENCES api_keys(org_id,environment_id,id) ON DELETE RESTRICT,
   FOREIGN KEY (org_id,environment_id) REFERENCES environments(org_id,id) ON DELETE CASCADE,
   UNIQUE (id,environment_id,agents_mode),
-  UNIQUE NULLS NOT DISTINCT (org_id,role_id,environment_id,member_id,group_id,all_members)
+  UNIQUE NULLS NOT DISTINCT (org_id,role_id,environment_id,member_id,group_id,api_key_id,all_members)
 );
 CREATE TABLE role_grant_agents (
   grant_id uuid NOT NULL,
@@ -2453,7 +2453,7 @@ CREATE TABLE role_grant_agents (
 -- All Agent actions, including Session viewing and management, keep the same
 -- selected targets. Included actions never expand the assignment's Agent scope.
 CREATE VIEW role_grant_permissions AS
-SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.all_members,g.environment_id,
+SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.api_key_id,g.all_members,g.environment_id,
        a.agent_id,p.permission
 FROM role_grants g
 JOIN role_permissions p ON (p.org_id,p.role_id)=(g.org_id,g.role_id)
@@ -2481,7 +2481,7 @@ CREATE FUNCTION audit_deleted_agent_targets() RETURNS trigger LANGUAGE plpgsql A
 DECLARE target record;
 BEGIN
   FOR target IN
-    SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.all_members,g.revision,r.name AS role_name
+    SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.api_key_id,g.all_members,g.revision,r.name AS role_name
     FROM role_grants g JOIN role_grant_agents a ON a.grant_id=g.id
     JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
     WHERE a.environment_id=OLD.environment_id AND a.agent_id=OLD.id
@@ -2490,7 +2490,7 @@ BEGIN
     INSERT INTO audit_events(id,actor_kind,actor_source,org_id,action,target_kind,target_id,details)
     VALUES(uuidv7(),'system','agent-registration-deletion',target.org_id,'role_grant.target_removed','role_grant',target.id,
       jsonb_build_object('role_id',target.role_id,'role_name',target.role_name,'member_id',target.member_id,
-        'group_id',target.group_id,'all_members',target.all_members,'environment_id',OLD.environment_id,
+        'group_id',target.group_id,'api_key_id',target.api_key_id,'all_members',target.all_members,'environment_id',OLD.environment_id,
         'removed_agent_id',OLD.id,'removed_agent_key',OLD.key,
         'before_revision',target.revision,'after_revision',target.revision+1));
   END LOOP;
@@ -2503,6 +2503,7 @@ CREATE TRIGGER deleted_agent_targets BEFORE DELETE ON agents
 CREATE INDEX role_grants_role ON role_grants(org_id,role_id);
 CREATE INDEX role_grants_environment ON role_grants(org_id,environment_id);
 CREATE INDEX role_grants_member ON role_grants(org_id,member_id) WHERE member_id IS NOT NULL;
+CREATE INDEX role_grants_api_key ON role_grants(org_id,api_key_id) WHERE api_key_id IS NOT NULL;
 CREATE INDEX role_grants_group ON role_grants(org_id,group_id) WHERE group_id IS NOT NULL;
 
 CREATE INDEX sessions_user_origin ON sessions(environment_id,origin_user_id,id) WHERE admission_mode='scoped';

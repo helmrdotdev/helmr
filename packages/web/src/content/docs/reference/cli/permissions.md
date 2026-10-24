@@ -59,6 +59,9 @@ helmr role grant create --all-users --role "Agent user" \
 helmr role grant create --user alice@example.com --role "Agent user" \
   --project operations --env production --agent invoice-checker
 helmr role grant create --user alice@example.com --role "Access Administrator" --organization
+helmr role grant create --api-key-id API_KEY_UUID --role "Agent user" \
+  --project operations --env production --agent invoice-checker
+helmr role grant list --api-key-id API_KEY_UUID
 helmr role grant list --group Engineering
 helmr role grant list --project operations --env production --agent invoice-checker
 helmr role grant get --id GRANT_ID
@@ -77,6 +80,10 @@ Roles without explicit Agent actions accept no Agent-selection flags.
 All members is the logical set of active organization members and accepts only
 selected-Agent assignments containing `agents.use`. It is not a Group name or ID.
 Organization assignments use `--organization` and no workload flags.
+API-key recipients use `--api-key-id` with the stable identity ID, never the
+secret. They require their own environment and a machine-assignable workload Role;
+All members and Group membership never include keys. Role assignment still uses
+a human login with `access.manage`, not the target key's authentication.
 
 Identical creates return the existing assignment without another audit entry.
 Different targets for the same recipient, Role and environment conflict. Use

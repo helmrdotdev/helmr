@@ -152,8 +152,10 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	f := newAdmissionFixture(t)
 	ctx := t.Context()
 	key, other := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,permissions,name,key_prefix,token_hash)
- SELECT k.id,e.org_id,e.project_id,e.id,ARRAY['agents.use','sessions.view'],k.name,'fixture',convert_to(k.name,'UTF8') FROM environments e CROSS JOIN (VALUES($1::uuid,'source'),($2::uuid,'other')) k(id,name) WHERE e.id=$3`, key, other, f.env)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash)
+ SELECT k.id,e.org_id,e.project_id,e.id,k.name,'fixture',convert_to(k.name,'UTF8') FROM environments e CROSS JOIN (VALUES($1::uuid,'source'),($2::uuid,'other')) k(id,name) WHERE e.id=$3`, key, other, f.env)
+	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.view")
+	dbtest.SetAPIKeyRole(t, f.pool, other, "agents.use", "sessions.view")
 	caller := session.Caller{Kind: "api_key", ID: key}
 	req := f.startRequest("machine")
 	noRetry := req
@@ -182,7 +184,7 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',origin_kind='api_key',origin_user_id=NULL,origin_api_key_id=$1 WHERE id=$2`, key, f.session)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET admission_mode='scoped',origin_kind='api_key',origin_user_id=NULL,origin_api_key_id=$1 WHERE id=$2`, key, peer.session)
 	runtime := runtimeReadCaller(t, f)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE api_keys SET permissions=ARRAY['sessions.manage'] WHERE id=$1`, key)
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.manage")
 	if _, err := session.GetSession(ctx, f.pool, caller, f.env, peer.session); err != nil {
 		t.Fatal("explicit run-view path denied", err)
 	}
@@ -228,5 +230,36 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
 	if _, err := session.Spawn(ctx, f.pool, nil, caller, f.startRequest("revoked")); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked origin spawned: %v", err)
+	}
+}
+
+func TestAPIKeySelectedAgentSessionVisibilityAndRevocation(t *testing.T) {
+	f := newAdmissionFixture(t)
+	ctx := t.Context()
+	key, hiddenAgent := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $1,org_id,project_id,id,'selected','fixture',convert_to('selected','UTF8') FROM environments WHERE id=$2`, key, f.env)
+	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.view")
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET agents_mode='selected' WHERE api_key_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE api_key_id=$1`, pgx.QueryExecModeSimpleProtocol, key, f.agent)
+	hidden := f.peer(t)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'hidden'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3; UPDATE sessions SET agent_id=$2 WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, hiddenAgent, f.agent, hidden.session)
+	caller := session.Caller{Kind: "api_key", ID: key}
+	page, err := session.ListSessions(ctx, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
+	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session {
+		t.Fatalf("selected visibility: %+v %v", page, err)
+	}
+	if _, err := session.GetSession(ctx, f.pool, caller, f.env, hidden.session); !errors.Is(err, session.ErrDenied) {
+		t.Fatal("hidden session readable", err)
+	}
+	req := f.startRequest("hidden-key")
+	req.Agent = "hidden"
+	if _, err := session.Start(ctx, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+		t.Fatal("hidden Agent admitted", err)
+	}
+	if _, err := session.Start(ctx, f.pool, nil, caller, f.startRequest("selected-key")); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM role_grants WHERE api_key_id=$1`, key)
+	if _, err := session.GetSession(ctx, f.pool, caller, f.env, f.session); !errors.Is(err, session.ErrDenied) {
+		t.Fatal("removed assignment still authorizes", err)
 	}
 }

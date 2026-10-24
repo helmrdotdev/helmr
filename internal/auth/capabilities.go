@@ -1,7 +1,8 @@
 package auth
 
 // Capabilities are the public, assignable permission vocabulary. Operation
-// permissions stay internal; Roles and API keys store the catalog IDs; API keys accept only workload capabilities.
+// permissions stay internal; Roles store the catalog IDs. Machine assignments
+// accept only workload Roles.
 const (
 	CapabilityAccessManage       Permission = "access.manage"
 	CapabilityOrganizationManage Permission = "organization.manage"
@@ -28,7 +29,7 @@ func CapabilityCatalog() []CapabilityDefinition {
 	catalog := []CapabilityDefinition{
 		{"organization", CapabilityAccessManage, "Manage access", "Manage members, invitations, Groups, Roles and assignments across the organization. This can delegate powerful workload access.", nil},
 		{"organization", CapabilityOrganizationManage, "Manage organization", "Create and manage Projects and environments. Does not grant workload or access administration.", nil},
-		{"api_keys", CapabilityKeysManage, "Manage API keys", "Create and revoke organization-owned API keys in this environment, including keys with any workload permission.", nil},
+		{"api_keys", CapabilityKeysManage, "Manage API keys", "Create, rotate and revoke API keys in this environment. Rotation allows acting as those keys. Assigning Roles requires Manage access.", nil},
 		{"agents", CapabilityAgentsManage, "Configure agents", "Configure assigned Agent settings and chat connections. Does not grant Agent use, session history or deployment changes.", nil},
 		{"agents", CapabilityAgentsUse, "Use agents", "Use assigned Agents in your own conversations and connected shared channels. Session viewers and operators can access these conversations.", nil},
 		{"agents", CapabilitySessionsView, "View all sessions", "Read all conversations and execution history for assigned Agents, including other people's personal sessions. Does not grant Computer access.", nil},

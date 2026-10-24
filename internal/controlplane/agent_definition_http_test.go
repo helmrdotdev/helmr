@@ -159,7 +159,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}
 	issue := func(permission auth.Permission) string {
 		t.Helper()
-		key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: string(permission) + uuid.NewV7().String(), Permissions: []auth.Permission{permission}})
+		key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: string(permission) + uuid.NewV7().String(), RolePermissions: []auth.Permission{permission}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -218,7 +218,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("read key created Computer: %d %s", denied.Code, denied.Body.String())
 	}
-	sdkKey, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: "computer SDK", Permissions: []auth.Permission{auth.CapabilitySessionsView, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilitySecretsManage}})
+	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "computer SDK", RolePermissions: []auth.Permission{auth.CapabilitySessionsView, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilitySecretsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}

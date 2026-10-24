@@ -14,7 +14,8 @@ func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
 			request := f.request("queued-revocation")
 			if kind == "api_key" {
 				key := uuid.NewV7()
-				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,permissions,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,ARRAY['computers.operate'],'command test','test',$5)`, key, f.OrgID, f.ProjectID, f.Environment, []byte(key.String()))
+				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,'command test','test',$5)`, key, f.OrgID, f.ProjectID, f.Environment, []byte(key.String()))
+				dbtest.SetAPIKeyRole(t, f.Pool, key, "computers.operate")
 				request.Creator = Creator{Kind: "api_key", ID: key}
 			}
 			c, err := Create(t.Context(), f.Pool, request)

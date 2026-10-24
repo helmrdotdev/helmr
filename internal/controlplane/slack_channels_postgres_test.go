@@ -104,7 +104,7 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	call("POST", base+"/sessions", viewer, fmt.Sprintf(`{"agent":"agent","input":[{"type":"text","text":"work"}],"slack":{"channel_id":%q}}`, channel), 403)
 	issuer := f.Principal(t)
 	scope := auth.Scope{OrgID: orgID, ProjectID: projectID.String(), EnvironmentID: f.Environment.String()}
-	key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: "Slack SDK", Permissions: []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage}})
+	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "Slack SDK", RolePermissions: []auth.Permission{auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage}})
 	if err != nil {
 		t.Fatal(err)
 	}

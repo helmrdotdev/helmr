@@ -39,7 +39,7 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}
 	issue := func(permission auth.Permission) string {
 		t.Helper()
-		key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, scope, identity.APIKeyInput{Name: string(permission) + uuid.NewV7().String(), Permissions: []auth.Permission{permission}})
+		key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: string(permission) + uuid.NewV7().String(), RolePermissions: []auth.Permission{permission}})
 		if err != nil {
 			t.Fatal(err)
 		}

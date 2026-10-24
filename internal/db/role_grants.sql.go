@@ -11,6 +11,53 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const listAPIKeyPermissionGrants = `-- name: ListAPIKeyPermissionGrants :many
+SELECT DISTINCT e.project_id,g.environment_id,g.agent_id,g.permission
+FROM api_keys k
+JOIN role_grant_permissions g ON (g.org_id,g.environment_id,g.api_key_id)=(k.org_id,k.environment_id,k.id)
+JOIN environments e ON e.id=g.environment_id
+WHERE k.org_id=$1 AND k.id=$2 AND k.revoked_at IS NULL
+ AND (k.expires_at IS NULL OR k.expires_at>statement_timestamp())
+ORDER BY e.project_id,g.environment_id,g.agent_id,g.permission
+`
+
+type ListAPIKeyPermissionGrantsParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
+}
+
+type ListAPIKeyPermissionGrantsRow struct {
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	AgentID       pgtype.UUID `json:"agent_id"`
+	Permission    string      `json:"permission"`
+}
+
+func (q *Queries) ListAPIKeyPermissionGrants(ctx context.Context, arg ListAPIKeyPermissionGrantsParams) ([]ListAPIKeyPermissionGrantsRow, error) {
+	rows, err := q.db.Query(ctx, listAPIKeyPermissionGrants, arg.OrgID, arg.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAPIKeyPermissionGrantsRow
+	for rows.Next() {
+		var i ListAPIKeyPermissionGrantsRow
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.AgentID,
+			&i.Permission,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserPermissionGrants = `-- name: ListUserPermissionGrants :many
 SELECT DISTINCT e.project_id,g.environment_id,g.agent_id,g.permission,
  COALESCE(project.slug,'')::text AS project_slug,

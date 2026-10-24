@@ -26,12 +26,12 @@ trusted local code with the invoking user's authority.
 
 ## Credentials and questions
 
-Environment API keys carry explicit operation permissions. An authenticated client
+Environment API keys receive explicit Role assignments, including Agent targets. An authenticated client
 uses those credentials even inside Agent code. Injected Turn operations and a
 managed Session-bound MCP connection use their runtime authority instead.
 
 Questions have exact Session, Turn and ask identities. Answering requires current
-membership or explicit API-key permission and records the authenticated responder.
+membership or an explicit API-key Role grant and records the authenticated responder.
 Channel visibility alone does not grant that authority. Native permission adapters
 must validate the live callback and propagate cancellation; a retained answer or
 output receipt does not grant permission to a different request.

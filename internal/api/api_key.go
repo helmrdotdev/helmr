@@ -11,18 +11,18 @@ const (
 )
 
 type APIKeySummary struct {
-	CreatedByMemberID *string                 `json:"created_by_member_id"`
-	ID                string                  `json:"id"`
-	Name              string                  `json:"name"`
-	KeyPrefix         string                  `json:"key_prefix"`
-	Project           string                  `json:"project"`
-	Environment       string                  `json:"environment"`
-	Permissions       []APIKeyPermissionGrant `json:"permissions,omitempty"`
-	Status            APIKeyStatus            `json:"status"`
-	CreatedAt         time.Time               `json:"created_at"`
-	LastUsedAt        *time.Time              `json:"last_used_at"`
-	ExpiresAt         *time.Time              `json:"expires_at"`
-	RevokedAt         *time.Time              `json:"revoked_at"`
+	CreatedByMemberID *string      `json:"created_by_member_id"`
+	ID                string       `json:"id"`
+	Name              string       `json:"name"`
+	KeyPrefix         string       `json:"key_prefix"`
+	Project           string       `json:"project"`
+	Environment       string       `json:"environment"`
+	RoleNames         []string     `json:"role_names"`
+	Status            APIKeyStatus `json:"status"`
+	CreatedAt         time.Time    `json:"created_at"`
+	LastUsedAt        *time.Time   `json:"last_used_at"`
+	ExpiresAt         *time.Time   `json:"expires_at"`
+	RevokedAt         *time.Time   `json:"revoked_at"`
 }
 
 type APIKeyIssued struct {
@@ -36,29 +36,20 @@ type ListAPIKeysResponse struct {
 }
 
 type IssueAPIKeyRequest struct {
-	Name          string                  `json:"name"`
-	ExpiresInDays *int                    `json:"expires_in_days"`
-	Permissions   []APIKeyPermissionGrant `json:"permissions"`
+	Name          string                `json:"name"`
+	ExpiresInDays *int                  `json:"expires_in_days"`
+	Role          *APIKeyRoleAssignment `json:"role,omitempty"`
 }
 
-type APIKeyPermissionGrant struct {
-	Scopes []APIKeyScope `json:"scopes"`
+// APIKeyRoleAssignment uses the key's environment; permissions belong to the Role.
+type APIKeyRoleAssignment struct {
+	RoleID               string   `json:"role_id"`
+	ExpectedRoleRevision int64    `json:"expected_role_revision"`
+	AgentsMode           string   `json:"agents_mode"`
+	AgentIDs             []string `json:"agent_ids"`
 }
-
-type APIKeyScope string
-
-const (
-	APIKeyScopeAgentsUse          APIKeyScope = "agents.use"
-	APIKeyScopeSessionsView       APIKeyScope = "sessions.view"
-	APIKeyScopeSessionsManage     APIKeyScope = "sessions.manage"
-	APIKeyScopeDeploymentsPublish APIKeyScope = "deployments.publish"
-	APIKeyScopeDeploymentsPromote APIKeyScope = "deployments.promote"
-	APIKeyScopeComputersOperate   APIKeyScope = "computers.operate"
-	APIKeyScopeSecretsManage      APIKeyScope = "secrets.manage"
-)
 
 type UpdateAPIKeyRequest struct {
-	Name        string                  `json:"name"`
-	Permissions []APIKeyPermissionGrant `json:"permissions"`
-	ExpiresAt   *time.Time              `json:"expires_at"`
+	Name      string     `json:"name"`
+	ExpiresAt *time.Time `json:"expires_at"`
 }

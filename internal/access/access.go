@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -36,18 +37,18 @@ func Principal(ctx context.Context, database db.DBTX, kind string, id, env uuid.
 		return human, nil
 	case "api_key":
 		p.Kind, p.APIKeyID = auth.PrincipalKindAPIKey, id
-		var permissions []string
-		if err := database.QueryRow(ctx, `SELECT permissions FROM api_keys WHERE id=$1 AND org_id=$2 AND environment_id=$3 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>statement_timestamp())`, id, org, env).Scan(&permissions); err != nil {
+		var key uuid.UUID
+		if err := database.QueryRow(ctx, `SELECT id FROM api_keys WHERE id=$1 AND org_id=$2 AND environment_id=$3 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>statement_timestamp())`, id, org, env).Scan(&key); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return p, ErrDenied
 			}
 			return p, err
 		}
-		for _, permission := range permissions {
-			if cap, ok := auth.ParseAPIKeyGrant(permission); ok {
-				p.Permissions = append(p.Permissions, cap)
-			}
+		grants, err := db.New(database).ListAPIKeyPermissionGrants(ctx, db.ListAPIKeyPermissionGrantsParams{OrgID: pgvalue.UUID(org), ID: pgvalue.UUID(id)})
+		if err != nil {
+			return p, err
 		}
+		p.Grants = APIKeyGrants(grants)
 		return p, nil
 	default:
 		return p, ErrDenied
@@ -134,4 +135,18 @@ func Current(ctx context.Context, q db.DBTX, prior auth.Principal, scope auth.Sc
 		return auth.Principal{}, ErrDenied
 	}
 	return p, nil
+}
+
+// APIKeyGrants formats the same current Role grants for transport authentication
+// and durable operation admission. Eligibility is enforced when policy is written.
+func APIKeyGrants(rows []db.ListAPIKeyPermissionGrantsRow) []auth.PermissionGrant {
+	grants := make([]auth.PermissionGrant, 0, len(rows))
+	for _, row := range rows {
+		grant := auth.PermissionGrant{ProjectID: pgvalue.UUIDString(row.ProjectID), EnvironmentID: pgvalue.UUIDString(row.EnvironmentID), Permission: auth.Permission(row.Permission)}
+		if row.AgentID.Valid {
+			grant.AgentID = pgvalue.UUIDString(row.AgentID)
+		}
+		grants = append(grants, grant)
+	}
+	return grants
 }

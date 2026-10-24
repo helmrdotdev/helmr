@@ -1,5 +1,9 @@
+import { useMe } from "../lib/me";
+import { hasPermission } from "../lib/auth";
+import { APIKeyAccess } from "../features/access/APIKeyAccess";
+import { Notice } from "../ui/Notice";
 import { listMembers } from "../lib/members";
-import { listRoles, includedPermissions, type Capability } from "../lib/permissions";
+import { listRoles, listAccessTargets, resourceLabel, type Capability, type PermissionRole } from "../lib/permissions";
 import { createQuery, createInfiniteQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
@@ -10,16 +14,16 @@ import {
   revokeApiKey,
   rotateApiKey,
   updateApiKey,
-  type ApiKeyScope,
+
   type ApiKeyIssued,
   type ApiKeySummary,
   type ListFilter,
 } from "../lib/api-keys";
 import { environmentChip } from "../features/projects/display";
 import { EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from "../components/EnvironmentSelector";
-import { DataTable, EmptyCell, LoadMore, RowActions } from "../ui/DataTable";
+import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
-import { CheckboxGroup, Field, TextInput } from "../ui/Field";
+import { Field, TextInput } from "../ui/Field";
 import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { isDenied, QueryState } from "../ui/QueryState";
@@ -29,9 +33,9 @@ import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 import { EnvironmentTarget } from "../ui/EnvChip";
 
-const COLUMNS = ["Name", "Key", "Created by", "Permissions", "Last used", "Expires", { label: "Actions", srOnly: true }] as const;
+const COLUMNS = ["Name", "Key", "Created by", "Roles", "Last used", "Expires", { label: "Actions", srOnly: true }] as const;
 // "All" mixes active, expired and revoked keys, so it adds their status.
-const ALL_COLUMNS = ["Name", "Status", "Key", "Created by", "Permissions", "Last used", "Expires", { label: "Actions", srOnly: true }] as const;
+const ALL_COLUMNS = ["Name", "Status", "Key", "Created by", "Roles", "Last used", "Expires", { label: "Actions", srOnly: true }] as const;
 
 const FILTER_OPTIONS: SelectOption<ListFilter>[] = [
   { value: "active", label: "Active" },
@@ -52,16 +56,10 @@ const EXPIRY_OPTIONS: SelectOption<ExpiryValue>[] = [
 const API_KEY_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage API keys.",
   invalid_label: "Name must be 1-64 characters and contain no control characters.",
-  invalid_permissions: "Select at least one API key permission.",
+
   not_found: "This key was already revoked or removed.",
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
-
-function permissionGroups(catalog: Capability[]) {
- return [{label:"Agents and sessions",prefixes:["agents.","sessions."]},{label:"Deployments",prefixes:["deployments."]},{label:"Computers and secrets",prefixes:["computers.","secrets."]}].map(group=>({label:group.label,options:catalog.filter(c=>group.prefixes.some(prefix=>c.id.startsWith(prefix))).map(c=>({value:c.id as ApiKeyScope,label:c.name,description:c.description}))}));
-}
-
-const DEFAULT_SCOPES: ApiKeyScope[] = ["agents.use"];
 
 const apiKeyErrorMessage = (error: unknown) => errorMessage(error, INTERNAL_ERROR_MESSAGE, API_KEY_ERROR_MESSAGES);
 
@@ -73,39 +71,26 @@ function validateLabel(value: string): string | null {
   return null;
 }
 
-// A key's permissions as a count; their names are its tooltip and label.
-function Permissions(props: { keyItem: ApiKeySummary; catalog: Capability[] }) {
-  const labels = () => (props.keyItem.permissions ?? []).flatMap((grant) => grant.scopes).map((scope) => props.catalog.find(c=>c.id===scope)?.name ?? scope);
-  return (
-    <Show when={labels().length > 0} fallback={<EmptyCell />}>
-      <span class="cursor-help underline decoration-dotted underline-offset-4" title={labels().join("\n")}>
-        {labels().length} {labels().length === 1 ? "permission" : "permissions"}
-        <span class="sr-only">: {labels().join(", ")}</span>
-      </span>
-    </Show>
-  );
-}
-
-function ApiKeyRow(props: { creator: string; keyItem: ApiKeySummary; catalog: Capability[]; status: boolean; onRevoke: (keyItem: ApiKeySummary) => void; onRotate: (keyItem: ApiKeySummary) => void; onEdit: (keyItem: ApiKeySummary) => void }) {
-  return (
-    <tr>
-      <td><span class="font-mono text-chrome">{props.keyItem.name}</span></td>
-      <Show when={props.status}><td><StatusBadge resource="api_key" status={props.keyItem.status} /></td></Show>
-      <td><code>{props.keyItem.key_prefix}…</code></td>
-      <td><span class="text-control">{props.creator}</span></td>
-      <td><Permissions keyItem={props.keyItem} catalog={props.catalog} /></td>
-      <td><RelativeTime value={props.keyItem.last_used_at} fallback="—" /></td>
-      <td><RelativeTime value={props.keyItem.expires_at} fallback="Never" /></td>
-      <RowActions
-        label={`Actions for ${props.keyItem.name}`}
-        items={props.keyItem.status === "active" ? [{label:"Edit",onSelect:()=>props.onEdit(props.keyItem)}, {label:"Rotate token",onSelect:()=>props.onRotate(props.keyItem)}, { label: "Revoke", tone: "danger", onSelect: () => props.onRevoke(props.keyItem) }] : props.keyItem.status === "expired" ? [{label:"Revoke",tone:"danger",onSelect:()=>props.onRevoke(props.keyItem)}] : []}
-      />
-    </tr>
-  );
+function ApiKeyRow(props: { creator: string; keyItem: ApiKeySummary; canManage: boolean; canAssign: boolean; status: boolean; onAccess: (keyItem: ApiKeySummary) => void; onRevoke: (keyItem: ApiKeySummary) => void; onRotate: (keyItem: ApiKeySummary) => void; onEdit: (keyItem: ApiKeySummary) => void }) {
+  const lifecycleActions = () => !props.canManage ? [] : props.keyItem.status === "active" ? [{label:"Edit",onSelect:()=>props.onEdit(props.keyItem)}, {label:"Rotate token",onSelect:()=>props.onRotate(props.keyItem)}, {label:"Revoke",tone:"danger" as const,onSelect:()=>props.onRevoke(props.keyItem)}] : props.keyItem.status === "expired" ? [{label:"Revoke",tone:"danger" as const,onSelect:()=>props.onRevoke(props.keyItem)}] : [];
+  return <tr>
+    <td><span class="font-mono text-chrome">{props.keyItem.name}</span></td>
+    <Show when={props.status}><td><StatusBadge resource="api_key" status={props.keyItem.status} /></td></Show>
+    <td><code>{props.keyItem.key_prefix}…</code></td>
+    <td><span class="text-control">{props.creator}</span></td>
+    <td><Show when={props.canAssign} fallback={<span>{props.keyItem.role_names.join(", ") || "No access"}</span>}><button class="text-left text-console-accent hover:underline" onClick={()=>props.onAccess(props.keyItem)}>{props.keyItem.role_names.join(", ") || "No access — assign a Role"}</button></Show></td>
+    <td><RelativeTime value={props.keyItem.last_used_at} fallback="—" /></td>
+    <td><RelativeTime value={props.keyItem.expires_at} fallback="Never" /></td>
+    <RowActions label={`Actions for ${props.keyItem.name}`} items={[...(props.canAssign ? [{label:"Manage access",onSelect:()=>props.onAccess(props.keyItem)}] : []),...lifecycleActions()]} />
+  </tr>;
 }
 
 function IssueApiKeyDialog(props: {
  catalog: Capability[];
+ roles: PermissionRole[];
+ canAssign: boolean;
+ rolesLoading: boolean;
+ rolesError: unknown;
   projectID: string;
   environmentID: string;
   projectName: string;
@@ -116,7 +101,15 @@ function IssueApiKeyDialog(props: {
 }) {
   const [label, setLabel] = createSignal("");
   const [expiry, setExpiry] = createSignal<ExpiryValue>("never");
-  const [selectedScopes, setSelectedScopes] = createSignal<ApiKeyScope[]>([...DEFAULT_SCOPES]);
+  const [roleID, setRoleID] = createSignal("");
+  const [mode, setMode] = createSignal<"selected"|"all">("selected");
+  const [agents, setAgents] = createSignal<string[]>([]);
+  const targets = createQuery(()=>({queryKey:["access","targets",props.projectID],queryFn:()=>listAccessTargets(props.projectID),enabled:props.canAssign}));
+  const environment = () => targets.data?.targets.find(t=>t.environment === props.environmentID);
+  const role = () => props.roles.find(r=>r.id === roleID());
+  const resources = () => [...new Set((role()?.permissions ?? []).map(p=>props.catalog.find(c=>c.id===p)?.resource_type).filter((r):r is string=>!!r))];
+  const hasAgents = () => resources().includes("agents");
+  const roleReady = () => !props.rolesLoading && !props.rolesError && !!role() && !!environment() && !targets.error && (!hasAgents() || mode()==="all" || agents().length>0);
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
@@ -127,8 +120,8 @@ function IssueApiKeyDialog(props: {
       setError(validation);
       return;
     }
-    if (selectedScopes().length === 0) {
-      setError(API_KEY_ERROR_MESSAGES["invalid_permissions"] ?? INTERNAL_ERROR_MESSAGE);
+    if (props.canAssign && roleID() && !roleReady()) {
+      setError("Choose a Role and its targets after access options load.");
       return;
     }
     setSubmitting(true);
@@ -137,7 +130,7 @@ function IssueApiKeyDialog(props: {
       const result = await issueApiKey(props.projectID, props.environmentID, {
         name: label().trim(),
         expires_in_days: value === "never" ? null : Number(value),
-        permissions: [{ scopes: selectedScopes() }],
+        ...(props.canAssign && role() ? {role:{role_id:role()!.id,expected_role_revision:role()!.revision,agents_mode:hasAgents() ? mode() : "none" as const,agent_ids:hasAgents() && mode()==="selected" ? agents() : []}} : {}),
       });
       await props.onIssued(result);
     } catch (issueError) {
@@ -150,7 +143,7 @@ function IssueApiKeyDialog(props: {
   return (
     <FormDialog
       title="Generate API key"
-      intro="A key for automation such as CI. It can only do what you allow below."
+      intro="Create a machine identity for automation. Its Role assignments determine what it can do."
       submitLabel="Generate key"
       busyLabel="Generating..."
       busy={submitting()}
@@ -170,26 +163,33 @@ function IssueApiKeyDialog(props: {
       <Field label="Expiry">
         <Select<ExpiryValue> value={expiry()} options={EXPIRY_OPTIONS} onChange={setExpiry} minWidth="100%" />
       </Field>
-      <CheckboxGroup label="Permissions for this environment" groups={permissionGroups(props.catalog)} value={selectedScopes()} onChange={setSelectedScopes} />
- <p class="text-control text-console-muted">Includes: {includedPermissions(selectedScopes(),props.catalog).map(id=>props.catalog.find(c=>c.id===id)?.name??id).join(" · ")}. Use agents starts conversations owned by this key. Manage all sessions grants control of other sessions; sending input, answering questions or resuming also requires Use agents.</p>
+      <Show when={props.canAssign} fallback={<Notice tone="info">This key will have no workload access. An access administrator must assign a Role before it can be used.</Notice>}>
+        <Show when={props.rolesLoading || targets.isPending}><p role="status">Loading Roles and Agent targets…</p></Show>
+        <Show when={props.rolesError || targets.error}><Notice tone="danger">{errorMessage(props.rolesError || targets.error)}</Notice></Show>
+        <Field label="Role"><Select value={roleID()} options={[{value:"",label:"No access — assign a Role later"},...props.roles.filter(r=>r.api_key_assignable).map(r=>({value:r.id,label:r.name}))]} onChange={id=>{setRoleID(id);setMode("selected");setAgents([]);}} /></Field>
+        <Show when={!roleID()}><Notice tone="info">This key will have no workload access until a Role is assigned.</Notice></Show>
+        <Show when={hasAgents()}><Field label="Agent targets"><Select value={mode()} options={[{value:"selected" as const,label:"Selected Agents"},{value:"all" as const,label:"All current and future Agents"}]} onChange={value=>{setMode(value);setAgents([]);}} /></Field>
+          <Show when={mode()==="selected"}><fieldset class="max-h-44 space-y-2 overflow-y-auto border border-console-border p-3"><legend class="px-1 text-control">Select Agents</legend><For each={environment()?.agents} fallback={<p class="text-control text-console-muted">No Agents available in this environment.</p>}>{agent=><label class="flex items-center gap-2 text-control"><input type="checkbox" class="accent-console-accent" checked={agents().includes(agent.id)} onChange={e=>setAgents(ids=>e.currentTarget.checked ? [...ids,agent.id] : ids.filter(id=>id!==agent.id))}/>{agent.key}</label>}</For></fieldset></Show>
+        </Show>
+        <Show when={role()}><div class="space-y-1 text-control"><p class="font-medium">Access summary</p><For each={resources()}>{resource=><p>{resourceLabel(resource)}: {resource === "agents" ? mode()==="all" ? "All current and future Agents" : environment()?.agents.filter(a=>agents().includes(a.id)).map(a=>a.key).join(", ") || "No Agents selected" : "Entire environment"} — {role()!.permissions.filter(p=>props.catalog.find(c=>c.id===p)?.resource_type===resource).map(p=>props.catalog.find(c=>c.id===p)?.name ?? p).join(" · ")}</p>}</For></div></Show>
+      </Show>
+      <p class="text-control text-console-muted">Everyone holding this secret acts as the same identity and shares ownership of its sessions. Role changes apply to future operations.</p>
     </FormDialog>
   );
 }
 
-function EditApiKeyDialog(props: {catalog: Capability[];keyItem:ApiKeySummary;target:EditTarget;onClose:()=>void;onSaved:()=>Promise<void>}) {
+function EditApiKeyDialog(props: {keyItem:ApiKeySummary;target:EditTarget;onClose:()=>void;onSaved:()=>Promise<void>}) {
  const [name,setName]=createSignal(props.keyItem.name);
- const [permissions,setPermissions]=createSignal<ApiKeyScope[]>((props.keyItem.permissions??[]).flatMap(g=>g.scopes));
  const [expiry,setExpiry]=createSignal<"keep"|ExpiryValue>("keep");
  const [busy,setBusy]=createSignal(false);
  const [error,setError]=createSignal<string|null>(null);
  const save=async()=>{
   const validation=validateLabel(name()); if(validation){setError(validation);return}
-  if(!permissions().length){setError("Select at least one permission.");return}
   setBusy(true);setError(null);
   try {
    const choice=expiry();
    const expires=choice==="keep"?props.keyItem.expires_at:choice==="never"?null:new Date(Date.now()+Number(choice)*86400000).toISOString();
-   await updateApiKey(props.target.projectID,props.target.environment.environment,props.keyItem.id,{name:name().trim(),permissions:[{scopes:permissions()}],expires_at:expires});
+   await updateApiKey(props.target.projectID,props.target.environment.environment,props.keyItem.id,{name:name().trim(),expires_at:expires});
    await props.onSaved();
   }catch(e){setError(apiKeyErrorMessage(e))}finally{setBusy(false)}
  };
@@ -197,17 +197,18 @@ function EditApiKeyDialog(props: {catalog: Capability[];keyItem:ApiKeySummary;ta
   <EnvironmentTarget label="API key target environment" environmentName={props.target.environment.name} environmentColorHex={environmentChip(props.target.environment)?.colorHex??""} projectName={props.target.projectName}/>
   <Field label="Name"><TextInput value={name()} maxLength={64} onInput={e=>setName(e.currentTarget.value)}/></Field>
   <Field label="Expiry"><Select<"keep"|ExpiryValue> value={expiry()} options={[{value:"keep",label:"Keep current expiry"},...EXPIRY_OPTIONS]} onChange={setExpiry}/></Field>
-  <CheckboxGroup label="Permissions for this environment" groups={permissionGroups(props.catalog)} value={permissions()} onChange={setPermissions}/>
-  <p class="text-control text-console-muted">Use agents is required to start sessions and continue this key’s own conversations. Managing other sessions does not change their original owner. Sending input, answering questions or resuming another session also requires Use agents.</p>
- <p class="text-control text-console-muted">Includes: {includedPermissions(permissions(),props.catalog).map(id=>props.catalog.find(c=>c.id===id)?.name??id).join(" · ")}</p>
-  <p class="text-sm text-muted">Changes apply to future work, including sessions started by this key. Removing access can prevent those sessions from continuing.</p>
+  <p class="text-control text-console-muted">Role assignments determine this key’s access. Use Manage access to change them. Anyone who can rotate this key can act with its assigned Roles.</p>
  </FormDialog>;
 }
 
 export function ApiKeys() {
- const catalog = createQuery(()=>({queryKey:["access","roles"],queryFn:listRoles}));
+ const me = useMe();
+ const canAssign = () => hasPermission(me.data,"access.manage");
+ const canManage = () => hasPermission(me.data,"keys.manage",{projectID:edited.projectID(),environmentID:edited.environmentID()});
+ const catalog = createQuery(()=>({queryKey:["access","roles"],queryFn:listRoles,enabled:canAssign()}));
   const edited = useEditedEnvironment();
   const queryClient = useQueryClient();
+  const [accessing,setAccessing] = createSignal<{keyItem:ApiKeySummary;target:EditTarget}>();
   const [filter, setFilter] = createSignal<ListFilter>("active");
   const [issuing, setIssuing] = createSignal<EditTarget>();
   const [issued, setIssued] = createSignal<ApiKeyIssued | null>(null);
@@ -232,7 +233,7 @@ export function ApiKeys() {
     enabled: !!edited.projectID() && !!edited.environmentID(),
     retry: false,
   }));
-  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: !!keys.data }));
+  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: !!keys.data && canAssign() }));
   const creator = (key: ApiKeySummary) => { const member = members.data?.members.find(m => m.membership_id === key.created_by_member_id); return member?.display_name || member?.email || key.created_by_member_id || "Unknown"; };
   const keyItems = createMemo(() => keys.data?.pages.flatMap((page) => page.api_keys) ?? []);
   const columns = () => (filter() === "all" ? ALL_COLUMNS : COLUMNS);
@@ -247,9 +248,9 @@ export function ApiKeys() {
     <>
       <PageHeader
         title="API keys"
-        subtitle="Machine identities with explicit permissions for one environment."
+        subtitle="Machine identities with Role assignments for one environment."
         actions={
-          <Show when={!isDenied(keys.error) && !keys.isPending && !noKeys()}>
+          <Show when={canManage() && !isDenied(keys.error) && !keys.isPending && !noKeys()}>
             <button
               class={ui.button}
               type="button"
@@ -275,7 +276,7 @@ export function ApiKeys() {
             when: (data) => data.pages.every((page) => page.api_keys.length === 0),
             title: filter() === "active" ? `No API keys in ${edited.environment()?.name ?? "this environment"} yet.` : "No API keys match this filter.",
             hint: filter() === "active" ? "API keys let CI and scripts deploy and start sessions without signing in." : undefined,
-            action: filter() === "active" ? <button type="button" class={ui.button} disabled={!edited.environment()} onClick={generate}>Generate API key</button> : undefined,
+            action: filter() === "active" && canManage() ? <button type="button" class={ui.button} disabled={!edited.environment()} onClick={generate}>Generate API key</button> : undefined,
           }}
         >
           {() => (
@@ -284,7 +285,7 @@ export function ApiKeys() {
               minWidth="min-w-200"
               footer={<LoadMore count={keyItems().length} noun={{ one: "API key", other: "API keys" }} hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
             >
-              <For each={keyItems()}>{(keyItem) => <ApiKeyRow creator={creator(keyItem)} catalog={catalog.data?.catalog ?? []} keyItem={keyItem} status={filter() === "all"} onRevoke={revoke} onEdit={keyItem=>{const target=edited.target();if(target)setEditing({keyItem,target})}} onRotate={keyItem=>{const target=edited.target();if(target)setRotating({keyItem,target})}} />}</For>
+              <For each={keyItems()}>{(keyItem) => <ApiKeyRow creator={creator(keyItem)} canAssign={canAssign()} canManage={canManage()} onAccess={keyItem=>{const target=edited.target();if(target)setAccessing({keyItem,target});}} keyItem={keyItem} status={filter() === "all"} onRevoke={revoke} onEdit={keyItem=>{const target=edited.target();if(target)setEditing({keyItem,target})}} onRotate={keyItem=>{const target=edited.target();if(target)setRotating({keyItem,target})}} />}</For>
             </DataTable>
           )}
         </QueryState>
@@ -293,7 +294,7 @@ export function ApiKeys() {
       <Show when={issuing()}>
         {(target) => (
           <IssueApiKeyDialog
- catalog={catalog.data?.catalog ?? []}
+ catalog={catalog.data?.catalog ?? []} roles={catalog.data?.roles ?? []} canAssign={canAssign()} rolesLoading={catalog.isPending} rolesError={catalog.error}
             projectID={target().projectID}
             environmentID={target().environment.environment}
             projectName={target().projectName}
@@ -321,10 +322,11 @@ export function ApiKeys() {
         )}
       </Show>
 
-      <Show when={editing()} keyed>{current=><EditApiKeyDialog catalog={catalog.data?.catalog ?? []} keyItem={current.keyItem} target={current.target} onClose={()=>setEditing(undefined)} onSaved={async()=>{await invalidateApiKeys(current.target.projectID,current.target.environment.environment);setEditing(undefined)}}/>}</Show>
+      <Show when={accessing()} keyed>{current=><APIKeyAccess keyItem={current.keyItem} project={current.target.projectID} projectName={current.target.projectName} environment={current.target.environment.environment} onClose={()=>setAccessing(undefined)}/>}</Show>
+      <Show when={editing()} keyed>{current=><EditApiKeyDialog keyItem={current.keyItem} target={current.target} onClose={()=>setEditing(undefined)} onSaved={async()=>{await invalidateApiKeys(current.target.projectID,current.target.environment.environment);setEditing(undefined)}}/>}</Show>
       <Show when={rotating()}>{current=><ConfirmDialog title="Rotate API key token" confirmLabel="Rotate token" busyLabel="Rotating..." target={current().keyItem.name} environment={environmentChip(current().target.environment)} errorMessage={apiKeyErrorMessage} onClose={()=>setRotating(undefined)} onConfirm={async()=>{
        const {keyItem,target}=current();const result=await rotateApiKey(target.projectID,target.environment.environment,keyItem.id);setIssued(result);await invalidateApiKeys(target.projectID,target.environment.environment);
-      }}>The previous token stops working immediately. This key keeps its permissions and ownership of existing sessions. Update your automation with the new token.</ConfirmDialog>}</Show>
+      }}>The previous token stops working immediately. This key keeps its Role assignments and ownership of existing sessions. Update your automation with the new token.</ConfirmDialog>}</Show>
       <Show when={revoking()}>
         {(current) => (
           <ConfirmDialog

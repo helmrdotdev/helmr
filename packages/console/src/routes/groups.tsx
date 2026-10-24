@@ -1,3 +1,4 @@
+import { listAllApiKeys } from "../lib/api-keys";
 import { hasPermission } from "../lib/auth";
 import { A, useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
@@ -112,13 +113,13 @@ function GroupEditor(props: { group: PermissionGroup | "new"; onClose: () => voi
   </form></Dialog>;
 }
 
-export function AssignRoleDialog(props: { project:string; projectName:string; groups:PermissionGroup[]; roles:PermissionRole[]; catalog:Capability[]; targets:AccessTarget[]; initialGroup:string; initialMember?:string; initialRole:string; initialEnvironment:string; assignment?:RoleGrant; fixedTarget?:{environment_id:string;agent_id?:string}; onClose:()=>void; onSaved:(group:string)=>Promise<void> }) {
+export function AssignRoleDialog(props: { project:string; projectName:string; groups:PermissionGroup[]; roles:PermissionRole[]; catalog:Capability[]; targets:AccessTarget[]; initialGroup:string; initialMember?:string; initialAPIKey?:{id:string;name:string}; initialRole:string; initialEnvironment:string; assignment?:RoleGrant; fixedTarget?:{environment_id:string;agent_id?:string}; onClose:()=>void; onSaved:(group:string)=>Promise<void> }) {
   const project=props.project; const existing=props.assignment; const cache=useQueryClient();
   const members=createQuery(()=>({queryKey:["members"],queryFn:listMembers}));
   const initialRole=props.roles.find(r=>r.id === (existing?.role_id ?? props.initialRole));
   const initialAudience=props.initialGroup === ALL && (!initialRole || initialRole.permissions.length === 1 && initialRole.permissions[0] === "agents.use");
-  const [kind,setKind]=createSignal<"member"|"group"|"all_members">(existing?.subject_kind ?? (initialAudience ? "all_members" : props.initialGroup && props.initialGroup !== ALL ? "group" : "member"));
-  const [recipient,setRecipient]=createSignal(existing?.member_id ?? existing?.group_id ?? props.initialMember ?? (props.initialGroup === ALL ? "" : props.initialGroup));
+  const [kind,setKind]=createSignal<"member"|"group"|"api_key"|"all_members">(existing?.subject_kind ?? (props.initialAPIKey ? "api_key" : initialAudience ? "all_members" : props.initialGroup && props.initialGroup !== ALL ? "group" : "member"));
+  const [recipient,setRecipient]=createSignal(existing?.api_key_id ?? existing?.member_id ?? existing?.group_id ?? props.initialAPIKey?.id ?? props.initialMember ?? (props.initialGroup === ALL ? "" : props.initialGroup));
   const [roleID,setRoleID]=createSignal(existing?.role_id ?? (props.initialRole || props.roles.find(r=>r.builtin_key === "agent_user")?.id || ""));
   const [env,setEnv]=createSignal(existing?.environment_id ?? props.fixedTarget?.environment_id ?? props.targets.find(t=>t.environment === props.initialEnvironment)?.environment_id ?? "");
   const [mode,setMode]=createSignal<"selected"|"all">(existing?.agents_mode === "all" ? "all" : "selected");
@@ -129,24 +130,27 @@ export function AssignRoleDialog(props: { project:string; projectName:string; gr
   const organizationRole=()=>resources().includes("organization");
   const hasAgents=()=>resources().includes("agents");
   const environment=()=>props.targets.find(t=>t.environment_id === env());
+  const keys=createQuery(()=>({queryKey:["access","api-key-subjects",project,environment()?.environment],queryFn:()=>listAllApiKeys(project,environment()!.environment),enabled:kind() === "api_key" && !!environment() && !props.initialAPIKey && !existing}));
   const sharedRole=()=>role()?.permissions.length === 1 && role()?.permissions[0] === "agents.use";
   const quickIncompatible=()=>!!props.fixedTarget?.agent_id && !supportsAgent(role()?.permissions ?? [],props.catalog);
-  const incompatible=()=>quickIncompatible() || (kind() === "all_members" && (!sharedRole() || mode() !== "selected"));
+  const incompatible=()=>quickIncompatible() || (kind() === "api_key" && !role()?.api_key_assignable) || (kind() === "all_members" && (!sharedRole() || mode() !== "selected"));
   const valid=()=>!!role() && (kind() === "all_members" || !!recipient()) && !incompatible() && (organizationRole() || !!environment()) && (!hasAgents() || mode() === "all" || agents().length>0);
   const actionNames=(resource:string)=>(role()?.permissions ?? []).filter(p=>props.catalog.find(c=>c.id===p)?.resource_type===resource).map(p=>props.catalog.find(c=>c.id===p)?.name ?? p).join(" · ");
   return <Dialog title={existing ? "Edit assignment targets" : "Assign role"} onClose={props.onClose} closeDisabled={busy()} class="max-w-180"><form class="space-y-4" onSubmit={async event=>{
     event.preventDefault();if(!valid())return;setBusy(true);setError("");
     try {
-      await assignRole(project,{subject_kind:kind(),member_id:kind() === "member" ? recipient() : undefined,group_id:kind() === "group" ? recipient() : null,role_id:roleID(),environment_id:env(),target_kind:organizationRole() ? "organization" : "environment",agents_mode:hasAgents() ? mode() : "none",agent_ids:hasAgents() && mode() === "selected" ? agents() : [],expected_role_revision:role()!.revision},existing);
+      await assignRole(project,{subject_kind:kind(),member_id:kind() === "member" ? recipient() : undefined,api_key_id:kind() === "api_key" ? recipient() : undefined,group_id:kind() === "group" ? recipient() : null,role_id:roleID(),environment_id:env(),target_kind:organizationRole() ? "organization" : "environment",agents_mode:hasAgents() ? mode() : "none",agent_ids:hasAgents() && mode() === "selected" ? agents() : [],expected_role_revision:role()!.revision},existing);
       await props.onSaved(kind() === "all_members" ? ALL : kind() === "group" ? recipient() : "");
     }catch(e){setError(errorMessage(e));await cache.invalidateQueries({queryKey:["access"]});}finally{setBusy(false);}
   }}>
-    <div class="grid gap-4 sm:grid-cols-2"><Field label="Assign to"><Select value={kind()} options={[{value:"member" as const,label:"People"},{value:"group" as const,label:"Groups"},{value:"all_members" as const,label:"All members"}]} onChange={value=>{setKind(value);setRecipient("");if(value === "all_members")setMode("selected");}} disabled={busy() || !!existing} /></Field>
+    <div class="grid gap-4 sm:grid-cols-2"><Field label="Assign to"><Select value={kind()} options={[{value:"member" as const,label:"People"},{value:"group" as const,label:"Groups"},{value:"api_key" as const,label:"API keys"},{value:"all_members" as const,label:"All members"}]} onChange={value=>{setKind(value);setRecipient("");if(value === "all_members")setMode("selected");}} disabled={busy() || !!existing || !!props.initialAPIKey} /></Field>
     <Show when={kind() === "member"}><Field label="Person"><Select value={recipient()} options={(members.data?.members ?? []).filter(m=>m.status === "active").map(m=>({value:m.membership_id,label:memberName(m)}))} onChange={setRecipient} disabled={busy() || !!existing} /></Field></Show>
     <Show when={kind() === "group"}><Field label="Group"><Select value={recipient()} options={props.groups.map(g=>({value:g.id,label:g.name}))} onChange={setRecipient} disabled={busy() || !!existing} /></Field></Show></div>
-    <Field label="Role"><Select value={roleID()} options={props.roles.map(r=>({value:r.id,label:`${r.name}${r.builtin_key ? " · Standard" : " · Custom"}`}))} onChange={id=>{setRoleID(id);setMode("selected");setAgents(props.fixedTarget?.agent_id ? [props.fixedTarget.agent_id] : []);}} disabled={busy() || !!existing} /></Field>
-    <Show when={!organizationRole()}><div class="grid gap-4 sm:grid-cols-2"><Field label="Project"><TextInput value={props.projectName} readonly /></Field><Field label="Environment"><Select value={env()} options={props.targets.map(t=>({value:t.environment_id,label:t.name}))} onChange={id=>{setEnv(id);setMode("selected");setAgents([]);}} disabled={busy() || !!props.fixedTarget || !!existing} /></Field></div><p class="text-control text-console-muted">This assignment applies to one environment. Create another assignment to choose different targets in another environment.</p></Show>
+    <Show when={kind() === "api_key"}><Field label="API key"><Select value={recipient()} options={props.initialAPIKey ? [{value:props.initialAPIKey.id,label:props.initialAPIKey.name}] : existing ? [{value:existing.api_key_id ?? "",label:existing.api_key_name ?? "API key"}] : (keys.data ?? []).map(k=>({value:k.id,label:k.name}))} onChange={setRecipient} disabled={busy() || !!existing || !!props.initialAPIKey} /></Field><p class="text-control text-console-muted">Choose an environment to see its active API keys. Keys receive only their own assignments, never All members or Group access.</p><Show when={keys.error}><Notice tone="danger">{errorMessage(keys.error)}</Notice></Show></Show>
+    <Field label="Role"><Select value={roleID()} options={props.roles.filter(r=>kind() !== "api_key" || r.api_key_assignable).map(r=>({value:r.id,label:`${r.name}${r.builtin_key ? " · Standard" : " · Custom"}`}))} onChange={id=>{setRoleID(id);setMode("selected");setAgents(props.fixedTarget?.agent_id ? [props.fixedTarget.agent_id] : []);}} disabled={busy() || !!existing} /></Field>
+    <Show when={!organizationRole()}><div class="grid gap-4 sm:grid-cols-2"><Field label="Project"><TextInput value={props.projectName} readonly /></Field><Field label="Environment"><Select value={env()} options={props.targets.map(t=>({value:t.environment_id,label:t.name}))} onChange={id=>{setEnv(id);setMode("selected");setAgents([]);if(kind() === "api_key")setRecipient("");}} disabled={busy() || !!props.fixedTarget || !!existing} /></Field></div><p class="text-control text-console-muted">This assignment applies to one environment. Create another assignment to choose different targets in another environment.</p></Show>
     <Show when={quickIncompatible()}><Notice tone="warning">This role also grants access to other resource types. <A href={`/settings/groups?role=${encodeURIComponent(roleID())}`} class="underline">Open the full assignment editor</A> to review all targets.</Notice></Show>
+    <Show when={kind() === "api_key" && role() && !role()?.api_key_assignable}><Notice tone="warning">This Role cannot be assigned to an API key. Choose a workload Role.</Notice></Show>
     <Show when={kind() === "all_members" && !sharedRole()}><Notice tone="warning">All members supports only Use agents on selected Agents.</Notice></Show>
     <div class="divide-y divide-console-border border border-console-border px-4"><For each={resources()}>{resource=><div class="space-y-2 py-3">
       <div class="flex flex-wrap items-center justify-between gap-2"><div><h3 class="font-medium">{resourceLabel(resource)}</h3><p class="text-control text-console-muted">{actionNames(resource)}</p></div>

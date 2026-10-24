@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -47,19 +48,29 @@ type APIKeyPosition struct {
 	ID        uuid.UUID
 }
 
-// APIKeyInput describes an API key to issue. Permissions are the API key
-// grantable permissions it carries; a nil ExpiresInDays never expires.
+// APIKeyInput creates a machine identity, optionally assigning an existing Role
+// atomically. A nil Role creates a key without workload access.
 type APIKeyInput struct {
 	Name          string
-	Permissions   []auth.Permission
+	Role          *APIKeyRole
 	ExpiresInDays *int
+}
+
+// APIKeyRole selects an ordinary Role and its Agent targets for a new key.
+// The key's organization and environment supply the assignment scope.
+type APIKeyRole struct {
+	RoleID               uuid.UUID
+	ExpectedRoleRevision int64
+	AgentsMode           string
+	AgentIDs             []uuid.UUID
 }
 
 // IssuedAPIKey is an issued API key record with its raw key, which only the
 // issue response carries.
 type IssuedAPIKey struct {
-	Record db.APIKey
-	Raw    string
+	Record    db.APIKey
+	Raw       string
+	RoleNames []string
 }
 
 func authorizeAPIKeyManagement(manager auth.Principal, scope auth.Scope) error {
@@ -72,8 +83,8 @@ func authorizeAPIKeyManagement(manager auth.Principal, scope auth.Scope) error {
 // ListAPIKeys returns up to limit API keys of the environment matching the
 // filter after the given position and whether more follow.
 func ListAPIKeys(ctx context.Context, q db.Querier, manager auth.Principal, scope auth.Scope, filter APIKeyFilter, limit int32, after *APIKeyPosition) ([]db.ListAPIKeysRow, bool, error) {
-	if err := authorizeAPIKeyManagement(manager, scope); err != nil {
-		return nil, false, err
+	if manager.Kind != auth.PrincipalKindSession {
+		return nil, false, ErrAPIKeyManagementRequired
 	}
 	member, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(manager.OrgID), UserID: pgvalue.UUID(manager.UserID)})
 	if err != nil || pgvalue.MustUUIDValue(member.ID) != manager.MemberID {
@@ -85,7 +96,7 @@ func ListAPIKeys(ctx context.Context, q db.Querier, manager auth.Principal, scop
 	}
 	allowed := false
 	for _, g := range grants {
-		if g.EnvironmentID.Valid && pgvalue.UUIDString(g.EnvironmentID) == scope.EnvironmentID && pgvalue.UUIDString(g.ProjectID) == scope.ProjectID && g.Permission == string(auth.CapabilityKeysManage) && !g.AgentID.Valid {
+		if !g.EnvironmentID.Valid && g.Permission == string(auth.CapabilityAccessManage) || g.EnvironmentID.Valid && pgvalue.UUIDString(g.EnvironmentID) == scope.EnvironmentID && pgvalue.UUIDString(g.ProjectID) == scope.ProjectID && g.Permission == string(auth.CapabilityKeysManage) && !g.AgentID.Valid {
 			allowed = true
 		}
 	}
@@ -126,16 +137,6 @@ func IssueAPIKey(ctx context.Context, database db.TxBeginner, issuer auth.Princi
 	if name == "" || len(name) > 64 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return IssuedAPIKey{}, invalidInput("name must be 1-64 characters and contain no control characters")
 	}
-	if len(input.Permissions) == 0 {
-		return IssuedAPIKey{}, invalidInput("permissions must include at least one grant")
-	}
-	permissions := make([]string, 0, len(input.Permissions))
-	for _, permission := range input.Permissions {
-		if _, ok := auth.ParseAPIKeyGrant(string(permission)); !ok {
-			return IssuedAPIKey{}, invalidInput("unsupported permission %q", permission)
-		}
-		permissions = append(permissions, string(permission))
-	}
 	expiresAt := pgtype.Timestamptz{}
 	if input.ExpiresInDays != nil {
 		switch *input.ExpiresInDays {
@@ -154,6 +155,7 @@ func IssueAPIKey(ctx context.Context, database db.TxBeginner, issuer auth.Princi
 		return IssuedAPIKey{}, fmt.Errorf("generate api key: %w", err)
 	}
 	var record db.APIKey
+	roleNames := []string{}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if err := lockAPIKeyManager(ctx, tx, issuer, scope); err != nil {
 			return err
@@ -165,7 +167,6 @@ func IssueAPIKey(ctx context.Context, database db.TxBeginner, issuer auth.Princi
 			ProjectID:         projectID,
 			EnvironmentID:     environmentID,
 			CreatedByMemberID: pgvalue.UUID(issuer.MemberID),
-			Permissions:       permissions,
 			Name:              name,
 			KeyPrefix:         generated.KeyPrefix,
 			TokenHash:         generated.TokenHash,
@@ -174,13 +175,27 @@ func IssueAPIKey(ctx context.Context, database db.TxBeginner, issuer auth.Princi
 		if err != nil {
 			return apiKeyWriteError(err)
 		}
-		return audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(issuer), OrgID: issuer.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.issued", TargetKind: "api_key", TargetID: pgvalue.MustUUIDValue(record.ID), Details: audit.APIKeyIssuedDetails{Permissions: record.Permissions, ExpiresAt: pgvalue.TimePtr(record.ExpiresAt)}})
+		if input.Role != nil {
+			keyID := pgvalue.MustUUIDValue(record.ID)
+			project, environment := pgvalue.MustUUIDValue(projectID), pgvalue.MustUUIDValue(environmentID)
+			grants, err := org.AssignRole(ctx, tx, org.ManagingMember{Actor: audit.FromPrincipal(issuer), OrgID: issuer.OrgID, UserID: issuer.UserID, MemberID: issuer.MemberID}, org.GrantInput{
+				Subject: org.GrantSubject{Type: "api_key", APIKeyID: &keyID}, RoleID: input.Role.RoleID, ExpectedRoleRevision: input.Role.ExpectedRoleRevision,
+				ProjectID: &project, EnvironmentID: &environment, AgentsMode: input.Role.AgentsMode, AgentIDs: input.Role.AgentIDs,
+			})
+			if err != nil {
+				return err
+			}
+			for _, grant := range grants {
+				roleNames = append(roleNames, grant.RoleName)
+			}
+		}
+		return audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(issuer), OrgID: issuer.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.issued", TargetKind: "api_key", TargetID: pgvalue.MustUUIDValue(record.ID), Details: audit.APIKeyIssuedDetails{Name: record.Name, ExpiresAt: pgvalue.TimePtr(record.ExpiresAt)}})
 	})
 	if err != nil {
 		return IssuedAPIKey{}, err
 	}
 
-	return IssuedAPIKey{Record: record, Raw: generated.Raw}, nil
+	return IssuedAPIKey{Record: record, Raw: generated.Raw, RoleNames: roleNames}, nil
 }
 
 // RevokeAPIKey revokes an API key of the environment.
@@ -265,29 +280,18 @@ func (a APIKeyAuthenticator) Authenticate(ctx context.Context, rawKey string) (a
 	if err != nil {
 		return auth.Principal{}, fmt.Errorf("api key id: %w", err)
 	}
+	grants, err := a.q.ListAPIKeyPermissionGrants(ctx, db.ListAPIKeyPermissionGrantsParams{OrgID: row.OrgID, ID: row.ID})
+	if err != nil {
+		return auth.Principal{}, fmt.Errorf("read API key roles: %w", err)
+	}
 	return auth.Principal{
 		OrgID:         orgID,
 		APIKeyID:      apiKeyID,
 		ProjectID:     projectID.String(),
 		EnvironmentID: environmentID.String(),
 		Kind:          auth.PrincipalKindAPIKey,
-		Permissions:   grantedPermissions(row.Permissions),
+		Grants:        access.APIKeyGrants(grants),
 	}, nil
-}
-
-// grantedPermissions keeps the stored permissions that API keys can still be
-// granted, or nil when none remain.
-func grantedPermissions(values []string) []auth.Permission {
-	permissions := make([]auth.Permission, 0, len(values))
-	for _, value := range values {
-		if permission, ok := auth.ParseAPIKeyGrant(value); ok {
-			permissions = append(permissions, permission)
-		}
-	}
-	if len(permissions) == 0 {
-		return nil
-	}
-	return permissions
 }
 
 func apiKeyWriteError(err error) error {
@@ -315,11 +319,10 @@ func lockAPIKeyManager(ctx context.Context, tx pgx.Tx, manager auth.Principal, s
 	return authorizeAPIKeyManagement(current, scope)
 }
 
-// APIKeyUpdate replaces mutable machine-principal policy without changing identity.
+// APIKeyUpdate changes credential metadata without changing its identity or Roles.
 type APIKeyUpdate struct {
-	Name        string
-	Permissions []auth.Permission
-	ExpiresAt   *time.Time
+	Name      string
+	ExpiresAt *time.Time
 }
 
 func UpdateAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Principal, scope auth.Scope, id uuid.UUID, input APIKeyUpdate) (db.APIKey, error) {
@@ -327,16 +330,6 @@ func UpdateAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Prin
 	name := strings.TrimSpace(input.Name)
 	if name == "" || len(name) > 64 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return result, invalidInput("name must be 1-64 characters and contain no control characters")
-	}
-	if len(input.Permissions) == 0 {
-		return result, invalidInput("permissions must not be empty")
-	}
-	permissions := make([]string, 0, len(input.Permissions))
-	for _, p := range input.Permissions {
-		if !auth.IsMachineCapability(p) {
-			return result, invalidInput("unsupported permission %q", p)
-		}
-		permissions = append(permissions, string(p))
 	}
 	expires := pgtype.Timestamptz{}
 	if input.ExpiresAt != nil {
@@ -361,7 +354,7 @@ func UpdateAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Prin
 		if err != nil {
 			return err
 		}
-		result, err = q.UpdateActiveAPIKey(ctx, db.UpdateActiveAPIKeyParams{OrgID: before.OrgID, ProjectID: project, EnvironmentID: environment, ID: before.ID, Name: name, Permissions: permissions, ExpiresAt: expires})
+		result, err = q.UpdateActiveAPIKey(ctx, db.UpdateActiveAPIKeyParams{OrgID: before.OrgID, ProjectID: project, EnvironmentID: environment, ID: before.ID, Name: name, ExpiresAt: expires})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrAPIKeyNotFound
 		}
@@ -402,6 +395,10 @@ func RotateAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Prin
 		if err != nil {
 			return err
 		}
+		result.RoleNames, err = q.ListAPIKeyRoleNames(ctx, db.ListAPIKeyRoleNamesParams{OrgID: before.OrgID, ApiKeyID: before.ID})
+		if err != nil {
+			return err
+		}
 		return audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(manager), OrgID: manager.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environment), Action: "api_key.rotated", TargetKind: "api_key", TargetID: id})
 	})
 	if err != nil {
@@ -411,5 +408,5 @@ func RotateAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Prin
 	return result, nil
 }
 func apiKeyPolicy(key db.APIKey) audit.APIKeyPolicy {
-	return audit.APIKeyPolicy{Name: key.Name, Permissions: key.Permissions, ExpiresAt: pgvalue.TimePtr(key.ExpiresAt)}
+	return audit.APIKeyPolicy{Name: key.Name, ExpiresAt: pgvalue.TimePtr(key.ExpiresAt)}
 }

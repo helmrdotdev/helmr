@@ -35,10 +35,10 @@ func TestCapabilityBoundaries(t *testing.T) {
 	}
 }
 
-func TestMachineCapabilitiesDoNotBorrowHumanRoleOrGrant(t *testing.T) {
+func TestMachineUsesOwnRoleGrantsWithinExactEnvironment(t *testing.T) {
 	org := uuid.NewV7()
 	scope := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
-	p := Principal{Kind: PrincipalKindAPIKey, OrgID: org, IsOwner: true, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permissions: []Permission{CapabilitySessionsView}, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilitySecretsManage}}}
+	p := Principal{Kind: PrincipalKindAPIKey, OrgID: org, IsOwner: true, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilitySessionsView}}}
 	if !p.HasPermission(PermissionSessionsRead, scope) {
 		t.Fatal("explicit capability denied")
 	}
@@ -87,15 +87,15 @@ func TestHumanGrantUnionAndAgentScope(t *testing.T) {
 
 }
 
-func TestAPIKeyGrantCatalog(t *testing.T) {
-	for _, entry := range CapabilityCatalog() {
-		if permission, ok := ParseAPIKeyGrant(" " + string(entry.ID) + " "); ok != IsMachineCapability(entry.ID) || permission != entry.ID {
-			t.Fatal("catalog capability rejected")
+func TestMachineRoleCapabilityEligibility(t *testing.T) {
+	for _, p := range []Permission{CapabilityAccessManage, CapabilityOrganizationManage, CapabilityKeysManage, CapabilityAgentsManage, "", "*", "unsupported.permission"} {
+		if IsMachineCapability(p) {
+			t.Fatalf("incompatible machine capability %q", p)
 		}
 	}
-	for _, value := range []string{"", "*", "unsupported.permission"} {
-		if _, ok := ParseAPIKeyGrant(value); ok {
-			t.Fatalf("unsupported grant %q accepted", value)
+	for _, p := range []Permission{CapabilityAgentsUse, CapabilitySessionsView, CapabilitySessionsManage, CapabilityDeploymentsPublish, CapabilityDeploymentsPromote, CapabilityComputersOperate, CapabilitySecretsManage} {
+		if !IsMachineCapability(p) {
+			t.Fatalf("workload capability %q rejected", p)
 		}
 	}
 }
@@ -111,15 +111,7 @@ func TestOrganizationAndKeyGrantsHaveExactScope(t *testing.T) {
 	if p.HasPermission(PermissionMembersManage, env) || p.HasPermission(PermissionProjectsManage, env) || p.HasPermission(PermissionAPIKeysManage, organization) || p.HasPermission(PermissionSessionsRead, env) {
 		t.Fatal("administrative grant crossed its boundary")
 	}
-	p.Kind = PrincipalKindAPIKey
-	p.ProjectID = env.ProjectID
-	p.EnvironmentID = env.EnvironmentID
-	p.Permissions = []Permission{CapabilityAccessManage, CapabilityOrganizationManage, CapabilityKeysManage}
-	for _, permission := range []Permission{PermissionMembersManage, PermissionProjectsManage, PermissionAPIKeysManage} {
-		if p.HasPermission(permission, env) || p.HasPermission(permission, organization) {
-			t.Fatal("machine obtained human administration")
-		}
-	}
+
 }
 
 func TestAgentManagementScopeAndMachineExclusion(t *testing.T) {
@@ -134,12 +126,8 @@ func TestAgentManagementScopeAndMachineExclusion(t *testing.T) {
 	if p.HasPermission(CapabilityAgentsManage, other) {
 		t.Fatal("other Agent admitted")
 	}
-	p.Kind = PrincipalKindAPIKey
-	p.ProjectID = scope.ProjectID
-	p.EnvironmentID = scope.EnvironmentID
-	p.Permissions = []Permission{CapabilityAgentsManage}
-	if IsMachineCapability(CapabilityAgentsManage) || p.HasPermission(CapabilityAgentsManage, scope) {
-		t.Fatal("machine acquired human configuration authority")
+	if IsMachineCapability(CapabilityAgentsManage) {
+		t.Fatal("configuration Role cannot be assigned to machines")
 	}
 }
 
@@ -167,5 +155,28 @@ func TestSessionExecutionRequiresUseAndManagementOnSameAgent(t *testing.T) {
 	all, agents := p.AgentPermissionScope(PermissionSessionsRead, Scope{ProjectID: project, EnvironmentID: env})
 	if all || len(agents) != 1 || agents[0].String() != first {
 		t.Fatalf("read scope escaped: %v %v", all, agents)
+	}
+}
+
+func TestHumanAndAPIKeyGrantParity(t *testing.T) {
+	org, project, env, a, b := uuid.NewV7(), uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String()
+	grants := []PermissionGrant{{ProjectID: project, EnvironmentID: env, AgentID: a, Permission: CapabilitySessionsManage}, {ProjectID: project, EnvironmentID: env, AgentID: b, Permission: CapabilityAgentsUse}, {ProjectID: project, EnvironmentID: env, Permission: CapabilitySecretsManage}}
+	human := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: grants}
+	machine := Principal{Kind: PrincipalKindAPIKey, OrgID: org, ProjectID: project, EnvironmentID: env, Grants: grants}
+	for _, agent := range []string{"", a, b, uuid.NewV7().String()} {
+		scope := Scope{OrgID: org, ProjectID: project, EnvironmentID: env, AgentID: agent}
+		for _, permission := range AllPermissions() {
+			if human.HasPermission(permission, scope) != machine.HasPermission(permission, scope) {
+				t.Fatalf("different %s on %s", permission, agent)
+			}
+		}
+	}
+	all, targets := machine.AgentPermissionScope(PermissionSessionsRead, Scope{OrgID: org, ProjectID: project, EnvironmentID: env})
+	if all || len(targets) != 1 || targets[0].String() != a {
+		t.Fatalf("machine Agent targets escaped: %v %v", all, targets)
+	}
+	machine.Grants = nil
+	if machine.HasPermission(PermissionSecretsWrite, Scope{OrgID: org, ProjectID: project, EnvironmentID: env}) {
+		t.Fatal("unassigned key has authority")
 	}
 }

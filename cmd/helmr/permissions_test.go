@@ -327,3 +327,50 @@ func TestPermissionCLIGrantPreviewUsesInspectedRoleRevision(t *testing.T) {
 		t.Fatalf("confirmed update: %v writes=%d", err, writes)
 	}
 }
+
+func TestPermissionCLIAPIKeyRecipient(t *testing.T) {
+	role, key, project, env := uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String()
+	writes, lists := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/roles/" + role:
+			json.NewEncoder(w).Encode(map[string]any{"id": role, "name": "Reader", "revision": 7, "permissions": []string{"sessions.view"}, "api_key_assignable": true})
+		case "GET /api/projects/work":
+			w.Write([]byte(`{"project":"work"}`))
+		case "GET /api/projects/work/access-targets":
+			json.NewEncoder(w).Encode(map[string]any{"project_id": project, "targets": []any{map[string]any{"environment_id": env, "environment": "production"}}})
+		case "GET /api/role-grants":
+			lists++
+			if r.URL.Query().Get("api_key_id") != key {
+				t.Error("API key filter lost")
+			}
+			w.Write([]byte(`{"grants":[]}`))
+		case "POST /api/role-grants":
+			writes++
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			subject, _ := body["subject"].(map[string]any)
+			if subject["type"] != "api_key" || subject["api_key_id"] != key || body["environment_id"] != env || body["expected_role_revision"] != float64(7) {
+				t.Errorf("invalid key assignment: %v", body)
+			}
+			w.Write([]byte(`{"grants":[]}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	state := installTestCLIConfig(t)
+	state.SaveLogin(server.URL, "human")
+	t.Setenv(helmrAPIURLEnv, "")
+	if _, _, err := runPermissionCLI("role", "grant", "create", "--api-key-id", key, "--role-id", role, "--project", "work", "--env", "production", "--all-agents", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runPermissionCLI("role", "grant", "list", "--api-key-id", key, "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 1 || lists != 1 {
+		t.Fatal(writes, lists)
+	}
+}

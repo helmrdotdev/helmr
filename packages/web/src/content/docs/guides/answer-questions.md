@@ -69,8 +69,11 @@ Use `--answer-file answer.json` for longer answers. `--answer-id` identifies
 this answer: if the command fails with an uncertain result, run it again with the
 same answer ID and the same answer.
 
-The answer is recorded under the identity that sent it. A signed-in member of
-the organization can answer. An API key needs the `asks:answer` permission.
+The answer is recorded under the identity that sent it. Members and API keys
+need current Role access to the Session’s Agent. `agents.use` permits answering
+in their own scoped Sessions; intervention in other Sessions requires
+`sessions.manage` and `agents.use`. API keys receive these permissions through
+Role assignments.
 Once the question is answered, the Agent's `turn.ask` call returns and the Turn
 continues; follow it as described in
 [Start and observe a Session](/docs/guides/start-and-observe-a-session).

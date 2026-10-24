@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -139,4 +140,25 @@ func (f httpPostgresFixture) request(t *testing.T, method string, path string, t
 func (f httpPostgresFixture) grant(t *testing.T, org, user, env uuid.UUID, permission string) {
 	t.Helper()
 	dbtest.GrantMember(t, f.pool, org, user, &env, permission)
+}
+
+// testAPIKeyInput gives workload fixtures an explicit custom Role. Production
+// issuance and role-assignment authorization are covered by their own tests.
+type testAPIKeyInput struct {
+	Name            string
+	RolePermissions []auth.Permission
+}
+
+func issueAPIKeyWithRole(t *testing.T, ctx context.Context, database db.TxDB, issuer auth.Principal, scope auth.Scope, input testAPIKeyInput) (identity.IssuedAPIKey, error) {
+	t.Helper()
+	issued, err := identity.IssueAPIKey(ctx, database, issuer, scope, identity.APIKeyInput{Name: input.Name})
+	if err != nil {
+		return issued, err
+	}
+	values := make([]string, 0, len(input.RolePermissions))
+	for _, p := range input.RolePermissions {
+		values = append(values, string(p))
+	}
+	dbtest.SetAPIKeyRole(t, database, pgvalue.MustUUIDValue(issued.Record.ID), values...)
+	return issued, nil
 }

@@ -6,17 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
-	"strings"
 	"time"
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -69,7 +67,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 			writeError(w, errors.New("format api key"))
 			return
 		}
-		item.Permissions = apiKeyPermissionGrantsFromPermissions(row.Permissions)
+		item.RoleNames = row.RoleNames
 		items = append(items, item)
 	}
 	response := api.ListAPIKeysResponse{APIKeys: items}
@@ -120,18 +118,30 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	permissionGrants, permissions, err := normalizeAPIKeyPermissionGrants(input.Permissions)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
+	var role *identity.APIKeyRole
+	if input.Role != nil {
+		roleID, err := ids.Parse(input.Role.RoleID)
+		if err != nil || roleID == uuid.Nil() {
+			writeError(w, badRequest(errors.New("invalid role_id")))
+			return
+		}
+		role = &identity.APIKeyRole{RoleID: roleID, ExpectedRoleRevision: input.Role.ExpectedRoleRevision, AgentsMode: input.Role.AgentsMode}
+		for _, value := range input.Role.AgentIDs {
+			id, err := ids.Parse(value)
+			if err != nil || id == uuid.Nil() {
+				writeError(w, badRequest(errors.New("invalid agent_id")))
+				return
+			}
+			role.AgentIDs = append(role.AgentIDs, id)
+		}
 	}
 	issued, err := identity.IssueAPIKey(r.Context(), s.tx, principal, scope, identity.APIKeyInput{
 		Name:          input.Name,
-		Permissions:   permissions,
+		Role:          role,
 		ExpiresInDays: input.ExpiresInDays,
 	})
 	if err != nil {
-		writeError(w, identityError(err))
+		writeError(w, apiKeyIssuanceError(err))
 		return
 	}
 	summary, err := apiKeySummaryFromRecord(issued.Record, chi.URLParam(r, "project"), chi.URLParam(r, "environment"))
@@ -139,7 +149,7 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("format api key"))
 		return
 	}
-	summary.Permissions = permissionGrants
+	summary.RoleNames = issued.RoleNames
 	writeJSON(w, http.StatusCreated, api.APIKeyIssued{APIKeySummary: summary, RawKey: issued.Raw})
 }
 
@@ -160,70 +170,6 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// normalizeAPIKeyPermissionGrants maps requested permission grants to the
-// sorted, deduplicated permissions they name and the single canonical grant
-// that lists them.
-func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.APIKeyPermissionGrant, []auth.Permission, error) {
-	if len(grants) == 0 {
-		return nil, nil, errors.New("permissions must include at least one grant")
-	}
-	permissions := make([]auth.Permission, 0, len(grants))
-	for _, grant := range grants {
-		if len(grant.Scopes) == 0 {
-			return nil, nil, errors.New("permission grants must include at least one scope")
-		}
-		for _, scope := range grant.Scopes {
-			normalizedScope, ok := normalizeAPIKeyScope(scope)
-			if !ok {
-				return nil, nil, fmt.Errorf("unsupported permission scope %q", scope)
-			}
-			permission, ok := apiKeyScopePermission(normalizedScope)
-			if !ok {
-				return nil, nil, fmt.Errorf("unsupported permission scope %q", scope)
-			}
-			if !slices.Contains(permissions, permission) {
-				permissions = append(permissions, permission)
-			}
-		}
-	}
-	slices.Sort(permissions)
-	scopes := make([]api.APIKeyScope, 0, len(permissions))
-	for _, permission := range permissions {
-		scope, ok := apiKeyPermissionScope(string(permission))
-		if !ok {
-			return nil, nil, fmt.Errorf("unsupported permission %q", permission)
-		}
-		scopes = append(scopes, scope)
-	}
-	return []api.APIKeyPermissionGrant{{Scopes: scopes}}, permissions, nil
-}
-
-func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
-	value := strings.TrimSpace(string(scope))
-	return api.APIKeyScope(value), auth.IsCapability(auth.Permission(value))
-}
-func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
-	return auth.Permission(scope), auth.IsCapability(auth.Permission(scope))
-}
-func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
-	return normalizeAPIKeyScope(api.APIKeyScope(permission))
-}
-
-func apiKeyPermissionGrantsFromPermissions(permissions []string) []api.APIKeyPermissionGrant {
-	scopes := make([]api.APIKeyScope, 0, len(permissions))
-	for _, permission := range permissions {
-		scope, ok := apiKeyPermissionScope(permission)
-		if !ok {
-			continue
-		}
-		scopes = append(scopes, scope)
-	}
-	if len(scopes) == 0 {
-		return nil
-	}
-	return []api.APIKeyPermissionGrant{{Scopes: scopes}}
 }
 
 func apiKeySummaryFromRecord(record db.APIKey, project, environment string) (api.APIKeySummary, error) {
@@ -278,6 +224,7 @@ func apiKeySummary(id pgtype.UUID, createdBy pgtype.UUID, name string, keyPrefix
 	}
 	return api.APIKeySummary{
 		ID:                parsedID.String(),
+		RoleNames:         []string{},
 		CreatedByMemberID: creator,
 		Name:              name,
 		KeyPrefix:         keyPrefix,
@@ -308,12 +255,7 @@ func (s *Server) updateAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	_, permissions, err := normalizeAPIKeyPermissionGrants(input.Permissions)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	record, err := identity.UpdateAPIKey(r.Context(), s.tx, principal, scope, id, identity.APIKeyUpdate{Name: input.Name, Permissions: permissions, ExpiresAt: input.ExpiresAt})
+	record, err := identity.UpdateAPIKey(r.Context(), s.tx, principal, scope, id, identity.APIKeyUpdate{Name: input.Name, ExpiresAt: input.ExpiresAt})
 	if err != nil {
 		writeError(w, identityError(err))
 		return
@@ -323,7 +265,11 @@ func (s *Server) updateAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	summary.Permissions = apiKeyPermissionGrantsFromPermissions(record.Permissions)
+	summary.RoleNames, err = s.db.ListAPIKeyRoleNames(r.Context(), db.ListAPIKeyRoleNamesParams{OrgID: record.OrgID, ApiKeyID: record.ID})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, summary)
 }
 func (s *Server) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -348,6 +294,15 @@ func (s *Server) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	summary.Permissions = apiKeyPermissionGrantsFromPermissions(result.Record.Permissions)
+	summary.RoleNames = result.RoleNames
 	writeJSON(w, http.StatusOK, api.APIKeyIssued{APIKeySummary: summary, RawKey: result.Raw})
+}
+
+// Role assignment failures retain the same status as the ordinary access API.
+func apiKeyIssuanceError(err error) error {
+	var inputError org.InputError
+	if errors.Is(err, org.ErrMemberManagementRequired) || errors.Is(err, org.ErrAccessNotFound) || errors.Is(err, org.ErrRoleTarget) || errors.Is(err, org.ErrStaleRevision) || errors.As(err, &inputError) {
+		return permissionManagementError(err)
+	}
+	return identityError(err)
 }

@@ -23,8 +23,8 @@ func TestDetailsPreserveActionFacts(t *testing.T) {
 		{"invitation.revoked", InvitationStateDetails{}, `{}`},
 		{"invitation.expired", InvitationStateDetails{}, `{}`},
 		{"invitation.created", InvitationCreatedDetails{ExpiresAt: &expires}, `{"expires_at":"2026-10-14T12:00:00Z"}`},
-		{"api_key.issued", APIKeyIssuedDetails{Permissions: []string{"sessions.read"}}, `{"permissions":["sessions.read"],"expires_at":null}`},
-		{"api_key.issued", APIKeyIssuedDetails{Permissions: []string{"sessions.read"}, ExpiresAt: &expires}, `{"permissions":["sessions.read"],"expires_at":"2026-10-14T12:00:00Z"}`},
+		{"api_key.issued", APIKeyIssuedDetails{Name: "automation"}, `{"name":"automation","expires_at":null}`},
+		{"api_key.issued", APIKeyIssuedDetails{Name: "automation", ExpiresAt: &expires}, `{"name":"automation","expires_at":"2026-10-14T12:00:00Z"}`},
 		{"slack_connection.authorized", PermissionsDetails{Permissions: []string{"chat:write"}}, `{"permissions":["chat:write"]}`},
 		{"project.retention_changed", RetentionChangedDetails{OldRetentionSeconds: &seconds}, `{"old_retention_seconds":86400,"new_retention_seconds":null}`},
 		{"secret.rotated", nil, `{}`},
@@ -66,14 +66,13 @@ func TestDetailsRejectInvalidActionFacts(t *testing.T) {
 		{"missing revoked role", "member.removed", RoleRemovedDetails{}},
 		{"missing invitation expiry", "invitation.created", InvitationCreatedDetails{}},
 		{"zero invitation expiry", "invitation.created", InvitationCreatedDetails{ExpiresAt: &zero}},
-		{"missing key role", "api_key.issued", APIKeyIssuedDetails{}},
-		{"missing key permissions", "api_key.issued", APIKeyIssuedDetails{}},
+		{"missing key name", "api_key.issued", APIKeyIssuedDetails{}},
 		{"empty permission", "slack_connection.authorized", PermissionsDetails{Permissions: []string{""}}},
 		{"missing permissions object", "slack_connection.authorized", nil},
 		{"negative retention duration", "project.retention_changed", RetentionChangedDetails{OldRetentionSeconds: &negative}},
 		{"unexpected retention duration", "project.retention_changed", RetentionChangedDetails{NewRetentionSeconds: &negative}},
 		{"unapproved facts", "secret.rotated", RoleGrantedDetails{NewRole: "owner"}},
-		{"invalid timestamp encoding", "api_key.issued", APIKeyIssuedDetails{Permissions: []string{"sessions.read"}, ExpiresAt: &unencodable}},
+		{"invalid timestamp encoding", "api_key.issued", APIKeyIssuedDetails{Name: "automation", ExpiresAt: &unencodable}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,7 +90,7 @@ func TestDetailsNormalizeExpiryToUTC(t *testing.T) {
 		details Details
 	}{
 		{"invitation.created", InvitationCreatedDetails{ExpiresAt: &expires}},
-		{"api_key.issued", APIKeyIssuedDetails{Permissions: []string{"sessions.read"}, ExpiresAt: &expires}},
+		{"api_key.issued", APIKeyIssuedDetails{Name: "automation", ExpiresAt: &expires}},
 	} {
 		t.Run(tc.action, func(t *testing.T) {
 			data, err := marshalDetails(tc.action, tc.details)

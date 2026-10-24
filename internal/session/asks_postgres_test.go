@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"sync"
 	"testing"
 	"time"
@@ -170,10 +171,11 @@ func TestAskTerminalCancellationAndBudget(t *testing.T) {
 func askKey(t *testing.T, f fixture, permissions []string) session.Caller {
 	t.Helper()
 	id := uuid.NewV7()
-	_, err := f.pool.Exec(t.Context(), `INSERT INTO api_keys(id,org_id,project_id,environment_id,permissions,name,key_prefix,token_hash) SELECT $2,org_id,project_id,id,$3,$2::uuid::text,'test',$4 FROM environments WHERE id=$1`, f.env, id, permissions, id[:])
+	_, err := f.pool.Exec(t.Context(), `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $2,org_id,project_id,id,$2::uuid::text,'test',$3 FROM environments WHERE id=$1`, f.env, id, id[:])
 	if err != nil {
 		t.Fatal(err)
 	}
+	dbtest.SetAPIKeyRole(t, f.pool, id, permissions...)
 	return session.Caller{Kind: "api_key", ID: id}
 }
 func TestAskKeyAuthorityAndAttribution(t *testing.T) {
@@ -181,14 +183,13 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 	reader := askKey(t, f, []string{"sessions.view"})
 	answerer := askKey(t, f, []string{"agents.use", "sessions.manage"})
 	scoped := askKey(t, f, []string{"agents.use"})
-	cross := askKey(t, f, []string{"agents.use", "sessions.manage"})
 	otherEnv := uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, otherEnv); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.pool.Exec(t.Context(), `UPDATE api_keys SET environment_id=$2 WHERE id=$1`, cross.ID, otherEnv); err != nil {
-		t.Fatal(err)
-	}
+	otherFixture := f
+	otherFixture.env = otherEnv
+	cross := askKey(t, otherFixture, []string{"agents.use", "sessions.manage"})
 
 	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "response", Answer: json.RawMessage(`""`)}
 	for _, caller := range []session.Caller{reader, scoped, cross, {Kind: "session", ID: f.session}} {

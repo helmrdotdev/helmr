@@ -1,12 +1,12 @@
 import { del, request } from "./api";
 
 export type Capability = { resource_type: string; id: string; name: string; description: string; included: string[] };
-export type PermissionRole = { id: string; name: string; description: string; builtin_key: string | null; permissions: string[]; grant_count: number; group_count: number; updated_at: string; revision: number };
+export type PermissionRole = { api_key_assignable: boolean; id: string; name: string; description: string; builtin_key: string | null; permissions: string[]; grant_count: number; group_count: number; updated_at: string; revision: number };
 export type RoleInput = Pick<PermissionRole, "name" | "description" | "permissions">;
 export type PermissionGroup = { id: string; name: string; member_ids: string[]; revision: number };
 export type GrantTarget = { resource_type:string; mode:string; agent_ids?:string[]; agent_keys?:string[]; permissions:string[]; included_permissions:string[] };
-export type RoleGrant = { id:string; revision:number; subject_kind:"member"|"group"|"all_members"; member_id?:string; member_name?:string; group_id:string|null; role_id:string; project_id:string; project:string; environment_id:string; environment:string; target_kind:"organization"|"environment"; agents_mode:"none"|"selected"|"all"; agent_ids:string[]; agent_keys:string[]; targets:GrantTarget[]; role_name:string; project_name:string; environment_name:string; permissions:string[] };
-export type GrantInput = { subject_kind:"member"|"group"|"all_members"; member_id?:string|undefined; group_id:string|null; role_id:string; environment_id:string; target_kind:"organization"|"environment"; agents_mode:"none"|"selected"|"all"; agent_ids:string[]; expected_role_revision:number };
+export type RoleGrant = { api_key_id?: string; api_key_name?: string; id:string; revision:number; subject_kind:"member"|"group"|"api_key"|"all_members"; member_id?:string; member_name?:string; group_id:string|null; role_id:string; project_id:string; project:string; environment_id:string; environment:string; target_kind:"organization"|"environment"; agents_mode:"none"|"selected"|"all"; agent_ids:string[]; agent_keys:string[]; targets:GrantTarget[]; role_name:string; project_name:string; environment_name:string; permissions:string[] };
+export type GrantInput = { api_key_id?: string|undefined; subject_kind:"member"|"group"|"api_key"|"all_members"; member_id?:string|undefined; group_id:string|null; role_id:string; environment_id:string; target_kind:"organization"|"environment"; agents_mode:"none"|"selected"|"all"; agent_ids:string[]; expected_role_revision:number };
 export type AccessTarget = { environment_id: string; environment: string; name: string; agents: { id: string; key: string }[] };
 export async function listRoles():Promise<{roles:PermissionRole[];catalog:Capability[]}> {
  const roles:PermissionRole[]=[];let catalog:Capability[]=[];let cursor="";
@@ -31,7 +31,7 @@ export const deleteGroup = (id: string) => del(`/api/groups/${encodeURIComponent
 export const setGroupMember = (group: string, user: string, add: boolean) => request(`/api/groups/${encodeURIComponent(group)}/members/${encodeURIComponent(user)}`, { method: add ? "PUT" : "DELETE" });
 export async function assignRole(project:string,input:GrantInput,existing?:Pick<RoleGrant,"id"|"revision">) {
  const projectID=input.target_kind === "organization" ? undefined : (await listAccessTargets(project)).project_id;
- const subject=input.subject_kind === "member" ? {type:"member",member_id:input.member_id} : input.subject_kind === "group" ? {type:"group",group_id:input.group_id} : {type:"all_members"};
+ const subject=input.subject_kind === "member" ? {type:"member",member_id:input.member_id} : input.subject_kind === "group" ? {type:"group",group_id:input.group_id} : input.subject_kind === "api_key" ? {type:"api_key",api_key_id:input.api_key_id} : {type:"all_members"};
  return request(`/api/role-grants${existing ? `/${encodeURIComponent(existing.id)}` : ""}`,{method:existing ? "PATCH" : "POST",headers:existing ? {"If-Match":`"${existing.revision}"`} : {},body:JSON.stringify({role_id:input.role_id,subject,project_id:projectID,environment_id:input.target_kind === "organization" ? undefined : input.environment_id,agents_mode:input.agents_mode,agent_ids:input.agent_ids,expected_role_revision:input.expected_role_revision})});
 }
 export const removeGrant=(id:string,revision:number)=>request(`/api/role-grants/${encodeURIComponent(id)}`,{method:"DELETE",headers:{"If-Match":`"${revision}"`}});

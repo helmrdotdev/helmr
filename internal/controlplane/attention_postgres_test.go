@@ -253,7 +253,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=NULL,is_owner=true WHERE user_id=$1`, f.User)
 	issuer := f.Principal(t)
-	key, err := identity.IssueAPIKey(t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, identity.APIKeyInput{Name: "attention read", Permissions: []auth.Permission{auth.CapabilitySessionsView}})
+	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, testAPIKeyInput{Name: "attention read", RolePermissions: []auth.Permission{auth.CapabilitySessionsView}})
 	if err != nil {
 		t.Fatal(err)
 	}

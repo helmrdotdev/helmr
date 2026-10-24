@@ -36,7 +36,7 @@ export function ResourceAccess(props: { environment: string; agent?: string; onC
         <Show when={ready()} fallback={<p class={ui.muted}>Loading access…</p>}>
           <Show when={assignments().length} fallback={<p>No roles assigned to this scope.</p>}>
             <div class="divide-y divide-console-border"><For each={assignments()}>{grant => <div class="flex items-start gap-3 py-3">
-              <div class="flex-1"><p class="font-medium">{grant.subject_kind === "all_members" ? "All members" : grant.subject_kind === "member" ? grant.member_name : groups.data?.groups.find(g => g.id === grant.group_id)?.name} → {grant.role_name}</p>
+              <div class="flex-1"><p class="font-medium">{grant.subject_kind === "all_members" ? "All members" : grant.subject_kind === "api_key" ? grant.api_key_name || grant.api_key_id : grant.subject_kind === "member" ? grant.member_name : groups.data?.groups.find(g => g.id === grant.group_id)?.name} → {grant.role_name}</p>
                 <p class="text-control">{targetSummary(grant)}</p>
                 <p class="text-control text-console-muted">{includedPermissions(grant.permissions, roles.data?.catalog ?? []).map(id => roles.data?.catalog.find(c => c.id === id)?.name ?? id).join(" · ")}</p>
               </div><button class={ui.secondaryButton} onClick={() => setEditing(grant)}>Edit targets</button><button class={ui.secondaryButton} onClick={() => setRemoving(grant)}>Remove assignment</button>

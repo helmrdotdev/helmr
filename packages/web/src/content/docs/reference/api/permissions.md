@@ -48,7 +48,7 @@ The errors `role_in_use` and `role_target_incompatible` include the conflicting
 }
 ```
 
-A subject is a `member` with `member_id`, a `group` with `group_id`, or
+A subject is a `member` with `member_id`, a `group` with `group_id`, an `api_key` with `api_key_id`, or
 `all_members` without another ID. Membership IDs differ from user IDs; `/api/me`
 and Members responses expose both. Rejoining creates a new membership ID.
 
@@ -90,7 +90,7 @@ the assignment revision and records an audit event. An empty selected assignment
 remains visible and grants no explicit Agent access; other resource types remain
 effective. Repair it with a conditional PATCH or remove the assignment.
 
-List filters are `member_id`, `group_id`, `role_id`, `subject_kind`, `scope_kind`,
+List filters are `member_id`, `group_id`, `api_key_id`, `role_id`, `subject_kind`, `scope_kind`,
 `project`, `environment` and `agent`. Project/Environment filters use slugs; an
 Agent filter requires both. Agent listing includes assignments selecting that Agent and all-Agent assignments. Pagination uses `limit`
 (1–100, default 100), `cursor` and `next_cursor`. Role, Group and Group membership
@@ -108,7 +108,26 @@ lists use the same pagination contract. Membership PUT/DELETE is idempotent.
 The standard Agent user Role has use; Agent settings manager has use and configure;
 Session viewer has view; Session operator has use and manage. None embeds a target.
 Computer access, deployments, secrets and administrative actions remain separate.
-API keys use the same workload action names and cover their entire environment.
+API keys receive ordinary Role Grants in their own environment, including selected
+Agent targets. They do not inherit their creator's Roles, Group membership or
+All members assignments. A Role assigned to a key may contain only `agents.use`,
+`sessions.view`, `sessions.manage`, `deployments.publish`, `deployments.promote`,
+`computers.operate` and `secrets.manage`. Incompatible assignments and subsequent
+Role edits are rejected atomically. Role responses include `api_key_assignable`
+so clients can offer eligible Roles without maintaining another permission list.
+
+API-key issuance accepts `name`, optional `expires_in_days` and an optional `role`
+object with `role_id`, `expected_role_revision`, `agents_mode` and `agent_ids`.
+The Role assignment and key creation commit together. Without `role`, the key has
+no workload access. Direct `permissions` or `scopes` are not accepted.
+
+`keys.manage` controls creation, rotation, metadata updates and revocation;
+`access.manage` controls Role assignments. Issuing a key with a Role requires both.
+Listing key metadata is available to either an access administrator or a manager
+of that environment's keys. Metadata includes current `role_names`. An environment
+administrator without `access.manage` cannot assign Roles to a new key. Rotation
+allows acting as an existing key and retains its Roles and Session ownership.
+Key metadata updates never change Role assignments; use the Role Grants API.
 
 ## Effective permissions
 

@@ -454,11 +454,12 @@ func (s *Server) mountAuthRoutes(r chi.Router) {
 }
 
 func (s *Server) mountSessionRoutes(r chi.Router) {
+	// Listing accepts key lifecycle managers or access administrators in the domain.
+	r.With(s.requireSession).Get("/projects/{project}/environments/{environment}/api-keys", s.listAPIKeys)
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
 			return s.requireSessionPermission(auth.PermissionAPIKeysManage, next)
 		})
-		r.Get("/projects/{project}/environments/{environment}/api-keys", s.listAPIKeys)
 		r.Post("/projects/{project}/environments/{environment}/api-keys", s.issueAPIKey)
 		r.Delete("/projects/{project}/environments/{environment}/api-keys/{id}", s.revokeAPIKey)
 		r.Put("/projects/{project}/environments/{environment}/api-keys/{id}", s.updateAPIKey)

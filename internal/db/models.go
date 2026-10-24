@@ -59,7 +59,6 @@ type APIKey struct {
 	ProjectID         pgtype.UUID        `json:"project_id"`
 	EnvironmentID     pgtype.UUID        `json:"environment_id"`
 	CreatedByMemberID pgtype.UUID        `json:"created_by_member_id"`
-	Permissions       []string           `json:"permissions"`
 	Name              string             `json:"name"`
 	KeyPrefix         string             `json:"key_prefix"`
 	TokenHash         []byte             `json:"token_hash"`

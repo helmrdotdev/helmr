@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -122,8 +121,8 @@ func TestDeploymentHTTPPostgresAPIKeyRoutes(t *testing.T) {
 	manager := auth.Principal{OrgID: orgID, UserID: managerID, MemberID: managerMemberID, Grants: []auth.PermissionGrant{{ProjectID: projectID.String(), EnvironmentID: environmentID.String(), Permission: auth.CapabilityKeysManage}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}
 	issue := func(permission auth.Permission) string {
 		t.Helper()
-		issued, err := identity.IssueAPIKey(t.Context(), fixture.pool, manager, scope, identity.APIKeyInput{
-			Name: string(permission) + uuid.NewV7().String(), Permissions: []auth.Permission{permission},
+		issued, err := issueAPIKeyWithRole(t, t.Context(), fixture.pool, manager, scope, testAPIKeyInput{
+			Name: string(permission) + uuid.NewV7().String(), RolePermissions: []auth.Permission{permission},
 		})
 		if err != nil {
 			t.Fatal(err)

@@ -12,7 +12,8 @@ Send an Environment-bound Helmr API key as a Bearer credential:
 Authorization: Bearer hlmr_sk_...
 ```
 
-The key determines the Organization, Project, Environment, and permissions for
+The key identifies its Organization, Project and Environment. Current Role
+assignments determine allowed operations and Agent targets for
 the request. `/v1` callers do not send separate project or environment path
 segments. A missing, malformed, expired, revoked, or insufficient credential
 is rejected by the Control Plane.

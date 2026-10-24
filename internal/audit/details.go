@@ -47,14 +47,13 @@ func (MembershipDetails) auditDetails()      {}
 func (InvitationStateDetails) auditDetails() {}
 
 type APIKeyIssuedDetails struct {
-	Permissions []string   `json:"permissions"`
-	ExpiresAt   *time.Time `json:"expires_at"`
+	Name      string     `json:"name"`
+	ExpiresAt *time.Time `json:"expires_at"`
 }
 
 type APIKeyPolicy struct {
-	Name        string     `json:"name"`
-	Permissions []string   `json:"permissions"`
-	ExpiresAt   *time.Time `json:"expires_at"`
+	Name      string     `json:"name"`
+	ExpiresAt *time.Time `json:"expires_at"`
 }
 type APIKeyChangedDetails struct {
 	Before APIKeyPolicy `json:"before"`
@@ -82,6 +81,8 @@ func (RetentionChangedDetails) auditDetails()  {}
 
 // AccessChangeDetails contains policy facts, never request metadata or credentials.
 type AccessSnapshot struct {
+	APIKeyID   string   `json:"api_key_id,omitempty"`
+	APIKeyName string   `json:"api_key_name,omitempty"`
 	GrantID    string   `json:"grant_id,omitempty"`
 	AgentsMode string   `json:"agents_mode,omitempty"`
 	AgentIDs   []string `json:"agent_ids,omitempty"`
@@ -143,10 +144,10 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 		details = d
 	case "api_key.updated":
 		d, ok := details.(APIKeyChangedDetails)
-		valid = ok && d.Before.Name != "" && d.After.Name != "" && validPermissions(d.After.Permissions)
+		valid = ok && d.Before.Name != "" && d.After.Name != ""
 	case "api_key.issued":
 		d, ok := details.(APIKeyIssuedDetails)
-		valid = ok && validPermissions(d.Permissions)
+		valid = ok && d.Name != ""
 		d.ExpiresAt = utcTime(d.ExpiresAt)
 		details = d
 	case "slack_connection.authorized":

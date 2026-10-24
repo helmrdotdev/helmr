@@ -35,15 +35,16 @@ func (e *RoleGrantConflict) Error() string { return e.Cause.Error() }
 func (e *RoleGrantConflict) Unwrap() error { return e.Cause }
 
 type PermissionRole struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	BuiltinKey  *string   `json:"builtin_key"`
-	Permissions []string  `json:"permissions"`
-	GrantCount  int       `json:"grant_count"`
-	GroupCount  int       `json:"group_count"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Revision    int64     `json:"revision"`
+	APIKeyAssignable bool      `json:"api_key_assignable"`
+	ID               uuid.UUID `json:"id"`
+	Name             string    `json:"name"`
+	Description      string    `json:"description"`
+	BuiltinKey       *string   `json:"builtin_key"`
+	Permissions      []string  `json:"permissions"`
+	GrantCount       int       `json:"grant_count"`
+	GroupCount       int       `json:"group_count"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	Revision         int64     `json:"revision"`
 }
 type RoleInput struct {
 	ExpectedRevision string   `json:"-"`
@@ -67,6 +68,8 @@ type GrantTarget struct {
 	IncludedPermissions []string    `json:"included_permissions"`
 }
 type RoleGrant struct {
+	APIKeyID     *uuid.UUID    `json:"api_key_id"`
+	APIKeyName   string        `json:"api_key_name"`
 	RoleRevision int64         `json:"role_revision"`
 	Revision     int64         `json:"revision"`
 	AgentsMode   string        `json:"agents_mode"`
@@ -95,6 +98,7 @@ type RoleGrant struct {
 	Permissions     []string   `json:"permissions"`
 }
 type GrantSubject struct {
+	APIKeyID *uuid.UUID `json:"api_key_id,omitempty"`
 	Type     string     `json:"type"`
 	MemberID *uuid.UUID `json:"member_id,omitempty"`
 	GroupID  *uuid.UUID `json:"group_id,omitempty"`
@@ -158,6 +162,10 @@ func grantSnapshot(g RoleGrant) *audit.AccessSnapshot {
 	s := &audit.AccessSnapshot{GrantID: g.ID.String(), MemberName: g.MemberName, GroupName: g.GroupName, RoleName: g.RoleName, ProjectName: g.ProjectName, EnvironmentName: g.EnvironmentName, AgentsMode: g.AgentsMode, AgentKeys: g.AgentKeys, Revision: g.Revision, Permissions: g.Permissions, SubjectKind: g.SubjectKind, RoleID: g.RoleID.String(), ProjectID: g.ProjectID.String(), EnvironmentID: g.EnvironmentID.String(), TargetKind: g.TargetKind}
 	if g.MemberID != nil {
 		s.MemberID = g.MemberID.String()
+	}
+	if g.APIKeyID != nil {
+		s.APIKeyID = g.APIKeyID.String()
+		s.APIKeyName = g.APIKeyName
 	}
 	if g.GroupID != nil {
 		s.GroupID = g.GroupID.String()
@@ -231,6 +239,21 @@ func roleSupportsTargets(permissions []string, organization bool, mode string, a
 	}
 	return !hasAgentCapabilities(permissions) || mode != "none"
 }
+
+// machineAssignable checks the whole Role; incompatible capabilities are never
+// silently removed when assigning a Role to a machine.
+func machineAssignable(permissions []string) bool {
+	if len(permissions) == 0 {
+		return false
+	}
+	for _, p := range permissions {
+		if !auth.IsMachineCapability(auth.Permission(p)) {
+			return false
+		}
+	}
+	return true
+}
+
 func grantTargets(g RoleGrant) []GrantTarget {
 	targets := []GrantTarget{}
 	for _, permission := range g.Permissions {
@@ -269,6 +292,7 @@ func readPermissionRole(ctx context.Context, database db.DBTX, orgID, id uuid.UU
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrAccessNotFound
 	}
+	r.APIKeyAssignable = machineAssignable(r.Permissions)
 	return r, err
 }
 
@@ -352,21 +376,21 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 			}
 			before = permissionRoleSnapshot(old)
 			action = "role.updated"
-			rows, err := tx.Query(ctx, `SELECT id,environment_id IS NULL,agents_mode,all_members FROM role_grants WHERE org_id=$1 AND role_id=$2 ORDER BY id FOR UPDATE`, m.OrgID, id)
+			rows, err := tx.Query(ctx, `SELECT id,environment_id IS NULL,agents_mode,all_members,api_key_id IS NOT NULL FROM role_grants WHERE org_id=$1 AND role_id=$2 ORDER BY id FOR UPDATE`, m.OrgID, id)
 			if err != nil {
 				return err
 			}
 			incompatible := []string{}
 			for rows.Next() {
 				var gid uuid.UUID
-				var organization, allMembers bool
+				var organization, allMembers, machine bool
 				var mode string
-				if err = rows.Scan(&gid, &organization, &mode, &allMembers); err != nil {
+				if err = rows.Scan(&gid, &organization, &mode, &allMembers, &machine); err != nil {
 					rows.Close()
 					return err
 				}
 				affected = append(affected, gid.String())
-				if !roleSupportsTargets(input.Permissions, organization, mode, allMembers) {
+				if !roleSupportsTargets(input.Permissions, organization, mode, allMembers) || machine && !machineAssignable(input.Permissions) {
 					incompatible = append(incompatible, gid.String())
 				}
 			}
@@ -666,19 +690,23 @@ func ListRoleGrants(ctx context.Context, database db.TxBeginner, m ManagingMembe
 func validateGrantInput(input GrantInput) error {
 	switch input.Subject.Type {
 	case "member":
-		if input.Subject.MemberID == nil || *input.Subject.MemberID == uuid.Nil() || input.Subject.GroupID != nil {
+		if input.Subject.MemberID == nil || *input.Subject.MemberID == uuid.Nil() || input.Subject.GroupID != nil || input.Subject.APIKeyID != nil {
 			return invalidInput("member subject requires only member_id")
 		}
 	case "group":
-		if input.Subject.GroupID == nil || *input.Subject.GroupID == uuid.Nil() || input.Subject.MemberID != nil {
+		if input.Subject.GroupID == nil || *input.Subject.GroupID == uuid.Nil() || input.Subject.MemberID != nil || input.Subject.APIKeyID != nil {
 			return invalidInput("group subject requires only group_id")
 		}
+	case "api_key":
+		if input.Subject.APIKeyID == nil || *input.Subject.APIKeyID == uuid.Nil() || input.Subject.MemberID != nil || input.Subject.GroupID != nil || input.EnvironmentID == nil {
+			return invalidInput("API key subject requires only api_key_id and an environment")
+		}
 	case "all_members":
-		if input.Subject.GroupID != nil || input.Subject.MemberID != nil {
+		if input.Subject.GroupID != nil || input.Subject.MemberID != nil || input.Subject.APIKeyID != nil {
 			return invalidInput("All members has no subject id")
 		}
 	default:
-		return invalidInput("select a member, group or All members")
+		return invalidInput("select a member, group, API key or All members")
 	}
 	if input.RoleID == uuid.Nil() || input.ExpectedRoleRevision < 1 {
 		return invalidInput("role and expected_role_revision are required")
@@ -756,6 +784,18 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		if !roleSupportsTargets(role.Permissions, input.EnvironmentID == nil, input.AgentsMode, input.Subject.Type == "all_members") || (!hasAgentCapabilities(role.Permissions) && input.AgentsMode != "none") {
 			return ErrRoleTarget
 		}
+		if input.Subject.APIKeyID != nil {
+			if !machineAssignable(role.Permissions) {
+				return ErrRoleTarget
+			}
+			var key uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT id FROM api_keys WHERE org_id=$1 AND environment_id=$2 AND id=$3 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>statement_timestamp()) FOR SHARE`, m.OrgID, input.EnvironmentID, input.Subject.APIKeyID).Scan(&key); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return ErrAccessNotFound
+				}
+				return err
+			}
+		}
 		if input.Subject.GroupID != nil {
 			var group uuid.UUID
 			if err := tx.QueryRow(ctx, `SELECT id FROM permission_groups WHERE org_id=$1 AND id=$2 FOR KEY SHARE`, m.OrgID, input.Subject.GroupID).Scan(&group); err != nil {
@@ -788,13 +828,13 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		created := false
 		if id == uuid.Nil() {
 			id = uuid.NewV7()
-			tag, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,group_id,all_members,environment_id,agents_mode,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`, id, m.OrgID, roleID, input.Subject.MemberID, input.Subject.GroupID, input.Subject.Type == "all_members", input.EnvironmentID, input.AgentsMode, m.UserID)
+			tag, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,group_id,all_members,environment_id,agents_mode,created_by,api_key_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, id, m.OrgID, roleID, input.Subject.MemberID, input.Subject.GroupID, input.Subject.Type == "all_members", input.EnvironmentID, input.AgentsMode, m.UserID, input.Subject.APIKeyID)
 			if err != nil {
 				return err
 			}
 			created = tag.RowsAffected() != 0
 			if !created {
-				if err := tx.QueryRow(ctx, `SELECT id FROM role_grants WHERE org_id=$1 AND role_id=$2 AND member_id IS NOT DISTINCT FROM $3::uuid AND group_id IS NOT DISTINCT FROM $4::uuid AND all_members=$5 AND environment_id IS NOT DISTINCT FROM $6::uuid FOR UPDATE`, m.OrgID, roleID, input.Subject.MemberID, input.Subject.GroupID, input.Subject.Type == "all_members", input.EnvironmentID).Scan(&id); err != nil {
+				if err := tx.QueryRow(ctx, `SELECT id FROM role_grants WHERE org_id=$1 AND role_id=$2 AND member_id IS NOT DISTINCT FROM $3::uuid AND group_id IS NOT DISTINCT FROM $4::uuid AND all_members=$5 AND environment_id IS NOT DISTINCT FROM $6::uuid AND api_key_id IS NOT DISTINCT FROM $7::uuid FOR UPDATE`, m.OrgID, roleID, input.Subject.MemberID, input.Subject.GroupID, input.Subject.Type == "all_members", input.EnvironmentID, input.Subject.APIKeyID).Scan(&id); err != nil {
 					return err
 				}
 				grants, err := readRoleGrants(ctx, tx, m.OrgID, GrantFilter{ID: id})
@@ -829,7 +869,7 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 			if strconv.FormatInt(old.Revision, 10) != input.ExpectedRevision {
 				return ErrStaleRevision
 			}
-			if old.SubjectKind != input.Subject.Type || !equalUUID(old.MemberID, input.Subject.MemberID) || !equalUUID(old.GroupID, input.Subject.GroupID) || (input.EnvironmentID == nil && old.EnvironmentID != uuid.Nil()) || (input.EnvironmentID != nil && old.EnvironmentID != *input.EnvironmentID) {
+			if old.SubjectKind != input.Subject.Type || !equalUUID(old.MemberID, input.Subject.MemberID) || !equalUUID(old.GroupID, input.Subject.GroupID) || !equalUUID(old.APIKeyID, input.Subject.APIKeyID) || (input.EnvironmentID == nil && old.EnvironmentID != uuid.Nil()) || (input.EnvironmentID != nil && old.EnvironmentID != *input.EnvironmentID) {
 				return invalidInput("assignment identity cannot change; create a new assignment")
 			}
 			before = grantSnapshot(old)
@@ -1031,7 +1071,7 @@ func GetPermissionGroup(ctx context.Context, database db.TxBeginner, m ManagingM
 }
 
 type GrantFilter struct {
-	ID, MemberID, GroupID, RoleID, After                uuid.UUID
+	ID, MemberID, GroupID, APIKeyID, RoleID, After      uuid.UUID
 	SubjectKind, ScopeKind, Project, Environment, Agent string
 	Limit                                               int
 }
@@ -1051,25 +1091,27 @@ func QueryRoleGrants(ctx context.Context, database db.TxBeginner, m ManagingMemb
 
 func readRoleGrants(ctx context.Context, q db.DBTX, orgID uuid.UUID, filter GrantFilter) ([]RoleGrant, error) {
 	rows, err := q.Query(ctx, `SELECT g.id,
- CASE WHEN g.all_members THEN 'all_members' WHEN g.member_id IS NOT NULL THEN 'member' ELSE 'group' END,
- g.member_id,g.group_id,g.role_id,e.project_id,g.environment_id,
+ CASE WHEN g.all_members THEN 'all_members' WHEN g.member_id IS NOT NULL THEN 'member' WHEN g.api_key_id IS NOT NULL THEN 'api_key' ELSE 'group' END,
+ g.member_id,g.group_id,g.api_key_id,COALESCE(k.name,''),g.role_id,e.project_id,g.environment_id,
  CASE WHEN g.environment_id IS NULL THEN 'organization' ELSE 'environment' END,
  g.revision,r.revision,g.agents_mode,ARRAY(SELECT agent_id FROM role_grant_agents WHERE grant_id=g.id ORDER BY agent_id),ARRAY(SELECT a.key FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id ORDER BY ga.agent_id),r.name,COALESCE(p.name,''),COALESCE(e.name,''),COALESCE(p.slug,''),COALESCE(e.slug,''),COALESCE(pg.name,''),COALESCE(m.display_name,u.display_name,''),g.created_at,g.created_by,
  ARRAY(SELECT permission FROM role_permissions WHERE org_id=r.org_id AND role_id=r.id ORDER BY permission)
  FROM role_grants g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
  LEFT JOIN environments e ON e.id=g.environment_id LEFT JOIN projects p ON p.id=e.project_id
+ LEFT JOIN api_keys k ON (k.org_id,k.id)=(g.org_id,g.api_key_id)
  LEFT JOIN permission_groups pg ON (pg.org_id,pg.id)=(g.org_id,g.group_id)
  LEFT JOIN org_members m ON (m.org_id,m.id)=(g.org_id,g.member_id) LEFT JOIN users u ON u.id=m.user_id
  WHERE g.org_id=$1 AND ($2::uuid='00000000-0000-0000-0000-000000000000' OR g.id=$2)
  AND ($3::uuid='00000000-0000-0000-0000-000000000000' OR g.group_id=$3)
  AND ($4::uuid='00000000-0000-0000-0000-000000000000' OR g.role_id=$4)
- AND ($5='' OR CASE WHEN g.all_members THEN 'all_members' WHEN g.member_id IS NOT NULL THEN 'member' ELSE 'group' END=$5)
+ AND ($5='' OR CASE WHEN g.all_members THEN 'all_members' WHEN g.member_id IS NOT NULL THEN 'member' WHEN g.api_key_id IS NOT NULL THEN 'api_key' ELSE 'group' END=$5)
  AND ($6='' OR p.slug=$6) AND ($7='' OR e.slug=$7)
  AND ($8='' OR g.agents_mode='all' OR EXISTS(SELECT 1 FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id AND a.key=$8))
  AND g.id>$9
  AND ($11::uuid='00000000-0000-0000-0000-000000000000' OR g.member_id=$11)
  AND ($12='' OR CASE WHEN g.environment_id IS NULL THEN 'organization' ELSE 'environment' END=$12)
- ORDER BY g.id LIMIT NULLIF($10::integer,0)`, orgID, filter.ID, filter.GroupID, filter.RoleID, filter.SubjectKind, filter.Project, filter.Environment, filter.Agent, filter.After, filter.Limit, filter.MemberID, filter.ScopeKind)
+ AND ($13::uuid='00000000-0000-0000-0000-000000000000' OR g.api_key_id=$13)
+ ORDER BY g.id LIMIT NULLIF($10::integer,0)`, orgID, filter.ID, filter.GroupID, filter.RoleID, filter.SubjectKind, filter.Project, filter.Environment, filter.Agent, filter.After, filter.Limit, filter.MemberID, filter.ScopeKind, filter.APIKeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -1078,7 +1120,7 @@ func readRoleGrants(ctx context.Context, q db.DBTX, orgID uuid.UUID, filter Gran
 	for rows.Next() {
 		var g RoleGrant
 		var project, env *uuid.UUID
-		if err := rows.Scan(&g.ID, &g.SubjectKind, &g.MemberID, &g.GroupID, &g.RoleID, &project, &env, &g.TargetKind, &g.Revision, &g.RoleRevision, &g.AgentsMode, &g.AgentIDs, &g.AgentKeys, &g.RoleName, &g.ProjectName, &g.EnvironmentName, &g.Project, &g.Environment, &g.GroupName, &g.MemberName, &g.CreatedAt, &g.CreatedBy, &g.Permissions); err != nil {
+		if err := rows.Scan(&g.ID, &g.SubjectKind, &g.MemberID, &g.GroupID, &g.APIKeyID, &g.APIKeyName, &g.RoleID, &project, &env, &g.TargetKind, &g.Revision, &g.RoleRevision, &g.AgentsMode, &g.AgentIDs, &g.AgentKeys, &g.RoleName, &g.ProjectName, &g.EnvironmentName, &g.Project, &g.Environment, &g.GroupName, &g.MemberName, &g.CreatedAt, &g.CreatedBy, &g.Permissions); err != nil {
 			return nil, err
 		}
 		if project != nil {

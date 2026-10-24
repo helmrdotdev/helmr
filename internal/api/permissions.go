@@ -3,14 +3,15 @@ package api
 // Permission management uses organization-owned roles and groups. Resource scope
 // belongs to each grant, not to a role definition.
 type PermissionRole struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	BuiltinKey  *string  `json:"builtin_key"`
-	Permissions []string `json:"permissions"`
-	GrantCount  int      `json:"grant_count"`
-	GroupCount  int      `json:"group_count"`
-	Revision    int64    `json:"revision"`
+	APIKeyAssignable bool     `json:"api_key_assignable"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	BuiltinKey       *string  `json:"builtin_key"`
+	Permissions      []string `json:"permissions"`
+	GrantCount       int      `json:"grant_count"`
+	GroupCount       int      `json:"group_count"`
+	Revision         int64    `json:"revision"`
 }
 type CapabilityDefinition struct {
 	ResourceType string   `json:"resource_type"`
@@ -57,6 +58,8 @@ type GrantTarget struct {
 	IncludedPermissions []string `json:"included_permissions"`
 }
 type RoleGrant struct {
+	APIKeyID     *string       `json:"api_key_id"`
+	APIKeyName   string        `json:"api_key_name"`
 	RoleRevision int64         `json:"role_revision"`
 	Revision     int64         `json:"revision"`
 	AgentsMode   string        `json:"agents_mode"`
@@ -85,6 +88,7 @@ type RoleGrantsResponse struct {
 	NextCursor string      `json:"next_cursor,omitempty"`
 }
 type GrantSubject struct {
+	APIKeyID *string `json:"api_key_id,omitempty"`
 	Type     string  `json:"type"`
 	MemberID *string `json:"member_id,omitempty"`
 	GroupID  *string `json:"group_id,omitempty"`
