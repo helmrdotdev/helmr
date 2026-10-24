@@ -463,14 +463,3 @@ variable "warm_pool_size" {
     error_message = "warm_pool_size must be a non-negative integer."
   }
 }
-
-variable "access_service_token" {
-  description = "Optional Cloudflare Access identity for control-plane requests. Additional KMS keys grant only secret decryption."
-  type = object({
-    origin            = string
-    client_id         = string
-    client_secret_arn = string
-    kms_key_arns      = optional(list(string), [])
-  })
-  default = null
-}

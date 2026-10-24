@@ -538,7 +538,12 @@ func TestCheckpointMemoryStreamDeadlineIsSharedAcrossWindows(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s, r := openStreamMemoryFixture(t, bytes.Repeat([]byte{74}, 3*vm.MemoryReadBytes))
 		count := 0
-		next, err := s.ReadWindows(t.Context(), 0, func(int64, []byte) error { count++; time.Sleep(memoryReadTimeout); return nil })
+		next, err := s.ReadWindows(t.Context(), 0, func(int64, []byte) error {
+			count++
+			time.Sleep(memoryReadTimeout)
+			synctest.Wait()
+			return nil
+		})
 		if !errors.Is(err, context.DeadlineExceeded) || next != vm.MemoryReadBytes || count != 1 || r.closed != 1 {
 			t.Fatalf("next=%d count=%d close=%d err=%v", next, count, r.closed, err)
 		}

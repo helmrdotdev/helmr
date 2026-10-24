@@ -27,8 +27,6 @@ locals {
   )
 
   worker_environment_values = {
-    HELMR_ACCESS_ORIGIN               = var.access_service_token == null ? null : var.access_service_token.origin
-    HELMR_ACCESS_CLIENT_ID            = var.access_service_token == null ? null : var.access_service_token.client_id
     WORKER_COMPUTER_STAGING_MIB       = tostring(var.computer_staging_mib)
     WORKER_COMPUTER_DEVICES           = join(" ", var.computer_devices)
     CONTROL_PLANE_URL                 = var.worker_controlplane_url
@@ -73,7 +71,6 @@ locals {
     "CHECKPOINT_ENCRYPTION_KEY",
     "WORKER_ENROLLMENT_TOKEN_FILE",
     "WORKER_RESOURCE_ID",
-    "HELMR_ACCESS_CLIENT_SECRET",
   ]))
   worker_environment_conflicts = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
   base_worker_environment      = merge(var.worker_environment, local.worker_environment)
@@ -84,7 +81,6 @@ locals {
     environment                          = local.base_worker_environment
     checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
     worker_enrollment_token_secret_arn   = var.secret_arns.worker_enrollment_token
-    access_client_secret_arn             = var.access_service_token == null ? null : var.access_service_token.client_secret_arn
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path
     autoscaling_group_name               = local.asg_name
@@ -153,19 +149,12 @@ locals {
         Action = [
           "secretsmanager:GetSecretValue"
         ]
-        Resource = concat([
+        Resource = [
           var.secret_arns.checkpoint_encryption_key,
           var.secret_arns.worker_enrollment_token,
-        ], var.access_service_token == null ? [] : [var.access_service_token.client_secret_arn])
+        ]
       },
-      ], var.access_service_token == null ? [] : [for key in var.access_service_token.kms_key_arns : {
-        Effect   = "Allow"
-        Action   = ["kms:Decrypt"]
-        Resource = key
-        Condition = {
-          StringEquals = { "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com" }
-        }
-      }], [
+      ], [
       {
         Sid    = "ReadPlatformObjects"
         Effect = "Allow"
@@ -411,16 +400,6 @@ resource "terraform_data" "network_preconditions" {
   }
 
   lifecycle {
-    precondition {
-      condition = var.access_service_token == null ? true : (
-        var.access_service_token.origin == var.worker_controlplane_url &&
-        can(regex("^https://[A-Za-z0-9.-]+(:[0-9]+)?/?$", var.access_service_token.origin)) &&
-        can(regex("^[A-Za-z0-9_.-]+$", var.access_service_token.client_id)) &&
-        can(regex("^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.access_service_token.client_secret_arn))
-      )
-      error_message = "Worker Access identity must name its HTTPS control plane and a valid secret reference."
-    }
-
     precondition {
       condition     = length(local.worker_environment_conflicts) == 0
       error_message = "worker_environment must not set module-managed Worker variables. Remove conflicting entries and use typed inputs where available."

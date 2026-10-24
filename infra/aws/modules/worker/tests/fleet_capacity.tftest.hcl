@@ -402,18 +402,3 @@ run "caller_can_provision_multiple_standby_instances" {
     error_message = "the generic module must provision caller capacity without a Managed Cloud policy"
   }
 }
-
-run "worker_access_identity_uses_secret_store" {
-  command = plan
-  variables {
-    access_service_token = {
-      origin            = "https://controlplane.example.test"
-      client_id         = "worker-id"
-      client_secret_arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-access"
-    }
-  }
-  assert {
-    condition     = strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_ACCESS_CLIENT_ID=worker-id") && strcontains(base64decode(aws_launch_template.worker.user_data), "--secret-id 'arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-access'") && strcontains(aws_iam_role_policy.worker.policy, "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-access")
-    error_message = "Worker bootstrap must load its scoped Access secret through its own role."
-  }
-}

@@ -165,11 +165,9 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 		return report
 	}
 	if doctor {
-		// Readiness needs no Helmr bearer, but retains outer gateway authentication.
-		probe, err := newControlPlaneClient(cp.BaseURL())
-		if err != nil {
-			report.readError("server.ready", err)
-		} else if err := probe.CheckReadiness(ctx); err != nil {
+		// Readiness is public. Do not send the saved credential to this probe.
+		probe, _ := client.New(cp.BaseURL())
+		if err := probe.CheckReadiness(ctx); err != nil {
 			report.readError("server.ready", err)
 		} else {
 			report.check("server.ready", "pass", "Server database readiness check passed; this does not establish Worker capacity.", nil)
@@ -332,7 +330,7 @@ func diagnosticConnection(cmd *cobra.Command, report *diagnosticReport) *client.
 	if session && report.Offline {
 		report.Credential.Present = nil
 		report.check("auth.credential", "skip", "Offline: saved credential presence is unknown; the OS credential store was not opened.", nil)
-		cp, err := newControlPlaneClient(parsed.String())
+		cp, err := client.New(parsed.String())
 		if err != nil {
 			report.APIURL = nil
 			report.check("server.origin", "error", "Server must be an HTTPS origin (HTTP is allowed only for loopback), without credentials, path, query or fragment.", &diagnosticRemedy{"Correct --api-url or HELMR_API_URL.", false})
@@ -360,7 +358,7 @@ func diagnosticConnection(cmd *cobra.Command, report *diagnosticReport) *client.
 	if session {
 		opts = append(opts, client.WithSessionScopedRoutes())
 	}
-	cp, err := newControlPlaneClient(parsed.String(), opts...)
+	cp, err := client.New(parsed.String(), opts...)
 	if err != nil {
 		report.readError("server.origin", err)
 		return nil

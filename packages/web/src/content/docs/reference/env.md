@@ -38,26 +38,6 @@ entirely by the guest image, tests, or development tooling remain internal.
 `HelmrClient` does not read these variables automatically. Pass the URL and API
 key from your application's configuration to its constructor.
 
-## Access-protected Control Plane clients
-
-The CLI, Worker and dispatcher's readiness client accept an optional Cloudflare
-Access service identity through the shared client configuration below. Set all
-three values together, or leave all three unset. Helmr's application credentials
-are still required; these headers do not replace the API key or Worker identity.
-
-| Variable | Purpose |
-| --- | --- |
-| `HELMR_ACCESS_ORIGIN` | Exact HTTPS origin protected by Access, without a path, query or credentials. |
-| `HELMR_ACCESS_CLIENT_ID` | Access service token client ID. |
-| `HELMR_ACCESS_CLIENT_SECRET` | Access service token secret, supplied through the process's secret store. |
-
-Credentials are sent only to the configured origin, including when the selected
-API URL changes. Cross-origin redirects and storage requests do not receive them.
-Do not put token values in source, command arguments or diagnostic output.
-`HelmrClient` accepts a custom `fetch` for gateway integration; it does not read
-these variables automatically. A custom fetch must restrict credentials to the
-configured HTTPS origin and refuse credential-bearing redirects.
-
 ## Control Plane
 
 Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`,

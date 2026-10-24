@@ -151,39 +151,3 @@ test("progress wait reads canonical Content through the SDK before terminal sett
     expect(cursors).toEqual(["0", "1"])
   } finally { server.stop(true) }
 })
-
-
-test("Access-protected verification preserves caller cancellation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "helmr-access-cancel-"))
-  const old = { ...process.env }
-  const originalFetch = globalThis.fetch
-  let received: Request | undefined
-  const controller = new AbortController()
-  try {
-    Object.assign(process.env, {
-      HELMR_API_URL: "https://staging.example.com", HELMR_API_KEY: "fixture",
-      HELMR_EVIDENCE_DIR: join(root, "evidence"),
-      HELMR_ACCESS_ORIGIN: "https://staging.example.com",
-      HELMR_ACCESS_CLIENT_ID: "id", HELMR_ACCESS_CLIENT_SECRET: "secret",
-    })
-    delete process.env.HELMR_EXPECTED_BUNDLE_DIGEST
-    globalThis.fetch = (async (input, init) => {
-      received = new Request(input, init)
-      return Response.json({ computers: [] })
-    }) as typeof fetch
-    await verify("access-cancellation", async ({ client }) => {
-      await client.computers.list({}, { signal: controller.signal })
-      expect(received!.headers.get("CF-Access-Client-Id")).toBe("id")
-      expect(received!.signal.aborted).toBe(false)
-      controller.abort()
-      expect(received!.signal.aborted).toBe(true)
-    })
-  } finally {
-    globalThis.fetch = originalFetch
-    for (const key of ["HELMR_API_URL", "HELMR_API_KEY", "HELMR_EVIDENCE_DIR", "HELMR_EXPECTED_BUNDLE_DIGEST", "HELMR_ACCESS_ORIGIN", "HELMR_ACCESS_CLIENT_ID", "HELMR_ACCESS_CLIENT_SECRET"]) {
-      if (old[key] === undefined) delete process.env[key]
-      else process.env[key] = old[key]
-    }
-    await rm(root, { recursive: true, force: true })
-  }
-})

@@ -221,7 +221,7 @@ func TestFreshWorkerObservationWinsAgainstStaleFenceRecheck(t *testing.T) {
 	defer server.Close()
 	clock := &testFenceClock{now: now.Add(-120 * time.Second)}
 	fencer, err := workergroup.NewStaleHostFencer(
-		pool, server.URL, nil,
+		pool, server.URL,
 		workergroup.WithStaleHostFenceClock(clock),
 	)
 	if err != nil {

@@ -6,7 +6,6 @@ mock_provider "aws" {
   mock_resource "aws_s3_bucket" { defaults = { arn = "arn:aws:s3:::mock-bucket" } }
   mock_resource "aws_kms_key" { defaults = { arn = "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000" } }
   mock_resource "aws_iam_role" { defaults = { arn = "arn:aws:iam::000000000000:role/mock" } }
-  mock_resource "aws_lb_listener" { defaults = { arn = "arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/app/helmr-test/0000000000000000/0000000000000000" } }
   mock_resource "aws_iam_policy" { defaults = { arn = "arn:aws:iam::000000000000:policy/mock" } }
 }
 
@@ -501,39 +500,4 @@ run "private_rejects_implicit_sources" {
   command = plan
   variables { ingress_mode = "private" }
   expect_failures = [terraform_data.ingress_contract]
-}
-
-run "authenticated_origin_and_dispatcher" {
-  command = apply
-  variables {
-    app_origin          = "https://controlplane.example.test"
-    allow_insecure_http = false
-    certificate_arn     = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
-    origin_authentication = {
-      secret_arn         = "arn:aws:secretsmanager:us-east-1:000000000000:secret:origin"
-      secret_version_id  = "00000000-0000-0000-0000-000000000000"
-      allowed_ipv4_cidrs = ["192.0.2.0/24"]
-    }
-    dispatcher_access_service_token = {
-      origin            = "https://controlplane.example.test"
-      client_id         = "dispatcher-id"
-      client_secret_arn = "arn:aws:secretsmanager:us-east-1:000000000000:secret:dispatcher-access"
-    }
-  }
-  override_data {
-    target = data.aws_secretsmanager_secret_version.origin_authentication
-    values = { secret_string = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
-  }
-  assert {
-    condition     = length(aws_vpc_security_group_ingress_rule.alb_http_public) == 0 && length(aws_vpc_security_group_ingress_rule.alb_https) == 0 && aws_vpc_security_group_ingress_rule.alb_authenticated_origin["192.0.2.0/24"].from_port == 443
-    error_message = "Authenticated origin must allow only the selected HTTPS proxy sources."
-  }
-  assert {
-    condition     = aws_lb_listener.https[0].default_action[0].type == "fixed-response" && aws_lb_listener.https[0].default_action[0].fixed_response[0].status_code == "403" && one(aws_lb_listener_rule.authenticated_origin[0].condition).http_header[0].values == toset(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
-    error_message = "The origin must refuse forwarding unless the exact proxy secret is present."
-  }
-  assert {
-    condition     = { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].secrets : item.name => item.valueFrom }.HELMR_ACCESS_CLIENT_SECRET == var.dispatcher_access_service_token.client_secret_arn && { for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name => item.value }.HELMR_ACCESS_CLIENT_ID == "dispatcher-id"
-    error_message = "Dispatcher must load its own Access identity as an ECS secret."
-  }
 }
