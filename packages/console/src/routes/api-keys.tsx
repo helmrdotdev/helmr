@@ -322,7 +322,7 @@ export function ApiKeys() {
         )}
       </Show>
 
-      <Show when={accessing()} keyed>{current=><APIKeyAccess keyItem={current.keyItem} project={current.target.projectID} projectName={current.target.projectName} environment={current.target.environment.environment} onClose={()=>setAccessing(undefined)}/>}</Show>
+      <Show when={accessing()} keyed>{current=><APIKeyAccess keyItem={current.keyItem} project={current.target.projectID} environment={current.target.environment.environment} onClose={()=>setAccessing(undefined)}/>}</Show>
       <Show when={editing()} keyed>{current=><EditApiKeyDialog keyItem={current.keyItem} target={current.target} onClose={()=>setEditing(undefined)} onSaved={async()=>{await invalidateApiKeys(current.target.projectID,current.target.environment.environment);setEditing(undefined)}}/>}</Show>
       <Show when={rotating()}>{current=><ConfirmDialog title="Rotate API key token" confirmLabel="Rotate token" busyLabel="Rotating..." target={current().keyItem.name} environment={environmentChip(current().target.environment)} errorMessage={apiKeyErrorMessage} onClose={()=>setRotating(undefined)} onConfirm={async()=>{
        const {keyItem,target}=current();const result=await rotateApiKey(target.projectID,target.environment.environment,keyItem.id);setIssued(result);await invalidateApiKeys(target.projectID,target.environment.environment);

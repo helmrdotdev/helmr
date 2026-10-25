@@ -66,7 +66,7 @@ function agentPath(agent: string, options: DefinitionScope & { deploymentID?: st
 
 export type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean; deleted_at: string | null; revision: number };
 // An Agent's page opens on its Sessions; its other tabs are pages below it.
-export type AgentTab = "sessions" | "triggers" | "slack";
+export type AgentTab = "sessions" | "triggers" | "slack" | "access";
 export function agentHref(agent: string, tab: AgentTab = "sessions"): string {
   const base = `/agents/${encodeURIComponent(agent)}`;
   return tab === "sessions" ? base : `${base}/${tab}`;

@@ -1,4 +1,5 @@
-import { MemberAccess } from "../features/access/MemberAccess";
+import { A } from "@solidjs/router";
+import { memberHref } from "../lib/permissions";
 import { OwnershipSettings } from "../features/access/OwnershipSettings";
 import { Show } from "solid-js";
 import { useMe } from "../lib/me";
@@ -23,7 +24,7 @@ export function AccountSettings() {
               <KeyValue label="Organization">{account().org_name || undefined}</KeyValue>
             </dl>
           </Panel>
-          <Show when={account().membership_id}><Panel title="My access"><MemberAccess membershipID={account().membership_id!} /></Panel></Show>
+          <Show when={account().membership_id}>{membership => <Panel title="My access" actions={<A href={memberHref(membership())} class={ui.compactButton}>View my access</A>}><p class={ui.muted}>The permissions you have and where each one comes from: direct assignments, groups and all members.</p></Panel>}</Show>
           <Show when={account().is_owner}><OwnershipSettings /></Show>
           <IdentitySettings userID={account().user_id} organizationID={account().org_id ?? ""} />
         </div>

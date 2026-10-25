@@ -1,4 +1,4 @@
-import { ResourceAccess } from "../features/access/ResourceAccess";
+import { EnvironmentAccess } from "../features/access/EnvironmentAccess";
 import { useMe } from "../lib/me";
 import { useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
@@ -111,7 +111,7 @@ export function Environments() {
                   items={[
                     ...(scope.selectedEnvironmentID() !== env.environment ? [{ label: "Use", onSelect: () => scope.setSelectedEnvironmentID(env.environment) }] : []),
                     ...(canManage() ? [{ label: "Edit", onSelect: () => setEditing(env) }] : []),
-                    ...(hasPermission(me.data,"access.manage") ? [{label:"Access",onSelect:()=>setAccessEnvironment(env.environment)}] : []),
+                    ...(hasPermission(me.data,"access.manage") ? [{label:"Manage access",onSelect:()=>setAccessEnvironment(env.environment)}] : []),
                     { label: "Copy ID", onSelect: () => void clipboard.copy(env.environment) },
                   ]}
                 />
@@ -137,7 +137,7 @@ export function Environments() {
         )}
       </Show>
 
-      <Show when={accessEnvironment()}>{env => <ResourceAccess environment={env()} onClose={() => setAccessEnvironment(undefined)} />}</Show>
+      <Show when={accessEnvironment()}>{env => <EnvironmentAccess environment={env()} onClose={() => setAccessEnvironment(undefined)} />}</Show>
       <Show when={editing()}>
         {(env) => (
           <EditEnvironmentDialog

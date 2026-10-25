@@ -1,46 +1,35 @@
-import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createSignal, For, Show } from "solid-js";
-import { errorMessage } from "../../lib/error";
-import { listAccessTargets, listGrants, listRoles, removeGrant, targetSummary, type RoleGrant } from "../../lib/permissions";
+import { createQuery } from "@tanstack/solid-query";
+import { createMemo, createSignal, Show } from "solid-js";
 import { type ApiKeySummary } from "../../lib/api-keys";
-import { AssignRoleDialog, EditGrantDialog } from "../../routes/groups";
-import { ConfirmDialog, Dialog } from "../../ui/Dialog";
+import { loadError } from "../../lib/error";
+import { listGrants, listRoles } from "../../lib/permissions";
+import { Dialog } from "../../ui/Dialog";
 import { Notice } from "../../ui/Notice";
+import { Toolbar } from "../../ui/Page";
+import { QueryState } from "../../ui/QueryState";
+import { TableSkeleton } from "../../ui/Skeleton";
 import { ui } from "../../ui/styles";
+import { AssignmentsTable } from "./AssignmentsTable";
+import { GrantAccessDialog } from "./GrantAccessDialog";
 
-export function APIKeyAccess(props: { keyItem: ApiKeySummary; project: string; projectName: string; environment: string; onClose: () => void }) {
-  const cache = useQueryClient();
+// An API key's role assignments, all in its own environment. Keys never get
+// access from groups or all members.
+export function APIKeyAccess(props: { keyItem: ApiKeySummary; project: string; environment: string; onClose: () => void }) {
   const roles = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles }));
   const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants }));
-  const targets = createQuery(() => ({ queryKey: ["access", "targets", props.project], queryFn: () => listAccessTargets(props.project) }));
-  const assignments = () => grants.data?.grants.filter(g => g.api_key_id === props.keyItem.id) ?? [];
-  const environment = () => targets.data?.targets.find(t => t.environment === props.environment);
-  const [assigning, setAssigning] = createSignal(false);
-  const [editing, setEditing] = createSignal<RoleGrant>();
-  const [removing, setRemoving] = createSignal<RoleGrant>();
-  const refresh = async () => { await Promise.all([cache.invalidateQueries({ queryKey: ["access"] }), cache.invalidateQueries({ queryKey: ["api-keys"] })]); };
-  const error = () => roles.error || grants.error || targets.error;
-  const ready = () => !!roles.data && !!grants.data && !!environment();
+  const assignments = createMemo(() => grants.data?.grants.filter(g => g.api_key_id === props.keyItem.id) ?? []);
+  const [granting, setGranting] = createSignal(false);
+  const active = () => props.keyItem.status === "active";
   return <>
-    <Show when={!assigning() && !editing() && !removing()}><Dialog title={`Access: ${props.keyItem.name}`} onClose={props.onClose} class="max-w-180">
-      <div class="space-y-4">
-        <p class="text-control text-console-muted">Roles grant access only in {props.projectName} / {environment()?.name ?? props.environment}. This key does not inherit its creator’s access or All members assignments. Everyone holding its secret acts as the same identity.</p>
-        <Show when={error()}><Notice tone="danger">{errorMessage(error())}</Notice></Show>
-        <Show when={ready()} fallback={<p>Loading assignments…</p>}>
-          <For each={assignments()} fallback={<Notice tone="info">No Roles assigned. This key cannot perform workload operations.</Notice>}>{grant => <div class="space-y-2 border-b border-console-border pb-3">
-            <p class="font-medium">{grant.role_name}</p><p class="text-control">{targetSummary(grant)}</p>
-            <div class="flex gap-2"><Show when={props.keyItem.status === "active"}><button class={ui.secondaryButton} onClick={() => setEditing(grant)}>Edit targets</button></Show><button class={ui.secondaryButton} onClick={() => setRemoving(grant)}>Remove assignment</button></div>
-          </div>}</For>
-          <Show when={props.keyItem.status === "active"} fallback={<Notice tone="info">This key is {props.keyItem.status}. Its Role assignments do not allow authentication.</Notice>}><div class="flex justify-end"><button class={ui.button} onClick={() => setAssigning(true)}>Assign role</button></div></Show>
-        </Show>
-      </div>
-    </Dialog></Show>
-    <Show when={assigning() && ready()}><AssignRoleDialog project={props.project} projectName={props.projectName} groups={[]} roles={roles.data!.roles} catalog={roles.data!.catalog} targets={targets.data!.targets} initialGroup="" initialRole="" initialEnvironment={props.environment} initialAPIKey={{ id: props.keyItem.id, name: props.keyItem.name }} fixedTarget={{ environment_id: environment()!.environment_id }} onClose={() => setAssigning(false)} onSaved={async () => { await refresh(); setAssigning(false); }} /></Show>
-    <Show when={editing()} keyed>{grant => <EditGrantDialog grant={grant} onClose={() => setEditing(undefined)} onSaved={refresh} />}</Show>
-    <Show when={removing()}>{grant => <ConfirmDialog title="Remove role assignment" confirmLabel="Remove assignment" tone="danger" onClose={() => setRemoving(undefined)} onConfirm={async () => { await removeGrant(grant().id, grant().revision); await refresh(); setRemoving(undefined); }}>
-      <p>Remove {grant().role_name} from {props.keyItem.name}? {targetSummary(grant())}.</p>
-      <p class="mt-2">Other Role assignments remain. This may prevent future work in this key’s existing sessions; it does not undo work already performed.</p>
-      <p class="mt-2">Remaining Roles: {assignments().filter(g => g.id !== grant().id).map(g => g.role_name).join(", ") || "None"}.</p>
-    </ConfirmDialog>}</Show>
+    <Dialog title={`Access for ${props.keyItem.name}`} onClose={props.onClose} class="max-w-200">
+      <Show when={!active()}><Notice tone="info" class="mb-3">This key is {props.keyItem.status} and can't be used. You can still remove its roles.</Notice></Show>
+      <Toolbar end={<Show when={active()}><button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant access</button></Show>} />
+      <QueryState query={grants} pending={<TableSkeleton label="Loading access" columns={["Role", "Where", "Agents", "Permissions"]} />} error={error => loadError(error, "Could not load access.")}>
+        {() => <AssignmentsTable grants={assignments()} catalog={roles.data?.catalog ?? []} editable={active()} empty="No roles yet" emptyHint="This key can't do anything until it has a role. Everyone holding it acts as the same identity." />}
+      </QueryState>
+    </Dialog>
+    <Show when={granting()}>
+      <GrantAccessDialog recipient={{ kind: "api_key", id: props.keyItem.id, name: props.keyItem.name }} environment={{ project: props.project, environment: props.environment }} onClose={() => setGranting(false)} />
+    </Show>
   </>;
 }
