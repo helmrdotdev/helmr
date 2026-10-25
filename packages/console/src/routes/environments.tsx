@@ -78,7 +78,8 @@ export function Environments() {
   const queryClient = useQueryClient();
   const me = useMe();
   const clipboard = useClipboard({ copied: "Environment ID copied", failed: "Could not copy the environment ID" });
-  const canManage = () => hasPermission(me.data, "projects.manage");
+  const canCreate = () => hasPermission(me.data, "environments.create");
+  const canUpdate = () => hasPermission(me.data, "environments.update");
   const [accessEnvironment, setAccessEnvironment] = createSignal<string>();
   const [creating, setCreating] = createSignal(false);
   const [editing, setEditing] = createSignal<Environment | null>(null);
@@ -91,7 +92,7 @@ export function Environments() {
       <PageHeader
         title="Environments"
         actions={
-          <button type="button" class={ui.button} disabled={!project() || !canManage()} onClick={() => setCreating(true)}>
+          <button type="button" class={ui.button} disabled={!project() || !canCreate()} onClick={() => setCreating(true)}>
             New environment
           </button>
         }
@@ -110,8 +111,8 @@ export function Environments() {
                   label={`Actions for ${env.name}`}
                   items={[
                     ...(scope.selectedEnvironmentID() !== env.environment ? [{ label: "Use", onSelect: () => scope.setSelectedEnvironmentID(env.environment) }] : []),
-                    ...(canManage() ? [{ label: "Edit", onSelect: () => setEditing(env) }] : []),
-                    ...(hasPermission(me.data,"access.manage") ? [{label:"Manage access",onSelect:()=>setAccessEnvironment(env.environment)}] : []),
+                    ...(canUpdate() ? [{ label: "Edit", onSelect: () => setEditing(env) }] : []),
+                    ...(hasPermission(me.data,"assignments.create") ? [{label:"Manage access",onSelect:()=>setAccessEnvironment(env.environment)}] : []),
                     { label: "Copy ID", onSelect: () => void clipboard.copy(env.environment) },
                   ]}
                 />
@@ -131,7 +132,7 @@ export function Environments() {
               await queryClient.invalidateQueries({ queryKey: ["projects"] });
               scope.setSelectedEnvironmentID(env.environment);
               setCreating(false);
-              if(hasPermission(me.data,"access.manage")) setAccessEnvironment(env.environment);
+              if(hasPermission(me.data,"assignments.create")) setAccessEnvironment(env.environment);
             }}
           />
         )}

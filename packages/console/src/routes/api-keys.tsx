@@ -3,7 +3,7 @@ import { hasPermission } from "../lib/auth";
 import { APIKeyAccess } from "../features/access/APIKeyAccess";
 import { Notice } from "../ui/Notice";
 import { listMembers } from "../lib/members";
-import { listRoles, listAccessTargets, resourceLabel, type Capability, type PermissionRole } from "../lib/permissions";
+import { listRoles, listAccessTargets, resourceLabel, type PermissionDefinition, type PermissionRole } from "../lib/permissions";
 import { createQuery, createInfiniteQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
@@ -26,7 +26,7 @@ import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
 import { Field, TextInput } from "../ui/Field";
 import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { isDenied, QueryState } from "../ui/QueryState";
+import { QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -71,22 +71,26 @@ function validateLabel(value: string): string | null {
   return null;
 }
 
-function ApiKeyRow(props: { creator: string; keyItem: ApiKeySummary; canManage: boolean; canAssign: boolean; status: boolean; onAccess: (keyItem: ApiKeySummary) => void; onRevoke: (keyItem: ApiKeySummary) => void; onRotate: (keyItem: ApiKeySummary) => void; onEdit: (keyItem: ApiKeySummary) => void }) {
-  const lifecycleActions = () => !props.canManage ? [] : props.keyItem.status === "active" ? [{label:"Edit",onSelect:()=>props.onEdit(props.keyItem)}, {label:"Rotate token",onSelect:()=>props.onRotate(props.keyItem)}, {label:"Revoke",tone:"danger" as const,onSelect:()=>props.onRevoke(props.keyItem)}] : props.keyItem.status === "expired" ? [{label:"Revoke",tone:"danger" as const,onSelect:()=>props.onRevoke(props.keyItem)}] : [];
+function ApiKeyRow(props: { metadata: boolean; creator: string; keyItem: ApiKeySummary; canUpdate: boolean; canRotate: boolean; canRevoke: boolean; canAssign: boolean; status: boolean; onAccess: (keyItem: ApiKeySummary) => void; onRevoke: (keyItem: ApiKeySummary) => void; onRotate: (keyItem: ApiKeySummary) => void; onEdit: (keyItem: ApiKeySummary) => void }) {
+  const lifecycleActions = () => [
+    ...(props.keyItem.status === "active" && props.canUpdate ? [{label:"Edit",onSelect:()=>props.onEdit(props.keyItem)}] : []),
+    ...(props.keyItem.status === "active" && props.canRotate ? [{label:"Rotate token",onSelect:()=>props.onRotate(props.keyItem)}] : []),
+    ...(["active", "expired"].includes(props.keyItem.status) && props.canRevoke ? [{label:"Revoke",tone:"danger" as const,onSelect:()=>props.onRevoke(props.keyItem)}] : []),
+  ];
   return <tr>
     <td><span class="font-mono text-chrome">{props.keyItem.name}</span></td>
     <Show when={props.status}><td><StatusBadge resource="api_key" status={props.keyItem.status} /></td></Show>
-    <td><code>{props.keyItem.key_prefix}…</code></td>
-    <td><span class="text-control">{props.creator}</span></td>
+    <Show when={props.metadata}><td><code>{props.keyItem.key_prefix}…</code></td>
+    <td><span class="text-control">{props.creator}</span></td></Show>
     <td><Show when={props.canAssign} fallback={<span>{props.keyItem.role_names.join(", ") || "No access"}</span>}><button class="text-left text-console-accent hover:underline" onClick={()=>props.onAccess(props.keyItem)}>{props.keyItem.role_names.join(", ") || "No access — assign a Role"}</button></Show></td>
-    <td><RelativeTime value={props.keyItem.last_used_at} fallback="—" /></td>
-    <td><RelativeTime value={props.keyItem.expires_at} fallback="Never" /></td>
+    <Show when={props.metadata}><td><RelativeTime value={props.keyItem.last_used_at} fallback="—" /></td>
+    <td><RelativeTime value={props.keyItem.expires_at} fallback="Never" /></td></Show>
     <RowActions label={`Actions for ${props.keyItem.name}`} items={[...(props.canAssign ? [{label:"Manage access",onSelect:()=>props.onAccess(props.keyItem)}] : []),...lifecycleActions()]} />
   </tr>;
 }
 
 function IssueApiKeyDialog(props: {
- catalog: Capability[];
+ catalog: PermissionDefinition[];
  roles: PermissionRole[];
  canAssign: boolean;
  rolesLoading: boolean;
@@ -188,7 +192,7 @@ function EditApiKeyDialog(props: {keyItem:ApiKeySummary;target:EditTarget;onClos
   setBusy(true);setError(null);
   try {
    const choice=expiry();
-   const expires=choice==="keep"?props.keyItem.expires_at:choice==="never"?null:new Date(Date.now()+Number(choice)*86400000).toISOString();
+   const expires=choice==="keep"?(props.keyItem.expires_at ?? null):choice==="never"?null:new Date(Date.now()+Number(choice)*86400000).toISOString();
    await updateApiKey(props.target.projectID,props.target.environment.environment,props.keyItem.id,{name:name().trim(),expires_at:expires});
    await props.onSaved();
   }catch(e){setError(apiKeyErrorMessage(e))}finally{setBusy(false)}
@@ -203,9 +207,9 @@ function EditApiKeyDialog(props: {keyItem:ApiKeySummary;target:EditTarget;onClos
 
 export function ApiKeys() {
  const me = useMe();
- const canAssign = () => hasPermission(me.data,"access.manage");
- const canManage = () => hasPermission(me.data,"keys.manage",{projectID:edited.projectID(),environmentID:edited.environmentID()});
- const catalog = createQuery(()=>({queryKey:["access","roles"],queryFn:listRoles,enabled:canAssign()}));
+ const canAssign = () => hasPermission(me.data,"assignments.create");
+ const can = (action: string) => hasPermission(me.data, `api_keys.${action}`, {projectID:edited.projectID(),environmentID:edited.environmentID()});
+ const catalog = createQuery(()=>({queryKey:["access","roles"],queryFn:listRoles,enabled:hasPermission(me.data, "roles.read")}));
   const edited = useEditedEnvironment();
   const queryClient = useQueryClient();
   const [accessing,setAccessing] = createSignal<{keyItem:ApiKeySummary;target:EditTarget}>();
@@ -221,7 +225,7 @@ export function ApiKeys() {
   };
 
   const keys = createInfiniteQuery(() => ({
-    queryKey: ["api-keys", edited.projectID(), edited.environmentID(), filter()],
+    queryKey: ["api-keys", edited.projectID(), edited.environmentID(), filter(), can("read")],
     queryFn: ({ pageParam }) => listApiKeys(
       edited.projectID(),
       edited.environmentID(),
@@ -233,12 +237,12 @@ export function ApiKeys() {
     enabled: !!edited.projectID() && !!edited.environmentID(),
     retry: false,
   }));
-  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: !!keys.data && canAssign() }));
+  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: !!keys.data && hasPermission(me.data, "members.read") }));
   const creator = (key: ApiKeySummary) => { const member = members.data?.members.find(m => m.membership_id === key.created_by_member_id); return member?.display_name || member?.email || key.created_by_member_id || "Unknown"; };
   const keyItems = createMemo(() => keys.data?.pages.flatMap((page) => page.api_keys) ?? []);
-  const columns = () => (filter() === "all" ? ALL_COLUMNS : COLUMNS);
+  const columns = () => can("read") ? (filter() === "all" ? ALL_COLUMNS : COLUMNS) : ["Name", ...(filter() === "all" ? ["Status"] : []), "Roles", {label: "Actions", srOnly: true}];
   // While the active list is empty its empty state offers the one action.
-  const noKeys = () => filter() === "active" && keys.data !== undefined && keyItems().length === 0;
+
   const generate = () => setIssuing(edited.target());
 
   const invalidateApiKeys = (projectID: string, environmentID: string) =>
@@ -250,7 +254,7 @@ export function ApiKeys() {
         title="API keys"
         subtitle="Machine identities with Role assignments for one environment."
         actions={
-          <Show when={canManage() && !isDenied(keys.error) && !keys.isPending && !noKeys()}>
+          <Show when={can("create")}>
             <button
               class={ui.button}
               type="button"
@@ -276,7 +280,7 @@ export function ApiKeys() {
             when: (data) => data.pages.every((page) => page.api_keys.length === 0),
             title: filter() === "active" ? `No API keys in ${edited.environment()?.name ?? "this environment"} yet.` : "No API keys match this filter.",
             hint: filter() === "active" ? "API keys let CI and scripts deploy and start sessions without signing in." : undefined,
-            action: filter() === "active" && canManage() ? <button type="button" class={ui.button} disabled={!edited.environment()} onClick={generate}>Generate API key</button> : undefined,
+            action: filter() === "active" && can("create") ? <button type="button" class={ui.button} disabled={!edited.environment()} onClick={generate}>Generate API key</button> : undefined,
           }}
         >
           {() => (
@@ -285,7 +289,7 @@ export function ApiKeys() {
               minWidth="min-w-200"
               footer={<LoadMore count={keyItems().length} noun={{ one: "API key", other: "API keys" }} hasMore={keys.hasNextPage} loading={keys.isFetchingNextPage} failed={keys.isFetchNextPageError} onLoadMore={() => void keys.fetchNextPage()} />}
             >
-              <For each={keyItems()}>{(keyItem) => <ApiKeyRow creator={creator(keyItem)} canAssign={canAssign()} canManage={canManage()} onAccess={keyItem=>{const target=edited.target();if(target)setAccessing({keyItem,target});}} keyItem={keyItem} status={filter() === "all"} onRevoke={revoke} onEdit={keyItem=>{const target=edited.target();if(target)setEditing({keyItem,target})}} onRotate={keyItem=>{const target=edited.target();if(target)setRotating({keyItem,target})}} />}</For>
+              <For each={keyItems()}>{(keyItem) => <ApiKeyRow metadata={can("read")} creator={creator(keyItem)} canAssign={canAssign()} canUpdate={can("update") && can("read") && keyItem.created_at !== undefined} canRotate={can("rotate")} canRevoke={can("revoke")} onAccess={keyItem=>{const target=edited.target();if(target)setAccessing({keyItem,target});}} keyItem={keyItem} status={filter() === "all"} onRevoke={revoke} onEdit={keyItem=>{const target=edited.target();if(target)setEditing({keyItem,target})}} onRotate={keyItem=>{const target=edited.target();if(target)setRotating({keyItem,target})}} />}</For>
             </DataTable>
           )}
         </QueryState>

@@ -8,7 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-func authorizeOperator(ctx context.Context, q db.DBTX, p auth.Principal, scope Scope) error {
+func authorizeOperation(ctx context.Context, q db.DBTX, p auth.Principal, scope Scope, permission auth.Permission) error {
 	s := auth.Scope{OrgID: scope.OrgID, ProjectID: scope.ProjectID.String(), EnvironmentID: scope.EnvironmentID.String()}
 	current, err := access.Current(ctx, q, p, s)
 	if errors.Is(err, access.ErrDenied) {
@@ -17,7 +17,7 @@ func authorizeOperator(ctx context.Context, q db.DBTX, p auth.Principal, scope S
 	if err != nil {
 		return err
 	}
-	if !current.HasPermission(auth.CapabilityComputersOperate, s) {
+	if !current.HasPermission(permission, s) {
 		return ErrDenied
 	}
 	return nil

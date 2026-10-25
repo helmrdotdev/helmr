@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"testing"
 	"time"
 	"uuid"
@@ -131,7 +132,7 @@ func TestSocketHealthDoesNotClaimExpiredConnection(t *testing.T) {
 	if err := store.observeSocket(t.Context(), *claim, false); err != nil {
 		t.Fatal(err)
 	}
-	view, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+	view, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, auth.PermissionAgentConnectionsRead)
 	if err != nil || view == nil || view.Socket == nil || view.Socket.Status != "connected" || view.Socket.LastConnectedAt == nil {
 		t.Fatalf("health unavailable: %+v %v", view, err)
 	}
@@ -149,7 +150,7 @@ func TestSocketHealthDoesNotClaimExpiredConnection(t *testing.T) {
 		t.Fatalf("unexpected socket JSON contract: %s", payload)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_socket_connections SET expires_at=clock_timestamp()-interval '1 second' WHERE app_registration_id=$1`, f.registration)
-	view, err = GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent)
+	view, err = GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, auth.PermissionAgentConnectionsRead)
 	if err != nil || view.Socket.Status != "reconnecting" || view.Status != "connected" {
 		t.Fatalf("lease health confused with authorization: %+v %v", view, err)
 	}

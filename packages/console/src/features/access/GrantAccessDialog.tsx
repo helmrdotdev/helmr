@@ -5,7 +5,7 @@ import { errorMessage } from "../../lib/error";
 import { listMembers } from "../../lib/members";
 import {
   assignRole, grantRecipientName, isOrganizationRole, listAccessTargets, listGrants, listGroups, listRoles, permissionName, permissionResources,
-  type Capability, type PermissionRole, type RoleGrant,
+  permissionScope, type PermissionDefinition, type PermissionRole, type RoleGrant,
 } from "../../lib/permissions";
 import { useScope } from "../../lib/scope";
 import { FormDialog } from "../../ui/Dialog";
@@ -30,10 +30,10 @@ const joinAnd = (parts: string[]) => parts.length < 2 ? parts.join("") : `${part
 // Whether a role may be granted here: API keys take only workload roles, all
 // members only agent use on selected agents, an agent's page only roles with
 // agent permissions, and a fixed environment no organization role.
-function eligible(role: PermissionRole, kind: AccessKind, catalog: readonly Capability[], place: { agent: boolean; environment: boolean }): boolean {
+function eligible(role: PermissionRole, kind: AccessKind, catalog: readonly PermissionDefinition[], place: { agent: boolean; environment: boolean }): boolean {
   if (kind === "api_key" && !role.api_key_assignable) return false;
   if (kind === "all_members" && !(role.permissions.length === 1 && role.permissions[0] === "agents.use")) return false;
-  if (place.agent && !permissionResources(role.permissions, catalog).includes("agents")) return false;
+  if (place.agent && !role.permissions.some(p => permissionScope(p, catalog) === "agent")) return false;
   return !((place.agent || place.environment) && isOrganizationRole(role.permissions, catalog));
 }
 
@@ -70,7 +70,7 @@ export function GrantAccessDialog(props: {
 
   const fixedRecipient = () => !!existing || !!props.recipient;
   const fixedWhere = () => !!existing || !!props.environment;
-  const catalog = (): Capability[] => roles.data?.catalog ?? [];
+  const catalog = (): PermissionDefinition[] => roles.data?.catalog ?? [];
   const targets = createQuery(() => ({ queryKey: ["access", "targets", project()], queryFn: () => listAccessTargets(project()), enabled: !!project() }));
   const target = () => targets.data?.targets.find(t => existing ? t.environment_id === existing.environment_id : t.environment === environmentSlug());
   const keys = createQuery(() => ({
@@ -88,7 +88,7 @@ export function GrantAccessDialog(props: {
   const role = () => options().find(r => r.id === roleID());
   const organizationRole = () => !!role() && isOrganizationRole(role()!.permissions, catalog());
   const resources = () => permissionResources(role()?.permissions ?? [], catalog());
-  const hasAgents = () => resources().includes("agents");
+  const hasAgents = () => (role()?.permissions ?? []).some(p => permissionScope(p, catalog()) === "agent");
   const allMembers = () => kind() === "all_members";
   const agentMode = () => allMembers() ? "selected" : mode();
 
@@ -138,16 +138,16 @@ export function GrantAccessDialog(props: {
   const summary = () => {
     const name = recipientName();
     if (!role() || !name) return "";
-    if (organizationRole()) return `${name} can ${actions("organization")} across the organization.`;
+    if (organizationRole()) return `${name} can ${joinAnd(resources().map(actions))} across the organization.`;
     const where = target()?.name ?? "this environment";
-    const parts = resources().map(resource => resource === "agents"
+    const parts = resources().map(resource => catalog().some(c => c.resource_type === resource && c.scope_type === "agent")
       ? `${actions(resource)} ${agentMode() === "all" ? `on every agent in ${where}, including new ones` : chosenAgents().length ? `on ${chosenAgents().join(", ")} in ${where}` : "on the agents you select"}`
       : `${actions(resource)} across ${where}`);
     return `${name} can ${joinAnd(parts)}.`;
   };
-  const readsSessions = () => role()?.permissions.some(p => p === "sessions.view" || p === "sessions.manage");
+  const readsSessions = () => role()?.permissions.some(p => p === "sessions.read");
   // Waits for current assignments, so a grant never misses one it should add to.
-  const valid = () => (!!existing || !!grants.data) && !!role() && !alreadyGranted() && (allMembers() || !!recipient()) && (organizationRole() || !!target()) && (!hasAgents() || agentMode() === "all" || agents().some(id => !held().includes(id)) || (!current() && resources().some(r => r !== "agents")));
+  const valid = () => (!!existing || !!grants.data) && !!role() && !alreadyGranted() && (allMembers() || !!recipient()) && (organizationRole() || !!target()) && (!hasAgents() || agentMode() === "all" || agents().some(id => !held().includes(id)) || (!current() && (role()?.permissions ?? []).some(p => permissionScope(p, catalog()) === "environment")));
 
   const chooseKind = (value: AccessKind) => { setKind(value); setRecipient(""); setMode("selected"); };
   const chooseEnvironment = (slug: string) => { setEnvironmentSlug(slug); setAgents([]); if (kind() === "api_key") setRecipient(""); };

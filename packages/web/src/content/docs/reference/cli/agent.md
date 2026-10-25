@@ -51,7 +51,8 @@ helmr agent restore AGENT -p PROJECT -e ENV [--dry-run] [--if-match REVISION] [-
 ```
 
 These commands use your saved human login, including when `HELMR_API_KEY` is set.
-They require both `access.manage` and `agents.manage` on the target Agent.
+Delete requires `agents.delete`; Restore requires `agents.restore` on the target Agent.
+Both use their dedicated permission for preview and mutation.
 They act on the Environment's stable Agent identity, not a selected Deployment.
 
 Preview first to see blockers, cleanup effects and warnings:

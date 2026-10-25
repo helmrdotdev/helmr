@@ -58,7 +58,7 @@ func TestComputerExecutionHTTPUsesCurrentAuthorityAndConfirmedScope(t *testing.T
 	if !strings.Contains(string(read), `"execution_control"`) || !strings.Contains(string(read), `"hibernate"`) {
 		t.Fatalf("missing operation state: %s", read)
 	}
-	f.SetPermissions(t, "sessions.view")
+	f.SetPermissions(t, "sessions.read")
 	call("POST", base+"/hibernate", string(request), http.StatusForbidden)
 	call("POST", base+"/wake", `{}`, http.StatusForbidden)
 	call("GET", base+"/execution-scope", "", http.StatusForbidden)

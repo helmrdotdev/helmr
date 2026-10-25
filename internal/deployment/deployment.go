@@ -75,11 +75,11 @@ func authorize(principal auth.Principal, scope auth.Scope, permissions ...auth.P
 }
 
 func authorizeDeploy(principal auth.Principal, scope auth.Scope) error {
-	return authorize(principal, scope, auth.PermissionDeploymentsWrite)
+	return authorize(principal, scope, auth.PermissionDeploymentsPublish)
 }
 
 func authorizeRead(principal auth.Principal, scope auth.Scope) error {
-	return authorize(principal, scope, auth.PermissionDeploymentMetadataRead)
+	return authorize(principal, scope, auth.PermissionDeploymentsRead)
 }
 
 func scopeIDs(scope auth.Scope) (pgtype.UUID, pgtype.UUID, error) {

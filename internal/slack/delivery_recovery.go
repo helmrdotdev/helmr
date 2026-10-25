@@ -128,8 +128,18 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 			}
 			return err
 		}
-		if p.OrgID != org || !p.HasPermission(auth.CapabilitySessionsManage, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}) {
+		permission := auth.PermissionSessionsCheckDelivery
+		if action == "abandon" {
+			permission = auth.PermissionSessionsAbandonDelivery
+		}
+		if p.OrgID != org || !p.HasPermission(permission, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}) {
 			return errInstallationAuthority
+		}
+		if err := sessionowner.AuthorizeSessionOperation(ctx, tx, sessionowner.Caller{Kind: "user", ID: user}, environment, session, auth.PermissionSessionsRead); err != nil {
+			if errors.Is(err, sessionowner.ErrDenied) {
+				return errInstallationAuthority
+			}
+			return err
 		}
 		var installation, thread, participant uuid.UUID
 		var publication string

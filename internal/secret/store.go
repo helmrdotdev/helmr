@@ -142,7 +142,7 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, na
 				return err
 			}
 		}
-		if err := authorizeMutation(ctx, tx, actor, env); err != nil {
+		if err := authorizeMutation(ctx, tx, actor, env, auth.PermissionSecretsCreate); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -187,7 +187,7 @@ func (s *Store) Rotate(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 		if err != nil {
 			return err
 		}
-		if err := authorizeMutation(ctx, tx, actor, env); err != nil {
+		if err := authorizeMutation(ctx, tx, actor, env, auth.PermissionSecretsRotate); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -248,7 +248,7 @@ func (s *Store) Revoke(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 				return err
 			}
 		}
-		if err := authorizeMutation(ctx, tx, actor, env); err != nil {
+		if err := authorizeMutation(ctx, tx, actor, env, auth.PermissionSecretsRevoke); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -349,16 +349,16 @@ func secretFromCreate(row db.CreateSecretRow) db.Secret {
 	return db.Secret(row)
 }
 
-func authorizeMutation(ctx context.Context, tx pgx.Tx, actor audit.Actor, env uuid.UUID) error {
+func authorizeMutation(ctx context.Context, tx pgx.Tx, actor audit.Actor, env uuid.UUID, permission auth.Permission) error {
 	switch actor.Kind {
 	case "system":
 		if actor.Source != "" {
 			return nil
 		}
 	case "login":
-		return access.Check(ctx, tx, "user", actor.UserID, env, uuid.Nil(), auth.CapabilitySecretsManage)
+		return access.Check(ctx, tx, "user", actor.UserID, env, uuid.Nil(), permission)
 	case "api_key":
-		return access.Check(ctx, tx, "api_key", actor.CredentialID, env, uuid.Nil(), auth.CapabilitySecretsManage)
+		return access.Check(ctx, tx, "api_key", actor.CredentialID, env, uuid.Nil(), permission)
 	}
 	return access.ErrDenied
 }

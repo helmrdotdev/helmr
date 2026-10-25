@@ -72,7 +72,7 @@ same answer ID and the same answer.
 The answer is recorded under the identity that sent it. Members and API keys
 need current Role access to the Session’s Agent. `agents.use` permits answering
 in their own scoped Sessions; intervention in other Sessions requires
-`sessions.manage` and `agents.use`. API keys receive these permissions through
+`sessions.answer` and `agents.use`. API keys receive these permissions through
 Role assignments.
 Once the question is answered, the Agent's `turn.ask` call returns and the Turn
 continues; follow it as described in

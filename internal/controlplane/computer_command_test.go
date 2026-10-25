@@ -82,21 +82,16 @@ func TestPublicCommandInfoProjectsEveryState(t *testing.T) {
 	}
 }
 
-func TestComputerCommandGETRequiresExecPermissionNotComputerRead(t *testing.T) {
+func TestComputerCommandOutputRequiresDedicatedPermission(t *testing.T) {
 	orgID := uuid.New()
 	scope := auth.Scope{OrgID: orgID, ProjectID: "project", EnvironmentID: "environment"}
-	viewer := auth.Principal{Kind: auth.PrincipalKindSession, OrgID: orgID}
-	if canAccessComputerCommandOutput(viewer, scope) {
-		t.Fatal("Computer reader was allowed to read Computer Exec output")
+	for _, permission := range []auth.Permission{auth.PermissionComputersRead, auth.PermissionComputersExecute, auth.PermissionComputersReadOutput} {
+		p := auth.Principal{Kind: auth.PrincipalKindAPIKey, OrgID: orgID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Grants: []auth.PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: permission}}}
+		if got := canAccessComputerCommandOutput(p, scope); got != (permission == auth.PermissionComputersReadOutput) {
+			t.Fatalf("output permission %s: %v", permission, got)
+		}
 	}
-	createOnly := auth.Principal{
-		Kind: auth.PrincipalKindAPIKey, OrgID: orgID,
-		ProjectID: "project", EnvironmentID: "environment",
-		Grants: []auth.PermissionGrant{{ProjectID: "project", EnvironmentID: "environment", Permission: auth.CapabilityComputersOperate}},
-	}
-	if !canAccessComputerCommandOutput(createOnly, scope) {
-		t.Fatal("create-only API key was unable to poll its Computer Exec")
-	}
+
 }
 
 func TestNormalizeIdempotencyKeyRejectsInsteadOfRewriting(t *testing.T) {

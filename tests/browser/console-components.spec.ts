@@ -37,10 +37,10 @@ async function fixture(page: Page, accessAdmin = false): Promise<Fixture> {
     const path = url.pathname;
     const method = route.request().method();
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: [...(accessAdmin ? ["access.manage"] : []), "projects.manage", "keys.manage", "secrets.read", "secrets.write", "secrets.revoke", "deployments.read"], admin: false, organization_required: false, project_required: false, email_delivery: true };
+    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: [...(accessAdmin ? ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"] : []), "projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update", "api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke", "secrets.read", "secrets.create", "secrets.revoke", "deployments.read"], admin: false, organization_required: false, project_required: false, email_delivery: true };
     else if (path === "/api/groups") json = { groups: [] };
     else if (path === "/api/role-grants") json = { grants: [] };
-    else if (path === "/api/roles") json = { roles: [{id:"viewer",name:"Session viewer",permissions:["sessions.view"],api_key_assignable:true,revision:7}], catalog:[{id:"sessions.view",name:"View all sessions",resource_type:"agents",included:["sessions.view"]}] };
+    else if (path === "/api/roles") json = { roles: [{id:"viewer",name:"Session viewer",permissions:["sessions.read"],api_key_assignable:true,revision:7}], catalog:[{id:"sessions.read",name:"View all sessions",resource_type:"sessions",scope_type:"agent",api_key_assignable:true}] };
     else if (path === `/api/projects/${projectID}/access-targets`) json = {project_id:projectID,targets:[{environment_id:environmentID,environment:environmentID,name:"Production",agents:[{id:"agent-1",key:"assistant"}]}]};
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
@@ -762,7 +762,7 @@ test("when no invitation email can be sent the form stays open with its addresse
 
 test("without email delivery, inviting members is unavailable and says why", async ({ page }) => {
   await fixture(page, true);
-  await page.route("**/api/me", route => route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: ["access.manage"], admin: false, organization_required: false, project_required: false, email_delivery: false } }));
+  await page.route("**/api/me", route => route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"], admin: false, organization_required: false, project_required: false, email_delivery: false } }));
   await page.goto(`/settings/members?${scope}`);
   await expect(page.getByText("Email delivery is not set up for this Helmr installation, so members can't be invited.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Invite members", exact: true })).toBeDisabled();

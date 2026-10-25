@@ -28,7 +28,7 @@ func GrantMember(t *testing.T, q interface {
 	MustExec(t, t.Context(), q, `INSERT INTO roles(id,org_id,name,permissions) VALUES($1,$2,$1::uuid::text,$3)`, role, org, permissions)
 	mode := "none"
 	for _, p := range permissions {
-		if auth.CapabilityResourceType(auth.Permission(p)) == "agents" {
+		if auth.IsAgentPermission(auth.Permission(p)) {
 			mode = "all"
 		}
 	}
@@ -48,7 +48,7 @@ func CreateRole(t *testing.T, q interface {
 	MustExec(t, t.Context(), q, `INSERT INTO roles(id,org_id,name,permissions) VALUES($1,$2,$1::uuid::text,$3)`, role, org, permissions)
 	mode := "none"
 	for _, p := range permissions {
-		if auth.CapabilityResourceType(auth.Permission(p)) == "agents" {
+		if auth.IsAgentPermission(auth.Permission(p)) {
 			mode = "all"
 		}
 	}

@@ -39,7 +39,7 @@ func (s *Server) agentRequestAuthority(r *http.Request, permission auth.Permissi
 	if err != nil {
 		return session.Caller{}, uuid.Nil(), err
 	}
-	if permission == auth.PermissionComputersUpdate && !principal.HasPermission(permission, scope) {
+	if !auth.IsAgentPermission(permission) && !principal.HasPermission(permission, scope) {
 		return session.Caller{}, uuid.Nil(), session.ErrDenied
 	}
 	caller, err := externalAgentCaller(principal)
@@ -67,7 +67,7 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		slackChannelID = &route.ChannelID
 	}
-	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsCreate)
+	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionAgentsUse)
 	if err != nil {
 		if slackChannelID != nil && errors.Is(err, session.ErrDenied) {
 			err = slackroute.ErrChannelUnavailable

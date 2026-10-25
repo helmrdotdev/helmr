@@ -10,18 +10,18 @@ const agentID = "00000000-0000-7000-8000-000000000a01";
 const now = "2026-10-14T00:00:00Z";
 
 const catalog = [
-  { resource_type: "organization", id: "access.manage", name: "Manage access", description: "Manage members and access.", included: ["access.manage"] },
-  { resource_type: "agents", id: "agents.use", name: "Use agents", description: "Use assigned agents.", included: ["agents.use"] },
-  { resource_type: "agents", id: "sessions.view", name: "View all sessions", description: "Read all sessions.", included: ["sessions.view"] },
-  { resource_type: "secrets", id: "secrets.manage", name: "Manage secrets", description: "Manage secrets.", included: ["secrets.manage"] },
+  { resource_type: "assignments", id: "assignments.create", name: "Manage access", description: "Manage members and access.", scope_type: "organization", api_key_assignable: false },
+  { resource_type: "agents", id: "agents.use", name: "Use agents", description: "Use assigned agents.", scope_type: "agent", api_key_assignable: true },
+  { resource_type: "sessions", id: "sessions.read", name: "View all sessions", description: "Read all sessions.", scope_type: "agent", api_key_assignable: true },
+  { resource_type: "secrets", id: "secrets.rotate", name: "Manage secrets", description: "Manage secrets.", scope_type: "environment", api_key_assignable: true },
 ];
 const role = (id: string, name: string, permissions: string[], builtin: string | null, extra: Record<string, unknown> = {}) =>
-  ({ id, name, description: `${name} description`, builtin_key: builtin, permissions, api_key_assignable: !permissions.includes("access.manage"), grant_count: 0, group_count: 0, updated_at: now, revision: 1, ...extra });
+  ({ id, name, description: `${name} description`, builtin_key: builtin, permissions, api_key_assignable: !permissions.includes("assignments.create"), grant_count: 0, group_count: 0, updated_at: now, revision: 1, ...extra });
 const roles = [
   role("role-user", "Agent user", ["agents.use"], "agent_user", { grant_count: 1 }),
-  role("role-viewer", "Session viewer", ["sessions.view"], "session_viewer", { grant_count: 1 }),
-  role("role-admin", "Access administrator", ["access.manage"], "access_administrator", { grant_count: 1 }),
-  role("role-ops", "Agent and secrets operator", ["agents.use", "secrets.manage"], null, { grant_count: 1 }),
+  role("role-viewer", "Session viewer", ["sessions.read"], "session_viewer", { grant_count: 1 }),
+  role("role-admin", "Access administrator", ["assignments.create"], "access_administrator", { grant_count: 1 }),
+  role("role-ops", "Agent and secrets operator", ["agents.use", "secrets.rotate"], null, { grant_count: 1 }),
 ];
 const grant = (id: string, subject: Record<string, unknown>, roleID: string, extra: Record<string, unknown> = {}) => {
   const r = roles.find(x => x.id === roleID)!;
@@ -48,7 +48,7 @@ async function fixture(page: Page) {
     const path = url.pathname;
     const method = route.request().method();
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", membership_id: "m-local", display_name: "Local", org_id: "org", is_owner: true, permissions: ["access.manage", "projects.manage"], admin: false, organization_required: false, project_required: false, email_delivery: true };
+    if (path === "/api/me") json = { user_id: "local", membership_id: "m-local", display_name: "Local", org_id: "org", is_owner: true, permissions: ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete", "projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], admin: false, organization_required: false, project_required: false, email_delivery: true };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === `/api/projects/${projectID}/access-targets`) json = { project_id: "p", targets: [{ environment_id: environmentUUID, environment: environmentID, name: "Production", agents: [{ id: agentID, key: "assistant" }, { id: "agent-2", key: "triage" }] }] };
@@ -63,10 +63,10 @@ async function fixture(page: Page) {
     ] };
     else if (path === "/api/invitations") json = { invitations: [] };
     else if (path === "/api/members/m-local/permissions") json = { user_id: "local", membership_id: "m-local", is_owner: true, status: "active", notice: "", scopes: [
-      { type: "organization", project: "", environment: "", permissions: ["access.manage"], sources: [{ kind: "role_grant", subject_kind: "member", grant_id: "grant-admin", role_name: "Access administrator", permissions: ["access.manage"], included_permissions: ["access.manage"] }] },
-      { type: "agent", project: projectID, environment: environmentID, agent: "assistant", permissions: ["agents.use", "secrets.manage"], sources: [
-        { kind: "role_grant", subject_kind: "group", group_id: "group-release", group_name: "Release team", grant_id: "grant-ops", role_name: "Agent and secrets operator", permissions: ["agents.use", "secrets.manage"], included_permissions: ["agents.use", "secrets.manage"] },
-        { kind: "role_grant", subject_kind: "all_members", grant_id: "grant-all", role_name: "Agent user", permissions: ["agents.use"], included_permissions: ["agents.use"] },
+      { type: "organization", project: "", environment: "", permissions: ["assignments.create"], sources: [{ kind: "role_grant", subject_kind: "member", grant_id: "grant-admin", role_name: "Access administrator", permissions: ["assignments.create"] }] },
+      { type: "agent", project: projectID, environment: environmentID, agent: "assistant", permissions: ["agents.use", "secrets.rotate"], sources: [
+        { kind: "role_grant", subject_kind: "group", group_id: "group-release", group_name: "Release team", grant_id: "grant-ops", role_name: "Agent and secrets operator", permissions: ["agents.use", "secrets.rotate"] },
+        { kind: "role_grant", subject_kind: "all_members", grant_id: "grant-all", role_name: "Agent user", permissions: ["agents.use"] },
       ] },
     ] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: "not found" } } }); return; }

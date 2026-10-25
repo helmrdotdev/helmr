@@ -50,10 +50,10 @@ export function ComputerExecutionControls(props: { computer: Computer; scope: Co
     <Show when={props.computer.residency === "parked"}><Notice tone="info">Background work is paused. Wake this Computer or send a new request to continue.</Notice></Show>
     <Show when={props.computer.execution_control?.status === "accepted"}><Notice tone="info">{props.computer.execution_control?.kind === "hibernate" ? "Hibernating…" : "Waking…"}</Notice></Show>
     <Show when={props.computer.execution_control?.status === "failed"}><Notice tone="danger">Could not {props.computer.execution_control?.kind}. {failureMessage(props.computer.execution_control?.error_code)}</Notice></Show>
-    <Show when={hasPermission(me.data, "computers.update", props.scope) && props.computer.status === "available"}>
+    <Show when={props.computer.status === "available"}>
       <div class="flex gap-2">
-        <button class={ui.secondaryButton} disabled={busy() || props.computer.execution_control?.status === "accepted"} onClick={() => void prepare()}>Hibernate Computer</button>
-        <button class={ui.secondaryButton} disabled={busy() || props.computer.execution_control?.status === "accepted"} onClick={() => void wake()}>Wake Computer</button>
+        <Show when={hasPermission(me.data, "computers.hibernate", props.scope)}><button class={ui.secondaryButton} disabled={busy() || props.computer.execution_control?.status === "accepted"} onClick={() => void prepare()}>Hibernate Computer</button></Show>
+        <Show when={hasPermission(me.data, "computers.wake", props.scope)}><button class={ui.secondaryButton} disabled={busy() || props.computer.execution_control?.status === "accepted"} onClick={() => void wake()}>Wake Computer</button></Show>
       </div>
     </Show>
     <Show when={error()}>{message => <Notice tone="danger" role="alert">{message()}</Notice>}</Show>

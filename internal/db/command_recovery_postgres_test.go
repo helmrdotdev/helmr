@@ -12,7 +12,7 @@ import (
 func insertRecoveryCommand(t *testing.T, f sessiontest.Fixture, computer uuid.UUID, terminal bool) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id,status,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,ARRAY['true'],'{}','',60000,'session',uuidv7(),CASE WHEN $4::boolean THEN 'cancelled' ELSE 'running' END,CASE WHEN $4::boolean THEN now() END,CASE WHEN $4::boolean THEN 'cancelled' END)`, f.Environment, id, computer, terminal)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,argv,env,stdin,timeout_ms,caller_kind,caller_id,status,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,ARRAY['true'],'{}','',60000,'user',uuidv7(),CASE WHEN $4::boolean THEN 'cancelled' ELSE 'running' END,CASE WHEN $4::boolean THEN now() END,CASE WHEN $4::boolean THEN 'cancelled' END)`, f.Environment, id, computer, terminal)
 	return id
 }
 

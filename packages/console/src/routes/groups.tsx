@@ -26,10 +26,10 @@ const grantPlaces = (grants: readonly RoleGrant[]) => [...new Set(grants.map(gra
 
 export function Groups() {
   const me = useMe(); const cache = useQueryClient(); const navigate = useNavigate();
-  const allowed = () => hasPermission(me.data, "access.manage");
+  const allowed = () => hasPermission(me.data, "groups.read");
   const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: allowed() }));
-  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: allowed() }));
-  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: allowed() }));
+  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: hasPermission(me.data, "assignments.read") }));
+  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: hasPermission(me.data, "members.read") }));
   const [filter, setFilter] = createSignal("");
   const [creating, setCreating] = createSignal(false);
   const [renaming, setRenaming] = createSignal<PermissionGroup>();
@@ -43,8 +43,8 @@ export function Groups() {
   const assignments = (id: string) => subjectGrants(grants.data?.grants ?? [], id);
   const places = (id: string) => grantPlaces(assignments(id));
   return <>
-    <PageHeader title="Groups" subtitle="Grant roles to several people at once." actions={<Show when={allowed()}><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create group</button></Show>} />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to manage groups.</Notice></Show>}>
+    <PageHeader title="Groups" subtitle="Grant roles to several people at once." actions={<Show when={hasPermission(me.data, "groups.create")}><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create group</button></Show>} />
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Read groups permission is required to view groups.</Notice></Show>}>
       <Toolbar start={<SearchInput aria-label="Filter groups" placeholder="Filter groups" value={filter()} onInput={e => setFilter(e.currentTarget.value)} />} />
       <QueryState query={groups} pending={<TableSkeleton label="Loading groups" columns={COLUMNS} />} error={failure}>
         {() => (
@@ -65,7 +65,7 @@ export function Groups() {
                   <td class="font-mono text-chrome!">{memberCount(group.member_ids)}</td>
                   <td class="font-mono text-chrome!">{assignments(group.id).length}</td>
                   <td><Show when={places(group.id)} fallback={<EmptyCell />}>{text => <span class="font-mono text-chrome">{text()}</span>}</Show></td>
-                  <RowActions label={`Actions for ${group.name}`} items={[{ label: "Rename", onSelect: () => setRenaming(group) }, { label: "Delete", tone: "danger", onSelect: () => setDeleting(group) }]} />
+                  <RowActions label={`Actions for ${group.name}`} items={[...(hasPermission(me.data, "groups.update") ? [{ label: "Rename", onSelect: () => setRenaming(group) }] : []), ...(hasPermission(me.data, "groups.delete") ? [{ label: "Delete", tone: "danger" as const, onSelect: () => setDeleting(group) }] : [])]} />
                 </tr>
               )}
             </For>

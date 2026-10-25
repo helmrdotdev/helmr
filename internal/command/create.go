@@ -260,7 +260,7 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 	if kind == string(auth.PrincipalKindSession) {
 		kind, id = "user", request.Creator.UserID
 	}
-	if err := access.Check(ctx, tx, kind, id, request.EnvironmentID, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+	if err := access.Check(ctx, tx, kind, id, request.EnvironmentID, uuid.Nil(), auth.PermissionComputersExecute); err != nil {
 		if errors.Is(err, access.ErrDenied) {
 			return db.Command{}, computer.ErrDenied
 		}

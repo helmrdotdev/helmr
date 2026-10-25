@@ -21,7 +21,7 @@ func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
 			app, team, actor := "app", "team", "human"
 			switch scenario {
 			case "operator":
-				f.SetPermissions(t, "agents.use", "sessions.manage")
+				f.SetPermissions(t, "agents.use", "sessions.send")
 			case "unlinked":
 				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM slack_user_links`)
 			case "disabled_member":

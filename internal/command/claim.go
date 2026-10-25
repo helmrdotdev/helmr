@@ -151,7 +151,7 @@ func claimNext(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal,
 		// Running commands retain their durable dispatch receipt, including when
 		// delivery is uncertain. Queued commands need current caller authority.
 		if c.Status != "running" {
-			if err = access.Check(ctx, tx, c.CallerKind, uuid.UUID(c.CallerID.Bytes), request.EnvironmentID, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+			if err = access.Check(ctx, tx, c.CallerKind, uuid.UUID(c.CallerID.Bytes), request.EnvironmentID, uuid.Nil(), auth.PermissionComputersExecute); err != nil {
 				if !errors.Is(err, access.ErrDenied) {
 					return ClaimResult{}, err
 				}

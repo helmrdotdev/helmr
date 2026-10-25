@@ -30,7 +30,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		AppOrigin:       s.appOrigin.String(),
 		Admin:           principal.Admin,
 		Permissions:     []string{},
-		ProjectRequired: hasOrg && !account.HasProjects && principal.HasPermission(auth.CapabilityOrganizationManage, auth.Scope{OrgID: principal.OrgID}),
+		ProjectRequired: hasOrg && !account.HasProjects && principal.HasPermission(auth.PermissionProjectsCreate, auth.Scope{OrgID: principal.OrgID}),
 		EmailDelivery:   s.emailConfigured(),
 	}
 	switch {
@@ -54,13 +54,11 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 			item := api.PermissionScope{Project: g.ProjectSlug, Environment: g.EnvironmentSlug, Agent: g.AgentKey, Permissions: []string{}}
 			scope := auth.Scope{OrgID: principal.OrgID, ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID, AgentID: g.AgentID}
 			for _, operation := range auth.AllPermissions() {
-				if auth.CapabilityAllows(auth.Permission(g.Permission), operation) || (auth.SessionExecutionOperation(operation) && principal.HasPermission(operation, scope)) {
+				if principal.HasPermission(operation, scope) {
 					item.Permissions = append(item.Permissions, string(operation))
 				}
 			}
-			for _, capability := range auth.IncludedCapabilities(auth.Permission(g.Permission)) {
-				item.Permissions = append(item.Permissions, string(capability))
-			}
+
 			response.PermissionScopes = append(response.PermissionScopes, item)
 		}
 	case s.selfHostedMode():
@@ -83,11 +81,7 @@ func sessionPermissions(principal auth.Principal) []string {
 			permissions = append(permissions, string(permission))
 		}
 	}
-	for _, cap := range auth.CapabilityCatalog() {
-		if principal.HasPermission(cap.ID, scope) {
-			permissions = append(permissions, string(cap.ID))
-		}
-	}
+
 	return permissions
 }
 

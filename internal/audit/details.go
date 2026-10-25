@@ -109,6 +109,8 @@ type AccessSnapshot struct {
 	UserID          string   `json:"user_id,omitempty"`
 }
 type AccessChangeDetails struct {
+	CauseAgentID      string            `json:"cause_agent_id,omitempty"`
+	Reason            string            `json:"reason,omitempty"`
 	BeforeAssignments []*AccessSnapshot `json:"before_assignments,omitempty"`
 	AfterAssignments  []*AccessSnapshot `json:"after_assignments,omitempty"`
 	Before            *AccessSnapshot   `json:"before"`
@@ -117,6 +119,13 @@ type AccessChangeDetails struct {
 }
 
 func (AccessChangeDetails) auditDetails() {}
+
+type AgentCleanupDetails struct {
+	CauseAgentID string `json:"cause_agent_id"`
+	Reason       string `json:"reason"`
+}
+
+func (AgentCleanupDetails) auditDetails() {}
 
 type AgentChangeDetails struct {
 	Revision           int64   `json:"revision"`
@@ -132,6 +141,12 @@ func (AgentChangeDetails) auditDetails() {}
 func marshalDetails(action string, details Details) ([]byte, error) {
 	valid := false
 	switch action {
+	case "slack_connection.disconnected":
+		if details == nil {
+			return []byte("{}"), nil
+		}
+		d, ok := details.(AgentCleanupDetails)
+		valid = ok && d.CauseAgentID != "" && d.Reason == "agent_deleted"
 	case "agent.deleted", "agent.restored":
 		d, ok := details.(AgentChangeDetails)
 		valid = ok && d.Revision > 0

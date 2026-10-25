@@ -112,8 +112,8 @@ function AppShell(props: { children?: JSX.Element }) {
     { href: "/", label: "Overview", count: () => (attention.data ? attentionTotal(attention.data.counts) : undefined) },
     { href: "/sessions", label: "Sessions" },
     { href: "/agents", label: "Agents", match: ["/triggers"] },
-    ...(canRead("run_metadata.read") ? [{ href: "/computers", label: "Computers", match: ["/templates"] }] : []),
-    ...(canRead("deployment_metadata.read") ? [{ href: "/deployments", label: "Deployments" }] : []),
+    ...(canRead("computers.read") ? [{ href: "/computers", label: "Computers", match: ["/templates"] }] : []),
+    ...(canRead("deployments.read") ? [{ href: "/deployments", label: "Deployments" }] : []),
   ];
   const protectedColor = () => {
     const environment = scope.selectedEnvironment();

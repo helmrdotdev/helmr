@@ -118,7 +118,7 @@ function ProjectHistorySettings(props: { project: string }) {
   const [error, setError] = createSignal<string | null>(null);
   const [saved, setSaved] = createSignal(false);
   const [shortening, setShortening] = createSignal<string | null>(null);
-  const canManage = () => hasPermission(me.data, "projects.manage");
+  const canManage = () => hasPermission(me.data, "projects.update_retention");
 
   const reset = () => {
     const current = settings.data;
@@ -178,7 +178,7 @@ function ProjectHistorySettings(props: { project: string }) {
             <fieldset class="m-0 border-0 p-0" disabled={!canManage() || saving()}>
               <HistoryRetentionFields value={draft()} onChange={value => { setDraft(value); setSaved(false); }} />
             </fieldset>
-            <Show when={!canManage()}><p class={ui.muted}>Manage organization permission is required to change this setting.</p></Show>
+            <Show when={!canManage()}><p class={ui.muted}>Update project retention permission is required to change this setting.</p></Show>
             <Show when={error()}>{(message) => <Notice tone="danger">{message()}</Notice>}</Show>
             <Show when={canManage()}>
               <div class="flex flex-wrap items-center justify-end gap-3">

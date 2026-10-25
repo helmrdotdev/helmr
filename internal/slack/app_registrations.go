@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"net/http"
 	"strings"
 	"uuid"
@@ -86,7 +87,7 @@ func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.A
 		return errCredentialUnavailable
 	}
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockRegistrationManager(ctx, tx, org, user, registration); err != nil {
+		if err := lockRegistrationManager(ctx, tx, org, user, registration, auth.PermissionAgentConnectionsUpdateCredentials); err != nil {
 			return err
 		}
 		var client *string

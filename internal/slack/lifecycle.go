@@ -93,7 +93,7 @@ func applyLifecycleControl(ctx context.Context, tx pgx.Tx, caller session.Caller
 		return nil, session.ErrTerminal
 	}
 	if c.Action == "sleep" {
-		err := access.Check(ctx, tx, caller.Kind, caller.ID, target.Environment, uuid.Nil(), auth.CapabilityComputersOperate)
+		err := access.Check(ctx, tx, caller.Kind, caller.ID, target.Environment, uuid.Nil(), auth.PermissionComputersHibernate)
 		if errors.Is(err, access.ErrDenied) {
 			return nil, session.ErrDenied
 		}

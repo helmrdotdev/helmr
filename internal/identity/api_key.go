@@ -73,8 +73,8 @@ type IssuedAPIKey struct {
 	RoleNames []string
 }
 
-func authorizeAPIKeyManagement(manager auth.Principal, scope auth.Scope) error {
-	if manager.Kind != auth.PrincipalKindSession || !manager.HasPermission(auth.PermissionAPIKeysManage, scope) {
+func authorizeAPIKeyManagement(manager auth.Principal, scope auth.Scope, permission auth.Permission) error {
+	if manager.Kind != auth.PrincipalKindSession || !manager.HasPermission(permission, scope) {
 		return ErrAPIKeyManagementRequired
 	}
 	return nil
@@ -82,31 +82,34 @@ func authorizeAPIKeyManagement(manager auth.Principal, scope auth.Scope) error {
 
 // ListAPIKeys returns up to limit API keys of the environment matching the
 // filter after the given position and whether more follow.
-func ListAPIKeys(ctx context.Context, database db.DBTX, manager auth.Principal, scope auth.Scope, filter APIKeyFilter, limit int32, after *APIKeyPosition) ([]db.ListAPIKeysRow, bool, error) {
+func ListAPIKeys(ctx context.Context, database db.DBTX, manager auth.Principal, scope auth.Scope, filter APIKeyFilter, limit int32, after *APIKeyPosition) ([]db.ListAPIKeysRow, bool, bool, error) {
 	q := db.New(database)
 	if manager.Kind != auth.PrincipalKindSession {
-		return nil, false, ErrAPIKeyManagementRequired
+		return nil, false, false, ErrAPIKeyManagementRequired
 	}
 	member, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(manager.OrgID), UserID: pgvalue.UUID(manager.UserID)})
 	if err != nil || pgvalue.MustUUIDValue(member.ID) != manager.MemberID {
-		return nil, false, ErrAPIKeyManagementRequired
+		return nil, false, false, ErrAPIKeyManagementRequired
 	}
 	grants, err := access.MemberGrants(ctx, database, manager.OrgID, manager.MemberID)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
-	allowed := false
+	allowed, metadata := false, false
 	for _, g := range grants {
-		if g.EnvironmentID == "" && g.Permission == auth.CapabilityAccessManage || g.EnvironmentID != "" && g.EnvironmentID == scope.EnvironmentID && g.ProjectID == scope.ProjectID && g.Permission == auth.CapabilityKeysManage && g.AgentID == "" {
+		if g.EnvironmentID == "" && g.Permission == auth.PermissionAssignmentsRead {
 			allowed = true
+		}
+		if g.EnvironmentID != "" && g.EnvironmentID == scope.EnvironmentID && g.ProjectID == scope.ProjectID && g.Permission == auth.PermissionAPIKeysRead && g.AgentID == "" {
+			allowed, metadata = true, true
 		}
 	}
 	if !allowed {
-		return nil, false, ErrAPIKeyManagementRequired
+		return nil, false, false, ErrAPIKeyManagementRequired
 	}
 	projectID, environmentID, err := environmentIDs(scope)
 	if err != nil {
-		return nil, false, err
+		return nil, false, false, err
 	}
 	params := db.ListAPIKeysParams{
 		OrgID:         pgvalue.UUID(manager.OrgID),
@@ -121,17 +124,17 @@ func ListAPIKeys(ctx context.Context, database db.DBTX, manager auth.Principal, 
 	}
 	rows, err := q.ListAPIKeys(ctx, params)
 	if err != nil {
-		return nil, false, fmt.Errorf("list api keys: %w", err)
+		return nil, false, false, fmt.Errorf("list api keys: %w", err)
 	}
 	if len(rows) > int(limit) {
-		return rows[:limit], true, nil
+		return rows[:limit], true, metadata, nil
 	}
-	return rows, false, nil
+	return rows, false, metadata, nil
 }
 
 // IssueAPIKey creates a distinct machine principal. Reserved names are rejected.
 func IssueAPIKey(ctx context.Context, database db.TxBeginner, issuer auth.Principal, scope auth.Scope, input APIKeyInput) (IssuedAPIKey, error) {
-	if err := authorizeAPIKeyManagement(issuer, scope); err != nil {
+	if err := authorizeAPIKeyManagement(issuer, scope, auth.PermissionAPIKeysCreate); err != nil {
 		return IssuedAPIKey{}, err
 	}
 	name := strings.TrimSpace(input.Name)
@@ -158,7 +161,7 @@ func IssueAPIKey(ctx context.Context, database db.TxBeginner, issuer auth.Princi
 	var record db.APIKey
 	roleNames := []string{}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAPIKeyManager(ctx, tx, issuer, scope); err != nil {
+		if err := lockAPIKeyManager(ctx, tx, issuer, scope, auth.PermissionAPIKeysCreate); err != nil {
 			return err
 		}
 		q := db.New(tx)
@@ -201,7 +204,7 @@ func IssueAPIKey(ctx context.Context, database db.TxBeginner, issuer auth.Princi
 
 // RevokeAPIKey revokes an API key of the environment.
 func RevokeAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Principal, scope auth.Scope, id uuid.UUID) error {
-	if err := authorizeAPIKeyManagement(manager, scope); err != nil {
+	if err := authorizeAPIKeyManagement(manager, scope, auth.PermissionAPIKeysRevoke); err != nil {
 		return err
 	}
 	projectID, environmentID, err := environmentIDs(scope)
@@ -209,7 +212,7 @@ func RevokeAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Prin
 		return err
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAPIKeyManager(ctx, tx, manager, scope); err != nil {
+		if err := lockAPIKeyManager(ctx, tx, manager, scope, auth.PermissionAPIKeysRevoke); err != nil {
 			return err
 		}
 		q := db.New(tx)
@@ -302,8 +305,8 @@ func apiKeyWriteError(err error) error {
 	}
 	return err
 }
-func lockAPIKeyManager(ctx context.Context, tx pgx.Tx, manager auth.Principal, scope auth.Scope) error {
-	if err := authorizeAPIKeyManagement(manager, scope); err != nil {
+func lockAPIKeyManager(ctx context.Context, tx pgx.Tx, manager auth.Principal, scope auth.Scope, permission auth.Permission) error {
+	if err := authorizeAPIKeyManagement(manager, scope, permission); err != nil {
 		return err
 	}
 	var id uuid.UUID
@@ -317,7 +320,7 @@ func lockAPIKeyManager(ctx context.Context, tx pgx.Tx, manager auth.Principal, s
 	if err != nil {
 		return ErrAPIKeyManagementRequired
 	}
-	return authorizeAPIKeyManagement(current, scope)
+	return authorizeAPIKeyManagement(current, scope, permission)
 }
 
 // APIKeyUpdate changes credential metadata without changing its identity or Roles.
@@ -344,7 +347,7 @@ func UpdateAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Prin
 		return result, err
 	}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAPIKeyManager(ctx, tx, manager, scope); err != nil {
+		if err := lockAPIKeyManager(ctx, tx, manager, scope, auth.PermissionAPIKeysUpdate); err != nil {
 			return err
 		}
 		q := db.New(tx)
@@ -378,7 +381,7 @@ func RotateAPIKey(ctx context.Context, database db.TxBeginner, manager auth.Prin
 		return result, err
 	}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAPIKeyManager(ctx, tx, manager, scope); err != nil {
+		if err := lockAPIKeyManager(ctx, tx, manager, scope, auth.PermissionAPIKeysRotate); err != nil {
 			return err
 		}
 		q := db.New(tx)

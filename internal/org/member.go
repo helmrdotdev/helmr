@@ -40,7 +40,7 @@ type ManagingMember struct {
 	MemberID uuid.UUID
 }
 
-func (m ManagingMember) Authorize(ctx context.Context, database db.DBTX) error {
+func (m ManagingMember) Authorize(ctx context.Context, database db.DBTX, permission auth.Permission) error {
 	q := db.New(database)
 	member, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(m.OrgID), UserID: pgvalue.UUID(m.UserID)})
 	if isNoRows(err) {
@@ -57,7 +57,7 @@ func (m ManagingMember) Authorize(ctx context.Context, database db.DBTX) error {
 		return err
 	}
 	for _, g := range grants {
-		if g.EnvironmentID == "" && auth.Permission(g.Permission) == auth.CapabilityAccessManage {
+		if g.EnvironmentID == "" && auth.Permission(g.Permission) == permission && auth.IsOrganizationPermission(permission) {
 			return nil
 		}
 	}
@@ -107,7 +107,7 @@ type UpdatedMember struct {
 // ListMembers returns every member of the organization, including disabled ones.
 func ListMembers(ctx context.Context, database db.DBTX, manager ManagingMember) ([]db.ListOrgMembersRow, error) {
 	q := db.New(database)
-	if err := manager.Authorize(ctx, database); err != nil {
+	if err := manager.Authorize(ctx, database, auth.PermissionMembersRead); err != nil {
 		return nil, err
 	}
 	members, err := q.ListOrgMembers(ctx, pgvalue.UUID(manager.OrgID))
@@ -121,7 +121,7 @@ func ListMembers(ctx context.Context, database db.DBTX, manager ManagingMember) 
 // the given position and whether more follow.
 func ListInvitations(ctx context.Context, database db.DBTX, manager ManagingMember, limit int32, after *InvitationPosition) ([]db.ListInvitationsRow, bool, error) {
 	q := db.New(database)
-	if err := manager.Authorize(ctx, database); err != nil {
+	if err := manager.Authorize(ctx, database, auth.PermissionInvitationsRead); err != nil {
 		return nil, false, err
 	}
 	params := db.ListInvitationsParams{OrgID: pgvalue.UUID(manager.OrgID), RowLimit: limit + 1}
@@ -190,7 +190,7 @@ func CreateInvitations(ctx context.Context, database db.TxBeginner, tokenKey []b
 	ordered := slices.Clone(valid)
 	slices.SortFunc(ordered, func(a, b int) int { return strings.Compare(results[a].Email, results[b].Email) })
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, inviter); err != nil {
+		if err := lockAccessMembers(ctx, tx, inviter, auth.PermissionInvitationsCreate); err != nil {
 			return err
 		}
 		var batch []NewInvitation
@@ -307,7 +307,7 @@ func pendingInvitation(ctx context.Context, q db.Querier, orgID uuid.UUID, email
 // RevokeInvitation revokes a pending invitation of the organization.
 func RevokeInvitation(ctx context.Context, database db.TxBeginner, manager ManagingMember, invitationID uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, manager); err != nil {
+		if err := lockAccessMembers(ctx, tx, manager, auth.PermissionInvitationsRevoke); err != nil {
 			return err
 		}
 		return revokeInvitation(ctx, tx, manager, invitationID)
@@ -396,7 +396,7 @@ func DisableMember(ctx context.Context, tx pgx.Tx, manager ManagingMember, targe
 	if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, manager.OrgID); err != nil {
 		return err
 	}
-	if err := lockAccessMembers(ctx, tx, manager, targetID); err != nil {
+	if err := lockAccessMembers(ctx, tx, manager, auth.PermissionMembersRemove, targetID); err != nil {
 		return err
 	}
 	q := db.New(tx)

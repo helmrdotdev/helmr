@@ -23,7 +23,7 @@ const LISTED_PERMISSIONS = 3;
 
 export function Roles() {
   const me = useMe(); const cache = useQueryClient(); const navigate = useNavigate();
-  const allowed = () => hasPermission(me.data, "access.manage");
+  const allowed = () => hasPermission(me.data, "roles.read");
   const query = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() }));
   const [filter, setFilter] = createSignal("");
   const [deleting, setDeleting] = createSignal<PermissionRole>();
@@ -35,8 +35,8 @@ export function Roles() {
   });
   const catalog = () => query.data?.catalog ?? [];
   return <>
-    <PageHeader title="Roles" subtitle="Sets of permissions you grant to people, groups and API keys." actions={<Show when={allowed()}><button type="button" class={ui.button} onClick={() => navigate("/settings/roles/new")}>Create role</button></Show>} />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to manage roles.</Notice></Show>}>
+    <PageHeader title="Roles" subtitle="Sets of permissions you grant to people, groups and API keys." actions={<Show when={hasPermission(me.data, "roles.create")}><button type="button" class={ui.button} onClick={() => navigate("/settings/roles/new")}>Create role</button></Show>} />
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Read roles permission is required to view roles.</Notice></Show>}>
       <Toolbar start={<SearchInput aria-label="Filter roles" placeholder="Filter roles" value={filter()} onInput={e => setFilter(e.currentTarget.value)} />} />
       <QueryState query={query} pending={<TableSkeleton label="Loading roles" columns={COLUMNS} />} error={error => loadError(error, "Could not load roles.")}>
         {() => (
@@ -49,8 +49,8 @@ export function Roles() {
                   <td>{role.permissions.length > LISTED_PERMISSIONS ? `${role.permissions.length} permissions` : permissionNames(role.permissions, catalog())}</td>
                   <td class="font-mono text-chrome!">{role.grant_count}</td>
                   <RowActions label={`Actions for ${role.name}`} items={[
-                    { label: "Duplicate", href: `/settings/roles/new?from=${encodeURIComponent(role.id)}` },
-                    ...(role.builtin_key || role.grant_count > 0 ? [] : [{ label: "Delete", tone: "danger" as const, onSelect: () => setDeleting(role) }]),
+                    ...(hasPermission(me.data, "roles.create") ? [{ label: "Duplicate", href: `/settings/roles/new?from=${encodeURIComponent(role.id)}` }] : []),
+                    ...(!hasPermission(me.data, "roles.delete") || role.builtin_key || role.grant_count > 0 ? [] : [{ label: "Delete", tone: "danger" as const, onSelect: () => setDeleting(role) }]),
                   ]} />
                 </tr>
               )}

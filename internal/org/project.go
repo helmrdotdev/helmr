@@ -3,6 +3,7 @@ package org
 import (
 	"context"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"strings"
 	"uuid"
 
@@ -89,7 +90,8 @@ func ListEnvironments(ctx context.Context, q db.Querier, project db.Project) ([]
 // CreateProject creates a project with its default environments. The
 // organization row lock serializes the choice of the organization's default
 // project before the insert.
-func CreateProject(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, input ProjectInput) (db.Project, []db.Environment, error) {
+func CreateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, input ProjectInput) (db.Project, []db.Environment, error) {
+	orgID := m.OrgID
 	if err := input.ExecutionLimits.Validate(); err != nil {
 		return db.Project{}, nil, err
 	}
@@ -108,6 +110,9 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, inpu
 		q := db.New(tx)
 		if _, err := q.LockOrganizationForProjectDefaults(ctx, pgvalue.UUID(orgID)); err != nil {
 			return fmt.Errorf("lock organization: %w", err)
+		}
+		if err := lockAccessMembers(ctx, tx, m, auth.PermissionProjectsCreate); err != nil {
+			return err
 		}
 		regionID, err := defaultRegionID(ctx, q, input.DefaultRegionID)
 		if err != nil {
@@ -170,30 +175,40 @@ func defaultRegionID(ctx context.Context, q db.Querier, requested string) (strin
 }
 
 // UpdateProject changes the display name while preserving the public identifier.
-func UpdateProject(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID uuid.UUID, details ProjectDetails) (db.Project, error) {
+func UpdateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, projectID uuid.UUID, details ProjectDetails) (db.Project, error) {
+	orgID := m.OrgID
 	name, err := normalizeDisplayName(details.Name)
 	if err != nil {
 		return db.Project{}, err
 	}
-	project, err := q.UpdateProjectDetails(ctx, db.UpdateProjectDetailsParams{
-		OrgID: pgvalue.UUID(orgID),
-		ID:    pgvalue.UUID(projectID),
-		Name:  name,
+	var project db.Project
+	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		if err := lockAccessMembers(ctx, tx, m, auth.PermissionProjectsUpdate); err != nil {
+			return err
+		}
+		q := db.New(tx)
+		project, err = q.UpdateProjectDetails(ctx, db.UpdateProjectDetailsParams{
+			OrgID: pgvalue.UUID(orgID),
+			ID:    pgvalue.UUID(projectID),
+			Name:  name,
+		})
+		if isNoRows(err) {
+			return ErrProjectNotFound
+		}
+		if db.IsUniqueViolation(err) {
+			return ErrProjectSlugInUse
+		}
+		if err != nil {
+			return fmt.Errorf("update project: %w", err)
+		}
+		return nil
 	})
-	if isNoRows(err) {
-		return db.Project{}, ErrProjectNotFound
-	}
-	if db.IsUniqueViolation(err) {
-		return db.Project{}, ErrProjectSlugInUse
-	}
-	if err != nil {
-		return db.Project{}, fmt.Errorf("update project: %w", err)
-	}
-	return project, nil
+	return project, err
 }
 
 // CreateEnvironment adds an environment to an active project.
-func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, projectID uuid.UUID, details EnvironmentDetails, limits ExecutionLimits) (db.Environment, error) {
+func CreateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember, projectID uuid.UUID, details EnvironmentDetails, limits ExecutionLimits) (db.Environment, error) {
+	orgID := m.OrgID
 	if err := limits.Validate(); err != nil {
 		return db.Environment{}, err
 	}
@@ -203,6 +218,9 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, 
 	}
 	var environment db.Environment
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		if err := lockAccessMembers(ctx, tx, m, auth.PermissionEnvironmentsCreate); err != nil {
+			return err
+		}
 		q := db.New(tx)
 		_, err := q.GetProject(ctx, db.GetProjectParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(projectID)})
 		if isNoRows(err) {
@@ -244,22 +262,31 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, orgID uuid.UUID, 
 }
 
 // UpdateEnvironment changes display settings while preserving the public identifier.
-func UpdateEnvironment(ctx context.Context, q db.Querier, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, details EnvironmentDetails) (db.Environment, error) {
+func UpdateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember, projectID uuid.UUID, environmentID uuid.UUID, details EnvironmentDetails) (db.Environment, error) {
+	orgID := m.OrgID
 	name, err := normalizeDisplayName(details.Name)
 	if err != nil {
 		return db.Environment{}, err
 	}
-	environment, err := q.UpdateEnvironmentDetails(ctx, db.UpdateEnvironmentDetailsParams{OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID), ID: pgvalue.UUID(environmentID), Name: name, ColorHex: details.ColorHex})
-	if isNoRows(err) {
-		return db.Environment{}, ErrEnvironmentNotFound
-	}
-	if db.IsUniqueViolation(err) {
-		return db.Environment{}, ErrEnvironmentSlugInUse
-	}
-	if err != nil {
-		return db.Environment{}, fmt.Errorf("update environment: %w", err)
-	}
-	return environment, nil
+	var environment db.Environment
+	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		if err := lockAccessMembers(ctx, tx, m, auth.PermissionEnvironmentsUpdate); err != nil {
+			return err
+		}
+		q := db.New(tx)
+		environment, err = q.UpdateEnvironmentDetails(ctx, db.UpdateEnvironmentDetailsParams{OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID), ID: pgvalue.UUID(environmentID), Name: name, ColorHex: details.ColorHex})
+		if isNoRows(err) {
+			return ErrEnvironmentNotFound
+		}
+		if db.IsUniqueViolation(err) {
+			return ErrEnvironmentSlugInUse
+		}
+		if err != nil {
+			return fmt.Errorf("update environment: %w", err)
+		}
+		return nil
+	})
+	return environment, err
 }
 
 // GetEnvironmentByReference resolves a public Environment identifier in its Project.

@@ -19,7 +19,7 @@ import (
 
 func (f statusFixture) deliveryManager(t *testing.T) uuid.UUID {
 	t.Helper()
-	f.SetPermissions(t, "agents.use", "sessions.view", "sessions.manage")
+	f.SetPermissions(t, "agents.use", "sessions.read", "sessions.send", "sessions.check_delivery", "sessions.abandon_delivery")
 	var org uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `UPDATE org_members SET is_owner=true WHERE user_id=$1 RETURNING org_id`, f.User).Scan(&org); err != nil {
 		t.Fatal(err)
@@ -128,12 +128,22 @@ func TestSlackDeliveryRecoveryRequiresCurrentManagerAndObservedPublication(t *te
 		t.Fatal(err)
 	}
 	input := f.recoveryInput(t, org, post)
-	f.SetPermissions(t, "sessions.view")
+	f.SetPermissions(t, "sessions.read")
 	if _, err := ListSessionDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, 0, 100); err != nil {
 		t.Fatal("reader denied", err)
 	}
 	if err := RecoverDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("developer changed delivery", err)
+	}
+	for _, action := range []string{"check", "abandon"} {
+		permission := "sessions.check_delivery"
+		if action == "abandon" {
+			permission = "sessions.abandon_delivery"
+		}
+		f.SetPermissions(t, permission)
+		if err := RecoverDelivery(t.Context(), f.Pool, org, f.User, f.Environment, f.Session, post, input, action); !errors.Is(err, errInstallationAuthority) {
+			t.Fatalf("%s without Session read: %v", action, err)
+		}
 	}
 	_ = f.deliveryManager(t)
 	wrong := input

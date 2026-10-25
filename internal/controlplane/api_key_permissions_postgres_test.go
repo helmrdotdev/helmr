@@ -66,7 +66,7 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		}
 	}
 
-	for _, body := range []string{`{"name":""}`, `{"name":"invalid-role","role":{"role_id":"bad"}}`, `{"name":"old-format","permissions":[{"scopes":["secrets.manage"]}]}`} {
+	for _, body := range []string{`{"name":""}`, `{"name":"invalid-role","role":{"role_id":"bad"}}`, `{"name":"old-format","permissions":[{"scopes":["secrets.create"]}]}`} {
 		response := fixture.request(t, http.MethodPost, "/api/projects/api-keys/environments/production/api-keys", fixture.token, body)
 		if response.Code != http.StatusBadRequest {
 			t.Fatalf("invalid body status=%d: %s", response.Code, response.Body.String())
@@ -175,8 +175,10 @@ func newAPIKeyHTTPPostgresFixture(t *testing.T, keyCount int) apiKeyHTTPPostgres
 	if err := fixture.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE id=$1`, ownerID).Scan(&ownerUser); err != nil {
 		t.Fatal(err)
 	}
-	fixture.grant(t, orgID, ownerUser, environmentID, "keys.manage")
-	roleID, _ := dbtest.CreateRole(t, fixture.pool, orgID, "agents.use", "sessions.view", "sessions.manage", "deployments.publish", "deployments.promote", "computers.operate", "secrets.manage")
+	for _, permission := range []string{"api_keys.read", "api_keys.create", "api_keys.revoke"} {
+		fixture.grant(t, orgID, ownerUser, environmentID, permission)
+	}
+	roleID, _ := dbtest.CreateRole(t, fixture.pool, orgID, "agents.use", "sessions.read", "sessions.send", "deployments.publish", "deployments.promote", "computers.execute", "secrets.create")
 	dbtest.MustExec(t, t.Context(), fixture.pool, `UPDATE roles SET name='Machine workload' WHERE id=$1`, roleID)
 	keyRows := make([][]any, 0, keyCount+1)
 	for index := range keyCount {
@@ -252,7 +254,7 @@ func (s *apiKeyCountingStore) Begin(ctx context.Context) (pgx.Tx, error) {
 	return s.TxDB.Begin(ctx)
 }
 
-func TestAPIKeyHTTPAccessAdministratorListsWithoutLifecycleAuthority(t *testing.T) {
+func TestAPIKeyHTTPAssignmentReaderReceivesOnlyTargetIdentity(t *testing.T) {
 	f := newAPIKeyHTTPPostgresFixture(t, 1)
 	ctx := t.Context()
 	var orgID uuid.UUID
@@ -261,13 +263,24 @@ func TestAPIKeyHTTPAccessAdministratorListsWithoutLifecycleAuthority(t *testing.
 	}
 	user := f.user(t, "Access administrator")
 	member := f.member(t, orgID, user, "member")
-	dbtest.GrantMember(t, f.pool, orgID, user, nil, "access.manage")
+	dbtest.GrantMember(t, f.pool, orgID, user, nil, "assignments.read", "assignments.create")
 	token := f.session(t, user, orgID)
 	base := "/api/projects/api-keys/environments/production/api-keys"
 	response := f.request(t, http.MethodGet, base, token, "")
 	var listed api.ListAPIKeysResponse
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &listed) != nil || len(listed.APIKeys) != 1 {
 		t.Fatalf("access-only list: %d %s", response.Code, response.Body.String())
+	}
+	var projection struct {
+		APIKeys []map[string]json.RawMessage `json:"api_keys"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &projection); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"key_prefix", "created_by_member_id", "created_at", "last_used_at", "expires_at", "revoked_at"} {
+		if _, present := projection.APIKeys[0][field]; present {
+			t.Fatalf("assignment directory exposed %s: %s", field, response.Body.String())
+		}
 	}
 	keyID := listed.APIKeys[0].ID
 	if bytes.Contains(response.Body.Bytes(), []byte("raw_key")) || bytes.Contains(response.Body.Bytes(), []byte("token_hash")) {

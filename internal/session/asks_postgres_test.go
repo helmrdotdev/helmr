@@ -180,8 +180,8 @@ func askKey(t *testing.T, f fixture, permissions []string) session.Caller {
 }
 func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 	f, a, id, _ := askFixture(t)
-	reader := askKey(t, f, []string{"sessions.view"})
-	answerer := askKey(t, f, []string{"agents.use", "sessions.manage"})
+	reader := askKey(t, f, []string{"sessions.read"})
+	answerer := askKey(t, f, []string{"agents.use", "sessions.answer"})
 	scoped := askKey(t, f, []string{"agents.use"})
 	otherEnv := uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, otherEnv); err != nil {
@@ -189,7 +189,7 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 	}
 	otherFixture := f
 	otherFixture.env = otherEnv
-	cross := askKey(t, otherFixture, []string{"agents.use", "sessions.manage"})
+	cross := askKey(t, otherFixture, []string{"agents.use", "sessions.answer"})
 
 	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "response", Answer: json.RawMessage(`""`)}
 	for _, caller := range []session.Caller{reader, scoped, cross, {Kind: "session", ID: f.session}} {
@@ -197,8 +197,8 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 			t.Fatalf("ungranted answer %+v: %v", caller, err)
 		}
 	}
-	if _, err := session.GetAsk(t.Context(), f.pool, answerer, f.env, f.session, a.TurnID, id); err != nil {
-		t.Fatalf("operate includes read: %v", err)
+	if _, err := session.GetAsk(t.Context(), f.pool, answerer, f.env, f.session, a.TurnID, id); !errors.Is(err, session.ErrDenied) {
+		t.Fatalf("answer permission allowed reading: %v", err)
 	}
 	if _, err := session.GetAsk(t.Context(), f.pool, reader, f.env, f.session, a.TurnID, id); err != nil {
 		t.Fatal(err)
@@ -219,7 +219,7 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 }
 func TestAskKeyExpiresWhileWaitingForSession(t *testing.T) {
 	f, a, id, _ := askFixture(t)
-	key := askKey(t, f, []string{"agents.use", "sessions.manage"})
+	key := askKey(t, f, []string{"agents.use", "sessions.answer"})
 	var expires time.Time
 	if err := f.pool.QueryRow(t.Context(), `UPDATE api_keys SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1 RETURNING expires_at`, key.ID).Scan(&expires); err != nil {
 		t.Fatal(err)

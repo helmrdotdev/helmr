@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -136,7 +137,7 @@ func TestCommandReplayAfterDeletionAndExpiredReceipt(t *testing.T) {
 	f := commandFixture(t)
 	c := f.create(t, "replay")
 	id := uuid.UUID(c.ID.Bytes)
-	if _, err := Cancel(t.Context(), f.Pool, f.ref(id)); err != nil {
+	if _, err := Cancel(t.Context(), f.Pool, f.Principal(t), f.ref(id)); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer)
@@ -152,7 +153,7 @@ func TestCommandReplayAfterDeletionAndExpiredReceipt(t *testing.T) {
 	if _, err = Create(t.Context(), f.Pool, f.request("replay")); !errors.As(err, &expired) {
 		t.Fatalf("expired create: %v", err)
 	}
-	if _, err = Cancel(t.Context(), f.Pool, f.ref(id)); !errors.As(err, &expired) {
+	if _, err = Cancel(t.Context(), f.Pool, f.Principal(t), f.ref(id)); !errors.As(err, &expired) {
 		t.Fatalf("expired cancel: %v", err)
 	}
 	var count int
@@ -179,15 +180,19 @@ func TestCommandScopeAndCancellationReceipt(t *testing.T) {
 		if _, err := Get(t.Context(), db.New(f.Pool), ref); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("%s get: %v", coordinate, err)
 		}
-		if _, err := Cancel(t.Context(), f.Pool, ref); !errors.Is(err, ErrNotFound) {
+		want := ErrNotFound
+		if coordinate != "command" {
+			want = access.ErrDenied
+		}
+		if _, err := Cancel(t.Context(), f.Pool, f.Principal(t), ref); !errors.Is(err, want) {
 			t.Fatalf("%s cancel: %v", coordinate, err)
 		}
 	}
-	receipt, err := Cancel(t.Context(), f.Pool, f.ref(id))
+	receipt, err := Cancel(t.Context(), f.Pool, f.Principal(t), f.ref(id))
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := Cancel(t.Context(), f.Pool, f.ref(id))
+	again, err := Cancel(t.Context(), f.Pool, f.Principal(t), f.ref(id))
 	if err != nil || again != receipt {
 		t.Fatalf("cancel replay %+v %v", again, err)
 	}
@@ -196,7 +201,7 @@ func TestCommandScopeAndCancellationReceipt(t *testing.T) {
 		t.Fatalf("pending cancellation: %+v", c)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET result_expires_at=clock_timestamp()-interval '1 day',result_pruned_at=clock_timestamp(),argv=NULL,cwd=NULL,env=NULL,stdin=NULL,error=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)
-	again, err = Cancel(t.Context(), f.Pool, f.ref(id))
+	again, err = Cancel(t.Context(), f.Pool, f.Principal(t), f.ref(id))
 	if err != nil || again != receipt {
 		t.Fatalf("pruned replay %+v %v", again, err)
 	}
@@ -257,7 +262,7 @@ func TestCommandCancellationPrecedesOtherStarts(t *testing.T) {
 	first := f.start(t, "first")
 	id := uuid.UUID(first.Command.ID.Bytes)
 	second := f.create(t, "second")
-	if _, err := Cancel(t.Context(), f.Pool, f.ref(id)); err != nil {
+	if _, err := Cancel(t.Context(), f.Pool, f.Principal(t), f.ref(id)); err != nil {
 		t.Fatal(err)
 	}
 	r, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
@@ -517,7 +522,7 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	if _, err = computer.Delete(t.Context(), f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("delete live Command: %v", err)
 	}
-	if _, err = Cancel(t.Context(), f.Pool, f.ref(uuid.UUID(cmd.ID.Bytes))); err != nil {
+	if _, err = Cancel(t.Context(), f.Pool, f.Principal(t), f.ref(uuid.UUID(cmd.ID.Bytes))); err != nil {
 		t.Fatal(err)
 	}
 	deleted, err := computer.Delete(t.Context(), f.Pool, deletion)
@@ -602,7 +607,7 @@ func TestCommandProtectedSelectorTracksLogicalOwner(t *testing.T) {
 	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://other.example.com", []string{selector}); err == nil {
 		t.Fatal("wrong origin resolved")
 	}
-	if _, err = Cancel(t.Context(), f.Pool, f.ref(id)); err != nil {
+	if _, err = Cancel(t.Context(), f.Pool, f.Principal(t), f.ref(id)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector}); err == nil {

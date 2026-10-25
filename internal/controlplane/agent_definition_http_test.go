@@ -107,7 +107,10 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	get(base, "", http.StatusUnauthorized)
 	viewer := h.user(t, "Viewer")
 	h.member(t, org, viewer, "member")
-	get(base, h.session(t, viewer, org), http.StatusForbidden)
+	var hidden api.ListAgentDefinitionsResponse
+	if err := json.Unmarshal(get(base, h.session(t, viewer, org), http.StatusOK), &hidden); err != nil || len(hidden.AgentDefinitions) != 0 {
+		t.Fatalf("ungranted catalog: %+v %v", hidden, err)
+	}
 	var first api.ListAgentDefinitionsResponse
 	if err := json.Unmarshal(get(base+"?limit=1", owner, http.StatusOK), &first); err != nil {
 		t.Fatal(err)
@@ -157,37 +160,52 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	get(base+selected, other, http.StatusBadRequest)
 	issuer := f.Principal(t)
 	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}
-	issue := func(permission auth.Permission) string {
+	issue := func(permissions ...auth.Permission) string {
 		t.Helper()
-		key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: string(permission) + uuid.NewV7().String(), RolePermissions: []auth.Permission{permission}})
+		key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: string(permissions[0]) + uuid.NewV7().String(), RolePermissions: permissions})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return key.Raw
 	}
-	reader := issue(auth.CapabilitySessionsView)
+	reader := issue(auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsRead)
 	get("/v1/agents"+selected, reader, http.StatusOK)
 	get("/v1/agents/agent"+selected, reader, http.StatusOK)
-	get("/v1/agents"+selected, issue(auth.CapabilityAgentsUse), http.StatusNotFound)
+	var inaccessible api.ListAgentDefinitionsResponse
+	if err := json.Unmarshal(get("/v1/agents"+selected, issue(auth.PermissionAgentsUse), http.StatusOK), &inaccessible); err != nil || len(inaccessible.AgentDefinitions) != 0 {
+		t.Fatalf("use exposed history: %+v %v", inaccessible, err)
+	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1;
  UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile)
-	consumer := issue(auth.CapabilityAgentsUse)
+	consumer := issue(auth.PermissionAgentsUse)
 	closePath := "/v1/sessions/" + f.Session.String() + "/close-scope"
 	get(closePath, consumer, http.StatusForbidden)
 	get("/v1/sessions/"+uuid.NewV7().String()+"/close-scope", consumer, http.StatusForbidden)
 	get(closePath, reader, http.StatusForbidden)
 	get(sessionPath+"/close-scope", owner, http.StatusOK)
-	get(closePath, issue(auth.CapabilitySessionsManage), http.StatusOK)
+	get(closePath, issue(auth.PermissionSessionsClose), http.StatusOK)
 
-	for _, path := range []string{"/v1/agents", "/v1/agents/agent"} {
+	for _, path := range []string{"/v1/agents", "/v1/agents/agent", "/v1/agents" + selected, "/v1/agents/agent" + selected} {
 		response := get(path, consumer, http.StatusOK)
 		if !bytes.Contains(response, []byte(`"agent"`)) || bytes.Contains(response, []byte(`"template"`)) {
 			t.Fatalf("scoped discovery projection %s: %s", path, response)
 		}
 	}
+	var usePage api.ListAgentDefinitionsResponse
+	if err := json.Unmarshal(get("/v1/agents?limit=1", consumer, http.StatusOK), &usePage); err != nil || len(usePage.AgentDefinitions) != 1 || usePage.NextCursor == "" {
+		t.Fatalf("use pagination: %+v %v", usePage, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)
+	var stalePage api.ListAgentDefinitionsResponse
+	if err := json.Unmarshal(get("/v1/agents?cursor="+url.QueryEscape(usePage.NextCursor), consumer, http.StatusOK), &stalePage); err != nil || len(stalePage.AgentDefinitions) != 0 {
+		t.Fatalf("use cursor exposed historical definition: %+v %v", stalePage, err)
+	}
+	get("/v1/agents/agent"+selected, consumer, http.StatusNotFound)
+	get("/v1/agents/agent"+selected, reader, http.StatusOK)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
 	var resourceList api.ListTemplateDefinitionsResponse
 	if err := json.Unmarshal(get("/v1/templates", reader, http.StatusOK), &resourceList); err != nil {
 		t.Fatal(err)
@@ -212,12 +230,12 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		t.Fatalf("definition resources: %+v %v", resources, err)
 	}
 	get("/v1/sandboxes", reader, http.StatusNotFound)
-	get("/v1/templates", issue(auth.CapabilityAgentsUse), http.StatusForbidden)
+	get("/v1/templates", issue(auth.PermissionAgentsUse), http.StatusForbidden)
 	denied := h.request(t, http.MethodPost, "/v1/computers", reader, `{"template":"fixture-computer"}`)
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("read key created Computer: %d %s", denied.Code, denied.Body.String())
 	}
-	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "computer SDK", RolePermissions: []auth.Permission{auth.CapabilitySessionsView, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilitySecretsManage}})
+	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "computer SDK", RolePermissions: []auth.Permission{auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsRead, auth.PermissionComputersRead, auth.PermissionComputersCreate, auth.PermissionComputersUpdateRetention, auth.PermissionSecretsCreate}})
 	if err != nil {
 		t.Fatal(err)
 	}

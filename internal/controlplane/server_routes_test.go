@@ -70,6 +70,7 @@ GET /api/me
 GET /api/members
 GET /api/members/{memberID}/permissions
 GET /api/ownership/members
+GET /api/permission-catalog
 GET /api/projects
 GET /api/projects/{project}
 GET /api/projects/{project}/access-targets

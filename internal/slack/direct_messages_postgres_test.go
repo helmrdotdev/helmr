@@ -499,7 +499,7 @@ func TestDirectDeliveryRechecksRecipientUseAndIdentity(t *testing.T) {
 			check(true)
 			switch revoke {
 			case "permission":
-				f.SetPermissions(t, "sessions.view")
+				f.SetPermissions(t, "sessions.read")
 			case "link":
 				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM slack_user_links WHERE user_id=$1`, f.User)
 			case "membership":

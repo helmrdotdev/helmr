@@ -34,7 +34,7 @@ function roleLabel(post: SlackDeliveryPost): string {
 
 // One delivery issue: a 36px row with its actions; opened, the message text and
 // what is known about its delivery, as plain text under the row.
-function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; onToggle: () => void; canManage: boolean; checking: boolean; onCheck: () => void; onStop: () => void }) {
+function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; onToggle: () => void; canCheck: boolean; canAbandon: boolean; checking: boolean; onCheck: () => void; onStop: () => void }) {
   const open = () => props.open;
   const post = () => props.post;
   const bodyID = createUniqueId();
@@ -48,9 +48,9 @@ function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; onToggle: 
           <span class="truncate text-console-muted">· {roleLabel(post())} · message {post().sequence} · <RelativeTime value={post().created_at} /></span>
         </button>
         <Show when={post().attempt_id && !post().check_paused_at}><span class="font-mono text-chrome text-console-subtle">Check scheduled</span></Show>
-        <Show when={props.canManage && post().attempt_id}>
-          <Show when={post().check_paused_at}><button type="button" class={ui.compactButton} aria-describedby={titleID} disabled={props.checking} onClick={() => props.onCheck()}>Check Slack again</button></Show>
-          <Show when={post().status === "uncertain" && !post().disposed_at}><button type="button" class={ui.compactButton} aria-describedby={titleID} disabled={props.checking} onClick={() => props.onStop()}>Stop delivery</button></Show>
+        <Show when={post().attempt_id}>
+          <Show when={props.canCheck && post().check_paused_at}><button type="button" class={ui.compactButton} aria-describedby={titleID} disabled={props.checking} onClick={() => props.onCheck()}>Check Slack again</button></Show>
+          <Show when={props.canAbandon && post().status === "uncertain" && !post().disposed_at}><button type="button" class={ui.compactButton} aria-describedby={titleID} disabled={props.checking} onClick={() => props.onStop()}>Stop delivery</button></Show>
         </Show>
       </div>
       <div id={bodyID} hidden={!open()} class="flex flex-col gap-1.5 px-3 pb-3 pl-8">
@@ -69,7 +69,7 @@ function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; onToggle: 
   );
 }
 
-export function SessionDelivery(props: { address: SessionAddress; live: boolean; canManage: boolean }) {
+export function SessionDelivery(props: { address: SessionAddress; live: boolean; canCheck: boolean; canAbandon: boolean }) {
   const posts = createInfiniteQuery(() => ({
     queryKey: ["slack-delivery", props.address.projectID, props.address.environmentID, props.address.sessionID],
     queryFn: ({ pageParam }) => listSlackDelivery(props.address, pageParam),
@@ -100,7 +100,7 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
   };
   return <Panel title="Slack delivery">
     <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
-    <Show when={!props.canManage && rows().some((post) => post.attempt_id)}>
+    <Show when={!props.canCheck && !props.canAbandon && rows().some((post) => post.attempt_id)}>
       <p class={cx(ui.muted, "m-0")}>A session manager for this Agent can check again or stop delivery.</p>
     </Show>
     <QueryState
@@ -114,7 +114,7 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
           label="Slack delivery issues"
           footer={<LoadMore count={rows().length} noun={{ one: "delivery issue", other: "delivery issues" }} hasMore={posts.hasNextPage} loading={posts.isFetchingNextPage} failed={posts.isFetchNextPageError} onLoadMore={() => void posts.fetchNextPage()} />}
         >
-          <For each={rows()}>{(post, index) => <DeliveryRow post={post} open={isOpen(post, index())} onToggle={() => toggle(post)} canManage={props.canManage} checking={checking()} onCheck={() => void check(post)} onStop={() => setSelected(post)} />}</For>
+          <For each={rows()}>{(post, index) => <DeliveryRow post={post} open={isOpen(post, index())} onToggle={() => toggle(post)} canCheck={props.canCheck} canAbandon={props.canAbandon} checking={checking()} onCheck={() => void check(post)} onStop={() => setSelected(post)} />}</For>
         </List>
       )}
     </QueryState>

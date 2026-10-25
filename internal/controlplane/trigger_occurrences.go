@@ -34,7 +34,7 @@ func (s *Server) listTriggerOccurrences(w http.ResponseWriter, r *http.Request) 
 		writeError(w, badRequest(err))
 		return
 	}
-	all, agents := p.AgentPermissionScope(auth.PermissionSessionsRead, scope)
+	all, agents := p.AgentPermissionScope(auth.PermissionTriggersRead, scope)
 	authorized := make([]pgtype.UUID, 0, len(agents))
 	for _, a := range agents {
 		authorized = append(authorized, pgvalue.UUID(a))

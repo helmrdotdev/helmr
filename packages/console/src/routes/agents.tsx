@@ -1,3 +1,4 @@
+import { ApiError } from "../lib/api";
 import { AgentDeleteDialog } from "../features/agents/AgentDeleteDialog";
 import { hasPermission } from "../lib/auth";
 import { useLocation, useParams } from "@solidjs/router";
@@ -11,7 +12,6 @@ import { CopyLinkButton } from "../components/CopyLinkButton";
 import { SectionLayout } from "../components/SectionLayout";
 import { deploymentHref } from "../features/deployments/navigation";
 import { AgentSlackConnection } from "../features/slack/AgentSlackConnection";
-import { getCurrentDeployment } from "../lib/deployments";
 import { agentHref, getAgentDefinition, getAgentStatus, listAgentDefinitions, listRetainedAgents, type AgentTab, type RetainedAgent } from "../lib/definitions";
 import { loadError } from "../lib/error";
 import { useScope, useScopeIDs } from "../lib/scope";
@@ -57,8 +57,8 @@ type AgentRow = RetainedAgent & { template?: string | undefined };
 export function AgentList() {
  const me=useMe();
  const [view,setView]=createSignal<"workloads"|"access">();
- const selected=()=>view() ?? (hasPermission(me.data,"access.manage") ? "access" : "workloads");
- return <><Show when={hasPermission(me.data,"access.manage")}><div class="mb-4"><Segmented label="Agent view" value={selected()} options={[{value:"workloads" as const,label:"Workloads"},{value:"access" as const,label:"Manage access"}]} onChange={setView} /></div></Show><Show when={selected()==="access" && hasPermission(me.data,"access.manage")} fallback={<OperationalAgentList />}><AccessAgentDirectory /></Show></>;
+ const selected=()=>view() ?? (hasPermission(me.data,"assignments.read") ? "access" : "workloads");
+ return <><Show when={hasPermission(me.data,"assignments.read")}><div class="mb-4"><Segmented label="Agent view" value={selected()} options={[{value:"workloads" as const,label:"Workloads"},{value:"access" as const,label:"Manage access"}]} onChange={setView} /></div></Show><Show when={selected()==="access" && hasPermission(me.data,"assignments.read")} fallback={<OperationalAgentList />}><AccessAgentDirectory /></Show></>;
 }
 
 function AccessAgentDirectory() {
@@ -73,16 +73,18 @@ function OperationalAgentList() {
   const [catalogView, setCatalogView] = createSignal<"current" | "all" | "deleted">("current");
   const all = () => catalogView() !== "current";
   const [search, setSearch] = createSignal("");
-  const current = createQuery(() => ({ queryKey: ["deployments", "current", scope().projectID, scope().environmentID], queryFn: () => getCurrentDeployment(scope()), enabled: !all(), retry: false, refetchInterval: 15_000 }));
   const agents = createInfiniteQuery(() => ({
-    queryKey: ["agents", "catalog", scope().projectID, scope().environmentID, catalogView(), all() ? null : current.data?.id],
+    queryKey: ["agents", "catalog", scope().projectID, scope().environmentID, catalogView()],
     queryFn: async ({ pageParam }): Promise<{ agents: AgentRow[]; next_cursor?: string | undefined }> => {
       if (all()) return listRetainedAgents(scope(), pageParam || undefined, catalogView() === "deleted" ? "deleted" : "all");
-      const page = await listAgentDefinitions({ ...scope(), deploymentID: current.data!.id, cursor: pageParam || undefined, limit: 100 });
+      const page = await listAgentDefinitions({ ...scope(), cursor: pageParam || undefined, limit: 100 }).catch(error => {
+        if (error instanceof ApiError && error.code === "no_current_deployment") return { agents: [], deployment_id: "", next_cursor: undefined };
+        throw error;
+      });
       return { agents: page.agents.map(item => ({ agent: item.agent, template: item.template, defined_in_current: true, deleted_at: null, revision: 0, current_deployment_id: page.deployment_id })), next_cursor: page.next_cursor };
     },
     initialPageParam: "", getNextPageParam: page => page.next_cursor,
-    enabled: all() || (!!current.data && !current.isError), retry: false,
+    enabled: !!scope().projectID && !!scope().environmentID, retry: false, refetchInterval: 15_000,
   }));
   const items = createMemo(() => agents.data?.pages.flatMap(page => page.agents) ?? []);
   const query = () => search().trim().toLowerCase();
@@ -128,18 +130,7 @@ function OperationalAgentList() {
         <SearchInput aria-label="Filter agents" placeholder="Filter agents…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
       </div>
     </>} />
-    <Show when={all()} fallback={
-      <QueryState
-        query={current}
-        pending={<TableSkeleton label="Loading agents" columns={columns()} />}
-        error={failure}
-        empty={{ when: (deployment) => !deployment, title: "No current deployment.", hint: "Show all agents to manage retained connections and history." }}
-      >
-        {table}
-      </QueryState>
-    }>
-      {table()}
-    </Show>
+    {table()}
   </>;
 }
 
@@ -179,13 +170,13 @@ export function AgentDetail(props: { children?: JSX.Element }) {
   const definition = createQuery(() => ({
     queryKey: ["agents", "definition", scope().projectID, scope().environmentID, currentDeploymentID(), name()],
     queryFn: () => getAgentDefinition(name(), { ...scope(), deploymentID: currentDeploymentID() }),
-    enabled: !!currentDeploymentID(), retry: false,
+    enabled: !!currentDeploymentID() && (hasPermission(me.data, "agents.read", {...scope(), agent: name()}) || hasPermission(me.data, "agents.use", {...scope(), agent: name()})), retry: false,
   }));
-  const accessTargets=createQuery(()=>({queryKey:["access","targets",scope().projectID],queryFn:()=>listAccessTargets(scope().projectID),enabled:enabled() && hasPermission(me.data,"access.manage")}));
+  const accessTargets=createQuery(()=>({queryKey:["access","targets",scope().projectID],queryFn:()=>listAccessTargets(scope().projectID),enabled:enabled() && hasPermission(me.data,"assignments.read")}));
   const accessIdentity=()=>accessTargets.data?.targets.find(t=>t.environment===scope().environmentID)?.agents.find(a=>a.key===name());
   const missing = () => !agent.data && !accessIdentity() && isNotFound(agent.error);
   const environment = () => scopeState.selectedEnvironment()?.name;
-  const tabs = createMemo(() => [...AGENT_TABS, ...(hasPermission(me.data, "access.manage") && !agent.data?.deleted_at ? [{ value: "access" as const, label: "Access" }] : [])].map(tab => ({ ...tab, href: agentHref(name(), tab.value) })));
+  const tabs = createMemo(() => [...AGENT_TABS, ...(hasPermission(me.data, "assignments.read") && !agent.data?.deleted_at ? [{ value: "access" as const, label: "Access" }] : [])].map(tab => ({ ...tab, href: agentHref(name(), tab.value) })));
   const selected = () => selectedLinkTab(tabs(), location.pathname);
   return <Page>
     <PageHeader
@@ -200,7 +191,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
         )}</Show>
         <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
       </>}
-      actions={<Show when={!missing()}><Show when={agent.data && hasPermission(me.data,"access.manage") && hasPermission(me.data,"agents.manage",{...scope(),agent:name()})}><button class={ui.secondaryButton} onClick={() => setChangeOpen(true)}>{agent.data?.deleted_at ? "Restore" : "Delete"}</button></Show><CopyLinkButton /></Show>}
+      actions={<Show when={!missing()}><Show when={agent.data && hasPermission(me.data,agent.data?.deleted_at ? "agents.restore" : "agents.delete",{...scope(),agent:name()})}><button class={ui.secondaryButton} onClick={() => setChangeOpen(true)}>{agent.data?.deleted_at ? "Restore" : "Delete"}</button></Show><CopyLinkButton /></Show>}
     />
     <Show when={changeMessage()}><Notice tone="success">{changeMessage()}</Notice></Show>
     <Show when={changeOpen()}><AgentDeleteDialog agent={name()} scope={scope()} restore={!!agent.data?.deleted_at} onClose={() => setChangeOpen(false)} onSaved={() => {

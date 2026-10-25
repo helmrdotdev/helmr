@@ -173,7 +173,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$9,$2,'second-app','second-client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$12);
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id,authorization_lost_at) VALUES($10,$9,$2,'second-app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$12,clock_timestamp());
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($11,$1,$6,$9,$10,$12)`, pgx.QueryExecModeSimpleProtocol, second, org, project, secondDeployment, "sha256:"+strings.Repeat("2", 64), secondAgent, secondSession, secondHold, secondRegistration, secondInstallation, secondConnection, f.User)
-	dbtest.GrantMember(t, f.Pool, org, f.User, &second, "sessions.view", "agents.manage")
+	dbtest.GrantMember(t, f.Pool, org, f.User, &second, "sessions.read", "agent_connections.read")
 	ownerToken := h.session(t, f.User, org)
 	other := func(token, path string) api.Attention {
 		t.Helper()
@@ -205,7 +205,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	if err := f.Pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id=$1`, otherOrg).Scan(&otherUser); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.GrantMember(t, f.Pool, otherOrg, otherUser, &otherEnv, "sessions.view", "agents.manage")
+	dbtest.GrantMember(t, f.Pool, otherOrg, otherUser, &otherEnv, "sessions.read", "agent_connections.read")
 	if view := other(otherOwner, path); len(view.Items) != 0 || (view.Counts.Question == nil || *view.Counts.Question != 0) || (view.Counts.Hold == nil || *view.Counts.Hold != 0) || (view.Counts.FailedTurn == nil || *view.Counts.FailedTurn != 0) || view.Counts.SlackReauthorization == nil || *view.Counts.SlackReauthorization != 0 {
 		t.Fatalf("other organization: %+v", view)
 	}
@@ -213,7 +213,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	// Members who do not manage Slack read every other kind; the Slack kind and
 	// its count are absent rather than zero.
 	for _, role := range []string{"member"} {
-		f.SetPermissions(t, "agents.use", "sessions.view", "sessions.manage", "keys.manage")
+		f.SetPermissions(t, "agents.use", "sessions.read", "sessions.send", "api_keys.create")
 		w := h.request(t, http.MethodGet, path, h.session(t, f.User, org), "")
 		if w.Code != http.StatusOK || bytes.Contains(w.Body.Bytes(), []byte("slack_reauthorization")) {
 			t.Fatalf("%s: %d %s", role, w.Code, w.Body.String())
@@ -226,9 +226,9 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	// An owner whose management authority is withdrawn after sign-in no longer
 	// sees the Slack kind.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User)
-	f.SetPermissions(t, "agents.manage", "sessions.view", "sessions.manage", "keys.manage")
+	f.SetPermissions(t, "agent_connections.read", "sessions.read", "sessions.send", "api_keys.create")
 	stillOwner := h.session(t, f.User, org)
-	f.SetPermissions(t, "agents.use", "sessions.view", "sessions.manage", "keys.manage")
+	f.SetPermissions(t, "agents.use", "sessions.read", "sessions.send", "api_keys.create")
 	if w := h.request(t, http.MethodGet, path, stillOwner, ""); w.Code != http.StatusOK || bytes.Contains(w.Body.Bytes(), []byte("slack_reauthorization")) {
 		t.Fatalf("withdrawn owner: %d %s", w.Code, w.Body.String())
 	}
@@ -253,7 +253,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=NULL,is_owner=true WHERE user_id=$1`, f.User)
 	issuer := f.Principal(t)
-	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, testAPIKeyInput{Name: "attention read", RolePermissions: []auth.Permission{auth.CapabilitySessionsView}})
+	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, testAPIKeyInput{Name: "attention read", RolePermissions: []auth.Permission{auth.PermissionSessionsRead}})
 	if err != nil {
 		t.Fatal(err)
 	}

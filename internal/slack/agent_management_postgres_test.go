@@ -2,6 +2,7 @@ package slack
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"testing"
 	"uuid"
 
@@ -14,10 +15,10 @@ func TestAgentManagementUsesExactCurrentGrantAndStoredConnection(t *testing.T) {
 	f, store, org := credentialFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM role_grants WHERE environment_id=$1`, f.Environment)
 	// Ownership deliberately remains set while all operational authority is absent.
-	if _, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent); !errors.Is(err, errInstallationAuthority) {
+	if _, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, auth.PermissionAgentConnectionsRead); !errors.Is(err, errInstallationAuthority) {
 		t.Fatalf("owner-only connection read: %v", err)
 	}
-	dbtest.GrantMember(t, f.Pool, org, f.User, &f.Environment, "agents.manage")
+	dbtest.GrantMember(t, f.Pool, org, f.User, &f.Environment, "agent_connections.read", "agent_connections.update_credentials", "agent_connections.authorize", "agent_connections.delete")
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET all_agents=false WHERE environment_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Agent)
 	otherAgent, otherRegistration, otherInstallation, otherConnection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'other');
@@ -25,10 +26,10 @@ func TestAgentManagementUsesExactCurrentGrantAndStoredConnection(t *testing.T) {
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id,authorization_lost_at) SELECT $4,$3,org_id,'other-app','other-team','other-bot',credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id,clock_timestamp()-interval '1 day' FROM slack_installations WHERE id=$8;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$1,$2,$3,$4,$6);
  UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$8`, pgx.QueryExecModeSimpleProtocol, f.Environment, otherAgent, otherRegistration, otherInstallation, otherConnection, f.User, f.registration, f.installation)
-	if view, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent); err != nil || view == nil {
+	if view, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, auth.PermissionAgentConnectionsRead); err != nil || view == nil {
 		t.Fatalf("exact connection: %+v %v", view, err)
 	}
-	if _, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, otherAgent); !errors.Is(err, errInstallationAuthority) {
+	if _, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, otherAgent, auth.PermissionAgentConnectionsRead); !errors.Is(err, errInstallationAuthority) {
 		t.Fatalf("other Agent: %v", err)
 	}
 	if err := store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, otherRegistration, AppCredentials{ClientID: "replacement", ClientSecret: "secret", SigningSecret: "signing"}); !errors.Is(err, errInstallationAuthority) {

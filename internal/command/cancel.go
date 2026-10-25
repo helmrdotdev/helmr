@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auth"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -28,11 +30,18 @@ type CancelReceipt struct {
 // In one transaction Cancel reads the Command in its scope, acquires the
 // Computer lock before the idempotency claim and Command update, so cancelling
 // the last unallocated demand releases its execution reservation atomically.
-func Cancel(ctx context.Context, txb db.TxBeginner, ref Ref) (CancelReceipt, error) {
+func Cancel(ctx context.Context, txb db.TxBeginner, principal auth.Principal, ref Ref) (CancelReceipt, error) {
 	var receipt CancelReceipt
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		var err error
-		receipt, err = cancel(ctx, tx, ref)
+		scope := auth.Scope{OrgID: ref.OrgID, ProjectID: ref.ProjectID.String(), EnvironmentID: ref.EnvironmentID.String()}
+		current, err := access.Current(ctx, tx, principal, scope)
+		if err != nil {
+			return err
+		}
+		if !current.HasPermission(auth.PermissionComputersCancelCommand, scope) {
+			return access.ErrDenied
+		}
+		receipt, err = cancel(ctx, tx, principal, ref)
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -44,7 +53,7 @@ func Cancel(ctx context.Context, txb db.TxBeginner, ref Ref) (CancelReceipt, err
 	return receipt, nil
 }
 
-func cancel(ctx context.Context, tx pgx.Tx, ref Ref) (CancelReceipt, error) {
+func cancel(ctx context.Context, tx pgx.Tx, principal auth.Principal, ref Ref) (CancelReceipt, error) {
 	q := db.New(tx)
 	c, err := q.GetCommand(ctx, ref.params())
 	if err != nil {
@@ -52,6 +61,14 @@ func cancel(ctx context.Context, tx pgx.Tx, ref Ref) (CancelReceipt, error) {
 	}
 	if _, err = tx.Exec(ctx, `SELECT id FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, ref.EnvironmentID, c.ComputerID); err != nil {
 		return CancelReceipt{}, err
+	}
+	scope := auth.Scope{OrgID: ref.OrgID, ProjectID: ref.ProjectID.String(), EnvironmentID: ref.EnvironmentID.String()}
+	current, err := access.Current(ctx, tx, principal, scope)
+	if err != nil {
+		return CancelReceipt{}, err
+	}
+	if !current.HasPermission(auth.PermissionComputersCancelCommand, scope) {
+		return CancelReceipt{}, access.ErrDenied
 	}
 	request, err := idempotency.NewCommandCancelRequest(ref.EnvironmentID, ref.CommandID)
 	if err != nil {

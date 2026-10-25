@@ -26,24 +26,16 @@ func authorizeCurrent(ctx context.Context, q db.DBTX, p auth.Principal, scope au
 
 // Agent filters are applied in SQL before pagination. An empty filter stays empty.
 func agentReadScope(p auth.Principal, scope auth.Scope) (bool, []uuid.UUID) {
-	all, ids := p.AgentPermissionScope(auth.PermissionDeploymentMetadataRead, scope)
-	useAll, useIDs := p.AgentPermissionScope(auth.CapabilityAgentsUse, scope)
-	all = all || useAll
-	ids = append(ids, useIDs...)
-	return all, ids
+	return p.AgentPermissionScope(auth.PermissionAgentsRead, scope)
 }
 
 func agentIdentityScope(p auth.Principal, scope auth.Scope) (bool, []uuid.UUID) {
-	all, ids := agentReadScope(p, scope)
-	if p.HasPermission(auth.CapabilityAgentsManage, scope) {
-		all = true
-	}
-	for _, g := range p.Grants {
-		if g.ProjectID == scope.ProjectID && g.EnvironmentID == scope.EnvironmentID && g.AgentID != "" && g.Permission == auth.CapabilityAgentsManage {
-			if id, err := uuid.Parse(g.AgentID); err == nil {
-				ids = append(ids, id)
-			}
-		}
+	all := false
+	ids := []uuid.UUID{}
+	for _, permission := range []auth.Permission{auth.PermissionAgentsRead, auth.PermissionAgentsUse, auth.PermissionAgentsDelete, auth.PermissionAgentsRestore} {
+		broad, selected := p.AgentPermissionScope(permission, scope)
+		all = all || broad
+		ids = append(ids, selected...)
 	}
 	return all, ids
 }

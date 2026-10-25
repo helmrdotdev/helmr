@@ -115,8 +115,8 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 			if err := f.pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, f.env).Scan(&orgID); err != nil {
 				t.Fatal(err)
 			}
-			dbtest.GrantMember(t, f.pool, orgID, f.user, nil, "access.manage")
-			dbtest.GrantMember(t, f.pool, orgID, f.user, &f.env, "agents.manage")
+			dbtest.GrantMember(t, f.pool, orgID, f.user, nil, "assignments.create")
+			dbtest.GrantMember(t, f.pool, orgID, f.user, &f.env, "agents.delete")
 			principal, err := access.Principal(t.Context(), f.pool, "user", f.user, f.env)
 			if err != nil {
 				t.Fatal(err)

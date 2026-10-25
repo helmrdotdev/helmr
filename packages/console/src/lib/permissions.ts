@@ -1,16 +1,16 @@
 import { del, request } from "./api";
 
-export type Capability = { resource_type: string; id: string; name: string; description: string; included: string[] };
+export type PermissionDefinition = { resource_type: string; id: string; name: string; description: string; scope_type: "organization" | "environment" | "agent"; api_key_assignable: boolean };
 export type PermissionRole = { api_key_assignable: boolean; id: string; name: string; description: string; builtin_key: string | null; permissions: string[]; grant_count: number; group_count: number; updated_at: string; revision: number };
 export type RoleInput = Pick<PermissionRole, "name" | "description" | "permissions">;
 export type PermissionGroup = { id: string; name: string; member_ids: string[]; revision: number };
-export type GrantTarget = { resource_type:string; mode:string; agent_ids?:string[]; agent_keys?:string[]; permissions:string[]; included_permissions:string[] };
+export type GrantTarget = { resource_type:string; mode:string; agent_ids?:string[]; agent_keys?:string[]; permissions:string[] };
 export type RoleGrant = { api_key_id?: string; api_key_name?: string; id:string; revision:number; subject_kind:"member"|"group"|"api_key"|"all_members"; member_id?:string; member_name?:string; group_id:string|null; group_name?:string; role_id:string; project_id:string; project:string; environment_id:string; environment:string; target_kind:"organization"|"environment"; agents_mode:"none"|"selected"|"all"; agent_ids:string[]; agent_keys:string[]; targets:GrantTarget[]; role_name:string; project_name:string; environment_name:string; permissions:string[] };
 export type GrantInput = { api_key_id?: string|undefined; subject_kind:"member"|"group"|"api_key"|"all_members"; member_id?:string|undefined; group_id:string|null; role_id:string; environment_id:string; target_kind:"organization"|"environment"; agents_mode:"none"|"selected"|"all"; agent_ids:string[]; expected_role_revision:number };
 export type AccessTarget = { environment_id: string; environment: string; name: string; agents: { id: string; key: string }[] };
-export async function listRoles():Promise<{roles:PermissionRole[];catalog:Capability[]}> {
- const roles:PermissionRole[]=[];let catalog:Capability[]=[];let cursor="";
- do {const page=await request<{roles:PermissionRole[];catalog:Capability[];next_cursor?:string}>(`/api/roles?limit=100&cursor=${encodeURIComponent(cursor)}`);roles.push(...page.roles);catalog=page.catalog;cursor=page.next_cursor??"";}while(cursor);
+export async function listRoles():Promise<{roles:PermissionRole[];catalog:PermissionDefinition[]}> {
+ const roles:PermissionRole[]=[];let catalog:PermissionDefinition[]=[];let cursor="";
+ do {const page=await request<{roles:PermissionRole[];catalog:PermissionDefinition[];next_cursor?:string}>(`/api/roles?limit=100&cursor=${encodeURIComponent(cursor)}`);roles.push(...page.roles);catalog=page.catalog;cursor=page.next_cursor??"";}while(cursor);
  return {roles,catalog};
 }
 export async function listGroups():Promise<{groups:PermissionGroup[]}> {
@@ -35,7 +35,7 @@ export async function assignRole(project:string,input:GrantInput,existing?:Pick<
  return request(`/api/role-grants${existing ? `/${encodeURIComponent(existing.id)}` : ""}`,{method:existing ? "PATCH" : "POST",headers:existing ? {"If-Match":`"${existing.revision}"`} : {},body:JSON.stringify({role_id:input.role_id,subject,project_id:projectID,environment_id:input.target_kind === "organization" ? undefined : input.environment_id,agents_mode:input.agents_mode,agent_ids:input.agent_ids,expected_role_revision:input.expected_role_revision})});
 }
 export const removeGrant=(id:string,revision:number)=>request(`/api/role-grants/${encodeURIComponent(id)}`,{method:"DELETE",headers:{"If-Match":`"${revision}"`}});
-export const resourceLabel=(type:string)=>({agents:"Agents",runs:"Runs",deployments:"Deployments",computers:"Computers",secrets:"Secrets",api_keys:"API keys",organization:"Organization"}[type] ?? type);
+export const resourceLabel=(type:string)=>({agents:"Agents",sessions:"Sessions",agent_connections:"Agent connections",triggers:"Triggers",templates:"Templates",projects:"Projects",environments:"Environments",members:"Members",invitations:"Invitations",groups:"Groups",roles:"Roles",assignments:"Assignments",deployments:"Deployments",computers:"Computers",secrets:"Secrets",api_keys:"API keys",organization:"Organization"}[type] ?? type);
 export const targetSummary=(grant:RoleGrant)=>grant.targets.map(t=>`${resourceLabel(t.resource_type)}: ${t.mode === "selected" ? t.agent_keys?.join(", ") || "No remaining Agent targets" : t.mode === "all" ? "All current and future Agents" : t.mode === "organization" ? "Organization" : "Entire environment"}`).join(" · ");
 // The route ID of the built-in all-members audience on the Groups pages.
 export const ALL_MEMBERS = "all-members";
@@ -43,12 +43,12 @@ export const memberHref = (id: string) => `/settings/members/${encodeURIComponen
 export const groupHref = (id: string) => `/settings/groups/${encodeURIComponent(id)}`;
 export const roleHref = (id: string) => `/settings/roles/${encodeURIComponent(id)}`;
 
-export const permissionName = (id: string, catalog: readonly Capability[]) => catalog.find(c => c.id === id)?.name ?? id;
-export const permissionNames = (ids: readonly string[], catalog: readonly Capability[]) => ids.map(id => permissionName(id, catalog)).join(" · ");
-export const permissionResource = (id: string, catalog: readonly Capability[]) => catalog.find(c => c.id === id)?.resource_type ?? "";
-export const permissionResources = (ids: readonly string[], catalog: readonly Capability[]) => [...new Set(ids.map(id => permissionResource(id, catalog)).filter(Boolean))];
+export const permissionName = (id: string, catalog: readonly PermissionDefinition[]) => catalog.find(c => c.id === id)?.name ?? id;
+export const permissionNames = (ids: readonly string[], catalog: readonly PermissionDefinition[]) => ids.map(id => permissionName(id, catalog)).join(" · ");
+export const permissionResource = (id: string, catalog: readonly PermissionDefinition[]) => catalog.find(c => c.id === id)?.resource_type ?? "";
+export const permissionResources = (ids: readonly string[], catalog: readonly PermissionDefinition[]) => [...new Set(ids.map(id => permissionResource(id, catalog)).filter(Boolean))];
 // Organization roles hold only organization permissions; every other role is granted in one environment.
-export const isOrganizationRole = (permissions: readonly string[], catalog: readonly Capability[]) => permissions.some(p => permissionResource(p, catalog) === "organization");
+export const isOrganizationRole = (permissions: readonly string[], catalog: readonly PermissionDefinition[]) => permissions.some(p => permissionScope(p, catalog) === "organization");
 
 // The recipient of an assignment, as its pages name it.
 export function grantRecipientName(grant: RoleGrant): string {
@@ -80,6 +80,10 @@ export function memberGrantSources(grants: readonly RoleGrant[], groups: readonl
   return grants.filter((g) => g.subject_kind === "all_members" || (g.subject_kind === "member" && g.member_id === user) || (g.group_id !== null && memberships.has(g.group_id)));
 }
 
-export type MemberPermissionSource = {kind: "role_grant"; subject_kind:"member"|"group"|"all_members"; member_id?:string; target_kind?:string; agent?:string; agent_id?:string; included_permissions:string[]; grant_id?: string; group_id?:string; group_name?:string; role_name?:string; permissions:string[]};
+export type MemberPermissionSource = {kind: "role_grant"; subject_kind:"member"|"group"|"all_members"; member_id?:string; target_kind?:string; agent?:string; agent_id?:string; grant_id?: string; group_id?:string; group_name?:string; role_name?:string; permissions:string[]};
 export type MemberPermissions = {user_id:string;membership_id:string;is_owner:boolean;status:string;notice:string;scopes:{type:"organization"|"environment"|"agent";project:string;environment:string;agent?:string;permissions:string[];sources:MemberPermissionSource[]}[]};
 export const getMemberPermissions=(user:string)=>request<MemberPermissions>(`/api/members/${encodeURIComponent(user)}/permissions`);
+
+export const permissionScope = (id: string, catalog: readonly PermissionDefinition[]) => catalog.find(c => c.id === id)?.scope_type;
+
+export const getPermissionCatalog = () => request<{catalog: PermissionDefinition[]}>("/api/permission-catalog");

@@ -228,8 +228,10 @@ func TestHistoryRetentionCurrentProjectPolicy(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.env).Scan(&orgID, &projectID); err != nil {
 		t.Fatal(err)
 	}
+	memberID := dbtest.GrantMember(t, f.pool, orgID, f.user, nil, "projects.update_retention")
+	manager := org.ManagingMember{OrgID: orgID, UserID: f.user, MemberID: memberID, Actor: audit.System("test")}
 	for _, seconds := range []*int64{nil, ptrInt64(3 * 86400), nil, ptrInt64(86400)} {
-		if err := org.UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), orgID, projectID, seconds); err != nil {
+		if err := org.UpdateProjectHistoryRetention(t.Context(), f.pool, manager, projectID, seconds); err != nil {
 			t.Fatal(err)
 		}
 		// Exercise discovery as well as the locked final check.
@@ -247,7 +249,7 @@ func TestHistoryRetentionCurrentProjectPolicy(t *testing.T) {
 			t.Fatal("policy edit moved clock")
 		}
 	}
-	if err := org.UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), orgID, projectID, nil); err != nil {
+	if err := org.UpdateProjectHistoryRetention(t.Context(), f.pool, manager, projectID, nil); err != nil {
 		t.Fatal(err)
 	}
 	reconcileHistory(t, f)

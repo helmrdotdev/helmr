@@ -34,8 +34,8 @@ func (s *Server) listPermissionRoles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		NextCursor string                      `json:"next_cursor,omitempty"`
 		Roles      []org.PermissionRole        `json:"roles"`
-		Catalog    []auth.CapabilityDefinition `json:"catalog"`
-	}{next, roles, auth.CapabilityCatalog()})
+		Catalog    []auth.PermissionDefinition `json:"catalog"`
+	}{next, roles, auth.PermissionCatalog()})
 }
 func permissionPathID(r *http.Request, name string) (uuid.UUID, error) {
 	id, err := ids.Parse(chi.URLParam(r, name))
@@ -63,30 +63,28 @@ func (s *Server) savePermissionRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	var input org.RoleInput
+	var role org.PermissionRole
+	manager := managingMember(principalFromContext(r.Context()))
 	if id != uuid.Nil() {
-		old, e := org.GetPermissionRole(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), id)
-		if e != nil {
-			writeError(w, permissionManagementError(e))
-			return
-		}
-		revision, e := permissionEditRevision(r, old.Revision)
+		revision, e := permissionRequestRevision(r)
 		if e != nil {
 			writeError(w, e)
 			return
 		}
-		input = org.RoleInput{Name: old.Name, Description: old.Description, Permissions: old.Permissions, ExpectedRevision: revision}
+		role, err = org.PatchPermissionRole(r.Context(), s.tx, manager, id, org.RolePatch{Name: patch.Name, Description: patch.Description, Permissions: patch.Permissions, ExpectedRevision: revision})
+	} else {
+		var input org.RoleInput
+		if patch.Name != nil {
+			input.Name = *patch.Name
+		}
+		if patch.Description != nil {
+			input.Description = *patch.Description
+		}
+		if patch.Permissions != nil {
+			input.Permissions = *patch.Permissions
+		}
+		role, err = org.SavePermissionRole(r.Context(), s.tx, manager, id, input)
 	}
-	if patch.Name != nil {
-		input.Name = *patch.Name
-	}
-	if patch.Description != nil {
-		input.Description = *patch.Description
-	}
-	if patch.Permissions != nil {
-		input.Permissions = *patch.Permissions
-	}
-	role, err := org.SavePermissionRole(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), id, input)
 	if err != nil {
 		writeError(w, permissionManagementError(err))
 		return
@@ -149,22 +147,17 @@ func (s *Server) savePermissionGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var group org.PermissionGroup
-	name, revision := "", ""
-	if id != uuid.Nil() {
-		old, e := org.GetPermissionGroup(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), id)
-		if e != nil {
-			writeError(w, permissionManagementError(e))
-			return
-		}
-		name = old.Name
-		revision, e = permissionEditRevision(r, old.Revision)
-		if e != nil {
-			writeError(w, e)
-			return
-		}
+	if input.Name == nil {
+		writeError(w, badRequest(errors.New("name is required")))
+		return
 	}
-	if input.Name != nil {
-		name = *input.Name
+	name, revision := *input.Name, ""
+	if id != uuid.Nil() {
+		revision, err = permissionRequestRevision(r)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	if id == uuid.Nil() {
 		group, err = org.SavePermissionGroup(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), id, name)
@@ -321,16 +314,7 @@ func (s *Server) removeRoleGrant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	grants, err := org.QueryRoleGrants(r.Context(), s.tx, managingMember(p), org.GrantFilter{ID: id})
-	if err != nil {
-		writeError(w, permissionManagementError(err))
-		return
-	}
-	if len(grants) == 0 {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	revision, err := permissionEditRevision(r, grants[0].Revision)
+	revision, err := permissionRequestRevision(r)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -378,7 +362,7 @@ func permissionManagementError(err error) error {
 
 func (s *Server) listAccessTargets(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
-	if !p.HasPermission(auth.CapabilityAccessManage, auth.Scope{OrgID: p.OrgID}) {
+	if !p.HasPermission(auth.PermissionAssignmentsRead, auth.Scope{OrgID: p.OrgID}) {
 		writeError(w, forbidden(org.ErrMemberManagementRequired))
 		return
 	}
@@ -398,16 +382,19 @@ func (s *Server) listAccessTargets(w http.ResponseWriter, r *http.Request) {
 	}{pgvalue.UUIDString(project.ID), targets})
 }
 
-func permissionEditRevision(r *http.Request, current int64) (string, error) {
+func permissionRequestRevision(r *http.Request) (string, error) {
 	raw := r.Header.Get("If-Match")
 	if raw == "" {
 		return "", apiError{kind: errPreconditionRequired, err: codedError{code: "revision_required", message: "If-Match from the displayed revision is required"}}
 	}
-	if raw != `"`+strconv.FormatInt(current, 10)+`"` {
-		return "", permissionManagementError(org.ErrStaleRevision)
+	value := strings.Trim(raw, `"`)
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || n < 1 || raw != `"`+strconv.FormatInt(n, 10)+`"` {
+		return "", badRequest(errors.New("invalid If-Match revision"))
 	}
-	return strings.Trim(raw, `"`), nil
+	return value, nil
 }
+
 func (s *Server) getPermissionRole(w http.ResponseWriter, r *http.Request) {
 	id, err := permissionPathID(r, "id")
 	if err != nil {
@@ -549,4 +536,9 @@ func (s *Server) updateRoleGrant(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("ETag", `"`+strconv.FormatInt(result.Revision, 10)+`"`)
 	writeJSON(w, http.StatusOK, result)
+}
+
+// The fixed action catalog contains no tenant data or Role assignments.
+func (s *Server) permissionCatalog(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"catalog": auth.PermissionCatalog()})
 }

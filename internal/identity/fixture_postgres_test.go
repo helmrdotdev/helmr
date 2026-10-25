@@ -81,7 +81,7 @@ func (f identityFixture) invitation(t *testing.T, orgID uuid.UUID, email string,
 	t.Helper()
 	owner := f.user(t, "Owner", "")
 	f.member(t, orgID, owner, "owner")
-	memberID := dbtest.GrantMember(t, f.pool, orgID, owner, nil, "access.manage")
+	memberID := dbtest.GrantMember(t, f.pool, orgID, owner, nil, "invitations.create")
 	var delivered org.NewInvitation
 	results, err := org.CreateInvitations(t.Context(), f.pool, f.keys.Invitation,
 		org.ManagingMember{Actor: audit.System("test-fixture"), OrgID: orgID, UserID: owner, MemberID: memberID}, org.InvitationInput{Emails: []string{email}},

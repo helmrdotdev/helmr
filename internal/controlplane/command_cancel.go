@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -23,11 +24,11 @@ func (s *Server) cancelCommandHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !canAccessComputerCommandOutput(principal, scope) {
+	if !principal.HasPermission(auth.PermissionComputersCancelCommand, scope) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	receipt, err := command.Cancel(r.Context(), s.tx, command.Ref{
+	receipt, err := command.Cancel(r.Context(), s.tx, principal, command.Ref{
 		OrgID: principal.OrgID, ProjectID: pgvalue.MustUUIDValue(projectID),
 		EnvironmentID: pgvalue.MustUUIDValue(environmentID), CommandID: commandID,
 	})
