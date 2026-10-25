@@ -56,7 +56,7 @@ func (s *Server) refuseOperation(w http.ResponseWriter, r *http.Request, reason 
 		actor.CredentialKind, actor.CredentialID, actor.CredentialVersion = "worker_host", host.HostID, host.HostClaimVersion
 		actor.Authorization = audit.Authorization{Basis: "credential", Decision: "denied", Reason: reason}
 		org = uuid.Nil()
-		if !s.admitSecurityKey(w, r, "worker_host:"+host.HostID.String()) {
+		if !s.admitSecurityKey(w, r, "worker_host:"+host.HostID.String(), true) {
 			return false
 		}
 		if guard := s.auditAdmission; guard != nil {

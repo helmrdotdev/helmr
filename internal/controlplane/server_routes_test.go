@@ -105,6 +105,7 @@ GET /api/projects/{project}/environments/{environment}/deployments
 GET /api/projects/{project}/environments/{environment}/deployments/current
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}/events
+GET /api/projects/{project}/environments/{environment}/overview
 GET /api/projects/{project}/environments/{environment}/secrets
 GET /api/projects/{project}/environments/{environment}/secrets/{secret}
 GET /api/projects/{project}/environments/{environment}/sessions
@@ -123,6 +124,7 @@ GET /api/projects/{project}/environments/{environment}/templates/{template}/buil
 GET /api/projects/{project}/environments/{environment}/triggers
 GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}
 GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}/occurrences
+GET /api/projects/{project}/environments/{environment}/usage
 GET /api/projects/{project}/settings
 GET /api/regions
 GET /api/role-grants

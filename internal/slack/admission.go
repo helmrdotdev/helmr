@@ -144,12 +144,16 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 	if client == nil {
 		return ErrChannelVerification
 	}
-	if _, err = client.verifyConversation(ctx, p.installation, p.route.Target.CredentialRevision, p.route.Target.TeamID, p.message.Channel, p.actor); err != nil {
+	name, err := client.verifyConversation(ctx, p.installation, p.route.Target.CredentialRevision, p.route.Target.TeamID, p.message.Channel, p.actor)
+	if err != nil {
 		var failure *channelVerificationFailure
 		typed := errors.As(err, &failure)
 		if typed && failure.result.Disposition == Rejected || !typed && errors.Is(err, ErrChannelVerification) {
 			return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return rejectMessage(ctx, tx, id, "binding_unavailable") })
 		}
+		return err
+	}
+	if err = rememberChannelName(ctx, pool, p.installation, p.message.Channel, name); err != nil {
 		return err
 	}
 	if p.thread == uuid.Nil() && p.message.Thread != "" {

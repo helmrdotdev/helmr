@@ -131,11 +131,11 @@ the expiring audit table. Size aggregate load across all application replicas:
 request admission limits are per process, not distributed quotas.
 
 Covered ordinary HTTP requests have bounded per-process rate/concurrency and
-per-principal admission for capture-bearing routes. The current process ceilings
+per-principal concurrency limits, with rate limits for capture-bearing routes. The current process ceilings
 are 400 requests/second (burst 800), 16 concurrent ordinary operations, and
-100 capture-bearing requests/second per principal (burst 200), with at most eight
-in-flight operations per principal. Metadata/navigation
-reads do not spend the principal capture budget. The bounded principal cache evicts
+100 capture-bearing requests/second per principal (burst 200), with at most twelve
+in-flight operations per principal, including metadata/navigation reads. Those
+reads do not spend the principal capture rate budget. The bounded principal cache evicts
 its oldest entry at capacity; this is an abuse backstop, not strict distributed or
 tenant-isolated fairness. Containment uses available ordinary capacity before a
 separate 10/second (burst 20), four-operation reserve. Worker refusals have their

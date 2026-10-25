@@ -61,7 +61,7 @@ func TestAuditAdmissionEstablishedStreamsReleaseOperationSlots(t *testing.T) {
 	ready := make(chan struct{}, 32)
 	var wg sync.WaitGroup
 	handler := s.limitSecurityAdmission(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.admitSecurityKey(w, r, "stream-principal") {
+		if !s.admitSecurityKey(w, r, "stream-principal", true) {
 			return
 		}
 		if r.URL.Path == "/v1/events" {
@@ -102,45 +102,61 @@ func TestAuditAdmissionEstablishedStreamsReleaseOperationSlots(t *testing.T) {
 }
 
 func TestAuditAdmissionPrincipalCannotOccupyAllSlots(t *testing.T) {
-	s := &Server{auditAdmission: newAuditAdmission(), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	ready, release := make(chan struct{}, auditPrincipalConcurrency), make(chan struct{})
-	var wg sync.WaitGroup
-	handler := s.limitSecurityAdmission(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.admitSecurityKey(w, r, r.Header.Get("Test-Principal")) {
-			return
-		}
-		if r.Header.Get("Test-Hold") == "true" {
-			ready <- struct{}{}
-			<-release
-		}
-		w.WriteHeader(204)
-	}))
-	request := func(key string, hold bool) int {
-		r := httptest.NewRequest("POST", "/v1/sessions", nil)
-		r.Header.Set("Test-Principal", key)
-		if hold {
-			r.Header.Set("Test-Hold", "true")
-		}
-		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, r)
-		return rr.Code
-	}
-	for range auditPrincipalConcurrency {
-		wg.Add(1)
-		go func() { defer wg.Done(); request("first", true) }()
-	}
-	defer func() { close(release); wg.Wait() }()
-	for range auditPrincipalConcurrency {
-		select {
-		case <-ready:
-		case <-time.After(3 * time.Second):
-			t.Fatal("principal did not fill its slots")
-		}
-	}
-	if code := request("first", false); code != 429 {
-		t.Fatalf("principal exceeded concurrency: %d", code)
-	}
-	if code := request("second", false); code != 204 {
-		t.Fatalf("other principal starved: %d", code)
+	for _, route := range []struct{ name, method, path string }{{"capture", "POST", "/v1/sessions"}, {"metadata", "GET", "/api/projects/project/environments/test/usage"}} {
+		t.Run(route.name, func(t *testing.T) {
+			s := &Server{auditAdmission: newAuditAdmission(), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			s.auditRouter = chi.NewRouter()
+			s.auditRouter.Post("/v1/sessions", func(http.ResponseWriter, *http.Request) {})
+			s.auditRouter.Get("/api/projects/{project}/environments/{environment}/usage", func(http.ResponseWriter, *http.Request) {})
+			principals := map[string]uuid.UUID{"first": uuid.NewV7(), "second": uuid.NewV7()}
+			ready, release := make(chan struct{}, auditPrincipalConcurrency), make(chan struct{})
+			var wg sync.WaitGroup
+			handler := s.limitSecurityAdmission(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !s.admitPrincipal(w, r, auth.Principal{Kind: auth.PrincipalKindSession, UserID: principals[r.Header.Get("Test-Principal")]}) {
+					return
+				}
+				if r.Header.Get("Test-Hold") == "true" {
+					ready <- struct{}{}
+					<-release
+				}
+				w.WriteHeader(204)
+			}))
+			request := func(key string, hold bool) int {
+				r := httptest.NewRequest(route.method, route.path, nil)
+				r.Header.Set("Test-Principal", key)
+				if hold {
+					r.Header.Set("Test-Hold", "true")
+				}
+				rr := httptest.NewRecorder()
+				handler.ServeHTTP(rr, r)
+				return rr.Code
+			}
+			for range auditPrincipalConcurrency {
+				wg.Add(1)
+				go func() { defer wg.Done(); request("first", true) }()
+			}
+			defer func() { close(release); wg.Wait() }()
+			for range auditPrincipalConcurrency {
+				select {
+				case <-ready:
+				case <-time.After(3 * time.Second):
+					t.Fatal("principal did not fill its slots")
+				}
+			}
+			if code := request("first", false); code != 429 {
+				t.Fatalf("principal exceeded concurrency: %d", code)
+			}
+			if code := request("second", false); code != 204 {
+				t.Fatalf("other principal starved: %d", code)
+			}
+			if route.name == "metadata" {
+				for range 250 {
+					if code := request("second", false); code != 204 {
+						t.Fatalf("metadata spent capture tokens: %d", code)
+					}
+				}
+			}
+
+		})
 	}
 }

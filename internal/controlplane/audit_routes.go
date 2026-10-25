@@ -8,6 +8,8 @@ type auditRoute struct {
 }
 
 var auditRoutes = map[string]auditRoute{
+	"GET /api/projects/{project}/environments/{environment}/overview": {"session.content_read", ""},
+	"GET /api/projects/{project}/environments/{environment}/usage":    {"", "aggregate usage and channel metadata; no session content"},
 	"DELETE /api/groups/{id}":                    {"permission_group.deleted", ""},
 	"DELETE /api/groups/{id}/members/{memberID}": {"permission_group.member_removed", ""},
 	"DELETE /api/invitations/{id}":               {"invitation.revoked", ""},

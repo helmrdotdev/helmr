@@ -1685,6 +1685,8 @@ CREATE INDEX turns_deadlines ON turns(deadline_at, environment_id, session_id) W
 
 CREATE INDEX turns_failed ON turns(environment_id, terminal_at) WHERE status='failed';
 
+CREATE INDEX turns_created ON turns(environment_id, created_at);
+
 -- One scheduled instant of an Agent's trigger, across every activation and
 -- deployment: the identity is (agent, key, scheduled_at).
 CREATE TABLE trigger_occurrences (
@@ -2386,6 +2388,17 @@ CREATE INDEX audit_events_actor ON audit_events(org_id,actor_kind,actor_id,recor
 CREATE INDEX audit_events_target ON audit_events(org_id,target_kind,target_id,recorded_at DESC,id DESC);
 CREATE INDEX audit_events_expiry ON audit_events(expires_at,id);
 CREATE INDEX audit_events_environment_time ON audit_events(org_id,environment_id,recorded_at DESC,id DESC) WHERE environment_id IS NOT NULL;
+
+-- A Slack channel Helmr has verified, one per workspace installation and
+-- channel, whichever agents use it: the name Slack reported when it was last
+-- verified.
+CREATE TABLE slack_channels (
+    installation_id uuid NOT NULL REFERENCES slack_installations(id),
+    slack_channel_id text NOT NULL CHECK (slack_channel_id<>''),
+    name text NOT NULL CHECK (name<>'' AND char_length(name)<=255),
+    observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (installation_id, slack_channel_id)
+);
 
 -- Per-channel routine pacing and provider method Retry-After are independent.
 CREATE TABLE slack_delivery_limits (

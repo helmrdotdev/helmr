@@ -54,6 +54,18 @@ func TestSlackBoundReplyCommitsOneCoreTurnAndExactReceipt(t *testing.T) {
 	}
 }
 
+func TestSlackAdmissionKeepsTheVerifiedChannelName(t *testing.T) {
+	f := newStatusFixture(t)
+	f.link(t)
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), f.reply(t, "named", false)); err != nil {
+		t.Fatal(err)
+	}
+	var name string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT name FROM slack_channels WHERE installation_id=$1 AND slack_channel_id='C1'`, f.installation).Scan(&name); err != nil || name == "" {
+		t.Fatalf("channel name not kept: %q %v", name, err)
+	}
+}
+
 func TestSlackBoundReplyRejectsCurrentAuthorityAndContentFailures(t *testing.T) {
 	for _, kind := range []string{"unlinked", "member-disabled", "publication-revoked", "reauthorized", "expired", "file", "closed", "deleted-root"} {
 		t.Run(kind, func(t *testing.T) {

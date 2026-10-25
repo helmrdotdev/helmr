@@ -15,7 +15,7 @@ import (
 // These are per-process ceilings, not a distributed quota. Containment keeps
 // separate concurrency and rate capacity when ordinary requests are saturated.
 const auditPrincipalCapacity = 4096
-const auditPrincipalConcurrency = 8
+const auditPrincipalConcurrency = 12
 
 type auditPrincipalBucket struct {
 	limiter *rate.Limiter
@@ -105,13 +105,10 @@ func (s *Server) limitSecurityAdmission(next http.Handler) http.Handler {
 }
 func (s *Server) admitPrincipal(w http.ResponseWriter, r *http.Request, p auth.Principal) bool {
 	route, _, ok := s.requestAuditRoute(r)
-	if ok && route.action == "" {
-		return true
-	}
 	key := string(p.Kind) + ":" + p.UserID.String() + ":" + p.APIKeyID.String() + ":" + p.OrgID.String()
-	return s.admitSecurityKey(w, r, key)
+	return s.admitSecurityKey(w, r, key, !ok || route.action != "")
 }
-func (s *Server) admitSecurityKey(w http.ResponseWriter, r *http.Request, key string) bool {
+func (s *Server) admitSecurityKey(w http.ResponseWriter, r *http.Request, key string, capture bool) bool {
 	guard := s.auditAdmission
 	if guard == nil {
 		return true
@@ -130,7 +127,7 @@ func (s *Server) admitSecurityKey(w http.ResponseWriter, r *http.Request, key st
 	}
 	bucket.seen = now
 	lease, _ := r.Context().Value(auditAdmissionContextKey{}).(*auditAdmissionLease)
-	allowed := bucket.active < auditPrincipalConcurrency && bucket.limiter.AllowN(now, 1)
+	allowed := bucket.active < auditPrincipalConcurrency && (!capture || bucket.limiter.AllowN(now, 1))
 	if allowed && lease != nil {
 		bucket.active++
 		lease.releases = append(lease.releases, func() {
