@@ -52,6 +52,7 @@ export function RoleDetail() {
   const [tab, setTab] = createSignal<Tab>("permissions");
   const [granting, setGranting] = createSignal(false);
   const [deleting, setDeleting] = createSignal(false);
+  const [createdName, setCreatedName] = createSignal<string>();
 
   const title = () => creating() ? (source() ? `Duplicate ${source()!.name}` : "Create role") : missing() ? "Role not found" : role()?.name ?? "";
   return <>
@@ -77,8 +78,17 @@ export function RoleDetail() {
             {/* The form stays mounted while another tab shows, so unsaved edits survive; it
                 starts over only for another role or a newly saved revision. */}
             <div {...(creating() ? {} : { role: "tabpanel", id: "role-tabs-panel-permissions", "aria-labelledby": "role-tabs-tab-permissions" })} hidden={!creating() && tab() !== "permissions"}>
-              <Show when={formKey()} keyed>
-                {_key => <RoleForm role={source()} copy={creating()} readonly={readonly()} catalog={catalog()} onSaved={saved => creating() ? navigate(roleHref(saved.id)) : undefined} />}
+              <Show when={!creating() || !createdName()} fallback={<>
+                <Notice tone="info">Role “{createdName()}” created.</Notice>
+                <button type="button" class={`${ui.secondaryButton} mt-3`} onClick={() => setCreatedName(undefined)}>Create another role</button>
+              </>}>
+                <Show when={formKey()} keyed>
+                  {_key => <RoleForm role={source()} copy={creating()} readonly={readonly()} catalog={catalog()} onSaved={saved => {
+                    if (!creating()) return;
+                    if (hasPermission(me.data, "roles.read")) navigate(roleHref(saved.id));
+                    else setCreatedName(saved.name);
+                  }} />}
+                </Show>
               </Show>
               <Show when={hasPermission(me.data, "roles.delete") && role() && !role()!.builtin_key}>
                 <DangerZone
