@@ -1,4 +1,6 @@
-import { useParams } from "@solidjs/router";
+import { useNavigate, useParams } from "@solidjs/router";
+import { assignableRoles, ChangeRoleDialog, memberMenu, RemoveMemberDialog, type OwnershipChoice } from "./members";
+import { Tag } from "../ui/Tag";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { AccessLabel } from "../features/access/AccessIcon";
@@ -8,16 +10,14 @@ import { GroupMemberRemovalImpact } from "../features/access/GrantRemovalImpact"
 import { hasPermission } from "../lib/auth";
 import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
-import { listMembers } from "../lib/members";
+import { listMembers, memberResourceID, updateMemberOwnership } from "../lib/members";
 import { useScope } from "../lib/scope";
 import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionGroup } from "../lib/permissions";
-import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
+import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
 import { ConfirmDialog } from "../ui/Dialog";
-import { Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, NotFoundState, QueryState } from "../ui/QueryState";
+import { EmptyState, NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
-import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
 
 type Tab = "effective" | "assignments" | "groups";
@@ -44,7 +44,7 @@ function EffectiveAccessTable(props: { access: MemberPermissions; names: (id: st
   };
   return (
     <Show when={props.access.scopes.length > 0} fallback={<EmptyState title={props.empty} />}>
-      <DataTable columns={EFFECTIVE_COLUMNS} minWidth="min-w-180" footer={<LoadMore count={props.access.scopes.length} noun={{ one: "scope", other: "scopes" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+      <DataTable columns={EFFECTIVE_COLUMNS} minWidth="min-w-180" footer={<TableCount count={props.access.scopes.length} noun={{ one: "scope", other: "scopes" }} />}>
         <For each={props.access.scopes}>
           {scope => (
             <tr>
@@ -76,6 +76,9 @@ export function MemberDetail() {
   const missing = () => canManage() && !!members.data && !member();
   const [tab, setTab] = createSignal<Tab>("effective");
   const [granting, setGranting] = createSignal(false);
+  const [changingOwnership, setChangingOwnership] = createSignal(false);
+  const [removing, setRemoving] = createSignal(false);
+  const navigate = useNavigate();
   const [leaving, setLeaving] = createSignal<PermissionGroup>();
   const direct = createMemo(() => grants.data?.grants.filter(g => g.subject_kind === "member" && g.member_id === id()) ?? []);
   const memberGroups = createMemo(() => groups.data?.groups.filter(g => g.member_ids.includes(id())) ?? []);
@@ -90,15 +93,20 @@ export function MemberDetail() {
     <PageHeader
       title={missing() ? "Member not found" : name()}
       breadcrumb={canManage() ? [{ href: "/settings/members", label: "Members" }] : [{ href: "/settings/account", label: "My account" }]}
-      badge={<Show when={member()?.is_owner || (self() && me.data?.is_owner)}><span class="border border-console-border px-1 font-mono text-micro text-console-muted">Owner</span></Show>}
+      badge={<Show when={member()?.is_owner || (self() && me.data?.is_owner)}><Tag title="Can appoint owners and recover access administration">owner</Tag></Show>}
       subtitle={member()?.email && member()?.email !== name() ? member()?.email : undefined}
-      actions={<Show when={hasPermission(me.data, "assignments.create") && member()?.status === "active"}><button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant access</button></Show>}
+      menu={member()?.status === "active" ? memberMenu({
+        grant: hasPermission(me.data, "assignments.create") ? () => setGranting(true) : undefined,
+        changeOwnership: canManage() && me.data?.is_owner ? () => setChangingOwnership(true) : undefined,
+        remove: !member()?.is_owner && hasPermission(me.data, "members.remove") ? () => setRemoving(true) : undefined,
+      }) : undefined}
+      menuLabel="Member actions"
     />
-    <Show when={canManage() || canReadAccess()} fallback={<Show when={!me.isPending}><Notice tone="info">Read assignments permission is required to view other members’ access.</Notice></Show>}>
+    <Show when={canManage() || canReadAccess()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read assignments permission to see other members’ access." /></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="member" id={id()} back={{ href: "/settings/members", label: "Go to members" }} />}>
         <Tabs id="member-tabs" label="Member" items={tabs()} selected={tab()} onSelect={setTab} />
         <TabPanel tabs="member-tabs" value="effective" selected={tab()}>
-          <Show when={canReadAccess()} fallback={<Notice tone="info">The assignments.read permission is required to view effective access.</Notice>}><QueryState query={access} pending={<TableSkeleton label="Loading access" columns={EFFECTIVE_COLUMNS} />} error={error => loadError(error, "Could not load access.")}>
+          <Show when={canReadAccess()} fallback={<DeniedState message="You need Read assignments permission to view effective access." />}><QueryState query={access} pending={<TableSkeleton label="Loading access" columns={EFFECTIVE_COLUMNS} />} error={error => loadError(error, "Could not load access.")}>
             {data => <EffectiveAccessTable access={data()} names={names} empty="No access yet" />}
           </QueryState></Show>
         </TabPanel>
@@ -111,7 +119,7 @@ export function MemberDetail() {
           <QueryState query={groups} pending={<TableSkeleton label="Loading groups" columns={["Group", "Members"]} />} error={error => loadError(error, "Could not load groups.")}>
             {() => (
               <Show when={memberGroups().length > 0} fallback={<EmptyState title="Not in any group" hint="Add this person from a group's members tab." />}>
-                <DataTable columns={["Group", "Members", { label: "Actions", srOnly: true }]} footer={<LoadMore count={memberGroups().length} noun={{ one: "group", other: "groups" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+                <DataTable columns={["Group", "Members", { label: "Actions", srOnly: true }]} footer={<TableCount count={memberGroups().length} noun={{ one: "group", other: "groups" }} />}>
                   <For each={memberGroups()}>
                     {group => (
                       <tr>
@@ -128,6 +136,12 @@ export function MemberDetail() {
         </TabPanel>
       </Show>
     </Show>
+    <Show when={changingOwnership() && member()}>{m => <ChangeRoleDialog member={m()} roles={assignableRoles(me.data?.is_owner, self())} onClose={() => setChangingOwnership(false)} onSave={async (role: OwnershipChoice) => {
+      if ((role === "owner") === m().is_owner) return;
+      try { await updateMemberOwnership(memberResourceID(m()), role === "owner", m().is_owner); }
+      finally { await cache.invalidateQueries({ queryKey: ["members"] }); }
+    }} />}</Show>
+    <Show when={removing() && member()}>{m => <RemoveMemberDialog member={m()} onClose={() => setRemoving(false)} onRemoved={async () => { await cache.invalidateQueries({ queryKey: ["members"] }); navigate("/settings/members"); }} />}</Show>
     <Show when={granting()}><GrantAccessDialog recipient={{ kind: "member", id: id(), name: name() }} onClose={() => setGranting(false)} /></Show>
     <Show when={leaving()}>
       {group => (

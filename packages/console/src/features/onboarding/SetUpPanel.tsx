@@ -10,6 +10,7 @@ import { Field, FormActions, Segmented, SecretInput } from "../../ui/Field";
 import { Notice } from "../../ui/Notice";
 import { Panel } from "../../ui/Panel";
 import { isDenied } from "../../ui/QueryState";
+import { Loading, SkeletonBar } from "../../ui/Skeleton";
 import { Steps, type Step } from "../../ui/Steps";
 import { cx, ui } from "../../ui/styles";
 import { HARNESSES, PROVIDERS, setupPrompt, type HarnessID, type ProviderID } from "./harnesses";
@@ -88,10 +89,10 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
       </Field>
       <Show when={replacing()} fallback={
         <div class={ui.modalActions}>
-          <button type="submit" class={ui.button} disabled={saving() || value().trim() === ""}>{saving() ? "Saving..." : "Save key"}</button>
+          <button type="submit" class={ui.button} disabled={saving() || value().trim() === ""}>{saving() ? "Saving…" : "Save key"}</button>
         </div>
       }>
-        <FormActions submitLabel="Save key" busyLabel="Saving..." busy={saving()} disabled={value().trim() === ""} onCancel={() => { setReplacing(false); setValue(""); setError(null); }} />
+        <FormActions submitLabel="Save key" busyLabel="Saving…" busy={saving()} disabled={value().trim() === ""} onCancel={() => { setReplacing(false); setValue(""); setError(null); }} />
       </Show>
     </form>
   );
@@ -111,7 +112,7 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
       <span>Your agent's code sends this key only to <code class="font-mono text-chrome text-console-text">{provider().origin}</code>; the computer sees a placeholder, and your coding agent never sees the key.</span>
       <Switch>
         <Match when={state() === "loading"}>
-          <span class="font-mono text-chrome text-console-subtle">Checking secrets...</span>
+          <Loading label="Checking secrets"><SkeletonBar width="10rem" /></Loading>
         </Match>
         <Match when={state() === "active" && !replacing()}>
           <div class="flex flex-wrap items-center gap-2">

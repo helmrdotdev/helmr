@@ -1,16 +1,16 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const NAVIGATION = ["Overview", "Sessions", "Agents", "Computers", "Deployments"];
+const NAVIGATION = ["Overview", "Agents", "Computers", "Deployments"];
 
 // Each section route and the header tab that is current on it.
 const SECTION_ROUTES: [string, string][] = [
   ["/", "Overview"],
   ["/agents", "Agents"],
-  ["/sessions", "Sessions"],
+  ["/sessions", "Agents"],
   ["/triggers", "Agents"],
   ["/agents/support", "Agents"],
   ["/agents/support/slack", "Agents"],
-  ["/sessions/00000000-0000-7000-8000-000000000001", "Sessions"],
+  ["/sessions/00000000-0000-7000-8000-000000000001", "Agents"],
   ["/computers", "Computers"],
   ["/templates", "Computers"],
   ["/computers/00000000-0000-7000-8000-000000000002", "Computers"],
@@ -23,7 +23,7 @@ async function login(page: Page) {
   await expect(page).toHaveURL("/");
 }
 
-test("local developer can enter the console and sees the five sections", async ({ page }) => {
+test("local developer can enter the console and sees the four sections", async ({ page }) => {
   await login(page);
 
   await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
@@ -75,13 +75,16 @@ test("every navigation item resolves to its page", async ({ page }) => {
   await expect(page).toHaveURL("/");
 });
 
-test("the Agents section switches between Agents and Triggers by click and keyboard", async ({ page }) => {
+test("the Agents section switches between Agents, Sessions and Triggers by click and keyboard", async ({ page }) => {
   await login(page);
   await page.goto("/agents");
   const tabs = page.getByRole("tablist", { name: "Agents" });
-  await expect(tabs.getByRole("tab")).toHaveText(["Agents", "Triggers"]);
+  await expect(tabs.getByRole("tab")).toHaveText(["Agents", "Sessions", "Triggers"]);
 
   await tabs.getByRole("tab", { name: "Agents", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page).toHaveURL("/sessions");
+  await expect(tabs.getByRole("tab", { name: "Sessions", exact: true })).toBeFocused();
   await page.keyboard.press("ArrowRight");
   await expect(page).toHaveURL("/triggers");
   const triggers = tabs.getByRole("tab", { name: "Triggers", exact: true });
@@ -118,7 +121,7 @@ test("on a phone the menu button opens a drawer that reaches every section, Sett
   await page.setViewportSize({ width: 375, height: 812 });
   await login(page);
   await expect(page.getByRole("navigation", { name: "Sections" })).toHaveCount(0);
-  const destinations: [string, string][] = [["Sessions", "/sessions"], ["Agents", "/agents"], ["Computers", "/computers"], ["Deployments", "/deployments"], ["Overview", "/"]];
+  const destinations: [string, string][] = [["Agents", "/agents"], ["Computers", "/computers"], ["Deployments", "/deployments"], ["Overview", "/"]];
   for (const [name, path] of destinations) {
     await page.getByRole("button", { name: "Open menu" }).click();
     const drawer = page.getByRole("dialog", { name: "Menu" });
@@ -184,8 +187,8 @@ test("a sub-page path with a trailing slash selects its tab, and an unknown Agen
 test("the Sessions page filters by status and shows the empty state", async ({ page }) => {
   await login(page);
   await page.goto("/sessions");
-  await expect(page.getByRole("heading", { level: 1, name: "Sessions" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Sections" }).locator("[aria-current=page]")).toHaveText(["Sessions"]);
+  await expect(page.getByRole("tab", { name: "Sessions", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("navigation", { name: "Sections" }).locator("[aria-current=page]")).toHaveText(["Agents"]);
   await expect(page.getByText("No sessions yet.")).toBeVisible();
 
   const statusSelect = page.getByRole("combobox", { name: "Filter by status" });

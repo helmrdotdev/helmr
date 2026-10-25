@@ -1,4 +1,5 @@
 import { A } from "@solidjs/router";
+import { ActionMenu, type ActionMenuItem } from "./ActionMenu";
 import { For, Show, type JSX } from "solid-js";
 import { cx, ui } from "./styles";
 
@@ -9,7 +10,8 @@ export type Crumb = { href: string; label: string };
 // the breadcrumb runs from the parent pages to the current page (the title when
 // it is text, or `current`). The title row holds the h1 (one line, truncated with
 // the full text in `title`), an optional status badge and, on the right, the
-// page's actions (Copy link first, the primary action last). Below sit a one-line
+// list page's create action. A detail page has no action buttons: its actions are
+// in `menu`, the menu by its name, the same as its row menu in the list. Below sit a one-line
 // subtitle and a metadata row (IDs, times). On phones the actions follow the
 // metadata.
 export function PageHeader(props: {
@@ -20,6 +22,9 @@ export function PageHeader(props: {
   current?: string;
   meta?: JSX.Element;
   actions?: JSX.Element;
+  // A detail page's object menu: the same actions as the object's row menu in its list.
+  menu?: ActionMenuItem[] | undefined;
+  menuLabel?: string;
 }) {
   const currentLabel = () => props.current ?? (typeof props.title === "string" ? props.title : undefined);
   return (
@@ -50,6 +55,7 @@ export function PageHeader(props: {
       </div>
       <div class={cx(ui.pageTitle, "col-start-1 min-w-0")}>
         <h1 class={cx(ui.h1, "min-w-0 truncate")} title={typeof props.title === "string" ? props.title : undefined}>{props.title}</h1>
+        <Show when={props.menu?.length}><ActionMenu items={props.menu!} trigger="chevron" label={props.menuLabel ?? `Actions for ${typeof props.title === "string" ? props.title : "this page"}`} /></Show>
         <Show when={props.badge}><span class="shrink-0">{props.badge}</span></Show>
       </div>
       <Show when={props.subtitle}>

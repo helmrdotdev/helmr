@@ -1,6 +1,8 @@
 import { useSearchParams } from "@solidjs/router";
 import { agentHref, listRetainedAgents } from "../lib/definitions";
 import { computerHref } from "../features/computers/navigation";
+import { HeldLabel } from "../features/sessions/HeldLabel";
+import { SessionOrigin } from "../features/sessions/SessionOrigin";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { loadError } from "../lib/error";
@@ -9,13 +11,19 @@ import {
   listSessions,
   sessionConsolePath,
   type Session,
+  type SessionAddress,
   type SessionStatus,
 } from "../lib/sessions";
-import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
+import { Notice } from "../ui/Notice";
+import type { ActionMenuItem } from "../ui/ActionMenu";
+import { useCopyLink } from "../components/copyLink";
+import { createSessionControls } from "../features/sessions/sessionControls";
+import { hasPermission } from "../lib/auth";
+import { useMe } from "../lib/me";
 import { IDText } from "../ui/IDText";
-import { Page, Toolbar } from "../ui/Page";
-import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, QueryState } from "../ui/QueryState";
+import { Toolbar } from "../ui/Page";
+import { QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Select, type SelectOption } from "../ui/Select";
@@ -34,26 +42,27 @@ const FILTERS: SelectOption<SessionFilter>[] = [
 const sessionsErrorMessage = (error: unknown) =>
   loadError(error, "Could not load sessions.", { forbidden: "You do not have permission to view sessions." });
 
-function SessionRow(props: { session: Session; agentColumn: boolean }) {
+function SessionRow(props: { session: Session; agentColumn: boolean; menu: ActionMenuItem[] }) {
   return (
     <tr>
       <td><IDText value={props.session.id} mode="link" href={sessionConsolePath(props.session.id)} /></td>
-      <td><StatusBadge resource="session" status={props.session.status} /></td>
+      <td>
+        <span class="inline-flex items-center gap-2">
+          <StatusBadge resource="session" status={props.session.status} />
+          <Show when={props.session.holds.length > 0}><HeldLabel title={props.session.holds.map(hold => hold.reason).join("\n")} /></Show>
+        </span>
+      </td>
       <Show when={props.agentColumn}>
         <td><PrimaryLink href={agentHref(props.session.agent)}>{props.session.agent}</PrimaryLink></td>
       </Show>
-      <td>
-        <Show when={props.session.key} fallback={<EmptyCell />}>
-          {(key) => <code>{key()}</code>}
-        </Show>
-      </td>
-      <td><Show when={props.session.holds.length} fallback={<EmptyCell />}>{(count) => `${count()} active`}</Show></td>
+      <td><SessionOrigin session={props.session} /></td>
       <td>
         <Show when={props.session.computer_id} fallback={<EmptyCell />}>
           {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
         </Show>
       </td>
       <td><RelativeTime value={props.session.created_at} /></td>
+      <RowActions label={`Actions for ${props.session.id}`} items={props.menu} />
     </tr>
   );
 }
@@ -106,11 +115,25 @@ export function SessionList(props: { agent?: string }) {
   );
 
   const columns = () => fixedAgent()
-    ? ["Session", "Status", "Key", "Holds", "Computer", "Created"]
-    : ["Session", "Status", "Agent", "Key", "Holds", "Computer", "Created"];
+    ? ["Session", "Status", "Started from", "Computer", "Created", { label: "Actions", srOnly: true }]
+    : ["Session", "Status", "Agent", "Started from", "Computer", "Created", { label: "Actions", srOnly: true }];
+  // One control set for the list; a row's menu points it at that row.
+  const me = useMe();
+  const copyLink = useCopyLink();
+  const [target, setTarget] = createSignal<SessionAddress>({ sessionID: "", projectID: "", environmentID: "" });
+  const [receipt, setReceipt] = createSignal<string>();
+  const controls = createSessionControls({ address: target, onChanged: () => sessions.refetch(), onReceipt: setReceipt });
+  const menu = (session: Session): ActionMenuItem[] => {
+    const can = (permission: string) => session.permissions?.includes(permission) ?? hasPermission(me.data, permission, { ...scope(), agent: session.agent });
+    const point = (item: ActionMenuItem): ActionMenuItem => item.onSelect ? { ...item, onSelect: () => { setTarget({ sessionID: session.id, projectID: projectID(), environmentID: environmentID() }); item.onSelect!(); } } : item;
+    return controls.items({ live: session.status === "open" || session.status === "closing", open: session.status === "open", can, copyLink: copyLink.item(sessionConsolePath(session.id)) }).map(point);
+  };
 
   return (
     <>
+      <copyLink.LiveRegion />
+      <Show when={receipt()}>{text => <Notice tone="info" class="mb-3" onDismiss={() => setReceipt(undefined)}>{text()}</Notice>}</Show>
+      <Show when={controls.error()}>{text => <Notice tone="danger" class="mb-3" role="alert" onDismiss={controls.clearError}>{text()}</Notice>}</Show>
       <Toolbar
         start={
           <>
@@ -137,24 +160,12 @@ export function SessionList(props: { agent?: string }) {
             minWidth="min-w-200"
             footer={<LoadMore count={items().length} noun={{ one: "session", other: "sessions" }} hasMore={sessions.hasNextPage} loading={sessions.isFetchingNextPage} failed={sessions.isFetchNextPageError} onLoadMore={() => void sessions.fetchNextPage()} />}
           >
-            <For each={items()}>{(session) => <SessionRow session={session} agentColumn={!fixedAgent()} />}</For>
+            <For each={items()}>{(session) => <SessionRow session={session} agentColumn={!fixedAgent()} menu={menu(session)} />}</For>
           </DataTable>
         )}
       </QueryState>
+      <controls.Dialogs />
     </>
   );
 }
 
-// The Sessions page: every Session in the Environment, filtered by status and
-// Agent.
-export function SessionsPage() {
-  const scope = useScopeIDs();
-  return (
-    <Page>
-      <PageHeader title="Sessions" />
-      <Show when={scope().projectID && scope().environmentID} fallback={<EmptyState title="Select a project and environment." />}>
-        <SessionList />
-      </Show>
-    </Page>
-  );
-}

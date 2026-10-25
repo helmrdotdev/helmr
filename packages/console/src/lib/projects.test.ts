@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { getProject, isProtectedEnvironment, listProjects, updateEnvironment } from "./projects";
+import { getProject, listProjects, updateEnvironment } from "./projects";
 
 const originalFetch = globalThis.fetch;
 
@@ -50,8 +50,3 @@ test("environment update patches name and color while preserving its identifier"
   expect(environment.name).toBe("Staging 2");
 });
 
-test("production and staging are the protected Environments", () => {
-  expect(isProtectedEnvironment({ environment: "production" })).toBe(true);
-  expect(isProtectedEnvironment({ environment: "staging" })).toBe(true);
-  expect(isProtectedEnvironment({ environment: "preview" })).toBe(false);
-});

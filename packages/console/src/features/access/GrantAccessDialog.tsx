@@ -12,6 +12,7 @@ import { FormDialog } from "../../ui/Dialog";
 import { Field, Segmented } from "../../ui/Field";
 import { Notice } from "../../ui/Notice";
 import { Select } from "../../ui/Select";
+import { LinesSkeleton } from "../../ui/Skeleton";
 import { ui } from "../../ui/styles";
 import { AccessLabel, type AccessKind } from "./AccessIcon";
 
@@ -196,7 +197,7 @@ export function GrantAccessDialog(props: {
       onClose={props.onClose}
       onSubmit={() => void submit()}
     >
-      <Show when={roles.data} fallback={<p class={ui.muted} role="status">Loading roles…</p>}>
+      <Show when={roles.data} fallback={<LinesSkeleton label="Loading roles" />}>
         <Show when={fixedRecipient()} fallback={
           <Field label="Who" hint={reach()}>
             <div class="grid justify-items-start gap-2">

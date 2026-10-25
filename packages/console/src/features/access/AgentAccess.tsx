@@ -8,7 +8,7 @@ import {
   type RoleGrant,
 } from "../../lib/permissions";
 import { useScopeIDs } from "../../lib/scope";
-import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../../ui/DataTable";
+import { DataTable, EmptyCell, TableCount, PrimaryLink } from "../../ui/DataTable";
 import { Segmented } from "../../ui/Field";
 import { Notice } from "../../ui/Notice";
 import { Toolbar } from "../../ui/Page";
@@ -129,7 +129,7 @@ export function AgentAccess(props: { agent: string }) {
         />
         <Show when={view() === "people"}>
           <Show when={people().length > 0} fallback={<EmptyState title="Nobody can use this agent yet" hint="Share it with all members or grant a role." />}>
-            <DataTable columns={PEOPLE_COLUMNS} minWidth="min-w-180" footer={<LoadMore count={people().length} noun={{ one: "person", other: "people" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+            <DataTable columns={PEOPLE_COLUMNS} minWidth="min-w-180" footer={<TableCount count={people().length} noun={{ one: "person", other: "people" }} />}>
               <For each={people()}>
                 {person => (
                   <tr>

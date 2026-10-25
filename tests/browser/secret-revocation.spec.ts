@@ -34,7 +34,6 @@ test("Secret revocation explains running Turn interruption and retained pending 
     const dialog = page.getByRole("dialog", { name: "Revoke secret" });
     await expect(dialog).toContainText("SYNTHETIC_TOKEN");
     await expect(dialog.getByText("Production", { exact: true })).toBeVisible();
-    await expect(dialog.getByText("protected", { exact: true })).toBeVisible();
     await expect(dialog).toContainText("Affected running turns may be interrupted and fail to complete.");
     await expect(dialog).toContainText("Pending inputs are retained but cannot run on affected computers.");
     if (accept) await dialog.getByRole("button", { name: "Revoke", exact: true }).click();

@@ -1,11 +1,12 @@
 import { createEffect, createMemo, createSignal, createUniqueId, For, on, Show, untrack, type JSX } from "solid-js";
+import { Icon } from "./Icon";
 import { groupEntries, listKey, matchesQuery, type CommandEntry } from "./command";
 import { cx, ui } from "./styles";
 
 export type CommandItem = CommandEntry & {
   // Shown before the label (an Environment's color).
   leading?: JSX.Element;
-  // Shown after the label (a protected tag, a hint).
+  // Shown after the label (a tag, a hint).
   trailing?: JSX.Element;
   // The item in effect now; it is checked.
   current?: boolean;
@@ -127,7 +128,7 @@ export function CommandList(props: {
                       <span class="grid place-items-center">{entry.leading}</span>
                       <span class="truncate">{entry.label}</span>
                       <span class="flex items-center justify-end gap-1.5">{entry.trailing}</span>
-                      <span class="text-control leading-none text-console-accent" aria-hidden="true">{entry.current ? "✓" : ""}</span>
+                      <span class="grid place-items-center text-console-accent">{entry.current ? <Icon name="check" /> : null}</span>
                     </div>
                   )}
                 </For>

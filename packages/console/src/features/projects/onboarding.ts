@@ -10,7 +10,7 @@ export function createSignOut() {
   return {
     busy,
     error,
-    label: () => (busy() ? "Signing out..." : "Sign out"),
+    label: () => (busy() ? "Signing out…" : "Sign out"),
     run: async () => {
       setBusy(true);
       setError(null);

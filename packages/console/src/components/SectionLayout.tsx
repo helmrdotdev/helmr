@@ -3,7 +3,7 @@ import { Show, type JSX } from "solid-js";
 import { useScopeIDs } from "../lib/scope";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState } from "../ui/QueryState";
+import { NoScopeState } from "../ui/QueryState";
 import { selectedLinkTab } from "../ui/linkTab";
 import { LinkTabs, TabPanel, type LinkTabItem } from "../ui/Tabs";
 
@@ -25,7 +25,7 @@ export function SectionLayout<T extends string>(props: {
       <PageHeader title={props.title} />
       <LinkTabs id={props.id} label={props.title} items={props.tabs} selected={selected()} />
       <TabPanel tabs={props.id} value={selected()} selected={selected()}>
-        <Show when={scope().projectID && scope().environmentID} fallback={<EmptyState title="Select a project and environment." />}>
+        <Show when={scope().projectID && scope().environmentID} fallback={<NoScopeState />}>
           {props.children}
         </Show>
       </TabPanel>
