@@ -81,13 +81,9 @@ func (o sessionOrigin) authorize(ctx context.Context, q db.DBTX, env, agent uuid
 	}
 
 	if o.kind() == "schedule" {
-		var allowed bool
-		if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM trigger_activations WHERE environment_id=$1 AND id=$2 AND (active_until IS NULL OR active_until>statement_timestamp()))`, env, *o.Activation).Scan(&allowed); err != nil {
-			return err
-		}
-		if !allowed {
-			return ErrDenied
-		}
+		// Activation intervals bound new occurrences, not the authority of Sessions
+		// already admitted from them. Those Sessions retain their pinned deployment.
+		// The Session's composite foreign key guarantees its origin exists in env.
 		return nil
 	}
 	permission := auth.CapabilityAgentsUse
