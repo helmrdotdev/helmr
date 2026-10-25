@@ -147,7 +147,7 @@ func (r cancellingObjectReader) Close() error { return nil }
 
 func TestPrepareRejectsInvalidIdempotencyKeysBeforeReadingObjects(t *testing.T) {
 	principal := auth.Principal{OrgID: uuid.NewV7(), Kind: auth.PrincipalKindAPIKey, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
-	principal.Grants = []auth.PermissionGrant{{ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID, Permission: auth.CapabilityDeploymentsPublish}}
+	principal.Grants = []auth.PermissionGrant{{ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID, Permission: auth.PermissionDeploymentsPublish}}
 	scope := auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID}
 	finalizer := NewFinalizer(nil, nil, bundle.Admission{}, discardLogger())
 	for _, key := range []string{"", " ", "a\x00b", "a\nb", string([]byte{0xff}), strings.Repeat("x", 513)} {

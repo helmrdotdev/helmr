@@ -20,7 +20,7 @@ const grantPermissionsSQL = `SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_
   OR g.all_agents OR a.agent_id IS NOT NULL`
 
 // MemberPermissionGrantsSQL reads one active membership's direct, Group and
-// all-members assignments. Hosts bind $1 to auth.CapabilityIDsForResource("agents"),
+// all-members assignments. Hosts bind $1 to auth.AgentPermissionIDs(),
 // $2 to organization ID and $3 to exact membership ID; host parameters start at $4.
 // Embed this relation when authorization must precede SQL pagination or aggregation.
 const MemberPermissionGrantsSQL = `SELECT g.* FROM (` + grantPermissionsSQL + `) g
@@ -44,7 +44,7 @@ func MemberGrants(ctx context.Context, database db.DBTX, org, member uuid.UUID) 
  FROM (`+MemberPermissionGrantsSQL+`) g
  LEFT JOIN environments e ON e.id=g.environment_id LEFT JOIN projects p ON p.id=e.project_id
  LEFT JOIN agents a ON (a.environment_id,a.id)=(g.environment_id,g.agent_id)
- ORDER BY 2,3,4,1`, auth.CapabilityIDsForResource("agents"), org, member)
+ ORDER BY 2,3,4,1`, auth.AgentPermissionIDs(), org, member)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func APIKeyGrants(ctx context.Context, database db.DBTX, org, key uuid.UUID) ([]
  JOIN api_keys k ON (k.org_id,k.environment_id,k.id)=(g.org_id,g.environment_id,g.api_key_id)
  JOIN environments e ON e.id=g.environment_id
  WHERE k.org_id=$2 AND k.id=$3 AND k.revoked_at IS NULL
- AND (k.expires_at IS NULL OR k.expires_at>statement_timestamp()) ORDER BY 2,3,4,1`, auth.CapabilityIDsForResource("agents"), org, key)
+ AND (k.expires_at IS NULL OR k.expires_at>statement_timestamp()) ORDER BY 2,3,4,1`, auth.AgentPermissionIDs(), org, key)
 	if err != nil {
 		return nil, err
 	}

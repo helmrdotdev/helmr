@@ -65,7 +65,7 @@ func TestSlackAnswerAllowsLinkedOperatorAndKeepsExactAskOnlyReceipt(t *testing.T
 	f := newStatusFixture(t)
 	f.link(t)
 	turn, ask := f.pendingQuestion(t)
-	f.SetPermissions(t, "agents.use", "sessions.manage")
+	f.SetPermissions(t, "agents.use", "sessions.send")
 	c := f.control("answer")
 	c.Target.Turn, c.Target.Ask = turn, ask
 	first := f.controlReceipt(t, c, json.RawMessage(`"yes"`))
@@ -86,7 +86,7 @@ func TestSlackAnswerAllowsLinkedOperatorAndKeepsExactAskOnlyReceipt(t *testing.T
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='rejected' AND error='ask_already_answered' FROM slack_requests WHERE id=$1`, second).Scan(&exact); err != nil || !exact {
 		t.Fatalf("competing answer replaced first: %v %v", exact, err)
 	}
-	f.SetPermissions(t, "sessions.view")
+	f.SetPermissions(t, "sessions.read")
 	stop := f.nativeStop(t, "viewer-stop")
 	if err := admitNativeStop(t.Context(), f.Pool, stop); err != nil {
 		t.Fatal(err)

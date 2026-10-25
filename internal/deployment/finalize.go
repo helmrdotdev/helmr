@@ -116,7 +116,7 @@ func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope
 // Deployment and its definitions. An operation-specific receipt binds a retry
 // key to the exact bundle; distinct keys for that bundle converge on one record.
 func (f *Finalizer) Finalize(ctx context.Context, database db.TxDB, finalization Finalization, progress func(objectDigest string) error) (Record, error) {
-	if err := authorizeCurrent(ctx, database, finalization.principal, finalization.scope, auth.PermissionDeploymentsWrite); err != nil {
+	if err := authorizeCurrent(ctx, database, finalization.principal, finalization.scope, auth.PermissionDeploymentsPublish); err != nil {
 		return Record{}, err
 	}
 	available, err := f.available(ctx, database, finalization)
@@ -160,7 +160,7 @@ func register(ctx context.Context, txb db.TxBeginner, f Finalization) (Record, e
 		} else if err != nil {
 			return err
 		}
-		if err := authorizeCurrent(ctx, tx, f.principal, f.scope, auth.PermissionDeploymentsWrite); err != nil {
+		if err := authorizeCurrent(ctx, tx, f.principal, f.scope, auth.PermissionDeploymentsPublish); err != nil {
 			return err
 		}
 		request, err := idempotency.NewDeploymentFinalizeRequest(env, project, f.idempotencyKey, idempotency.DeploymentFinalizeFingerprint{BundleDigest: f.bundle.root.Digest})

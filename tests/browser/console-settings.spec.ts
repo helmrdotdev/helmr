@@ -26,7 +26,7 @@ async function fixture(page: Page, options: { signedOut?: boolean } = {}) {
     const apiKeys = path.match(/^\/api\/projects\/settings-demo\/environments\/([^/]+)\/api-keys$/);
     let json: unknown;
     if (path === "/api/me" && options.signedOut) { await route.fulfill({ status: 401, json: { error: { code: "unauthorized", message: "sign in" } } }); return; }
-    else if (path === "/api/me") json = { user_id: "user-1", display_name: "Dana Example", org_id: "org", org_name: "Research Org", role: "owner", permissions: ["projects.manage"], admin: false, organization_required: false, project_required: false };
+    else if (path === "/api/me") json = { user_id: "user-1", display_name: "Dana Example", org_id: "org", org_name: "Research Org", role: "owner", permissions: ["projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], admin: false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === `/api/projects/${projectID}/settings`) json = { history_retention: "30d" };

@@ -11,18 +11,18 @@ const (
 )
 
 type APIKeySummary struct {
-	CreatedByMemberID *string      `json:"created_by_member_id"`
+	CreatedByMemberID *string      `json:"created_by_member_id,omitempty"`
 	ID                string       `json:"id"`
 	Name              string       `json:"name"`
-	KeyPrefix         string       `json:"key_prefix"`
+	KeyPrefix         string       `json:"key_prefix,omitempty"`
 	Project           string       `json:"project"`
 	Environment       string       `json:"environment"`
 	RoleNames         []string     `json:"role_names"`
 	Status            APIKeyStatus `json:"status"`
-	CreatedAt         time.Time    `json:"created_at"`
-	LastUsedAt        *time.Time   `json:"last_used_at"`
-	ExpiresAt         *time.Time   `json:"expires_at"`
-	RevokedAt         *time.Time   `json:"revoked_at"`
+	CreatedAt         time.Time    `json:"created_at,omitzero"`
+	LastUsedAt        *time.Time   `json:"last_used_at,omitempty"`
+	ExpiresAt         *time.Time   `json:"expires_at,omitempty"`
+	RevokedAt         *time.Time   `json:"revoked_at,omitempty"`
 }
 
 type APIKeyIssued struct {

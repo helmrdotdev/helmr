@@ -91,7 +91,7 @@ func TestSlackNativeStopCannotAdmitAgainstNewerExecutionOrChangedAuthority(t *te
 			case "relink":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_user_links SET linked_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			case "role":
-				f.SetPermissions(t, "sessions.view")
+				f.SetPermissions(t, "sessions.read")
 			case "generation":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.Session)
 			}

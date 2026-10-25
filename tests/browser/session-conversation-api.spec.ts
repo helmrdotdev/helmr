@@ -136,7 +136,7 @@ test("real API rejects a loaded question after organization scope loss and accep
 
 test("real Secret revocation preserves queued input for inspection and explicit cancellation", async ({ page }, testInfo) => {
   const f = await conversation(page);
-  await f.grantEnvironmentPermissions(["secrets.manage"]);
+  await f.grantEnvironmentPermissions(["secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke"]);
   const created = await page.request.post(`${f.base}/secrets`, {
     data: { secret: "BROWSER_REVOCATION", value: "synthetic-browser-value", idempotency_key: crypto.randomUUID() },
   });

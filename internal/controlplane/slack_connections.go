@@ -28,7 +28,19 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	env := pgvalue.MustUUIDValue(environment)
 	name := chi.URLParam(r, "agentName")
-	agent, err := slack.ConnectionAgent(r.Context(), s.tx, principal.OrgID, principal.UserID, env, name)
+	permission := auth.PermissionAgentConnectionsRead
+	switch r.Method {
+	case http.MethodPut:
+		permission = auth.PermissionAgentConnectionsUpdateCredentials
+	case http.MethodDelete:
+		permission = auth.PermissionAgentConnectionsDelete
+	case http.MethodPost:
+		permission = auth.PermissionAgentConnectionsCreate
+		if chi.URLParam(r, "connectionID") != "" {
+			permission = auth.PermissionAgentConnectionsAuthorize
+		}
+	}
+	agent, err := slack.ConnectionAgent(r.Context(), s.tx, principal.OrgID, principal.UserID, env, name, permission)
 	if err != nil {
 		s.writeSlackError(w, err)
 		return
@@ -52,7 +64,7 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	view, err := slack.GetConnection(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent)
+	view, err := slack.GetConnection(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent, permission)
 	if err != nil {
 		s.writeSlackError(w, err)
 		return

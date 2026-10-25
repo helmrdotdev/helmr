@@ -14,7 +14,7 @@ import (
 )
 
 // These routes belong to the browser Session surface. Recovery grants no API-key
-// mutation capability and requires current organization management in the owner.
+// mutation capability and requires Session read plus the exact delivery action.
 func (s *Server) sessionSlackDelivery(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)

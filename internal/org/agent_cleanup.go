@@ -6,6 +6,8 @@ import (
 	"slices"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/jackc/pgx/v5"
 )
@@ -18,10 +20,18 @@ type AgentGrantCleanup struct {
 	manager            ManagingMember
 	environment, agent uuid.UUID
 	grants             []RoleGrant
+	permission         auth.Permission
 }
 
-func LockAgentGrantCleanup(ctx context.Context, tx pgx.Tx, m ManagingMember, env, agent uuid.UUID) (*AgentGrantCleanup, error) {
-	if err := lockAccessMembers(ctx, tx, m); err != nil {
+func LockAgentGrantCleanup(ctx context.Context, tx pgx.Tx, m ManagingMember, env, agent uuid.UUID, restore bool) (*AgentGrantCleanup, error) {
+	permission := auth.PermissionAgentsDelete
+	if restore {
+		permission = auth.PermissionAgentsRestore
+	}
+	if err := lockActiveMembers(ctx, tx, m); err != nil {
+		return nil, err
+	}
+	if err := authorizeAgentCleanup(ctx, tx, m, env, agent, permission); err != nil {
 		return nil, err
 	}
 	rows, err := tx.Query(ctx, `SELECT r.id FROM roles r WHERE r.org_id=$1 AND EXISTS(SELECT 1 FROM role_grants g JOIN role_grant_agents a ON a.grant_id=g.id WHERE g.role_id=r.id AND a.environment_id=$2 AND a.agent_id=$3) ORDER BY r.id FOR UPDATE`, m.OrgID, env, agent)
@@ -40,7 +50,7 @@ func LockAgentGrantCleanup(ctx context.Context, tx pgx.Tx, m ManagingMember, env
 	if err != nil {
 		return nil, err
 	}
-	result := &AgentGrantCleanup{manager: m, environment: env, agent: agent}
+	result := &AgentGrantCleanup{manager: m, environment: env, agent: agent, permission: permission}
 	for _, id := range ids {
 		grants, err := readRoleGrants(ctx, tx, m.OrgID, GrantFilter{ID: id})
 		if err != nil {
@@ -52,6 +62,9 @@ func LockAgentGrantCleanup(ctx context.Context, tx pgx.Tx, m ManagingMember, env
 }
 
 func (c *AgentGrantCleanup) Recheck(ctx context.Context, tx pgx.Tx) error {
+	if err := authorizeAgentCleanup(ctx, tx, c.manager, c.environment, c.agent, c.permission); err != nil {
+		return err
+	}
 	rows, err := tx.Query(ctx, `SELECT grant_id FROM role_grant_agents WHERE environment_id=$1 AND agent_id=$2 ORDER BY grant_id`, c.environment, c.agent)
 	if err != nil {
 		return err
@@ -82,7 +95,7 @@ func grantWithoutAgent(g RoleGrant, agent uuid.UUID) (RoleGrant, bool) {
 	}
 	effective := len(g.AgentIDs) > 0
 	for _, p := range g.Permissions {
-		if auth.CapabilityResourceType(auth.Permission(p)) != "agents" {
+		if !auth.IsAgentPermission(auth.Permission(p)) {
 			effective = true
 		}
 	}
@@ -103,6 +116,9 @@ func (c *AgentGrantCleanup) Counts() (edges, removed, mixed int) {
 }
 
 func (c *AgentGrantCleanup) Apply(ctx context.Context, tx pgx.Tx) error {
+	if c.permission != auth.PermissionAgentsDelete {
+		return access.ErrDenied
+	}
 	if err := c.Recheck(ctx, tx); err != nil {
 		return err
 	}
@@ -127,9 +143,24 @@ func (c *AgentGrantCleanup) Apply(ctx context.Context, tx pgx.Tx) error {
 		if !effective {
 			after = nil
 		}
-		if err := accessAudit(ctx, tx, c.manager, action, "role_grant", g.ID, grantSnapshot(g), after, nil); err != nil {
+		if err := audit.Append(ctx, tx, audit.Event{Actor: c.manager.Actor, OrgID: c.manager.OrgID, EnvironmentID: c.environment, Action: action, TargetKind: "role_grant", TargetID: g.ID, Details: audit.AccessChangeDetails{Before: grantSnapshot(g), After: after, CauseAgentID: c.agent.String(), Reason: "agent_deleted"}}); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func authorizeAgentCleanup(ctx context.Context, tx pgx.Tx, m ManagingMember, env, agent uuid.UUID, permission auth.Permission) error {
+	current, err := access.Principal(ctx, tx, "user", m.UserID, env)
+	if err != nil {
+		return err
+	}
+	if current.OrgID != m.OrgID || current.MemberID != m.MemberID {
+		return access.ErrDenied
+	}
+	scope := auth.Scope{OrgID: m.OrgID, ProjectID: current.ProjectID, EnvironmentID: env.String(), AgentID: agent.String()}
+	if !current.HasPermission(permission, scope) {
+		return access.ErrDenied
 	}
 	return nil
 }

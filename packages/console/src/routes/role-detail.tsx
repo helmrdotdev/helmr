@@ -7,7 +7,7 @@ import { GrantAccessDialog } from "../features/access/GrantAccessDialog";
 import { hasPermission } from "../lib/auth";
 import { errorMessage, loadError } from "../lib/error";
 import { useMe } from "../lib/me";
-import { isOrganizationRole, listGrants, listRoles, permissionResource, resourceLabel, roleHref, saveRole, type Capability, type PermissionRole } from "../lib/permissions";
+import { getPermissionCatalog, isOrganizationRole, listGrants, listRoles, permissionScope, resourceLabel, roleHref, saveRole, type PermissionDefinition, type PermissionRole } from "../lib/permissions";
 import { CheckboxGroup, Field, FormActions, Segmented, TextArea, TextInput } from "../ui/Field";
 import { Notice } from "../ui/Notice";
 import { DangerZone } from "../ui/Panel";
@@ -22,14 +22,14 @@ type Level = "environment" | "organization";
 type Tab = "permissions" | "assignments";
 
 // Agents come first: they are what most roles are about.
-const RESOURCE_ORDER = ["agents", "deployments", "computers", "secrets", "api_keys", "organization"];
+const RESOURCE_ORDER = ["agents", "agent_connections", "sessions", "triggers", "deployments", "templates", "computers", "secrets", "api_keys", "projects", "environments", "members", "invitations", "groups", "roles", "assignments"];
 const resourceRank = (resource: string) => { const i = RESOURCE_ORDER.indexOf(resource); return i < 0 ? RESOURCE_ORDER.length : i; };
 
 // The permission groups a role of this level chooses from.
-function permissionGroups(catalog: readonly Capability[], level: Level) {
-  const resources = [...new Set(catalog.map(c => c.resource_type))].filter(r => (r === "organization") === (level === "organization")).sort((a, b) => resourceRank(a) - resourceRank(b));
+function permissionGroups(catalog: readonly PermissionDefinition[], level: Level) {
+  const resources = [...new Set(catalog.filter(c => (c.scope_type === "organization") === (level === "organization")).map(c => c.resource_type))].sort((a, b) => resourceRank(a) - resourceRank(b));
   return resources.map(resource => ({
-    label: resource === "agents" ? "Agents and sessions" : resourceLabel(resource),
+    label: resourceLabel(resource),
     options: catalog.filter(c => c.resource_type === resource).map(c => ({ value: c.id, label: c.name, description: c.description })),
   }));
 }
@@ -37,16 +37,16 @@ function permissionGroups(catalog: readonly Capability[], level: Level) {
 export function RoleDetail() {
   const params = useParams(); const [search] = useSearchParams(); const me = useMe();
   const navigate = useNavigate(); const cache = useQueryClient();
-  const allowed = () => hasPermission(me.data, "access.manage");
+  const allowed = () => hasPermission(me.data, "roles.read") || (creating() && hasPermission(me.data, "roles.create"));
   const id = () => params["role"] ?? "";
   const creating = () => id() === "new";
-  const query = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() }));
-  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: allowed() && !creating() }));
+  const query = createQuery(() => ({ queryKey: ["access", "role-editor", hasPermission(me.data, "roles.read")], queryFn: async () => hasPermission(me.data, "roles.read") ? listRoles() : {...await getPermissionCatalog(), roles: [] as PermissionRole[]}, enabled: allowed() }));
+  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: hasPermission(me.data, "assignments.read") && !creating() }));
   const catalog = () => query.data?.catalog ?? [];
   const role = () => creating() ? undefined : query.data?.roles.find(r => r.id === id());
   const source = () => creating() ? query.data?.roles.find(r => r.id === search["from"]) : role();
   const missing = () => !creating() && !!query.data && !role();
-  const readonly = () => !!role()?.builtin_key;
+  const readonly = () => !!role()?.builtin_key || !hasPermission(me.data, creating() ? "roles.create" : "roles.update");
   const assignments = createMemo(() => grants.data?.grants.filter(g => g.role_id === id()) ?? []);
   const formKey = () => creating() ? `new:${source()?.id ?? ""}` : role() ? `${role()!.id}:${role()!.revision}` : "";
   const [tab, setTab] = createSignal<Tab>("permissions");
@@ -62,12 +62,12 @@ export function RoleDetail() {
       subtitle={readonly() ? role()?.description || undefined : undefined}
       actions={<Show when={allowed() && role()}>
         {r => <>
-          <button type="button" class={ui.secondaryButton} onClick={() => navigate(`/settings/roles/new?from=${encodeURIComponent(r().id)}`)}>Duplicate</button>
-          <button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant this role</button>
+          <Show when={hasPermission(me.data, "roles.create")}><button type="button" class={ui.secondaryButton} onClick={() => navigate(`/settings/roles/new?from=${encodeURIComponent(r().id)}`)}>Duplicate</button></Show>
+          <Show when={hasPermission(me.data, "assignments.create")}><button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant this role</button></Show>
         </>}
       </Show>}
     />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to manage roles.</Notice></Show>}>
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Read roles permission is required to view roles.</Notice></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="role" id={id()} back={{ href: "/settings/roles", label: "Go to roles" }} />}>
         <QueryState query={query} pending={<PageSkeleton label="Loading role" sections={["Permissions"]} />} error={error => loadError(error, "Could not load this role.")}>
           {() => <>
@@ -80,7 +80,7 @@ export function RoleDetail() {
               <Show when={formKey()} keyed>
                 {_key => <RoleForm role={source()} copy={creating()} readonly={readonly()} catalog={catalog()} onSaved={saved => creating() ? navigate(roleHref(saved.id)) : undefined} />}
               </Show>
-              <Show when={role() && !role()!.builtin_key}>
+              <Show when={hasPermission(me.data, "roles.delete") && role() && !role()!.builtin_key}>
                 <DangerZone
                   title="Delete role"
                   class="mt-6"
@@ -92,11 +92,11 @@ export function RoleDetail() {
                 </DangerZone>
               </Show>
             </div>
-            <TabPanel tabs="role-tabs" value="assignments" selected={tab()}>
+            <TabPanel tabs="role-tabs" value="assignments" selected={tab()}><Show when={hasPermission(me.data, "assignments.read")} fallback={<Notice tone="info">The assignments.read permission is required to view this section.</Notice>}>
               <QueryState query={grants} pending={<TableSkeleton label="Loading assignments" columns={["Recipient", "Where", "Agents", "Permissions"]} />} error={error => loadError(error, "Could not load assignments.")}>
                 {() => <AssignmentsTable grants={assignments()} catalog={catalog()} recipient role={false} empty="Nobody has this role" emptyHint="Grant it to give people, groups or API keys these permissions." />}
               </QueryState>
-            </TabPanel>
+            </Show></TabPanel>
           </>}
         </QueryState>
       </Show>
@@ -106,7 +106,7 @@ export function RoleDetail() {
   </>;
 }
 
-function RoleForm(props: { role: PermissionRole | undefined; copy: boolean; readonly: boolean; catalog: Capability[]; onSaved: (role: PermissionRole) => void }) {
+function RoleForm(props: { role: PermissionRole | undefined; copy: boolean; readonly: boolean; catalog: PermissionDefinition[]; onSaved: (role: PermissionRole) => void }) {
   const cache = useQueryClient();
   const initial = () => ({
     name: props.role ? (props.copy ? `${props.role.name} copy` : props.role.name) : "",
@@ -120,10 +120,10 @@ function RoleForm(props: { role: PermissionRole | undefined; copy: boolean; read
   const [busy, setBusy] = createSignal(false); const [error, setError] = createSignal<string | null>(null);
   const editing = () => !!props.role && !props.copy;
   // A saved role keeps its level; a new one starts empty when its level changes.
-  createEffect(() => { if (!editing()) setPermissions(p => p.filter(id => (permissionResource(id, props.catalog) === "organization") === (level() === "organization"))); });
+  createEffect(() => { if (!editing()) setPermissions(p => p.filter(id => (permissionScope(id, props.catalog) === "organization") === (level() === "organization"))); });
   const changed = () => name() !== initial().name || description() !== initial().description || [...permissions()].sort().join() !== [...initial().permissions].sort().join();
-  const agentActions = (ids: readonly string[]) => ids.some(id => permissionResource(id, props.catalog) === "agents");
-  const addsSessionReading = () => editing() && permissions().some(p => (p === "sessions.view" || p === "sessions.manage") && !initial().permissions.includes(p));
+  const agentActions = (ids: readonly string[]) => ids.some(id => permissionScope(id, props.catalog) === "agent");
+  const addsSessionReading = () => editing() && permissions().some(p => p === "sessions.read" && !initial().permissions.includes(p));
   const dropsAgents = () => editing() && (props.role?.grant_count ?? 0) > 0 && agentActions(initial().permissions) && !agentActions(permissions());
   const reset = () => { setName(initial().name); setDescription(initial().description); setPermissions(initial().permissions); setError(null); };
   const submit = async () => {
@@ -149,7 +149,7 @@ function RoleForm(props: { role: PermissionRole | undefined; copy: boolean; read
       </Show>
       <CheckboxGroup label="Permissions" groups={permissionGroups(props.catalog, level())} value={permissions()} onChange={setPermissions} disabled={props.readonly || busy()} />
       <Show when={level() === "environment"}>
-        <p class={`-mt-1 mb-3 ${ui.fieldHint}`}>Agent and session permissions apply to the agents chosen when the role is granted. The others apply to the whole environment.</p>
+        <p class={`-mt-1 mb-3 ${ui.fieldHint}`}>Agent, connection, session and trigger permissions apply to the agents chosen when the role is granted. The others apply to the whole environment.</p>
       </Show>
       <Show when={addsSessionReading()}><Notice tone="warning" class="mb-3">Viewing or managing all sessions includes other people’s personal conversations with these agents.</Notice></Show>
       <Show when={dropsAgents()}><Notice tone="warning" class="mb-3">Removing every agent permission clears the agents chosen on this role’s assignments.</Notice></Show>

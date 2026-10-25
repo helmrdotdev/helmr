@@ -1,11 +1,10 @@
-import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
+import { ApiError } from "../lib/api";
+import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show, type JSX } from "solid-js";
 import { SectionLayout } from "../components/SectionLayout";
 import { ComputerStatus } from "../features/computers/ComputerStatus";
 import { computerHref } from "../features/computers/navigation";
-import { deploymentHref } from "../features/deployments/navigation";
 import { listTemplateDefinitions, templateResources } from "../lib/definitions";
-import { getCurrentDeployment } from "../lib/deployments";
 import { loadError } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import { listComputers, type ComputerListItem } from "../lib/computers";
@@ -15,7 +14,6 @@ import { type LinkTabItem } from "../ui/Tabs";
 import { QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
-import { cx, ui } from "../ui/styles";
 
 const COMPUTER_COLUMNS = ["Computer", "Status", "Key", "Template", "Last activity", "Created"] as const;
 const TEMPLATE_COLUMNS = ["Template", "Resources"] as const;
@@ -101,28 +99,21 @@ const templatesFailure = (error: unknown) => loadError(error, "Could not load te
 // The Templates of the current Deployment, for creating Computers.
 export function TemplateList() {
   const scope = useScopeIDs();
-  const current = createQuery(() => ({ queryKey: ["deployments", "current", scope().projectID, scope().environmentID], queryFn: () => getCurrentDeployment(scope()), enabled: !!scope().projectID && !!scope().environmentID, retry: false, refetchInterval: 15_000 }));
-  // Pin every page to the observed current Deployment. Promotion changes this
-  // query key, so pages from different definitions cannot be combined.
+  // The API cursor pins subsequent pages to the first page's deployment.
   const definitions = createInfiniteQuery(() => ({
-    queryKey: ["templates", "current-definitions", scope().projectID, scope().environmentID, current.data?.id],
+    queryKey: ["templates", "current-definitions", scope().projectID, scope().environmentID],
     queryFn: async ({ pageParam }) => {
-      const page = await listTemplateDefinitions({ ...scope(), deploymentID: current.data!.id, cursor: pageParam || undefined, limit: 100 });
-      return { items: page.templates, next_cursor: page.next_cursor };
+      const page = await listTemplateDefinitions({ ...scope(), cursor: pageParam || undefined, limit: 100 }).catch(error => {
+        if (error instanceof ApiError && error.code === "no_current_deployment") return { templates: [], deployment_id: "", next_cursor: undefined };
+        throw error;
+      });
+      return { items: page.templates, next_cursor: page.next_cursor, deployment_id: page.deployment_id };
     },
     initialPageParam: "", getNextPageParam: page => page.next_cursor,
-    enabled: !!current.data && !current.isError, retry: false,
+    enabled: !!scope().projectID && !!scope().environmentID, retry: false, refetchInterval: 15_000,
   }));
   const items = createMemo(() => definitions.data?.pages.flatMap(page => page.items) ?? []);
   return (
-    <QueryState
-      query={current}
-      pending={<TableSkeleton label="Loading templates" columns={TEMPLATE_COLUMNS} />}
-      error={templatesFailure}
-      empty={{ when: (deployment) => !deployment, title: "No current deployment.", hint: "Deploy your code to make its templates available here." }}
-    >
-      {deployment => <>
-        <p class={cx(ui.muted, "mb-3")}>Templates in the current deployment <IDText value={deployment()!.id} mode="link" href={deploymentHref(deployment()!.id)} />, for creating computers.</p>
         <QueryState
           query={definitions}
           pending={<TableSkeleton label="Loading templates" columns={TEMPLATE_COLUMNS} />}
@@ -145,7 +136,5 @@ export function TemplateList() {
             </DataTable>
           )}
         </QueryState>
-      </>}
-    </QueryState>
   );
 }

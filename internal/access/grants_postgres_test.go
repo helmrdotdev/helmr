@@ -24,7 +24,7 @@ func TestGrantReadersPreserveTargetsAndCallerTransaction(t *testing.T) {
 	if grants, err := access.APIKeyGrants(ctx, f.Pool, org, key); err != nil || len(grants) != 0 {
 		t.Fatalf("unassigned key: %v %v", grants, err)
 	}
-	dbtest.SetAPIKeyRole(t, f.Pool, key, "agents.use", "sessions.view", "sessions.manage", "secrets.manage")
+	dbtest.SetAPIKeyRole(t, f.Pool, key, "agents.use", "sessions.read", "sessions.send", "secrets.create")
 	read := func(database db.DBTX, wantAgent bool, target string) {
 		t.Helper()
 		human, err := access.MemberGrants(ctx, database, org, f.MemberID)
@@ -48,13 +48,13 @@ func TestGrantReadersPreserveTargetsAndCallerTransaction(t *testing.T) {
 		}{{"human", grants}, {"key", machine}} {
 			foundAgent, foundSecret := false, false
 			for _, g := range subject.grants {
-				if auth.CapabilityResourceType(g.Permission) == "agents" {
+				if auth.PermissionResourceType(g.Permission) == "agents" {
 					foundAgent = true
 					if g.AgentID != target {
 						t.Fatalf("%s target widened: %+v", subject.name, g)
 					}
 				}
-				if g.Permission == auth.CapabilitySecretsManage {
+				if g.Permission == auth.PermissionSecretsCreate {
 					foundSecret = true
 					if g.AgentID != "" {
 						t.Fatalf("non-Agent permission narrowed: %+v", g)
@@ -87,12 +87,12 @@ func TestGrantReadersPreserveTargetsAndCallerTransaction(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE role_grants SET all_agents=false WHERE environment_id=$1`, f.Environment)
 	read(f.Pool, false, "")
 	// Live Role edits remove non-Agent authority as well.
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=array_remove(permissions,'secrets.manage') WHERE org_id=$1`, org)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=array_remove(permissions,'secrets.create') WHERE org_id=$1`, org)
 	grants, err := access.APIKeyGrants(ctx, f.Pool, org, key)
 	if err != nil || len(grants) != 0 {
 		t.Fatalf("stale Role: %v %v", grants, err)
 	}
-	dbtest.SetAPIKeyRole(t, f.Pool, key, "secrets.manage")
+	dbtest.SetAPIKeyRole(t, f.Pool, key, "secrets.create")
 	for _, state := range []string{"expired", "revoked"} {
 		dbtest.MustExec(t, ctx, f.Pool, `UPDATE api_keys SET expires_at=CASE WHEN $2='expired' THEN now()-interval '1 minute' END,revoked_at=CASE WHEN $2='revoked' THEN now() END WHERE id=$1`, key, state)
 		if grants, err := access.APIKeyGrants(ctx, f.Pool, org, key); err != nil || len(grants) != 0 {

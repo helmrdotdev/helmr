@@ -15,7 +15,7 @@ func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
 			if kind == "api_key" {
 				key := uuid.NewV7()
 				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,'command test','test',$5)`, key, f.OrgID, f.ProjectID, f.Environment, []byte(key.String()))
-				dbtest.SetAPIKeyRole(t, f.Pool, key, "computers.operate")
+				dbtest.SetAPIKeyRole(t, f.Pool, key, "computers.execute")
 				request.Creator = Creator{Kind: "api_key", ID: key}
 			}
 			c, err := Create(t.Context(), f.Pool, request)
@@ -24,7 +24,7 @@ func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
 			}
 			switch kind {
 			case "human_grant":
-				f.SetPermissions(t, "sessions.view")
+				f.SetPermissions(t, "sessions.read")
 			case "removed_member":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=now(),is_owner=false WHERE org_id=$1 AND user_id=$2`, f.OrgID, f.User)
 			case "api_key":
@@ -45,7 +45,7 @@ func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
 func TestAdmittedCommandRetainsDispatchReceiptAfterRevocation(t *testing.T) {
 	f := commandFixture(t)
 	first := f.start(t, "admitted")
-	f.SetPermissions(t, "sessions.view")
+	f.SetPermissions(t, "sessions.read")
 	replay, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
 	if err != nil || replay.Start == nil || replay.Start.Command.ID != first.Command.ID {
 		t.Fatalf("lost dispatch receipt: %+v %v", replay, err)

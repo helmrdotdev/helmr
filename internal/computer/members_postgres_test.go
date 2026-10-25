@@ -23,7 +23,7 @@ func TestComputerUsageCollectionsFilterBeforePagination(t *testing.T) {
 	// Commands are newer than both Sessions: a combined page followed by filtering would lose Sessions.
 	commandIDs := []uuid.UUID{uuid.NewV7(), uuid.NewV7(), uuid.NewV7()}
 	for _, id := range commandIDs {
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,status,argv,env,stdin,timeout_ms,caller_kind,caller_id,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,'cancelled',ARRAY['true'],'{}',decode('','hex'),1000,'session',$4,clock_timestamp(),'cancelled')`, f.Environment, id, f.Computer, f.User)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO commands(environment_id,id,computer_id,computer_lease_epoch,status,argv,env,stdin,timeout_ms,caller_kind,caller_id,terminal_at,terminal_reason_code) VALUES($1,$2,$3,1,'cancelled',ARRAY['true'],'{}',decode('','hex'),1000,'user',$4,clock_timestamp(),'cancelled')`, f.Environment, id, f.Computer, f.User)
 	}
 	for _, kind := range []string{"session", "command"} {
 		seen := map[string]bool{}

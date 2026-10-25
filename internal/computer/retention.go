@@ -127,7 +127,7 @@ func UpdateRetention(ctx context.Context, database db.TxBeginner, principal auth
 		if deleted {
 			return ErrNotFound
 		}
-		if err := authorizeOperator(ctx, tx, principal, scope); err != nil {
+		if err := authorizeOperation(ctx, tx, principal, scope, auth.PermissionComputersUpdateRetention); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE computers SET delete_after_unused_ms=$3,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, scope.EnvironmentID, id, policy.Milliseconds); err != nil {

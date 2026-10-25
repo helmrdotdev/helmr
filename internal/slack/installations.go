@@ -20,7 +20,12 @@ func lockSlackMember(ctx context.Context, tx pgx.Tx, org, user uuid.UUID) error 
 	return err
 }
 
-func lockAgentManager(ctx context.Context, tx pgx.Tx, org, user, environment, agent uuid.UUID) error {
+func lockAgentManager(ctx context.Context, tx pgx.Tx, org, user, environment, agent uuid.UUID, permission auth.Permission) error {
+	switch permission {
+	case auth.PermissionAgentConnectionsRead, auth.PermissionAgentConnectionsCreate, auth.PermissionAgentConnectionsUpdateCredentials, auth.PermissionAgentConnectionsAuthorize, auth.PermissionAgentConnectionsDelete, auth.PermissionAgentsDelete:
+	default:
+		return errInstallationAuthority
+	}
 	if err := lockSlackMember(ctx, tx, org, user); err != nil {
 		return err
 	}
@@ -31,13 +36,13 @@ func lockAgentManager(ctx context.Context, tx pgx.Tx, org, user, environment, ag
 	if err != nil {
 		return err
 	}
-	if p.OrgID != org || !p.HasPermission(auth.CapabilityAgentsManage, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}) {
+	if p.OrgID != org || !p.HasPermission(permission, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}) {
 		return errInstallationAuthority
 	}
 	return nil
 }
 
-func lockConnectionManager(ctx context.Context, tx pgx.Tx, org, user, connection uuid.UUID) error {
+func lockConnectionManager(ctx context.Context, tx pgx.Tx, org, user, connection uuid.UUID, permission auth.Permission) error {
 	var environment, agent uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT c.environment_id,c.agent_id FROM slack_connections c JOIN environments e ON e.id=c.environment_id WHERE c.id=$1 AND e.org_id=$2`, connection, org).Scan(&environment, &agent)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -46,10 +51,10 @@ func lockConnectionManager(ctx context.Context, tx pgx.Tx, org, user, connection
 	if err != nil {
 		return err
 	}
-	return lockAgentManager(ctx, tx, org, user, environment, agent)
+	return lockAgentManager(ctx, tx, org, user, environment, agent, permission)
 }
 
-func lockRegistrationManager(ctx context.Context, tx pgx.Tx, org, user, registration uuid.UUID) error {
+func lockRegistrationManager(ctx context.Context, tx pgx.Tx, org, user, registration uuid.UUID, permission auth.Permission) error {
 	var connection uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT c.id FROM slack_connections c JOIN environments e ON e.id=c.environment_id WHERE c.slack_app_registration_id=$1 AND e.org_id=$2`, registration, org).Scan(&connection)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -58,5 +63,5 @@ func lockRegistrationManager(ctx context.Context, tx pgx.Tx, org, user, registra
 	if err != nil {
 		return err
 	}
-	return lockConnectionManager(ctx, tx, org, user, connection)
+	return lockConnectionManager(ctx, tx, org, user, connection, permission)
 }

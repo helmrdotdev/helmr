@@ -337,7 +337,7 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 	if err := f.Pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.GrantMember(t, f.Pool, org, user, &f.Environment, "agents.use", "sessions.manage")
+	dbtest.GrantMember(t, f.Pool, org, user, &f.Environment, "agents.use", "sessions.send")
 	payload, _ := json.Marshal(messageGesture{Channel: "C1", Timestamp: slackNow(), Thread: "123.456", Text: "<@bot> another author"})
 	now := time.Now().UTC()
 	second, err := receiveGesture(ctx, f.Pool, inboundGesture{Installation: f.installation, Key: "second-source", Actor: "second-human", OccurredAt: now, ExpiresAt: now.Add(time.Minute), Payload: payload})

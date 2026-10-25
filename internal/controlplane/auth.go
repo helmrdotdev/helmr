@@ -130,15 +130,19 @@ func looksLikeSessionBearerToken(token string) bool {
 	return true
 }
 
+func (s *Server) sessionPermission(permission auth.Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler { return s.requireSessionPermission(permission, next) }
+}
+
 func (s *Server) requireSessionPermission(permission auth.Permission, next http.Handler) http.Handler {
-	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal := principalFromContext(r.Context())
 		if principal.MemberID == uuid.Nil() {
 			writeError(w, forbidden(errors.New("organization is required")))
 			return
 		}
 		scope := auth.Scope{OrgID: principal.OrgID}
-		if permission == auth.PermissionAPIKeysManage {
+		if !auth.IsOrganizationPermission(permission) {
 			resolved, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 			if err != nil {
 				writeError(w, err)
@@ -151,7 +155,7 @@ func (s *Server) requireSessionPermission(permission auth.Permission, next http.
 			return
 		}
 		next.ServeHTTP(w, r)
-	}))
+	})
 }
 
 func (s *Server) sessionPrincipal(r *http.Request) (auth.Principal, string, error) {

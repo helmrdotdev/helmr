@@ -30,8 +30,9 @@ func newAgentDeleteFixture(t *testing.T) agentDeleteFixture {
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT user_id,id FROM org_members WHERE org_id=$1 AND is_owner`, f.org).Scan(&f.user, &f.member); err != nil {
 		t.Fatal(err)
 	}
-	f.h.grant(t, f.org, f.user, f.env, "agents.manage")
-	f.h.grant(t, f.org, f.user, f.env, "sessions.manage")
+	f.h.grant(t, f.org, f.user, f.env, "agents.delete")
+	f.h.grant(t, f.org, f.user, f.env, "agents.restore")
+	f.h.grant(t, f.org, f.user, f.env, "sessions.read")
 	f.h.grant(t, f.org, f.user, f.env, "deployments.promote")
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT id FROM agents WHERE environment_id=$1`, f.env).Scan(&f.agent); err != nil {
 		t.Fatal(err)
@@ -93,8 +94,8 @@ func TestAgentDeleteRestoreHTTP(t *testing.T) {
 	sibling := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'sibling')`, f.env, sibling)
 	pure := f.selectedGrant(t, []string{"agents.use"}, f.agent)
-	mixed := f.selectedGrant(t, []string{"agents.use", "computers.operate"}, f.agent)
-	multi := f.selectedGrant(t, []string{"sessions.view"}, f.agent, sibling)
+	mixed := f.selectedGrant(t, []string{"agents.use", "computers.execute"}, f.agent)
+	multi := f.selectedGrant(t, []string{"sessions.read"}, f.agent, sibling)
 	registration, connection := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id,transport) VALUES($1,$2,$3,'http'); INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) VALUES($4,$5,$6,$1,$3)`, pgx.QueryExecModeSimpleProtocol, registration, f.org, f.user, connection, f.env, f.agent)
 	installation := uuid.NewV7()
@@ -113,6 +114,9 @@ func TestAgentDeleteRestoreHTTP(t *testing.T) {
 	var good bool
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM role_grants WHERE id=$1) AND (SELECT revision=2 AND NOT all_agents FROM role_grants WHERE id=$2) AND NOT EXISTS(SELECT 1 FROM role_grant_agents WHERE grant_id=$2) AND (SELECT revision=2 FROM role_grants WHERE id=$3) AND (SELECT count(*)=1 FROM role_grant_agents WHERE grant_id=$3) AND (SELECT revoked_at IS NOT NULL FROM slack_connections WHERE id=$4) AND (SELECT retired_at IS NOT NULL AND credential_ciphertext IS NULL FROM slack_app_registrations WHERE id=$5) AND (SELECT next_fire_at=active_until FROM trigger_activations WHERE id=$6)`, pure, mixed, multi, connection, registration, activation).Scan(&good); err != nil || !good {
 		t.Fatalf("cleanup=%v %v", good, err)
+	}
+	if err := f.h.pool.QueryRow(t.Context(), `SELECT count(*)=1 FROM audit_events WHERE action='slack_connection.disconnected' AND target_id=$1 AND details->>'cause_agent_id'=$2 AND details->>'reason'='agent_deleted'`, connection, f.agent.String()).Scan(&good); err != nil || !good {
+		t.Fatalf("missing disconnection cause: %v %v", good, err)
 	}
 	f.request(t, http.MethodGet, f.base+"/status", f.token, "", "", 200)
 	f.request(t, http.MethodGet, strings.TrimSuffix(f.base, "/daily-report")+"?view=deleted", f.token, "", "", 200)
@@ -164,12 +168,12 @@ func TestAgentDeletePrerequisitesAndRollback(t *testing.T) {
 func TestAgentDeleteScopedManagerVisibilityAndSelfLockout(t *testing.T) {
 	f := newAgentDeleteFixture(t)
 	user := f.h.user(t, "Scoped manager")
-	member := f.h.member(t, f.org, user, "admin")
+	member := f.h.member(t, f.org, user, "member")
 	token := f.h.session(t, user, f.org)
 	scoped := f
 	scoped.member = member
 	scoped.token = token
-	scoped.selectedGrant(t, []string{"agents.manage"}, f.agent)
+	scoped.selectedGrant(t, []string{"agents.delete"}, f.agent)
 	sess := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$2,0,$5)`, f.env, sess, f.agent, f.dep, f.user)
 	preview := scoped.change(t, false, true, "", 200)
@@ -184,13 +188,22 @@ func TestAgentDeleteScopedManagerVisibilityAndSelfLockout(t *testing.T) {
 	scoped.change(t, false, true, "", 404)
 }
 
-func TestAgentDeleteRequiresBothCapabilitiesAndStrictRequest(t *testing.T) {
+func TestAgentLifecycleRequiresOnlyItsDedicatedPermission(t *testing.T) {
 	f := newAgentDeleteFixture(t)
 	user := f.h.user(t, "Agent manager")
 	f.h.member(t, f.org, user, "member")
-	f.h.grant(t, f.org, user, f.env, "agents.manage")
+	f.h.grant(t, f.org, user, f.env, "agents.delete")
 	token := f.h.session(t, user, f.org)
-	f.request(t, http.MethodDelete, f.base+"?dry_run=true", token, "", "", 403)
+	f.request(t, http.MethodDelete, f.base+"?dry_run=true", token, "", "", 200)
+	f.request(t, http.MethodPost, f.base+"/restore", token, `{"dry_run":true}`, "", 403)
+	restorer := f.h.user(t, "Agent restorer")
+	f.h.member(t, f.org, restorer, "member")
+	f.h.grant(t, f.org, restorer, f.env, "agents.restore")
+	restoreToken := f.h.session(t, restorer, f.org)
+	f.request(t, http.MethodDelete, f.base+"?dry_run=true", restoreToken, "", "", 403)
+	f.request(t, http.MethodDelete, f.base, token, "", "1", 200)
+	f.request(t, http.MethodPost, f.base+"/restore", restoreToken, `{"dry_run":true}`, "", 200)
+	f.request(t, http.MethodPost, f.base+"/restore", restoreToken, `{}`, "2", 200)
 	admin := f.h.user(t, "Access manager")
 	f.h.member(t, f.org, admin, "admin")
 	f.request(t, http.MethodDelete, f.base+"?dry_run=true", f.h.session(t, admin, f.org), "", "", 404)
@@ -315,7 +328,7 @@ func TestAgentDeleteRechecksNewDependencies(t *testing.T) {
 
 func TestAgentDeleteInvalidatesGrantEditorsAndPreservesEmptyMixedGrant(t *testing.T) {
 	f := newAgentDeleteFixture(t)
-	grant := f.selectedGrant(t, []string{"agents.use", "computers.operate"}, f.agent)
+	grant := f.selectedGrant(t, []string{"agents.use", "computers.execute"}, f.agent)
 	var role uuid.UUID
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT role_id FROM role_grants WHERE id=$1`, grant).Scan(&role); err != nil {
 		t.Fatal(err)
@@ -369,7 +382,7 @@ func TestAgentDeleteReadsRoleAfterConcurrentEdit(t *testing.T) {
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE roles SET permissions=ARRAY['agents.use','computers.operate'],revision=revision+1 WHERE id=$1`, role); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE roles SET permissions=ARRAY['agents.use','computers.execute'],revision=revision+1 WHERE id=$1`, role); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -382,5 +395,62 @@ func TestAgentDeleteReadsRoleAfterConcurrentEdit(t *testing.T) {
 	var preserved bool
 	if err = f.h.pool.QueryRow(ctx, `SELECT revision=2 AND NOT EXISTS(SELECT 1 FROM role_grant_agents WHERE grant_id=$1) FROM role_grants WHERE id=$1`, grant).Scan(&preserved); err != nil || !preserved {
 		t.Fatalf("edited mixed grant lost: %v %v", preserved, err)
+	}
+}
+
+func TestAgentDeleteRevocationWhileWaitingReturnsPermissionRequired(t *testing.T) {
+	f := newAgentDeleteFixture(t)
+	tx, err := f.h.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := tx.Exec(t.Context(), `SELECT id FROM org_members WHERE id=$1 FOR UPDATE`, f.member); err != nil {
+		t.Fatal(err)
+	}
+	var blocker int
+	if err := tx.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		r := httptest.NewRequest(http.MethodDelete, f.base, nil).WithContext(ctx)
+		r.Header.Set("Authorization", "Bearer "+f.token)
+		r.Header.Set("If-Match", `"1"`)
+		w := httptest.NewRecorder()
+		f.h.handler.ServeHTTP(w, r)
+		done <- w
+	}()
+	for {
+		var waiting bool
+		if err := f.h.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case w := <-done:
+			t.Fatalf("delete did not wait: %d %s", w.Code, w.Body)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM role_grants g USING roles r WHERE r.id=g.role_id AND g.member_id=$1 AND 'agents.delete'=ANY(r.permissions)`, f.member); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	w := <-done
+	if w.Code != http.StatusForbidden || decodeHTTPError(t, w.Body.Bytes()).Code != "permission_required" {
+		t.Fatalf("revoked deletion: %d %s", w.Code, w.Body)
+	}
+	var unchanged bool
+	if err := f.h.pool.QueryRow(t.Context(), `SELECT deleted_at IS NULL AND revision=1 FROM agents WHERE id=$1`, f.agent).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("revoked delete persisted: %v %v", unchanged, err)
 	}
 }

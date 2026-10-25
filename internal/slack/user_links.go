@@ -41,7 +41,7 @@ const linkWorkspaceAccess = `EXISTS (
  SELECT 1 FROM slack_connections c JOIN (` + access.MemberPermissionGrantsSQL + `) g
  ON g.org_id=i.org_id AND g.environment_id=c.environment_id
  WHERE c.slack_installation_id=i.id AND c.revoked_at IS NULL
- AND g.permission IN ('agents.use','sessions.manage','agents.manage')
+ AND g.permission IN ('agents.use','agent_connections.read','agent_connections.create','agent_connections.update_credentials','agent_connections.authorize','agent_connections.delete')
  AND (g.agent_id IS NULL OR g.agent_id=c.agent_id))`
 
 func CheckLinkWorkspace(ctx context.Context, pool db.TxBeginner, org, user, installation uuid.UUID) (LinkWorkspace, error) {
@@ -53,7 +53,7 @@ func CheckLinkWorkspace(ctx context.Context, pool db.TxBeginner, org, user, inst
 		}
 		// Linking alone grants no org or publication authority. Read the connection
 		// without acquiring admission's installation gate while holding user locks.
-		err = tx.QueryRow(ctx, `SELECT i.id,i.team_id,i.workspace_name FROM slack_installations i WHERE i.id=$4 AND i.org_id=$2 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND `+linkWorkspaceAccess, auth.CapabilityIDsForResource("agents"), org, member, installation).Scan(&v.InstallationID, &v.TeamID, &v.WorkspaceName)
+		err = tx.QueryRow(ctx, `SELECT i.id,i.team_id,i.workspace_name FROM slack_installations i WHERE i.id=$4 AND i.org_id=$2 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND `+linkWorkspaceAccess, auth.AgentPermissionIDs(), org, member, installation).Scan(&v.InstallationID, &v.TeamID, &v.WorkspaceName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrUserLinkDenied
 		}
@@ -71,7 +71,7 @@ func ListLinkWorkspaces(ctx context.Context, pool db.TxBeginner, org, user, befo
 		if err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT i.id,i.team_id,i.workspace_name FROM slack_installations i WHERE i.org_id=$2 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND ($4::uuid='00000000-0000-0000-0000-000000000000' OR i.id<$4) AND `+linkWorkspaceAccess+` ORDER BY i.id DESC LIMIT $5`, auth.CapabilityIDsForResource("agents"), org, member, before, limit)
+		rows, err := tx.Query(ctx, `SELECT i.id,i.team_id,i.workspace_name FROM slack_installations i WHERE i.org_id=$2 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND ($4::uuid='00000000-0000-0000-0000-000000000000' OR i.id<$4) AND `+linkWorkspaceAccess+` ORDER BY i.id DESC LIMIT $5`, auth.AgentPermissionIDs(), org, member, before, limit)
 		if err != nil {
 			return err
 		}
@@ -126,7 +126,7 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, actor audit.Actor, org, u
 			return err
 		}
 		var active bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_installations i WHERE i.id=$4 AND i.org_id=$2 AND i.team_id=$5 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND `+linkWorkspaceAccess+`)`, auth.CapabilityIDsForResource("agents"), org, member, installation, identity.TeamID).Scan(&active); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_installations i WHERE i.id=$4 AND i.org_id=$2 AND i.team_id=$5 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND `+linkWorkspaceAccess+`)`, auth.AgentPermissionIDs(), org, member, installation, identity.TeamID).Scan(&active); err != nil {
 			return err
 		}
 		if !active {

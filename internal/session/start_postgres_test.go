@@ -312,7 +312,7 @@ func TestStartAPIKeyCreationAndContinuationPermissions(t *testing.T) {
 	f := newAdmissionFixture(t)
 	key := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $1,org_id,project_id,id,'test','test',$2 FROM environments WHERE id=$3`, key, []byte(key.String()), f.env)
-	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.view")
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.read")
 	caller := session.Caller{Kind: "api_key", ID: key}
 	sessionKey := "conversation"
 	req := f.startRequest("first")
@@ -321,7 +321,7 @@ func TestStartAPIKeyCreationAndContinuationPermissions(t *testing.T) {
 	if _, err := session.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("view grant created work: %v", err)
 	}
-	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.manage", "computers.operate")
+	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.create_keyed", "sessions.send", "computers.execute")
 	first, err := session.Start(t.Context(), f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +330,7 @@ func TestStartAPIKeyCreationAndContinuationPermissions(t *testing.T) {
 	if _, err := session.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("duplicate creation reused a Session: %v", err)
 	}
-	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.manage", "computers.operate")
+	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.create_keyed", "sessions.send", "computers.execute")
 	if _, err := session.Start(t.Context(), f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("send permission bypassed key conflict: %v", err)
 	}

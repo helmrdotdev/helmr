@@ -12,7 +12,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -171,7 +170,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := principalFromContext(r.Context())
-	project, environments, err := org.CreateProject(r.Context(), s.tx, principal.OrgID, org.ProjectInput{
+	project, environments, err := org.CreateProject(r.Context(), s.tx, managingMember(principal), org.ProjectInput{
 		ExecutionLimits: s.environmentExecutionLimits,
 		ProjectDetails:  org.ProjectDetails{Slug: request.Project, Name: request.Name},
 		DefaultRegionID: request.DefaultRegionID,
@@ -196,7 +195,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := principalFromContext(r.Context())
-	project, err := org.UpdateProject(r.Context(), s.db, principal.OrgID, projectID, org.ProjectDetails{
+	project, err := org.UpdateProject(r.Context(), s.tx, managingMember(principal), projectID, org.ProjectDetails{
 		Name: request.Name,
 	})
 	if err != nil {
@@ -224,7 +223,7 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := principalFromContext(r.Context())
-	environment, err := org.CreateEnvironment(r.Context(), s.tx, principal.OrgID, projectID, org.EnvironmentDetails{
+	environment, err := org.CreateEnvironment(r.Context(), s.tx, managingMember(principal), projectID, org.EnvironmentDetails{
 		Slug: request.Environment, Name: request.Name, ColorHex: colorHex,
 	}, s.environmentExecutionLimits)
 	if err != nil {
@@ -278,7 +277,7 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	principal := principalFromContext(r.Context())
-	environment, err := org.UpdateEnvironment(r.Context(), s.db, principal.OrgID, projectID, environmentID, org.EnvironmentDetails{
+	environment, err := org.UpdateEnvironment(r.Context(), s.tx, managingMember(principal), projectID, environmentID, org.EnvironmentDetails{
 		Name: request.Name, ColorHex: colorHex,
 	})
 	if err != nil {
@@ -340,7 +339,7 @@ func projectSettingsResponse(project db.Project) api.ProjectSettings {
 
 func (s *Server) getProjectSettings(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
-	if !p.HasPermission(auth.CapabilityOrganizationManage, auth.Scope{OrgID: p.OrgID}) {
+	if !p.HasPermission(auth.PermissionProjectsRead, auth.Scope{OrgID: p.OrgID}) {
 		writeError(w, notFound(org.ErrProjectNotFound))
 		return
 	}
@@ -369,7 +368,7 @@ func (s *Server) updateProjectSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := org.UpdateProjectHistoryRetention(r.Context(), s.tx, audit.FromPrincipal(principal), principal.OrgID, pgvalue.MustUUIDValue(project.ID), seconds); err != nil {
+	if err := org.UpdateProjectHistoryRetention(r.Context(), s.tx, managingMember(principal), pgvalue.MustUUIDValue(project.ID), seconds); err != nil {
 		writeError(w, orgError(err))
 		return
 	}
@@ -378,7 +377,7 @@ func (s *Server) updateProjectSettings(w http.ResponseWriter, r *http.Request) {
 
 func directoryAdministrator(p auth.Principal) bool {
 	scope := auth.Scope{OrgID: p.OrgID}
-	return p.HasPermission(auth.CapabilityAccessManage, scope) || p.HasPermission(auth.CapabilityOrganizationManage, scope)
+	return p.HasPermission(auth.PermissionAssignmentsRead, scope) || p.HasPermission(auth.PermissionProjectsRead, scope) || p.HasPermission(auth.PermissionEnvironmentsRead, scope)
 }
 func directoryVisible(p auth.Principal, project, environment string) bool {
 	if directoryAdministrator(p) {
@@ -392,13 +391,13 @@ func directoryVisible(p auth.Principal, project, environment string) bool {
 	return false
 }
 func visibleProjectResponse(p auth.Principal, project db.Project) api.ProjectSummary {
-	if p.HasPermission(auth.CapabilityOrganizationManage, auth.Scope{OrgID: p.OrgID}) {
+	if p.HasPermission(auth.PermissionProjectsRead, auth.Scope{OrgID: p.OrgID}) {
 		return projectResponse(project)
 	}
 	return api.ProjectSummary{ID: pgvalue.UUIDString(project.ID), Project: project.Slug, Name: project.Name}
 }
 func visibleEnvironmentResponse(p auth.Principal, environment db.Environment, project string) api.EnvironmentSummary {
-	if p.HasPermission(auth.CapabilityOrganizationManage, auth.Scope{OrgID: p.OrgID}) {
+	if p.HasPermission(auth.PermissionEnvironmentsRead, auth.Scope{OrgID: p.OrgID}) {
 		return environmentResponse(environment, project)
 	}
 	return api.EnvironmentSummary{ID: pgvalue.UUIDString(environment.ID), Project: project, Environment: environment.Slug, Name: environment.Name}

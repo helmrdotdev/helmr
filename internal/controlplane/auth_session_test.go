@@ -12,9 +12,9 @@ func TestSessionPermissionsAreExplicitOrganizationGrants(t *testing.T) {
 	if got := sessionPermissions(p); len(got) != 0 {
 		t.Fatalf("owner bypass: %v", got)
 	}
-	p.Grants = []auth.PermissionGrant{{Permission: auth.CapabilityAccessManage}, {Permission: auth.CapabilityKeysManage, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}}
+	p.Grants = []auth.PermissionGrant{{Permission: auth.PermissionAssignmentsCreate}, {Permission: auth.PermissionAPIKeysCreate, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}}
 	got := sessionPermissions(p)
-	if !slices.Contains(got, "access.manage") || !slices.Contains(got, string(auth.PermissionMembersManage)) || slices.Contains(got, "keys.manage") || slices.Contains(got, "organization.manage") {
+	if !slices.Contains(got, "assignments.create") || slices.Contains(got, string(auth.PermissionMembersRead)) || slices.Contains(got, "api_keys.create") || slices.Contains(got, "projects.create") {
 		t.Fatalf("incorrect organization projection: %v", got)
 	}
 }

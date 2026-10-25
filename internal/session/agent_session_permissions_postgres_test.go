@@ -26,7 +26,7 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 	if err := f.pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.env).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
-	member := dbtest.GrantMember(t, f.pool, org, viewer, &f.env, "sessions.view")
+	member := dbtest.GrantMember(t, f.pool, org, viewer, &f.env, "sessions.read")
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id=$1;
  INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE member_id=$1`, pgx.QueryExecModeSimpleProtocol, member, f.agent)
 	caller := session.Caller{Kind: "user", ID: viewer}
@@ -46,7 +46,7 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 		t.Fatalf("attention escaped: %+v %v", attention, err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM session_holds WHERE environment_id=$1`, f.env)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=ARRAY['sessions.manage'] WHERE id IN (SELECT role_id FROM role_grants WHERE member_id=$1)`, member)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=ARRAY['sessions.send','sessions.read','sessions.close'] WHERE id IN (SELECT role_id FROM role_grants WHERE member_id=$1)`, member)
 	input := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "management-input", Input: json.RawMessage(`[]`)}
 	if _, err := session.Enqueue(ctx, f.pool, nil, caller, input); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("management alone executed", err)
@@ -122,7 +122,7 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 		}
 	}
 	checkRelations(false)
-	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.member_id=$1 AND p.permission='sessions.manage'`, member, otherAgent)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.member_id=$1 AND p.permission='sessions.send'`, member, otherAgent)
 	checkRelations(true)
 
 }

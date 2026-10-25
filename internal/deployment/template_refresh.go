@@ -30,7 +30,7 @@ type TemplateBuild struct {
 // RefreshTemplate requests unfinished preparation for the current Template.
 // Existing Computers and the last eligible image retain their current pins.
 func RefreshTemplate(ctx context.Context, database db.TxBeginner, principal auth.Principal, scope auth.Scope, template, key string) (TemplateBuild, error) {
-	if err := authorizeDeploy(principal, scope); err != nil {
+	if err := authorize(principal, scope, auth.PermissionTemplatesRefresh); err != nil {
 		return TemplateBuild{}, err
 	}
 	if !definition.ValidDeclaredID(template) {
@@ -47,10 +47,16 @@ func RefreshTemplate(ctx context.Context, database db.TxBeginner, principal auth
 	}
 	var result TemplateBuild
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := authorizeCurrent(ctx, tx, principal, scope, auth.PermissionTemplatesRefresh); err != nil {
+			return err
+		}
 		var locked uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 FOR NO KEY UPDATE`, env, principal.OrgID, project).Scan(&locked); errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
+			return err
+		}
+		if err := authorizeCurrent(ctx, tx, principal, scope, auth.PermissionTemplatesRefresh); err != nil {
 			return err
 		}
 		err := idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -84,6 +90,9 @@ func RefreshTemplate(ctx context.Context, database db.TxBeginner, principal auth
 			if err := computer.LockImageSpec(ctx, tx, env, result.ImageSpecID); err != nil {
 				return idempotency.Completion{}, err
 			}
+			if err := authorizeCurrent(ctx, tx, principal, scope, auth.PermissionTemplatesRefresh); err != nil {
+				return idempotency.Completion{}, err
+			}
 			build, err := computer.StartTemplateRefresh(ctx, tx, env, result.ImageSpecID, result.DeploymentID)
 			if err != nil {
 				return idempotency.Completion{}, err
@@ -108,7 +117,7 @@ func ReadTemplateBuild(ctx context.Context, q db.DBTX, principal auth.Principal,
 	if !definition.ValidDeclaredID(template) || build == uuid.Nil() {
 		return TemplateBuild{}, invalidInput(errors.New("invalid Template build"))
 	}
-	if err := authorizeCurrent(ctx, q, principal, scope, auth.PermissionDeploymentMetadataRead); err != nil {
+	if err := authorizeCurrent(ctx, q, principal, scope, auth.PermissionTemplatesRead); err != nil {
 		return TemplateBuild{}, err
 	}
 	deployment, err := definitionDeployment(ctx, q, principal, scope, selected)

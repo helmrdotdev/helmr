@@ -5,7 +5,7 @@ export const projectID = "console-demo";
 
 // Seed catalog definitions and synthetic capacity. Admission and controls use HTTP.
 // No Worker, executable bundle, VM or object-store behavior is represented.
-export async function createAgentCatalog(page: Page, environmentPermissions: ("secrets.manage" | "computers.operate")[] = []) {
+export async function createAgentCatalog(page: Page, environmentPermissions: string[] = []) {
   if (process.env.HELMR_E2E_BASE_URL || process.env.DATABASE_URL) {
     throw new Error("Run Agent API acceptance with the disposable managed browser stack");
   }
@@ -24,7 +24,7 @@ export async function createAgentCatalog(page: Page, environmentPermissions: ("s
   expect(meResponse.ok(), await meResponse.text()).toBeTruthy();
   const me = await meResponse.json() as { membership_id: string };
   const roleResponse = await page.request.post("/api/roles", { data: {
-    name: slug, description: "Browser conversation fixture", permissions: ["agents.use", "sessions.view", "sessions.manage"],
+    name: slug, description: "Browser conversation fixture", permissions: ["agents.read", "agents.use", "sessions.read", "sessions.create_keyed", "sessions.send", "sessions.answer", "sessions.resume", "sessions.interrupt", "sessions.cancel", "sessions.close", "triggers.read"],
   } });
   expect(roleResponse.ok(), await roleResponse.text()).toBeTruthy();
   const role = await roleResponse.json() as { id: string; revision: number };
@@ -38,7 +38,7 @@ export async function createAgentCatalog(page: Page, environmentPermissions: ("s
     agents_mode: "selected", agent_ids: [agentID],
   } });
   expect(grant.ok(), await grant.text()).toBeTruthy();
-  const grantEnvironmentPermissions = async (permissions: ("secrets.manage" | "computers.operate")[]) => {
+  const grantEnvironmentPermissions = async (permissions: string[]) => {
     const response = await page.request.post("/api/roles", { data: {
       name: `browser-environment-${crypto.randomUUID()}`, description: "Browser environment fixture", permissions,
     } });

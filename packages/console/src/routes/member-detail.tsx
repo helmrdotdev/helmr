@@ -63,13 +63,14 @@ function EffectiveAccessTable(props: { access: MemberPermissions; names: (id: st
 export function MemberDetail() {
   const params = useParams(); const me = useMe(); const cache = useQueryClient();
   const id = () => params["member"] ?? "";
-  const canManage = () => hasPermission(me.data, "access.manage");
+  const canManage = () => hasPermission(me.data, "members.read");
   const self = () => me.data?.membership_id === id();
+  const canReadAccess = () => hasPermission(me.data, "assignments.read") || self();
   const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: canManage() }));
-  const access = createQuery(() => ({ queryKey: ["access", "member", id(), "permissions"], queryFn: () => getMemberPermissions(id()), enabled: !!id() && (canManage() || self()) }));
-  const roles = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: canManage() }));
-  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: canManage() }));
-  const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: canManage() }));
+  const access = createQuery(() => ({ queryKey: ["access", "member", id(), "permissions"], queryFn: () => getMemberPermissions(id()), enabled: !!id() && canReadAccess() }));
+  const roles = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: hasPermission(me.data, "roles.read") }));
+  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: hasPermission(me.data, "assignments.read") }));
+  const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: hasPermission(me.data, "groups.read") }));
   const member = () => members.data?.members.find(m => m.membership_id === id());
   const name = () => member()?.display_name || member()?.email || (self() ? me.data?.display_name : "") || "";
   const missing = () => canManage() && !!members.data && !member();
@@ -81,7 +82,8 @@ export function MemberDetail() {
   const names = (permission: string) => permissionName(permission, roles.data?.catalog ?? []);
   const tabs = () => [
     { value: "effective" as const, label: "Effective access", count: access.data?.scopes.length },
-    ...(canManage() ? [{ value: "assignments" as const, label: "Assignments", count: direct().length }, { value: "groups" as const, label: "Groups", count: memberGroups().length }] : []),
+    ...(hasPermission(me.data, "assignments.read") ? [{ value: "assignments" as const, label: "Assignments", count: direct().length }] : []),
+    ...(hasPermission(me.data, "groups.read") ? [{ value: "groups" as const, label: "Groups", count: memberGroups().length }] : []),
   ];
 
   return <>
@@ -90,15 +92,15 @@ export function MemberDetail() {
       breadcrumb={canManage() ? [{ href: "/settings/members", label: "Members" }] : [{ href: "/settings/account", label: "My account" }]}
       badge={<Show when={member()?.is_owner || (self() && me.data?.is_owner)}><span class="border border-console-border px-1 font-mono text-micro text-console-muted">Owner</span></Show>}
       subtitle={member()?.email && member()?.email !== name() ? member()?.email : undefined}
-      actions={<Show when={canManage() && member()?.status === "active"}><button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant access</button></Show>}
+      actions={<Show when={hasPermission(me.data, "assignments.create") && member()?.status === "active"}><button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant access</button></Show>}
     />
-    <Show when={canManage() || self()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to view other members’ access.</Notice></Show>}>
+    <Show when={canManage() || canReadAccess()} fallback={<Show when={!me.isPending}><Notice tone="info">Read assignments permission is required to view other members’ access.</Notice></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="member" id={id()} back={{ href: "/settings/members", label: "Go to members" }} />}>
         <Tabs id="member-tabs" label="Member" items={tabs()} selected={tab()} onSelect={setTab} />
         <TabPanel tabs="member-tabs" value="effective" selected={tab()}>
-          <QueryState query={access} pending={<TableSkeleton label="Loading access" columns={EFFECTIVE_COLUMNS} />} error={error => loadError(error, "Could not load access.")}>
+          <Show when={canReadAccess()} fallback={<Notice tone="info">The assignments.read permission is required to view effective access.</Notice>}><QueryState query={access} pending={<TableSkeleton label="Loading access" columns={EFFECTIVE_COLUMNS} />} error={error => loadError(error, "Could not load access.")}>
             {data => <EffectiveAccessTable access={data()} names={names} empty="No access yet" />}
-          </QueryState>
+          </QueryState></Show>
         </TabPanel>
         <TabPanel tabs="member-tabs" value="assignments" selected={tab()}>
           <QueryState query={grants} pending={<TableSkeleton label="Loading assignments" columns={["Role", "Where", "Agents", "Permissions"]} />} error={error => loadError(error, "Could not load assignments.")}>
@@ -115,7 +117,7 @@ export function MemberDetail() {
                       <tr>
                         <td><PrimaryLink href={groupHref(group.id)}>{group.name}</PrimaryLink></td>
                         <td class="font-mono text-chrome!">{group.member_ids.length}</td>
-                        <RowActions label={`Actions for ${group.name}`} items={[{ label: "Remove from group", tone: "danger", onSelect: () => setLeaving(group) }]} />
+                        <RowActions label={`Actions for ${group.name}`} items={hasPermission(me.data, "groups.remove_member") ? [{ label: "Remove from group", tone: "danger", onSelect: () => setLeaving(group) }] : []} />
                       </tr>
                     )}
                   </For>

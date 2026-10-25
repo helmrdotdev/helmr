@@ -220,6 +220,7 @@ function assignableRoles(currentUserIsOwner: boolean | undefined, ownRow: boolea
 function MemberRow(props: {
   member: OrganizationMember;
   canManage: boolean;
+  canRemove: boolean;
   organizationRoles: string[];
   isCurrentUser: boolean;
   currentUserIsOwner: boolean | undefined;
@@ -242,7 +243,7 @@ function MemberRow(props: {
           items={active() ? [
             { label: "View access", href: memberHref(props.member.membership_id) },
             ...(props.currentUserIsOwner ? [{label: "Change ownership", onSelect: () => props.onChangeRole(props.member)}] : []),
-            ...(!isOwner() ? [{label: "Remove", tone: "danger" as const, onSelect: () => props.onRemove(props.member)}] : []),
+            ...(!isOwner() && props.canRemove ? [{label: "Remove", tone: "danger" as const, onSelect: () => props.onRemove(props.member)}] : []),
           ] : []}
         />
       </tr>
@@ -309,19 +310,22 @@ export function Members() {
   const members = createQuery(() => ({
     queryKey: ["members"],
     queryFn: listMembers,
+    enabled: me.data?.permissions.includes("members.read") === true,
     retry: false,
   }));
   const invitations = createInfiniteQuery(() => ({
     queryKey: ["invitations"],
+    enabled: me.data?.permissions.includes("invitations.read") === true,
     queryFn: ({ pageParam }) => listInvitations(pageParam || undefined),
     initialPageParam: "",
     getNextPageParam: (page) => page.next_cursor,
     retry: false,
   }));
 
-  const canManage = createMemo(() => me.data?.permissions.includes("access.manage") === true);
-  const grants = createQuery(()=>({queryKey:["access","grants"],queryFn:listGrants,enabled:canManage()}));
-  const groups = createQuery(()=>({queryKey:["access","groups"],queryFn:listGroups,enabled:canManage()}));
+  const can = (permission: string) => me.data?.permissions.includes(permission) === true;
+  const canManage = () => can("members.read");
+  const grants = createQuery(()=>({queryKey:["access","grants"],queryFn:listGrants,enabled:can("assignments.read")}));
+  const groups = createQuery(()=>({queryKey:["access","groups"],queryFn:listGroups,enabled:can("groups.read")}));
   const emailDelivery = () => me.data?.email_delivery === true;
   // The server lists pending invitations, newest first; further pages are
   // appended in that order.
@@ -358,7 +362,7 @@ export function Members() {
       <PageHeader
         title="Members"
         actions={
-          <Show when={canManage()}>
+          <Show when={can("invitations.create")}>
             <button class={ui.button} type="button" disabled={!emailDelivery()} onClick={() => setInviting(true)}>
               Invite members
             </button>
@@ -367,37 +371,30 @@ export function Members() {
       />
 
       <Show when={!me.isPending && !canManage()}>
-        <Notice tone="info" class="mb-3">Manage access permission is required to view and manage members.</Notice>
+        <Notice tone="info" class="mb-3">Read members permission is required to view members.</Notice>
       </Show>
-      <Show when={canManage() && !emailDelivery()}>
+      <Show when={can("invitations.create") && !emailDelivery()}>
         <Notice tone="info" class="mb-3">{NO_EMAIL_DELIVERY}</Notice>
       </Show>
 
-      <QueryState
-        query={members}
-        pending={<TableSkeleton label="Loading members" columns={COLUMNS} minWidth="min-w-160" />}
-        error={(error) => loadError(error, "Could not load members.", MEMBERS_ERROR_MESSAGES)}
-      >
-        {(data) => <>
-          <Show when={invitations.isError && !invitations.isFetchNextPageError}>
-            <Notice
-              tone="danger"
-              class="mb-3"
-              action={<button type="button" class={ui.compactButton} onClick={() => void invitations.refetch()}>Retry</button>}
-            >
-              Could not load invitations.
-            </Notice>
-          </Show>
+      <Show when={canManage()}>
+        <QueryState query={members} pending={<TableSkeleton label="Loading members" columns={COLUMNS} minWidth="min-w-160" />} error={error => loadError(error, "Could not load members.", MEMBERS_ERROR_MESSAGES)}>{() => null}</QueryState>
+      </Show>
+      <Show when={can("invitations.read")}>
+        <QueryState query={invitations} pending={<TableSkeleton label="Loading invitations" columns={COLUMNS} minWidth="min-w-160" />} error={error => loadError(error, "Could not load invitations.")}>{() => null}</QueryState>
+      </Show>
+      <Show when={(canManage() && members.data) || (can("invitations.read") && invitations.data)}>
           <DataTable
             columns={COLUMNS}
             minWidth="min-w-160"
-            footer={<LoadMore count={data().members.length} noun={{ one: "member", other: "members" }} extra={{ count: pendingInvitations().length, noun: { one: "invitation", other: "invitations" } }} hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
+            footer={<LoadMore count={canManage() ? members.data?.members.length ?? 0 : 0} noun={{ one: "member", other: "members" }} extra={{ count: pendingInvitations().length, noun: { one: "invitation", other: "invitations" } }} hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
           >
-            <For each={data().members}>
+            <For each={canManage() ? members.data?.members ?? [] : []}>
               {(member) => (
                 <MemberRow
                   member={member}
                   canManage={canManage()}
+                  canRemove={can("members.remove")}
                   organizationRoles={member.status === "active" ? [...new Set(memberGrantSources(grants.data?.grants ?? [], groups.data?.groups ?? [], member.membership_id).filter(g=>g.target_kind === "organization").map(g=>g.role_name))] : []}
                   isCurrentUser={isCurrentUser(member)}
                   currentUserIsOwner={me.data?.is_owner}
@@ -407,11 +404,10 @@ export function Members() {
               )}
             </For>
             <For each={pendingInvitations()}>
-              {(invitation) => <InvitationRow invitation={invitation} canManage={canManage()} onRevoke={setRevoking} />}
+              {(invitation) => <InvitationRow invitation={invitation} canManage={can("invitations.revoke")} onRevoke={setRevoking} />}
             </For>
           </DataTable>
-        </>}
-      </QueryState>
+      </Show>
 
       <Show when={inviting()}>
         <InviteMembersDialog

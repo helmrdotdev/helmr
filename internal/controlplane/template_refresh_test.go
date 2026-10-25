@@ -45,7 +45,7 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 		}
 		return key.Raw
 	}
-	writer, reader := issue(auth.CapabilityDeploymentsPublish), issue(auth.CapabilitySessionsView)
+	writer, reader := issue(auth.PermissionTemplatesRefresh), issue(auth.PermissionTemplatesRead)
 	path := "/v1/templates/fixture-computer/refresh"
 	for _, tc := range []struct {
 		token, body string
@@ -62,7 +62,7 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 		t.Fatalf("receipt %s: %v", response.Body.String(), err)
 	}
 	readPath := "/v1/templates/fixture-computer/builds/" + build.ImageBuildID + "?deployment_id=" + build.DeploymentID
-	response = h.request(t, http.MethodGet, readPath, issue(auth.CapabilityAgentsUse), "")
+	response = h.request(t, http.MethodGet, readPath, issue(auth.PermissionAgentsUse), "")
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("Use-only build read HTTP %d: %s", response.Code, response.Body.String())
 	}

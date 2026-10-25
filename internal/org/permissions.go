@@ -60,12 +60,11 @@ type PermissionGroup struct {
 	MemberIDs []uuid.UUID `json:"member_ids"`
 }
 type GrantTarget struct {
-	ResourceType        string      `json:"resource_type"`
-	Mode                string      `json:"mode"`
-	AgentIDs            []uuid.UUID `json:"agent_ids,omitempty"`
-	AgentKeys           []string    `json:"agent_keys,omitempty"`
-	Permissions         []string    `json:"permissions"`
-	IncludedPermissions []string    `json:"included_permissions"`
+	ResourceType string      `json:"resource_type"`
+	Mode         string      `json:"mode"`
+	AgentIDs     []uuid.UUID `json:"agent_ids,omitempty"`
+	AgentKeys    []string    `json:"agent_keys,omitempty"`
+	Permissions  []string    `json:"permissions"`
 }
 type RoleGrant struct {
 	APIKeyID     *uuid.UUID    `json:"api_key_id"`
@@ -114,15 +113,17 @@ type GrantInput struct {
 	ExpectedRevision     string       `json:"-"`
 }
 
-// authorizeAccessRead refreshes current authority without locking readers.
-func authorizeAccessRead(ctx context.Context, tx pgx.Tx, m ManagingMember) error {
-	return m.Authorize(ctx, tx)
+// Lock memberships in stable order before changing membership-owned access.
+func lockAccessMembers(ctx context.Context, tx pgx.Tx, m ManagingMember, permission auth.Permission, targets ...uuid.UUID) error {
+	if err := lockActiveMembers(ctx, tx, m, targets...); err != nil {
+		return err
+	}
+	return m.Authorize(ctx, tx, permission)
 }
 
-// Lock memberships in stable order before changing membership-owned access.
-func lockAccessMembers(ctx context.Context, tx pgx.Tx, m ManagingMember, targets ...uuid.UUID) error {
+func lockActiveMembers(ctx context.Context, tx pgx.Tx, m ManagingMember, targets ...uuid.UUID) error {
 	ids := append([]uuid.UUID{m.MemberID}, targets...)
-	rows, err := tx.Query(ctx, `SELECT id,removed_at IS NULL FROM org_members WHERE org_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE`, m.OrgID, ids)
+	rows, err := tx.Query(ctx, `SELECT id,removed_at IS NULL AND (id<>$3 OR user_id=$4) FROM org_members WHERE org_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE`, m.OrgID, ids, m.MemberID, m.UserID)
 	if err != nil {
 		return err
 	}
@@ -143,9 +144,6 @@ func lockAccessMembers(ctx context.Context, tx pgx.Tx, m ManagingMember, targets
 	}
 	if !active[m.MemberID] {
 		return ErrMemberManagementRequired
-	}
-	if err := m.Authorize(ctx, tx); err != nil {
-		return err
 	}
 	for _, id := range targets {
 		if !active[id] {
@@ -187,7 +185,7 @@ func validateRoleInput(input RoleInput) (RoleInput, error) {
 	input.Name = name
 	hasOrg, hasWorkload := false, false
 	for _, p := range input.Permissions {
-		if auth.IsOrganizationCapability(auth.Permission(p)) {
+		if auth.IsOrganizationPermission(auth.Permission(p)) {
 			hasOrg = true
 		} else {
 			hasWorkload = true
@@ -207,19 +205,19 @@ func validateRoleInput(input RoleInput) (RoleInput, error) {
 	slices.Sort(input.Permissions)
 	input.Permissions = slices.Compact(input.Permissions)
 	for _, permission := range input.Permissions {
-		if !auth.IsCapability(auth.Permission(permission)) {
+		if !auth.IsPermission(auth.Permission(permission)) {
 			return input, invalidInput("unknown permission %q", permission)
 		}
 	}
 	return input, nil
 }
 func supportsAgent(permissions []string) bool {
-	return len(permissions) == 1 && permissions[0] == string(auth.CapabilityAgentsUse)
+	return len(permissions) == 1 && permissions[0] == string(auth.PermissionAgentsUse)
 }
 
-func hasAgentCapabilities(permissions []string) bool {
+func hasAgentPermissions(permissions []string) bool {
 	for _, p := range permissions {
-		if auth.CapabilityResourceType(auth.Permission(p)) == "agents" {
+		if auth.IsAgentPermission(auth.Permission(p)) {
 			return true
 		}
 	}
@@ -228,7 +226,7 @@ func hasAgentCapabilities(permissions []string) bool {
 
 // Agent applicability follows the current Role; only all-versus-selected is stored.
 func grantAgentsMode(permissions []string, allAgents bool) string {
-	if !hasAgentCapabilities(permissions) {
+	if !hasAgentPermissions(permissions) {
 		return "none"
 	}
 	if allAgents {
@@ -245,11 +243,11 @@ func roleSupportsTargets(permissions []string, organization bool, mode string, a
 		return false
 	}
 	for _, p := range permissions {
-		if auth.IsOrganizationCapability(auth.Permission(p)) != organization {
+		if auth.IsOrganizationPermission(auth.Permission(p)) != organization {
 			return false
 		}
 	}
-	return !hasAgentCapabilities(permissions) || mode != "none"
+	return !hasAgentPermissions(permissions) || mode != "none"
 }
 
 // machineAssignable checks the whole Role; incompatible capabilities are never
@@ -259,7 +257,7 @@ func machineAssignable(permissions []string) bool {
 		return false
 	}
 	for _, p := range permissions {
-		if !auth.IsMachineCapability(auth.Permission(p)) {
+		if !auth.IsMachinePermission(auth.Permission(p)) {
 			return false
 		}
 	}
@@ -269,14 +267,14 @@ func machineAssignable(permissions []string) bool {
 func grantTargets(g RoleGrant) []GrantTarget {
 	targets := []GrantTarget{}
 	for _, permission := range g.Permissions {
-		resource := auth.CapabilityResourceType(auth.Permission(permission))
+		resource := auth.PermissionResourceType(auth.Permission(permission))
 		i := slices.IndexFunc(targets, func(t GrantTarget) bool { return t.ResourceType == resource })
 		if i < 0 {
-			t := GrantTarget{ResourceType: resource, Mode: "environment", Permissions: []string{}, IncludedPermissions: []string{}}
-			if resource == "organization" {
+			t := GrantTarget{ResourceType: resource, Mode: "environment", Permissions: []string{}}
+			if auth.IsOrganizationPermission(auth.Permission(permission)) {
 				t.Mode = "organization"
 			}
-			if resource == "agents" {
+			if auth.IsAgentPermission(auth.Permission(permission)) {
 				t.Mode = g.AgentsMode
 				t.AgentIDs = g.AgentIDs
 				t.AgentKeys = g.AgentKeys
@@ -285,11 +283,6 @@ func grantTargets(g RoleGrant) []GrantTarget {
 			i = len(targets) - 1
 		}
 		targets[i].Permissions = append(targets[i].Permissions, permission)
-		for _, included := range auth.IncludedCapabilities(auth.Permission(permission)) {
-			targets[i].IncludedPermissions = append(targets[i].IncludedPermissions, string(included))
-		}
-		slices.Sort(targets[i].IncludedPermissions)
-		targets[i].IncludedPermissions = slices.Compact(targets[i].IncludedPermissions)
 	}
 	return targets
 }
@@ -314,7 +307,7 @@ func ListPermissionRoles(ctx context.Context, database db.TxBeginner, m Managing
 func ListPermissionRolesPage(ctx context.Context, database db.TxBeginner, m ManagingMember, after uuid.UUID, limit int) ([]PermissionRole, error) {
 	result := []PermissionRole{}
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := authorizeAccessRead(ctx, tx, m); err != nil {
+		if err := m.Authorize(ctx, tx, auth.PermissionRolesRead); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT id FROM roles WHERE org_id=$1 AND ($2::uuid='00000000-0000-0000-0000-000000000000' OR id>$2) ORDER BY id LIMIT NULLIF($3,0)`, m.OrgID, after, limit)
@@ -350,13 +343,17 @@ func ListPermissionRolesPage(ctx context.Context, database db.TxBeginner, m Mana
 // SavePermissionRole creates or edits a custom Role. Locking the Role before
 // inspecting assignments also serializes with every assignment writer.
 func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID, input RoleInput) (PermissionRole, error) {
+	permission := auth.PermissionRolesCreate
+	if id != uuid.Nil() {
+		permission = auth.PermissionRolesUpdate
+	}
 	input, err := validateRoleInput(input)
 	if err != nil {
 		return PermissionRole{}, err
 	}
 	var result PermissionRole
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m); err != nil {
+		if err := lockAccessMembers(ctx, tx, m, permission); err != nil {
 			return err
 		}
 		action := "role.created"
@@ -423,7 +420,7 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 			if _, err = tx.Exec(ctx, `UPDATE roles SET name=$3,description=$4,permissions=$5,revision=revision+1,updated_at=clock_timestamp() WHERE org_id=$1 AND id=$2`, m.OrgID, id, input.Name, input.Description, input.Permissions); err != nil {
 				return accessWriteError(err)
 			}
-			if hasAgentCapabilities(old.Permissions) && !hasAgentCapabilities(input.Permissions) {
+			if hasAgentPermissions(old.Permissions) && !hasAgentPermissions(input.Permissions) {
 				if _, err = tx.Exec(ctx, `DELETE FROM role_grant_agents WHERE grant_id IN (SELECT id FROM role_grants WHERE org_id=$1 AND role_id=$2)`, m.OrgID, id); err != nil {
 					return err
 				}
@@ -452,9 +449,44 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 	return result, err
 }
 
+// RolePatch changes only fields supplied by the caller. Reading the existing
+// values is part of this mutation and does not require roles.read.
+type RolePatch struct {
+	Name             *string
+	Description      *string
+	Permissions      *[]string
+	ExpectedRevision string
+}
+
+func PatchPermissionRole(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID, patch RolePatch) (PermissionRole, error) {
+	var result PermissionRole
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := lockAccessMembers(ctx, tx, m, auth.PermissionRolesUpdate); err != nil {
+			return err
+		}
+		old, err := readPermissionRole(ctx, tx, m.OrgID, id)
+		if err != nil {
+			return err
+		}
+		input := RoleInput{Name: old.Name, Description: old.Description, Permissions: old.Permissions, ExpectedRevision: patch.ExpectedRevision}
+		if patch.Name != nil {
+			input.Name = *patch.Name
+		}
+		if patch.Description != nil {
+			input.Description = *patch.Description
+		}
+		if patch.Permissions != nil {
+			input.Permissions = *patch.Permissions
+		}
+		result, err = SavePermissionRole(ctx, tx, m, id, input)
+		return err
+	})
+	return result, err
+}
+
 func DeletePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m); err != nil {
+		if err := lockAccessMembers(ctx, tx, m, auth.PermissionRolesDelete); err != nil {
 			return err
 		}
 		var builtin *string
@@ -493,32 +525,22 @@ func DeletePermissionRole(ctx context.Context, database db.TxBeginner, m Managin
 // initialization, with the caller's transaction. Existing definitions are never
 // rewritten merely because the initializer runs again.
 func SeedStandardRoles(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, actor audit.Actor) error {
-	standards := []struct {
-		key, name, description string
-		permissions            []string
-	}{
-		{"agent_user", "Agent user", "Use assigned Agents in personal and connected shared conversations.", []string{"agents.use"}},
-		{"agent_settings_manager", "Agent settings manager", "Use assigned Agents and configure their settings and chat connections.", []string{"agents.use", "agents.manage"}},
-		{"session_viewer", "Session viewer", "Read all sessions for assigned Agents, including other people's personal conversations.", []string{"sessions.view"}},
-		{"session_operator", "Session operator", "Use assigned Agents and view, stop or continue their sessions.", []string{"agents.use", "sessions.manage"}},
-		{"release_manager", "Release manager", "Register and activate deployments in the assigned environment.", []string{"deployments.publish", "deployments.promote"}},
-		{"computer_operator", "Computer operator", "Operate computers and their workload credentials.", []string{"computers.operate"}},
-		{"secrets_manager", "Secrets manager", "Manage secrets in the assigned environment.", []string{"secrets.manage"}},
-		{"access_administrator", "Access Administrator", "Manage organization membership and access assignments.", []string{"access.manage"}},
-		{"organization_manager", "Organization Manager", "Manage Projects and environments.", []string{"organization.manage"}},
-		{"environment_administrator", "Environment Administrator", "Manage all workloads and API keys in the assigned environment.", []string{"agents.use", "sessions.manage", "deployments.publish", "deployments.promote", "computers.operate", "secrets.manage", "keys.manage", "agents.manage"}},
-	}
+	standards := auth.StandardRoles()
 	for _, standard := range standards {
-		slices.Sort(standard.permissions)
+		permissions := make([]string, 0, len(standard.Permissions))
+		for _, permission := range standard.Permissions {
+			permissions = append(permissions, string(permission))
+		}
+		slices.Sort(permissions)
 		id := uuid.NewV7()
-		tag, err := tx.Exec(ctx, `INSERT INTO roles(id,org_id,name,description,builtin_key,permissions) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(org_id,builtin_key) DO NOTHING`, id, orgID, standard.name, standard.description, standard.key, standard.permissions)
+		tag, err := tx.Exec(ctx, `INSERT INTO roles(id,org_id,name,description,builtin_key,permissions) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(org_id,builtin_key) DO NOTHING`, id, orgID, standard.Name, standard.Description, standard.Key, permissions)
 		if err != nil {
 			return err
 		}
 		if tag.RowsAffected() == 0 {
 			continue
 		}
-		if err = accessAudit(ctx, tx, ManagingMember{Actor: actor, OrgID: orgID}, "role.standard_created", "role", id, nil, &audit.AccessSnapshot{Name: standard.name, Description: standard.description, Permissions: standard.permissions}, nil); err != nil {
+		if err = accessAudit(ctx, tx, ManagingMember{Actor: actor, OrgID: orgID}, "role.standard_created", "role", id, nil, &audit.AccessSnapshot{Name: standard.Name, Description: standard.Description, Permissions: permissions}, nil); err != nil {
 			return err
 		}
 	}
@@ -538,7 +560,7 @@ func ListPermissionGroups(ctx context.Context, database db.TxBeginner, m Managin
 func ListPermissionGroupsPage(ctx context.Context, database db.TxBeginner, m ManagingMember, after uuid.UUID, limit int) ([]PermissionGroup, error) {
 	groups := []PermissionGroup{}
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := authorizeAccessRead(ctx, tx, m); err != nil {
+		if err := m.Authorize(ctx, tx, auth.PermissionGroupsRead); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT g.id,g.name,g.updated_at,g.revision,ARRAY(SELECT gm.member_id FROM permission_group_members gm JOIN org_members m ON (m.org_id,m.id)=(gm.org_id,gm.member_id) WHERE gm.org_id=g.org_id AND gm.group_id=g.id AND m.removed_at IS NULL ORDER BY gm.member_id) FROM permission_groups g WHERE g.org_id=$1 AND ($2::uuid='00000000-0000-0000-0000-000000000000' OR g.id>$2) ORDER BY g.id LIMIT NULLIF($3,0)`, m.OrgID, after, limit)
@@ -565,13 +587,17 @@ func UpdatePermissionGroup(ctx context.Context, database db.TxBeginner, m Managi
 	return savePermissionGroup(ctx, database, m, id, name, revision)
 }
 func savePermissionGroup(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID, name, revision string) (PermissionGroup, error) {
+	permission := auth.PermissionGroupsCreate
+	if id != uuid.Nil() {
+		permission = auth.PermissionGroupsUpdate
+	}
 	name, err := normalizeDisplayName(name)
 	if err != nil {
 		return PermissionGroup{}, err
 	}
 	result := PermissionGroup{ID: id, Name: name, MemberIDs: []uuid.UUID{}}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m); err != nil {
+		if err := lockAccessMembers(ctx, tx, m, permission); err != nil {
 			return err
 		}
 		var before *audit.AccessSnapshot
@@ -609,7 +635,7 @@ func savePermissionGroup(ctx context.Context, database db.TxBeginner, m Managing
 }
 func DeletePermissionGroup(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m); err != nil {
+		if err := lockAccessMembers(ctx, tx, m, auth.PermissionGroupsDelete); err != nil {
 			return err
 		}
 		var name string
@@ -639,8 +665,12 @@ func DeletePermissionGroup(ctx context.Context, database db.TxBeginner, m Managi
 	})
 }
 func SetPermissionGroupMember(ctx context.Context, database db.TxBeginner, m ManagingMember, group, user uuid.UUID, add bool) error {
+	permission := auth.PermissionGroupsRemoveMember
+	if add {
+		permission = auth.PermissionGroupsAddMember
+	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, user); err != nil {
+		if err := lockAccessMembers(ctx, tx, m, permission, user); err != nil {
 			return err
 		}
 		var existing uuid.UUID
@@ -751,6 +781,10 @@ func UpdateRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMemb
 	return writeRoleGrant(ctx, database, m, id, input)
 }
 func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID, input GrantInput) (RoleGrant, error) {
+	permission := auth.PermissionAssignmentsCreate
+	if id != uuid.Nil() {
+		permission = auth.PermissionAssignmentsUpdate
+	}
 	var result RoleGrant
 	if err := validateGrantInput(input); err != nil {
 		return result, err
@@ -763,7 +797,7 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		if input.Subject.MemberID != nil {
 			targets = append(targets, *input.Subject.MemberID)
 		}
-		if err := lockAccessMembers(ctx, tx, m, targets...); err != nil {
+		if err := lockAccessMembers(ctx, tx, m, permission, targets...); err != nil {
 			return err
 		}
 		var roleID uuid.UUID
@@ -780,13 +814,13 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		if role.Revision != input.ExpectedRoleRevision {
 			return ErrStaleRevision
 		}
-		if !roleSupportsTargets(role.Permissions, input.EnvironmentID == nil, input.AgentsMode, input.Subject.Type == "all_members") || (!hasAgentCapabilities(role.Permissions) && input.AgentsMode != "none") {
+		if !roleSupportsTargets(role.Permissions, input.EnvironmentID == nil, input.AgentsMode, input.Subject.Type == "all_members") || (!hasAgentPermissions(role.Permissions) && input.AgentsMode != "none") {
 			return ErrRoleTarget
 		}
 		if input.AgentsMode == "selected" && len(input.AgentIDs) == 0 {
 			mixed := false
 			for _, permission := range role.Permissions {
-				if auth.CapabilityResourceType(auth.Permission(permission)) != "agents" {
+				if !auth.IsAgentPermission(auth.Permission(permission)) {
 					mixed = true
 				}
 			}
@@ -913,7 +947,7 @@ func equalUUID(a, b *uuid.UUID) bool { return a == nil && b == nil || a != nil &
 
 func RemoveRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID, revision string) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m); err != nil {
+		if err := lockAccessMembers(ctx, tx, m, auth.PermissionAssignmentsDelete); err != nil {
 			return err
 		}
 		var role uuid.UUID
@@ -1007,7 +1041,7 @@ type AccessAgent struct {
 func ListAccessTargets(ctx context.Context, database db.TxBeginner, m ManagingMember, project uuid.UUID) ([]AccessTarget, error) {
 	result := []AccessTarget{}
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := authorizeAccessRead(ctx, tx, m); err != nil {
+		if err := m.Authorize(ctx, tx, auth.PermissionAssignmentsRead); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT id,slug,name FROM environments WHERE org_id=$1 AND project_id=$2 ORDER BY is_default DESC,slug`, m.OrgID, project)
@@ -1055,7 +1089,7 @@ func ListAccessTargets(ctx context.Context, database db.TxBeginner, m ManagingMe
 func GetPermissionRole(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID) (PermissionRole, error) {
 	var result PermissionRole
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := authorizeAccessRead(ctx, tx, m); err != nil {
+		if err := m.Authorize(ctx, tx, auth.PermissionRolesRead); err != nil {
 			return err
 		}
 		var err error
@@ -1068,7 +1102,7 @@ func GetPermissionRole(ctx context.Context, database db.TxBeginner, m ManagingMe
 func GetPermissionGroup(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID) (PermissionGroup, error) {
 	var result PermissionGroup
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := authorizeAccessRead(ctx, tx, m); err != nil {
+		if err := m.Authorize(ctx, tx, auth.PermissionGroupsRead); err != nil {
 			return err
 		}
 		err := tx.QueryRow(ctx, `SELECT id,name,updated_at,revision,ARRAY(SELECT gm.member_id FROM permission_group_members gm JOIN org_members m ON (m.org_id,m.id)=(gm.org_id,gm.member_id) WHERE gm.org_id=$1 AND gm.group_id=$2 AND m.removed_at IS NULL ORDER BY gm.member_id) FROM permission_groups WHERE org_id=$1 AND id=$2`, m.OrgID, id).Scan(&result.ID, &result.Name, &result.UpdatedAt, &result.Revision, &result.MemberIDs)
@@ -1089,7 +1123,7 @@ type GrantFilter struct {
 func QueryRoleGrants(ctx context.Context, database db.TxBeginner, m ManagingMember, filter GrantFilter) ([]RoleGrant, error) {
 	result := []RoleGrant{}
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := authorizeAccessRead(ctx, tx, m); err != nil {
+		if err := m.Authorize(ctx, tx, auth.PermissionAssignmentsRead); err != nil {
 			return err
 		}
 		var err error

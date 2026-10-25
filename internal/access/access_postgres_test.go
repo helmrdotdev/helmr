@@ -35,7 +35,7 @@ func TestRemovedMembershipCannotAcquireLaterAudienceGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	scope := auth.Scope{OrgID: original.OrgID, ProjectID: original.ProjectID, EnvironmentID: original.EnvironmentID, AgentID: f.Agent.String()}
-	if p.HasPermission(auth.CapabilityAgentsUse, scope) || len(p.Grants) != 0 {
+	if p.HasPermission(auth.PermissionAgentsUse, scope) || len(p.Grants) != 0 {
 		t.Fatalf("removed membership acquired later grant: %+v", p.Grants)
 	}
 }

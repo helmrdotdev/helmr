@@ -8,8 +8,7 @@ sidebarLabel: Agent lifecycle
 
 These management routes use a saved human session under
 `/api/projects/{project}/environments/{environment}`. They are separate from
-`/v1/agents`, which reads Deployment definitions. Delete and Restore require both
-`access.manage` and `agents.manage` on the target Agent; workload API keys and
+`/v1/agents`, which reads Deployment definitions. Delete requires `agents.delete`; Restore requires `agents.restore` on the target Agent; workload API keys and
 Agent runtimes cannot perform them. `{agent}` is the identifier declared in code.
 
 | Method | Path suffix | Purpose |

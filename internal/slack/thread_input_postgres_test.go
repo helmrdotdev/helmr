@@ -137,7 +137,7 @@ func TestSlackThreadInputControlAuthorityAndTerminalState(t *testing.T) {
 			id := f.threadMessage(t, "mute", "!mute", time.Now())
 			switch scenario {
 			case "read-only":
-				f.SetPermissions(t, "sessions.view")
+				f.SetPermissions(t, "sessions.read")
 			case "closed":
 				if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
@@ -306,7 +306,7 @@ func TestSlackThreadInputUnmentionedRejectionStaysQuiet(t *testing.T) {
 			f := newStatusFixture(t)
 			if role == "read-only" {
 				f.link(t)
-				f.SetPermissions(t, "sessions.view")
+				f.SetPermissions(t, "sessions.read")
 			}
 			id := f.threadMessage(t, "ordinary", "please continue", time.Now())
 			f.admitThreadMessage(t, id)

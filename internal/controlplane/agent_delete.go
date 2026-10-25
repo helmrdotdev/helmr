@@ -69,7 +69,7 @@ func (s *Server) changeAgent(w http.ResponseWriter, r *http.Request, restore boo
 		case errors.Is(err, deployment.ErrAgentNotFound):
 			writeError(w, notFound(err))
 		case errors.Is(err, deployment.ErrPermissionRequired), errors.Is(err, org.ErrMemberManagementRequired):
-			writeError(w, forbidden(codedError{code: "permission_required", message: "access.manage and target agents.manage are required"}))
+			writeError(w, forbidden(codedError{code: "permission_required", message: "the dedicated Agent lifecycle permission is required"}))
 		case errors.Is(err, org.ErrStaleRevision):
 			writeError(w, permissionManagementError(err))
 		case errors.Is(err, org.ErrAgentDependenciesChanged), errors.Is(err, slack.ErrConnectionUnavailable):

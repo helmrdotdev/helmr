@@ -76,7 +76,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 		if err := tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 FOR NO KEY UPDATE`, request.Scope.EnvironmentID, request.Scope.OrgID, request.Scope.ProjectID).Scan(&deployment); err != nil {
 			return err
 		}
-		if err := authorizeOperator(ctx, tx, request.Principal, request.Scope); err != nil {
+		if err := authorizeOperation(ctx, tx, request.Principal, request.Scope, auth.PermissionComputersCreate); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, retry, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {

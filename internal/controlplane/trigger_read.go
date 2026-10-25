@@ -42,7 +42,7 @@ func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	allAgents, agentIDs := principal.AgentPermissionScope(auth.PermissionSessionsRead, scope)
+	allAgents, agentIDs := principal.AgentPermissionScope(auth.PermissionTriggersRead, scope)
 	authorizedAgents := make([]pgtype.UUID, 0, len(agentIDs))
 	for _, id := range agentIDs {
 		authorizedAgents = append(authorizedAgents, pgvalue.UUID(id))
@@ -209,7 +209,7 @@ func (s *Server) getTrigger(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	allAgents, agentIDs := principal.AgentPermissionScope(auth.PermissionSessionsRead, scope)
+	allAgents, agentIDs := principal.AgentPermissionScope(auth.PermissionTriggersRead, scope)
 	authorizedAgents := make([]pgtype.UUID, 0, len(agentIDs))
 	for _, id := range agentIDs {
 		authorizedAgents = append(authorizedAgents, pgvalue.UUID(id))

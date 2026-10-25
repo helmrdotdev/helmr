@@ -20,7 +20,7 @@ async function secrets(page: Page, initial: SecretState, options: { manage?: boo
     const path = new URL(request.url()).pathname;
     // Like the server, only people who manage secrets can list them.
     if (options.manage === false) {
-      await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "secrets.write is required" } } });
+      await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "secrets.create is required" } } });
       return;
     }
     if (request.method() === "GET") {
@@ -38,7 +38,7 @@ async function secrets(page: Page, initial: SecretState, options: { manage?: boo
     await page.route("**/api/me", async (route) => {
       const response = await route.fetch();
       const me = await response.json() as { permissions: string[] };
-      await route.fulfill({ response, json: { ...me, role: "member", permissions: me.permissions.filter((permission) => permission !== "secrets.write") } });
+      await route.fulfill({ response, json: { ...me, role: "member", permissions: me.permissions.filter((permission) => permission !== "secrets.create") } });
     });
   }
   return writes;

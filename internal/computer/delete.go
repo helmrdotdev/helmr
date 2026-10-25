@@ -47,7 +47,7 @@ func Delete(ctx context.Context, txb db.TxBeginner, deletion Deletion) (Deleted,
 				return err
 			}
 		}
-		if err := authorizeOperator(ctx, tx, deletion.Principal, deletion.Scope); err != nil {
+		if err := authorizeOperation(ctx, tx, deletion.Principal, deletion.Scope, auth.PermissionComputersDelete); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {

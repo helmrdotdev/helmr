@@ -1,182 +1,192 @@
 package auth
 
 import (
+	"slices"
 	"testing"
 	"uuid"
 )
 
-func TestCapabilityBoundaries(t *testing.T) {
-	cases := []struct {
-		cap            Permission
-		allows, denies []Permission
-	}{
-		{CapabilityAgentsManage, []Permission{CapabilityAgentsManage}, []Permission{CapabilityAgentsUse, CapabilitySessionsView, CapabilitySessionsManage, CapabilityDeploymentsPublish, CapabilityDeploymentsPromote}},
-		{CapabilityAgentsUse, []Permission{PermissionSessionsCreate, PermissionAgentUse}, []Permission{PermissionSessionsRead, PermissionSessionsSend, PermissionComputersRead, PermissionDeploymentMetadataRead}},
-		{CapabilitySessionsView, []Permission{PermissionSessionsRead, PermissionDeploymentMetadataRead}, []Permission{PermissionRunMetadataRead, PermissionSessionsCreate, PermissionSessionsSend, PermissionComputersRead, PermissionComputerCommandCreate, PermissionSecretsWrite}},
-		{CapabilitySessionsManage, []Permission{PermissionSessionsRead, PermissionSessionsCancel, PermissionSessionsClose, PermissionSessionsInterrupt}, []Permission{PermissionSessionsCreate, PermissionSessionsSend, PermissionSessionsResume, PermissionAsksAnswer, PermissionComputersCreate, PermissionComputerCommandCreate, PermissionSecretsWrite, PermissionDeploymentsWrite}},
-		{CapabilityDeploymentsPublish, []Permission{PermissionDeploymentsWrite, PermissionDeploymentMetadataRead}, []Permission{PermissionDeploymentsPromote, PermissionSessionsRead, PermissionSecretsWrite}},
-		{CapabilityDeploymentsPromote, []Permission{PermissionDeploymentsPromote, PermissionDeploymentMetadataRead}, []Permission{PermissionDeploymentsWrite, PermissionSessionsRead}},
-		{CapabilityComputersOperate, []Permission{PermissionComputersCreate, PermissionComputersRead, PermissionComputersDelete, PermissionComputersUpdate, PermissionComputerCommandCreate, PermissionSecretMetadataRead}, []Permission{PermissionSecretsWrite, PermissionSessionsRead, PermissionDeploymentsWrite}},
-		{CapabilitySecretsManage, []Permission{PermissionSecretsWrite, PermissionSecretMetadataRead}, []Permission{PermissionComputerCommandCreate, PermissionDeploymentsWrite, PermissionSessionsRead}},
+func TestPermissionCatalog(t *testing.T) {
+	expected := map[string]int{"agents": 4, "agent_connections": 5, "sessions": 10, "deployments": 3, "templates": 2, "triggers": 1, "computers": 9, "secrets": 4, "api_keys": 5, "projects": 4, "environments": 3, "members": 2, "invitations": 3, "groups": 6, "roles": 4, "assignments": 4}
+	counts := map[string]int{}
+	seen := map[Permission]bool{}
+	for _, d := range PermissionCatalog() {
+		if seen[d.ID] || d.Name == "" || d.Description == "" {
+			t.Fatalf("invalid definition: %+v", d)
+		}
+		seen[d.ID] = true
+		counts[d.ResourceType]++
+		scope := ScopeOrganization
+		switch d.ResourceType {
+		case "agents", "agent_connections", "sessions", "triggers":
+			scope = ScopeAgent
+		case "deployments", "templates", "computers", "secrets", "api_keys":
+			scope = ScopeEnvironment
+		}
+		machine := scope != ScopeOrganization && d.ResourceType != "api_keys" && d.ResourceType != "agent_connections" && !slices.Contains([]Permission{"agents.delete", "agents.restore", "sessions.check_delivery", "sessions.abandon_delivery"}, d.ID)
+		if d.ScopeType != scope || d.APIKeyAssignable != machine {
+			t.Fatalf("wrong scope or machine eligibility: %+v", d)
+		}
 	}
-	for _, c := range cases {
-		t.Run(string(c.cap), func(t *testing.T) {
-			for _, operation := range c.allows {
-				if !CapabilityAllows(c.cap, operation) {
-					t.Errorf("missing operation %s", operation)
+	if len(seen) != 69 {
+		t.Fatalf("catalog size %d", len(seen))
+	}
+	for resource, count := range expected {
+		if counts[resource] != count {
+			t.Errorf("%s: %d, want %d", resource, counts[resource], count)
+		}
+	}
+	for _, invalid := range []Permission{"", "*", "agents.manage", "sessions.view", "computers.operate", "access.manage", "unknown.read"} {
+		if IsPermission(invalid) || IsMachinePermission(invalid) {
+			t.Errorf("unknown permission accepted: %q", invalid)
+		}
+	}
+}
+
+func TestEveryPermissionIsExactAndScopeBounded(t *testing.T) {
+	org := uuid.NewV7()
+	env := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
+	agent := env
+	agent.AgentID = uuid.NewV7().String()
+	for _, d := range PermissionCatalog() {
+		t.Run(string(d.ID), func(t *testing.T) {
+			permission := Permission(d.ID)
+			scope := env
+			if d.ScopeType == ScopeOrganization {
+				scope = Scope{OrgID: org}
+			} else if d.ScopeType == ScopeAgent {
+				scope = agent
+			}
+			grant := PermissionGrant{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, AgentID: scope.AgentID, Permission: permission}
+			p := Principal{Kind: PrincipalKindSession, OrgID: org, IsOwner: true, Grants: []PermissionGrant{grant}}
+			// The three execution actions intentionally require use on the same Agent.
+			if SessionExecutionOperation(permission) {
+				if p.HasPermission(permission, scope) {
+					t.Fatal("execution without Agent use")
+				}
+				use := grant
+				use.Permission = PermissionAgentsUse
+				p.Grants = append(p.Grants, use)
+			}
+			if !p.HasPermission(permission, scope) {
+				t.Fatal("dedicated permission denied")
+			}
+			for _, other := range AllPermissions() {
+				if other != permission && !(SessionExecutionOperation(permission) && other == PermissionAgentsUse) && p.HasPermission(other, scope) {
+					t.Errorf("implied %s", other)
 				}
 			}
-			for _, operation := range append(c.denies, PermissionMembersManage, PermissionAPIKeysManage, PermissionProjectsManage) {
-				if CapabilityAllows(c.cap, operation) {
-					t.Errorf("unexpected operation %s", operation)
+			other := scope
+			other.OrgID = uuid.NewV7()
+			if p.HasPermission(permission, other) {
+				t.Fatal("cross organization")
+			}
+			if d.ScopeType != ScopeOrganization {
+				other = scope
+				other.EnvironmentID = uuid.NewV7().String()
+				if p.HasPermission(permission, other) {
+					t.Fatal("cross environment")
 				}
+				other = scope
+				other.ProjectID = uuid.NewV7().String()
+				if p.HasPermission(permission, other) {
+					t.Fatal("cross project")
+				}
+				if p.HasPermission(permission, Scope{OrgID: org}) {
+					t.Fatal("missing environment")
+				}
+			} else if p.HasPermission(permission, env) {
+				t.Fatal("organization action accepted environment scope")
+			}
+			if d.ScopeType == ScopeAgent {
+				other = scope
+				other.AgentID = uuid.NewV7().String()
+				if p.HasPermission(permission, other) || p.HasPermission(permission, env) {
+					t.Fatal("selected Agent escaped")
+				}
+				all, ids := p.AgentPermissionScope(permission, env)
+				if all || len(ids) != 1 || ids[0].String() != agent.AgentID {
+					t.Fatalf("targets: %v %v", all, ids)
+				}
+				for i := range p.Grants {
+					p.Grants[i].AgentID = ""
+				}
+				if !p.HasPermission(permission, other) {
+					t.Fatal("all Agents denied")
+				}
+			}
+			p.Kind = PrincipalKindAPIKey
+			p.ProjectID = env.ProjectID
+			p.EnvironmentID = env.EnvironmentID
+			if p.HasPermission(permission, scope) != d.APIKeyAssignable {
+				t.Fatal("machine eligibility mismatch")
+			}
+			p.EnvironmentID = uuid.NewV7().String()
+			if p.HasPermission(permission, scope) {
+				t.Fatal("machine borrowed another environment")
+			}
+			p.Grants = nil
+			if p.HasPermission(permission, scope) {
+				t.Fatal("owner or machine creator bypass")
 			}
 		})
 	}
 }
 
-func TestMachineUsesOwnRoleGrantsWithinExactEnvironment(t *testing.T) {
-	org := uuid.NewV7()
-	scope := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
-	p := Principal{Kind: PrincipalKindAPIKey, OrgID: org, IsOwner: true, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilitySessionsView}}}
-	if !p.HasPermission(PermissionSessionsRead, scope) {
-		t.Fatal("explicit capability denied")
-	}
-	for _, operation := range []Permission{PermissionSecretsWrite, PermissionAPIKeysManage, PermissionSessionsCreate} {
-		if p.HasPermission(operation, scope) {
-			t.Fatalf("borrowed authority: %s", operation)
-		}
-	}
-	p.IsOwner = false
-	if !p.HasPermission(PermissionSessionsRead, scope) {
-		t.Fatal("creator role affected machine authority")
-	}
-	for _, other := range []Scope{{OrgID: org}, {OrgID: uuid.NewV7(), ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID}, {OrgID: org, ProjectID: scope.ProjectID, EnvironmentID: uuid.NewV7().String()}, {OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: scope.EnvironmentID}} {
-		if p.HasPermission(PermissionSessionsRead, other) {
-			t.Fatal("scope escaped")
-		}
-	}
-}
-
-func TestHumanGrantUnionAndAgentScope(t *testing.T) {
-	org := uuid.NewV7()
-	scope := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(), AgentID: uuid.NewV7().String()}
-	p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, AgentID: scope.AgentID, Permission: CapabilityAgentsUse}}}
-	if !p.HasPermission(PermissionSessionsCreate, scope) || p.HasPermission(PermissionSessionsRead, scope) {
-		t.Fatal("Agent use scope mismatch")
-	}
-	other := scope
-	other.AgentID = uuid.NewV7().String()
-	if p.HasPermission(PermissionSessionsCreate, other) {
-		t.Fatal("other Agent allowed")
-	}
-	p.Grants = append(p.Grants, PermissionGrant{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: CapabilitySessionsView})
-	if !p.HasPermission(PermissionSessionsRead, other) || p.HasPermission(PermissionSessionsSend, scope) {
-		t.Fatal("union broadened operation")
-	}
-	p.Grants = nil
-	if p.HasPermission(PermissionSessionsRead, scope) {
-		t.Fatal("member has implicit workload authority")
-	}
-	p.IsOwner = true
-	for _, permission := range AllPermissions() {
-		if p.HasPermission(permission, scope) || p.HasPermission(permission, Scope{OrgID: org}) {
-			t.Fatalf("owner borrowed authority: %s", permission)
-		}
-	}
-
-}
-
-func TestMachineRoleCapabilityEligibility(t *testing.T) {
-	for _, p := range []Permission{CapabilityAccessManage, CapabilityOrganizationManage, CapabilityKeysManage, CapabilityAgentsManage, "", "*", "unsupported.permission"} {
-		if IsMachineCapability(p) {
-			t.Fatalf("incompatible machine capability %q", p)
-		}
-	}
-	for _, p := range []Permission{CapabilityAgentsUse, CapabilitySessionsView, CapabilitySessionsManage, CapabilityDeploymentsPublish, CapabilityDeploymentsPromote, CapabilityComputersOperate, CapabilitySecretsManage} {
-		if !IsMachineCapability(p) {
-			t.Fatalf("workload capability %q rejected", p)
-		}
-	}
-}
-
-func TestOrganizationAndKeyGrantsHaveExactScope(t *testing.T) {
+func TestExecutionRequiresMatchingAgentUse(t *testing.T) {
 	org := uuid.NewV7()
 	env := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
-	organization := Scope{OrgID: org}
-	p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{{Permission: CapabilityAccessManage}, {Permission: CapabilityOrganizationManage}, {ProjectID: env.ProjectID, EnvironmentID: env.EnvironmentID, Permission: CapabilityKeysManage}}}
-	if !p.HasPermission(PermissionMembersManage, organization) || !p.HasPermission(PermissionProjectsManage, organization) || !p.HasPermission(PermissionAPIKeysManage, env) {
-		t.Fatal("explicit administrative authority denied")
-	}
-	if p.HasPermission(PermissionMembersManage, env) || p.HasPermission(PermissionProjectsManage, env) || p.HasPermission(PermissionAPIKeysManage, organization) || p.HasPermission(PermissionSessionsRead, env) {
-		t.Fatal("administrative grant crossed its boundary")
-	}
-
-}
-
-func TestAgentManagementScopeAndMachineExclusion(t *testing.T) {
-	org := uuid.NewV7()
-	scope := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(), AgentID: uuid.NewV7().String()}
-	p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, AgentID: scope.AgentID, Permission: CapabilityAgentsManage}}}
-	if !p.HasPermission(CapabilityAgentsManage, scope) {
-		t.Fatal("exact Agent denied")
-	}
-	other := scope
-	other.AgentID = uuid.NewV7().String()
-	if p.HasPermission(CapabilityAgentsManage, other) {
-		t.Fatal("other Agent admitted")
-	}
-	if IsMachineCapability(CapabilityAgentsManage) {
-		t.Fatal("configuration Role cannot be assigned to machines")
-	}
-}
-
-func TestSessionExecutionRequiresUseAndManagementOnSameAgent(t *testing.T) {
-	env, project, first, second := uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String()
-	p := Principal{Kind: PrincipalKindSession, Grants: []PermissionGrant{
-		{ProjectID: project, EnvironmentID: env, AgentID: first, Permission: CapabilitySessionsManage},
-		{ProjectID: project, EnvironmentID: env, AgentID: second, Permission: CapabilityAgentsUse},
-	}}
-	scope := Scope{ProjectID: project, EnvironmentID: env, AgentID: first}
-	if !p.HasPermission(PermissionSessionsRead, scope) || !p.HasPermission(PermissionSessionsClose, scope) {
-		t.Fatal("management must allow reading and closing")
-	}
-	for _, op := range []Permission{PermissionSessionsSend, PermissionAsksAnswer, PermissionSessionsResume, PermissionSessionsCreate} {
-		if p.HasPermission(op, scope) {
-			t.Fatalf("borrowed use from another Agent: %s", op)
+	first := env
+	first.AgentID = uuid.NewV7().String()
+	second := uuid.NewV7().String()
+	for _, action := range []Permission{PermissionSessionsSend, PermissionSessionsAnswer, PermissionSessionsResume} {
+		p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{
+			{ProjectID: env.ProjectID, EnvironmentID: env.EnvironmentID, AgentID: first.AgentID, Permission: action},
+			{ProjectID: env.ProjectID, EnvironmentID: env.EnvironmentID, AgentID: second, Permission: PermissionAgentsUse},
+		}}
+		if p.HasPermission(action, first) {
+			t.Fatal("borrowed use from another Agent")
+		}
+		p.Grants[1].AgentID = first.AgentID
+		if !p.HasPermission(action, first) {
+			t.Fatal("matching assignments failed to combine")
+		}
+		p.Grants = p.Grants[1:]
+		if p.HasPermission(action, first) {
+			t.Fatal("use implied session action")
 		}
 	}
-	p.Grants = append(p.Grants, PermissionGrant{ProjectID: project, EnvironmentID: env, AgentID: first, Permission: CapabilityAgentsUse})
-	for _, op := range []Permission{PermissionSessionsSend, PermissionAsksAnswer, PermissionSessionsResume, PermissionSessionsCreate} {
-		if !p.HasPermission(op, scope) {
-			t.Fatalf("separate matching assignments must combine: %s", op)
-		}
-	}
-	all, agents := p.AgentPermissionScope(PermissionSessionsRead, Scope{ProjectID: project, EnvironmentID: env})
-	if all || len(agents) != 1 || agents[0].String() != first {
-		t.Fatalf("read scope escaped: %v %v", all, agents)
-	}
 }
 
-func TestHumanAndAPIKeyGrantParity(t *testing.T) {
-	org, project, env, a, b := uuid.NewV7(), uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String()
-	grants := []PermissionGrant{{ProjectID: project, EnvironmentID: env, AgentID: a, Permission: CapabilitySessionsManage}, {ProjectID: project, EnvironmentID: env, AgentID: b, Permission: CapabilityAgentsUse}, {ProjectID: project, EnvironmentID: env, Permission: CapabilitySecretsManage}}
-	human := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: grants}
-	machine := Principal{Kind: PrincipalKindAPIKey, OrgID: org, ProjectID: project, EnvironmentID: env, Grants: grants}
-	for _, agent := range []string{"", a, b, uuid.NewV7().String()} {
-		scope := Scope{OrgID: org, ProjectID: project, EnvironmentID: env, AgentID: agent}
-		for _, permission := range AllPermissions() {
-			if human.HasPermission(permission, scope) != machine.HasPermission(permission, scope) {
-				t.Fatalf("different %s on %s", permission, agent)
+func TestStandardRolesContainOnlyExplicitCompatibleActions(t *testing.T) {
+	roles := StandardRoles()
+	if len(roles) != 16 {
+		t.Fatalf("roles: %d", len(roles))
+	}
+	keys := map[string]bool{}
+	for _, role := range roles {
+		if keys[role.Key] {
+			t.Fatalf("duplicate role %s", role.Key)
+		}
+		keys[role.Key] = true
+		seen := map[Permission]bool{}
+		organization, workload := false, false
+		for _, permission := range role.Permissions {
+			if !IsPermission(permission) || seen[permission] {
+				t.Fatalf("invalid permission in %s: %s", role.Key, permission)
+			}
+			seen[permission] = true
+			if IsOrganizationPermission(permission) {
+				organization = true
+			} else {
+				workload = true
 			}
 		}
-	}
-	all, targets := machine.AgentPermissionScope(PermissionSessionsRead, Scope{OrgID: org, ProjectID: project, EnvironmentID: env})
-	if all || len(targets) != 1 || targets[0].String() != a {
-		t.Fatalf("machine Agent targets escaped: %v %v", all, targets)
-	}
-	machine.Grants = nil
-	if machine.HasPermission(PermissionSecretsWrite, Scope{OrgID: org, ProjectID: project, EnvironmentID: env}) {
-		t.Fatal("unassigned key has authority")
+		if organization && workload {
+			t.Fatalf("mixed scope role %s", role.Key)
+		}
+		if role.Key == "agent_user" && (len(role.Permissions) != 1 || role.Permissions[0] != PermissionAgentsUse) {
+			t.Fatal("Agent User must only allow use")
+		}
 	}
 }

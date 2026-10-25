@@ -13,17 +13,18 @@ type PermissionRole struct {
 	GroupCount       int      `json:"group_count"`
 	Revision         int64    `json:"revision"`
 }
-type CapabilityDefinition struct {
-	ResourceType string   `json:"resource_type"`
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description"`
-	Included     []string `json:"included"`
+type PermissionDefinition struct {
+	ResourceType     string `json:"resource_type"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Description      string `json:"description"`
+	ScopeType        string `json:"scope_type"`
+	APIKeyAssignable bool   `json:"api_key_assignable"`
 }
 type PermissionRolesResponse struct {
 	NextCursor string                 `json:"next_cursor,omitempty"`
 	Roles      []PermissionRole       `json:"roles"`
-	Catalog    []CapabilityDefinition `json:"catalog"`
+	Catalog    []PermissionDefinition `json:"catalog"`
 }
 type PermissionRoleInput struct {
 	Name        string   `json:"name"`
@@ -50,12 +51,11 @@ type PermissionGroupMembersResponse struct {
 	MemberIDs  []string `json:"member_ids"`
 }
 type GrantTarget struct {
-	ResourceType        string   `json:"resource_type"`
-	Mode                string   `json:"mode"`
-	AgentIDs            []string `json:"agent_ids,omitempty"`
-	AgentKeys           []string `json:"agent_keys,omitempty"`
-	Permissions         []string `json:"permissions"`
-	IncludedPermissions []string `json:"included_permissions"`
+	ResourceType string   `json:"resource_type"`
+	Mode         string   `json:"mode"`
+	AgentIDs     []string `json:"agent_ids,omitempty"`
+	AgentKeys    []string `json:"agent_keys,omitempty"`
+	Permissions  []string `json:"permissions"`
 }
 type RoleGrant struct {
 	APIKeyID     *string       `json:"api_key_id"`
@@ -118,19 +118,18 @@ type AccessAgent struct {
 }
 
 type MemberPermissionSource struct {
-	SubjectKind         string   `json:"subject_kind"`
-	MemberID            string   `json:"member_id,omitempty"`
-	TargetKind          string   `json:"target_kind,omitempty"`
-	AgentID             string   `json:"agent_id,omitempty"`
-	Agent               string   `json:"agent,omitempty"`
-	IncludedPermissions []string `json:"included_permissions"`
-	Kind                string   `json:"kind"`
-	GrantID             string   `json:"grant_id,omitempty"`
-	GroupID             string   `json:"group_id,omitempty"`
-	GroupName           string   `json:"group_name,omitempty"`
-	RoleID              string   `json:"role_id,omitempty"`
-	RoleName            string   `json:"role_name,omitempty"`
-	Permissions         []string `json:"permissions"`
+	SubjectKind string   `json:"subject_kind"`
+	MemberID    string   `json:"member_id,omitempty"`
+	TargetKind  string   `json:"target_kind,omitempty"`
+	AgentID     string   `json:"agent_id,omitempty"`
+	Agent       string   `json:"agent,omitempty"`
+	Kind        string   `json:"kind"`
+	GrantID     string   `json:"grant_id,omitempty"`
+	GroupID     string   `json:"group_id,omitempty"`
+	GroupName   string   `json:"group_name,omitempty"`
+	RoleID      string   `json:"role_id,omitempty"`
+	RoleName    string   `json:"role_name,omitempty"`
+	Permissions []string `json:"permissions"`
 }
 type MemberPermissionScope struct {
 	Type        string                   `json:"type"`

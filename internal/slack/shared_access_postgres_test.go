@@ -262,7 +262,7 @@ func TestSharedRuntimeDiscoveryKeepsRelationshipsAndScheduleIsolation(t *testing
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input) SELECT environment_id,agent_id,deployment_id,'daily','* * * * *','UTC','[]' FROM sessions WHERE id=$1;
  INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at) SELECT environment_id,$2,agent_id,deployment_id,'daily',clock_timestamp(),clock_timestamp() FROM sessions WHERE id=$1;
  UPDATE sessions SET origin_user_id=NULL,origin_slack_connection_id=NULL,origin_activation_id=$2 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Session, activation)
-	for _, operation := range []auth.Permission{auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionAsksAnswer} {
+	for _, operation := range []auth.Permission{auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsAnswer} {
 		err := db.RunTx(ctx, f.Pool, func(tx pgx.Tx) error {
 			return session.AuthorizeSessionOperation(ctx, tx, caller, f.Environment, other, operation)
 		})

@@ -28,13 +28,13 @@ const memberName = (m: OrganizationMember) => m.display_name || m.email || m.mem
 
 export function GroupDetail() {
   const params = useParams(); const me = useMe(); const cache = useQueryClient(); const navigate = useNavigate();
-  const allowed = () => hasPermission(me.data, "access.manage");
+  const allowed = () => hasPermission(me.data, "groups.read");
   const id = () => params["group"] ?? "";
   const isAll = () => id() === ALL_MEMBERS;
   const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: allowed() }));
-  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: allowed() }));
-  const roles = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() }));
-  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: allowed() }));
+  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: hasPermission(me.data, "assignments.read") }));
+  const roles = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: hasPermission(me.data, "roles.read") }));
+  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: hasPermission(me.data, "members.read") }));
   const group = () => groups.data?.groups.find(g => g.id === id());
   const name = () => isAll() ? "All members" : group()?.name ?? "";
   const missing = () => !isAll() && !!groups.data && !group();
@@ -61,24 +61,24 @@ export function GroupDetail() {
       badge={<Show when={isAll()}><ManagedMark title={ALL_MEMBERS_NOTE} /></Show>}
       subtitle={isAll() ? "Everyone in the organization, including people who join later. Only agent use on selected agents can be granted here." : undefined}
       actions={<Show when={allowed() && !missing()}>
-        <Show when={!isAll()}><button type="button" class={ui.secondaryButton} onClick={() => setRenaming(true)}>Rename</button></Show>
-        <button type="button" class={ui.button} disabled={!isAll() && !group()} onClick={() => setGranting(true)}>Grant access</button>
+        <Show when={!isAll() && hasPermission(me.data, "groups.update")}><button type="button" class={ui.secondaryButton} onClick={() => setRenaming(true)}>Rename</button></Show>
+        <Show when={hasPermission(me.data, "assignments.create")}><button type="button" class={ui.button} disabled={!isAll() && !group()} onClick={() => setGranting(true)}>Grant access</button></Show>
       </Show>}
     />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to manage groups.</Notice></Show>}>
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Read groups permission is required to view groups.</Notice></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="group" id={id()} back={{ href: "/settings/groups", label: "Go to groups" }} />}>
         <QueryState query={groups} pending={<TableSkeleton label="Loading group" columns={["Role", "Where", "Agents", "Permissions"]} />} error={error => loadError(error, "Could not load this group.")}>
           {() => <>
             <Tabs id="group-tabs" label="Group" items={[{ value: "access", label: "Access", count: assignments().length }, { value: "members", label: "Members", count: inGroup().length }]} selected={tab()} onSelect={setTab} />
-            <TabPanel tabs="group-tabs" value="access" selected={tab()}>
+            <TabPanel tabs="group-tabs" value="access" selected={tab()}><Show when={hasPermission(me.data, "assignments.read")} fallback={<Notice tone="info">The assignments.read permission is required to view this section.</Notice>}>
               <QueryState query={grants} pending={<TableSkeleton label="Loading access" columns={["Role", "Where", "Agents", "Permissions"]} />} error={error => loadError(error, "Could not load access.")}>
                 {() => <AssignmentsTable grants={assignments()} catalog={roles.data?.catalog ?? []} empty="No access yet" emptyHint={`Grant a role to give ${isAll() ? "everyone" : "this group's members"} access.`} />}
               </QueryState>
-            </TabPanel>
-            <TabPanel tabs="group-tabs" value="members" selected={tab()}>
+            </Show></TabPanel>
+            <TabPanel tabs="group-tabs" value="members" selected={tab()}><Show when={hasPermission(me.data, "members.read")} fallback={<Notice tone="info">The members.read permission is required to view this section.</Notice>}>
               <Toolbar
                 start={<SearchInput aria-label="Filter members" placeholder="Filter by name or email" value={filter()} onInput={e => setFilter(e.currentTarget.value)} />}
-                end={<Show when={!isAll()}><button type="button" class={ui.secondaryButton} onClick={() => setAdding(true)}>Add members</button></Show>}
+                end={<Show when={!isAll() && hasPermission(me.data, "groups.add_member")}><button type="button" class={ui.secondaryButton} onClick={() => setAdding(true)}>Add members</button></Show>}
               />
               <QueryState query={members} pending={<TableSkeleton label="Loading members" columns={["Member", "Email", "Other groups"]} />} error={error => loadError(error, "Could not load members.")}>
                 {() => (
@@ -90,7 +90,7 @@ export function GroupDetail() {
                             <td><PrimaryLink href={memberHref(member.membership_id)}>{memberName(member)}</PrimaryLink></td>
                             <td class="text-console-muted!">{member.email ?? <EmptyCell />}</td>
                             <td><Show when={otherGroups(member)} fallback={<EmptyCell />}>{text => text()}</Show></td>
-                            <RowActions label={`Actions for ${memberName(member)}`} items={isAll() ? [] : [{ label: "Remove from group", tone: "danger", onSelect: () => setRemoving(member) }]} />
+                            <RowActions label={`Actions for ${memberName(member)}`} items={isAll() || !hasPermission(me.data, "groups.remove_member") ? [] : [{ label: "Remove from group", tone: "danger", onSelect: () => setRemoving(member) }]} />
                           </tr>
                         )}
                       </For>
@@ -98,8 +98,8 @@ export function GroupDetail() {
                   </Show>
                 )}
               </QueryState>
-            </TabPanel>
-            <Show when={group()}>{g => (
+            </Show></TabPanel>
+            <Show when={hasPermission(me.data, "groups.delete") && group()}>{g => (
               <DangerZone title="Delete group" class="mt-6" action={<button type="button" class={ui.dangerOutlineButton} onClick={() => setDeleting(true)}>Delete group</button>}>
                 Removes {g().name} with its members and access. Access from other sources stays.
               </DangerZone>
