@@ -21,13 +21,12 @@ type OverviewTurns struct {
 // OverviewAgent is one Agent's activity. Hourly and HourlyFailed hold 24
 // one-hour buckets counted back from the read, oldest first.
 type OverviewAgent struct {
-	Agent        string     `json:"agent"`
-	Active       int64      `json:"active"`
-	Turns        int64      `json:"turns"`
-	Failed       int64      `json:"failed"`
-	LastTurnAt   *time.Time `json:"last_turn_at"`
-	Hourly       []int64    `json:"hourly"`
-	HourlyFailed []int64    `json:"hourly_failed"`
+	Agent        string  `json:"agent"`
+	Active       int64   `json:"active"`
+	Turns        int64   `json:"turns"`
+	Failed       int64   `json:"failed"`
+	Hourly       []int64 `json:"hourly"`
+	HourlyFailed []int64 `json:"hourly_failed"`
 }
 
 // OverviewActive counts every Session with work in progress, by state, and

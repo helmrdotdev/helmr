@@ -255,6 +255,8 @@ type sessionReadScope struct {
 	Agents           []uuid.UUID
 	ViewAgents       []uuid.UUID
 	SharedConnection uuid.UUID
+	// MembersRead says whether the caller may see the organization's headcount.
+	MembersRead bool
 }
 
 func readScopeFor(ctx context.Context, q db.DBTX, caller Caller, env uuid.UUID) (sessionReadScope, error) {
@@ -271,6 +273,7 @@ func readScopeFor(ctx context.Context, q db.DBTX, caller Caller, env uuid.UUID) 
 	scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}
 	filter.All, filter.ViewAgents = p.AgentPermissionScope(auth.PermissionSessionsRead, scope)
 	filter.AllAgents, filter.Agents = p.AgentPermissionScope(auth.PermissionAgentsUse, scope)
+	filter.MembersRead = p.HasPermission(auth.PermissionMembersRead, auth.Scope{OrgID: p.OrgID})
 	// An active principal with no grant gets an empty list, never an unfiltered one.
 	return filter, nil
 }

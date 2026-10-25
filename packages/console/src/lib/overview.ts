@@ -12,7 +12,6 @@ export type OverviewAgent = {
   active: number;
   turns: number;
   failed: number;
-  last_turn_at: string | null;
   hourly: number[];
   hourly_failed: number[];
 };

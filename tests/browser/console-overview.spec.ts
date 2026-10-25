@@ -30,14 +30,15 @@ type State = {
   preparation: string;
   newer: number;
   writes: string[];
+  ranges: number[];
 };
 
 const overview = (state: State) => ({
   turns: { total: 132, failed: state.failures.length ? 11 : 2 },
   previous: { total: 120, failed: 2 },
   agents: [
-    { agent: "support", active: 1, turns: 71, failed: 1, last_turn_at: ago(4), hourly: hours([3, 4, 5, 6]), hourly_failed: hours([0, 1, 0, 0]) },
-    { agent: "deployer", active: 2, turns: 38, failed: 0, last_turn_at: ago(12), hourly: hours([1, 2]), hourly_failed: hours([0, 0]) },
+    { agent: "support", active: 1, turns: 71, failed: 1, hourly: hours([3, 4, 5, 6]), hourly_failed: hours([0, 1, 0, 0]) },
+    { agent: "deployer", active: 2, turns: 38, failed: 0, hourly: hours([1, 2]), hourly_failed: hours([0, 0]) },
   ],
   active: { count: 3, running: 1, queued: 1, held: 1, sessions: [
     { id: sessions.held, agent: "deployer", state: "held", since: ago(240), origin: "trigger" },
@@ -45,6 +46,14 @@ const overview = (state: State) => ({
     { id: sessions.queued, agent: "deployer", state: "queued", since: ago(1), origin: "api_key" },
   ] },
   failures: state.failures,
+});
+
+const usage = (days: number) => ({
+  days,
+  work: { seconds: 312 * 3600, previous_seconds: 264 * 3600, turns: 2140, previous_turns: 1900, daily: Array.from({ length: days }, (_, i) => 3600 * (4 + (i % 5))) },
+  people: { weekly: 29, members: 70, slack: 24, app: 9, daily: Array.from({ length: days }, (_, i) => 18 + Math.floor(i / 3)), channels: [{ id: "C1", name: "support", people: 14 }, { id: "D", people: 11 }, { id: "C9", people: 2 }] },
+  runs: { bounds: [60, 600, 3600, 14400], buckets: [620, 890, 592, 33, 5], median_seconds: 372, completed: 2000, unassisted: 1740, longest: { agent: "support", seconds: 6 * 3600 + 720, session_id: sessions.running, turn_id: turns.failed } },
+  agents: [{ agent: "support", seconds: 164 * 3600, people: 21 }, { agent: "deployer", seconds: 118 * 3600, people: 1 }],
 });
 
 const computer = (suffix: string, residency: string, minutes: number, extra: Record<string, unknown> = {}) => ({
@@ -63,6 +72,7 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
     preparation: "ready",
     newer: 0,
     writes: [],
+    ranges: [],
     ...overrides,
   };
   const environment = { environment: environmentID, project: projectID, name: "Preview", color_hex: "#06B6D4", is_default: true, created_at: ago(0), updated_at: ago(0) };
@@ -83,6 +93,11 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
     } else if (path === `${base}/overview`) {
       if (!state.permissions.includes("sessions.read")) { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }); return; }
       json = overview(state);
+    } else if (path === `${base}/usage`) {
+      if (!state.permissions.includes("sessions.read")) { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }); return; }
+      const days = Number(new URL(route.request().url()).searchParams.get("range")?.replace("d", "") ?? 30);
+      state.ranges.push(days);
+      json = usage(days);
     } else if (path === `${base}/computers`) json = { computers: [
       computer("f01", "parked", 120),
       computer("f02", "running", 2),
@@ -125,11 +140,11 @@ test("on a normal day the Overview shows the environment's health without Needs 
   await expect(page.getByText(/^Oldest 20 minutes ago$/)).toBeVisible();
 
   await expect(rows(page, "Agents")).toHaveCount(2);
-  await expect(rows(page, "Agents").first()).toContainText("1 active");
-  await expect(rows(page, "Agents").first()).toContainText("71 turns");
+  await expect(rows(page, "Agents").filter({ hasText: "support" })).toContainText("1 active");
+  await expect(rows(page, "Agents").filter({ hasText: "support" })).toContainText("1 failed");
   // Titled lists carry their own labels: no column header under a title.
   await expect(page.getByRole("main").getByRole("columnheader")).toHaveCount(0);
-  await expect(rows(page, "Agents").first().getByRole("link", { name: "support", exact: true })).toHaveAttribute("href", "/agents/support");
+  await expect(rows(page, "Agents").filter({ hasText: "support" }).getByRole("link", { name: "support", exact: true })).toHaveAttribute("href", "/agents/support");
 
   const running = rows(page, "Running now");
   await expect(running).toHaveCount(3);
@@ -218,4 +233,33 @@ test("the current deployment stays listed when newer ones push it out, with its 
   await expect(deployments.first()).toContainText("v2");
   await expect(deployments.first()).toContainText("Templates preparing");
   await expect(deployments.nth(1)).toContainText("v3");
+});
+
+test("Agent usage shows work, people and long runs over a range the viewer picks", async ({ page }) => {
+  const state = await fixture(page);
+  await open(page);
+  const band = panel(page, "Agent usage");
+  await expect(band).toContainText("312 h");
+  await expect(band).toContainText("+18% vs the 30 days before · 2,140 turns");
+  await expect(band).toContainText("29");
+  await expect(band).toContainText("41% of members · 24 via Slack, 9 only via the CLI, Console or API");
+  await expect(band).toContainText("# support");
+  await expect(band).toContainText("Direct messages");
+  await expect(band).toContainText("6 min");
+  await expect(band).toContainText("38 turns ran over an hour · 87% finished without asking a person");
+  await expect(band.getByRole("link", { name: "6.2 h", exact: true })).toHaveAttribute("href", `/sessions/${sessions.running}#turn-${turns.failed}`);
+  // Agents rows carry each agent's time and people over the same window.
+  await expect(rows(page, "Agents").filter({ hasText: "support" })).toContainText("164 h");
+  await expect(rows(page, "Agents").filter({ hasText: "support" })).toContainText("21 people");
+  // Keyboard users read each day with the arrow keys.
+  const work = band.getByRole("img", { name: /^Agent time per day/ });
+  await work.focus();
+  await work.press("End");
+  await expect(band).toContainText("Today · 8 h");
+  await work.press("ArrowLeft");
+  await expect(band).not.toContainText("Today · 8 h");
+  await band.getByRole("group", { name: "Usage range" }).getByRole("button", { name: "7 days" }).click();
+  await expect.poll(() => state.ranges.at(-1)).toBe(7);
+  await expect(band).toContainText("vs the 7 days before");
+  expect(state.writes).toEqual([]);
 });

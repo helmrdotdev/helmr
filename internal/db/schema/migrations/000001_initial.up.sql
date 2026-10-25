@@ -2350,6 +2350,17 @@ CREATE TABLE audit_events (
 );
 CREATE INDEX audit_events_scope_time ON audit_events (org_id, occurred_at, id);
 
+-- A Slack channel Helmr has verified, one per workspace installation and
+-- channel, whichever agents use it: the name Slack reported when it was last
+-- verified.
+CREATE TABLE slack_channels (
+    installation_id uuid NOT NULL REFERENCES slack_installations(id),
+    slack_channel_id text NOT NULL CHECK (slack_channel_id<>''),
+    name text NOT NULL CHECK (name<>'' AND char_length(name)<=255),
+    observed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (installation_id, slack_channel_id)
+);
+
 -- Per-channel routine pacing and provider method Retry-After are independent.
 CREATE TABLE slack_delivery_limits (
     installation_id uuid NOT NULL REFERENCES slack_installations(id),

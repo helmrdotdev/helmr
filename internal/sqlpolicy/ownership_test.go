@@ -27,6 +27,7 @@ var dynamicStatementSites = map[string]string{
 	"cmd/internal/dev-controlplane:migrate":         "runs the checked-in migration files",
 	"internal/computer:reclaimComputerGraphRow":     "statement is a constant at each caller, which the preparation test covers",
 	"internal/session:attentionRows":                "statement is a constant at each caller, which the preparation test covers",
+	"internal/session:usageEach":                    "statement is a constant at each caller, which the preparation test covers",
 	"internal/slackroute:lockConnections":           "two constant lock statements selected by lock strength",
 	"internal/telemetry:BeginDiagnosticAdmission":   "reads inline diagnostic cursors on session_processes, image_builds and commands; all producer kinds are exercised on PostgreSQL",
 	"internal/telemetry:DiagnosticAdmission.Append": "writes only diagnostic cursor/replay fields on session_processes, image_builds and commands in the authorizing owner's transaction; PostgreSQL tests cover both streams, unchanged lifecycle state and atomic rollback",
@@ -68,7 +69,7 @@ var tableOwners = map[string]string{
 	"secrets": "internal/secret", "secret_versions": "internal/secret",
 	// Slack
 	"slack_socket_connections": "internal/slack", "slack_app_registrations": "internal/slack", "slack_installations": "internal/slack", "slack_posts": "internal/slack", "slack_work_items": "internal/slack",
-	"slack_delivery_limits": "internal/slack", "slack_method_limits": "internal/slack",
+	"slack_delivery_limits": "internal/slack", "slack_method_limits": "internal/slack", "slack_channels": "internal/slack",
 	"slack_requests": "internal/slack", "slack_threads": "internal/slack", "slack_user_links": "internal/slack",
 	// Slack route authority
 	"slack_connections": "internal/slackroute", "slack_channel_bindings": "internal/slackroute", "slack_thread_sources": "internal/slackroute",

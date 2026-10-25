@@ -39,7 +39,6 @@ type OverviewAgent struct {
 	Agent                string
 	Active               int64
 	Turns, Failed        int64
-	LastTurnAt           *time.Time
 	Hourly, HourlyFailed [OverviewHours]int64
 }
 
@@ -80,7 +79,7 @@ const overviewTotalsSQL = `SELECT count(*) FILTER (WHERE t.created_at>=` + overv
  WHERE t.environment_id=$1 AND t.created_at>=now()-interval '48 hours'`
 
 // A Turn admitted after the transaction began still falls in the latest bucket.
-const overviewAgentsSQL = `SELECT a.key,GREATEST(0,LEAST(23,floor(extract(epoch FROM now()-t.created_at)/3600)))::int,count(*),count(*) FILTER (WHERE t.status='failed'),max(COALESCE(t.terminal_at,t.started_at,t.created_at))
+const overviewAgentsSQL = `SELECT a.key,GREATEST(0,LEAST(23,floor(extract(epoch FROM now()-t.created_at)/3600)))::int,count(*),count(*) FILTER (WHERE t.status='failed')
  FROM turns t JOIN (SELECT id,agent_id FROM sessions WHERE ` + overviewReadable + `) v ON v.id=t.session_id JOIN agents a ON (a.environment_id,a.id)=(t.environment_id,v.agent_id)
  WHERE t.environment_id=$1 AND t.created_at>=` + overviewWindow + `
  GROUP BY 1,2`
@@ -166,8 +165,7 @@ func overviewAgents(ctx context.Context, tx pgx.Tx, args []any) ([]OverviewAgent
 		var key string
 		var age int
 		var total, failed int64
-		var last time.Time
-		if err := rows.Scan(&key, &age, &total, &failed, &last); err != nil {
+		if err := rows.Scan(&key, &age, &total, &failed); err != nil {
 			return agents, err
 		}
 		agent := &agents[agentIndex(&agents, index, key)]
@@ -176,10 +174,6 @@ func overviewAgents(ctx context.Context, tx pgx.Tx, args []any) ([]OverviewAgent
 		agent.HourlyFailed[bucket] += failed
 		agent.Turns += total
 		agent.Failed += failed
-		if agent.LastTurnAt == nil || last.After(*agent.LastTurnAt) {
-			at := last
-			agent.LastTurnAt = &at
-		}
 	}
 	return agents, rows.Err()
 }
