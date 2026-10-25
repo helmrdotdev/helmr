@@ -21,9 +21,9 @@ test("console demo shows its waiting work on the Overview and retained history i
   await login(page);
   await selectDemoEnvironment(page);
   await page.goto("/");
-  const deployment = page.getByRole("region", { name: "Current deployment", exact: true });
-  await expect(deployment.getByRole("link").first()).toHaveAttribute("href", "/deployments/00000000-0000-7000-8000-000000000501");
-  await expect(deployment.getByText(/Promoted 3 days ago/)).toBeVisible();
+  const current = page.getByRole("region", { name: "Deployments", exact: true }).getByRole("listitem").filter({ hasText: "Current" });
+  await expect(current.getByRole("link").first()).toHaveAttribute("href", "/deployments/00000000-0000-7000-8000-000000000501");
+  await expect(current.getByText(/promoted 3 days ago/)).toBeVisible();
   // The seed holds one Session for approval; it needs attention and is the one
   // Session with work in progress.
   const attention = page.getByRole("region", { name: /^Needs attention/ });

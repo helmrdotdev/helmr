@@ -45,15 +45,13 @@ export type OverviewFailure = {
 
 // What the caller can read of one Environment's Sessions: Turns admitted in the
 // last 24 hours and the 24 before, activity by Agent, Sessions with work in
-// progress (all counted, the first few listed), failures by cause, and the
-// current deployment's share for callers who can read deployments.
+// progress (all counted, the first few listed), and failures by cause.
 export type Overview = {
   turns: OverviewTurns;
   previous: OverviewTurns;
   agents: OverviewAgent[];
   active: { count: number; running: number; queued: number; held: number; sessions: OverviewSession[] };
   failures: OverviewFailure[];
-  deployment: { id: string; turns: OverviewTurns; older_open_sessions: number } | null;
 };
 
 export function getOverview(scope: ScopeIDs): Promise<Overview> {

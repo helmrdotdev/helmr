@@ -34,6 +34,7 @@ const TONES = {
   attention: { question: "waiting", hold: "waiting", failed_turn: "revoked", slack_reauthorization: "revoked" },
   session_work: { running: "active", queued: "waiting", held: "waiting" },
   computer_wait: { waiting: "waiting" },
+  deployment_templates: { preparing: "waiting", failed: "revoked" },
 } as const satisfies Record<string, Record<string, Tone>>;
 
 // Labels that read better than the status name.
@@ -42,6 +43,7 @@ const LABELS: Partial<Record<keyof typeof TONES, Record<string, string>>> = {
   agent: { defined: "In current deployment", not_defined: "Not in current deployment", deleted: "Deleted" },
   attention: { question: "Question", hold: "Held", failed_turn: "Failed", slack_reauthorization: "Connection" },
   computer_wait: { waiting: "Waiting for capacity" },
+  deployment_templates: { preparing: "Templates preparing", failed: "Templates failed" },
 };
 
 export type BadgeResource = keyof typeof TONES;

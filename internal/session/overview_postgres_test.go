@@ -42,9 +42,6 @@ func TestOverviewSummarizesVisibleWork(t *testing.T) {
 	if len(o.Failures) != 2 || o.Failures[0].ErrorCode != "tool_error" || o.Failures[0].Count != 2 || o.Failures[0].LastHour != 2 || o.Failures[1].ErrorCode != "timeout" {
 		t.Fatalf("failures %+v", o.Failures)
 	}
-	if o.Deployment == nil || o.Deployment.ID != f.deployment || o.Deployment.Turns != 6 || o.Deployment.Failed != 3 || o.Deployment.OlderOpenSessions != 0 {
-		t.Fatalf("deployment %+v", o.Deployment)
-	}
 
 	// A subtree hold on the parent holds an idle child too, and outranks
 	// queued work; counts cover every Session, not only those listed.
@@ -85,8 +82,5 @@ func TestOverviewKeepsSessionReadBounds(t *testing.T) {
 	}
 	if o.Turns != 1 || o.ActiveCount != 1 || o.Active[0].ID != f.session || len(o.Agents) != 1 || o.Agents[0].Agent == "other" {
 		t.Fatalf("overview escaped the selected Agent: %+v", o)
-	}
-	if o.Deployment != nil {
-		t.Fatalf("current deployment shown without deployment read: %+v", o.Deployment)
 	}
 }

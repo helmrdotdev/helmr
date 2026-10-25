@@ -6,12 +6,11 @@ import "time"
 // Turn counts cover Turns admitted in the 24 hours before the read; Previous
 // covers the 24 hours before that.
 type Overview struct {
-	Turns      OverviewTurns       `json:"turns"`
-	Previous   OverviewTurns       `json:"previous"`
-	Agents     []OverviewAgent     `json:"agents"`
-	Active     OverviewActive      `json:"active"`
-	Failures   []OverviewFailure   `json:"failures"`
-	Deployment *OverviewDeployment `json:"deployment"`
+	Turns    OverviewTurns     `json:"turns"`
+	Previous OverviewTurns     `json:"previous"`
+	Agents   []OverviewAgent   `json:"agents"`
+	Active   OverviewActive    `json:"active"`
+	Failures []OverviewFailure `json:"failures"`
 }
 
 type OverviewTurns struct {
@@ -65,13 +64,4 @@ type OverviewFailure struct {
 	LastSessionID    string    `json:"last_session_id"`
 	LastTurnID       string    `json:"last_turn_id"`
 	LastTurnSequence int64     `json:"last_turn_sequence"`
-}
-
-// OverviewDeployment counts the window's Turns of Sessions started on the
-// current deployment and the open Sessions still on older ones. It is present
-// only for callers who can read deployments.
-type OverviewDeployment struct {
-	ID                string        `json:"id"`
-	Turns             OverviewTurns `json:"turns"`
-	OlderOpenSessions int64         `json:"older_open_sessions"`
 }

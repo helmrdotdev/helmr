@@ -22,8 +22,7 @@ const overviewFailureLimit = 10
 
 // Overview summarizes the Sessions a caller can read in one Environment: Turns
 // admitted in the last OverviewHours and the window before, activity by Agent,
-// Sessions with work in progress, failures grouped by Agent and error code,
-// and the current deployment's share when the caller may read deployments.
+// Sessions with work in progress, and failures grouped by Agent and error code.
 type Overview struct {
 	Turns, Failed                 int64
 	PreviousTurns, PreviousFailed int64
@@ -32,7 +31,6 @@ type Overview struct {
 	ActiveCount                   int64
 	Running, Queued, Held         int64
 	Failures                      []OverviewFailure
-	Deployment                    *OverviewDeployment
 }
 
 // OverviewAgent is one Agent's activity. Hourly and HourlyFailed hold one
@@ -68,14 +66,6 @@ type OverviewFailure struct {
 	LastSessionID    uuid.UUID
 	LastTurnID       uuid.UUID
 	LastTurnSequence int64
-}
-
-// OverviewDeployment is the Environment's current deployment: the window's
-// Turns of Sessions started on it, and the open Sessions still on older ones.
-type OverviewDeployment struct {
-	ID                uuid.UUID
-	Turns, Failed     int64
-	OlderOpenSessions int64
 }
 
 // overviewReadable restricts a query on `sessions` to those the caller can
@@ -129,14 +119,6 @@ const overviewFailuresSQL = `SELECT a.key,COALESCE(t.error_code,''),count(*),cou
  WHERE t.environment_id=$1 AND t.status='failed' AND t.created_at>=` + overviewWindow + `
  GROUP BY 1,2 ORDER BY 4 DESC,3 DESC,6 DESC LIMIT $9::int`
 
-const overviewDeploymentSQL = `SELECT e.current_deployment_id,d.turns,d.failed,
- (SELECT count(*) FROM sessions WHERE ` + overviewReadable + ` AND status IN ('open','closing') AND deployment_id<>e.current_deployment_id)
- FROM environments e CROSS JOIN LATERAL (
-  SELECT count(*) AS turns,count(*) FILTER (WHERE t.status='failed') AS failed
-  FROM turns t JOIN (SELECT id FROM sessions WHERE ` + overviewReadable + ` AND deployment_id=e.current_deployment_id) v ON v.id=t.session_id
-  WHERE t.environment_id=$1 AND t.created_at>=` + overviewWindow + `) d
- WHERE e.id=$1`
-
 // ReadOverview summarizes the Environment with the same authority as listing
 // its Sessions, in one snapshot.
 func ReadOverview(ctx context.Context, pool db.TxBeginner, caller Caller, env uuid.UUID) (Overview, error) {
@@ -166,9 +148,6 @@ func ReadOverview(ctx context.Context, pool db.TxBeginner, caller Caller, env uu
 		}
 		if result.Failures, err = overviewFailures(ctx, tx, args(overviewFailureLimit)); err != nil {
 			return err
-		}
-		if filter.DeploymentsRead {
-			result.Deployment, err = overviewDeployment(ctx, tx, args())
 		}
 		return err
 	})
@@ -273,17 +252,4 @@ func overviewFailures(ctx context.Context, tx pgx.Tx, args []any) ([]OverviewFai
 		failures = append(failures, f)
 	}
 	return failures, rows.Err()
-}
-
-func overviewDeployment(ctx context.Context, tx pgx.Tx, args []any) (*OverviewDeployment, error) {
-	var current *uuid.UUID
-	var d OverviewDeployment
-	if err := tx.QueryRow(ctx, overviewDeploymentSQL, args...).Scan(&current, &d.Turns, &d.Failed, &d.OlderOpenSessions); err != nil {
-		return nil, err
-	}
-	if current == nil {
-		return nil, nil
-	}
-	d.ID = *current
-	return &d, nil
 }

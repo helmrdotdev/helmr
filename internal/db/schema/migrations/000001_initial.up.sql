@@ -1527,8 +1527,6 @@ CREATE INDEX sessions_idle_policy ON sessions(environment_id, id) WHERE status='
 
 CREATE INDEX sessions_closing ON sessions(environment_id, id) WHERE status='closing';
 
-CREATE INDEX sessions_open_deployment ON sessions(environment_id, deployment_id) WHERE status IN ('open', 'closing');
-
 CREATE INDEX sessions_children ON sessions(environment_id, parent_session_id) WHERE parent_session_id IS NOT NULL;
 
 CREATE TABLE session_processes (

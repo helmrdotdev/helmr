@@ -27,6 +27,8 @@ type State = {
   waiting: boolean;
   current: boolean;
   agents: boolean;
+  preparation: string;
+  newer: number;
   writes: string[];
 };
 
@@ -43,7 +45,6 @@ const overview = (state: State) => ({
     { id: sessions.queued, agent: "deployer", state: "queued", since: ago(1), origin: "api_key" },
   ] },
   failures: state.failures,
-  deployment: { id: deploymentID, turns: { total: 96, failed: 2 }, older_open_sessions: 1 },
 });
 
 const computer = (suffix: string, residency: string, minutes: number, extra: Record<string, unknown> = {}) => ({
@@ -59,12 +60,14 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
     waiting: false,
     current: true,
     agents: true,
+    preparation: "ready",
+    newer: 0,
     writes: [],
     ...overrides,
   };
   const environment = { environment: environmentID, project: projectID, name: "Preview", color_hex: "#06B6D4", is_default: true, created_at: ago(0), updated_at: ago(0) };
   const project = { project: projectID, name: "Acme App", default_region_id: "local", is_default: true, environments: [environment], created_at: ago(0), updated_at: ago(0) };
-  const deployment = (did: string, version: string, minutes: number) => ({ id: did, version, bundle_digest: `sha256:${"b".repeat(64)}`, created_at: ago(minutes), preparation_state: "ready" });
+  const deployment = (did: string, version: string, minutes: number) => ({ id: did, version, bundle_digest: `sha256:${"b".repeat(64)}`, created_at: ago(minutes) });
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
@@ -89,7 +92,12 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
     else if (path === `${base}/deployments/current`) {
       if (!state.current) { await route.fulfill({ status: 404, json: { error: { code: "no_current_deployment", message: "none" } } }); return; }
       json = deployment(deploymentID, "v2", 200);
-    } else if (path === `${base}/deployments`) json = { deployments: state.current ? [deployment(deploymentID, "v2", 200), deployment(previousID, "v1", 3000)] : [] };
+    } else if (path === `${base}/deployments`) {
+      // The list carries no preparation state; newer registrations push the
+      // current one out of the newest five.
+      const newer = Array.from({ length: state.newer }, (_, i) => deployment(id(`6${i}0`), `v${3 + i}`, 10 + i));
+      json = { deployments: state.current ? [...newer, deployment(deploymentID, "v2", 200), deployment(previousID, "v1", 3000)].slice(0, 5) : [] };
+    } else if (path === `${base}/deployments/${deploymentID}`) json = { ...deployment(deploymentID, "v2", 200), preparation_state: state.preparation };
     else if (path === `${base}/deployments/${deploymentID}/events`) json = { events: [{ id: "1", kind: "deployment.promoted", message: "Deployment promoted", at: ago(125), attributes: {} }] };
     else if (path === `${base}/agents`) json = { deployment_id: deploymentID, agents: state.agents ? [{ agent: "support", template: "support" }] : [] };
     else if (path === `${base}/secrets`) json = { secrets: [] };
@@ -131,12 +139,15 @@ test("on a normal day the Overview shows the environment's health without Needs 
   await expect(running.nth(2)).toContainText("API key");
   await expect(running.nth(1).getByRole("link", { name: "000000000a01", exact: true })).toHaveAttribute("href", `/sessions/${sessions.running}`);
 
-  const deployment = panel(page, "Current deployment");
-  await expect(deployment.getByRole("link", { name: "v2", exact: true })).toHaveAttribute("href", `/deployments/${deploymentID}`);
-  await expect(deployment).toContainText("Promoted 2 hours ago");
-  await expect(deployment).toContainText("96");
-  await expect(rows(page, "Recent deployments")).toHaveCount(2);
-  await expect(rows(page, "Recent deployments").first()).toContainText("Current");
+  // One list: the current deployment is marked with when it was promoted, and
+  // templates show only when they need a look.
+  const deployments = rows(page, "Deployments");
+  await expect(deployments).toHaveCount(2);
+  await expect(deployments.first()).toContainText("Current");
+  await expect(deployments.first()).toContainText("promoted 2 hours ago");
+  await expect(deployments.first().getByRole("link", { name: "v2", exact: true })).toHaveAttribute("href", `/deployments/${deploymentID}`);
+  await expect(deployments.first()).not.toContainText("Templates");
+  await expect(panel(page, "Current deployment")).toHaveCount(0);
 
   // Deleted computers are left out; awake ones come before sleeping ones.
   const machines = rows(page, "Computers");
@@ -180,7 +191,7 @@ test("without session access the Overview still shows computers and deployments"
   await expect(page.getByText("No access to sessions").first()).toBeVisible();
   // Each section keeps its place and says why it is empty.
   await expect(panel(page, "Agents")).toContainText("You do not have access to sessions in this environment.");
-  await expect(panel(page, "Current deployment")).toBeVisible();
+  await expect(panel(page, "Deployments")).toBeVisible();
 });
 
 test("before the first Deployment the Overview shows setup for this tab's scope", async ({ page }) => {
@@ -196,4 +207,15 @@ test("a current Deployment without agents still shows setup, with Needs attentio
   await open(page);
   await expect(page.getByRole("region", { name: "Set up" })).toBeVisible();
   await expect(attention(page)).toBeVisible();
+});
+
+test("the current deployment stays listed when newer ones push it out, with its templates when they need a look", async ({ page }) => {
+  await fixture(page, { newer: 6, preparation: "preparing" });
+  await open(page);
+  const deployments = rows(page, "Deployments");
+  await expect(deployments).toHaveCount(5);
+  await expect(deployments.first()).toContainText("Current");
+  await expect(deployments.first()).toContainText("v2");
+  await expect(deployments.first()).toContainText("Templates preparing");
+  await expect(deployments.nth(1)).toContainText("v3");
 });

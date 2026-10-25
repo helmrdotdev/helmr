@@ -9,8 +9,7 @@ import { useAttention } from "../lib/attention";
 import { SetUpPanel } from "../features/onboarding/SetUpPanel";
 import { listComputers, type ComputerListItem, type ComputerScope } from "../lib/computers";
 import { agentHref, listAgentDefinitions } from "../lib/definitions";
-import { getCurrentDeployment, getDeploymentEvents, listDeployments, type Deployment } from "../lib/deployments";
-import { loadError } from "../lib/error";
+import { getCurrentDeployment, getDeployment, getDeploymentEvents, listDeployments, type Deployment } from "../lib/deployments";
 import { failureRate, getOverview, orderComputers, overviewIssues, type Issue, type IssueTarget, type Overview as OverviewData, type OverviewAgent, type OverviewSession } from "../lib/overview";
 import { useScopeIDs } from "../lib/scope";
 import { askConsolePath, sessionConsolePath } from "../lib/sessions";
@@ -209,17 +208,34 @@ function SessionRows(props: { sessions: OverviewSession[] }) {
   );
 }
 
-function DeploymentRows(props: { deployments: Deployment[]; currentID: string | undefined }) {
+const timeWide = "w-44 shrink-0 whitespace-nowrap text-right font-mono text-chrome text-console-muted";
+
+// The newest deployments with the current one marked and the time it was
+// promoted. The current one is always listed, first when it is older than the
+// rest. Its templates show only while preparing or failed.
+function DeploymentRows(props: { deployments: Deployment[]; current: Deployment | null | undefined; promotedAt: string | null | undefined; preparation: Deployment["preparation_state"] }) {
+  const rows = createMemo(() => {
+    const current = props.current;
+    const newest = props.deployments.slice(0, LIST_ROWS);
+    return !current || newest.some((d) => d.id === current.id) ? newest : [current, ...newest.slice(0, LIST_ROWS - 1)];
+  });
   return (
-    <Show when={props.deployments.length} fallback={<p class={cx(ui.muted, "m-0")}>No deployments yet.</p>}>
-      <List label="Recent deployments">
-        <For each={props.deployments.slice(0, LIST_ROWS)}>{(deployment) => (
-          <ListItem line>
-            <A class="min-w-0 flex-1 truncate font-mono text-chrome text-console-accent hover:text-console-accent-hover" href={deploymentHref(deployment.id)} title={deployment.version}>{deployment.version}</A>
-            <span class="w-20 shrink-0"><Show when={deployment.id === props.currentID}><StatusBadge resource="deployment" status="current" /></Show></span>
-            <span class={time}><RelativeTime value={deployment.created_at} /></span>
-          </ListItem>
-        )}</For>
+    <Show when={rows().length} fallback={<p class={cx(ui.muted, "m-0")}>No deployments yet.</p>}>
+      <List label="Deployments">
+        <For each={rows()}>{(deployment) => {
+          const current = () => deployment.id === props.current?.id;
+          const templates = () => (current() && (props.preparation === "preparing" || props.preparation === "failed") ? props.preparation : undefined);
+          return (
+            <ListItem line>
+              <span class="w-20 shrink-0"><Show when={current()}><StatusBadge resource="deployment" status="current" /></Show></span>
+              <A class="min-w-0 flex-1 truncate font-mono text-chrome text-console-accent hover:text-console-accent-hover" href={deploymentHref(deployment.id)} title={deployment.version}>{deployment.version}</A>
+              <Show when={templates()}>{(state) => <span class="shrink-0"><StatusBadge resource="deployment_templates" status={state()} /></span>}</Show>
+              <span class={cx(timeWide, !current() && "max-sm:hidden")}>
+                <Show when={current() && props.promotedAt} fallback={<RelativeTime value={deployment.created_at} />}>{(at) => <>promoted <RelativeTime value={at()} /></>}</Show>
+              </span>
+            </ListItem>
+          );
+        }}</For>
       </List>
     </Show>
   );
@@ -237,41 +253,6 @@ function ComputerRows(props: { computers: ComputerListItem[]; complete: boolean 
           </ListItem>
         )}</For>
       </List>
-    </Show>
-  );
-}
-
-function DeploymentSummary(props: { deployment: Deployment | null; promotedAt: string | null | undefined; share: OverviewData["deployment"] | undefined }) {
-  return (
-    <Show when={props.deployment} fallback={<p class={cx(ui.muted, "m-0")}>No current deployment.</p>}>
-      {(deployment) => (
-        <div class="flex flex-col gap-3">
-          <div>
-            <A class="block truncate font-mono text-body text-console-accent hover:text-console-accent-hover" href={deploymentHref(deployment().id)} title={deployment().version}>{deployment().version}</A>
-            <p class="m-0 mt-0.5 text-chrome text-console-muted">
-              <Show when={props.promotedAt} fallback="Current">{(at) => <>Promoted <RelativeTime value={at()} /></>}</Show>
-              <Show when={deployment().preparation_state && deployment().preparation_state !== "ready"}> · templates {deployment().preparation_state}</Show>
-            </p>
-          </div>
-          <Show when={props.share}>
-            {(share) => (
-              <dl class="m-0 grid grid-cols-2 gap-3">
-                <div>
-                  <dt class={ui.microLabel}>Turns · 24h</dt>
-                  <dd class="m-0 mt-1 flex items-baseline gap-1.5">
-                    <span class="text-[1.15rem] font-medium tabular-nums">{share().turns.total}</span>
-                    <span class={cx("text-chrome", share().turns.failed ? "text-console-danger" : "text-console-muted")}>{share().turns.failed} failed</span>
-                  </dd>
-                </div>
-                <div>
-                  <dt class={ui.microLabel}>Open on older</dt>
-                  <dd class="m-0 mt-1 flex items-baseline gap-1.5"><span class="text-[1.15rem] font-medium tabular-nums">{share().older_open_sessions}</span><span class="text-chrome text-console-muted">sessions</span></dd>
-                </div>
-              </dl>
-            )}
-          </Show>
-        </div>
-      )}
     </Show>
   );
 }
@@ -318,8 +299,8 @@ export function Overview() {
     retry: false,
     refetchInterval: 15_000,
   }));
-  // Only people who can read deployments get the setup check and the panels
-  // that show the current Deployment.
+  // Only people who can read deployments get the setup check and the current
+  // Deployment marked in the list.
   const current = createQuery(() => ({
     queryKey: ["deployments", "current", ids().projectID, ids().environmentID],
     queryFn: () => getCurrentDeployment(ids()),
@@ -333,6 +314,14 @@ export function Overview() {
     enabled: enabled() && can("deployments.read"),
     retry: false,
     refetchInterval: 60_000,
+  }));
+  // The current Deployment's own record says whether its templates are ready.
+  const currentRecord = createQuery(() => ({
+    queryKey: ["deployments", "record", ids().projectID, ids().environmentID, current.data?.id],
+    queryFn: () => getDeployment(current.data!.id, ids()),
+    enabled: enabled() && !!current.data && can("deployments.read"),
+    retry: false,
+    refetchInterval: 15_000,
   }));
   const promoted = createQuery(() => ({
     queryKey: ["deployments", "promoted", ids().projectID, ids().environmentID, current.data?.id],
@@ -366,7 +355,8 @@ export function Overview() {
   };
   const sessions = () => read(overview);
   const machines = () => read(computers, can("computers.read"));
-  const currentRead = () => read(current, can("deployments.read"));
+  // The list fails with either of its two reads.
+  const deploymentsRead = () => { const list = read(deployments, can("deployments.read")); const mark = read(current, can("deployments.read")); return { ...list, failed: list.failed || mark.failed }; };
 
   return (
     <Page>
@@ -374,7 +364,7 @@ export function Overview() {
       <Show when={enabled()} fallback={<NoScopeState hint={<>If none are available, ask an access administrator for a role. <A href="/settings/account" class="underline">View your access</A>.</>} />}>
         <Switch>
           <Match when={deciding()}>
-            <PageSkeleton label="Loading overview" sections={["Agents", "Running now"]} rail="Current deployment" />
+            <PageSkeleton label="Loading overview" sections={["Agents", "Running now"]} rail="Deployments" />
           </Match>
           <Match when={setUp()}>
             <div class={ui.sectionStack}>
@@ -392,19 +382,9 @@ export function Overview() {
                 <div class={cx(ui.sectionStack, "min-w-0")}>
                   <Section title="Agents" link={{ href: "/agents", label: "All agents" }} read={sessions()} what="sessions">{(o) => <AgentRows agents={o.agents} />}</Section>
                   <Section title="Running now" count={overview.data?.active.count} link={{ href: "/sessions", label: "All sessions" }} read={sessions()} what="sessions">{(o) => <SessionRows sessions={o.active.sessions} />}</Section>
-                  <Section title="Recent deployments" link={{ href: "/deployments", label: "All deployments" }} read={read(deployments, can("deployments.read"))} what="deployments">{(page) => <DeploymentRows deployments={page.deployments} currentID={current.data?.id} />}</Section>
                 </div>
                 <div class={cx(ui.sectionStack, "min-w-0")}>
-                  <Panel title="Current deployment">
-                    <Switch>
-                      <Match when={currentRead().denied}><p class={cx(ui.muted, "m-0")}>You do not have access to deployments in this environment.</p></Match>
-                      <Match when={currentRead().failed}><p class={cx(ui.muted, "m-0 text-console-danger")}>{loadError(current.error, "Could not load the current deployment.")}</p></Match>
-                      <Match when={current.data !== undefined}>
-                        <DeploymentSummary deployment={current.data ?? null} promotedAt={promoted.data} share={overview.data?.deployment?.id === current.data?.id ? overview.data?.deployment : undefined} />
-                      </Match>
-                      <Match when={true}><LinesSkeleton label="Loading the current deployment" /></Match>
-                    </Switch>
-                  </Panel>
+                  <Section title="Deployments" link={{ href: "/deployments", label: "All deployments" }} read={deploymentsRead()} what="deployments">{(page) => <DeploymentRows deployments={page.deployments} current={current.data} promotedAt={promoted.data} preparation={currentRecord.data?.preparation_state} />}</Section>
                   <Section title="Computers" count={computers.data?.complete ? computers.data.computers.length : undefined} link={{ href: "/computers", label: "All computers" }} read={machines()} what="computers">{(page) => <ComputerRows computers={page.computers} complete={page.complete} />}</Section>
                 </div>
               </div>

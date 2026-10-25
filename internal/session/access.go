@@ -255,8 +255,6 @@ type sessionReadScope struct {
 	Agents           []uuid.UUID
 	ViewAgents       []uuid.UUID
 	SharedConnection uuid.UUID
-	// DeploymentsRead says whether the caller may see the current deployment.
-	DeploymentsRead bool
 }
 
 func readScopeFor(ctx context.Context, q db.DBTX, caller Caller, env uuid.UUID) (sessionReadScope, error) {
@@ -273,7 +271,6 @@ func readScopeFor(ctx context.Context, q db.DBTX, caller Caller, env uuid.UUID) 
 	scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}
 	filter.All, filter.ViewAgents = p.AgentPermissionScope(auth.PermissionSessionsRead, scope)
 	filter.AllAgents, filter.Agents = p.AgentPermissionScope(auth.PermissionAgentsUse, scope)
-	filter.DeploymentsRead = p.HasPermission(auth.PermissionDeploymentsRead, scope)
 	// An active principal with no grant gets an empty list, never an unfiltered one.
 	return filter, nil
 }

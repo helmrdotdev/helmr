@@ -46,8 +46,5 @@ func overviewResponse(o session.Overview) api.Overview {
 	for _, f := range o.Failures {
 		response.Failures = append(response.Failures, api.OverviewFailure{Agent: f.Agent, ErrorCode: f.ErrorCode, Count: f.Count, LastHour: f.LastHour, FirstAt: f.FirstAt.UTC(), LastAt: f.LastAt.UTC(), LastSessionID: f.LastSessionID.String(), LastTurnID: f.LastTurnID.String(), LastTurnSequence: f.LastTurnSequence})
 	}
-	if d := o.Deployment; d != nil {
-		response.Deployment = &api.OverviewDeployment{ID: d.ID.String(), Turns: api.OverviewTurns{Total: d.Turns, Failed: d.Failed}, OlderOpenSessions: d.OlderOpenSessions}
-	}
 	return response
 }
