@@ -36,7 +36,7 @@ func TestOverviewSummarizesVisibleWork(t *testing.T) {
 	if o.ActiveCount != 1 || o.Queued != 1 || len(o.Active) != 1 || o.Active[0].ID != f.session || o.Active[0].State != "queued" || o.Active[0].Origin != "user" {
 		t.Fatalf("active %+v", o.Active)
 	}
-	if len(o.Agents) != 1 || o.Agents[0].Turns != 6 || o.Agents[0].Failed != 3 || o.Agents[0].Active != 1 || o.Agents[0].Hourly[23] != 6 || o.Agents[0].HourlyFailed[23] != 3 || o.Agents[0].LastTurnAt == nil {
+	if len(o.Agents) != 1 || o.Agents[0].Turns != 6 || o.Agents[0].Failed != 3 || o.Agents[0].Active != 1 || o.Agents[0].Hourly[23] != 6 || o.Agents[0].HourlyFailed[23] != 3 {
 		t.Fatalf("agents %+v", o.Agents)
 	}
 	if len(o.Failures) != 2 || o.Failures[0].ErrorCode != "tool_error" || o.Failures[0].Count != 2 || o.Failures[0].LastHour != 2 || o.Failures[1].ErrorCode != "timeout" {

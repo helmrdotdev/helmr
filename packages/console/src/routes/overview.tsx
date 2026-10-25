@@ -2,16 +2,18 @@ import { hasPermission } from "../lib/auth";
 import { useMe } from "../lib/me";
 import { A } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
-import { createMemo, For, Match, Show, Switch, type JSX } from "solid-js";
+import { createMemo, createSignal, For, Match, Show, Switch, type JSX } from "solid-js";
 import { computerHref } from "../features/computers/navigation";
 import { deploymentHref } from "../features/deployments/navigation";
 import { useAttention } from "../lib/attention";
 import { SetUpPanel } from "../features/onboarding/SetUpPanel";
+import { UsageBand, useUsage } from "../features/overview/UsageBand";
 import { listComputers, type ComputerListItem, type ComputerScope } from "../lib/computers";
 import { agentHref, listAgentDefinitions } from "../lib/definitions";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents, listDeployments, type Deployment } from "../lib/deployments";
 import { failureRate, getOverview, orderComputers, overviewIssues, type Issue, type IssueTarget, type Overview as OverviewData, type OverviewAgent, type OverviewSession } from "../lib/overview";
 import { useScopeIDs } from "../lib/scope";
+import { formatDuration, type Usage, type UsageRange } from "../lib/usage";
 import { askConsolePath, sessionConsolePath } from "../lib/sessions";
 import { Icon, type IconName } from "../ui/Icon";
 import { IDText } from "../ui/IDText";
@@ -151,19 +153,30 @@ function Spark(props: { hourly: number[]; failed: number[] }) {
   );
 }
 
-function AgentRows(props: { agents: OverviewAgent[] }) {
-  const sorted = createMemo(() => [...props.agents].sort((a, b) => b.turns - a.turns || b.active - a.active || a.agent.localeCompare(b.agent)));
+// Each Agent's work in the last 24 hours (sessions in progress, turns per hour,
+// failures) beside its time and people over the usage window. An Agent that
+// worked only earlier in the window still has a row.
+function AgentRows(props: { agents: OverviewAgent[]; usage: Usage | undefined }) {
+  const empty = (agent: string): OverviewAgent => ({ agent, active: 0, turns: 0, failed: 0, hourly: Array(24).fill(0), hourly_failed: Array(24).fill(0) });
+  const sorted = createMemo(() => {
+    const today = new Map(props.agents.map((a) => [a.agent, a]));
+    for (const a of props.usage?.agents ?? []) if (!today.has(a.agent)) today.set(a.agent, empty(a.agent));
+    const seconds = (agent: string) => props.usage?.agents.find((a) => a.agent === agent)?.seconds ?? 0;
+    return [...today.values()].sort((a, b) => b.active - a.active || seconds(b.agent) - seconds(a.agent) || b.turns - a.turns || a.agent.localeCompare(b.agent));
+  });
+  const share = (agent: string) => props.usage?.agents.find((a) => a.agent === agent);
   return (
-    <Show when={sorted().length} fallback={<p class={cx(ui.muted, "m-0")}>No agent has worked in the last 24 hours.</p>}>
+    <Show when={sorted().length} fallback={<p class={cx(ui.muted, "m-0")}>No agent has worked {props.usage ? `in the last ${props.usage.days} days` : "in the last 24 hours"}.</p>}>
+      <p class="m-0 text-chrome text-console-muted">Sessions, turns per hour and failures over the last 24 hours{props.usage ? `; time and people over the last ${props.usage.days} days` : ""}.</p>
       <List label="Agents">
         <For each={sorted()}>{(agent) => (
           <ListItem line label={agent.agent}>
             <A class="min-w-0 flex-1 truncate font-mono text-chrome text-console-accent hover:text-console-accent-hover" href={agentHref(agent.agent)}>{agent.agent}</A>
             <span class="w-20 shrink-0 whitespace-nowrap text-chrome text-console-muted">{agent.active} active</span>
             <Spark hourly={agent.hourly} failed={agent.hourly_failed} />
-            <span class="w-20 shrink-0 whitespace-nowrap text-right text-chrome tabular-nums">{agent.turns} turns</span>
-            <span class={cx("w-18 shrink-0 whitespace-nowrap text-right text-chrome tabular-nums", agent.failed ? "text-console-danger" : "text-console-muted")}>{agent.failed} failed</span>
-            <span class={cx(time, "max-sm:hidden")}><RelativeTime value={agent.last_turn_at} /></span>
+            <span class="w-16 shrink-0 whitespace-nowrap text-right text-chrome tabular-nums" title={props.usage ? `Agent time over ${props.usage.days} days` : undefined}>{props.usage ? formatDuration(share(agent.agent)?.seconds ?? 0) : "—"}</span>
+            <span class="w-20 shrink-0 whitespace-nowrap text-right text-chrome tabular-nums max-sm:hidden" title={props.usage ? `People over ${props.usage.days} days` : undefined}>{props.usage ? `${share(agent.agent)?.people ?? 0} ${share(agent.agent)?.people === 1 ? "person" : "people"}` : "—"}</span>
+            <span class={cx("w-24 shrink-0 whitespace-nowrap text-right text-chrome tabular-nums", agent.failed ? "text-console-danger" : "text-console-muted")}>{agent.failed} failed today</span>
           </ListItem>
         )}</For>
       </List>
@@ -355,6 +368,10 @@ export function Overview() {
   };
   const sessions = () => read(overview);
   const machines = () => read(computers, can("computers.read"));
+  // The usage band's window also gives the Agents rows their hours and people.
+  const [range, setRange] = createSignal<UsageRange>(30);
+  const usage = useUsage(range);
+  const usageData = () => (isDenied(usage.error) ? undefined : usage.data);
   // The list fails with either of its two reads.
   const deploymentsRead = () => { const list = read(deployments, can("deployments.read")); const mark = read(current, can("deployments.read")); return { ...list, failed: list.failed || mark.failed }; };
 
@@ -378,9 +395,10 @@ export function Overview() {
             <div class={ui.sectionStack}>
               <NeedsAttention issues={issues()} />
               <Tiles overview={sessions()} computers={{ ...machines(), data: machines().data?.computers }} computersComplete={computers.data?.complete ?? true} questions={questions()} />
+              <UsageBand range={range()} onRange={setRange} usage={usage} />
               <div class="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] items-start gap-6 max-[1120px]:grid-cols-1">
                 <div class={cx(ui.sectionStack, "min-w-0")}>
-                  <Section title="Agents" link={{ href: "/agents", label: "All agents" }} read={sessions()} what="sessions">{(o) => <AgentRows agents={o.agents} />}</Section>
+                  <Section title="Agents" link={{ href: "/agents", label: "All agents" }} read={sessions()} what="sessions">{(o) => <AgentRows agents={o.agents} usage={usageData()} />}</Section>
                   <Section title="Running now" count={overview.data?.active.count} link={{ href: "/sessions", label: "All sessions" }} read={sessions()} what="sessions">{(o) => <SessionRows sessions={o.active.sessions} />}</Section>
                 </div>
                 <div class={cx(ui.sectionStack, "min-w-0")}>

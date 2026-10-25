@@ -10,6 +10,7 @@ DROP TABLE IF EXISTS
     permission_groups,
     boot_seed_objects,
     boot_seed_builds,
+    slack_channel_names,
     slack_delivery_limits,
     slack_method_limits,
     slack_posts,

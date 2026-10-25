@@ -33,12 +33,7 @@ func overviewResponse(o session.Overview) api.Overview {
 		Failures: make([]api.OverviewFailure, 0, len(o.Failures)),
 	}
 	for _, a := range o.Agents {
-		var last = a.LastTurnAt
-		if last != nil {
-			utc := last.UTC()
-			last = &utc
-		}
-		response.Agents = append(response.Agents, api.OverviewAgent{Agent: a.Agent, Active: a.Active, Turns: a.Turns, Failed: a.Failed, LastTurnAt: last, Hourly: a.Hourly[:], HourlyFailed: a.HourlyFailed[:]})
+		response.Agents = append(response.Agents, api.OverviewAgent{Agent: a.Agent, Active: a.Active, Turns: a.Turns, Failed: a.Failed, Hourly: a.Hourly[:], HourlyFailed: a.HourlyFailed[:]})
 	}
 	for _, s := range o.Active {
 		response.Active.Sessions = append(response.Active.Sessions, api.OverviewSession{ID: s.ID.String(), Agent: s.Agent, State: s.State, Since: s.Since.UTC(), Origin: s.Origin, SlackChannelID: s.SlackChannelID})

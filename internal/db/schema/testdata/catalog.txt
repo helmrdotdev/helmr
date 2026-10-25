@@ -783,6 +783,10 @@ column slack_channel_bindings.installation_id uuid not null
 column slack_channel_bindings.org_id uuid not null
 column slack_channel_bindings.slack_channel_id text not null
 column slack_channel_bindings.team_id text not null
+column slack_channel_names.installation_id uuid not null
+column slack_channel_names.name text not null
+column slack_channel_names.observed_at timestamp with time zone not null default clock_timestamp()
+column slack_channel_names.slack_channel_id text not null
 column slack_connections.agent_id uuid not null
 column slack_connections.created_at timestamp with time zone not null default clock_timestamp()
 column slack_connections.created_by_user_id uuid not null
@@ -1849,6 +1853,10 @@ constraint slack_channel_bindings p PRIMARY KEY (id)
 constraint slack_channel_bindings u UNIQUE (connection_id, slack_channel_id)
 constraint slack_channel_bindings u UNIQUE (id, environment_id)
 constraint slack_channel_bindings u UNIQUE (id, environment_id, org_id, team_id, slack_channel_id)
+constraint slack_channel_names c CHECK (name <> ''::text AND char_length(name) <= 255)
+constraint slack_channel_names c CHECK (slack_channel_id <> ''::text)
+constraint slack_channel_names f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
+constraint slack_channel_names p PRIMARY KEY (installation_id, slack_channel_id)
 constraint slack_connections f FOREIGN KEY (created_by_user_id) REFERENCES users(id)
 constraint slack_connections f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id)
 constraint slack_connections f FOREIGN KEY (slack_app_registration_id) REFERENCES slack_app_registrations(id)

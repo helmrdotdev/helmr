@@ -111,6 +111,7 @@ GET /api/projects/{project}/environments/{environment}/templates/{template}/buil
 GET /api/projects/{project}/environments/{environment}/triggers
 GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}
 GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}/occurrences
+GET /api/projects/{project}/environments/{environment}/usage
 GET /api/projects/{project}/settings
 GET /api/regions
 GET /api/role-grants

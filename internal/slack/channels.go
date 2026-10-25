@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
+	"github.com/jackc/pgx/v5"
 )
 
 var ErrChannelVerification = errors.New("the Slack channel could not be verified; invite the app to an unshared workspace channel and try again")
@@ -138,6 +140,19 @@ func (c *WebClient) verifyConversation(ctx context.Context, installation uuid.UU
 		}
 	}
 	return v.Name, nil
+}
+
+// rememberChannelName keeps the name Slack reported for a channel so the
+// Console can show it; a DM has no name and is left out.
+func rememberChannelName(ctx context.Context, pool db.TxBeginner, installation uuid.UUID, channel, name string) error {
+	if name == "" {
+		return nil
+	}
+	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO slack_channel_names(installation_id,slack_channel_id,name) VALUES($1,$2,left($3,255))
+ ON CONFLICT(installation_id,slack_channel_id) DO UPDATE SET name=excluded.name,observed_at=clock_timestamp() WHERE slack_channel_names.name IS DISTINCT FROM excluded.name`, installation, channel, name)
+		return err
+	})
 }
 
 func (c *WebClient) VerifyConversation(ctx context.Context, installation uuid.UUID, revision int64, team, channel, peer string) error {
