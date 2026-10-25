@@ -15,7 +15,7 @@ type AgentDeletionBlocker struct {
 	SamplesIncomplete bool
 }
 
-var ErrAgentDeleted = errors.New("Agent is deleted; restore it before execution")
+var ErrAgentDeleted = errors.New("agent is deleted; restore it before execution")
 
 // AgentDeletionBlockers shares execution settlement predicates with history
 // retention. Pending Slack delivery is instead suppressed by connection cleanup.

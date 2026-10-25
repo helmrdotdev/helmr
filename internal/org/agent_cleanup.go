@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrAgentDependenciesChanged = errors.New("Agent access changed during deletion; refresh and retry")
+var ErrAgentDependenciesChanged = errors.New("agent access changed during deletion; refresh and retry")
 
 // AgentGrantCleanup owns selected-edge cleanup. Lock before Slack/Environment;
 // recheck after the caller acquires the Agent FOR UPDATE fence.

@@ -31,8 +31,8 @@ type AgentDeletionEffects struct {
 	TriggerActivationsSealed      int64
 }
 
-var ErrAgentDeletionBlocked = errors.New("Agent deletion has unresolved prerequisites")
-var ErrAgentNotFound = errors.New("Agent not found")
+var ErrAgentDeletionBlocked = errors.New("agent deletion has unresolved prerequisites")
+var ErrAgentNotFound = errors.New("agent not found")
 var ErrAgentDeleted = errors.New("restore deleted Agents before promotion")
 
 type DeletedAgentsError struct {
