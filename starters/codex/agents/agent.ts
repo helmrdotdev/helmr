@@ -11,6 +11,7 @@ export const workspace = template({
     .run(["mkdir", "-p", "/var/lib/helmr/codex"])
     .workdir("/workspace"),
   resources: { cpu: 2, memory: "4GiB" },
+  deleteAfterUnused: "1m",
   // Add this Secret in the Console for each Environment you deploy to. The key
   // is only sent to the model provider; the Computer sees a placeholder.
   secrets: [{ secret: modelKey.secret, env: { name: modelKey.env, mode: "protected", allowedOrigins: [modelKey.origin] } }],
@@ -20,7 +21,7 @@ export const assistant = agent({
   id: agentName,
   template: workspace,
   suspension: "manual",
-  closeAfterIdle: "never",
+  closeAfterIdle: "30m",
   maxTurnDuration: "15m",
   init({ session, recovery }) {
     return new CodexSession({ cwd: "/workspace", stateDirectory: "/var/lib/helmr/codex", sessionId: session.id, model, instructions: introduction, recovery: recovery.kind })
