@@ -32,6 +32,8 @@ const TONES = {
   process_stop: { requested: "waiting", stopping: "waiting", stopped: "succeeded" },
   question: { pending: "waiting", answered: "succeeded", cancelled: "revoked" },
   attention: { question: "waiting", hold: "waiting", failed_turn: "revoked", slack_reauthorization: "revoked" },
+  session_work: { running: "active", queued: "waiting", held: "waiting" },
+  computer_wait: { waiting: "waiting" },
 } as const satisfies Record<string, Record<string, Tone>>;
 
 // Labels that read better than the status name.
@@ -39,6 +41,7 @@ const LABELS: Partial<Record<keyof typeof TONES, Record<string, string>>> = {
   computer_residency: { parked: "Sleeping", parking: "Hibernating", restoring: "Waking", running: "Awake" },
   agent: { defined: "In current deployment", not_defined: "Not in current deployment", deleted: "Deleted" },
   attention: { question: "Question", hold: "Held", failed_turn: "Failed", slack_reauthorization: "Connection" },
+  computer_wait: { waiting: "Waiting for capacity" },
 };
 
 export type BadgeResource = keyof typeof TONES;

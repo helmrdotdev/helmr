@@ -92,6 +92,7 @@ GET /api/projects/{project}/environments/{environment}/deployments
 GET /api/projects/{project}/environments/{environment}/deployments/current
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}/events
+GET /api/projects/{project}/environments/{environment}/overview
 GET /api/projects/{project}/environments/{environment}/secrets
 GET /api/projects/{project}/environments/{environment}/secrets/{secret}
 GET /api/projects/{project}/environments/{environment}/sessions

@@ -1527,6 +1527,8 @@ CREATE INDEX sessions_idle_policy ON sessions(environment_id, id) WHERE status='
 
 CREATE INDEX sessions_closing ON sessions(environment_id, id) WHERE status='closing';
 
+CREATE INDEX sessions_open_deployment ON sessions(environment_id, deployment_id) WHERE status IN ('open', 'closing');
+
 CREATE INDEX sessions_children ON sessions(environment_id, parent_session_id) WHERE parent_session_id IS NOT NULL;
 
 CREATE TABLE session_processes (
@@ -1683,6 +1685,8 @@ CREATE INDEX turns_queue ON turns(environment_id, session_id, seq) WHERE status=
 CREATE INDEX turns_deadlines ON turns(deadline_at, environment_id, session_id) WHERE status IN ('running') AND deadline_at IS NOT NULL;
 
 CREATE INDEX turns_failed ON turns(environment_id, terminal_at) WHERE status='failed';
+
+CREATE INDEX turns_created ON turns(environment_id, created_at);
 
 -- One scheduled instant of an Agent's trigger, across every activation and
 -- deployment: the identity is (agent, key, scheduled_at).

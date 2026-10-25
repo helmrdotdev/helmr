@@ -38,8 +38,7 @@ test("an environment before its first Deployment shows setup on the Overview", a
   const setup = page.getByRole("region", { name: "Set up" });
   await expect(setup.getByRole("list", { name: "Set up" }).getByRole("listitem")).toHaveCount(4);
   await expect(setup.getByRole("radio", { name: "Claude Code" })).toBeChecked();
-  await expect(page.getByText("No current deployment")).toBeVisible();
-  await expect(page.getByRole("region", { name: "Waiting on you" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: /^Needs attention/ })).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Overview", exact: true })).toBeVisible();
 });
 
