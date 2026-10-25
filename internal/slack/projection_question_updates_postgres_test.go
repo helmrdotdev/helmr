@@ -16,7 +16,7 @@ func TestSlackQuestionWithdrawalPreservesIssuedRevisionAndOtherAsks(t *testing.T
 		t.Run(phase, func(t *testing.T) {
 			f := newStatusFixture(t)
 			turn, ask := f.pendingQuestion(t)
-			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 			peer := uuid.NewV7()
 			if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{

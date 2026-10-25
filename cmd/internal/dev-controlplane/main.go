@@ -149,7 +149,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err := audit.ValidatePrivileges(ctx, pool, false); err != nil {
 		return err
 	}
-	if err := audit.ObservePolicy(ctx, pool, cfg.auditPolicy, "control-plane"); err != nil {
+	if err := audit.ObservePolicy(ctx, pool, cfg.auditPolicy, audit.ControlPlane); err != nil {
 		return err
 	}
 	diagnosticAdmission, err := config.LoadDiagnosticAdmission()

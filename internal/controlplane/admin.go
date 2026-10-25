@@ -60,7 +60,7 @@ func (s *Server) adminCreateRegion(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Append(r.Context(), tx, s.auditPolicy, audit.Event{Actor: actor, Action: "region.created", TargetKind: "region", Details: audit.RegionDetails{RegionID: created.ID}})
+		return audit.Append(r.Context(), tx, s.auditPolicy, audit.Event{Evidence: actor, Action: "region.created", TargetKind: "region", Details: audit.RegionDetails{RegionID: created.ID}})
 	})
 	if err != nil {
 		s.writeRegionError(w, r, err)
@@ -87,7 +87,7 @@ func (s *Server) adminUpdateRegion(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return audit.Append(r.Context(), tx, s.auditPolicy, audit.Event{Actor: actor, Action: "region.updated", TargetKind: "region", Details: audit.RegionDetails{RegionID: updated.ID}})
+		return audit.Append(r.Context(), tx, s.auditPolicy, audit.Event{Evidence: actor, Action: "region.updated", TargetKind: "region", Details: audit.RegionDetails{RegionID: updated.ID}})
 	})
 	if err != nil {
 		s.writeRegionError(w, r, err)
@@ -168,7 +168,7 @@ func (s *Server) adminUpdateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			return err
 		}
-		return audit.Append(r.Context(), tx, s.auditPolicy, audit.Event{Actor: actor, Action: "worker_group.updated", TargetKind: "worker_group", TargetID: groupID, Details: audit.LifecycleDetails{}})
+		return audit.Append(r.Context(), tx, s.auditPolicy, audit.Event{Evidence: actor, Action: "worker_group.updated", TargetKind: "worker_group", TargetID: groupID, Details: audit.LifecycleDetails{}})
 	})
 	if err != nil {
 		s.writeWorkerGroupError(w, r, err)
@@ -193,7 +193,7 @@ func (s *Server) adminDisableWorkerGroup(w http.ResponseWriter, r *http.Request)
 	s.adminTransitionWorkerGroup(w, r, workergroup.DisableGroup)
 }
 
-type groupTransition func(context.Context, db.TxBeginner, auditpolicy.Policy, audit.Actor, uuid.UUID, int64) (workergroup.GroupStatus, error)
+type groupTransition func(context.Context, db.TxBeginner, auditpolicy.Policy, audit.Evidence, uuid.UUID, int64) (workergroup.GroupStatus, error)
 
 func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Request, transition groupTransition) {
 	actor, actorErr := audit.InstallationOperator(principalFromContext(r.Context()))
@@ -314,7 +314,7 @@ func (s *Server) adminDisableWorkerPool(w http.ResponseWriter, r *http.Request) 
 	s.adminTransitionWorkerPool(w, r, workergroup.DisablePool)
 }
 
-type poolTransition func(context.Context, db.TxBeginner, auditpolicy.Policy, audit.Actor, uuid.UUID, uuid.UUID, int64) (db.WorkerGroup, db.WorkerPool, error)
+type poolTransition func(context.Context, db.TxBeginner, auditpolicy.Policy, audit.Evidence, uuid.UUID, uuid.UUID, int64) (db.WorkerGroup, db.WorkerPool, error)
 
 func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Request, transition poolTransition) {
 	actor, actorErr := audit.InstallationOperator(principalFromContext(r.Context()))

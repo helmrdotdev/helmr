@@ -30,7 +30,7 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 	member := dbtest.GrantMember(t, f.pool, org, viewer, &f.env, "sessions.read")
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id=$1;
  INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE member_id=$1`, pgx.QueryExecModeSimpleProtocol, member, f.agent)
-	caller := session.Caller{Kind: "user", ID: viewer}
+	caller := session.Caller{Kind: "user", ID: viewer, CredentialID: uuid.NewV7()}
 	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, f.session); err != nil {
 		t.Fatal("selected personal history denied", err)
 	}

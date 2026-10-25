@@ -74,7 +74,7 @@ func Delete(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginn
 				return idempotency.Completion{}, err
 			}
 			if !deleted {
-				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: deletion.Scope.EnvironmentID, ComputerID: deletion.ComputerID, Action: "computer.deleted", TargetKind: "computer", TargetID: deletion.ComputerID}); err != nil {
+				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: deletion.Scope.EnvironmentID, ComputerID: deletion.ComputerID, Action: "computer.deleted", TargetKind: "computer", TargetID: deletion.ComputerID}); err != nil {
 					return idempotency.Completion{}, err
 				}
 			}

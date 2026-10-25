@@ -286,7 +286,7 @@ func TestPromotionAuditGrantActorAndRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='deployment.promoted' AND target_id=$1 AND actor_kind='api_key' AND credential_id=$2 AND actor_id=$2 AND org_id=$3 AND project_id=$4 AND environment_id=$5 AND outcome='succeeded'`, record.ID, principal.APIKeyID, principal.OrgID, f.request.projectID, f.request.environmentID).Scan(&count); err != nil || count != 1 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='deployment.promoted' AND target_id=$1 AND actor_api_key_id IS NOT NULL AND credential_id=$2 AND actor_api_key_id=$2 AND org_id=$3 AND project_id=$4 AND environment_id=$5 AND outcome='succeeded'`, record.ID, principal.APIKeyID, principal.OrgID, f.request.projectID, f.request.environmentID).Scan(&count); err != nil || count != 1 {
 		t.Fatal("promotion fact differs", count, err)
 	}
 }

@@ -56,12 +56,12 @@ export function AuditEvents(props: { installation?: boolean }) {
       <Show when={page()}>{result => <>
         <DataTable columns={COLUMNS} minWidth="min-w-180">
           <Show when={result().events.length > 0} fallback={<tr><td colSpan={COLUMNS.length}>No events match this range, filters and current access.</td></tr>}>
-            <For each={result().events}>{event => <tr>
+            <For each={result().events}>{event => <tr class="[&>td]:align-top!">
               <td><time datetime={event.recorded_at}>{new Date(event.recorded_at).toLocaleString()}</time></td>
-              <td>{event.actor_identity?.display_name || event.actor_service || event.actor_kind}<Show when={event.actor_identity?.email}><div class="text-console-subtle">{event.actor_identity?.email}</div></Show></td>
+              <td>{event.actor_identity?.display_name || event.actor_component || event.actor_user_id || event.actor_api_key_id || event.actor_session_id || event.actor_worker_host_id || "Unidentified"}<Show when={event.actor_identity?.email}><div class="text-console-subtle">{event.actor_identity?.email}</div></Show></td>
               <td>{event.action}</td><td>{event.outcome}</td>
               <td>{event.target_kind}<div class="break-all font-mono text-chrome">{event.target_id || event.target_user_id || "—"}</div><Show when={event.target_resolution === "unresolved"}><span>Unresolved</span></Show></td>
-              <td><details><summary class="cursor-pointer">View evidence</summary><dl class="my-2 space-y-2 text-control"><dt>Environment</dt><dd class="break-all">{event.environment_id || "Organization / installation"}</dd><dt>Occurred</dt><dd>{event.occurred_at}</dd><dt>Expires</dt><dd>{event.expires_at}</dd><dt>Credential</dt><dd class="break-all">{event.credential_kind} {event.credential_id}</dd><dt>Source</dt><dd>{event.source_ip || "Unavailable"} · {event.channel}</dd><dt>Operation</dt><dd class="break-all">{event.operation_id}</dd></dl><pre class="max-w-xl overflow-auto whitespace-pre-wrap break-all text-control">{JSON.stringify(event, null, 2)}</pre></details></td>
+              <td><details><summary class="cursor-pointer">View evidence</summary><dl class="my-2 space-y-2 text-control"><dt>Environment</dt><dd class="break-all">{event.environment_id || "Organization / installation"}</dd><dt>Occurred</dt><dd>{event.occurred_at}</dd><dt>Expires</dt><dd>{event.expires_at}</dd><dt>Authentication</dt><dd>{event.authentication.result}</dd><dt>Authorization</dt><dd>{event.authorization.decision}</dd><dt>Credential</dt><dd class="break-all">{event.authentication.credential_kind} {event.authentication.credential_id}</dd><dt>Source</dt><dd>{event.source_ip || "Unavailable"} · {event.channel}</dd><dt>Operation</dt><dd class="break-all">{event.operation_id}</dd></dl><pre class="max-h-96 max-w-xl overflow-auto whitespace-pre-wrap break-all text-control">{JSON.stringify(event, null, 2)}</pre></details></td>
             </tr>}</For>
           </Show>
         </DataTable>

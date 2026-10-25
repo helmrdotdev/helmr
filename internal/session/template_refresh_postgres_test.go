@@ -6,9 +6,10 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+
 	"github.com/jackc/pgx/v5"
 )
 
@@ -21,11 +22,11 @@ func TestManualRefreshRejectsChangedSecretExposure(t *testing.T) {
 			}
 			switch transition {
 			case "rotated":
-				if _, err := p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
+				if _, err := p.f.secrets.Rotate(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
 					t.Fatal(err)
 				}
 			case "revoked":
-				if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke"); err != nil {
+				if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, "revoke"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -113,7 +114,7 @@ func TestManualRefreshFailurePreservesPreviousImage(t *testing.T) {
 	if err != nil || pin.ImageBuildID != p.ref.ImageBuildID {
 		t.Fatalf("old image cannot serve new Computer: %+v %v", pin, err)
 	}
-	if _, err := p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "rotate-after-publication"); err != nil {
+	if _, err := p.f.secrets.Rotate(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, []byte("v2"), "rotate-after-publication"); err != nil {
 		t.Fatal(err)
 	}
 	stale, err := computer.ReadImageBuildState(t.Context(), p.f.pool, p.f.env, p.ref.ImageBuildID, nil)

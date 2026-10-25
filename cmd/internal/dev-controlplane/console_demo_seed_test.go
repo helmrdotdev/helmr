@@ -163,7 +163,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 		t.Fatalf("background reconciliation changed the demo history:\n%s\n%s", before, after)
 	}
 	// The Overview reads the held Session and the recent failure as waiting work.
-	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}, uuid.MustParse(demoSeedEnvironmentID))
+	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101"), CredentialID: uuid.NewV7()}, uuid.MustParse(demoSeedEnvironmentID))
 	if err != nil || attention.HoldCount != 1 || attention.FailedTurnCount != 1 || attention.QuestionCount != 0 ||
 		attention.Holds[0].SessionID.String() != demoSeedHeldSessionID || attention.FailedTurns[0].ID.String() != demoSeedFailedTurnID {
 		t.Fatalf("demo attention: %+v %v", attention, err)
@@ -183,7 +183,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  GROUP BY s.created_at,t.processing_closed_at,t.terminal_at,d.created_at,trigger.active_from,spec.created_at`, demoSeedEnvironmentID, demoSeedSessionID).Scan(&chronological); err != nil || !chronological {
 		t.Fatalf("demo history chronological=%v: %v", chronological, err)
 	}
-	caller := session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}
+	caller := session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101"), CredentialID: uuid.NewV7()}
 	env := uuid.MustParse(demoSeedEnvironmentID)
 	// The promoted Deployment is synthetic: its image spec has no Computer seed
 	// profile, so work sent to it is refused before anything is admitted.

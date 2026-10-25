@@ -79,7 +79,7 @@ func TestWorkerAgentAdmissionFences(t *testing.T) {
 			}
 			if test.code == "authority_changed" {
 				var captured bool
-				if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='runtime.operation_refused' AND org_id IS NULL AND actor_kind='service' AND credential_id=$1 AND details->>'reason'='stale_authority' AND details->>'operation'='POST /worker/v1/sessions/operations')`, f.Worker).Scan(&captured); err != nil || !captured {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='runtime.operation_refused' AND org_id IS NULL AND actor_worker_host_id IS NOT NULL AND credential_id=$1 AND details->>'reason'='stale_authority' AND details->>'operation'='POST /worker/v1/sessions/operations')`, f.Worker).Scan(&captured); err != nil || !captured {
 					t.Fatalf("missing verified refusal: %v %v", captured, err)
 				}
 			}
@@ -149,11 +149,11 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 			f := sessiontest.New(t)
 			handler := newPostgresServer(t, f.Pool)
 			client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
-			origin, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+			origin, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, WorkerHostID: f.Worker, WorkerEpoch: 1, ProcessEpoch: 1, LeaseEpoch: 1, AuthorityGeneration: 1}
+			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, WorkerHostID: f.Worker, WorkerEpoch: 1, ProcessEpoch: 1, LeaseEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 			if _, err = dispatchRuntimeTurn(t, f.Pool, execution); err != nil {
 				t.Fatal(err)
 			}
@@ -178,6 +178,10 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 				client.post(t, "/worker/v1/sessions/operations", request, 200, &stale)
 				if stale.Error == nil || stale.Error.Code != "authority_changed" {
 					t.Fatalf("stale receipt: %+v", stale)
+				}
+				var captured bool
+				if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='runtime.operation_refused' AND actor_worker_host_id=$1 AND actor_session_id IS NULL AND org_id IS NULL AND authentication_result='verified' AND authorization_evidence->>'decision'='denied' AND authorization_evidence->'checks' @> '[{"type":"runtime_binding","result":"failed","reason":"generation_changed","generation":1,"observed_generation":2}]'::jsonb)`, f.Worker).Scan(&captured); err != nil || !captured {
+					t.Fatal("runtime HTTP refusal lost check", captured, err)
 				}
 				// A new observation with renewed authority can recover the same
 				// key; the stale envelope never borrows the new generation.

@@ -221,7 +221,7 @@ func lockConnectionDisconnection(ctx context.Context, tx pgx.Tx, org, environmen
 	return &ConnectionDisconnection{registration: registration, installation: installation, connection: connection, environment: environment, org: org, active: active}, nil
 }
 
-func (p *ConnectionDisconnection) Apply(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Actor) error {
+func (p *ConnectionDisconnection) Apply(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence) error {
 	var err error
 	if p.installation != nil {
 		if err = suppressInstallationPosts(ctx, tx, *p.installation); err != nil {
@@ -243,10 +243,10 @@ func (p *ConnectionDisconnection) Apply(ctx context.Context, tx pgx.Tx, policy a
 	if p.causeAgent != nil {
 		details = audit.AgentCleanupDetails{CauseAgentID: p.causeAgent.String(), Reason: "agent_deleted"}
 	}
-	return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, OrgID: p.org, EnvironmentID: p.environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: p.connection, Details: details})
+	return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: p.org, EnvironmentID: p.environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: p.connection, Details: details})
 }
 
-func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.Actor, org, user, environment, connection uuid.UUID) error {
+func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.Evidence, org, user, environment, connection uuid.UUID) error {
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
 		p, err := LockConnectionDisconnection(ctx, tx, org, user, environment, connection)
 		if err != nil {

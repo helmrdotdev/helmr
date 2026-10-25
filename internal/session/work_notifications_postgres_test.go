@@ -3,13 +3,14 @@ package session_test
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/audit"
+
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+
 	"github.com/helmrdotdev/helmr/internal/session"
 )
 
@@ -209,7 +210,7 @@ func TestIdleStopIntentNotifiesWithoutTurnOrNewHold(t *testing.T) {
 			case "revocation":
 				p := preparationResidentImage(t)
 				f = p.f.fixture
-				if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, p.f.secretID, "revoke"); err != nil {
+				if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, p.f.secretID, "revoke"); err != nil {
 					t.Fatal(err)
 				}
 				// Revocation was already recorded, but the physical stop intent still needs delivery.

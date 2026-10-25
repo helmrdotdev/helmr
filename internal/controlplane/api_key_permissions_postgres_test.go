@@ -91,7 +91,7 @@ func TestAPIKeyHTTPPostgresContract(t *testing.T) {
 		t.Fatal("creator provenance missing", err)
 	}
 	var attributed bool
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events a JOIN login_sessions s ON s.id=a.credential_id AND s.user_id=a.actor_id WHERE a.action='api_key.issued' AND a.target_id=$1 AND a.actor_kind='human' AND a.project_id=$2 AND a.environment_id=$3)`, issued.ID, fixture.projectID, fixture.environmentID).Scan(&attributed); err != nil || !attributed {
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events a JOIN login_sessions s ON s.id=a.credential_id AND s.user_id=a.actor_user_id WHERE a.action='api_key.issued' AND a.target_id=$1 AND a.actor_user_id IS NOT NULL AND a.project_id=$2 AND a.environment_id=$3)`, issued.ID, fixture.projectID, fixture.environmentID).Scan(&attributed); err != nil || !attributed {
 		t.Fatal("issued key has no fact attributed to its authenticated login", attributed, err)
 	}
 	path := "/api/projects/api-keys/environments/production/api-keys/"

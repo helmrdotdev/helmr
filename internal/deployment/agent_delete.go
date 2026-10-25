@@ -118,7 +118,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 		}
 		m.Actor, err = audit.Authorized(current, permission, scope)
 		if err != nil {
-			return ErrPermissionRequired
+			return errors.Join(ErrPermissionRequired, err)
 		}
 		if !dryRun && revision != strconv.FormatInt(result.Revision, 10) {
 			return org.ErrStaleRevision
@@ -184,7 +184,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 		}
 		result.Changed = true
 		e := result.Effects
-		return audit.Append(ctx, tx, policy, audit.Event{Actor: m.Actor, OrgID: p.OrgID, EnvironmentID: env, Action: action, TargetKind: "agent", TargetID: id, Details: audit.AgentChangeDetails{Revision: result.Revision, EdgesRemoved: e.SelectedAgentEdgesRemoved, AssignmentsRemoved: e.IneffectiveAssignmentsRemoved, MixedPreserved: e.MixedAssignmentsPreserved, ConnectionID: e.SlackConnectionDisconnected, ActivationsSealed: e.TriggerActivationsSealed}})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: m.Actor, OrgID: p.OrgID, EnvironmentID: env, Action: action, TargetKind: "agent", TargetID: id, Details: audit.AgentChangeDetails{Revision: result.Revision, EdgesRemoved: e.SelectedAgentEdgesRemoved, AssignmentsRemoved: e.IneffectiveAssignmentsRemoved, MixedPreserved: e.MixedAssignmentsPreserved, ConnectionID: e.SlackConnectionDisconnected, ActivationsSealed: e.TriggerActivationsSealed}})
 	})
 	if errors.Is(err, access.ErrDenied) || slack.IsInstallationDenied(err) {
 		err = ErrPermissionRequired

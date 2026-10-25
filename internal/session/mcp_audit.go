@@ -34,24 +34,26 @@ func AdmitMCP(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner
 		if err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, policy, audit.Event{Actor: audit.RuntimeActor(caller.ID, caller.Execution.AuthorityGeneration, caller.Execution.ProcessEpoch), EnvironmentID: caller.Execution.EnvironmentID, SessionID: caller.ID, Action: "mcp.admitted", Outcome: "accepted", TargetKind: "mcp", TargetID: caller.ID, Causality: audit.Causality{InitiatorKind: origin.kind(), InitiatorID: origin.id()}, Details: audit.MCPDetails{Tool: tool}})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: callerRuntimeAuditEvidence(caller), EnvironmentID: caller.Execution.EnvironmentID, SessionID: caller.ID, Action: "mcp.admitted", Outcome: "accepted", TargetKind: "mcp", TargetID: caller.ID, Causality: audit.Causality{InitiatorKind: origin.kind(), InitiatorID: origin.id()}, Details: audit.MCPDetails{Tool: tool}})
 	})
 	if err == nil || errors.Is(err, audit.ErrCapture) || db.CommitOutcomeUnknown(err) {
 		return err
 	}
 	// The authenticated worker is known, but a failed runtime check does not
 	// establish the claimed Session or Environment as the caller's custody.
-	actor := audit.System("worker-host")
+	actor := audit.Unauthenticated("absent", "")
 	if caller.Host != nil {
-		actor.CredentialKind = "worker_host"
-		actor.CredentialID = caller.Host.HostID
-		actor.CredentialVersion = caller.Host.HostClaimVersion
+		actor = audit.Worker(caller.Host.HostID, caller.Host.HostClaimVersion)
+		var refusal *audit.Refusal
+		if errors.As(err, &refusal) {
+			actor.Authorization = refusal.Authorization
+		}
 	}
 	reason, outcome := "operation_failed", "failed"
 	if errors.Is(err, ErrDenied) {
 		reason, outcome = "stale_authority", "denied"
 	}
-	if captureErr := audit.RecordFailure(ctx, pool, policy, audit.Event{Actor: actor, Action: "mcp.refused", Outcome: outcome, TargetKind: "mcp", Unresolved: true}, reason); captureErr != nil {
+	if captureErr := audit.RecordFailure(ctx, pool, policy, audit.Event{Evidence: actor, Action: "mcp.refused", Outcome: outcome, TargetKind: "mcp", Unresolved: true}, reason); captureErr != nil {
 		return captureErr
 	}
 	return err

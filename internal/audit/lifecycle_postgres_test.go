@@ -27,7 +27,7 @@ func TestAuditRetentionUsesCaptureTimeAndSurvivesRestore(t *testing.T) {
 	principal := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, Admin: true, SessionID: uuid.NewV7()}
 	old, newer := uuid.NewV7(), uuid.NewV7()
 	appendFact := func(tx pgx.Tx, id uuid.UUID, seconds int64) error {
-		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: seconds}, audit.Event{ID: id, Actor: audit.System("retention-test"), OccurredAt: time.Now().Add(-24 * time.Hour), Action: "secret.created", TargetKind: "secret", TargetID: uuid.NewV7()})
+		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: seconds}, audit.Event{ID: id, Evidence: audit.Internal(audit.ControlPlane), OccurredAt: time.Now().Add(-24 * time.Hour), Action: "secret.created", TargetKind: "secret", TargetID: uuid.NewV7()})
 	}
 	if err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error { return appendFact(tx, old, 3600) }); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestAuditDeletedOrganizationCustodyAndCompositeTargets(t *testing.T) {
 	ids := []uuid.UUID{uuid.NewV7(), uuid.NewV7()}
 	for i, team := range []string{"TONE", "TTWO"} {
 		if err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
-			return audit.Append(t.Context(), tx, policy, audit.Event{ID: ids[i], Actor: audit.System("link-test"), OrgID: org, Action: "slack_user.linked", TargetKind: "slack_user_link", TargetUserID: target, SlackTeamID: team, SlackUserID: "UONE"})
+			return audit.Append(t.Context(), tx, policy, audit.Event{ID: ids[i], Evidence: audit.Internal(audit.ControlPlane), OrgID: org, Action: "slack_user.linked", TargetKind: "slack_user_link", TargetUserID: target, SlackTeamID: team, SlackUserID: "UONE"})
 		}); err != nil {
 			t.Fatal(err)
 		}

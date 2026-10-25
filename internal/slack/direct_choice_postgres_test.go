@@ -18,7 +18,7 @@ func (f statusFixture) choiceAsk(t *testing.T) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	turn, _ := f.pendingQuestion(t)
 	ask := uuid.NewV7()
-	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 	h := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	q := json.RawMessage(`{"prompt":[{"type":"text","text":"Include mobile?"}],"type":"choice","allowNotes":true,"options":[{"id":"yes","label":"Include mobile","value":{"private":true}},{"id":"no","label":"Web only","value":{"private":false}}]}`)
 	if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{

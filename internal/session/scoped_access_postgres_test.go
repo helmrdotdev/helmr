@@ -55,7 +55,7 @@ func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Peer');
  INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$1 FROM environments WHERE id=$2;
  INSERT INTO permission_group_members(org_id,group_id,member_id) SELECT gm.org_id,gm.group_id,other.id FROM permission_group_members gm JOIN org_members existing ON existing.id=gm.member_id JOIN org_members other ON other.org_id=gm.org_id AND other.user_id=$1 WHERE existing.user_id=$3`, pgx.QueryExecModeSimpleProtocol, other, f.env, f.user)
-	peer := session.Caller{Kind: "user", ID: other}
+	peer := session.Caller{Kind: "user", ID: other, CredentialID: uuid.NewV7()}
 	if _, err = session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, peer, f.env, first.SessionID); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("peer read own-origin session", err)
 	}

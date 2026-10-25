@@ -335,7 +335,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, 
 		}
 		switch result.Code {
 		case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive", "missing_scope":
-			return recordAuthorizationLoss(ctx, tx, policy, audit.System("slack-provider"), claim.InstallationID, claim.CredentialRevision, claim.AuthorizedAt)
+			return recordAuthorizationLoss(ctx, tx, policy, audit.Internal(audit.ControlPlane), claim.InstallationID, claim.CredentialRevision, claim.AuthorizedAt)
 		}
 		return nil
 	default:

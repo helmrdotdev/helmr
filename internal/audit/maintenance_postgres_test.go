@@ -73,7 +73,7 @@ func TestAuditDatabaseRolesAndAtomicMaintenance(t *testing.T) {
 		}
 	}
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
-	if err := audit.ObservePolicy(t.Context(), runtime, policy, "control-plane"); err != nil {
+	if err := audit.ObservePolicy(t.Context(), runtime, policy, audit.ControlPlane); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE audit_events SET occurred_at=statement_timestamp()-interval '2 hours', recorded_at=statement_timestamp()-interval '2 hours', expires_at=statement_timestamp()-interval '1 hour'`)

@@ -49,8 +49,9 @@ func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersCreate, scope) {
-		s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersCreate, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	result, err := s.computers.Create(r.Context(), s.tx, computer.Request{Principal: principal,
@@ -75,8 +76,9 @@ func (s *Server) getComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
-		s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersRead, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	computerID, err := ids.Parse(chi.URLParam(r, "computerID"))
@@ -128,8 +130,9 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersDelete, scope) {
-		s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersDelete, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	result, err := computer.Delete(r.Context(), s.auditPolicy, s.tx, computer.Deletion{Principal: principal,
@@ -183,8 +186,9 @@ func (s *Server) updateComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersUpdateRetention, scope) {
-		s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersUpdateRetention, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	id, err := ids.Parse(chi.URLParam(r, "computerID"))

@@ -17,12 +17,16 @@ type Record struct {
 	RecordedAt           time.Time         `json:"recorded_at"`
 	RetentionSeconds     int64             `json:"retention_seconds"`
 	ExpiresAt            time.Time         `json:"expires_at"`
-	ActorKind            string            `json:"actor_kind"`
-	ActorID              *uuid.UUID        `json:"actor_id"`
-	ActorService         *string           `json:"actor_service"`
-	ActorMemberID        *uuid.UUID        `json:"actor_member_id"`
+	ActorUserID          *uuid.UUID        `json:"actor_user_id"`
+	ActorAPIKeyID        *uuid.UUID        `json:"actor_api_key_id"`
+	ActorSessionID       *uuid.UUID        `json:"actor_session_id"`
+	ActorWorkerHostID    *uuid.UUID        `json:"actor_worker_host_id"`
+	ActorComponent       *string           `json:"actor_component"`
 	ActorIdentity        *IdentitySnapshot `json:"actor_identity"`
-	CredentialKind       string            `json:"credential_kind"`
+	AuthenticationResult string            `json:"authentication_result"`
+	AuthenticationOrigin string            `json:"authentication_origin"`
+	IdentityProvider     *string           `json:"identity_provider"`
+	CredentialKind       *string           `json:"credential_kind"`
 	CredentialID         *uuid.UUID        `json:"credential_id"`
 	CredentialVersion    *int64            `json:"credential_version"`
 	RuntimeGeneration    *int64            `json:"runtime_generation"`
@@ -35,7 +39,7 @@ type Record struct {
 	SlackTeamID          *string           `json:"slack_team_id"`
 	SlackUserID          *string           `json:"slack_user_id"`
 	TargetResolution     string            `json:"target_resolution"`
-	AuthorizationWitness json.RawMessage   `json:"authorization_witness"`
+	Authorization        json.RawMessage   `json:"authorization_evidence"`
 	OperationID          uuid.UUID         `json:"operation_id"`
 	SessionID            *uuid.UUID        `json:"session_id"`
 	TurnID               *uuid.UUID        `json:"turn_id"`

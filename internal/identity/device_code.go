@@ -67,9 +67,9 @@ func StartDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config) (D
 		}); err != nil {
 			return fmt.Errorf("create device code: %w", err)
 		}
-		actor := audit.Anonymous("device_request")
-		actor.Authorization.Decision = "allowed"
-		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Actor: actor, Action: "identity.device_started", TargetKind: "device_code", TargetID: id, Details: audit.AuthenticationDetails{Method: "device_authorization"}})
+		actor := audit.Unauthenticated("absent", "")
+		actor.Authorization = audit.NotEvaluated()
+		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: actor, Action: "identity.device_started", TargetKind: "device_code", TargetID: id, Details: audit.AuthenticationDetails{Method: "device_authorization"}})
 	})
 	if err != nil {
 		return DeviceAuthorization{}, err
@@ -109,8 +109,8 @@ func DenyDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, app
 // and organization are the ones consented to.
 func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string, approve bool) (result DeviceCodeState, resultErr error) {
 	actor := audit.FromPrincipal(approver)
-	actor.Authorization = audit.Authorization{Basis: "credential", Decision: "allowed"}
-	defer recordAuthenticationFailure(ctx, database, cfg, audit.Event{Actor: actor, OrgID: approver.OrgID, Action: "identity.device_authorized", TargetKind: "device_code"}, &resultErr)
+	actor.Authorization = audit.NotEvaluated()
+	defer recordAuthenticationFailure(ctx, database, cfg, audit.Event{Evidence: actor, OrgID: approver.OrgID, Action: "identity.device_authorized", TargetKind: "device_code"}, &resultErr)
 	hash, err := userCodeHash(cfg, userCode)
 	if err != nil {
 		return DeviceCodeState{}, err
@@ -149,12 +149,12 @@ func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, a
 			return fmt.Errorf("resolve device code: %w", err)
 		}
 		actor := audit.FromPrincipal(approver)
-		actor.Authorization = audit.Authorization{Basis: "credential", Decision: "allowed"}
+		actor.Authorization = audit.NotEvaluated()
 		action := "identity.device_authorized"
 		if !approve {
 			action = "identity.device_denied"
 		}
-		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Actor: actor, OrgID: approver.OrgID, Action: action, TargetKind: "device_code", TargetID: pgvalue.MustUUIDValue(device.ID), Details: audit.AuthenticationDetails{Method: "device_authorization", AuthorizingCredentialID: approver.SessionID}})
+		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: actor, OrgID: approver.OrgID, Action: action, TargetKind: "device_code", TargetID: pgvalue.MustUUIDValue(device.ID), Details: audit.AuthenticationDetails{Method: "device_authorization", AuthorizingCredentialID: approver.SessionID}})
 	})
 	if err != nil {
 		return DeviceCodeState{}, err
@@ -169,7 +169,7 @@ func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, a
 // one ErrDeviceCodeExpired; an unknown or already consumed one is
 // ErrInvalidDeviceCode.
 func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, deviceCode string) (result string, resultErr error) {
-	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Actor: audit.Anonymous("device_authorization"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
+	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Evidence: audit.Unauthenticated("failed", "device_code"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
 	hash, err := auth.HashToken(cfg.deviceCodeKey, strings.TrimSpace(deviceCode))
 	if err != nil {
 		return "", ErrInvalidDeviceCode
@@ -206,7 +206,7 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		if err != nil || member.RemovedAt.Valid {
 			return ErrInvalidDeviceCode
 		}
-		rawSession, err = issueLoginSession(ctx, tx, cfg, signedInUser{id: member.UserID, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(member.UserID), "device_authorization"), authentication: audit.AuthenticationDetails{Method: "device_authorization", DeviceCodeID: pgvalue.MustUUIDValue(consumed.ID)}}, consumed.OrgID)
+		rawSession, err = issueLoginSession(ctx, tx, cfg, signedInUser{id: member.UserID, actor: audit.VerifiedDevice(pgvalue.MustUUIDValue(member.UserID), pgvalue.MustUUIDValue(consumed.ID)), authentication: audit.AuthenticationDetails{Method: "device_authorization", DeviceCodeID: pgvalue.MustUUIDValue(consumed.ID)}}, consumed.OrgID)
 		return err
 	})
 	if err != nil {

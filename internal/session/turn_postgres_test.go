@@ -35,9 +35,11 @@ func newFixture(t *testing.T) fixture {
 func fixtureOf(f sessiontest.Fixture) fixture {
 	return fixture{pool: f.Pool, env: f.Environment, session: f.Session, computer: f.Computer, user: f.User, worker: f.Worker, agent: f.Agent, deployment: f.Deployment, group: f.Group}
 }
-func (f fixture) caller() session.Caller { return session.Caller{Kind: "user", ID: f.user} }
+func (f fixture) caller() session.Caller {
+	return session.Caller{Kind: "user", ID: f.user, CredentialID: uuid.NewV7()}
+}
 func (f fixture) execution() session.Execution {
-	return session.Execution{EnvironmentID: f.env, SessionID: f.session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	return session.Execution{EnvironmentID: f.env, SessionID: f.session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 }
 func (f fixture) enqueue(t *testing.T, key string) session.Admission {
 	t.Helper()

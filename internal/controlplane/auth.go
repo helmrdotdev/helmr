@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -83,7 +84,8 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !principalFromContext(r.Context()).Admin {
-			if !s.refuseOperation(w, r, "installation_authority_required") {
+			evidence, _ := audit.InstallationOperator(principalFromContext(r.Context()))
+			if !s.refuseOperation(w, r, "installation_authority_required", &audit.Refusal{Authorization: evidence.Authorization, Cause: errors.New("administrator access is required")}) {
 				return
 			}
 			writeError(w, forbidden(errors.New("administrator access is required")))
@@ -177,8 +179,8 @@ func (s *Server) requireSessionPermission(permission auth.Permission, next http.
 			}
 			scope = resolved
 		}
-		if !principal.HasPermission(permission, scope) {
-			s.writeOperationError(w, r, forbidden(errors.New("permission is required")))
+		if err := auth.Require(principal, permission, scope, errors.New("permission is required")); err != nil {
+			s.writeOperationError(w, r, forbidden(err))
 			return
 		}
 		next.ServeHTTP(w, r)

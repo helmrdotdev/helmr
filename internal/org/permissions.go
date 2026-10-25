@@ -176,7 +176,7 @@ func grantSnapshot(g RoleGrant) *audit.AccessSnapshot {
 	return s
 }
 func accessAudit(ctx context.Context, tx pgx.Tx, m ManagingMember, action, kind string, id uuid.UUID, before, after *audit.AccessSnapshot) error {
-	e := audit.Event{Actor: m.Actor, OrgID: m.OrgID, Action: action, TargetKind: kind, TargetID: id, Details: audit.AccessChangeDetails{Before: before, After: after}}
+	e := audit.Event{Evidence: m.Actor, OrgID: m.OrgID, Action: action, TargetKind: kind, TargetID: id, Details: audit.AccessChangeDetails{Before: before, After: after}}
 	if kind == "role_grant" {
 		snapshot := after
 		if snapshot == nil {
@@ -467,7 +467,7 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 				}
 			}
 		}
-		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Actor: m.Actor, OrgID: m.OrgID, Action: action, TargetKind: "role", TargetID: id, Details: audit.AccessChangeDetails{Before: before, After: permissionRoleSnapshot(result)}})
+		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: m.OrgID, Action: action, TargetKind: "role", TargetID: id, Details: audit.AccessChangeDetails{Before: before, After: permissionRoleSnapshot(result)}})
 	})
 	return result, err
 }
@@ -547,7 +547,7 @@ func DeletePermissionRole(ctx context.Context, database db.TxBeginner, m Managin
 // SeedStandardRoles runs on organization creation, or explicit local fixture
 // initialization, with the caller's transaction. Existing definitions are never
 // rewritten merely because the initializer runs again.
-func SeedStandardRoles(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, orgID uuid.UUID, actor audit.Actor) error {
+func SeedStandardRoles(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, orgID uuid.UUID, actor audit.Evidence) error {
 	standards := auth.StandardRoles()
 	for _, standard := range standards {
 		permissions := make([]string, 0, len(standard.Permissions))

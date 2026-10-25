@@ -23,12 +23,12 @@ func bootSeedExecutor(in workerapi.BootSeedExecutor) (computer.BootSeedExecutor,
 func (s *Server) workerDeliverBootSeed(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "seed")
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	result, err := s.allocator.DeliverBootSeed(r.Context(), workerFromContext(r.Context()), identity)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.BootSeedAllocationDelivery{Identity: allocationWireReceipt("seed", result.Allocation), Shape: allocationWireShape(result.Shape), ExpiresAt: *result.ExpiresAt, ChannelCredential: result.Executor.ChannelCredential})
@@ -37,39 +37,39 @@ func (s *Server) workerDeliverBootSeed(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerBootSeedStart(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.BootSeedExecutor
 	if err := decodeRequestJSON(r, &request); err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.ChannelCredential)
 	ref, err := bootSeedExecutor(request)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	host := workerFromContext(r.Context())
 	start, err := computer.ReadBootSeedStart(r.Context(), s.tx, host, ref)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	bundle, err := s.readExecutableBundle(r.Context(), start.BundleDigest)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	program, err := runtimeProgram(start.DeploymentID.String(), bundle)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	source, err := s.allocationKeys.BootSeedSource(r.Context(), host, ref)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	defer source.Clear()
 	if err := computer.StartBootSeedBuild(r.Context(), s.tx, host, ref); err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	response := workerapi.ComputerAllocationSource{BootProgram: &program, RootfsDigest: start.RootfsDigest, ImageConfig: start.ImageConfig,
@@ -84,18 +84,18 @@ func (s *Server) workerBootSeedStart(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerRenewBootSeed(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.BootSeedExecutor
 	if err := decodeRequestJSON(r, &request); err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.ChannelCredential)
 	ref, err := bootSeedExecutor(request)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	expires, err := computer.RenewBootSeedBuild(r.Context(), s.tx, workerFromContext(r.Context()), ref)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.PreparationRenewal{ExpiresAt: expires})
@@ -104,7 +104,7 @@ func (s *Server) workerRenewBootSeed(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerPublishBootSeed(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.BootSeedPublication
 	if err := decodeRequestJSON(r, &request); err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.Executor.ChannelCredential)
@@ -113,7 +113,7 @@ func (s *Server) workerPublishBootSeed(w http.ResponseWriter, r *http.Request) {
 		err = s.bootSeedPublisher.Publish(r.Context(), workerFromContext(r.Context()), ref, request.Manifest, request.Qualification)
 	}
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -122,7 +122,7 @@ func (s *Server) workerPublishBootSeed(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerFailBootSeed(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.BootSeedFailure
 	if err := decodeRequestJSON(r, &request); err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.Executor.ChannelCredential)
@@ -131,7 +131,7 @@ func (s *Server) workerFailBootSeed(w http.ResponseWriter, r *http.Request) {
 		err = computer.FailBootSeedBuild(r.Context(), s.tx, workerFromContext(r.Context()), ref, request.Code)
 	}
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -140,7 +140,7 @@ func (s *Server) workerFailBootSeed(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerReclaimBootSeed(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.BootSeedExecutor
 	if err := decodeRequestJSON(r, &request); err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.ChannelCredential)
@@ -149,7 +149,7 @@ func (s *Server) workerReclaimBootSeed(w http.ResponseWriter, r *http.Request) {
 		err = computer.ReclaimBootSeedBuild(r.Context(), s.tx, workerFromContext(r.Context()), ref)
 	}
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -161,7 +161,7 @@ func (s *Server) workerBootSeedStopped(w http.ResponseWriter, r *http.Request) {
 		err = dispatch.ObserveBootSeedStopped(r.Context(), s.tx, workerFromContext(r.Context()), identity)
 	}
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

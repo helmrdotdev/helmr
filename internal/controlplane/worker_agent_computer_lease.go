@@ -31,12 +31,12 @@ func agentComputerLeaseIdentity(request workerapi.AgentComputerLeaseRequest) (co
 func (server *Server) workerRenewAgentComputerLease(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAgentComputerLease(r)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	expires, err := computer.RenewLease(r.Context(), server.tx, workerFromContext(r.Context()), identity)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentComputerLeaseResponse{ExpiresAt: expires})
@@ -44,19 +44,19 @@ func (server *Server) workerRenewAgentComputerLease(w http.ResponseWriter, r *ht
 func (server *Server) workerAgentComputerStopped(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.AgentComputerStoppedRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAgentComputerError(w, session.ErrInvalidInput)
+		server.writeAgentComputerError(w, r, session.ErrInvalidInput)
 		return
 	}
 	identity, err := agentComputerLeaseIdentity(request.AgentComputerLeaseRequest)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	invalidCheckpoint := uuid.Nil()
 	if request.InvalidCheckpointID != "" {
 		invalidCheckpoint, err = agentComputerID(request.InvalidCheckpointID)
 		if err != nil {
-			server.writeAgentComputerError(w, err)
+			server.writeAgentComputerError(w, r, err)
 			return
 		}
 	}
@@ -64,12 +64,12 @@ func (server *Server) workerAgentComputerStopped(w http.ResponseWriter, r *http.
 	if request.FailedBootSeedID != "" {
 		failedBootSeed, err = agentComputerID(request.FailedBootSeedID)
 		if err != nil {
-			server.writeAgentComputerError(w, err)
+			server.writeAgentComputerError(w, r, err)
 			return
 		}
 	}
 	if err = dispatch.ObserveLeaseStopped(r.Context(), server.auditPolicy, server.tx, workerFromContext(r.Context()), identity, invalidCheckpoint, failedBootSeed); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

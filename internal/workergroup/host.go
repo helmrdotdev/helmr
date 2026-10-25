@@ -95,7 +95,7 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 			return err
 		}
 		if pgvalue.MustUUIDValue(hostSecret.WorkerPoolID) == proposedPool {
-			return audit.Append(ctx, tx, policy, audit.Event{Actor: audit.System("worker-pool-bootstrap"), Action: "worker_pool.created", TargetKind: "worker_pool", TargetID: proposedPool})
+			return audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "worker_pool.created", TargetKind: "worker_pool", TargetID: proposedPool})
 		}
 		return nil
 	})
@@ -187,7 +187,7 @@ func ActivateHost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Pol
 				return err
 			}
 			if !group.PrimaryPoolID.Valid && selected.PrimaryPoolID.Valid {
-				if err := audit.Append(ctx, tx, policy, audit.Event{Actor: audit.System("worker-pool-bootstrap"), Action: "worker_pool.primary_selected", TargetKind: "worker_pool", TargetID: pgvalue.MustUUIDValue(selected.PrimaryPoolID)}); err != nil {
+				if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "worker_pool.primary_selected", TargetKind: "worker_pool", TargetID: pgvalue.MustUUIDValue(selected.PrimaryPoolID)}); err != nil {
 					return err
 				}
 			}

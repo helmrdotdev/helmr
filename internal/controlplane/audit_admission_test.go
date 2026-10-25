@@ -46,7 +46,7 @@ func TestAuditAdmissionBoundsAndContainmentReserve(t *testing.T) {
 	for i := 0; i < auditPrincipalCapacity; i++ {
 		guard.principals[uuid.NewV7().String()] = auditPrincipalBucket{limiter: rate.NewLimiter(1, 1), seen: time.Now()}
 	}
-	principal := auth.Principal{Kind: auth.PrincipalKindSession, UserID: uuid.NewV7(), OrgID: uuid.NewV7()}
+	principal := auth.Principal{Kind: auth.PrincipalKindSession, UserID: uuid.NewV7(), OrgID: uuid.NewV7(), SessionID: uuid.NewV7()}
 	if !s.admitPrincipal(httptest.NewRecorder(), httptest.NewRequest("POST", "/v1/sessions", nil), principal) || len(guard.principals) != auditPrincipalCapacity {
 		t.Fatal("principal cache capacity blocked a new caller or grew")
 	}
@@ -112,7 +112,7 @@ func TestAuditAdmissionPrincipalCannotOccupyAllSlots(t *testing.T) {
 			ready, release := make(chan struct{}, auditPrincipalConcurrency), make(chan struct{})
 			var wg sync.WaitGroup
 			handler := s.limitSecurityAdmission(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if !s.admitPrincipal(w, r, auth.Principal{Kind: auth.PrincipalKindSession, UserID: principals[r.Header.Get("Test-Principal")]}) {
+				if !s.admitPrincipal(w, r, auth.Principal{Kind: auth.PrincipalKindSession, UserID: principals[r.Header.Get("Test-Principal")], SessionID: uuid.NewV7()}) {
 					return
 				}
 				if r.Header.Get("Test-Hold") == "true" {

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -126,7 +125,7 @@ func TestPreparationPublicationFullGraphAndReplay(t *testing.T) {
 		t.Fatalf("capacity changed: %v", err)
 	}
 	// Ordinary rotation does not turn a successful cut into an execution failure.
-	if _, err := p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "during-capture"); err != nil {
+	if _, err := p.f.secrets.Rotate(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, []byte("v2"), "during-capture"); err != nil {
 		t.Fatal(err)
 	}
 	swapped := root
@@ -215,7 +214,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 			case "expire":
 				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.ImageBuildID)
 			case "revoke":
-				if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, "revoke"); err != nil {
+				if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, "revoke"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -255,7 +254,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 		// A separate transaction must complete while Stat is in flight.
 		revokeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if _, err := p.f.secrets.Revoke(revokeCtx, audit.System("test-fixture"), p.f.env, p.f.secretID, "during-stat"); err != nil {
+		if _, err := p.f.secrets.Revoke(revokeCtx, dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, "during-stat"); err != nil {
 			return cas.Object{}, err
 		}
 		return p.remote.Stat(ctx, digest)

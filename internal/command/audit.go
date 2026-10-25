@@ -15,9 +15,7 @@ import (
 )
 
 func auditCompletion(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, worker workergroup.HostPrincipal, lease Lease, c db.Command, p completion, generation int64) error {
-	actor := audit.System("worker-host")
-	actor.CredentialKind, actor.CredentialID, actor.CredentialVersion = "worker_host", worker.HostID, worker.HostClaimVersion
-	actor.RuntimeGeneration = generation
+	actor := audit.AssignedWorker(worker.HostID, worker.HostClaimVersion, "computer", lease.ComputerID, lease.Epoch)
 	action, outcome := "command.completed", "succeeded"
 	var details audit.Details = audit.LifecycleDetails{Generation: generation}
 	switch p.status {
@@ -30,7 +28,7 @@ func auditCompletion(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, 
 		action, outcome = "command.failed", "failed"
 		details = audit.FailureDetails{Reason: "operation_failed"}
 	}
-	return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, EnvironmentID: lease.EnvironmentID, ComputerID: lease.ComputerID, Action: action, Outcome: outcome, TargetKind: "command", TargetID: uuid.UUID(p.command.Bytes), Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: details})
+	return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: lease.EnvironmentID, ComputerID: lease.ComputerID, Action: action, Outcome: outcome, TargetKind: "command", TargetID: uuid.UUID(p.command.Bytes), Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: details})
 }
 
 // AdmitOutputRead rechecks the current reader and persists admission after a
@@ -42,8 +40,9 @@ func AdmitOutputRead(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		if err != nil {
 			return err
 		}
-		if !current.HasPermission(auth.PermissionComputersReadOutput, scope) {
-			return access.ErrDenied
+		if permissionErr := auth.Require(current, auth.PermissionComputersReadOutput, scope,
+			access.ErrDenied); permissionErr != nil {
+			return permissionErr
 		}
 		c, err := db.New(tx).GetCommand(ctx, ref.params())
 		if err != nil {
@@ -53,11 +52,11 @@ func AdmitOutputRead(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		if err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, EnvironmentID: ref.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.output_read", TargetKind: "command", TargetID: ref.CommandID, Details: audit.LifecycleDetails{}})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: ref.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.output_read", TargetKind: "command", TargetID: ref.CommandID, Details: audit.LifecycleDetails{}})
 	})
 }
 
 // auditServiceFailure follows a fresh terminal transition under the Command lock.
-func auditServiceFailure(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, c db.Command, source, outcome, reason string) error {
-	return audit.Append(ctx, tx, policy, audit.Event{Actor: audit.System(source), EnvironmentID: pgvalue.MustUUIDValue(c.EnvironmentID), ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.failed", Outcome: outcome, TargetKind: "command", TargetID: pgvalue.MustUUIDValue(c.ID), Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: audit.FailureDetails{Reason: reason}})
+func auditServiceFailure(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, c db.Command, source audit.Component, outcome, reason string) error {
+	return audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(source), EnvironmentID: pgvalue.MustUUIDValue(c.EnvironmentID), ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.failed", Outcome: outcome, TargetKind: "command", TargetID: pgvalue.MustUUIDValue(c.ID), Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: audit.FailureDetails{Reason: reason}})
 }

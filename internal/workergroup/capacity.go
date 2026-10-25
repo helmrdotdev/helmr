@@ -86,7 +86,7 @@ func ResolvePool(ctx context.Context, q db.Querier, groupID uuid.UUID, name stri
 // SelectPrimary selects the provider controller's primary pool through
 // SelectPrimaryPool and returns the group's capacity projection. A zero poolID
 // is rejected as SelectPrimaryPool describes.
-func SelectPrimary(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Actor, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64, minimumReadyHosts int32) (PrimarySelectionResponse, error) {
+func SelectPrimary(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID, poolID uuid.UUID, expectedGroupClaimVersion int64, minimumReadyHosts int32) (PrimarySelectionResponse, error) {
 	selection, err := SelectPrimaryPool(ctx, txb, policy, actor, groupID, poolID, expectedGroupClaimVersion, minimumReadyHosts)
 	if err != nil {
 		return PrimarySelectionResponse{}, err
@@ -138,7 +138,7 @@ func GetHost(ctx context.Context, q db.Querier, hostID uuid.UUID) (WorkerHost, e
 
 // DrainHost commits a reasoned provider drain under the Group, Pool and Host
 // fences. Idle scale-in checks advisory demand; other planned drains do not.
-func DrainHost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Actor, hostID uuid.UUID, request DrainWorkerHostRequest) (WorkerHost, error) {
+func DrainHost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, hostID uuid.UUID, request DrainWorkerHostRequest) (WorkerHost, error) {
 	if request.ExpectedEpoch <= 0 || request.ExpectedClaimVersion <= 0 {
 		return WorkerHost{}, invalidInput("expected_epoch and expected_claim_version must be positive")
 	}
@@ -189,7 +189,7 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy
 			return fmt.Errorf("drain worker host %s: %w", hostID.String(), err)
 		}
 		if locked.Host.Status == db.WorkerHostStatusActive {
-			if err := audit.Append(ctx, tx, policy, audit.Event{Actor: actor, Action: "worker_host.draining", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.draining", TargetKind: "worker_host", TargetID: hostID}); err != nil {
 				return err
 			}
 		}
@@ -216,7 +216,7 @@ func (a ConfirmedProviderAbsence) HostID() uuid.UUID   { return a.hostID }
 // ConfirmHostProviderAbsent records verified provider absence under supply locks.
 // The caller owns the transaction and must reconcile physical Computer ownership
 // before committing. Ordinary host expiry or credential revocation is not this proof.
-func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Actor, hostID uuid.UUID) (ConfirmedProviderAbsence, error) {
+func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, hostID uuid.UUID) (ConfirmedProviderAbsence, error) {
 	var group uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT worker_group_id FROM worker_hosts WHERE id=$1`, hostID).Scan(&group); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -253,12 +253,12 @@ func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, policy auditpolic
 		return ConfirmedProviderAbsence{}, err
 	}
 	for _, key := range keys {
-		if err := audit.Append(ctx, tx, policy, audit.Event{Actor: actor, Action: "worker_scale_in.completed", TargetKind: "worker_scale_in_operation", TargetID: key}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_scale_in.completed", TargetKind: "worker_scale_in_operation", TargetID: key}); err != nil {
 			return ConfirmedProviderAbsence{}, err
 		}
 	}
 	if changed {
-		if err := audit.Append(ctx, tx, policy, audit.Event{Actor: actor, Action: "worker_host.provider_absence_confirmed", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.provider_absence_confirmed", TargetKind: "worker_host", TargetID: hostID}); err != nil {
 			return ConfirmedProviderAbsence{}, err
 		}
 	}

@@ -17,11 +17,11 @@ func TestScaleInPostgresReplayRestartAndAbsence(t *testing.T) {
 	f.activeHost(t, pool, "first")
 	f.activeHost(t, pool, "second")
 	key := uuid.NewV7()
-	selected, created, err := SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, key)
+	selected, created, err := SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, key)
 	if err != nil || !created || selected.Phase != "draining" {
 		t.Fatalf("selection: %+v %v", selected, err)
 	}
-	again, created, err := SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, key)
+	again, created, err := SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, key)
 	if err != nil || created || again.WorkerHostID != selected.WorkerHostID {
 		t.Fatalf("replay: %+v %v", again, err)
 	}
@@ -30,10 +30,10 @@ func TestScaleInPostgresReplayRestartAndAbsence(t *testing.T) {
 		t.Fatalf("pending: %+v %v", pending, err)
 	}
 	var conflict ScaleInConflict
-	if _, _, err := SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, uuid.NewV7()); !errors.As(err, &conflict) || conflict.Code != "scale_in_operation_pending" {
+	if _, _, err := SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, uuid.NewV7()); !errors.As(err, &conflict) || conflict.Code != "scale_in_operation_pending" {
 		t.Fatalf("other key: %v", err)
 	}
-	if _, _, err := SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), uuid.NewV7(), key); !errors.As(err, &conflict) || conflict.Code != "scale_in_operation_key_conflict" {
+	if _, _, err := SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), uuid.NewV7(), key); !errors.As(err, &conflict) || conflict.Code != "scale_in_operation_key_conflict" {
 		t.Fatalf("fingerprint: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, selected.WorkerHostID)
@@ -54,7 +54,7 @@ func TestScaleInPostgresReplayRestartAndAbsence(t *testing.T) {
 	if err != nil || fresh.Phase != "completed" || fresh.CompletedAt == nil {
 		t.Fatalf("completion: %+v %v", fresh, err)
 	}
-	again, created, err = SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, key)
+	again, created, err = SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, key)
 	if err != nil || created || again.Phase != "completed" || again.WorkerHostID != selected.WorkerHostID {
 		t.Fatalf("completed replay: %+v %v", again, err)
 	}
@@ -71,7 +71,7 @@ func TestScaleInPostgresConcurrentSelectionAndFencedAbsence(t *testing.T) {
 	for i := range errs {
 		wg.Go(func() {
 			<-start
-			_, _, errs[i] = SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, uuid.NewV7())
+			_, _, errs[i] = SelectScaleIn(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, uuid.NewV7())
 		})
 	}
 	close(start)

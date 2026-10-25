@@ -43,12 +43,12 @@ func (server *Server) workerCompleteAgentCheckpoint(w http.ResponseWriter, r *ht
 func (server *Server) workerReadAgentCheckpoint(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "computer")
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	result, err := session.ReadComputerCheckpoint(r.Context(), server.tx, workerFromContext(r.Context()), computer.LeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

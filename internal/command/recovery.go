@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
@@ -73,7 +74,7 @@ func recoverCommand(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 			return err
 		}
 		if !c.ComputerLeaseEpoch.Valid {
-			if err = auditServiceFailure(ctx, tx, auditPolicy, c, "command-recovery", "failed", "permission_denied"); err != nil {
+			if err = auditServiceFailure(ctx, tx, auditPolicy, c, audit.ControlPlane, "failed", "permission_denied"); err != nil {
 				return err
 			}
 		}
@@ -95,7 +96,7 @@ func recoverCommand(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
  WHERE environment_id=$1 AND id=$2 AND terminal_at IS NULL`, env, candidate.CommandID); err != nil {
 			return err
 		}
-		if err = auditServiceFailure(ctx, tx, auditPolicy, c, "command-recovery", "unknown", "worker_lost"); err != nil {
+		if err = auditServiceFailure(ctx, tx, auditPolicy, c, audit.ControlPlane, "unknown", "worker_lost"); err != nil {
 			return err
 		}
 	}

@@ -37,7 +37,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 		id := uuid.NewV7()
 		eventIDs = append(eventIDs, id)
 		err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
-			return audit.Append(t.Context(), tx, policy, audit.Event{ID: id, Actor: audit.System("fixture"), OrgID: org, EnvironmentID: e, Action: "secret.created", TargetKind: "secret", TargetID: uuid.NewV7()})
+			return audit.Append(t.Context(), tx, policy, audit.Event{ID: id, Evidence: audit.Internal(audit.ControlPlane), OrgID: org, EnvironmentID: e, Action: "secret.created", TargetKind: "secret", TargetID: uuid.NewV7()})
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -48,6 +48,22 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	if _, err := auditquery.Search(t.Context(), d.Pool, policy, p, f); !errors.Is(err, auditquery.ErrSearchDenied) {
 		t.Fatalf("admin flag granted tenant read: %v", err)
 	}
+	_, denied := auditquery.Search(t.Context(), d.Pool, policy, p, f)
+	var permissionRefusal *auth.PermissionRefusal
+	if !errors.As(denied, &permissionRefusal) || len(permissionRefusal.Checks) != 1 || permissionRefusal.Checks[0].Permission != auth.PermissionAuditEventsRead || permissionRefusal.Checks[0].Result != "failed" {
+		t.Fatal("search denial lost permission check", denied)
+	}
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE users SET admin=false WHERE id=$1`, user)
+	_, denied = auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f)
+	var adminRefusal *audit.Refusal
+	if !errors.As(denied, &adminRefusal) || adminRefusal.Authorization.Decision != "denied" || len(adminRefusal.Authorization.Checks) != 2 {
+		t.Fatal("search denial lost admin observations", denied)
+	}
+	observed, ok := adminRefusal.Authorization.Checks[1].(audit.UserAttributeCheck)
+	if !ok || observed.Observed || observed.ObservationSource != "transaction" {
+		t.Fatal("search rewrote request-time admin snapshot", observed)
+	}
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE users SET admin=true WHERE id=$1`, user)
 	dbtest.GrantMember(t, d.Pool, org, user, &env, "audit_events.read")
 	result, err := auditquery.Search(t.Context(), d.Pool, policy, p, f)
 	if err != nil || len(result.Events) != 1 || result.NextBefore != nil {
@@ -105,7 +121,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO organizations(id,slug,name) VALUES($1,'foreign-audit','Foreign')`, foreignOrg)
 	foreignFilter := f
 	foreignFilter.OrgID = foreignOrg
-	foreignFilter.ActorKind = "human"
+	foreignFilter.ActorKind = "user"
 	foreignFilter.TargetKind = "slack_user_link"
 	foreignFilter.TargetUserID = user
 	foreignFilter.SlackTeamID = "T123"
@@ -114,7 +130,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	var valid bool
-	if err := d.Pool.QueryRow(t.Context(), `SELECT bool_and(actor_member_id IS NULL AND details->>'actor_kind'='human' AND details->>'target_kind'='slack_user_link' AND details->>'target_user_id'=$2 AND details->>'slack_team_id'='T123' AND details->>'slack_user_id'='U123') FROM audit_events WHERE org_id=$1 AND action='audit.searched'`, foreignOrg, user.String()).Scan(&valid); err != nil || !valid {
+	if err := d.Pool.QueryRow(t.Context(), `SELECT bool_and(authorization_evidence->'checks' @> '[{"type":"user_attribute","attribute":"admin"}]'::jsonb AND details->>'actor_kind'='user' AND details->>'target_kind'='slack_user_link' AND details->>'target_user_id'=$2 AND details->>'slack_team_id'='T123' AND details->>'slack_user_id'='U123') FROM audit_events WHERE org_id=$1 AND action='audit.searched'`, foreignOrg, user.String()).Scan(&valid); err != nil || !valid {
 		t.Fatalf("foreign membership or lost filters: %v %v", valid, err)
 	}
 	dbtest.MustExec(t, t.Context(), d.Pool, `CREATE FUNCTION reject_audit_search() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='audit.searched' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END $$`)

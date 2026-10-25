@@ -27,7 +27,7 @@ func recordComputerSecretRevocationFailure(ctx context.Context, auditPolicy audi
 	if !record {
 		return false, nil
 	}
-	if err := recordSessionFailure(ctx, auditPolicy, tx, audit.System("secret-revocation"), e, "Computer exposed to a revoked Secret"); err != nil {
+	if err := recordSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, "Computer exposed to a revoked Secret"); err != nil {
 		return false, err
 	}
 	_, err := tx.Exec(ctx, `UPDATE session_processes SET failure_recorded_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)
@@ -86,7 +86,7 @@ func ReconcileComputerSecretRevocation(ctx context.Context, auditPolicy auditpol
 			if _, err = recordComputerSecretRevocationFailure(ctx, auditPolicy, tx, e); err != nil {
 				return err
 			}
-			if err = interruptRunningSessionTurn(ctx, auditPolicy, tx, audit.System("secret-revocation"), e); err != nil {
+			if err = interruptRunningSessionTurn(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e); err != nil {
 				return err
 			}
 			// A hibernated logical process may retain an already-fenced source lease.

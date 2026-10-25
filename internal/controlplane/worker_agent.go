@@ -28,7 +28,7 @@ func runtimeExecution(sessionID workerapi.RuntimeSession, host workergroup.HostP
 	if err != nil || id == uuid.Nil() || sessionID.ProcessEpoch <= 0 || sessionID.ComputerLeaseEpoch <= 0 {
 		return session.Execution{}, errors.New("invalid Session execution identity")
 	}
-	return session.Execution{EnvironmentID: env, SessionID: id, ProcessEpoch: sessionID.ProcessEpoch, LeaseEpoch: sessionID.ComputerLeaseEpoch, WorkerHostID: host.HostID, WorkerEpoch: host.Epoch}, nil
+	return session.Execution{EnvironmentID: env, SessionID: id, ProcessEpoch: sessionID.ProcessEpoch, LeaseEpoch: sessionID.ComputerLeaseEpoch, WorkerHostID: host.HostID, AuthenticatedHostVersion: host.HostClaimVersion, WorkerEpoch: host.Epoch}, nil
 }
 func (server *Server) workerAgentAuthority(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RuntimeSession
@@ -159,7 +159,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if code == "authority_changed" {
-		if !server.refuseOperation(w, r, "stale_authority") {
+		if !server.refuseOperation(w, r, "stale_authority", err) {
 			return
 		}
 	}
@@ -189,7 +189,7 @@ func (server *Server) writeAgentWorkerError(w http.ResponseWriter, r *http.Reque
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		server.writeOperationError(w, r, unauthorized(errors.New("worker authentication is stale")))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, dispatch.ErrDenied):
-		if !server.refuseOperation(w, r, "stale_authority") {
+		if !server.refuseOperation(w, r, "stale_authority", err) {
 			return
 		}
 		writeError(w, conflict(errors.New("session execution authority is unavailable")))

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"text/tabwriter"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
@@ -93,14 +94,20 @@ func auditNamespace(installation bool) *cobra.Command {
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		fmt.Fprintln(w, "RECORDED AT\tACTION\tOUTCOME\tACTOR\tTARGET")
 		for _, event := range result.Events {
-			actor := event.ActorKind
+			actor := "Unidentified"
 			if event.ActorIdentity != nil {
 				actor = event.ActorIdentity.DisplayName
-			} else if event.ActorService != nil {
-				actor = *event.ActorService
-			} else if event.ActorID != nil {
-				actor = event.ActorID.String()
+			} else if event.ActorComponent != nil {
+				actor = *event.ActorComponent
+			} else {
+				for _, id := range []*uuid.UUID{event.ActorUserID, event.ActorAPIKeyID, event.ActorSessionID, event.ActorWorkerHostID} {
+					if id != nil {
+						actor = id.String()
+						break
+					}
+				}
 			}
+
 			target := event.TargetKind
 			if event.TargetID != nil {
 				target += "/" + event.TargetID.String()

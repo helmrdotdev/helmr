@@ -169,7 +169,7 @@ func FinishStatus(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Po
 		if result.Disposition == Rejected {
 			switch result.Code {
 			case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive", "missing_scope":
-				return recordAuthorizationLoss(ctx, tx, policy, audit.System("slack-provider"), installation, claim.CredentialRevision, claim.AuthorizedAt)
+				return recordAuthorizationLoss(ctx, tx, policy, audit.Internal(audit.ControlPlane), installation, claim.CredentialRevision, claim.AuthorizedAt)
 			}
 		}
 		return nil

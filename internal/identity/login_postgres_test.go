@@ -238,21 +238,21 @@ func TestLoadAccountPostgres(t *testing.T) {
 	fixture := newIdentityFixture(t)
 	ctx := t.Context()
 	userID := fixture.user(t, "Newcomer", "")
-	account, err := LoadAccount(ctx, fixture.queries, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession})
+	account, err := LoadAccount(ctx, fixture.queries, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()})
 	if err != nil || account.DisplayName != "Newcomer" || account.OrganizationExists {
 		t.Fatalf("account = %+v, err = %v", account, err)
 	}
 	orgID := fixture.organization(t, "account")
 	fixture.member(t, orgID, userID, "owner")
-	account, err = LoadAccount(ctx, fixture.queries, auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession})
+	account, err = LoadAccount(ctx, fixture.queries, auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()})
 	if err != nil || account.OrgSlug != "account" || account.HasProjects {
 		t.Fatalf("org account = %+v, err = %v", account, err)
 	}
-	account, err = LoadAccount(ctx, fixture.queries, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession})
+	account, err = LoadAccount(ctx, fixture.queries, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()})
 	if err != nil || !account.OrganizationExists {
 		t.Fatalf("account without selected organization = %+v, err = %v", account, err)
 	}
-	if _, err := LoadAccount(ctx, fixture.queries, auth.Principal{UserID: uuid.NewV7(), Kind: auth.PrincipalKindSession}); !errors.Is(err, ErrUserNotFound) {
+	if _, err := LoadAccount(ctx, fixture.queries, auth.Principal{UserID: uuid.NewV7(), Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("missing user error = %v", err)
 	}
 }
@@ -275,13 +275,13 @@ func TestVerifiedLoginAuditAndInitialAdministratorGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='invitation.accepted' AND actor_kind='human' AND credential_kind='github' AND actor_id=$1 AND credential_id IS NULL AND org_id=$2 AND target_id=$3 AND target_user_id=$1 AND details->>'is_owner'='false'`, principal.UserID, orgID, invitation.ID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='invitation.accepted' AND actor_user_id IS NOT NULL AND credential_kind='provider_assertion' AND identity_provider='github' AND actor_user_id=$1 AND credential_id IS NULL AND org_id=$2 AND target_id=$3 AND target_user_id=$1 AND details->>'is_owner'='false'`, principal.UserID, orgID, invitation.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("pre-session acceptance actor count=%d err=%v", count, err)
 	}
 	if _, err := SignIn(t.Context(), f.pool, f.cfg, external); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='installation_admin.granted' AND actor_kind='service' AND actor_service='initial-admin-config' AND target_id=$1 AND org_id IS NULL`, principal.UserID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='installation_admin.granted' AND actor_component IS NOT NULL AND actor_component='control_plane' AND target_id=$1 AND org_id IS NULL`, principal.UserID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("initial grant count=%d err=%v", count, err)
 	}
 }

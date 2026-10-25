@@ -36,6 +36,15 @@ func TestMemberManagementSeparatesAccessAndOwnership(t *testing.T) {
 	if _, err := org.UpdateMemberOwnership(ctx, f.pool, f.admin, f.member.MemberID, true, false); !errors.Is(err, org.ErrOwnerRoleRequired) {
 		t.Fatalf("administrator appointed owner: %v", err)
 	}
+	_, denied := org.UpdateMemberOwnership(ctx, f.pool, f.admin, f.member.MemberID, true, false)
+	var ownerRefusal *audit.Refusal
+	if !errors.As(denied, &ownerRefusal) || ownerRefusal.Authorization.Decision != "denied" || len(ownerRefusal.Authorization.Checks) != 1 {
+		t.Fatal("owner denial lost actual check", denied)
+	}
+	check, ok := ownerRefusal.Authorization.Checks[0].(audit.MembershipAttributeCheck)
+	if !ok || check.Observed || check.MemberID != f.admin.MemberID {
+		t.Fatal("wrong observed owner", check)
+	}
 	if err := identity.RemoveMember(ctx, f.pool, f.admin, f.owner.MemberID); !errors.Is(err, org.ErrOwnerRoleRequired) {
 		t.Fatalf("administrator removed owner: %v", err)
 	}
@@ -85,7 +94,7 @@ func TestCreateOrganizationPostgresInitialSetupAdmitsOneOrganization(t *testing.
 	}
 	queries := db.New(database.Pool)
 	userID := insertUser(t, database.Pool, "Owner", "owner@example.test")
-	created, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "Acme", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
+	created, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "Acme", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
 	if err != nil || created.Slug != "acme" || created.Name != "acme" {
 		t.Fatalf("organization = %+v, err = %v", created, err)
 	}
@@ -97,10 +106,10 @@ func TestCreateOrganizationPostgresInitialSetupAdmitsOneOrganization(t *testing.
 	if err != nil || member.RemovedAt.Valid || !member.IsOwner {
 		t.Fatalf("owner member = %+v, err = %v", member, err)
 	}
-	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "second", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); !errors.Is(err, org.ErrOrganizationExists) {
+	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "second", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); !errors.Is(err, org.ErrOrganizationExists) {
 		t.Fatalf("second setup error = %v", err)
 	}
-	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "acme", OwnerUserID: userID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); !errors.Is(err, org.ErrOrganizationSlugInUse) {
+	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "acme", OwnerUserID: userID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); !errors.Is(err, org.ErrOrganizationSlugInUse) {
 		t.Fatalf("duplicate slug error = %v", err)
 	}
 }
@@ -150,7 +159,7 @@ func TestInitialOrganizationRollsBackFailedAdministratorGrant(t *testing.T) {
 	user := insertUser(t, database.Pool, "Owner", "owner@example.test")
 	dbtest.MustExec(t, t.Context(), database.Pool, `CREATE FUNCTION reject_initial_admin() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected administrator grant failure'; END $$;
  CREATE TRIGGER reject_initial_admin BEFORE UPDATE ON users FOR EACH STATEMENT EXECUTE FUNCTION reject_initial_admin()`)
-	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "initial", OwnerUserID: user, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); err == nil {
+	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "initial", OwnerUserID: user, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); err == nil {
 		t.Fatal("failed administrator grant created an organization")
 	}
 	var intact bool
@@ -173,7 +182,7 @@ func newMemberFixture(t *testing.T) memberFixture {
 		t.Fatal(err)
 	}
 	if err := db.RunTx(t.Context(), database.Pool, func(tx pgx.Tx) error {
-		return org.SeedStandardRoles(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, orgID, audit.System("fixture"))
+		return org.SeedStandardRoles(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, orgID, audit.Internal(audit.ControlPlane))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +314,7 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 		t.Fatalf("re-enabled member = %+v, err = %v", member, err)
 	}
 	var newGrant bool
-	if err := fixture.pool.QueryRow(ctx, `SELECT NOT (details ? 'old_role') AND NOT (details ? 'new_role') AND actor_kind='human' AND target_user_id=$2 FROM audit_events WHERE action='invitation.accepted' AND target_id=$1`, reinvitation.ID, joiner).Scan(&newGrant); err != nil || !newGrant {
+	if err := fixture.pool.QueryRow(ctx, `SELECT NOT (details ? 'old_role') AND NOT (details ? 'new_role') AND actor_user_id IS NOT NULL AND target_user_id=$2 FROM audit_events WHERE action='invitation.accepted' AND target_id=$1`, reinvitation.ID, joiner).Scan(&newGrant); err != nil || !newGrant {
 		t.Fatal("reinvitation recorded disabled membership as active authority", newGrant, err)
 	}
 }

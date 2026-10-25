@@ -312,9 +312,8 @@ func RecordImageBuildExposure(ctx context.Context, auditPolicy auditpolicy.Polic
 				if err = tx.QueryRow(ctx, `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3 RETURNING id,revocation_generation`, ref.EnvironmentID, ref.ImageBuildID, id, versions[id]).Scan(&exposureID, &generation); err != nil {
 					return err
 				}
-				actor := audit.System("worker-host")
-				actor.CredentialKind, actor.CredentialID, actor.CredentialVersion = "worker_host", host.HostID, host.HostClaimVersion
-				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: ref.EnvironmentID, Action: "secret.exposed", TargetKind: "secret", TargetID: id, Details: audit.SecretExposureDetails{ExposureID: exposureID, VersionID: versions[id], RevocationGeneration: generation, ImageBuildID: ref.ImageBuildID}}); err != nil {
+				actor := audit.AssignedWorker(host.HostID, host.HostClaimVersion, "image_build", ref.ImageBuildID, ref.Epoch)
+				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: ref.EnvironmentID, Action: "secret.exposed", TargetKind: "secret", TargetID: id, Details: audit.SecretExposureDetails{ExposureID: exposureID, VersionID: versions[id], RevocationGeneration: generation, ImageBuildID: ref.ImageBuildID}}); err != nil {
 					return err
 				}
 

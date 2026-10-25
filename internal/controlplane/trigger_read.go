@@ -299,7 +299,7 @@ func (s *Server) readTriggerContent(ctx context.Context, principal auth.Principa
 			if err != nil {
 				return err
 			}
-			if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, OrgID: current.OrgID, ProjectID: uuid.MustParse(scope.ProjectID), EnvironmentID: uuid.MustParse(scope.EnvironmentID), DeploymentID: pgvalue.MustUUIDValue(row.DeploymentID), Action: "trigger.content_read", TargetKind: "trigger", TargetID: pgvalue.MustUUIDValue(row.ID), Details: audit.LifecycleDetails{}}); err != nil {
+			if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Evidence: actor, OrgID: current.OrgID, ProjectID: uuid.MustParse(scope.ProjectID), EnvironmentID: uuid.MustParse(scope.EnvironmentID), DeploymentID: pgvalue.MustUUIDValue(row.DeploymentID), Action: "trigger.content_read", TargetKind: "trigger", TargetID: pgvalue.MustUUIDValue(row.ID), Details: audit.LifecycleDetails{}}); err != nil {
 				return err
 			}
 		}

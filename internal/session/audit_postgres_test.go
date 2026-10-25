@@ -31,7 +31,7 @@ func TestAuditStartAtomicReceiptAndCredential(t *testing.T) {
 	}
 	var count, operations int
 	var valid bool
-	err = f.pool.QueryRow(t.Context(), `SELECT count(*),count(DISTINCT operation_id),bool_and(actor_kind='human' AND actor_id=$2 AND credential_id=$3 AND environment_id=$4 AND authorization_witness->>'basis'='permission' AND actor_identity->>'source'='account') FROM audit_events WHERE session_id=$1`, receipt.SessionID, caller.ID, caller.CredentialID, f.env).Scan(&count, &operations, &valid)
+	err = f.pool.QueryRow(t.Context(), `SELECT count(*),count(DISTINCT operation_id),bool_and(actor_user_id IS NOT NULL AND actor_user_id=$2 AND credential_id=$3 AND environment_id=$4 AND authorization_evidence->'checks' @> '[{"type":"permission","result":"passed"}]'::jsonb AND actor_identity->>'source'='account') FROM audit_events WHERE session_id=$1`, receipt.SessionID, caller.ID, caller.CredentialID, f.env).Scan(&count, &operations, &valid)
 	if err != nil || count != 4 || operations != 1 || !valid {
 		t.Fatalf("capture/replay: count=%d operations=%d valid=%v err=%v", count, operations, valid, err)
 	}
@@ -130,7 +130,7 @@ func TestAuditDeadlineSettlementRollsBackAndDoesNotRecreate(t *testing.T) {
 	if err := fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND actor_service='session-deadline' AND action IN ('turn.interrupted','session.authority_changed')`, f.session).Scan(&count); err != nil || count != 2 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND actor_component='control_plane' AND action IN ('turn.interrupted','session.authority_changed')`, f.session).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("deadline facts: %d %v", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM audit_events WHERE session_id=$1`, f.session)
@@ -172,7 +172,7 @@ func TestAuditWorkerStopAttributionAndRollback(t *testing.T) {
 	}
 	var count int
 	var valid bool
-	err = f.pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_kind='service' AND actor_service='worker-host' AND credential_id=$2 AND credential_version=$3) FROM audit_events WHERE session_id=$1 AND action IN ('turn.interrupted','session.authority_changed')`, f.session, f.host().HostID, f.host().HostClaimVersion).Scan(&count, &valid)
+	err = f.pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_worker_host_id IS NOT NULL AND credential_id=$2 AND credential_version=$3) FROM audit_events WHERE session_id=$1 AND action IN ('turn.interrupted','session.authority_changed')`, f.session, f.host().HostID, f.host().HostClaimVersion).Scan(&count, &valid)
 	if err != nil || count != 2 || !valid {
 		t.Fatalf("worker facts: %d %v %v", count, valid, err)
 	}
@@ -324,5 +324,21 @@ func TestAuditSessionHoldReadsWithholdOnCaptureFailure(t *testing.T) {
 	}
 	if err := session.AuthorizeSessionRead(t.Context(), f.pool, f.caller(), f.env, receipt.SessionID); err != nil {
 		t.Fatalf("metadata subscription: %v", err)
+	}
+}
+
+func TestAuditMCPStaleGenerationRetainsObservedCheck(t *testing.T) {
+	f := newFixture(t)
+	e := f.execution()
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.session)
+	caller := session.Caller{Kind: "session", ID: f.session, Execution: e, Host: f.host()}
+	err := session.AdmitMCP(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, "list_agents")
+	if !errors.Is(err, session.ErrDenied) {
+		t.Fatal(err)
+	}
+	var valid bool
+	err = f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(actor_worker_host_id=$1 AND actor_session_id IS NULL AND org_id IS NULL AND authentication_result='verified' AND authorization_evidence->>'decision'='denied' AND authorization_evidence->'checks'->0->>'type'='runtime_binding' AND authorization_evidence->'checks'->0->>'reason'='generation_changed' AND (authorization_evidence->'checks'->0->>'generation')::bigint=$2 AND (authorization_evidence->'checks'->0->>'observed_generation')::bigint=$2+1) FROM audit_events WHERE action='mcp.refused'`, f.host().HostID, e.AuthorityGeneration).Scan(&valid)
+	if err != nil || !valid {
+		t.Fatal("lost runtime refusal or changed executor", valid, err)
 	}
 }

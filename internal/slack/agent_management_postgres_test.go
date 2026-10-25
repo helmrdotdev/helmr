@@ -43,10 +43,10 @@ func TestAgentManagementUsesExactCurrentGrantAndStoredConnection(t *testing.T) {
 	if err != nil || count != 1 || len(views) != 1 || views[0].ConnectionID != f.publication {
 		t.Fatalf("filter must precede count and limit: %+v %d %v", views, count, err)
 	}
-	if _, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User}, f.Environment, f.Session, 0, 100); !errors.Is(err, ErrDeliveryUnavailable) {
+	if _, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, 0, 100); !errors.Is(err, ErrDeliveryUnavailable) {
 		t.Fatalf("manager read run delivery: %v", err)
 	}
-	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User}, f.Environment, f.Session, uuid.NewV7(), DeliveryRecovery{AttemptID: uuid.NewV7(), PublicationRevision: 1}, "abandon"); !errors.Is(err, errInstallationAuthority) {
+	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, uuid.NewV7(), DeliveryRecovery{AttemptID: uuid.NewV7(), PublicationRevision: 1}, "abandon"); !errors.Is(err, errInstallationAuthority) {
 		t.Fatalf("manager changed run delivery: %v", err)
 	}
 	// The externally exchanged grant must be rejected if authorization changed in flight.

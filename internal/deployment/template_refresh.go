@@ -114,7 +114,7 @@ func RefreshTemplate(ctx context.Context, auditPolicy auditpolicy.Policy,
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
-			if err := audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: env, DeploymentID: result.DeploymentID, Action: "template.refreshed", Outcome: "accepted", TargetKind: "template", TargetID: templateID, Details: audit.LifecycleDetails{RequestID: build}}); err != nil {
+			if err := audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: env, DeploymentID: result.DeploymentID, Action: "template.refreshed", Outcome: "accepted", TargetKind: "template", TargetID: templateID, Details: audit.LifecycleDetails{RequestID: build}}); err != nil {
 				return idempotency.Completion{}, err
 			}
 			receipt, err := json.Marshal(result)

@@ -14,6 +14,17 @@ import (
 
 var ErrDenied = errors.New("permission is required")
 
+// PrincipalUnavailable preserves only the predicate observed during a refresh.
+// Not-found predicates do not distinguish revocation, expiry or missing membership.
+type PrincipalUnavailable struct {
+	UserID, APIKeyID                  uuid.UUID
+	Reason                            string
+	PresentedVersion, ObservedVersion int64
+}
+
+func (e *PrincipalUnavailable) Error() string { return ErrDenied.Error() }
+func (e *PrincipalUnavailable) Unwrap() error { return ErrDenied }
+
 // Principal resolves a human or machine against an exact environment using the
 // caller's transaction snapshot. A schedule/runtime Session is not a human.
 func Principal(ctx context.Context, database db.DBTX, kind string, id, env uuid.UUID) (auth.Principal, error) {
@@ -39,7 +50,7 @@ func Principal(ctx context.Context, database db.DBTX, kind string, id, env uuid.
 		var key uuid.UUID
 		if err := database.QueryRow(ctx, `SELECT id,credential_version FROM api_keys WHERE id=$1 AND org_id=$2 AND environment_id=$3 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>statement_timestamp())`, id, org, env).Scan(&key, &p.CredentialVersion); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return p, ErrDenied
+				return p, &PrincipalUnavailable{APIKeyID: id, Reason: "current_key_not_found"}
 			}
 			return p, err
 		}
@@ -60,7 +71,7 @@ func OrganizationPrincipal(ctx context.Context, database db.DBTX, org, user uuid
 	p := auth.Principal{OrgID: org, UserID: user, Kind: auth.PrincipalKindSession}
 	if err := database.QueryRow(ctx, `SELECT id,is_owner FROM org_members WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL`, org, user).Scan(&p.MemberID, &p.IsOwner); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return p, ErrDenied
+			return p, &PrincipalUnavailable{UserID: user, Reason: "active_membership_not_found"}
 		}
 		return p, err
 	}
@@ -83,8 +94,9 @@ func Check(ctx context.Context, database db.DBTX, kind string, id, env, agent uu
 	if agent != uuid.Nil() {
 		scope.AgentID = agent.String()
 	}
-	if !p.HasPermission(permission, scope) {
-		return ErrDenied
+	if permissionErr := auth.Require(p, permission, scope,
+		ErrDenied); permissionErr != nil {
+		return permissionErr
 	}
 	return nil
 }
@@ -123,7 +135,7 @@ func Current(ctx context.Context, q db.DBTX, prior auth.Principal, scope auth.Sc
 		return auth.Principal{}, ErrDenied
 	}
 	if prior.Kind == auth.PrincipalKindAPIKey && prior.CredentialVersion != p.CredentialVersion {
-		return auth.Principal{}, ErrDenied
+		return auth.Principal{}, &PrincipalUnavailable{APIKeyID: prior.APIKeyID, Reason: "credential_version_changed", PresentedVersion: prior.CredentialVersion, ObservedVersion: p.CredentialVersion}
 	}
 	if prior.Kind == auth.PrincipalKindSession {
 		if prior.MemberID != uuid.Nil() && p.MemberID != prior.MemberID {

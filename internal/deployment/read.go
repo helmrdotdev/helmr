@@ -93,8 +93,9 @@ func GetCurrent(ctx context.Context, q db.DBTX, principal auth.Principal, scope 
 	if refreshErr != nil {
 		return Record{}, refreshErr
 	}
-	if !principal.HasPermission(auth.PermissionDeploymentsRead, scope) {
-		return Record{}, ErrPermissionRequired
+	if permissionErr := auth.Require(principal, auth.PermissionDeploymentsRead, scope,
+		ErrPermissionRequired); permissionErr != nil {
+		return Record{}, permissionErr
 	}
 
 	project, env, err := scopeIDs(scope)

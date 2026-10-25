@@ -101,7 +101,7 @@ func runAuditMaintenance(ctx context.Context, output io.Writer, args []string) e
 		failureCtx, failureCancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer failureCancel()
 		captureErr := db.RunTx(failureCtx, pool, func(tx pgx.Tx) error {
-			return audit.Append(failureCtx, tx, policy, audit.Event{Actor: audit.System("audit-maintenance"), Action: action, Outcome: "failed", TargetKind: "audit", Details: audit.FailureDetails{Reason: "operation_failed"}})
+			return audit.Append(failureCtx, tx, policy, audit.Event{Evidence: audit.Internal(audit.AuditMaintenance), Action: action, Outcome: "failed", TargetKind: "audit", Details: audit.FailureDetails{Reason: "operation_failed"}})
 		})
 		if captureErr != nil {
 			return fmt.Errorf("audit maintenance failed: %w; failure capture also failed: %v", err, captureErr)

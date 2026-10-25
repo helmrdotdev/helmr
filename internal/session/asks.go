@@ -107,7 +107,7 @@ func RuntimeAsk(ctx context.Context, auditPolicy auditpolicy.Policy,
 		if err := notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
 			return err
 		}
-		if err := auditActorFact(ctx, tx, auditPolicy, audit.RuntimeActor(e.SessionID, e.AuthorityGeneration, e.ProcessEpoch), audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: turn, Action: "input.requested", Outcome: "accepted", TargetKind: "input_request", TargetID: id, Details: audit.LifecycleDetails{Sequence: sequence, Generation: e.ProcessEpoch}}); err != nil {
+		if err := auditActorFact(ctx, tx, auditPolicy, runtimeAuditEvidence(e), audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: turn, Action: "input.requested", Outcome: "accepted", TargetKind: "input_request", TargetID: id, Details: audit.LifecycleDetails{Sequence: sequence, Generation: e.ProcessEpoch}}); err != nil {
 			return err
 		}
 		return publication.accept(ctx, tx, e.EnvironmentID, e.SessionID, turn, sequence)
@@ -151,10 +151,10 @@ func RuntimeWithdrawAsk(ctx context.Context, auditPolicy auditpolicy.Policy, poo
 		if status != "pending" {
 			return nil
 		}
-		return cancelAsk(ctx, auditPolicy, tx, audit.RuntimeActor(e.SessionID, e.AuthorityGeneration, e.ProcessEpoch), e.EnvironmentID, e.SessionID, turn, id)
+		return cancelAsk(ctx, auditPolicy, tx, runtimeAuditEvidence(e), e.EnvironmentID, e.SessionID, turn, id)
 	}))
 }
-func cancelAsk(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Actor, env, session, turn, id uuid.UUID) error {
+func cancelAsk(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Evidence, env, session, turn, id uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `UPDATE turn_asks SET status='cancelled',cancelled_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4 AND status='pending'`, env, session, turn, id); err != nil {
 		return err
 	}
@@ -186,7 +186,7 @@ func cancelTurnAsks(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 		return err
 	}
 	for _, id := range ids {
-		if err := cancelAsk(ctx, auditPolicy, tx, audit.System("input-lifecycle"), env, session, turn, id); err != nil {
+		if err := cancelAsk(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), env, session, turn, id); err != nil {
 			return err
 		}
 	}

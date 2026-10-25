@@ -28,7 +28,7 @@ func startingSessionFixture(t *testing.T) (fixture, *dispatch.Allocator, session
 	if _, err := a.AllocateSessionProcess(t.Context(), f.env, sessionID, 1); err != nil {
 		t.Fatalf("initial assignment missing: %v", err)
 	}
-	beforeReady := session.Execution{EnvironmentID: f.env, SessionID: sessionID, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	beforeReady := session.Execution{EnvironmentID: f.env, SessionID: sessionID, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 	if _, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), beforeReady); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("attachment before VM readiness: %v", err)
 	}
@@ -46,7 +46,7 @@ func startingSessionFixture(t *testing.T) (fixture, *dispatch.Allocator, session
 	if p.Status != "starting" || p.ComputerID != computerID || p.InstanceID != r.InstanceID {
 		t.Fatalf("wrong process allocation: %+v", p)
 	}
-	e := session.Execution{EnvironmentID: f.env, SessionID: sessionID, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	e := session.Execution{EnvironmentID: f.env, SessionID: sessionID, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 	return f, a, e
 }
 

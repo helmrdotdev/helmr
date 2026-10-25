@@ -7,7 +7,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -265,7 +264,7 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 		t.Fatalf("lost target retry: %+v %v", replacement, err)
 	}
 	exposed := checkpointImageExposure(t, f)
-	if _, err := exposed.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, exposed.secretID, "revoke-restore"); err != nil {
+	if _, err := exposed.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, exposed.secretID, "revoke-restore"); err != nil {
 		t.Fatal(err)
 	}
 	target := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: replacement.InstanceID, Epoch: 3}
@@ -482,7 +481,7 @@ func TestAllocationRevokedImageRequiresPhysicalStop(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.Revoke(t.Context(), audit.System("test-fixture"), f.env, secretID, "revoke-before-start"); err != nil {
+			if _, err := store.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, secretID, "revoke-before-start"); err != nil {
 				t.Fatal(err)
 			}
 			wrong := identity

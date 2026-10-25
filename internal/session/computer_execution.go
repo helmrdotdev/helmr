@@ -131,10 +131,8 @@ func ControlComputerExecution(ctx context.Context, auditPolicy auditpolicy.Polic
 		if err != nil {
 			return err
 		}
-		if caller.CredentialKind != "" {
-			actor.CredentialKind = caller.CredentialKind
-		}
-		event := audit.Event{Actor: actor, EnvironmentID: req.EnvironmentID, ComputerID: req.ComputerID, Action: "computer.control_requested", Outcome: "accepted", TargetKind: "computer", TargetID: req.ComputerID, Details: audit.ComputerControlDetails{Kind: req.Kind, RequestID: result.ID}}
+		callerAuthentication(&actor, caller)
+		event := audit.Event{Evidence: actor, EnvironmentID: req.EnvironmentID, ComputerID: req.ComputerID, Action: "computer.control_requested", Outcome: "accepted", TargetKind: "computer", TargetID: req.ComputerID, Details: audit.ComputerControlDetails{Kind: req.Kind, RequestID: result.ID}}
 		if err := audit.Append(ctx, tx, auditPolicy, event); err != nil {
 			return err
 		}
@@ -164,8 +162,9 @@ func authorizeComputerExecution(ctx context.Context, tx pgx.Tx, caller Caller, e
 	if caller.Kind == "api_key" && caller.CredentialVersion > 0 && caller.CredentialVersion != p.CredentialVersion {
 		return auth.Principal{}, ErrDenied
 	}
-	if !p.HasPermission(permission, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}) {
-		return auth.Principal{}, ErrDenied
+	if permissionErr := auth.Require(p, permission, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID},
+		ErrDenied); permissionErr != nil {
+		return auth.Principal{}, permissionErr
 	}
 	return p, nil
 }

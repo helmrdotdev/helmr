@@ -16,7 +16,7 @@ import (
 // OrganizationInput describes an organization to create and the user who owns it.
 type OrganizationInput struct {
 	AuditPolicy auditpolicy.Policy
-	Actor       audit.Actor
+	Actor       audit.Evidence
 	Slug        string
 	Name        string
 	OwnerUserID uuid.UUID
@@ -31,8 +31,8 @@ type OrganizationInput struct {
 // so concurrent setups admit one organization. The caller commits the owner
 // membership and any initial administrator grant in this transaction.
 func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput) (db.Organization, error) {
-	if input.Actor.Authorization.Basis == "" {
-		input.Actor.Authorization = audit.Authorization{Basis: "credential", Decision: "allowed"}
+	if input.Actor.Authorization.Decision == "" {
+		input.Actor.Authorization = audit.NotEvaluated()
 	}
 	slug, name, err := normalizeSlugName(input.Slug, input.Name)
 	if err != nil {
@@ -88,10 +88,10 @@ func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput)
 			return db.Organization{}, err
 		}
 	}
-	if err := audit.Append(ctx, tx, input.AuditPolicy, audit.Event{Actor: input.Actor, OrgID: orgID, Action: "organization.created", TargetKind: "organization", TargetID: orgID}); err != nil {
+	if err := audit.Append(ctx, tx, input.AuditPolicy, audit.Event{Evidence: input.Actor, OrgID: orgID, Action: "organization.created", TargetKind: "organization", TargetID: orgID}); err != nil {
 		return db.Organization{}, err
 	}
-	if err := audit.Append(ctx, tx, input.AuditPolicy, audit.Event{Actor: input.Actor, OrgID: orgID, Action: "member.granted", TargetKind: "member", TargetID: pgvalue.MustUUIDValue(owner.ID), Details: audit.MembershipDetails{MembershipID: pgvalue.UUIDString(owner.ID), IsOwner: true}}); err != nil {
+	if err := audit.Append(ctx, tx, input.AuditPolicy, audit.Event{Evidence: input.Actor, OrgID: orgID, Action: "member.granted", TargetKind: "member", TargetID: pgvalue.MustUUIDValue(owner.ID), Details: audit.MembershipDetails{MembershipID: pgvalue.UUIDString(owner.ID), IsOwner: true}}); err != nil {
 		return db.Organization{}, err
 	}
 	return organization, nil

@@ -54,9 +54,9 @@ const (
 )
 
 type SecretManager interface {
-	Create(ctx context.Context, actor audit.Actor, environmentID uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error)
-	Rotate(ctx context.Context, actor audit.Actor, environmentID uuid.UUID, secretID uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error)
-	Revoke(ctx context.Context, actor audit.Actor, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error)
+	Create(ctx context.Context, principal auth.Principal, environmentID uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error)
+	Rotate(ctx context.Context, principal auth.Principal, environmentID uuid.UUID, secretID uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error)
+	Revoke(ctx context.Context, principal auth.Principal, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error)
 }
 
 type Server struct {

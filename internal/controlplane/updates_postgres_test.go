@@ -86,7 +86,7 @@ func TestConsoleUpdateStreamRequiresCurrentSessionAuthority(t *testing.T) {
 		t.Fatal("initial durable refresh missing", scanner.Text(), scanner.Err())
 	}
 	// A connected stream refreshes from a real operation's committed notification.
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stream-control"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stream-control"}); err != nil {
 		t.Fatal(err)
 	}
 	refreshed := false
@@ -174,7 +174,7 @@ func TestCapacityUpdateStreamUsesDedicatedAuthorityAndCommittedDemand(t *testing
 			t.Fatalf("missing change: %v", scanner.Err())
 		}
 		readChange()
-		if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "capacity-stream-control"}); err != nil {
+		if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "capacity-stream-control"}); err != nil {
 			t.Fatal(err)
 		}
 		readChange()

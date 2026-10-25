@@ -94,6 +94,11 @@ func TestPermissionManagementHTTP(t *testing.T) {
 	if err != nil || auditCount != 1 {
 		t.Fatalf("audit %d %v", auditCount, err)
 	}
+	// The grant that authorized the change is not the grant created by it.
+	var distinct bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT actor_user_id IS NOT NULL AND authentication_result='verified' AND credential_kind='login_session' AND credential_id IS NOT NULL AND authorization_evidence->>'decision'='allowed' AND authorization_evidence->'checks' @> '[{"type":"permission","permission":"assignments.create","result":"passed"}]'::jsonb AND authorization_evidence->'checks'->0->'evidence'->>'assignment_id'<>target_id::text AND details->'before'='null'::jsonb AND details->'after'->>'role_id'=$2 AND details->'after'->>'group_id'=$3 AND details->'after'->'permissions'='["agents.use"]'::jsonb FROM audit_events WHERE action='role_grant.created' AND target_id=$1`, grant.ID, role.ID, group.ID).Scan(&distinct); err != nil || !distinct {
+		t.Fatal("change and evaluated authority conflated", distinct, err)
+	}
 	// Concurrent duplicate creation converges on the existing tuple without extra audit events.
 	var duplicateWG sync.WaitGroup
 	duplicateCodes := make(chan int, 4)

@@ -87,7 +87,7 @@ func TestConnectionPendingSlotAndCredentialCustody(t *testing.T) {
 	if err = store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, setup.RegistrationID, changed); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, uuid.NewV7(), setup.RegistrationID, secret); !errors.Is(err, errInstallationAuthority) {
+	if err = store.StoreAppCredentials(t.Context(), audit.Internal(audit.ControlPlane), org, uuid.NewV7(), setup.RegistrationID, secret); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("nonmember wrote secrets", err)
 	}
 	if err = store.DisconnectConnection(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.Environment, setup.ID); err != nil {

@@ -66,8 +66,9 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersExecute, scope) {
-		s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersExecute, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	created, err := command.Create(r.Context(), s.auditPolicy, s.tx, command.CreateRequest{
@@ -106,8 +107,9 @@ func (s *Server) getComputerCommandHTTP(w http.ResponseWriter, r *http.Request) 
 		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
-		s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersRead, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	process, err := command.Get(r.Context(), s.db, command.Ref{

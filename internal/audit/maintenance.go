@@ -11,12 +11,12 @@ import (
 )
 
 // ObservePolicy records one process-start observation, not a policy change.
-func ObservePolicy(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, process string) error {
-	if process != "control-plane" && process != "dispatcher" {
+func ObservePolicy(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, process Component) error {
+	if process != ControlPlane && process != Dispatcher {
 		return errors.New("unknown audit process")
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		return Append(ctx, tx, policy, Event{Actor: System(process), Action: "audit.retention_configured", TargetKind: "audit", Details: RetentionObservedDetails{RetentionSeconds: policy.RetentionSeconds}})
+		return Append(ctx, tx, policy, Event{Evidence: Internal(process), Action: "audit.retention_configured", TargetKind: "audit", Details: RetentionObservedDetails{RetentionSeconds: policy.RetentionSeconds}})
 	})
 }
 
@@ -55,7 +55,7 @@ func Purge(ctx context.Context, database db.TxBeginner, policy auditpolicy.Polic
 			if err != nil || count == 0 {
 				return err
 			}
-			return Append(batchCtx, tx, policy, Event{Actor: System("audit-maintenance"), Action: "audit.purge_completed", TargetKind: "audit", Details: PurgeDetails{Cutoff: cutoff, Count: count, MinExpiry: *minExpiry, MaxExpiry: *maxExpiry}})
+			return Append(batchCtx, tx, policy, Event{Evidence: Internal(AuditMaintenance), Action: "audit.purge_completed", TargetKind: "audit", Details: PurgeDetails{Cutoff: cutoff, Count: count, MinExpiry: *minExpiry, MaxExpiry: *maxExpiry}})
 		})
 		cancel()
 		if err != nil {
@@ -72,6 +72,6 @@ func Purge(ctx context.Context, database db.TxBeginner, policy auditpolicy.Polic
 
 func RecordRestore(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, detail RestoreDetails) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		return Append(ctx, tx, policy, Event{Actor: System("audit-maintenance"), Action: "audit.restore_recorded", TargetKind: "audit", Details: detail})
+		return Append(ctx, tx, policy, Event{Evidence: Internal(AuditMaintenance), Action: "audit.restore_recorded", TargetKind: "audit", Details: detail})
 	})
 }

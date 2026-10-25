@@ -50,7 +50,7 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 		if _, err := a.AllocateSessionProcess(t.Context(), f.env, sessionID, 1); err != nil {
 			t.Fatalf("committed initial assignment unavailable: %v", err)
 		}
-		e := session.Execution{EnvironmentID: f.env, SessionID: sessionID, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+		e := session.Execution{EnvironmentID: f.env, SessionID: sessionID, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 		if _, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e); !errors.Is(err, session.ErrNotReady) {
 			t.Fatalf("pre-ready attachment: %v", err)
 		}
@@ -62,7 +62,7 @@ func TestInitialCohortContinuesAfterDrainButLaterSessionDoesNot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, sessionID := range []uuid.UUID{first, peer.SessionID} {
-		e := session.Execution{EnvironmentID: f.env, SessionID: sessionID, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+		e := session.Execution{EnvironmentID: f.env, SessionID: sessionID, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 		attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 		if err != nil {
 			t.Fatal(err)

@@ -125,7 +125,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
-			if err = audit.Append(ctx, tx, c.auditPolicy, audit.Event{Actor: actor, EnvironmentID: request.Scope.EnvironmentID, ComputerID: id, DeploymentID: *deployment, Action: "computer.created", TargetKind: "computer", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
+			if err = audit.Append(ctx, tx, c.auditPolicy, audit.Event{Evidence: actor, EnvironmentID: request.Scope.EnvironmentID, ComputerID: id, DeploymentID: *deployment, Action: "computer.created", TargetKind: "computer", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
 				return idempotency.Completion{}, err
 			}
 			return idempotency.Completion{Target: idempotency.Target{ComputerID: id}, Receipt: body}, nil

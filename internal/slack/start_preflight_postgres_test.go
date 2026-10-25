@@ -86,7 +86,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 			if kind == "too-large" {
 				input, _ = json.Marshal([]map[string]string{{"type": "text", "text": strings.Repeat("x", contentCharacters+1)}})
 			}
-			caller := session.Caller{Kind: "session", ID: f.Session, TurnID: turn, Execution: session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
+			caller := session.Caller{Kind: "session", ID: f.Session, TurnID: turn, Execution: session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
 			result, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", ComputerID: f.Computer, IdempotencyKey: "cross-app", Input: input})
 			accepted := kind == "valid" || kind == "source-stopped" || kind == "target-stopped" || kind == "unknown-opening" || kind == "source-revoked-after-issued" || kind == "source-disconnected-before-root-recognition"
 			if !accepted {
@@ -113,7 +113,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 				if kind == "target-stopped" {
 					stopped = result.SessionID
 				}
-				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: stopped, Kind: "cancel", IdempotencyKey: "stop-after-start"}); err != nil {
+				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: stopped, Kind: "cancel", IdempotencyKey: "stop-after-start"}); err != nil {
 					t.Fatal(err)
 				}
 				if kind == "source-stopped" {

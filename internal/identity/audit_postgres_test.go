@@ -25,7 +25,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	var issued bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(actor_identity->>'display_name'='Original' AND credential_kind='github' AND details->>'provider'='github' AND details->>'subject'='subject-42') FROM audit_events WHERE action='identity.session_issued' AND target_id=$1`, principal.SessionID).Scan(&issued); err != nil || !issued {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(actor_identity->>'display_name'='Original' AND credential_kind='provider_assertion' AND identity_provider='github' AND details->>'provider'='github' AND details->>'subject'='subject-42') FROM audit_events WHERE action='identity.session_issued' AND target_id=$1`, principal.SessionID).Scan(&issued); err != nil || !issued {
 		t.Fatal(issued, err)
 	}
 	external.DisplayName = "Renamed"
@@ -73,7 +73,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	var revoked bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(credential_id=$1 AND actor_id=$2) FROM audit_events WHERE action='identity.session_revoked' AND target_id=$1`, principal.SessionID, principal.UserID).Scan(&revoked); err != nil || !revoked {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(credential_id=$1 AND actor_user_id=$2) FROM audit_events WHERE action='identity.session_revoked' AND target_id=$1`, principal.SessionID, principal.UserID).Scan(&revoked); err != nil || !revoked {
 		t.Fatal(revoked, err)
 	}
 }
@@ -90,7 +90,7 @@ func TestAuditAuthenticationRefusalSurvivesCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var safe bool
-	if err := f.pool.QueryRow(ctx, `SELECT count(*)=2 AND bool_and(org_id IS NULL AND actor_kind='anonymous' AND outcome='denied' AND details='{"reason":"authentication_invalid"}'::jsonb) FROM audit_events WHERE action='identity.sign_in'`).Scan(&safe); err != nil || !safe {
+	if err := f.pool.QueryRow(ctx, `SELECT count(*)=2 AND bool_and(org_id IS NULL AND authentication_result='failed' AND outcome='denied' AND details='{"reason":"authentication_invalid"}'::jsonb) FROM audit_events WHERE action='identity.sign_in'`).Scan(&safe); err != nil || !safe {
 		t.Fatal(safe, err)
 	}
 	f.exec(t, `ALTER TABLE audit_events ADD CONSTRAINT reject_refusal CHECK(outcome<>'denied') NOT VALID`)
@@ -165,7 +165,7 @@ func TestAuditDeviceIssuanceLinksVerifiedAuthorization(t *testing.T) {
 		t.Fatal(err)
 	}
 	var linked bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(i.actor_id=$1 AND i.details->>'method'='device_authorization' AND NOT (i.details ? 'provider') AND a.credential_id=$2 AND a.details->>'authorizing_credential_id'=$2::uuid::text) FROM audit_events i JOIN audit_events a ON a.target_id=(i.details->>'device_code_id')::uuid AND a.action='identity.device_authorized' AND a.outcome='succeeded' WHERE i.action='identity.session_issued' AND i.target_id=$3`, p.UserID, p.SessionID, device.SessionID).Scan(&linked); err != nil || !linked {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(i.actor_user_id=$1 AND i.details->>'method'='device_authorization' AND NOT (i.details ? 'provider') AND a.credential_id=$2 AND a.details->>'authorizing_credential_id'=$2::uuid::text) FROM audit_events i JOIN audit_events a ON a.target_id=(i.details->>'device_code_id')::uuid AND a.action='identity.device_authorized' AND a.outcome='succeeded' WHERE i.action='identity.session_issued' AND i.target_id=$3`, p.UserID, p.SessionID, device.SessionID).Scan(&linked); err != nil || !linked {
 		t.Fatal("device attribution", linked, err)
 	}
 	var leaked bool

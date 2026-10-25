@@ -404,7 +404,7 @@ func authorizeSessionInput(ctx context.Context, tx pgx.Tx, caller Caller, env uu
 		}
 		if err := executionAvailable(ctx, tx, caller.Execution, o, caller.TurnID == uuid.Nil()); err != nil {
 			if (errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady)) || (errors.Is(err, ErrDenied) || errors.Is(err, computer.ErrDenied)) {
-				return ErrDenied
+				return errors.Join(ErrDenied, err)
 			}
 			return err
 		}
@@ -433,13 +433,14 @@ func authorizeSessionInput(ctx context.Context, tx pgx.Tx, caller Caller, env uu
 
 // Execution identifies the exact native process authorized by a Computer lease.
 type Execution struct {
-	EnvironmentID       uuid.UUID
-	SessionID           uuid.UUID
-	ProcessEpoch        int64
-	LeaseEpoch          int64
-	WorkerHostID        uuid.UUID
-	WorkerEpoch         int64
-	AuthorityGeneration int64
+	EnvironmentID            uuid.UUID
+	SessionID                uuid.UUID
+	ProcessEpoch             int64
+	LeaseEpoch               int64
+	WorkerHostID             uuid.UUID
+	AuthenticatedHostVersion int64
+	WorkerEpoch              int64
+	AuthorityGeneration      int64
 }
 
 func executionReady(ctx context.Context, tx pgx.Tx, e Execution, o owners) error {
@@ -447,7 +448,7 @@ func executionReady(ctx context.Context, tx pgx.Tx, e Execution, o owners) error
 }
 func executionAvailable(ctx context.Context, tx pgx.Tx, e Execution, o owners, allowStarting bool) error {
 	if e.AuthorityGeneration != o.generation {
-		return ErrDenied
+		return runtimeGenerationRefusal(e, o.generation)
 	}
 	if err := executionPhysical(ctx, tx, e, allowStarting, true); err != nil {
 		return err
@@ -460,7 +461,7 @@ func executionAvailable(ctx context.Context, tx pgx.Tx, e Execution, o owners, a
 // fence every request, including same-key recovery after a lost response.
 func executionReceipt(ctx context.Context, tx pgx.Tx, e Execution, o owners) error {
 	if e.AuthorityGeneration != o.generation {
-		return ErrDenied
+		return runtimeGenerationRefusal(e, o.generation)
 	}
 	err := executionPhysical(ctx, tx, e, true, false)
 	if errors.Is(err, ErrNotReady) {
@@ -601,7 +602,7 @@ func dispatchTurn(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx
 		if _, err = tx.Exec(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp(),error_code='permission_revoked',error_message=$3 WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID, []byte("Permission was revoked before dispatch")); err != nil {
 			return err
 		}
-		if err = auditServiceFact(ctx, tx, auditPolicy, "turn-dispatcher", audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: result.TurnID, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: result.TurnID, Details: audit.FailureDetails{Reason: "permission_denied"}}); err != nil {
+		if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: result.TurnID, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: result.TurnID, Details: audit.FailureDetails{Reason: "permission_denied"}}); err != nil {
 			return err
 		}
 		if err = eventData(ctx, tx, e.EnvironmentID, e.SessionID, result.TurnID, "turn.failed", []byte(`{"code":"permission_revoked"}`)); err != nil {

@@ -15,6 +15,7 @@ import (
 	"uuid"
 
 	"github.com/coder/websocket"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -142,5 +143,37 @@ func TestSocketDiscardLogsOnlyRedactedReason(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "reason=invalid") || strings.Contains(logs.String(), "payload-sentinel") {
 		t.Fatalf("discard log lost its redacted reason: %s", logs.String())
+	}
+}
+
+func TestSocketAdmissionRecordsProviderAssertionWithoutInventingSignature(t *testing.T) {
+	f, store, _ := socketFixture(t)
+	f.link(t)
+	claim, err := store.acquireSocket(t.Context(), uuid.NewV7())
+	if err != nil || claim == nil {
+		t.Fatal(err)
+	}
+	supervisor := SocketSupervisor{cfg: SocketConfig{Credentials: store, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}}
+	client, peer := socketPair(t)
+	event := eventBody(t, "socket-audit", map[string]any{"type": "app_mention", "user": "human", "channel": "C1", "ts": slackNow(), "thread_ts": "123.456", "text": "<@bot> work"})
+	raw, _ := json.Marshal(socketEnvelope{Type: "events_api", EnvelopeID: "socket-audit", Payload: event})
+	if err := supervisor.receiveSocketEnvelope(t.Context(), client, *claim, raw); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, _, err := peer.Read(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var receipt uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_requests WHERE status='received'`).Scan(&receipt); err != nil {
+		t.Fatal(err)
+	}
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), receipt); err != nil {
+		t.Fatal(err)
+	}
+	var valid bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)>0 AND bool_and(actor_user_id=$1 AND authentication_result='verified' AND identity_provider='slack' AND credential_kind='provider_assertion' AND credential_id IS NULL) FROM audit_events WHERE action='turn.admitted'`, f.User).Scan(&valid); err != nil || !valid {
+		t.Fatal("socket admission invented signature", valid, err)
 	}
 }

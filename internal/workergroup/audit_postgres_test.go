@@ -2,6 +2,7 @@ package workergroup
 
 import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"testing"
 	"uuid"
 
@@ -13,7 +14,7 @@ func TestWorkerGroupAuditCommitsOnceAndRollsBack(t *testing.T) {
 	f := newSupplyFixture(t)
 	user := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Operator')`, user)
-	actor := audit.Actor{Kind: "installation_operator", ID: user, CredentialKind: "login_session", CredentialID: uuid.NewV7(), Authorization: audit.Authorization{Basis: "installation_admin", Decision: "allowed"}}
+	actor := audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: uuid.NewV7()})
 	paused, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, f.groupID(), f.group.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
@@ -22,7 +23,7 @@ func TestWorkerGroupAuditCommitsOnceAndRollsBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_group.paused' AND actor_kind='installation_operator' AND actor_id=$1 AND credential_id=$2 AND target_id=$3 AND org_id IS NULL AND environment_id IS NULL`, actor.ID, actor.CredentialID, f.groupID()).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_group.paused' AND actor_user_id IS NOT NULL AND actor_user_id=$1 AND credential_id=$2 AND target_id=$3 AND org_id IS NULL AND environment_id IS NULL`, actor.Actor.UserID, actor.Authentication.CredentialID, f.groupID()).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("pause audit count=%d err=%v", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_worker_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)

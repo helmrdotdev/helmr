@@ -6,7 +6,9 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auth"
 )
 
 func (s *Server) requestAuditRoute(r *http.Request) (auditRoute, string, bool) {
@@ -26,7 +28,7 @@ func (s *Server) requestAuditRoute(r *http.Request) (auditRoute, string, bool) {
 
 // refuseOperation is called at explicit authentication/permission/owner error
 // boundaries before a response is written, not by observing HTTP status codes.
-func (s *Server) refuseOperation(w http.ResponseWriter, r *http.Request, reason string) bool {
+func (s *Server) refuseOperation(w http.ResponseWriter, r *http.Request, reason string, causes ...error) bool {
 	route, operation, ok := s.requestAuditRoute(r)
 	if !ok || route.action == "" {
 		return true
@@ -42,19 +44,20 @@ func (s *Server) refuseOperation(w http.ResponseWriter, r *http.Request, reason 
 		return false
 	}
 	p := principalFromContext(r.Context())
-	actor := audit.Anonymous("presented_credential")
+	result := "absent"
+	if presentedCredential(r) {
+		result = "failed"
+	}
+	actor := audit.Unauthenticated(result, "")
 	org := uuid.Nil()
 	if p.UserID != uuid.Nil() || p.APIKeyID != uuid.Nil() {
 		actor = audit.FromPrincipal(p)
-		actor.Authorization = audit.Authorization{Basis: "credential", Decision: "denied", Reason: reason}
 		org = p.OrgID
 	}
 	if host := workerFromContext(r.Context()); host.HostID != uuid.Nil() {
 		// The authenticated Host does not prove the tenant/runtime IDs in the
 		// rejected body. Keep custody at installation scope.
-		actor = audit.System("worker-host")
-		actor.CredentialKind, actor.CredentialID, actor.CredentialVersion = "worker_host", host.HostID, host.HostClaimVersion
-		actor.Authorization = audit.Authorization{Basis: "credential", Decision: "denied", Reason: reason}
+		actor = audit.Worker(host.HostID, host.HostClaimVersion)
 		org = uuid.Nil()
 		if !s.admitSecurityKey(w, r, "worker_host:"+host.HostID.String(), true) {
 			return false
@@ -73,7 +76,24 @@ func (s *Server) refuseOperation(w http.ResponseWriter, r *http.Request, reason 
 			}
 		}
 	}
-	event := audit.Event{Actor: actor, OrgID: org, Action: route.action, TargetKind: definition.TargetKind, Unresolved: true, Details: audit.FailureDetails{Operation: operation}}
+	for _, cause := range causes {
+		var evaluated *audit.Refusal
+		if errors.As(cause, &evaluated) {
+			actor.Authorization = evaluated.Authorization
+		}
+		var unavailable *access.PrincipalUnavailable
+		if errors.As(cause, &unavailable) && org != uuid.Nil() && (unavailable.UserID != uuid.Nil() && unavailable.UserID == p.UserID || unavailable.APIKeyID != uuid.Nil() && unavailable.APIKeyID == p.APIKeyID) {
+			actor.Authorization = audit.Authorization{Decision: "denied", Checks: []audit.Check{audit.PrincipalCurrencyCheck{Type: "principal_currency", SubjectUserID: unavailable.UserID, SubjectAPIKeyID: unavailable.APIKeyID, Scope: audit.CheckScope{Kind: "organization", OrgID: org}, ObservationSource: "transaction", Result: "failed", Reason: unavailable.Reason, PresentedVersion: unavailable.PresentedVersion, ObservedVersion: unavailable.ObservedVersion}}}
+		}
+		var refusal *auth.PermissionRefusal
+		if errors.As(cause, &refusal) {
+			// A failed check can concern a Session's origin principal. That principal
+			// is the subject of the check, not necessarily the authenticated executor.
+			actor.Authorization = audit.PermissionAuthorization(refusal.Checks, false)
+		}
+
+	}
+	event := audit.Event{Evidence: actor, OrgID: org, Action: route.action, TargetKind: definition.TargetKind, Unresolved: true, Details: audit.FailureDetails{Operation: operation}}
 	// Path/body tenant claims and guessed resource IDs never establish custody.
 	if err := audit.RecordFailure(r.Context(), s.tx, s.auditPolicy, event, reason); err != nil {
 		s.auditCaptureFailed(r, err)
@@ -107,7 +127,7 @@ func (s *Server) writeOperationError(w http.ResponseWriter, r *http.Request, err
 		case errUnauthorized:
 			reason = "authentication_invalid"
 		}
-		if reason != "" && !s.refuseOperation(w, r, reason) {
+		if reason != "" && !s.refuseOperation(w, r, reason, err) {
 			return
 		}
 	}

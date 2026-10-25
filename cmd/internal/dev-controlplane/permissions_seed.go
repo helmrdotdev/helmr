@@ -11,7 +11,7 @@ import (
 // Permission fixtures contain people and policy only. Agent registrations have
 // no deployment or executable bundle and cannot create Worker demand.
 func seedPermissionData(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy) error {
-	if err := org.SeedStandardRoles(ctx, tx, policy, mustUUID("00000000-0000-7000-8000-000000000201"), audit.System("local-development")); err != nil {
+	if err := org.SeedStandardRoles(ctx, tx, policy, mustUUID("00000000-0000-7000-8000-000000000201"), audit.Internal(audit.Development)); err != nil {
 		return err
 	}
 	_, err := tx.Exec(ctx, permissionSeedSQL)

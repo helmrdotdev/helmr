@@ -121,7 +121,7 @@ func mutationKey(raw string, required bool) (string, error) {
 
 // Create serializes Environment-owned name and retry identities. Its first
 // encrypted version is the immutable value receipt, even after rotation/revocation.
-func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
+func (s *Store) Create(ctx context.Context, principal auth.Principal, env uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
@@ -148,7 +148,8 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, na
 				return err
 			}
 		}
-		if err := authorizeMutation(ctx, tx, &actor, env, auth.PermissionSecretsCreate); err != nil {
+		actor, err := authorizeMutation(ctx, tx, principal, env, auth.PermissionSecretsCreate)
+		if err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -168,7 +169,7 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, na
 				return idempotency.Completion{}, err
 			}
 
-			if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.created", TargetKind: "secret", TargetID: pgvalue.MustUUIDValue(record.ID)}); err != nil {
+			if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Evidence: actor, EnvironmentID: env, Action: "secret.created", TargetKind: "secret", TargetID: pgvalue.MustUUIDValue(record.ID)}); err != nil {
 				return idempotency.Completion{}, err
 			}
 			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
@@ -179,7 +180,7 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, na
 }
 
 // Rotate binds retries to the exact encrypted version and never rewrites pins.
-func (s *Store) Rotate(ctx context.Context, actor audit.Actor, env, id uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
+func (s *Store) Rotate(ctx context.Context, principal auth.Principal, env, id uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
@@ -193,7 +194,8 @@ func (s *Store) Rotate(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 		if err != nil {
 			return err
 		}
-		if err := authorizeMutation(ctx, tx, &actor, env, auth.PermissionSecretsRotate); err != nil {
+		actor, err := authorizeMutation(ctx, tx, principal, env, auth.PermissionSecretsRotate)
+		if err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -226,7 +228,7 @@ func (s *Store) Rotate(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
-			if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.rotated", TargetKind: "secret", TargetID: id}); err != nil {
+			if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Evidence: actor, EnvironmentID: env, Action: "secret.rotated", TargetKind: "secret", TargetID: id}); err != nil {
 				return idempotency.Completion{}, err
 			}
 			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: updated.ID})
@@ -237,7 +239,7 @@ func (s *Store) Rotate(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 }
 
 // Revoke records intent, never a claim that physical execution has stopped.
-func (s *Store) Revoke(ctx context.Context, actor audit.Actor, env, id uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
+func (s *Store) Revoke(ctx context.Context, principal auth.Principal, env, id uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
@@ -254,7 +256,8 @@ func (s *Store) Revoke(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 				return err
 			}
 		}
-		if err := authorizeMutation(ctx, tx, &actor, env, auth.PermissionSecretsRevoke); err != nil {
+		actor, err := authorizeMutation(ctx, tx, principal, env, auth.PermissionSecretsRevoke)
+		if err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -267,7 +270,7 @@ func (s *Store) Revoke(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 				if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedCurrentVersionID: record.CurrentVersionID}); err != nil {
 					return idempotency.Completion{}, err
 				}
-				if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.revoked", TargetKind: "secret", TargetID: id}); err != nil {
+				if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Evidence: actor, EnvironmentID: env, Action: "secret.revoked", TargetKind: "secret", TargetID: id}); err != nil {
 					return idempotency.Completion{}, err
 				}
 			}
@@ -355,32 +358,30 @@ func secretFromCreate(row db.CreateSecretRow) db.Secret {
 	return db.Secret(row)
 }
 
-func authorizeMutation(ctx context.Context, tx pgx.Tx, actor *audit.Actor, env uuid.UUID, permission auth.Permission) error {
-	if actor.Kind == "service" && actor.Source != "" {
-		return nil
-	}
-	kind := ""
-	switch actor.Kind {
-	case "human":
-		kind = "user"
-	case "api_key":
-		kind = "api_key"
+// authorizeMutation consumes executable authority independently of audit evidence.
+func authorizeMutation(ctx context.Context, tx pgx.Tx, principal auth.Principal, env uuid.UUID, permission auth.Permission) (audit.Evidence, error) {
+	p := principal
+	var kind string
+	var id uuid.UUID
+	switch p.Kind {
+	case auth.PrincipalKindSession:
+		kind, id = "user", p.UserID
+	case auth.PrincipalKindAPIKey:
+		kind, id = "api_key", p.APIKeyID
 	default:
-		return access.ErrDenied
+		return audit.Evidence{}, access.ErrDenied
 	}
-	current, err := access.Principal(ctx, tx, kind, actor.ID, env)
+	current, err := access.Principal(ctx, tx, kind, id, env)
 	if err != nil {
-		return err
+		return audit.Evidence{}, err
 	}
-	if actor.Kind == "api_key" && current.CredentialVersion != actor.CredentialVersion {
-		return access.ErrDenied
+	if p.Kind == auth.PrincipalKindAPIKey && current.CredentialVersion != p.CredentialVersion {
+		return audit.Evidence{}, &access.PrincipalUnavailable{APIKeyID: p.APIKeyID, Reason: "credential_version_changed", PresentedVersion: p.CredentialVersion, ObservedVersion: current.CredentialVersion}
 	}
-	current.SessionID = actor.CredentialID
-	scope := auth.Scope{OrgID: current.OrgID, ProjectID: current.ProjectID, EnvironmentID: current.EnvironmentID}
-	verified, err := audit.Authorized(current, permission, scope)
+	current.SessionID = p.SessionID
+	evidence, err := audit.Authorized(current, permission, auth.Scope{OrgID: current.OrgID, ProjectID: current.ProjectID, EnvironmentID: current.EnvironmentID})
 	if err != nil {
-		return access.ErrDenied
+		return evidence, errors.Join(access.ErrDenied, err)
 	}
-	*actor = verified
-	return nil
+	return evidence, nil
 }

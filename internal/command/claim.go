@@ -167,7 +167,7 @@ func claimNext(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, w
  revision=revision+1,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, request.EnvironmentID, id); err != nil {
 					return ClaimResult{}, err
 				}
-				if err = auditServiceFailure(ctx, tx, auditPolicy, c, "command-dispatcher", "failed", "permission_denied"); err != nil {
+				if err = auditServiceFailure(ctx, tx, auditPolicy, c, audit.ControlPlane, "failed", "permission_denied"); err != nil {
 					return ClaimResult{}, err
 				}
 				continue
@@ -193,7 +193,7 @@ func claimNext(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, w
 		if err != nil {
 			return ClaimResult{}, err
 		}
-		envelopes, protected, err := recordExposure(ctx, auditPolicy, tx, worker, c, bindings)
+		envelopes, protected, err := recordExposure(ctx, auditPolicy, tx, worker, lease, c, bindings)
 		if err != nil {
 			return ClaimResult{}, err
 		}
@@ -307,7 +307,7 @@ func lockBindings(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]ru
 		return b, err
 	})
 }
-func recordExposure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, worker workergroup.HostPrincipal, c db.Command, bindings []runtimeBinding) ([]secret.DeliveryEnvelope, map[string]string, error) {
+func recordExposure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, worker workergroup.HostPrincipal, lease Lease, c db.Command, bindings []runtimeBinding) ([]secret.DeliveryEnvelope, map[string]string, error) {
 	env, id := uuid.UUID(c.EnvironmentID.Bytes), uuid.UUID(c.ID.Bytes)
 	ids := []uuid.UUID{}
 	for _, b := range bindings {
@@ -317,10 +317,9 @@ func recordExposure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 	if err != nil {
 		return nil, nil, err
 	}
-	actor := audit.System("worker-host")
-	actor.CredentialKind, actor.CredentialID, actor.CredentialVersion = "worker_host", worker.HostID, worker.HostClaimVersion
+	actor := audit.AssignedWorker(worker.HostID, worker.HostClaimVersion, "computer", lease.ComputerID, lease.Epoch)
 	for _, exposure := range exposures {
-		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: env, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, RevocationGeneration: exposure.RevocationGeneration, CommandID: id}}); err != nil {
+		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: env, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, RevocationGeneration: exposure.RevocationGeneration, CommandID: id}}); err != nil {
 			return nil, nil, err
 		}
 	}

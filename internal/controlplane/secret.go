@@ -63,7 +63,7 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	record, err := s.secrets.Create(
-		r.Context(), audit.FromPrincipal(principal),
+		r.Context(), principal,
 		pgvalue.MustUUIDValue(environmentID),
 		request.Secret,
 		[]byte(request.Value),
@@ -88,8 +88,9 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionSecretsRead, scope) {
-		s.writeOperationError(w, r, forbidden(errors.New("permission is required")))
+	if permissionErr := auth.Require(principal, auth.PermissionSecretsRead, scope,
+		errors.New("permission is required")); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	limit, cursor, err := parseSecretListQuery(r, scope.ProjectID, scope.EnvironmentID)
@@ -165,8 +166,9 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id string) {
 		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionSecretsRead, scope) {
-		s.writeOperationError(w, r, forbidden(errors.New("permission is required")))
+	if permissionErr := auth.Require(principal, auth.PermissionSecretsRead, scope,
+		errors.New("permission is required")); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	record, err := s.db.GetSecretSnapshotByName(r.Context(), db.GetSecretSnapshotByNameParams{
@@ -230,7 +232,7 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id string)
 	}
 	secretID := pgvalue.MustUUIDValue(record.ID)
 	rotated, err := s.secrets.Rotate(
-		r.Context(), audit.FromPrincipal(principal),
+		r.Context(), principal,
 		pgvalue.MustUUIDValue(environmentID),
 		secretID,
 		[]byte(request.Value),
@@ -290,7 +292,7 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id string)
 	}
 	secretID := pgvalue.MustUUIDValue(record.ID)
 	revoked, err := s.secrets.Revoke(
-		r.Context(), audit.FromPrincipal(principal),
+		r.Context(), principal,
 		pgvalue.MustUUIDValue(environmentID),
 		secretID,
 		idempotencyKey,
@@ -318,8 +320,9 @@ func (s *Server) secretMutationAuthority(
 		s.writeOperationError(w, r, badRequest(err))
 		return auth.Principal{}, pgtype.UUID{}, false
 	}
-	if !principal.HasPermission(permission, scope) {
-		s.writeOperationError(w, r, forbidden(errors.New("permission is required")))
+	if permissionErr := auth.Require(principal, permission, scope,
+		errors.New("permission is required")); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return auth.Principal{}, pgtype.UUID{}, false
 	}
 	return principal, environmentID, true
@@ -342,7 +345,7 @@ func (s *Server) writeSecretMutationError(
 	var retryConflict idempotency.ConflictError
 	switch {
 	case errors.Is(err, access.ErrDenied):
-		s.writeOperationError(w, r, forbidden(errors.New("permission is required")))
+		s.writeOperationError(w, r, forbidden(errors.Join(errors.New("permission is required"), err)))
 	case errors.As(err, &expired):
 		s.writeOperationError(w, r, gone(expired))
 	case errors.As(err, &retryConflict):

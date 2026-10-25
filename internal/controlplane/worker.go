@@ -143,7 +143,7 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		quarantined[i] = uuid.MustParse(value)
 	}
 	if err := dispatch.ObserveRecoveredHost(r.Context(), s.auditPolicy, s.tx, worker, quarantined); err != nil {
-		s.writeAgentComputerError(w, err)
+		s.writeAgentComputerError(w, r, err)
 		return
 	}
 	evidence, err := json.Marshal(request)
@@ -274,7 +274,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 	}
 	keys, err := computer.ListPreparationSources(r.Context(), s.tx, worker)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	hints := make([]workerapi.ReadyLeafKey, 0, len(keys))

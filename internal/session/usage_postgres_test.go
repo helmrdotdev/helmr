@@ -77,7 +77,7 @@ func TestUsageKeepsSessionReadBounds(t *testing.T) {
  INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$5 FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherAgent, f.agent, peer.session, viewer)
 	f.enqueue(t, "visible")
 	peer.enqueue(t, "hidden")
-	caller := session.Caller{Kind: "user", ID: viewer}
+	caller := session.Caller{Kind: "user", ID: viewer, CredentialID: uuid.NewV7()}
 	if _, err := session.ReadUsage(ctx, f.pool, caller, f.env, 7); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("usage without session access", err)
 	}

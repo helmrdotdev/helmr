@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -41,7 +42,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 			for range perWriter {
 				before := time.Now()
 				err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
-					return audit.Append(t.Context(), tx, policy, audit.Event{Actor: audit.System("workload"), OrgID: org, Action: "command.completed", TargetKind: "command", TargetID: uuid.NewV7(), Details: audit.LifecycleDetails{}})
+					return audit.Append(t.Context(), tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), OrgID: org, Action: "command.completed", TargetKind: "command", TargetID: uuid.NewV7(), Details: audit.LifecycleDetails{}})
 				})
 				if err != nil {
 					errors <- err
@@ -95,6 +96,20 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 		}
 		t.Logf("query_plan action=%s %s", action, plan)
 	}
+	filter.Action, filter.ActorKind, filter.ActorID = "", "user", user
+	actorRows, err := SearchInstallation(t.Context(), d.Pool, policy, principal, filter)
+	if err != nil || len(actorRows.Events) != 2 {
+		t.Fatal("actor search", len(actorRows.Events), err)
+	}
+	var actorPlan json.RawMessage
+	if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "user", user, "", "", nil, "", nil, "", "", 101).Scan(&actorPlan); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("actor_query_plan %s", actorPlan)
+	if !strings.Contains(string(actorPlan), "audit_events_actor") {
+		t.Fatal("actor lookup did not use its index", string(actorPlan))
+	}
+	filter.ActorKind, filter.ActorID = "", uuid.Nil()
 	// Purge and searches overlap: neither can disclose expired rows, and the
 	// summary counts must equal the rows actually removed across competing jobs.
 	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE audit_events SET recorded_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()-interval '1 hour' WHERE action='command.completed'`)

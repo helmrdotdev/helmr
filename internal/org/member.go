@@ -36,7 +36,7 @@ const (
 // ManagingMember identifies the acting human membership. Authority is read live.
 type ManagingMember struct {
 	AuditPolicy auditpolicy.Policy
-	Actor       audit.Actor
+	Actor       audit.Evidence
 	OrgID       uuid.UUID
 	UserID      uuid.UUID
 	MemberID    uuid.UUID
@@ -58,12 +58,12 @@ func (m *ManagingMember) Authorize(ctx context.Context, database db.DBTX, permis
 	if err != nil {
 		return err
 	}
-	decisions, ok := p.Decide(permission, auth.Scope{OrgID: m.OrgID})
+	checks, ok := p.Evaluate(permission, auth.Scope{OrgID: m.OrgID})
+	m.Actor.Authorization = audit.PermissionAuthorization(checks, ok)
 	if !ok {
-		return ErrMemberManagementRequired
+		return errors.Join(ErrMemberManagementRequired, &auth.PermissionRefusal{Principal: p, Checks: checks})
 	}
-	m.Actor.MemberID = m.MemberID
-	m.Actor.Authorization = audit.Authorization{Basis: "permission", Decision: "allowed", Permissions: decisions}
+
 	return nil
 }
 
@@ -251,7 +251,7 @@ func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter M
 		return db.Invitation{}, "", fmt.Errorf("expire invitations: %w", err)
 	}
 	for _, old := range expired {
-		if err := audit.Append(ctx, tx, inviter.AuditPolicy, audit.Event{Actor: audit.System("invitation-expiry"), OrgID: inviter.OrgID, Action: "invitation.expired", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(old), Details: audit.InvitationStateDetails{}}); err != nil {
+		if err := audit.Append(ctx, tx, inviter.AuditPolicy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), OrgID: inviter.OrgID, Action: "invitation.expired", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(old), Details: audit.InvitationStateDetails{}}); err != nil {
 			return db.Invitation{}, "", err
 		}
 	}
@@ -287,7 +287,7 @@ func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter M
 	if err != nil {
 		return db.Invitation{}, "", fmt.Errorf("create invitation: %w", err)
 	}
-	if err := audit.Append(ctx, tx, inviter.AuditPolicy, audit.Event{Actor: inviter.Actor, OrgID: inviter.OrgID, Action: "invitation.created", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(invitation.ID), Details: audit.InvitationCreatedDetails{ExpiresAt: pgvalue.TimePtr(invitation.ExpiresAt)}}); err != nil {
+	if err := audit.Append(ctx, tx, inviter.AuditPolicy, audit.Event{Evidence: inviter.Actor, OrgID: inviter.OrgID, Action: "invitation.created", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(invitation.ID), Details: audit.InvitationCreatedDetails{ExpiresAt: pgvalue.TimePtr(invitation.ExpiresAt)}}); err != nil {
 		return db.Invitation{}, "", err
 	}
 	return invitation, rawToken, nil
@@ -339,7 +339,7 @@ func revokeInvitation(ctx context.Context, tx pgx.Tx, manager ManagingMember, in
 	if revoked == 0 {
 		return ErrInvitationNotFound
 	}
-	return audit.Append(ctx, tx, manager.AuditPolicy, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "invitation.revoked", TargetKind: "invitation", TargetID: invitationID, Details: audit.InvitationStateDetails{}})
+	return audit.Append(ctx, tx, manager.AuditPolicy, audit.Event{Evidence: manager.Actor, OrgID: manager.OrgID, Action: "invitation.revoked", TargetKind: "invitation", TargetID: invitationID, Details: audit.InvitationStateDetails{}})
 }
 
 // UpdateMemberOwnership serializes owner changes on the organization row.
@@ -358,10 +358,15 @@ func UpdateMemberOwnership(ctx context.Context, database db.TxBeginner, manager 
 		if err != nil {
 			return err
 		}
-		if !actor.IsOwner || pgvalue.MustUUIDValue(actor.ID) != manager.MemberID {
+		if !actor.IsOwner {
+			evidence := manager.Actor
+			evidence.Authorization = audit.Ownership(auth.Principal{OrgID: manager.OrgID, MemberID: pgvalue.MustUUIDValue(actor.ID), IsOwner: false})
+			return &audit.Refusal{Authorization: evidence.Authorization, Cause: ErrOwnerRoleRequired}
+		}
+		if pgvalue.MustUUIDValue(actor.ID) != manager.MemberID {
 			return ErrOwnerRoleRequired
 		}
-		manager.Actor.Authorization = audit.Authorization{Basis: "ownership", Decision: "allowed"}
+		manager.Actor.Authorization = audit.Ownership(auth.Principal{OrgID: manager.OrgID, MemberID: manager.MemberID, IsOwner: actor.IsOwner})
 		target, err := activeMember(ctx, q, manager.OrgID, targetID)
 		if err != nil {
 			return err
@@ -389,7 +394,7 @@ func UpdateMemberOwnership(ctx context.Context, database db.TxBeginner, manager 
 		if expected == value {
 			return nil
 		}
-		return audit.Append(ctx, tx, manager.AuditPolicy, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.ownership_changed", TargetKind: "member", TargetID: targetID, Details: audit.OwnershipChangedDetails{WasOwner: expected, IsOwner: value}})
+		return audit.Append(ctx, tx, manager.AuditPolicy, audit.Event{Evidence: manager.Actor, OrgID: manager.OrgID, Action: "member.ownership_changed", TargetKind: "member", TargetID: targetID, Details: audit.OwnershipChangedDetails{WasOwner: expected, IsOwner: value}})
 	})
 	return result, err
 }
@@ -429,7 +434,7 @@ func DisableMember(ctx context.Context, tx pgx.Tx, manager ManagingMember, targe
 	if err = RemovePermissionGroupMemberships(ctx, tx, manager, targetID); err != nil {
 		return err
 	}
-	return audit.Append(ctx, tx, manager.AuditPolicy, audit.Event{Actor: manager.Actor, OrgID: manager.OrgID, Action: "member.removed", TargetKind: "member", TargetID: targetID, Details: audit.MembershipDetails{MembershipID: targetID.String(), UserID: pgvalue.UUIDString(target.UserID), DisplayName: target.DisplayName.String}})
+	return audit.Append(ctx, tx, manager.AuditPolicy, audit.Event{Evidence: manager.Actor, OrgID: manager.OrgID, Action: "member.removed", TargetKind: "member", TargetID: targetID, Details: audit.MembershipDetails{MembershipID: targetID.String(), UserID: pgvalue.UUIDString(target.UserID), DisplayName: target.DisplayName.String}})
 }
 
 func activeMember(ctx context.Context, q db.Querier, orgID, memberID uuid.UUID) (db.GetOrgMemberForManagementRow, error) {
@@ -506,7 +511,7 @@ func pendingInvitationFromRow(id pgtype.UUID, orgID pgtype.UUID, inviteeEmail st
 }
 
 // AcceptInvitation creates a new membership; removed membership IDs never revive.
-func AcceptInvitation(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Actor, invitation PendingInvitation, userID uuid.UUID, displayName string) error {
+func AcceptInvitation(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, invitation PendingInvitation, userID uuid.UUID, displayName string) error {
 	if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, invitation.OrgID); err != nil {
 		return err
 	}
@@ -529,5 +534,5 @@ func AcceptInvitation(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy,
 	if accepted == 0 {
 		return ErrInvitationNotFound
 	}
-	return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, OrgID: invitation.OrgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: invitation.ID, TargetUserID: userID, Details: audit.MembershipDetails{MembershipID: pgvalue.UUIDString(member.ID)}})
+	return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: invitation.OrgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: invitation.ID, TargetUserID: userID, Details: audit.MembershipDetails{MembershipID: pgvalue.UUIDString(member.ID)}})
 }

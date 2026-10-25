@@ -362,8 +362,9 @@ func permissionManagementError(err error) error {
 
 func (s *Server) listAccessTargets(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
-	if !p.HasPermission(auth.PermissionAssignmentsRead, auth.Scope{OrgID: p.OrgID}) {
-		s.writeOperationError(w, r, forbidden(org.ErrMemberManagementRequired))
+	if permissionErr := auth.Require(p, auth.PermissionAssignmentsRead, auth.Scope{OrgID: p.OrgID},
+		org.ErrMemberManagementRequired); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	project, err := org.GetProject(r.Context(), s.db, p.OrgID, chi.URLParam(r, "project"))

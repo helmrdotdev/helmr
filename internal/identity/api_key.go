@@ -75,10 +75,10 @@ type IssuedAPIKey struct {
 }
 
 func authorizeAPIKeyManagement(manager auth.Principal, scope auth.Scope, permission auth.Permission) error {
-	if manager.Kind != auth.PrincipalKindSession || !manager.HasPermission(permission, scope) {
+	if manager.Kind != auth.PrincipalKindSession {
 		return ErrAPIKeyManagementRequired
 	}
-	return nil
+	return auth.Require(manager, permission, scope, ErrAPIKeyManagementRequired)
 }
 
 // ListAPIKeys returns up to limit API keys of the environment matching the
@@ -195,7 +195,7 @@ func IssueAPIKey(ctx context.Context, database db.TxBeginner, policy auditpolicy
 				roleNames = append(roleNames, grant.RoleName)
 			}
 		}
-		return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, OrgID: issuer.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.issued", TargetKind: "api_key", TargetID: pgvalue.MustUUIDValue(record.ID), Details: audit.APIKeyIssuedDetails{Name: record.Name, ExpiresAt: pgvalue.TimePtr(record.ExpiresAt)}})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: issuer.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.issued", TargetKind: "api_key", TargetID: pgvalue.MustUUIDValue(record.ID), Details: audit.APIKeyIssuedDetails{Name: record.Name, ExpiresAt: pgvalue.TimePtr(record.ExpiresAt)}})
 	})
 	if err != nil {
 		return IssuedAPIKey{}, err
@@ -231,7 +231,7 @@ func RevokeAPIKey(ctx context.Context, database db.TxBeginner, policy auditpolic
 		if revoked == 0 {
 			return ErrAPIKeyNotFound
 		}
-		return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, OrgID: manager.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.revoked", TargetKind: "api_key", TargetID: id})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: manager.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environmentID), Action: "api_key.revoked", TargetKind: "api_key", TargetID: id})
 	})
 }
 
@@ -309,23 +309,23 @@ func apiKeyWriteError(err error) error {
 	}
 	return err
 }
-func lockAPIKeyManager(ctx context.Context, tx pgx.Tx, manager auth.Principal, scope auth.Scope, permission auth.Permission) (audit.Actor, error) {
+func lockAPIKeyManager(ctx context.Context, tx pgx.Tx, manager auth.Principal, scope auth.Scope, permission auth.Permission) (audit.Evidence, error) {
 	if err := authorizeAPIKeyManagement(manager, scope, permission); err != nil {
-		return audit.Actor{}, err
+		return audit.Evidence{}, err
 	}
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT id FROM org_members WHERE org_id=$1 AND id=$2 AND user_id=$3 AND removed_at IS NULL FOR UPDATE`, manager.OrgID, manager.MemberID, manager.UserID).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return audit.Actor{}, ErrAPIKeyManagementRequired
+			return audit.Evidence{}, ErrAPIKeyManagementRequired
 		}
-		return audit.Actor{}, err
+		return audit.Evidence{}, err
 	}
 	current, err := access.Current(ctx, tx, manager, scope)
 	if err != nil {
-		return audit.Actor{}, ErrAPIKeyManagementRequired
+		return audit.Evidence{}, ErrAPIKeyManagementRequired
 	}
 	if err := authorizeAPIKeyManagement(current, scope, permission); err != nil {
-		return audit.Actor{}, err
+		return audit.Evidence{}, err
 	}
 	return audit.Authorized(current, permission, scope)
 }
@@ -373,7 +373,7 @@ func UpdateAPIKey(ctx context.Context, database db.TxBeginner, policy auditpolic
 		if err != nil {
 			return apiKeyWriteError(err)
 		}
-		return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, OrgID: manager.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environment), Action: "api_key.updated", TargetKind: "api_key", TargetID: id, Details: audit.APIKeyChangedDetails{Before: apiKeyPolicy(before), After: apiKeyPolicy(result)}})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: manager.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environment), Action: "api_key.updated", TargetKind: "api_key", TargetID: id, Details: audit.APIKeyChangedDetails{Before: apiKeyPolicy(before), After: apiKeyPolicy(result)}})
 	})
 	return result, err
 }
@@ -412,7 +412,7 @@ func RotateAPIKey(ctx context.Context, database db.TxBeginner, policy auditpolic
 		if err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, OrgID: manager.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environment), Action: "api_key.rotated", TargetKind: "api_key", TargetID: id})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: manager.OrgID, EnvironmentID: pgvalue.MustUUIDValue(environment), Action: "api_key.rotated", TargetKind: "api_key", TargetID: id})
 	})
 	if err != nil {
 		return IssuedAPIKey{}, err

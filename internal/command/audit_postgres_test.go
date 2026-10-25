@@ -30,7 +30,7 @@ func TestAuditCommandCompletionReceiptSurvivesAuditRemoval(t *testing.T) {
 	}
 	var count int
 	var valid bool
-	err := f.Pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_kind='service' AND actor_service='worker-host' AND credential_id=$2 AND credential_version=1 AND runtime_generation=1 AND causality->>'initiator_id'=$3) FROM audit_events WHERE target_id=$1 AND action='command.completed'`, id, f.Worker, f.User.String()).Scan(&count, &valid)
+	err := f.Pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_worker_host_id IS NOT NULL AND credential_id=$2 AND credential_version=1 AND details->>'generation'='1' AND causality->>'initiator_id'=$3) FROM audit_events WHERE target_id=$1 AND action='command.completed'`, id, f.Worker, f.User.String()).Scan(&count, &valid)
 	if err != nil || count != 1 || !valid {
 		t.Fatalf("worker attribution: %d %v %v", count, valid, err)
 	}
@@ -65,7 +65,7 @@ func TestAuditCommandLossRollbackAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='command.failed' AND outcome='unknown' AND actor_service='command-recovery' AND details->>'reason'='worker_lost'`, id).Scan(&count)
+	err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='command.failed' AND outcome='unknown' AND actor_component='control_plane' AND details->>'reason'='worker_lost'`, id).Scan(&count)
 	if err != nil || count != 1 {
 		t.Fatalf("loss fact: %d %v", count, err)
 	}

@@ -231,7 +231,7 @@ func TestEnrollHostRejectsRotatedEnrollmentToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID()); err != nil {
+	if _, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, Enrollment{TokenHash: tokenHash, PoolName: "default", ResourceID: "i-rotated"}); !errors.Is(err, ErrInvalidEnrollmentToken) {
@@ -243,7 +243,7 @@ func TestHostCredentialsGoStaleWithGroupTransitions(t *testing.T) {
 	f := newSupplyFixture(t)
 	cfg := testHostAuthConfig(t)
 	host := f.start(t, cfg, "default", "i-group", validHostTemplate(t))
-	if _, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
+	if _, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
@@ -401,7 +401,7 @@ func TestInitialPrimaryPoolAuditAtomicityAndSingleGrant(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_pool.primary_selected'`).Scan(&count); err != nil || count != 1 {
 		t.Fatal("primary selection missing or repeated", count, err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT target_id=$1 AND actor_kind='service' AND actor_service='worker-pool-bootstrap' AND actor_id IS NULL AND credential_id IS NULL FROM audit_events WHERE action='worker_pool.primary_selected'`, enrolled.PoolID).Scan(&intact); err != nil || !intact {
+	if err := f.pool.QueryRow(t.Context(), `SELECT target_id=$1 AND actor_component IS NOT NULL AND actor_component='control_plane' AND actor_user_id IS NULL AND credential_id IS NULL FROM audit_events WHERE action='worker_pool.primary_selected'`, enrolled.PoolID).Scan(&intact); err != nil || !intact {
 		t.Fatal("incorrect bootstrap primary fact", intact, err)
 	}
 }
@@ -436,7 +436,7 @@ func TestEnrolledPoolAuditAtomicityAndSingleCreation(t *testing.T) {
 	if first.PoolID != second.PoolID {
 		t.Fatal("existing pool was not reused")
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_pool.created' AND target_id=$1 AND actor_kind='service' AND actor_service='worker-pool-bootstrap'`, first.PoolID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_pool.created' AND target_id=$1 AND actor_component IS NOT NULL AND actor_component='control_plane'`, first.PoolID).Scan(&count); err != nil || count != 1 {
 		t.Fatal("pool bootstrap fact missing or repeated", count, err)
 	}
 }

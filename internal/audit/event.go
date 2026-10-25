@@ -12,85 +12,9 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-// Actor identifies the actual executor, separately from its credential and initiator.
-// Identity is loaded from the account inside the capture transaction for humans.
-type Actor struct {
-	Kind              string
-	ID                uuid.UUID
-	MemberID          uuid.UUID
-	CredentialKind    string
-	CredentialID      uuid.UUID
-	CredentialVersion int64
-	RuntimeGeneration int64
-	ProcessEpoch      int64
-	Source            string
-	Authorization     Authorization
-}
-
-type Authorization struct {
-	Basis       string                    `json:"basis"`
-	Decision    string                    `json:"decision"`
-	Reason      string                    `json:"reason,omitempty"`
-	Permissions []auth.PermissionDecision `json:"permissions,omitempty"`
-}
-
-func FromPrincipal(p auth.Principal) Actor {
-	if p.Kind == auth.PrincipalKindAPIKey {
-		return Actor{Kind: "api_key", ID: p.APIKeyID, MemberID: p.MemberID, CredentialKind: "api_key", CredentialID: p.APIKeyID, CredentialVersion: p.CredentialVersion}
-	}
-	if p.Kind == auth.PrincipalKindSession {
-		kind := "human"
-		member := p.MemberID
-		if p.Admin && p.OrgID == uuid.Nil() {
-			kind = "installation_operator"
-			member = uuid.Nil()
-		}
-		return Actor{Kind: kind, ID: p.UserID, MemberID: member, CredentialKind: "login_session", CredentialID: p.SessionID}
-	}
-	return Actor{}
-}
-
-// Authorized records the exact decision path evaluated on the owner's current
-// principal. It does not re-read policy after the mutation has changed it.
-func Authorized(p auth.Principal, permission auth.Permission, scope auth.Scope) (Actor, error) {
-	decisions, ok := p.Decide(permission, scope)
-	if !ok {
-		return Actor{}, errors.New("audit permission decision denied")
-	}
-	a := FromPrincipal(p)
-	a.Authorization = Authorization{Basis: "permission", Decision: "allowed", Permissions: decisions}
-	return a, nil
-}
-
-func VerifiedLogin(user uuid.UUID, provider string) Actor {
-	return Actor{Kind: "human", ID: user, CredentialKind: provider, Authorization: Authorization{Basis: "verified_identity", Decision: "allowed"}}
-}
-func System(source string) Actor {
-	return Actor{Kind: "service", Source: source, CredentialKind: "service", Authorization: Authorization{Basis: "service", Decision: "allowed"}}
-}
-func CapacityAuthority() Actor {
-	a := System("capacity-controller")
-	a.CredentialKind = "capacity_token"
-	return a
-}
-func InstallationOperator(p auth.Principal) (Actor, error) {
-	if p.Kind != auth.PrincipalKindSession || !p.Admin {
-		return Actor{}, errors.New("installation authority is required")
-	}
-	a := FromPrincipal(p)
-	a.Kind = "installation_operator"
-	a.MemberID = uuid.Nil()
-	a.Authorization = Authorization{Basis: "installation_admin", Decision: "allowed"}
-	return a, nil
-}
-func RuntimeActor(session uuid.UUID, generation, epoch int64) Actor {
-	return Actor{Kind: "session", ID: session, CredentialKind: "session_runtime", RuntimeGeneration: generation, ProcessEpoch: epoch, Authorization: Authorization{Basis: "runtime", Decision: "allowed"}}
-}
 
 // Request contains only trusted transport metadata; service dependencies do not
 // travel through context. Its operation ID correlates facts from the same request.
@@ -118,10 +42,10 @@ type Causality struct {
 }
 
 type Event struct {
-	ID            uuid.UUID
-	OperationID   uuid.UUID
-	OccurredAt    time.Time
-	Actor         Actor
+	ID          uuid.UUID
+	OperationID uuid.UUID
+	OccurredAt  time.Time
+	Evidence
 	OrgID         uuid.UUID
 	ProjectID     uuid.UUID
 	EnvironmentID uuid.UUID
@@ -170,51 +94,20 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 	if err != nil {
 		return err
 	}
+	if err := e.Evidence.validate(); err != nil {
+		return err
+	}
+	if (e.Authentication.Result == "absent" || e.Authentication.Result == "failed") && e.Outcome != "denied" && e.Outcome != "failed" {
+		if e.Authentication.Result != "absent" || !slices.Contains([]string{"identity.device_started", "identity.magic_link_requested"}, e.Action) {
+			return errors.New("established actor required for operation")
+		}
+	}
 	a := e.Actor
 	var identity *Identity
-	switch a.Kind {
-	case "human", "installation_operator":
-		if a.ID == uuid.Nil() || a.Source != "" {
-			return errors.New("invalid human audit actor")
-		}
+	if a.UserID != uuid.Nil() {
 		identity = &Identity{Source: "account"}
-		// users.primary_email is set only after verification by the identity owner.
-		if err := tx.QueryRow(ctx, `SELECT display_name,COALESCE(primary_email,'') FROM users WHERE id=$1`, a.ID).Scan(&identity.DisplayName, &identity.Email); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT display_name,COALESCE(primary_email,'') FROM users WHERE id=$1`, a.UserID).Scan(&identity.DisplayName, &identity.Email); err != nil {
 			return fmt.Errorf("read audit actor identity: %w", err)
-		}
-	case "api_key":
-		if a.ID == uuid.Nil() || a.CredentialID != a.ID || a.CredentialKind != "api_key" || a.CredentialVersion <= 0 || a.Source != "" {
-			return errors.New("invalid audit key actor")
-		}
-	case "session":
-		if a.ID == uuid.Nil() || a.RuntimeGeneration <= 0 || a.Source != "" {
-			return errors.New("invalid audit runtime actor")
-		}
-	case "service":
-		if a.ID != uuid.Nil() || a.Source == "" || len(a.Source) > 128 {
-			return errors.New("invalid audit service actor")
-		}
-	case "anonymous":
-		if a.ID != uuid.Nil() || a.Source != "" {
-			return errors.New("invalid anonymous audit actor")
-		}
-	default:
-		return errors.New("invalid audit actor")
-	}
-	if a.CredentialKind == "" || len(a.CredentialKind) > 64 {
-		return errors.New("invalid audit credential kind")
-	}
-	if !slices.Contains([]string{"permission", "ownership", "verified_identity", "credential", "runtime", "origin", "service", "installation_admin", "unauthenticated"}, a.Authorization.Basis) || !slices.Contains([]string{"allowed", "denied"}, a.Authorization.Decision) {
-		return errors.New("audit authorization witness is required")
-	}
-	if a.Authorization.Basis == "permission" {
-		if len(a.Authorization.Permissions) == 0 {
-			return errors.New("audit permission witness is empty")
-		}
-		for _, decision := range a.Authorization.Permissions {
-			if !auth.IsPermission(decision.Permission) || decision.AssignmentID == "" || decision.AssignmentRevision <= 0 || decision.RoleID == "" || decision.RoleRevision <= 0 {
-				return errors.New("incomplete audit permission witness")
-			}
 		}
 	}
 	// Authoritative live parents are resolved while the operation owns them. No
@@ -238,9 +131,6 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 		}
 		e.OrgID = org
 	}
-	if e.OrgID == uuid.Nil() {
-		a.MemberID = uuid.Nil()
-	}
 	identityJSON, err := boundedJSON(identity, 4096)
 	if err != nil {
 		return err
@@ -248,7 +138,7 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 	if identity == nil {
 		identityJSON = nil
 	}
-	witness, err := boundedJSON(a.Authorization, 16384)
+	witness, err := boundedJSON(e.Authorization, 16384)
 	if err != nil {
 		return err
 	}
@@ -288,21 +178,26 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 	if !e.OccurredAt.IsZero() {
 		occurred = e.OccurredAt.UTC()
 	}
-	if len(identityJSON)+len(witness)+len(causality)+len(details)+len(a.Source)+len(a.CredentialKind)+len(channel)+1024 > 65536 {
+	if len(identityJSON)+len(witness)+len(causality)+len(details)+len(a.Component)+len(e.Authentication.CredentialKind)+len(channel)+1024 > 65536 {
 		return errors.New("audit envelope exceeds limit")
 	}
+	c := e.Authentication
 	_, err = tx.Exec(ctx, `INSERT INTO audit_events (
  id,org_id,project_id,environment_id,schema_version,occurred_at,recorded_at,retention_seconds,expires_at,
- actor_kind,actor_id,actor_service,actor_member_id,actor_identity,credential_kind,credential_id,credential_version,runtime_generation,process_epoch,
- action,outcome,target_kind,target_id,target_user_id,slack_team_id,slack_user_id,target_resolution,authorization_witness,
+ actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component,actor_identity,
+ authentication_result,authentication_origin,identity_provider,credential_kind,credential_id,credential_version,runtime_generation,process_epoch,
+ action,outcome,target_kind,target_id,target_user_id,slack_team_id,slack_user_id,target_resolution,authorization_evidence,
  operation_id,session_id,turn_id,computer_id,deployment_id,cause_event_id,causality,source_ip,channel,details)
  VALUES ($1,$2,$3,$4,1,COALESCE($5::timestamptz,statement_timestamp()),statement_timestamp(),$6,
- statement_timestamp()+$6::bigint*interval '1 second',$7,$8,NULLIF($9,''),$10,$11,$12,$13,$14,$15,$16,
- $17,$18,$19,$20,$21,NULLIF($22,''),NULLIF($23,''),$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)`,
+ statement_timestamp()+$6::bigint*interval '1 second',$7,$8,$9,$10,NULLIF($11,''),$12,
+ $13,NULLIF($14,''),NULLIF($15,''),NULLIF($16,''),$17,$18,$19,$20,
+ $21,$22,$23,$24,$25,NULLIF($26,''),NULLIF($27,''),$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)`,
 		e.ID, optionalUUID(e.OrgID), optionalUUID(e.ProjectID), optionalUUID(e.EnvironmentID), occurred, policy.RetentionSeconds,
-		a.Kind, optionalUUID(a.ID), a.Source, optionalUUID(a.MemberID), identityJSON, a.CredentialKind, optionalUUID(a.CredentialID), positive(a.CredentialVersion), positive(a.RuntimeGeneration), positive(a.ProcessEpoch),
+		optionalUUID(a.UserID), optionalUUID(a.APIKeyID), optionalUUID(a.SessionID), optionalUUID(a.WorkerHostID), a.Component, identityJSON,
+		c.Result, c.Origin, c.Provider, c.CredentialKind, optionalUUID(c.CredentialID), positive(c.CredentialVersion), positive(e.RuntimeGeneration), positive(e.ProcessEpoch),
 		e.Action, e.Outcome, e.TargetKind, optionalUUID(e.TargetID), optionalUUID(e.TargetUserID), e.SlackTeamID, e.SlackUserID, resolution, witness, e.OperationID,
 		optionalUUID(e.SessionID), optionalUUID(e.TurnID), optionalUUID(e.ComputerID), optionalUUID(e.DeploymentID), optionalUUID(e.CauseEventID), causality, ip, channel, details)
+
 	if err != nil {
 		return fmt.Errorf("append audit event: %w", err)
 	}

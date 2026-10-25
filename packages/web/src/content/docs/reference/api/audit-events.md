@@ -76,6 +76,33 @@ history is recorded in that tenant; requests for absent/deleted organizations ar
 recorded as unresolved installation facts. After all facts expire there is no
 persistent audit inventory proving the former organization's existence.
 
+## Identity and authority fields
+
+An event references at most one actor: `actor_user_id`, `actor_api_key_id`,
+`actor_session_id`, `actor_worker_host_id`, or `actor_component`. No actor is
+established for failed or absent authentication. `actor_kind` is a search filter
+with values `user`, `api_key`, `session`, `worker_host`, `component`, or `unidentified`;
+it is derived from these references. Account labels are capture-time snapshots.
+
+`authentication` records `origin` (`request` or `internal`), `result`, and actual
+credential/provider information. `authorization` separately records `decision`
+(`allowed`, `denied`, or `not_evaluated`) and typed `checks`. A verified credential
+can accompany a denied permission. Internal execution can have no authorization
+check. Installation administration records the same user ID with the observed
+`admin` attribute; it does not create a separate administrator actor or Role.
+
+Permission checks identify the checked subject, permission and scope. A passed
+check includes its granting assignment and Role revisions; a failed check gives
+the observed reason without inventing a grant. Runtime checks identify the
+Session binding or Host assignment. Credential refresh failures retain the
+admission authentication and describe the later mismatch. These are observations
+of the owner's checks, not an executable policy document.
+
+`causality` identifies an initiator or source independently. A Session's creator
+is not the actor of its later runtime operations. Permission mutations describe
+the changed resource in target/details; their authorization records which
+existing authority allowed the mutation.
+
 ## Retention and deployment prerequisites
 
 Every producing control-plane/dispatcher process must receive a finite positive

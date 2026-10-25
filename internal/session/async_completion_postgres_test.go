@@ -8,12 +8,12 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/session"
 )
 
@@ -365,7 +365,7 @@ func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.
 			case "deleted":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE id=$1`, f.computer)
 			case "revoked":
-				if _, err := preparation.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, preparation.secretID, "revoke"); err != nil {
+				if _, err := preparation.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, preparation.secretID, "revoke"); err != nil {
 					t.Fatal(err)
 				}
 			case "missing-image":

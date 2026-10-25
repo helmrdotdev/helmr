@@ -76,7 +76,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err := audit.ValidatePrivileges(ctx, pool, false); err != nil {
 		return fmt.Errorf("validate audit database privileges: %w", err)
 	}
-	if err := audit.ObservePolicy(ctx, pool, cfg.AuditPolicy, "dispatcher"); err != nil {
+	if err := audit.ObservePolicy(ctx, pool, cfg.AuditPolicy, audit.Dispatcher); err != nil {
 		return fmt.Errorf("record audit retention configuration: %w", err)
 	}
 

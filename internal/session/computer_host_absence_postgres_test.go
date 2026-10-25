@@ -23,7 +23,7 @@ import (
 
 func confirmComputerHostAbsent(ctx context.Context, f fixture, host uuid.UUID) error {
 	return db.RunTx(ctx, f.pool, func(tx pgx.Tx) error {
-		absence, err := workergroup.ConfirmHostProviderAbsent(ctx, tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), host)
+		absence, err := workergroup.ConfirmHostProviderAbsent(ctx, tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), host)
 		if err != nil {
 			return err
 		}
@@ -290,7 +290,7 @@ func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.worker)
+	absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
 
 func TestProviderAbsenceAuditIncludesAlreadyLostHostWithPhysicalAllocations(t *testing.T) {
 	f := newFixture(t)
-	if _, err := workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("operator"), f.group, "host", 1); err != nil {
+	if _, err := workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, "host", 1); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -323,7 +323,7 @@ func TestProviderAbsenceAuditIncludesAlreadyLostHostWithPhysicalAllocations(t *t
 		}
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_host.provider_absence_confirmed' AND actor_kind='service' AND credential_kind='capacity_token' AND actor_id IS NULL AND credential_id IS NULL AND target_id=$1 AND org_id IS NULL`, f.worker).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_host.provider_absence_confirmed' AND actor_component IS NOT NULL AND credential_kind='capacity_token' AND actor_user_id IS NULL AND credential_id IS NULL AND target_id=$1 AND org_id IS NULL`, f.worker).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("physical confirmation count=%d err=%v", count, err)
 	}
 }

@@ -108,7 +108,7 @@ func reconcileUnused(ctx context.Context, auditPolicy auditpolicy.Policy, databa
 		if err := deleteLocked(ctx, tx, env, id, false); err != nil {
 			return err
 		}
-		if err := audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: audit.System("computer-retention"), EnvironmentID: env, ComputerID: id, Action: "computer.deleted", TargetKind: "computer", TargetID: id}); err != nil {
+		if err := audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), EnvironmentID: env, ComputerID: id, Action: "computer.deleted", TargetKind: "computer", TargetID: id}); err != nil {
 			return err
 		}
 		deletedByRetention = true
@@ -140,7 +140,7 @@ func UpdateRetention(ctx context.Context, auditPolicy auditpolicy.Policy, databa
 		if _, err := tx.Exec(ctx, `UPDATE computers SET delete_after_unused_ms=$3,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, scope.EnvironmentID, id, policy.Milliseconds); err != nil {
 			return err
 		}
-		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: scope.EnvironmentID, ComputerID: id, Action: "computer.retention_changed", TargetKind: "computer", TargetID: id, Details: audit.ComputerRetentionDetails{Before: before, After: policy.Milliseconds}}); err != nil {
+		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: scope.EnvironmentID, ComputerID: id, Action: "computer.retention_changed", TargetKind: "computer", TargetID: id, Details: audit.ComputerRetentionDetails{Before: before, After: policy.Milliseconds}}); err != nil {
 			return err
 		}
 		result, err = Read(ctx, tx, scope, id)

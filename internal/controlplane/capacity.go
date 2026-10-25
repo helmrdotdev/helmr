@@ -269,7 +269,7 @@ func (s *Server) capacityConfirmWorkerHostProviderAbsent(w http.ResponseWriter, 
 	if err != nil {
 		var lock *pgconn.PgError
 		if (errors.Is(err, dispatch.ErrNotReady) || errors.Is(err, computer.ErrNotReady) || errors.Is(err, session.ErrNotReady)) || (errors.As(err, &lock) && lock.Code == "55P03") {
-			s.writeAgentComputerError(w, session.ErrNotReady)
+			s.writeAgentComputerError(w, r, session.ErrNotReady)
 		} else {
 			s.writeWorkerGroupError(w, r, err)
 		}

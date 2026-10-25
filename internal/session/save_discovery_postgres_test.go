@@ -10,7 +10,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -266,7 +265,7 @@ func TestBackgroundSaveDeclinesRevokedImage(t *testing.T) {
 			_, save := f.finalize(t, "pending")
 			expected = save.ID
 		}
-		if _, err := p.f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, p.f.secretID, "revoke"); err != nil {
+		if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, p.f.secretID, "revoke"); err != nil {
 			t.Fatal(err)
 		}
 		save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil)

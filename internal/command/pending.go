@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
@@ -60,5 +61,5 @@ func failPending(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx,
 	if err != nil {
 		return err
 	}
-	return auditServiceFailure(ctx, tx, auditPolicy, command, "command-dispatcher", "failed", "delivery_failed")
+	return auditServiceFailure(ctx, tx, auditPolicy, command, audit.ControlPlane, "failed", "delivery_failed")
 }

@@ -30,8 +30,9 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
-		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersRead, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	limit, cursor, exactKey, err := parseComputerListQuery(r, scope.ProjectID, scope.EnvironmentID)

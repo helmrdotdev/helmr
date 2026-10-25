@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 	"uuid"
@@ -187,7 +187,7 @@ func TestPressureStopRevocationRetainsShutdown(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Revoke(t.Context(), audit.System("test-fixture"), f.env, secretID, "revoke"); err != nil {
+	if _, err := store.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {

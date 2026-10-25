@@ -278,7 +278,7 @@ func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, requ
 	}
 	actor, err := audit.Authorized(principal, auth.PermissionComputersExecute, auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID})
 	if err != nil {
-		return db.Command{}, computer.ErrDenied
+		return db.Command{}, errors.Join(computer.ErrDenied, err)
 	}
 	var result db.Command
 	err = idempotency.Run(ctx, tx, claimRequest, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -382,7 +382,7 @@ func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, requ
 			return idempotency.Completion{}, err
 		}
 
-		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: request.EnvironmentID, ComputerID: request.ComputerID, Action: "command.admitted", Outcome: "accepted", TargetKind: "command", TargetID: pgvalue.MustUUIDValue(created.ID), Details: audit.LifecycleDetails{}}); err != nil {
+		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: request.EnvironmentID, ComputerID: request.ComputerID, Action: "command.admitted", Outcome: "accepted", TargetKind: "command", TargetID: pgvalue.MustUUIDValue(created.ID), Details: audit.LifecycleDetails{}}); err != nil {
 			return idempotency.Completion{}, err
 		}
 		result = created

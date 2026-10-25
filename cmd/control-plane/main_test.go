@@ -335,7 +335,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	var observed int
-	if err := observation.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='audit.retention_configured' AND actor_service=$1 AND retention_seconds=3600`, "control-plane").Scan(&observed); err != nil || observed != 1 {
+	if err := observation.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='audit.retention_configured' AND actor_component=$1 AND retention_seconds=3600`, "control_plane").Scan(&observed); err != nil || observed != 1 {
 		t.Fatalf("startup observation: %d %v", observed, err)
 	}
 	observation.Close(ctx)

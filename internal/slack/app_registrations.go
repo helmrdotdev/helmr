@@ -82,7 +82,7 @@ func (s *CredentialStore) openApp(org, registration uuid.UUID, revision int64, c
 
 // StoreAppCredentials rotates secrets for one registration. Once enrolled, the
 // OAuth client is immutable: changing app identity requires new setup.
-func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.Actor, org, user, registration uuid.UUID, credentials AppCredentials) error {
+func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.Evidence, org, user, registration uuid.UUID, credentials AppCredentials) error {
 	if !credentials.valid(s.mode) {
 		return errCredentialUnavailable
 	}
@@ -116,7 +116,7 @@ func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.A
 		if err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, OrgID: org, Action: "slack_app.credentials_configured", TargetKind: "slack_app_registration", TargetID: registration})
+		return audit.Append(ctx, tx, s.auditPolicy, audit.Event{Evidence: actor, OrgID: org, Action: "slack_app.credentials_configured", TargetKind: "slack_app_registration", TargetID: registration})
 	})
 }
 

@@ -412,7 +412,7 @@ func drainClosingSessions(ctx context.Context, auditPolicy auditpolicy.Policy, t
 		if _, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=$2 AND status IN ('starting','ready') AND fenced_at IS NULL`, env, id); err != nil {
 			return err
 		}
-		if err = auditServiceFact(ctx, tx, auditPolicy, "session-lifecycle", audit.Event{EnvironmentID: env, SessionID: id, Action: "session.closed", TargetKind: "session", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
+		if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: id, Action: "session.closed", TargetKind: "session", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
 			return err
 		}
 		if err = event(ctx, tx, env, id, uuid.Nil(), "session.closed"); err != nil {

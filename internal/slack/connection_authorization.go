@@ -49,7 +49,7 @@ func (s *CredentialStore) ConnectionAuthorizationURL(ctx context.Context, org, u
 
 // AuthorizeConnection performs remote exchange outside SQL locks, then verifies
 // the unchanged registration and connection slot before attaching the grant.
-func (s *CredentialStore) AuthorizeConnection(ctx context.Context, actor audit.Actor, org, user, connection uuid.UUID, code, redirect string, transport http.RoundTripper) (uuid.UUID, error) {
+func (s *CredentialStore) AuthorizeConnection(ctx context.Context, actor audit.Evidence, org, user, connection uuid.UUID, code, redirect string, transport http.RoundTripper) (uuid.UUID, error) {
 	if code == "" || len(code) > 4096 || redirect == "" {
 		return uuid.Nil(), ErrOAuthAuthorization
 	}
@@ -80,7 +80,7 @@ func (s *CredentialStore) AuthorizeConnection(ctx context.Context, actor audit.A
 	return s.attachConnectionGrant(ctx, actor, org, user, connection, observed, result.grant)
 }
 
-func (s *CredentialStore) attachConnectionGrant(ctx context.Context, actor audit.Actor, org, user, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant) (uuid.UUID, error) {
+func (s *CredentialStore) attachConnectionGrant(ctx context.Context, actor audit.Evidence, org, user, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant) (uuid.UUID, error) {
 	installation := uuid.NewV7()
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := lockConnectionManager(ctx, tx, org, user, connection, auth.PermissionAgentConnectionsAuthorize); err != nil {
@@ -157,7 +157,7 @@ func (s *CredentialStore) attachConnectionGrant(ctx context.Context, actor audit
 		if err = slackroute.AttachInstallation(ctx, tx, connection, installation); err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, OrgID: org, EnvironmentID: environment, Action: "slack_connection.authorized", TargetKind: "slack_connection", TargetID: connection, Details: audit.PermissionsDetails{Permissions: grant.scopes}})
+		return audit.Append(ctx, tx, s.auditPolicy, audit.Event{Evidence: actor, OrgID: org, EnvironmentID: environment, Action: "slack_connection.authorized", TargetKind: "slack_connection", TargetID: connection, Details: audit.PermissionsDetails{Permissions: grant.scopes}})
 	})
 	if err != nil {
 		return uuid.Nil(), err

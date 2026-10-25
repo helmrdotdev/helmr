@@ -103,7 +103,7 @@ func Promote(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, 
 		if err = appendEvent(ctx, tx, pgvalue.MustUUIDValue(env), id, "deployment.promoted", "Deployment promoted"); err != nil {
 			return err
 		}
-		if err := audit.Append(ctx, tx, policy, audit.Event{Actor: actor, EnvironmentID: pgvalue.MustUUIDValue(env), Action: "deployment.promoted", TargetKind: "deployment", TargetID: id}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: pgvalue.MustUUIDValue(env), Action: "deployment.promoted", TargetKind: "deployment", TargetID: id}); err != nil {
 			return err
 		}
 		result, err = readRecord(ctx, tx, pgvalue.MustUUIDValue(env), id)

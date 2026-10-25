@@ -59,13 +59,13 @@ func runWorkerGroupStatusCommand(ctx context.Context, output io.Writer, args []s
 		case "status":
 			result, err = workergroup.ReadGroupStatus(ctx, db.New(pool), parsedGroupID)
 		case "pause":
-			result, err = workergroup.PauseGroup(ctx, pool, policy, audit.System("control-plane-cli"), parsedGroupID, expectedClaimVersion)
+			result, err = workergroup.PauseGroup(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, expectedClaimVersion)
 		case "activate":
-			result, err = workergroup.ActivateGroup(ctx, pool, policy, audit.System("control-plane-cli"), parsedGroupID, expectedClaimVersion)
+			result, err = workergroup.ActivateGroup(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, expectedClaimVersion)
 		case "drain":
-			result, err = workergroup.BeginGroupDrain(ctx, pool, policy, audit.System("control-plane-cli"), parsedGroupID, expectedClaimVersion)
+			result, err = workergroup.BeginGroupDrain(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, expectedClaimVersion)
 		case "disable":
-			result, err = workergroup.DisableGroup(ctx, pool, policy, audit.System("control-plane-cli"), parsedGroupID, expectedClaimVersion)
+			result, err = workergroup.DisableGroup(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, expectedClaimVersion)
 		}
 		if err != nil {
 			return err
@@ -116,7 +116,7 @@ func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []st
 		case "status":
 			result, err = workergroup.ReadHostStatus(ctx, db.New(pool), parsedGroupID, resourceID)
 		case "lose":
-			result, err = workergroup.MarkHostLost(ctx, pool, policy, audit.System("control-plane-cli"), parsedGroupID, resourceID, expectedClaimVersion)
+			result, err = workergroup.MarkHostLost(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, resourceID, expectedClaimVersion)
 		}
 		if err != nil {
 			return err

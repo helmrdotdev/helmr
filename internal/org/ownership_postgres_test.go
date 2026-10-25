@@ -23,7 +23,7 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := insertUser(t, d.Pool, "Founder", "founder@example.test")
-	organization, err := identity.CreateOrganization(ctx, d.Pool, org.OrganizationInput{Actor: audit.System("test"), Slug: "bootstrap", OwnerUserID: user, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
+	organization, err := identity.CreateOrganization(ctx, d.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "bootstrap", OwnerUserID: user, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}

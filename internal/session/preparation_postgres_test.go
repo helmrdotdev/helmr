@@ -13,7 +13,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -49,7 +48,7 @@ func preparationFixtureFor(t *testing.T, resident fixture) preparationFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := f.secrets.Create(t.Context(), audit.System("test-fixture"), f.env, "BUILD_TOKEN_"+f.deployment.String(), []byte("v1"), "create:"+f.deployment.String())
+	record, err := f.secrets.Create(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, "BUILD_TOKEN_"+f.deployment.String(), []byte("v1"), "create:"+f.deployment.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +171,7 @@ func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T
 	p := f.attach(t, f.waiter(t))
 	ref := f.claim(t, p)
 	// Rotation while queued or before first delivery does not expose stale bytes.
-	if _, err := f.secrets.Rotate(t.Context(), audit.System("test-fixture"), f.env, f.secretID, []byte("v2"), "rotate-2"); err != nil {
+	if _, err := f.secrets.Rotate(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, []byte("v2"), "rotate-2"); err != nil {
 		t.Fatal(err)
 	}
 	exposed, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref)
@@ -183,14 +182,14 @@ func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND image_build_id=$2`, f.env, p.ID).Scan(&pins); err != nil || pins != 1 {
 		t.Fatalf("alias pins=%d: %v", pins, err)
 	}
-	if _, err = f.secrets.Rotate(t.Context(), audit.System("test-fixture"), f.env, f.secretID, []byte("v3"), "rotate-3"); err != nil {
+	if _, err = f.secrets.Rotate(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, []byte("v3"), "rotate-3"); err != nil {
 		t.Fatal(err)
 	}
 	replay, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref)
 	if err != nil || len(replay) != 2 || replay[0].VersionID != exposed[0].VersionID {
 		t.Fatalf("retry replaced pins: %+v %v", replay, err)
 	}
-	if _, err = f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke"); err != nil {
+	if _, err = f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if values, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) || values != nil {
@@ -271,7 +270,7 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 				if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke"); err != nil {
+				if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke"); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) {
@@ -401,7 +400,7 @@ func TestPreparationLifecycleConvergesRevocationWithoutGuestConnection(t *testin
 	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke"); err != nil {
+	if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if _, more, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil || more {
@@ -597,7 +596,7 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 				if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, host, ref); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, ""); err != nil {
+				if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, ""); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -84,7 +84,7 @@ func ExpireImageWaiter(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 			return err
 		}
 		for _, turn := range failedTurns {
-			if err = auditServiceFact(ctx, tx, auditPolicy, "image-preparation", audit.Event{EnvironmentID: env, SessionID: turn.session, TurnID: turn.turn, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: turn.turn, Details: audit.FailureDetails{Reason: "expired"}}); err != nil {
+			if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: turn.session, TurnID: turn.turn, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: turn.turn, Details: audit.FailureDetails{Reason: "expired"}}); err != nil {
 				return err
 			}
 			if err = eventData(ctx, tx, env, turn.session, turn.turn, "turn.failed", []byte(`{"code":"preparation_deadline"}`)); err != nil {

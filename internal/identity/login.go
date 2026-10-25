@@ -55,7 +55,7 @@ func (i ExternalIdentity) Verifies(email string) bool {
 // and issues a login session that selects no organization in one
 // transaction. It returns the raw session token.
 func SignIn(ctx context.Context, txb db.TxBeginner, cfg Config, external ExternalIdentity) (rawSession string, resultErr error) {
-	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Actor: audit.Anonymous("provider"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
+	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Evidence: audit.Unauthenticated("failed", "provider_assertion"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		user, err := upsertExternalIdentity(ctx, tx, cfg, external)
 		if err != nil {
@@ -93,7 +93,7 @@ func ResolveInvitation(ctx context.Context, q db.Querier, cfg Config, rawToken s
 // invitee email, and issues a login session for the invitation's organization.
 // It returns the raw session token.
 func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, invitationTokenHash []byte, external ExternalIdentity) (rawSession string, resultErr error) {
-	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Actor: audit.Anonymous("provider"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
+	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Evidence: audit.Unauthenticated("failed", "provider_assertion"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		invitation, err := org.PendingInvitationByTokenHash(ctx, q, invitationTokenHash)
@@ -118,7 +118,7 @@ func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, in
 
 // signedInUser is the user an identity upsert selected.
 type signedInUser struct {
-	actor          audit.Actor
+	actor          audit.Evidence
 	authentication audit.AuthenticationDetails
 	id             pgtype.UUID
 }
@@ -145,7 +145,7 @@ func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external
 		return signedInUser{}, fmt.Errorf("record auth identity: %w", err)
 	}
 	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, external.EmailVerified) {
-		if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
+		if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
 			return signedInUser{}, err
 		}
 	}
@@ -205,7 +205,7 @@ func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedIn
 	}); err != nil {
 		return "", fmt.Errorf("create login session: %w", err)
 	}
-	if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Actor: user.actor, Action: "identity.sign_in", TargetKind: "login_session", TargetID: sessionID, Details: user.authentication}); err != nil {
+	if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: user.actor, Action: "identity.sign_in", TargetKind: "login_session", TargetID: sessionID, Details: user.authentication}); err != nil {
 		return "", err
 	}
 	if err := appendSessionLifecycle(ctx, tx, cfg, user.actor, orgID, "identity.session_issued", sessionID, user.authentication); err != nil {
@@ -214,18 +214,13 @@ func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedIn
 	return raw, nil
 }
 
-func appendSessionLifecycle(ctx context.Context, tx pgx.Tx, cfg Config, actor audit.Actor, orgID pgtype.UUID, action string, id uuid.UUID, details audit.AuthenticationDetails) error {
-	event := audit.Event{Actor: actor, Action: action, TargetKind: "login_session", TargetID: id, Details: details}
+func appendSessionLifecycle(ctx context.Context, tx pgx.Tx, cfg Config, actor audit.Evidence, orgID pgtype.UUID, action string, id uuid.UUID, details audit.AuthenticationDetails) error {
+	event := audit.Event{Evidence: actor, Action: action, TargetKind: "login_session", TargetID: id, Details: details}
 	if err := audit.Append(ctx, tx, cfg.auditPolicy, event); err != nil {
 		return err
 	}
 	if orgID.Valid {
 		event.OrgID = pgvalue.MustUUIDValue(orgID)
-		event.Actor.MemberID = uuid.Nil()
-		// Only a durable binding creates the organization-scoped lifecycle fact.
-		if err := tx.QueryRow(ctx, `SELECT id FROM org_members WHERE org_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`, event.OrgID, actor.ID).Scan(&event.Actor.MemberID); err != nil && !isNoRows(err) {
-			return err
-		}
 		return audit.Append(ctx, tx, cfg.auditPolicy, event)
 	}
 	return nil
@@ -309,7 +304,7 @@ func RevokeLoginSession(ctx context.Context, database db.TxBeginner, cfg Config,
 			return err
 		}
 		actor := audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: id})
-		actor.Authorization = audit.Authorization{Basis: "credential", Decision: "allowed"}
+		actor.Authorization = audit.NotEvaluated()
 		return appendSessionLifecycle(ctx, tx, cfg, actor, orgID, "identity.session_revoked", id, audit.AuthenticationDetails{Method: "logout"})
 	})
 }

@@ -70,7 +70,7 @@ func Bootstrap(ctx context.Context, txb db.TxBeginner, cfg BootstrapConfig) erro
 		if err != nil {
 			return fmt.Errorf("create bootstrap worker group: %w", err)
 		}
-		if err := audit.Append(ctx, tx, cfg.AuditPolicy, audit.Event{Actor: audit.System("worker-group-bootstrap"), Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
+		if err := audit.Append(ctx, tx, cfg.AuditPolicy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
 			return err
 		}
 		return nil

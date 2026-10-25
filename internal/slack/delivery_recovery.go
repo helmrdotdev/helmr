@@ -162,18 +162,18 @@ func RecoverDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		if !canRead {
 			// The Session owner above verified the own-session alternative.
 			readDecisions, canRead = p.Decide(auth.PermissionAgentsUse, scope)
-			actor.Authorization.Basis = "origin"
+			actor.Authorization.Checks = append(actor.Authorization.Checks, audit.OriginCheck{Type: "session_origin", SessionID: session, InitiatorKind: "user", InitiatorID: user, Result: "passed"})
 		}
 		if !canRead {
 			return errInstallationAuthority
 		}
-		actor.Authorization.Permissions = append(actor.Authorization.Permissions, readDecisions...)
+		actor.Authorization.Checks = append(actor.Authorization.Checks, audit.PermissionEvidence(p, readDecisions)...)
 		capture := func() error {
 			name := "session.delivery_check_requested"
 			if action == "abandon" {
 				name = "session.delivery_abandoned"
 			}
-			return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, EnvironmentID: environment, SessionID: session, TargetKind: "session", TargetID: session, Action: name, Details: audit.LifecycleDetails{RequestID: input.AttemptID, Generation: input.PublicationRevision}})
+			return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: environment, SessionID: session, TargetKind: "session", TargetID: session, Action: name, Details: audit.LifecycleDetails{RequestID: input.AttemptID, Generation: input.PublicationRevision}})
 		}
 		var installation, thread, participant uuid.UUID
 		var publication string

@@ -40,8 +40,9 @@ func Cancel(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginn
 		if err != nil {
 			return err
 		}
-		if !current.HasPermission(auth.PermissionComputersCancelCommand, scope) {
-			return access.ErrDenied
+		if permissionErr := auth.Require(current, auth.PermissionComputersCancelCommand, scope,
+			access.ErrDenied); permissionErr != nil {
+			return permissionErr
 		}
 		receipt, err = cancel(ctx, auditPolicy, tx, principal, ref)
 		return err
@@ -69,8 +70,9 @@ func cancel(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, prin
 	if err != nil {
 		return CancelReceipt{}, err
 	}
-	if !current.HasPermission(auth.PermissionComputersCancelCommand, scope) {
-		return CancelReceipt{}, access.ErrDenied
+	if permissionErr := auth.Require(current, auth.PermissionComputersCancelCommand, scope,
+		access.ErrDenied); permissionErr != nil {
+		return CancelReceipt{}, permissionErr
 	}
 	request, err := idempotency.NewCommandCancelRequest(ref.EnvironmentID, ref.CommandID)
 	if err != nil {
@@ -106,11 +108,11 @@ func cancel(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, prin
 		if err != nil {
 			return idempotency.Completion{}, err
 		}
-		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: ref.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.cancel_requested", Outcome: "accepted", TargetKind: "command", TargetID: ref.CommandID, Details: audit.LifecycleDetails{RequestID: pgvalue.MustUUIDValue(acquired.Claim.ID)}}); err != nil {
+		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: ref.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.cancel_requested", Outcome: "accepted", TargetKind: "command", TargetID: ref.CommandID, Details: audit.LifecycleDetails{RequestID: pgvalue.MustUUIDValue(acquired.Claim.ID)}}); err != nil {
 			return idempotency.Completion{}, err
 		}
 		if changeErr == nil && changed.Status == "cancelled" {
-			if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: ref.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.cancelled", Outcome: "cancelled", TargetKind: "command", TargetID: ref.CommandID, Details: audit.LifecycleDetails{RequestID: pgvalue.MustUUIDValue(acquired.Claim.ID)}}); err != nil {
+			if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: ref.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.cancelled", Outcome: "cancelled", TargetKind: "command", TargetID: ref.CommandID, Details: audit.LifecycleDetails{RequestID: pgvalue.MustUUIDValue(acquired.Claim.ID)}}); err != nil {
 				return idempotency.Completion{}, err
 			}
 		}

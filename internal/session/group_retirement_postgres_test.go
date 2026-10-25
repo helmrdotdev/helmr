@@ -24,7 +24,7 @@ import (
 func assertGroupDrainBlocked(t *testing.T, f fixture) {
 	t.Helper()
 	var conflict workergroup.ConflictError
-	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.group, 1); !errors.As(err, &conflict) {
+	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1); !errors.As(err, &conflict) {
 		t.Fatalf("drain accepted retained state: %v", err)
 	}
 	var unchanged bool
@@ -49,11 +49,11 @@ func TestGroupDrainRetainsPhysicalCustodyAcrossEpochs(t *testing.T) {
  UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.env, p.ID)
 	assertGroupDrainBlocked(t, f.fixture)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET fenced_at=clock_timestamp(),fence_evidence='fixture physical closure' WHERE environment_id=$1`, f.env)
-	result, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.group, 1)
+	result, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1)
 	if err != nil || result.Status != "draining" {
 		t.Fatalf("resolved preparation: %+v %v", result, err)
 	}
-	replay, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.group, 1)
+	replay, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1)
 	if err != nil || replay.TransitionApplied || replay.ClaimVersion != result.ClaimVersion {
 		t.Fatalf("drain replay: %+v %v", replay, err)
 	}
@@ -81,7 +81,7 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 			assertGroupDrainBlocked(t, f)
 			// Terminal disposition is fixture setup here; this test does not prove its operation.
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='fixture terminal disposition' WHERE environment_id=$1`, f.env)
-			if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.group, 1); err != nil {
+			if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -107,7 +107,7 @@ func TestGroupDrainRechecksDependenciesAfterAllocationLock(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := workergroup.BeginGroupDrain(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.group, 1)
+		_, err := workergroup.BeginGroupDrain(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1)
 		done <- err
 	}()
 	for {
@@ -215,7 +215,7 @@ func TestGroupDrainWaitsForComputerPhysicalStop(t *testing.T) {
 	}, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.group, 1); err != nil {
+	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1); err != nil {
 		t.Fatal(err)
 	}
 }

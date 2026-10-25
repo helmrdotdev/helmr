@@ -62,7 +62,7 @@ func loadSessionOrigin(ctx context.Context, q db.DBTX, env, id uuid.UUID) (sessi
 }
 func accessError(err error) error {
 	if errors.Is(err, access.ErrDenied) || errors.Is(err, pgx.ErrNoRows) {
-		return ErrDenied
+		return errors.Join(ErrDenied, err)
 	}
 	return err
 }
@@ -176,6 +176,9 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 		if err != nil {
 			return accessError(err)
 		}
+		if caller.Kind == "api_key" && caller.CredentialVersion > 0 && caller.CredentialVersion != p.CredentialVersion {
+			return accessError(&access.PrincipalUnavailable{APIKeyID: caller.ID, Reason: "credential_version_changed", PresentedVersion: caller.CredentialVersion, ObservedVersion: p.CredentialVersion})
+		}
 		scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, AgentID: o.Agent.String()}
 		if p.HasPermission(operation, scope) {
 			if auth.SessionExecutionOperation(operation) {
@@ -194,10 +197,11 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 			}
 		}
 		if !ownSessionOperation(operation) || o.mode() != "scoped" || o.kind() != caller.Kind || o.id() != caller.ID {
-			return ErrDenied
+			return auth.Require(p, operation, scope, ErrDenied)
 		}
-		if !p.HasPermission(auth.PermissionAgentsUse, scope) {
-			return ErrDenied
+		if permissionErr := auth.Require(p, auth.PermissionAgentsUse, scope,
+			ErrDenied); permissionErr != nil {
+			return permissionErr
 		}
 		return nil
 	}
@@ -350,7 +354,7 @@ func failQueuedPermission(ctx context.Context, auditPolicy auditpolicy.Policy, t
 		return err
 	}
 	for _, id := range ids {
-		if err = auditServiceFact(ctx, tx, auditPolicy, "session-admission", audit.Event{EnvironmentID: env, SessionID: session, TurnID: id, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: id, Details: audit.FailureDetails{Reason: "permission_denied"}}); err != nil {
+		if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, TurnID: id, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: id, Details: audit.FailureDetails{Reason: "permission_denied"}}); err != nil {
 			return err
 		}
 		if err = eventData(ctx, tx, env, session, id, "turn.failed", []byte(`{"code":"permission_revoked"}`)); err != nil {

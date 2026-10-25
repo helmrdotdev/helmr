@@ -27,7 +27,7 @@ func FailQueuedExecutionTurns(ctx context.Context, auditPolicy auditpolicy.Polic
 		return err
 	}
 	for _, t := range turns {
-		if err = auditServiceFact(ctx, tx, auditPolicy, "execution-admission", audit.Event{EnvironmentID: env, SessionID: t.session, TurnID: t.id, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: t.id, Details: audit.FailureDetails{Reason: "expired"}}); err != nil {
+		if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: t.session, TurnID: t.id, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: t.id, Details: audit.FailureDetails{Reason: "expired"}}); err != nil {
 			return err
 		}
 		if err = eventData(ctx, tx, env, t.session, t.id, "turn.failed", []byte(`{"code":"execution_deadline_exceeded"}`)); err != nil {

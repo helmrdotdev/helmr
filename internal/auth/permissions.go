@@ -85,31 +85,67 @@ func (a Principal) HasPermission(permission Permission, scope Scope) bool {
 	return ok
 }
 
-func (a Principal) Decide(permission Permission, scope Scope) ([]PermissionDecision, bool) {
+// PermissionEvaluation preserves the actual evaluated scope and refusal reason.
+// A denied check has no granting path; it does not inventory rejected grants.
+type PermissionEvaluation struct {
+	SubjectUserID   uuid.UUID           `json:"subject_user_id,omitzero"`
+	SubjectAPIKeyID uuid.UUID           `json:"subject_api_key_id,omitzero"`
+	Permission      Permission          `json:"permission"`
+	Scope           Scope               `json:"scope"`
+	Result          string              `json:"result"`
+	Reason          string              `json:"reason,omitempty"`
+	Evidence        *PermissionDecision `json:"evidence,omitempty"`
+}
+
+func (a Principal) Evaluate(permission Permission, scope Scope) ([]PermissionEvaluation, bool) {
+	check := PermissionEvaluation{SubjectUserID: a.UserID, SubjectAPIKeyID: a.APIKeyID, Permission: permission, Scope: scope, Result: "failed"}
+	refuse := func(reason string) ([]PermissionEvaluation, bool) {
+		check.Reason = reason
+		return []PermissionEvaluation{check}, false
+	}
 	if !IsPermission(permission) {
-		return nil, false
+		return refuse("unsupported_permission")
 	}
 	if scope.OrgID != uuid.Nil() && a.OrgID != uuid.Nil() && scope.OrgID != a.OrgID {
-		return nil, false
+		return refuse("organization_mismatch")
 	}
-	if a.Kind == PrincipalKindAPIKey && (!IsMachinePermission(permission) || !a.matchesEnvironmentScope(scope)) {
-		return nil, false
+	if a.Kind == PrincipalKindAPIKey {
+		if !IsMachinePermission(permission) {
+			return refuse("key_permission_not_supported")
+		}
+		if !a.matchesEnvironmentScope(scope) {
+			return refuse("key_scope_mismatch")
+		}
 	}
-	var decisions []PermissionDecision
+	var checks []PermissionEvaluation
 	if SessionExecutionOperation(permission) {
 		var ok bool
-		decisions, ok = a.Decide(PermissionAgentsUse, scope)
+		checks, ok = a.Evaluate(PermissionAgentsUse, scope)
 		if !ok {
-			return nil, false
+			return checks, false
 		}
 	}
 	for _, grant := range a.Grants {
 		if grant.allows(permission, scope) {
-			decisions = append(decisions, PermissionDecision{Permission: permission, Scope: scope, AssignmentID: grant.AssignmentID, AssignmentRevision: grant.AssignmentRevision, RoleID: grant.RoleID, RoleRevision: grant.RoleRevision, MemberID: a.MemberID, GroupID: grant.GroupID, Subject: grant.Subject})
-			return decisions, true
+			check.Result = "passed"
+			check.Evidence = &PermissionDecision{Permission: permission, Scope: scope, AssignmentID: grant.AssignmentID, AssignmentRevision: grant.AssignmentRevision, RoleID: grant.RoleID, RoleRevision: grant.RoleRevision, MemberID: a.MemberID, GroupID: grant.GroupID, Subject: grant.Subject}
+			return append(checks, check), true
 		}
 	}
-	return nil, false
+	check.Reason = "no_matching_grant"
+	return append(checks, check), false
+}
+
+func (a Principal) Decide(permission Permission, scope Scope) ([]PermissionDecision, bool) {
+	checks, ok := a.Evaluate(permission, scope)
+	if !ok {
+		return nil, false
+	}
+	decisions := make([]PermissionDecision, 0, len(checks))
+	for _, check := range checks {
+		decisions = append(decisions, *check.Evidence)
+	}
+	return decisions, true
 }
 
 func (a Principal) matchesEnvironmentScope(scope Scope) bool {

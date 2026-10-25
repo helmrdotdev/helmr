@@ -18,7 +18,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -58,7 +57,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1", f.fixture.Worker)
 	for i := 0; i < count; i++ {
 		name := string(rune('a' + i))
-		record, err := f.store.Create(t.Context(), audit.System("test-fixture"), f.fixture.Environment, "token-"+name, []byte("old-"+name), "create-"+name)
+		record, err := f.store.Create(t.Context(), dbtest.SecretManager(t, f.fixture.Pool, f.fixture.Environment), f.fixture.Environment, "token-"+name, []byte("old-"+name), "create-"+name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,11 +123,11 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 				mutate := func() {
 					switch change {
 					case "rotate":
-						if _, err := f.store.Rotate(t.Context(), audit.System("test-fixture"), f.fixture.Environment, pgvalue.MustUUIDValue(f.secrets[0]), []byte("new-a"), "rotate"); err != nil {
+						if _, err := f.store.Rotate(t.Context(), dbtest.SecretManager(t, f.fixture.Pool, f.fixture.Environment), f.fixture.Environment, pgvalue.MustUUIDValue(f.secrets[0]), []byte("new-a"), "rotate"); err != nil {
 							t.Fatal(err)
 						}
 					case "revoke":
-						if _, err := f.store.Revoke(t.Context(), audit.System("test-fixture"), f.fixture.Environment, pgvalue.MustUUIDValue(f.secrets[0]), "revoke"); err != nil {
+						if _, err := f.store.Revoke(t.Context(), dbtest.SecretManager(t, f.fixture.Pool, f.fixture.Environment), f.fixture.Environment, pgvalue.MustUUIDValue(f.secrets[0]), "revoke"); err != nil {
 							t.Fatal(err)
 						}
 					case "epoch":
@@ -215,7 +214,7 @@ func TestProtectedSnapshotCoverageAndExpiry(t *testing.T) {
 func TestProtectedSnapshotPinsMultiSecretVersionsAcrossRotation(t *testing.T) {
 	f := newSnapshotFixture(t, 2, true)
 	for i, id := range f.secrets {
-		if _, err := f.store.Rotate(t.Context(), audit.System("test-fixture"), f.fixture.Environment, pgvalue.MustUUIDValue(id), []byte("new"), "rotate-"+string(rune('a'+i))); err != nil {
+		if _, err := f.store.Rotate(t.Context(), dbtest.SecretManager(t, f.fixture.Pool, f.fixture.Environment), f.fixture.Environment, pgvalue.MustUUIDValue(id), []byte("new"), "rotate-"+string(rune('a'+i))); err != nil {
 			t.Fatal(err)
 		}
 	}

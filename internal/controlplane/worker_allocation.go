@@ -34,7 +34,7 @@ func allocationWireReceipt(kind string, in computer.Allocation) workerapi.Alloca
 func allocationWireShape(in computer.AllocationShape) workerapi.AllocationShape {
 	return workerapi.AllocationShape{CPUMillis: in.CPUMillis, MemoryBytes: in.MemoryBytes, ScratchBytes: in.ScratchBytes, VMPlatformID: in.VMPlatformID, VCPUCount: in.VCPUCount, CPUConfigDigest: in.CPUConfigDigest}
 }
-func (server *Server) writeAllocationError(w http.ResponseWriter, err error) {
+func (server *Server) writeAllocationError(w http.ResponseWriter, r *http.Request, err error) {
 	var transport apiError
 	if errors.As(err, &transport) {
 		writeError(w, err)
@@ -44,26 +44,26 @@ func (server *Server) writeAllocationError(w http.ResponseWriter, err error) {
 		writeError(w, conflict(codedError{code: workerapi.AllocationClosed, message: "allocation requires physical stop confirmation"}))
 		return
 	}
-	server.writeAgentComputerError(w, err)
+	server.writeAgentComputerError(w, r, err)
 }
 func (server *Server) workerListAllocations(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.AllocationListRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	var after *dispatch.HostAllocation
 	if request.After != nil {
 		parsed, err := allocationIdentity(*request.After)
 		if err != nil {
-			server.writeAllocationError(w, err)
+			server.writeAllocationError(w, r, err)
 			return
 		}
 		after = &parsed
 	}
 	records, err := dispatch.ListHostAllocations(r.Context(), server.tx, workerFromContext(r.Context()), after)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	response := workerapi.AllocationListResponse{Allocations: make([]workerapi.AllocationIdentity, 0, len(records))}
@@ -85,12 +85,12 @@ func decodeAllocationIdentity(r *http.Request, kind string) (dispatch.HostAlloca
 func (server *Server) workerDeliverPreparationAllocation(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "preparation")
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	result, err := server.allocator.DeliverImageBuild(r.Context(), workerFromContext(r.Context()), computer.ImageBuildIdentity{EnvironmentID: identity.EnvironmentID, ImageBuildID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.PreparationAllocationDelivery{Identity: allocationWireReceipt("preparation", result.Allocation), Shape: allocationWireShape(result.Shape), ExpiresAt: *result.ExpiresAt, ChannelCredential: result.Executor.ChannelCredential})
@@ -101,12 +101,12 @@ func computerAllocationIdentity(in dispatch.HostAllocation) computer.LeaseIdenti
 func (server *Server) workerDeliverComputerAllocation(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "computer")
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	result, err := server.allocator.DeliverLease(r.Context(), workerFromContext(r.Context()), computerAllocationIdentity(identity))
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	response := workerapi.ComputerAllocationDelivery{Identity: allocationWireReceipt("computer", result.Allocation), Shape: allocationWireShape(result.Shape), ExpiresAt: *result.ExpiresAt, ChannelCredential: result.ChannelCredential, BaseVersion: result.BaseVersion, DiskOnlyRecovery: result.DiskOnlyRecovery}
@@ -118,21 +118,21 @@ func (server *Server) workerDeliverComputerAllocation(w http.ResponseWriter, r *
 func (server *Server) workerFreshComputerReady(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerAllocationReady
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	if request.Identity.Kind != "computer" {
-		server.writeAllocationError(w, session.ErrInvalidInput)
+		server.writeAllocationError(w, r, session.ErrInvalidInput)
 		return
 	}
 	identity, err := allocationIdentity(request.Identity)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	shape := computer.AllocationShape{CPUMillis: request.Shape.CPUMillis, MemoryBytes: request.Shape.MemoryBytes, ScratchBytes: request.Shape.ScratchBytes, VMPlatformID: request.Shape.VMPlatformID, VCPUCount: request.Shape.VCPUCount, CPUConfigDigest: request.Shape.CPUConfigDigest}
 	if err := dispatch.ObserveFreshLeaseReady(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), shape, request.BaseVersion); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -140,11 +140,11 @@ func (server *Server) workerFreshComputerReady(w http.ResponseWriter, r *http.Re
 func (server *Server) workerPreparationStopped(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "preparation")
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	if err := computer.ObserveImageBuildStopped(r.Context(), server.tx, workerFromContext(r.Context()), computer.ImageBuildIdentity{EnvironmentID: identity.EnvironmentID, ImageBuildID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch}); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -153,26 +153,26 @@ func (server *Server) workerPreparationStopped(w http.ResponseWriter, r *http.Re
 func (server *Server) workerListComputerProcesses(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerProcessesRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	identity, err := allocationIdentity(request.Identity)
 	if err != nil || identity.Kind != "computer" {
-		server.writeAllocationError(w, session.ErrInvalidInput)
+		server.writeAllocationError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var after *dispatch.ProcessIdentity
 	if request.After != nil {
 		id, err := agentComputerID(request.After.SessionID)
 		if err != nil || request.After.Epoch <= 0 {
-			server.writeAllocationError(w, session.ErrInvalidInput)
+			server.writeAllocationError(w, r, session.ErrInvalidInput)
 			return
 		}
 		after = &dispatch.ProcessIdentity{SessionID: id, Epoch: request.After.Epoch}
 	}
 	processes, err := dispatch.ListHostProcesses(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), after)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	response := workerapi.ComputerProcessesResponse{Processes: make([]workerapi.ProcessIdentity, 0, len(processes))}
@@ -185,25 +185,25 @@ func (server *Server) workerListComputerProcesses(w http.ResponseWriter, r *http
 func (server *Server) workerComputerAllocationSource(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "computer")
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	source, err := server.allocationKeys.Source(r.Context(), workerFromContext(r.Context()), computerAllocationIdentity(identity))
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer source.Clear()
 	boot, err := computer.ReadBoot(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity))
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	response := workerapi.ComputerAllocationSource{Disk: workerapi.ComputerSourceMaterial{VersionID: source.BaseVersion, Root: source.Root, WriteKeyID: source.WriteKeyID.String(), Keys: make([]workerapi.ComputerKeyMaterial, 0, len(source.Keys))}, ImageConfig: boot.ImageConfig, RootfsDigest: boot.RootfsDigest}
 
 	selected, err := session.ReadAllocationProgram(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity))
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	if selected != nil {
@@ -218,14 +218,14 @@ func (server *Server) workerComputerAllocationSource(w http.ResponseWriter, r *h
 				response.BootSeed, err = computer.SelectBootSeed(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), selected.DeploymentID,
 					computercheckpoint.Program{Runtime: computercheckpoint.Object(program.Runtime), Artifact: computercheckpoint.Object(program.Artifact)})
 				if err != nil {
-					server.writeAllocationError(w, err)
+					server.writeAllocationError(w, r, err)
 					return
 				}
 			}
 		}
 		if readErr != nil {
 			if r.Context().Err() != nil {
-				server.writeAllocationError(w, r.Context().Err())
+				server.writeAllocationError(w, r, r.Context().Err())
 				return
 			}
 			slog.Warn("Computer boot Program prefetch unavailable", "computer_id", identity.OwnerID, "error", readErr)

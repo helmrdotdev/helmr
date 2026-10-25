@@ -143,7 +143,7 @@ func (c *AgentGrantCleanup) Apply(ctx context.Context, tx pgx.Tx) error {
 		if !effective {
 			after = nil
 		}
-		if err := audit.Append(ctx, tx, c.manager.AuditPolicy, audit.Event{Actor: c.manager.Actor, OrgID: c.manager.OrgID, EnvironmentID: c.environment, Action: action, TargetKind: "role_grant", TargetID: g.ID, Details: audit.AccessChangeDetails{Before: grantSnapshot(g), After: after, CauseAgentID: c.agent.String(), Reason: "agent_deleted"}}); err != nil {
+		if err := audit.Append(ctx, tx, c.manager.AuditPolicy, audit.Event{Evidence: c.manager.Actor, OrgID: c.manager.OrgID, EnvironmentID: c.environment, Action: action, TargetKind: "role_grant", TargetID: g.ID, Details: audit.AccessChangeDetails{Before: grantSnapshot(g), After: after, CauseAgentID: c.agent.String(), Reason: "agent_deleted"}}); err != nil {
 			return err
 		}
 	}
@@ -159,11 +159,12 @@ func authorizeAgentCleanup(ctx context.Context, tx pgx.Tx, m *ManagingMember, en
 		return access.ErrDenied
 	}
 	scope := auth.Scope{OrgID: m.OrgID, ProjectID: current.ProjectID, EnvironmentID: env.String(), AgentID: agent.String()}
-	current.SessionID = m.Actor.CredentialID
+	current.SessionID = m.Actor.Authentication.CredentialID
 	actor, err := audit.Authorized(current, permission, scope)
 	if err != nil {
-		return access.ErrDenied
+		return errors.Join(access.ErrDenied, err)
 	}
+	actor.Authentication = m.Actor.Authentication
 	m.Actor = actor
 	return nil
 }

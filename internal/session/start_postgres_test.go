@@ -464,7 +464,7 @@ func TestStartRejectsNonMember(t *testing.T) {
 	f := newAdmissionFixture(t)
 	user := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'nonmember')`, user)
-	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "user", ID: user}, f.startRequest("nonmember")); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "user", ID: user, CredentialID: uuid.NewV7()}, f.startRequest("nonmember")); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("nonmember admitted: %v", err)
 	}
 }

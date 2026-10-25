@@ -359,7 +359,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatalf("SDK HTTP composition: %v\n%s", err, output)
 	}
 	t.Run("exact Turn interrupt across public clients", func(t *testing.T) {
-		a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
+		a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -376,7 +376,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 				t.Fatalf("queued rejection details: %s %v", raw, err)
 			}
 		}
-		e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+		e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 		if _, err := dispatchRuntimeTurn(t, f.Pool, e); err != nil {
 			t.Fatal(err)
 		}

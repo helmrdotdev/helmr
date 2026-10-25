@@ -2,9 +2,10 @@ package idempotency_test
 
 import (
 	"context"
-	"github.com/helmrdotdev/helmr/internal/audit"
+
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	retry "github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -67,7 +68,7 @@ func TestPlatformPublicSecretCancellationCannotCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, innerErr := store.Create(ctx, audit.System("test-fixture"), f.Environment, "CANCELLED_SECRET", []byte("value"), "cancelled-secret")
+	_, innerErr := store.Create(ctx, dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, "CANCELLED_SECRET", []byte("value"), "cancelled-secret")
 	if innerErr == nil {
 		t.Fatal("wanted cancellation error")
 	}

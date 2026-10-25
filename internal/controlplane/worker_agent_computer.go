@@ -21,13 +21,16 @@ func agentComputerID(value string) (uuid.UUID, error) {
 	}
 	return id, nil
 }
-func (server *Server) writeAgentComputerError(w http.ResponseWriter, err error) {
+func (server *Server) writeAgentComputerError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		writeError(w, unauthorized(errors.New("worker authentication is stale")))
 	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, dispatch.ErrInvalidInput):
 		writeError(w, badRequest(errors.New("invalid Computer continuation request")))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, dispatch.ErrDenied):
+		if !server.refuseOperation(w, r, "stale_authority", err) {
+			return
+		}
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerAuthorityUnavailable, message: "Computer continuation authority is unavailable"}))
 	case errors.Is(err, session.ErrComputerCaptureDemand):
 		writeError(w, conflict(codedError{code: workerapi.AgentComputerCaptureDemand, message: "Computer has pending execution during capture"}))
@@ -52,12 +55,12 @@ func (server *Server) workerBeginAgentComputerCapture(w http.ResponseWriter, r *
 	computer, e2 := agentComputerID(request.ComputerID)
 	checkpoint, e3 := agentComputerID(request.CheckpointID)
 	if e1 != nil || e2 != nil || e3 != nil {
-		server.writeAgentComputerError(w, session.ErrInvalidInput)
+		server.writeAgentComputerError(w, r, session.ErrInvalidInput)
 		return
 	}
 	result, err := session.BeginComputerCapture(r.Context(), server.tx, workerFromContext(r.Context()), session.ComputerCaptureRequest{EnvironmentID: env, ComputerID: computer, CheckpointID: checkpoint, LeaseEpoch: request.LeaseEpoch, ChannelCredential: request.ChannelCredential})
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentComputerCaptureResponse{Capture: result.Request, SaveID: result.SaveID.String(), WorkPending: result.WorkPending, ReleaseSource: result.ReleaseSource})
@@ -72,11 +75,11 @@ func (server *Server) workerSealAgentComputerCapture(w http.ResponseWriter, r *h
 	checkpoint, e2 := agentComputerID(request.CheckpointID)
 	receipt := new(agentv1.ComputerSessionReceipt)
 	if e1 != nil || e2 != nil || len(request.Receipt) == 0 || len(request.Receipt) > 64*1024 || proto.Unmarshal(request.Receipt, receipt) != nil {
-		server.writeAgentComputerError(w, session.ErrInvalidInput)
+		server.writeAgentComputerError(w, r, session.ErrInvalidInput)
 		return
 	}
 	if err := session.RecordComputerSealed(r.Context(), server.tx, workerFromContext(r.Context()), env, checkpoint, receipt); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -90,11 +93,11 @@ func (server *Server) workerCancelAgentComputerCapture(w http.ResponseWriter, r 
 	env, e1 := agentComputerID(request.EnvironmentID)
 	checkpoint, e2 := agentComputerID(request.CheckpointID)
 	if e1 != nil || e2 != nil {
-		server.writeAgentComputerError(w, session.ErrInvalidInput)
+		server.writeAgentComputerError(w, r, session.ErrInvalidInput)
 		return
 	}
 	if err := session.CancelUnsealedComputerCapture(r.Context(), server.auditPolicy, server.tx, workerFromContext(r.Context()), env, checkpoint, session.UnsealedCaptureEvidence{Rejected: request.Rejected, AbsentObservedAt: request.AbsentObservedAt}); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -108,11 +111,11 @@ func (server *Server) workerAgentComputerSaveAbsence(w http.ResponseWriter, r *h
 	env, e1 := agentComputerID(request.EnvironmentID)
 	checkpoint, e2 := agentComputerID(request.CheckpointID)
 	if e1 != nil || e2 != nil {
-		server.writeAgentComputerError(w, session.ErrInvalidInput)
+		server.writeAgentComputerError(w, r, session.ErrInvalidInput)
 		return
 	}
 	if err := session.RecordCheckpointSaveAbsence(r.Context(), server.tx, workerFromContext(r.Context()), env, checkpoint, request.Evidence); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -126,17 +129,17 @@ func (server *Server) workerPrepareAgentComputerRestore(w http.ResponseWriter, r
 	env, e1 := agentComputerID(request.EnvironmentID)
 	checkpoint, e2 := agentComputerID(request.CheckpointID)
 	if e1 != nil || e2 != nil {
-		server.writeAgentComputerError(w, session.ErrInvalidInput)
+		server.writeAgentComputerError(w, r, session.ErrInvalidInput)
 		return
 	}
 	p, err := session.PrepareComputerRestore(r.Context(), server.tx, workerFromContext(r.Context()), env, checkpoint, request.LeaseEpoch, request.ChannelCredential)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	raw, err := (proto.MarshalOptions{Deterministic: true}).Marshal(p)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentComputerInstallationResponse{Installation: raw})
@@ -162,11 +165,11 @@ func (server *Server) workerValidateAgentComputerSourceAbort(w http.ResponseWrit
 	}
 	env, p, receipt, err := decodeAgentComputerInstallation(request)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	if err := session.ValidateComputerSourceAbort(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -180,11 +183,11 @@ func (server *Server) workerCommitAgentComputerSourceAbort(w http.ResponseWriter
 	}
 	env, p, receipt, err := decodeAgentComputerInstallation(request)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	if err := session.CommitComputerSourceAbort(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -198,11 +201,11 @@ func (server *Server) workerCompleteAgentComputerSourceAbort(w http.ResponseWrit
 	}
 	env, p, receipt, err := decodeAgentComputerInstallation(request)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	if err := session.CompleteComputerSourceAbort(r.Context(), server.auditPolicy, server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -216,11 +219,11 @@ func (server *Server) workerValidateAgentComputerRestore(w http.ResponseWriter, 
 	}
 	env, p, receipt, err := decodeAgentComputerInstallation(request)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	if err := session.ValidateComputerRestore(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -234,11 +237,11 @@ func (server *Server) workerCommitAgentComputerRestore(w http.ResponseWriter, r 
 	}
 	env, p, receipt, err := decodeAgentComputerInstallation(request)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	if err := session.CommitComputerRestore(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -252,11 +255,11 @@ func (server *Server) workerCompleteAgentComputerRestore(w http.ResponseWriter, 
 	}
 	env, p, receipt, err := decodeAgentComputerInstallation(request)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	if err := session.CompleteComputerRestore(r.Context(), server.auditPolicy, server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -270,17 +273,17 @@ func (server *Server) workerAgentComputerControls(w http.ResponseWriter, r *http
 	}
 	env, p, receipt, err := decodeAgentComputerInstallation(request)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	controls, err := session.ReadComputerContinuationControls(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	raw, err := (proto.MarshalOptions{Deterministic: true}).Marshal(controls)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentComputerControlsResponse{Controls: raw})
@@ -296,17 +299,17 @@ func (server *Server) workerPrepareAgentComputerSourceAbort(w http.ResponseWrite
 	checkpoint, e2 := agentComputerID(request.CheckpointID)
 	receipt := new(agentv1.ComputerSessionReceipt)
 	if e1 != nil || e2 != nil || len(request.Receipt) == 0 || len(request.Receipt) > 64*1024 || proto.Unmarshal(request.Receipt, receipt) != nil {
-		server.writeAgentComputerError(w, session.ErrInvalidInput)
+		server.writeAgentComputerError(w, r, session.ErrInvalidInput)
 		return
 	}
 	p, err := session.PrepareComputerSourceAbort(r.Context(), server.tx, workerFromContext(r.Context()), env, checkpoint, request.LeaseEpoch, request.ChannelCredential, receipt)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	raw, err := (proto.MarshalOptions{Deterministic: true}).Marshal(p)
 	if err != nil {
-		server.writeAgentComputerError(w, err)
+		server.writeAgentComputerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentComputerInstallationResponse{Installation: raw})

@@ -38,6 +38,6 @@ func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, 
 		if old.Valid {
 			before = &old.Int64
 		}
-		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Actor: m.Actor, OrgID: orgID, ProjectID: projectID, Action: "project.retention_changed", TargetKind: "project", TargetID: projectID, Details: audit.RetentionChangedDetails{OldRetentionSeconds: before, NewRetentionSeconds: seconds}})
+		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: orgID, ProjectID: projectID, Action: "project.retention_changed", TargetKind: "project", TargetID: projectID, Details: audit.RetentionChangedDetails{OldRetentionSeconds: before, NewRetentionSeconds: seconds}})
 	})
 }

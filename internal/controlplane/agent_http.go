@@ -40,8 +40,10 @@ func (s *Server) agentRequestAuthority(r *http.Request, permission auth.Permissi
 	if err != nil {
 		return session.Caller{}, uuid.Nil(), err
 	}
-	if !auth.IsAgentPermission(permission) && !principal.HasPermission(permission, scope) {
-		return session.Caller{}, uuid.Nil(), session.ErrDenied
+	if !auth.IsAgentPermission(permission) {
+		if err := auth.Require(principal, permission, scope, session.ErrDenied); err != nil {
+			return session.Caller{}, uuid.Nil(), err
+		}
 	}
 	caller, err := externalAgentCaller(principal)
 	return caller, pgvalue.MustUUIDValue(environment), err
@@ -331,7 +333,7 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, r *http.Request, err
 	case errors.Is(err, session.ErrAgentDeleted):
 		s.writeOperationError(w, r, conflict(codedError{code: "agent_deleted", message: err.Error()}))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, agent.ErrDenied):
-		s.writeOperationError(w, r, forbidden(errors.New("agent or Session operation is not authorized")))
+		s.writeOperationError(w, r, forbidden(errors.Join(errors.New("agent or Session operation is not authorized"), err)))
 	case errors.Is(err, session.ErrControlScopeChanged):
 		s.writeOperationError(w, r, conflict(codedError{code: "control_scope_changed", message: "The affected Sessions or Commands changed. Close this confirmation and review the scope again."}))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict):

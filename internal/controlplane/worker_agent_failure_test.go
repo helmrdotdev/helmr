@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"uuid"
 )
 
 func TestWorkerAgentFailureHasOneObservableOutcome(t *testing.T) {
@@ -17,7 +18,7 @@ func TestWorkerAgentFailureHasOneObservableOutcome(t *testing.T) {
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	sessionID := runtimeTestSession(f)
-	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "failure", Input: json.RawMessage(`[]`)})
+	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "failure", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,7 @@ func TestWorkerAgentFailureHasOneObservableOutcome(t *testing.T) {
 			t.Fatalf("receipt: %+v %v", ack, err)
 		}
 	}
-	view, err := session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, f.Environment, f.Session, a.TurnID)
+	view, err := session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, f.Environment, f.Session, a.TurnID)
 	if err != nil || view.Error == nil || view.Error.Code != "application_error" {
 		t.Fatalf("inspection: %+v %v", view, err)
 	}
@@ -75,7 +76,7 @@ func TestWorkerAgentHoldBeforeTurn(t *testing.T) {
 			t.Fatalf("hold without Turn: %+v %v", response, err)
 		}
 	}
-	view, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, f.Environment, f.Session)
+	view, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, f.Environment, f.Session)
 	if err != nil || len(view.Holds) != 1 || view.Holds[0].Scope != "local" || view.Holds[0].Reason != "setup_failed" {
 		t.Fatalf("hold inspection: %+v %v", view, err)
 	}

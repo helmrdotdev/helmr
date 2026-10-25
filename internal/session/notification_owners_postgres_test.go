@@ -45,7 +45,7 @@ func TestMutationOwnersWakeDiscovery(t *testing.T) {
 					return computer.TerminateImageBuild(t.Context(), tx, f.env, build, "test_failure")
 				})
 			case "host":
-				_, err = workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.group, "host", 1)
+				_, err = workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, "host", 1)
 			}
 			if err != nil {
 				t.Fatal(err)

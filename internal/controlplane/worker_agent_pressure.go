@@ -13,7 +13,7 @@ func (s *Server) workerAgentStoragePressure(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if request.Kind != "computer" {
-		s.writeAllocationError(w, session.ErrInvalidInput)
+		s.writeAllocationError(w, r, session.ErrInvalidInput)
 		return
 	}
 	identity, err := allocationIdentity(request.AllocationIdentity)
