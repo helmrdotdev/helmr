@@ -12,7 +12,7 @@ import { CheckboxGroup, Field, FormActions, Segmented, TextArea, TextInput } fro
 import { Notice } from "../ui/Notice";
 import { DangerZone } from "../ui/Panel";
 import { PageHeader } from "../ui/PageHeader";
-import { NotFoundState, QueryState } from "../ui/QueryState";
+import { NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { PageSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
@@ -67,7 +67,7 @@ export function RoleDetail() {
         </>}
       </Show>}
     />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to manage roles.</Notice></Show>}>
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to manage roles." /></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="role" id={id()} back={{ href: "/settings/roles", label: "Go to roles" }} />}>
         <QueryState query={query} pending={<PageSkeleton label="Loading role" sections={["Permissions"]} />} error={error => loadError(error, "Could not load this role.")}>
           {() => <>

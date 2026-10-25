@@ -119,10 +119,10 @@ export function Device() {
                 </AuthFacts>
                 <Show when={actionError()}>{(failure) => <AuthError {...failure()} />}</Show>
                 <button type="button" class={ui.button} disabled={!canResolve()} onClick={() => resolveDevice(true)}>
-                  {busy() === "approve" ? "Approving..." : "Approve"}
+                  {busy() === "approve" ? "Approving…" : "Approve"}
                 </button>
                 <AuthLink disabled={!canResolve()} onClick={() => resolveDevice(false)}>
-                  {busy() === "deny" ? "Denying..." : "Deny"}
+                  {busy() === "deny" ? "Denying…" : "Deny"}
                 </AuthLink>
               </Match>
             </Switch>

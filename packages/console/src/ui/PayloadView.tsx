@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
+import { Icon } from "./Icon";
 import type { JsonValue } from "../../../../sdk/typescript/src/contract";
 import { byteLength, childPage, formatBytes, jsonPath, pathMatches, preview, scalar, stringClamp, textLineClamp, treeLimit } from "./payload";
 import { cx, ui } from "./styles";
@@ -127,7 +128,7 @@ function JsonNode(props: {
           Scalars copy through their parent's Copy value or the header's Copy JSON. */}
       <div class="group flex min-h-5 items-start gap-1 px-2 hover:bg-console-accent-soft focus-within:bg-console-accent-soft" style={{ "padding-left": `${8 + props.depth * 16}px` }}>
         <Show when={branch()} fallback={<span class="w-3 shrink-0" />}>
-          <button type="button" class="w-3 shrink-0 cursor-pointer border-0 bg-transparent p-0 text-left text-micro leading-5 text-console-subtle" aria-expanded={open()} aria-label={`${open() ? "Collapse" : "Expand"} ${props.name ?? "value"}`} onClick={() => setOpen(!open())}>{open() ? "▾" : "▸"}</button>
+          <button type="button" class="grid h-5 w-3 shrink-0 cursor-pointer place-items-center border-0 bg-transparent p-0 text-console-subtle" aria-expanded={open()} aria-label={`${open() ? "Collapse" : "Expand"} ${props.name ?? "value"}`} onClick={() => setOpen(!open())}><Icon name={open() ? "chevron-down" : "chevron-right"} class="size-2.5" /></button>
         </Show>
         <span class="min-w-0 flex-1 break-words">
           <span class={cx(pinned() && ui.payloadPinned)}>

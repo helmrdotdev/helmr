@@ -1,4 +1,3 @@
-import { A } from "@solidjs/router";
 import { listGrants, listGroups, memberGrantSources, memberHref } from "../lib/permissions";
 import { useMe } from "../lib/me";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
@@ -19,13 +18,14 @@ import {
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
-import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
+import { Tag } from "../ui/Tag";
 import { ConfirmDialog, Dialog, FormDialog } from "../ui/Dialog";
 import { Field, TextArea } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Notice } from "../ui/Notice";
-import { QueryState } from "../ui/QueryState";
+import { QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -119,7 +119,7 @@ function InviteMembersDialog(props: {
       title="Invite members"
       intro="Invitations expire after 7 days."
       submitLabel="Invite"
-      busyLabel="Inviting..."
+      busyLabel="Inviting…"
       busy={submitting()}
       disabled={valid().length === 0 || overLimit()}
       error={error()}
@@ -155,7 +155,7 @@ function InviteMembersDialog(props: {
           </ul>
         </div>
       </Show>
-      <p class={ui.fieldHint}>Invitations create members without access. An access administrator can assign Roles directly or through Groups after they join. Owners manage ownership separately.</p>
+      <p class={ui.fieldHint}>Invitations create members without access. An access administrator can grant roles directly or through groups after they join. Owners manage ownership separately.</p>
     </FormDialog>
   );
 }
@@ -173,7 +173,7 @@ function InvitationResultsDialog(props: { results: InvitationResult[]; onClose: 
         </Show>
         <Show when={failed().length > 0}>
           <div class="grid gap-1.5">
-            <p class="m-0 text-body leading-normal text-console-text">Couldn't invite {failed().length}:</p>
+            <p class="m-0 text-body leading-normal text-console-text">Could not invite {failed().length}:</p>
             <ul class="m-0 grid list-none gap-1 p-0" aria-label="Not invited">
               <For each={failed()}>
                 {(result) => (
@@ -193,20 +193,18 @@ function InvitationResultsDialog(props: { results: InvitationResult[]; onClose: 
   );
 }
 
-// Members and pending invitations in one table: a member's name over their
-// email, or an invitee's email; "Since" is when they joined or were invited.
-// Roles change from the row menu; your own row has none.
-const COLUMNS = ["Member", "Ownership and roles", "Status", "Since", { label: "Actions", srOnly: true }] as const;
+// Members and pending invitations in one table: a member's name, or an
+// invitee's email; "Since" is when they joined or were invited. Ownership and
+// your own row are tags after the name.
+const COLUMNS = ["Member", "Email", "Organization roles", "Status", "Since", { label: "Actions", srOnly: true }] as const;
 
-function MemberCell(props: { name: string; email?: string | null | undefined; you?: boolean; href?: string | undefined }) {
+function MemberCell(props: { name: string; owner?: boolean; you?: boolean; href?: string | undefined }) {
   return (
-    <div class="grid py-1 leading-tight">
-      <span class="flex items-center gap-1.5">
-        <Show when={props.href} fallback={<span class="font-medium text-console-text">{props.name}</span>}>{href => <A href={href()} class="font-medium text-console-accent hover:text-console-accent-hover">{props.name}</A>}</Show>
-        <Show when={props.you}><span class="border border-console-border px-1 font-mono text-micro text-console-muted">You</span></Show>
-      </span>
-      <Show when={props.email && props.email !== props.name}><span class="text-chrome text-console-muted">{props.email}</span></Show>
-    </div>
+    <span class="inline-flex items-center gap-1.5">
+      <Show when={props.href} fallback={<span class="font-mono text-chrome text-console-text">{props.name}</span>}>{href => <PrimaryLink href={href()}>{props.name}</PrimaryLink>}</Show>
+      <Show when={props.owner}><Tag title="Can appoint owners and recover access administration">owner</Tag></Show>
+      <Show when={props.you}><Tag>you</Tag></Show>
+    </span>
   );
 }
 
@@ -233,8 +231,9 @@ function MemberRow(props: {
   return (
     <>
       <tr>
-        <td><MemberCell name={memberName(props.member)} email={props.member.email} you={props.isCurrentUser} href={props.member.status === "active" && props.canManage ? memberHref(props.member.membership_id) : undefined} /></td>
-        <td><Show when={props.member.is_owner}><span class="font-medium">Owner</span></Show><p class="text-control text-console-muted">{props.organizationRoles.join(" · ") || "No organization roles"}</p></td>
+        <td><MemberCell name={memberName(props.member)} owner={props.member.is_owner} you={props.isCurrentUser} href={props.member.status === "active" && props.canManage ? memberHref(props.member.membership_id) : undefined} /></td>
+        <td class="text-console-muted!">{props.member.email && props.member.email !== memberName(props.member) ? props.member.email : <EmptyCell />}</td>
+        <td><Show when={props.organizationRoles.length} fallback={<EmptyCell />}>{props.organizationRoles.join(" · ")}</Show></td>
         <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
         <td><RelativeTime value={props.member.created_at} /></td>
         <RowActions
@@ -259,7 +258,8 @@ function InvitationRow(props: {
   return (
     <tr>
       <td><MemberCell name={props.invitation.email} /></td>
-      <td>{"Not an owner"}</td>
+      <td><EmptyCell /></td>
+      <td><EmptyCell /></td>
       <td><StatusBadge resource="member" status="invited" /></td>
       <td><RelativeTime value={props.invitation.created_at} /></td>
       <RowActions
@@ -279,7 +279,7 @@ function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOpti
       title="Change ownership"
       intro={<>Change ownership for <strong>{memberName(props.member)}</strong>. Ownership enables ownership transfer and access recovery; it does not grant workload permissions.</>}
       submitLabel="Change ownership"
-      busyLabel="Changing..."
+      busyLabel="Changing…"
       busy={busy()}
       disabled={role() === (props.member.is_owner ? "owner" : "member")}
       error={error()}
@@ -367,7 +367,7 @@ export function Members() {
       />
 
       <Show when={!me.isPending && !canManage()}>
-        <Notice tone="info" class="mb-3">Manage access permission is required to view and manage members.</Notice>
+        <div class="mb-3"><DeniedState message="You need Manage access permission to see and manage members." /></div>
       </Show>
       <Show when={canManage() && !emailDelivery()}>
         <Notice tone="info" class="mb-3">{NO_EMAIL_DELIVERY}</Notice>
@@ -438,7 +438,7 @@ export function Members() {
           <ConfirmDialog
             title="Remove member"
             confirmLabel="Remove"
-            busyLabel="Removing..."
+            busyLabel="Removing…"
             tone="danger"
             target={memberName(member())}
             errorMessage={membersErrorMessage}
@@ -458,7 +458,7 @@ export function Members() {
           <ConfirmDialog
             title="Revoke invitation"
             confirmLabel="Revoke"
-            busyLabel="Revoking..."
+            busyLabel="Revoking…"
             tone="danger"
             target={invitation().email}
             errorMessage={membersErrorMessage}

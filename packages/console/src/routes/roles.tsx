@@ -6,13 +6,12 @@ import { hasPermission } from "../lib/auth";
 import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { deleteRole, isOrganizationRole, listRoles, permissionNames, roleHref, type PermissionRole } from "../lib/permissions";
-import { DataTable, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
+import { DataTable, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
 import { ConfirmDialog } from "../ui/Dialog";
 import { SearchInput } from "../ui/Field";
-import { Notice } from "../ui/Notice";
 import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { QueryState } from "../ui/QueryState";
+import { QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 
@@ -36,11 +35,11 @@ export function Roles() {
   const catalog = () => query.data?.catalog ?? [];
   return <>
     <PageHeader title="Roles" subtitle="Sets of permissions you grant to people, groups and API keys." actions={<Show when={allowed()}><button type="button" class={ui.button} onClick={() => navigate("/settings/roles/new")}>Create role</button></Show>} />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to manage roles.</Notice></Show>}>
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to manage roles." /></Show>}>
       <Toolbar start={<SearchInput aria-label="Filter roles" placeholder="Filter roles" value={filter()} onInput={e => setFilter(e.currentTarget.value)} />} />
       <QueryState query={query} pending={<TableSkeleton label="Loading roles" columns={COLUMNS} />} error={error => loadError(error, "Could not load roles.")}>
         {() => (
-          <DataTable columns={COLUMNS} minWidth="min-w-180" footer={<LoadMore count={roles().length} noun={{ one: "role", other: "roles" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+          <DataTable columns={COLUMNS} minWidth="min-w-180" footer={<TableCount count={roles().length} noun={{ one: "role", other: "roles" }} />}>
             <For each={roles()}>
               {role => (
                 <tr>

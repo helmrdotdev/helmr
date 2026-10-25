@@ -36,7 +36,7 @@ export async function assignRole(project:string,input:GrantInput,existing?:Pick<
 }
 export const removeGrant=(id:string,revision:number)=>request(`/api/role-grants/${encodeURIComponent(id)}`,{method:"DELETE",headers:{"If-Match":`"${revision}"`}});
 export const resourceLabel=(type:string)=>({agents:"Agents",runs:"Runs",deployments:"Deployments",computers:"Computers",secrets:"Secrets",api_keys:"API keys",organization:"Organization"}[type] ?? type);
-export const targetSummary=(grant:RoleGrant)=>grant.targets.map(t=>`${resourceLabel(t.resource_type)}: ${t.mode === "selected" ? t.agent_keys?.join(", ") || "No remaining Agent targets" : t.mode === "all" ? "All current and future Agents" : t.mode === "organization" ? "Organization" : "Entire environment"}`).join(" · ");
+export const targetSummary=(grant:RoleGrant)=>grant.targets.map(t=>`${resourceLabel(t.resource_type)}: ${t.mode === "selected" ? t.agent_keys?.join(", ") || "No remaining agent targets" : t.mode === "all" ? "All current and future agents" : t.mode === "organization" ? "Organization" : "Entire environment"}`).join(" · ");
 // The route ID of the built-in all-members audience on the Groups pages.
 export const ALL_MEMBERS = "all-members";
 export const memberHref = (id: string) => `/settings/members/${encodeURIComponent(id)}`;

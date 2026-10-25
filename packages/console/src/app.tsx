@@ -1,4 +1,5 @@
 import { A, Navigate, Route, Router, useLocation } from "@solidjs/router";
+import { environmentChip } from "./features/projects/display";
 import type { JSX } from "solid-js";
 import { Show } from "solid-js";
 import { AppBar, type NavItem } from "./components/AppBar";
@@ -12,7 +13,6 @@ import { attentionTotal, useAttention } from "./lib/attention";
 import { SettingsLayout } from "./components/SettingsLayout";
 import { hasPermission, onboardingRedirectPath, type AuthRequirement } from "./lib/auth";
 import { useMe } from "./lib/me";
-import { isProtectedEnvironment } from "./lib/projects";
 import { ScopeProvider, useScope } from "./lib/scope";
 import { logout } from "./lib/auth";
 import { formatRole } from "./components/ProfileMenu";
@@ -27,7 +27,7 @@ import { SlackConnect } from "./routes/slack-connect";
 import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { AccountSettings } from "./routes/account-settings";
 import { AuthGitHubCallback, AuthMagicLinkCallback } from "./routes/auth-callback";
-import { SessionsPage } from "./routes/sessions";
+import { SessionList } from "./routes/sessions";
 import { TriggerList } from "./routes/triggers";
 import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab, AgentAccessTab } from "./routes/agents";
 import { ComputersSection, ComputerList, TemplateList } from "./routes/computers";
@@ -110,22 +110,18 @@ function AppShell(props: { children?: JSX.Element }) {
   const canRead = (permission: string) => hasPermission(me.data, permission, { projectID: scope.selectedProjectID(), environmentID: scope.selectedEnvironmentID() });
   const nav = (): NavItem[] => [
     { href: "/", label: "Overview", count: () => (attention.data ? attentionTotal(attention.data.counts) : undefined) },
-    { href: "/sessions", label: "Sessions" },
-    { href: "/agents", label: "Agents", match: ["/triggers"] },
+    { href: "/agents", label: "Agents", match: ["/sessions", "/triggers"] },
     ...(canRead("run_metadata.read") ? [{ href: "/computers", label: "Computers", match: ["/templates"] }] : []),
     ...(canRead("deployment_metadata.read") ? [{ href: "/deployments", label: "Deployments" }] : []),
   ];
-  const protectedColor = () => {
-    const environment = scope.selectedEnvironment();
-    return environment && isProtectedEnvironment(environment) ? environment.color_hex : undefined;
-  };
+  const environmentColor = () => environmentChip(scope.selectedEnvironment())?.colorHex;
   return (
     <div class={"min-h-dvh bg-transparent font-sans text-sm text-console-text"}>
       <AppBar
         leading={<ScopeSelector />}
         nav={nav()}
         trailing={<><CommandPalette /><div class="flex items-center gap-2 max-[720px]:hidden"><SettingsLink /><ProfileMenu /></div></>}
-        protectedColor={protectedColor()}
+        environmentColor={environmentColor()}
         drawerEnd={(close) => <DrawerAccount close={close} />}
       />
       <Show when={scope.error()}>
@@ -225,6 +221,7 @@ export function App() {
 
       <Route component={wrapLayout(AgentsSection)}>
         <Route path="/agents" component={AgentList} />
+        <Route path="/sessions" component={SessionList} />
         <Route path="/triggers" component={TriggerList} />
       </Route>
       <Route path="/agents/:agent" component={wrapLayout(AgentDetail)}>
@@ -233,7 +230,6 @@ export function App() {
         <Route path="/slack" component={AgentSlackTab} />
         <Route path="/access" component={AgentAccessTab} />
       </Route>
-      <Route path="/sessions" component={wrap(SessionsPage)} />
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/sessions/:session_id/turns/:turn_id/asks/:ask_id" component={wrap(QuestionDetail)} />
       <Route component={wrapLayout(ComputersSection)}>

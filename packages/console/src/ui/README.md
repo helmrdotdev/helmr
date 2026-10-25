@@ -113,8 +113,8 @@ Panel.
 
 - **AppBar** (`components/AppBar.tsx`). The one header bar for the console,
   settings and admin areas: `leading` (scope selector or `BrandMark`),
-  `nav` items, `trailing` controls. A protected Environment draws a 2px line in its
-  color along the top edge of the bar, inside its 40px height (`protectedColor`).
+  `nav` items, `trailing` controls. The tab's Environment draws a 2px line in its
+  color along the top edge of the bar, inside its 40px height (`environmentColor`).
   Below 720px the section tabs collapse into a menu button that opens an untitled
   drawer (a `Popover` dialog with 44px `ui.drawerItem` targets); the bar keeps
   both scope pickers at phone width, so the drawer holds only the sections and
@@ -133,7 +133,7 @@ Panel.
   page renders in the tab panel. It shows the no-scope state for every page.
 - **BrandMark.** The product name, optionally naming the area ("Helmr Admin").
 - **ScopeSelector** (`components/`). The tab's scope as two segments,
-  `<Project> / <Environment>` (with its dot and "protected" tag), each opening its
+  `<Project> / <Environment>` (with its dot), each opening its
   own picker: a titled `Popover`, a `CommandList` of the Projects or
   the Project's Environments (current one checked), "New project" / "New
   environment" (the shared create dialogs) and "Manage" (Project settings or
@@ -159,7 +159,7 @@ Panel.
   the tab's Project, chosen in a rail (a Select on narrow screens). It opens on the
   tab's Environment, is page state only (never the URL or the tab's scope), and
   starts over when the tab's scope changes. The rail tags the tab's Environment
-  "working" (the narrow Select adds "protected" and "working" to option text), as
+  with the `working` Tag (in the narrow Select's trailing column too), as
   the Environments table does. The primary action names the edited Environment and
   its dialogs carry it.
 
@@ -190,8 +190,9 @@ Panel.
 - **Panel.** The in-page container: optional `title`, `count` and `actions` in the
   container header, then the body (see Containers).
 - **DangerZone.** A destructive page action: the danger-tone header, the
-  consequence and one danger button that opens a `ConfirmDialog`. Last in the rail
-  or in the main column (Cancel session). Destructive page actions live here, not
+  consequence and its danger button, which opens a `ConfirmDialog`; related ends
+  of one thing share a zone (End session: Close and Cancel). Last in the rail or
+  in the main column. Destructive page actions live here, not
   in the page header.
 - **DetailLayout**, **KeyValueList**, **KeyValue.** Detail pages: main column plus a
   300px rail, 24px apart; the rail's title is its container header, then
@@ -223,9 +224,11 @@ Panel.
     "Load more turns". A table of two kinds of row counts both and loads the
     second (`extra`): "Showing 3 members, 1 invitation", "Load more invitations";
     the second count is left out while it is zero.
+  - **TableCount** — the `footer` of a table that shows everything it has: only
+    the count ("Showing 3 groups").
 - **List** and **ListItem.** Non-tabular rows (turns, holds, delivery issues, linked
   identities, the Overview queue) with one divider style; framed like a DataTable;
-  `footer` takes a LoadMore. A single-line row (`line`: the Overview queue, a
+  `footer` takes a LoadMore or a TableCount. A single-line row (`line`: the Overview queue, a
   Turn's Questions, linked identities) is 36px like a table row; a multi-block
   row (a Turn, a hold) pads 12px.
 - **StatusBadge.** Every status. One tone map per resource lives in
@@ -235,11 +238,17 @@ Panel.
   residency (cold, starting, running, parking, restoring, unavailable, with the
   unavailable reason as the tooltip and in the rail), or its lifecycle only while
   it is deleting or deleted.
-- **EnvChip** and **EnvDot.** The only way an Environment is shown: its color, name
-  and "protected" tag. **ProtectedBadge** is the one "protected" tag, in chips,
-  the scope picker, the command palette and the settings selector; in pickers it
-  sits in a trailing column right-aligned before the check mark.
-  **EnvironmentTarget** names the Environment a dialog writes to.
+- **EnvChip** and **EnvDot.** The only way an Environment is shown: its color and
+  name. **EnvironmentTarget** names the Environment a dialog writes to.
+- **Tag.** A short fixed fact after a name, in words: `owner`, `you`, `working`,
+  `default`, `selected`. One shape everywhere; in pickers it sits in the trailing column.
+  Facts are never shown as a symbol alone.
+- **Icons** (`ui/Icon.tsx`). 13px stroke icons in the text colour family. An icon
+  joins a word where the kind is quick to scan (a session's origin, held work,
+  a recipient kind, no access); it never replaces the word. The one exception is
+  the managed mark (`ManagedMark`): a lock after a definition Helmr maintains,
+  explained by its title and accessible name. Text glyphs (▸ ● ↓ ✓ →) are not
+  used as icons.
 - **IDText** and **RelativeTime.** Every ID and timestamp (rules below).
 - **CodeBlock.** Code and commands, with `copy` for things meant to be pasted.
 - **Session log** (`features/sessions`). The Session page's one history view:
@@ -287,7 +296,7 @@ Panel.
 | Many independent toggles grouped by scope | **CheckboxGroup** (group headings, "Select all", optional per-option description) |
 
 There is one Select. Native `<select>` elements are not used. An option's
-`trailing` tags (a protected badge) sit in a trailing column and show in the
+`trailing` tags (a Tag) sit in a trailing column and show in the
 trigger for the chosen option.
 
 ## Feedback
@@ -303,11 +312,13 @@ trigger for the chosen option.
   which retries only that page. `pending` is the content's skeleton; a refetch
   never blanks loaded content.
 - **EmptyState.** What is missing and the next step; may hold a CodeBlock or action.
-  Also the state for something a page computes itself, such as no selected scope.
   Dashed and tinted directly on the page; plain inside a container body.
+- **NoScopeState.** The one sentence for a page without the tab's scope: "Select
+  a project and environment." (or "Select a project." for project pages).
 - **ErrorState.** A failed read: the sentence in danger text, a compact Retry, and
   the server's code and message under a collapsed "Technical details".
-- **DeniedState.** A read the account may not make: a neutral notice, no Retry.
+- **DeniedState.** A read the account may not make, and a page the account's
+  permissions do not cover: a neutral notice naming the permission, no Retry.
   The page also hides actions that need the denied data (create buttons).
 - **NotFoundState.** A resource missing from the selected Environment: what was
   asked for, where, and the way back. The page titles itself "<Resource> not

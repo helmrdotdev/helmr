@@ -37,7 +37,7 @@ test("Console inspects externally admitted work and applies interrupt and cancel
   await expect(page.getByText("Send work from the CLI.", { exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("held-session.png"), fullPage: true });
   await page.goto(`/sessions?${scope}`);
-  await expect(page.getByRole("row").filter({ hasText: receipt.session_id.slice(-12) })).toContainText("1 active");
+  await expect(page.getByRole("row").filter({ hasText: receipt.session_id.slice(-12) })).toContainText("Held");
   await page.goto(`/sessions/${receipt.session_id}?${scope}`);
   await expandTurns(page);
   await confirm(page, "Cancel session");

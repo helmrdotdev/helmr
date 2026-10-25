@@ -1,4 +1,5 @@
 import { useParams } from "@solidjs/router";
+import { Tag } from "../ui/Tag";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { AccessLabel } from "../features/access/AccessIcon";
@@ -11,11 +12,10 @@ import { useMe } from "../lib/me";
 import { listMembers } from "../lib/members";
 import { useScope } from "../lib/scope";
 import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionGroup } from "../lib/permissions";
-import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
+import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
 import { ConfirmDialog } from "../ui/Dialog";
-import { Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, NotFoundState, QueryState } from "../ui/QueryState";
+import { EmptyState, NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
@@ -44,7 +44,7 @@ function EffectiveAccessTable(props: { access: MemberPermissions; names: (id: st
   };
   return (
     <Show when={props.access.scopes.length > 0} fallback={<EmptyState title={props.empty} />}>
-      <DataTable columns={EFFECTIVE_COLUMNS} minWidth="min-w-180" footer={<LoadMore count={props.access.scopes.length} noun={{ one: "scope", other: "scopes" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+      <DataTable columns={EFFECTIVE_COLUMNS} minWidth="min-w-180" footer={<TableCount count={props.access.scopes.length} noun={{ one: "scope", other: "scopes" }} />}>
         <For each={props.access.scopes}>
           {scope => (
             <tr>
@@ -88,11 +88,11 @@ export function MemberDetail() {
     <PageHeader
       title={missing() ? "Member not found" : name()}
       breadcrumb={canManage() ? [{ href: "/settings/members", label: "Members" }] : [{ href: "/settings/account", label: "My account" }]}
-      badge={<Show when={member()?.is_owner || (self() && me.data?.is_owner)}><span class="border border-console-border px-1 font-mono text-micro text-console-muted">Owner</span></Show>}
+      badge={<Show when={member()?.is_owner || (self() && me.data?.is_owner)}><Tag title="Can appoint owners and recover access administration">owner</Tag></Show>}
       subtitle={member()?.email && member()?.email !== name() ? member()?.email : undefined}
       actions={<Show when={canManage() && member()?.status === "active"}><button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant access</button></Show>}
     />
-    <Show when={canManage() || self()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to view other members’ access.</Notice></Show>}>
+    <Show when={canManage() || self()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to see other members’ access." /></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="member" id={id()} back={{ href: "/settings/members", label: "Go to members" }} />}>
         <Tabs id="member-tabs" label="Member" items={tabs()} selected={tab()} onSelect={setTab} />
         <TabPanel tabs="member-tabs" value="effective" selected={tab()}>
@@ -109,7 +109,7 @@ export function MemberDetail() {
           <QueryState query={groups} pending={<TableSkeleton label="Loading groups" columns={["Group", "Members"]} />} error={error => loadError(error, "Could not load groups.")}>
             {() => (
               <Show when={memberGroups().length > 0} fallback={<EmptyState title="Not in any group" hint="Add this person from a group's members tab." />}>
-                <DataTable columns={["Group", "Members", { label: "Actions", srOnly: true }]} footer={<LoadMore count={memberGroups().length} noun={{ one: "group", other: "groups" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+                <DataTable columns={["Group", "Members", { label: "Actions", srOnly: true }]} footer={<TableCount count={memberGroups().length} noun={{ one: "group", other: "groups" }} />}>
                   <For each={memberGroups()}>
                     {group => (
                       <tr>

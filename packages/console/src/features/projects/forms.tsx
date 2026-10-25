@@ -113,7 +113,7 @@ export function NewProjectDialog(props: { onCreated: (project: Project) => Promi
     <FormDialog
       title="New project"
       submitLabel="Create"
-      busyLabel="Creating..."
+      busyLabel="Creating…"
       busy={submission.busy()}
       disabled={!draft.valid()}
       error={submission.error()}
@@ -132,7 +132,7 @@ export function NewEnvironmentDialog(props: { project: Project; onCreated: (envi
     <FormDialog
       title={`New environment in ${props.project.name}`}
       submitLabel="Create"
-      busyLabel="Creating..."
+      busyLabel="Creating…"
       busy={submission.busy()}
       disabled={!draft.valid()}
       error={submission.error()}

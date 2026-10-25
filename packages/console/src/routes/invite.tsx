@@ -72,11 +72,11 @@ export function Invite() {
             <AuthCopy>Choose how to verify this invitation.</AuthCopy>
             <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
             <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
-              {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
+              {githubBusy() ? "Redirecting…" : "Continue with GitHub"}
             </button>
             <AuthDivider>OR</AuthDivider>
             <button class={ui.secondaryButton} type="button" onClick={sendMagicLink} disabled={githubBusy() || magicBusy()}>
-              {magicBusy() ? "Sending..." : "Send invite link"}
+              {magicBusy() ? "Sending…" : "Send invite link"}
             </button>
           </>
         }>
@@ -102,10 +102,10 @@ export function Invite() {
           <AuthDivider>OR</AuthDivider>
           <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
           <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
-            {githubBusy() ? "Redirecting..." : "Continue with GitHub"}
+            {githubBusy() ? "Redirecting…" : "Continue with GitHub"}
           </button>
           <AuthLink onClick={sendMagicLink} disabled={githubBusy() || magicBusy()}>
-            {magicBusy() ? "Sending..." : "Send another invite link"}
+            {magicBusy() ? "Sending…" : "Send another invite link"}
           </AuthLink>
         </Show>
       </Show>

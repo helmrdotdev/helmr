@@ -10,14 +10,13 @@ import { errorMessage, loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { listMembers, type OrganizationMember } from "../lib/members";
 import { ALL_MEMBERS, listGrants, listGroups, listRoles, memberHref, setGroupMember, subjectGrants } from "../lib/permissions";
-import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
+import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { SearchInput } from "../ui/Field";
-import { Notice } from "../ui/Notice";
 import { Toolbar } from "../ui/Page";
 import { DangerZone } from "../ui/Panel";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, NotFoundState, QueryState } from "../ui/QueryState";
+import { EmptyState, NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
@@ -65,7 +64,7 @@ export function GroupDetail() {
         <button type="button" class={ui.button} disabled={!isAll() && !group()} onClick={() => setGranting(true)}>Grant access</button>
       </Show>}
     />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to manage groups.</Notice></Show>}>
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to manage groups." /></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="group" id={id()} back={{ href: "/settings/groups", label: "Go to groups" }} />}>
         <QueryState query={groups} pending={<TableSkeleton label="Loading group" columns={["Role", "Where", "Agents", "Permissions"]} />} error={error => loadError(error, "Could not load this group.")}>
           {() => <>
@@ -83,7 +82,7 @@ export function GroupDetail() {
               <QueryState query={members} pending={<TableSkeleton label="Loading members" columns={["Member", "Email", "Other groups"]} />} error={error => loadError(error, "Could not load members.")}>
                 {() => (
                   <Show when={inGroup().length > 0} fallback={<EmptyState title="No members yet" hint="Add people to give them this group's access." />}>
-                    <DataTable columns={["Member", "Email", "Other groups", { label: "Actions", srOnly: true }]} footer={<LoadMore count={visibleMembers().length} noun={{ one: "member", other: "members" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+                    <DataTable columns={["Member", "Email", "Other groups", { label: "Actions", srOnly: true }]} footer={<TableCount count={visibleMembers().length} noun={{ one: "member", other: "members" }} />}>
                       <For each={visibleMembers()}>
                         {member => (
                           <tr>

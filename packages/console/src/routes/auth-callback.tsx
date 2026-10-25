@@ -48,7 +48,7 @@ function SignInCallback(props: { path: string; finish: (params: Params) => Promi
   });
 
   return (
-    <Switch fallback={<AuthWorking>Signing you in...</AuthWorking>}>
+    <Switch fallback={<AuthWorking>Signing you in…</AuthWorking>}>
       <Match when={outcome().kind === "missing"}>
         <AuthWindow>
           <AuthMissing title="This sign-in link is incomplete" action={<NextStep />}>

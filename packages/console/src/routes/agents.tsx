@@ -1,4 +1,5 @@
 import { AgentDeleteDialog } from "../features/agents/AgentDeleteDialog";
+import { DangerZone } from "../ui/Panel";
 import { hasPermission } from "../lib/auth";
 import { useLocation, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
@@ -15,13 +16,13 @@ import { getCurrentDeployment } from "../lib/deployments";
 import { agentHref, getAgentDefinition, getAgentStatus, listAgentDefinitions, listRetainedAgents, type AgentTab, type RetainedAgent } from "../lib/definitions";
 import { loadError } from "../lib/error";
 import { useScope, useScopeIDs } from "../lib/scope";
-import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, TableCount, PrimaryLink } from "../ui/DataTable";
 import { Notice } from "../ui/Notice";
 import { IDText } from "../ui/IDText";
 import { SearchInput, Segmented } from "../ui/Field";
 import { Page, Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
+import { EmptyState, isNotFound, NotFoundState, QueryState, NoScopeState } from "../ui/QueryState";
 import { LinesSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { StatusBadge } from "../ui/StatusBadge";
 import { selectedLinkTab } from "../ui/linkTab";
@@ -37,13 +38,14 @@ const SHOW_OPTIONS = [
 
 const failure = (error: unknown) => loadError(error, "Could not load agents.", { forbidden: "You do not have permission to view agents." });
 
-type Section = "agents" | "triggers";
+type Section = "agents" | "sessions" | "triggers";
 const SECTION_TABS: LinkTabItem<Section>[] = [
   { value: "agents", label: "Agents", href: "/agents" },
+  { value: "sessions", label: "Sessions", href: "/sessions" },
   { value: "triggers", label: "Triggers", href: "/triggers" },
 ];
 
-// The Agents section: Agents and their triggers, one page each.
+// The Agents section: agents, their sessions and triggers, one page each.
 export function AgentsSection(props: { children?: JSX.Element }) {
   return (
     <SectionLayout id="agents-section" title="Agents" tabs={SECTION_TABS}>
@@ -65,7 +67,7 @@ function AccessAgentDirectory() {
  const scope=useScopeIDs();
  const targets=createQuery(()=>({queryKey:["access","targets",scope().projectID],queryFn:()=>listAccessTargets(scope().projectID),enabled:!!scope().projectID}));
  const agents=()=>targets.data?.targets.find(t=>t.environment===scope().environmentID)?.agents ?? [];
- return <QueryState query={targets} pending={<TableSkeleton label="Loading agents" columns={["Agent"]} />} error={failure} empty={{ when: () => agents().length === 0, title: "No agents registered in this environment" }}>{()=> <DataTable columns={["Agent"]} footer={<LoadMore count={agents().length} noun={{ one: "agent", other: "agents" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}><For each={agents()}>{agent=><tr><td><PrimaryLink href={agentHref(agent.key, "access")}>{agent.key}</PrimaryLink></td></tr>}</For></DataTable>}</QueryState>;
+ return <QueryState query={targets} pending={<TableSkeleton label="Loading agents" columns={["Agent"]} />} error={failure} empty={{ when: () => agents().length === 0, title: "No agents registered in this environment" }}>{()=> <DataTable columns={["Agent"]} footer={<TableCount count={agents().length} noun={{ one: "agent", other: "agents" }} />}><For each={agents()}>{agent=><tr><td><PrimaryLink href={agentHref(agent.key, "access")}>{agent.key}</PrimaryLink></td></tr>}</For></DataTable>}</QueryState>;
 }
 
 function OperationalAgentList() {
@@ -169,6 +171,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
   const [changeMessage, setChangeMessage] = createSignal("");
   const me = useMe();
   const scope = useScopeIDs();
+  const canDelete = () => hasPermission(me.data, "access.manage") && hasPermission(me.data, "agents.manage", { ...scope(), agent: name() });
   const scopeState = useScope();
   const params = useParams();
   const location = useLocation();
@@ -200,7 +203,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
         )}</Show>
         <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
       </>}
-      actions={<Show when={!missing()}><Show when={agent.data && hasPermission(me.data,"access.manage") && hasPermission(me.data,"agents.manage",{...scope(),agent:name()})}><button class={ui.secondaryButton} onClick={() => setChangeOpen(true)}>{agent.data?.deleted_at ? "Restore" : "Delete"}</button></Show><CopyLinkButton /></Show>}
+      actions={<Show when={!missing()}><CopyLinkButton /><Show when={canDelete() && agent.data?.deleted_at}><button type="button" class={ui.secondaryButton} onClick={() => setChangeOpen(true)}>Restore</button></Show></Show>}
     />
     <Show when={changeMessage()}><Notice tone="success">{changeMessage()}</Notice></Show>
     <Show when={changeOpen()}><AgentDeleteDialog agent={name()} scope={scope()} restore={!!agent.data?.deleted_at} onClose={() => setChangeOpen(false)} onSaved={() => {
@@ -208,7 +211,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
       setChangeOpen(false);
       for (const key of ["agents", "access", "me", "triggers", "slack"]) void cache.invalidateQueries({queryKey:[key]});
     }} /></Show>
-    <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
+    <Show when={enabled()} fallback={<NoScopeState />}>
       <Show when={!missing()} fallback={<NotFoundState noun="agent" id={name()} environment={environment()} back={{ href: "/agents", label: "Go to agents" }} />}>
         <Show when={!agent.data && accessIdentity()} fallback={<QueryState query={agent} pending={<LinesSkeleton label="Loading agent" />} error={failure}>
           {record => <>
@@ -219,6 +222,11 @@ export function AgentDetail(props: { children?: JSX.Element }) {
             <TabPanel tabs="agent-tabs" value={selected()} selected={selected()}>{props.children}</TabPanel>
           </>}
         </QueryState>}><AgentAccess agent={name()} /></Show>
+        <Show when={canDelete() && agent.data && !agent.data.deleted_at}>
+          <DangerZone title="Delete agent" class="mt-6" action={<button type="button" class={ui.dangerOutlineButton} onClick={() => setChangeOpen(true)}>Delete agent</button>}>
+            Removes the agent's individual access assignments and Slack connections. Its sessions are kept, and you can restore it.
+          </DangerZone>
+        </Show>
       </Show>
     </Show>
   </Page>;

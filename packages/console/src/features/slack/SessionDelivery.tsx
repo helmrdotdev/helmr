@@ -1,4 +1,5 @@
 import { createInfiniteQuery } from "@tanstack/solid-query";
+import { Icon } from "../../ui/Icon";
 import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
 import type { Failure } from "../../lib/error";
 import { slackFailure } from "./failure";
@@ -43,7 +44,7 @@ function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; onToggle: 
     <ListItem class="p-0!">
       <div class="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1">
         <button type="button" class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left" aria-expanded={open()} aria-controls={bodyID} onClick={() => props.onToggle()}>
-          <span aria-hidden="true" class={cx("text-chrome text-console-subtle transition-transform", open() && "rotate-90")}>▸</span>
+          <span class={cx("text-console-subtle transition-transform", open() && "rotate-90")}><Icon name="chevron-right" class="size-2.5" /></span>
           <span id={titleID} class="font-medium text-console-text">{title(post())}</span>
           <span class="truncate text-console-muted">· {roleLabel(post())} · message {post().sequence} · <RelativeTime value={post().created_at} /></span>
         </button>
@@ -101,7 +102,7 @@ export function SessionDelivery(props: { address: SessionAddress; live: boolean;
   return <Panel title="Slack delivery">
     <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
     <Show when={!props.canManage && rows().some((post) => post.attempt_id)}>
-      <p class={cx(ui.muted, "m-0")}>A session manager for this Agent can check again or stop delivery.</p>
+      <p class={cx(ui.muted, "m-0")}>A session manager for this agent can check again or stop delivery.</p>
     </Show>
     <QueryState
       query={posts}

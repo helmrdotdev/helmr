@@ -152,8 +152,8 @@ test("the Secrets Environment selector edits another Environment without changin
   await expect(rail(page)).toContainText("Opens on the environment you are working in. Switching here does not change it.");
   const production = radio(page, "Production");
   const staging = radio(page, "Staging");
-  await expect(production).toHaveAccessibleName(/^Production\s*protected\s*working$/);
-  await expect(staging).toHaveAccessibleName(/^Staging\s*protected$/);
+  await expect(production).toHaveAccessibleName(/^Production\s*working$/);
+  await expect(staging).toHaveAccessibleName(/^Staging$/);
   await expect(production).toBeChecked();
   await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toBeVisible();
   await expect(subtitle(page)).toHaveText("Values are never displayed after saving.");
@@ -216,15 +216,13 @@ test("on narrow screens the Environment selector is a Select above the table", a
   await page.goto(`/settings/secrets?${scope}`);
   await expect(rail(page)).toBeHidden();
   const select = page.getByRole("combobox", { name: "Environment", exact: true });
-  // The protected tag is the shared badge, after the name, with the working tag.
+  // The working tag follows the name of the tab's Environment.
   await expect(select).toContainText("Production");
-  await expect(select.getByText("protected", { exact: true })).toBeVisible();
   await expect(select.getByText("working", { exact: true })).toBeVisible();
   await select.click();
-  await expect(page.getByRole("option", { name: /^Production\b/ }).getByText("protected", { exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: /^Production\b/ }).getByText("working", { exact: true })).toBeVisible();
   await page.getByRole("option", { name: /^Staging\b/ }).click();
   await expect(select).toContainText("Staging");
-  await expect(select.getByText("protected", { exact: true })).toBeVisible();
   await expect(select.getByText("working", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("cell", { name: "STAGING_TOKEN", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Set secret in Staging", exact: true })).toBeVisible();

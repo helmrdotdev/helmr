@@ -42,7 +42,7 @@ function RegionDialog(props: { region: AdminRegion | null; onClose: () => void; 
     <FormDialog
       title={props.region ? `Edit ${props.region.id}` : "New region"}
       submitLabel={props.region ? "Save" : "Create"}
-      busyLabel={props.region ? "Saving..." : "Creating..."}
+      busyLabel={props.region ? "Saving…" : "Creating…"}
       busy={submitting()}
       disabled={!id().trim() || !displayName().trim()}
       error={error()}

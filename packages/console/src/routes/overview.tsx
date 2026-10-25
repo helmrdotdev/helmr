@@ -17,13 +17,13 @@ import { List, ListItem } from "../ui/List";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { Panel } from "../ui/Panel";
-import { EmptyState, ErrorState } from "../ui/QueryState";
+import { EmptyState, ErrorState, NoScopeState } from "../ui/QueryState";
 import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, ui } from "../ui/styles";
 
-const overviewError = (error: unknown) => loadError(error, "Could not load what is waiting in this environment.", {forbidden:"You do not have run or Agent connection access in this environment. View your access in My account or ask an access administrator for a Role."});
+const overviewError = (error: unknown) => loadError(error, "Could not load what is waiting in this environment.", {forbidden:"You do not have run or agent connection access in this environment. View your access in My account or ask an access administrator for a role."});
 
 type Filter = "all" | AttentionKind;
 
@@ -190,7 +190,7 @@ export function Overview() {
   return (
     <Page>
       <PageHeader title="Overview" meta={<DeploymentContext />} />
-      <Show when={enabled()} fallback={<EmptyState title="No environment selected" hint={<>Select an accessible project and environment. If none are available, ask an access administrator to assign a Role. <A href="/settings/account" class="underline">View your access</A>.</>} />}>
+      <Show when={enabled()} fallback={<NoScopeState hint={<>If none are available, ask an access administrator for a role. <A href="/settings/account" class="underline">View your access</A>.</>} />}>
         <Switch>
           <Match when={attention.isError && !attention.data}>
             <ErrorState message={overviewError(attention.error)} details={errorDetails(attention.error)} onRetry={() => void attention.refetch()} />
@@ -200,7 +200,7 @@ export function Overview() {
           </Match>
           <Match when={setUp()}>
             <div class={ui.sectionStack}>
-              <Show when={hasPermission(me.data, "deployments.write", ids()) && hasPermission(me.data, "deployment.promote", ids())} fallback={<EmptyState title="No deployed agents are available to you in this environment." hint="Ask a member who can publish and activate deployments to make an Agent available." />}><SetUpPanel projectID={ids().projectID} environmentID={ids().environmentID} /></Show>
+              <Show when={hasPermission(me.data, "deployments.write", ids()) && hasPermission(me.data, "deployment.promote", ids())} fallback={<EmptyState title="No deployed agents are available to you in this environment." hint="Ask a member who can publish and activate deployments to make an agent available." />}><SetUpPanel projectID={ids().projectID} environmentID={ids().environmentID} /></Show>
               <Show when={attention.data && total() > 0}>
                 <Queue items={attention.data!.items} counts={attention.data!.counts} />
               </Show>

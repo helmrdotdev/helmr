@@ -6,6 +6,7 @@ import { getMemberPermissions, listGroups, listGrants, targetSummary, type RoleG
 import { Field } from "../../ui/Field";
 import { Notice } from "../../ui/Notice";
 import { Select } from "../../ui/Select";
+import { LinesSkeleton } from "../../ui/Skeleton";
 
 // Preview remaining sources using the server's current effective projection.
 export function GrantRemovalImpact(props: { grant: RoleGrant }) {
@@ -17,8 +18,8 @@ function APIKeyGrantRemovalImpact(props: { grant: RoleGrant }) {
   const remaining = () => grants.data?.grants.filter(g => g.api_key_id === props.grant.api_key_id && g.id !== props.grant.id) ?? [];
   return <div class="mt-4 space-y-2 border-t border-console-border pt-3">
     <Show when={grants.error}><Notice tone="danger">{errorMessage(grants.error)}</Notice></Show>
-    <Show when={grants.data}><p>Remaining Role assignments for this API key:</p><For each={remaining()} fallback={<p>None. This key will have no workload access.</p>}>{grant => <p>{grant.role_name}: {targetSummary(grant)}</p>}</For></Show>
-    <p class="text-control text-console-muted">API keys do not inherit member or Group assignments. Permissions are checked again when an operation runs.</p>
+    <Show when={grants.data}><p>Remaining role assignments for this API key:</p><For each={remaining()} fallback={<p>None. This key will have no workload access.</p>}>{grant => <p>{grant.role_name}: {targetSummary(grant)}</p>}</For></Show>
+    <p class="text-control text-console-muted">API keys do not inherit member or group assignments. Permissions are checked again when an operation runs.</p>
   </div>;
 }
 
@@ -36,14 +37,14 @@ function MemberGrantRemovalImpact(props: { grant: RoleGrant }) {
   const error = () => groups.error || members.error || effective.error;
   return <div class="mt-4 space-y-3 border-t border-console-border pt-3">
     <Show when={error()}><Notice tone="danger">{errorMessage(error())}</Notice></Show>
-    <Show when={groups.isPending || members.isPending}><p class="text-control">Loading affected members…</p></Show>
+    <Show when={groups.isPending || members.isPending}><LinesSkeleton label="Loading affected members" /></Show>
     <Show when={affected().length} fallback={<Show when={!groups.isPending && !members.isPending && !error()}><p class="text-control">No active members currently receive this assignment.</p></Show>}>
       <Field label="Preview remaining access for"><Select value={user()} options={affected().map(m => ({ value: m.membership_id, label: m.display_name || m.email || m.membership_id }))} onChange={setSelected} /></Field>
-      <Show when={effective.isPending}><p class="text-control">Loading access…</p></Show>
+      <Show when={effective.isPending}><LinesSkeleton label="Loading access" /></Show>
       <For each={scopes()}>{scope => <div class="text-control">
         <p class="font-medium">{scope.project} / {scope.environment} / {scope.agent || "Entire environment"}</p>
-        <p>Remaining permissions: {scope.permissions.join(" · ") || "None"}</p>
-        <For each={scope.sources}>{source => <p class="text-console-muted">{source.subject_kind === "member" ? `Direct assignment → ${source.role_name}` : source.subject_kind === "all_members" ? `All members → ${source.role_name}` : `${source.group_name} → ${source.role_name} (${source.agent || "Entire environment"})`}</p>}</For>
+        <p>Remaining permissions: {scope.permissions.join(" · ") || "—"}</p>
+        <For each={scope.sources}>{source => <p class="text-console-muted">{source.subject_kind === "member" ? `Direct assignment · ${source.role_name}` : source.subject_kind === "all_members" ? `All members · ${source.role_name}` : `${source.group_name} · ${source.role_name} (${source.agent || "Entire environment"})`}</p>}</For>
       </div>}</For>
     </Show>
     <p class="text-chrome text-console-muted">Preview of current sources after removing this assignment. Permissions are checked again when an operation runs.</p>
@@ -54,10 +55,10 @@ export function GroupMemberRemovalImpact(props: { memberID: string; groupID: str
  const effective = createQuery(() => ({queryKey:["access","member",props.memberID,"permissions"],queryFn:()=>getMemberPermissions(props.memberID)}));
  const affected = () => effective.data?.scopes.filter(scope=>scope.sources.some(source=>source.group_id===props.groupID)) ?? [];
  return <div class="mt-3 space-y-3">
-  <Show when={effective.isPending}><p>Loading remaining access…</p></Show>
+  <Show when={effective.isPending}><LinesSkeleton label="Loading remaining access" /></Show>
   <Show when={effective.error}><Notice tone="danger">{errorMessage(effective.error)}</Notice></Show>
-  <For each={affected()}>{scope=>{const remaining=()=>scope.sources.filter(source=>source.group_id!==props.groupID);return <div class="text-control"><p class="font-medium">{scope.project} / {scope.environment} / {scope.agent || "Entire environment"}</p><p>Remaining permissions: {[...new Set(remaining().flatMap(source=>source.included_permissions))].join(" · ") || "None"}</p><For each={remaining()}>{source=><p>{source.subject_kind === "member" ? "Direct assignment" : source.subject_kind === "all_members" ? "All members" : source.group_name} → {source.role_name}</p>}</For></div>;}}</For>
-  <Show when={!effective.isPending && !effective.error && affected().length===0}><p>This Group currently supplies no permissions to this member.</p></Show>
-  <p class="text-control text-console-muted">Other direct, Group and All members assignments remain. Effects already admitted by running workloads are not stopped.</p>
+  <For each={affected()}>{scope=>{const remaining=()=>scope.sources.filter(source=>source.group_id!==props.groupID);return <div class="text-control"><p class="font-medium">{scope.project} / {scope.environment} / {scope.agent || "Entire environment"}</p><p>Remaining permissions: {[...new Set(remaining().flatMap(source=>source.included_permissions))].join(" · ") || "—"}</p><For each={remaining()}>{source=><p>{source.subject_kind === "member" ? "Direct assignment" : source.subject_kind === "all_members" ? "All members" : source.group_name} · {source.role_name}</p>}</For></div>;}}</For>
+  <Show when={!effective.isPending && !effective.error && affected().length===0}><p>This group currently supplies no permissions to this member.</p></Show>
+  <p class="text-control text-console-muted">Other direct, group and all members assignments remain. Effects already admitted by running workloads are not stopped.</p>
  </div>;
 }

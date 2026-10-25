@@ -162,7 +162,7 @@ for (const status of ["open", "closing", "closed", "cancelled"] as const) {
     await expandTurns(page);
     await expect(inputLine(page, 1)).toContainText("original input");
     await expect(page.getByRole("button", { name: "Interrupt session", exact: true })).toHaveCount(active ? 1 : 0);
-    await expect(page.getByRole("region", { name: "Cancel session" }).getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(active ? 1 : 0);
+    await expect(page.getByRole("region", { name: "End session" }).getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(active ? 1 : 0);
   });
 }
 
@@ -178,7 +178,7 @@ test("Cancel session sits in a danger zone after the log and confirms before can
   });
   await page.goto(sessionURL);
   await expandTurns(page);
-  const zone = page.getByRole("region", { name: "Cancel session" });
+  const zone = page.getByRole("region", { name: "End session" });
   await expect(zone).toBeVisible();
   // The page header keeps Copy link and Interrupt; the destructive action is not there.
   await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(1);
@@ -195,7 +195,7 @@ test("Cancel session sits in a danger zone after the log and confirms before can
   await dialog.getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(mutations).toEqual(["cancel"]);
-  await expect(page.getByRole("region", { name: "Cancel session" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "End session" })).toHaveCount(0);
 });
 
 test("a Session without events says so instead of an empty log", async ({ page }) => {
@@ -243,14 +243,14 @@ test("recovery notice reports this conversation and Resume releases only its rec
   });
   await page.goto(sessionURL);
   await expandTurns(page);
-  await expect(page.getByText("This Computer was restored to the initial work environment.", { exact: false })).toBeVisible();
+  await expect(page.getByText("This computer was restored to the initial work environment.", { exact: false })).toBeVisible();
   await expect(page.getByText("native conversation history for 1 completed requests", { exact: false })).toBeVisible();
   await expect(log(page).getByRole("button", { name: /^(\S+ )?response / })).toContainText("Previously delivered answer");
   await page.getByRole("button", { name: "Resume", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Completed requests will not run again.", { exact: false })).toBeVisible();
   await dialog.getByRole("button", { name: "Resume", exact: true }).click();
-  await expect(page.getByText("This Computer was restored", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("This computer was restored", { exact: false })).toHaveCount(0);
   await expect(page.getByText("Operator pause", { exact: false })).toBeVisible();
   expect(mutations).toEqual([{ hold_id: recoveryHold, idempotency_key: expect.any(String) }]);
 });
@@ -270,7 +270,7 @@ test("a failed first Session read shows Retry while automatic recovery remains a
   await expect(failure).toBeVisible();
   await expect(failure.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
   await page.clock.runFor(5_100);
-  await expect(page.getByText("CLI or API", { exact: true })).toBeVisible();
+  await expect(page.getByText("CLI, API or trigger", { exact: true })).toBeVisible();
   await expect(failure).toHaveCount(0);
   expect(reads).toBe(2);
 });
@@ -280,7 +280,7 @@ test("a failed Session snapshot retries without another change notification", as
   const data = sessionWith({}, [makeTurn(1, { status: "completed", terminal_at: now, result: null })]);
   await serveSession(page, data, ["sessions.read", "sessions.resume"]);
   await page.goto(sessionURL);
-  await expect(page.getByText("CLI or API", { exact: true })).toBeVisible();
+  await expect(page.getByText("CLI, API or trigger", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0);
   const hold = "00000000-0000-7000-8000-000000000712";
   data.session["holds"] = [{

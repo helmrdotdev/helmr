@@ -68,7 +68,7 @@ export function AuthSlackLink() {
     catch (e) { if (mounted) setConfirmError(linkFailure(e, "Your accounts could not be linked.")); }
     finally { if (mounted) setBusy(false); }
   };
-  return <Switch fallback={<AuthWorking>Verifying your Slack account...</AuthWorking>}>
+  return <Switch fallback={<AuthWorking>Verifying your Slack account…</AuthWorking>}>
     <Match when={verifyError()}>
       {(failure) => <AuthWindow><AuthError title="Link your Slack account" message={failure().message} details={failure().details} action={<NextStep failure={failure()} />} /></AuthWindow>}
     </Match>
@@ -94,7 +94,7 @@ export function AuthSlackLink() {
           </AuthFacts>
           <AuthCopy>Confirm that both accounts are yours. Slack actions will use this Helmr account’s current permissions. Linking does not change organization membership.</AuthCopy>
           <Show when={confirmError()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<NextStep failure={failure()} inline />} />}</Show>
-          <button type="button" class={ui.button} disabled={busy()} onClick={() => void confirm()}>{busy() ? "Linking..." : "Confirm these accounts are mine"}</button>
+          <button type="button" class={ui.button} disabled={busy()} onClick={() => void confirm()}>{busy() ? "Linking…" : "Confirm these accounts are mine"}</button>
           <AuthLink href="/settings/account">My account</AuthLink>
         </AuthWindow>
       )}

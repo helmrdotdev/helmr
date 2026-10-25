@@ -5,14 +5,14 @@ import { environmentChip } from "../features/projects/display";
 import { agentHref, listRetainedAgents } from "../lib/definitions";
 import { hasPermission } from "../lib/auth";
 import { useMe } from "../lib/me";
-import { isProtectedEnvironment, type Project } from "../lib/projects";
+import { type Project } from "../lib/projects";
 import { useScope, useScopeIDs } from "../lib/scope";
 import { isApplePlatform, isPaletteShortcut } from "../lib/shortcuts";
 import { scopeSwitchPath } from "../lib/scope-navigation";
 import { listSessions, sessionConsolePath } from "../lib/sessions";
 import { CommandList, type CommandItem } from "../ui/CommandList";
 import { Dialog } from "../ui/Dialog";
-import { EnvDot, ProtectedBadge } from "../ui/EnvChip";
+import { EnvDot } from "../ui/EnvChip";
 import { formatID } from "../ui/id";
 import { cx } from "../ui/styles";
 
@@ -100,7 +100,6 @@ function Palette(props: { onClose: () => void }) {
       label: environment.name,
       keywords: `${environment.environment} ${current!.name} environment`,
       leading: <EnvDot colorHex={environmentChip(environment)?.colorHex} />,
-      trailing: isProtectedEnvironment(environment) ? <ProtectedBadge /> : undefined,
       current: environment.environment === scope.selectedEnvironmentID(),
       onSelect: () => switchTo(current!.project, environment.environment),
     }));

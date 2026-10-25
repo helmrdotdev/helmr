@@ -171,7 +171,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
               <ConfirmDialog
                 title={connection().installation_id ? "Disconnect Slack" : "Discard setup"}
                 confirmLabel={connection().installation_id ? "Disconnect Slack" : "Discard setup"}
-                busyLabel={connection().installation_id ? "Disconnecting..." : "Discarding..."}
+                busyLabel={connection().installation_id ? "Disconnecting…" : "Discarding…"}
                 tone="danger"
                 target={connection().app_name || props.agentName}
                 environment={environmentChip(scope.selectedEnvironment())}
@@ -277,7 +277,7 @@ function InstalledConnection(props: {
       <Show when={props.connection.status === "connected" && !props.connection.direct_messages_authorized}>
         <Notice tone="warning">Direct messages need additional Slack permissions. Update this app’s manifest below, then choose Reauthorize in Slack for the same workspace. Channel conversations remain available.</Notice>
       </Show>
-      <p class={ui.muted}>Channel conversations are shared with linked members who can use this Agent and participate in the channel. DMs are personal conversations. Members assigned View all sessions or Manage all sessions for this Agent can access their history. Sending input, answering questions or resuming another person’s session also requires Use agents. Authorized input can produce replies in the original DM. The app’s online indicator shows availability in Slack, not server health.</p>
+      <p class={ui.muted}>Channel conversations are shared with linked members who can use this agent and participate in the channel. DMs are personal conversations. Members assigned View all sessions or Manage all sessions for this agent can access their history. Sending input, answering questions or resuming another person’s session also requires Use agents. Authorized input can produce replies in the original DM. The app’s online indicator shows availability in Slack, not server health.</p>
       <Show when={props.connection.status === "reauthorization_required"}>
         <Notice tone="warning" action={reauthorize()}>Slack authorization needs repair. Update this app’s manifest below first. Reauthorize this same app and workspace to continue. Earlier unsent output will not be backfilled.</Notice>
       </Show>
@@ -329,7 +329,7 @@ function CredentialForm(props: { connection: Connection; busy: boolean; save: (c
           <SecretInput required value={signing()} disabled={props.busy} onInput={(event) => setSigning(event.currentTarget.value)} />
         </Field>
       </div>
-      <FormActions submitLabel="Save app credentials" busyLabel="Saving..." busy={props.busy} cancelLabel="Clear" onCancel={clear} />
+      <FormActions submitLabel="Save app credentials" busyLabel="Saving…" busy={props.busy} cancelLabel="Clear" onCancel={clear} />
     </form>
   );
 }

@@ -72,6 +72,11 @@ export function RowError(props: { columns: number; message: string | null | unde
 // noun mid-sentence ("session", "sessions").
 export type Noun = { one: string; other: string };
 
+// The footer of a table that shows everything it has: how many rows.
+export function TableCount(props: { count: number; noun: Noun }) {
+  return <div class={ui.tableFooter}><span>Showing {props.count} {props.count === 1 ? props.noun.one : props.noun.other}</span></div>;
+}
+
 // The footer of a table or list: how many rows are shown ("Showing 1 turn",
 // "Showing 3 turns") and, while more exist, "Load more", named for what it loads
 // ("Load more sessions") so several lists on one page stay distinguishable. When

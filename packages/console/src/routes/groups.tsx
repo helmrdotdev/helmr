@@ -7,13 +7,12 @@ import { errorMessage, loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { listMembers } from "../lib/members";
 import { ALL_MEMBERS, deleteGroup, grantWhere, groupHref, listGrants, listGroups, saveGroup, subjectGrants, type PermissionGroup, type RoleGrant } from "../lib/permissions";
-import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
+import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { Field, SearchInput, TextInput } from "../ui/Field";
-import { Notice } from "../ui/Notice";
 import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { QueryState } from "../ui/QueryState";
+import { QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 
@@ -44,11 +43,11 @@ export function Groups() {
   const places = (id: string) => grantPlaces(assignments(id));
   return <>
     <PageHeader title="Groups" subtitle="Grant roles to several people at once." actions={<Show when={allowed()}><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create group</button></Show>} />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Manage access permission is required to manage groups.</Notice></Show>}>
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to manage groups." /></Show>}>
       <Toolbar start={<SearchInput aria-label="Filter groups" placeholder="Filter groups" value={filter()} onInput={e => setFilter(e.currentTarget.value)} />} />
       <QueryState query={groups} pending={<TableSkeleton label="Loading groups" columns={COLUMNS} />} error={failure}>
         {() => (
-          <DataTable columns={COLUMNS} footer={<LoadMore count={visible().length + (showAll() ? 1 : 0)} noun={{ one: "group", other: "groups" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+          <DataTable columns={COLUMNS} footer={<TableCount count={visible().length + (showAll() ? 1 : 0)} noun={{ one: "group", other: "groups" }} />}>
             <Show when={showAll()}>
               <tr>
                 <td><span class="inline-flex items-center gap-1.5"><PrimaryLink href={groupHref(ALL_MEMBERS)}>All members</PrimaryLink><ManagedMark title={ALL_MEMBERS_NOTE} /></span></td>

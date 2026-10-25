@@ -1,6 +1,8 @@
 import { useSearchParams } from "@solidjs/router";
 import { agentHref, listRetainedAgents } from "../lib/definitions";
 import { computerHref } from "../features/computers/navigation";
+import { HeldLabel } from "../features/sessions/HeldLabel";
+import { SessionOrigin } from "../features/sessions/SessionOrigin";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { loadError } from "../lib/error";
@@ -13,9 +15,8 @@ import {
 } from "../lib/sessions";
 import { DataTable, EmptyCell, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
-import { Page, Toolbar } from "../ui/Page";
-import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, QueryState } from "../ui/QueryState";
+import { Toolbar } from "../ui/Page";
+import { QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Select, type SelectOption } from "../ui/Select";
@@ -38,16 +39,16 @@ function SessionRow(props: { session: Session; agentColumn: boolean }) {
   return (
     <tr>
       <td><IDText value={props.session.id} mode="link" href={sessionConsolePath(props.session.id)} /></td>
-      <td><StatusBadge resource="session" status={props.session.status} /></td>
+      <td>
+        <span class="inline-flex items-center gap-2">
+          <StatusBadge resource="session" status={props.session.status} />
+          <Show when={props.session.holds.length > 0}><HeldLabel title={props.session.holds.map(hold => hold.reason).join("\n")} /></Show>
+        </span>
+      </td>
       <Show when={props.agentColumn}>
         <td><PrimaryLink href={agentHref(props.session.agent)}>{props.session.agent}</PrimaryLink></td>
       </Show>
-      <td>
-        <Show when={props.session.key} fallback={<EmptyCell />}>
-          {(key) => <code>{key()}</code>}
-        </Show>
-      </td>
-      <td><Show when={props.session.holds.length} fallback={<EmptyCell />}>{(count) => `${count()} active`}</Show></td>
+      <td><SessionOrigin session={props.session} /></td>
       <td>
         <Show when={props.session.computer_id} fallback={<EmptyCell />}>
           {(id) => <IDText value={id()} mode="link" href={computerHref(id())} />}
@@ -106,8 +107,8 @@ export function SessionList(props: { agent?: string }) {
   );
 
   const columns = () => fixedAgent()
-    ? ["Session", "Status", "Key", "Holds", "Computer", "Created"]
-    : ["Session", "Status", "Agent", "Key", "Holds", "Computer", "Created"];
+    ? ["Session", "Status", "Started from", "Computer", "Created"]
+    : ["Session", "Status", "Agent", "Started from", "Computer", "Created"];
 
   return (
     <>
@@ -145,16 +146,3 @@ export function SessionList(props: { agent?: string }) {
   );
 }
 
-// The Sessions page: every Session in the Environment, filtered by status and
-// Agent.
-export function SessionsPage() {
-  const scope = useScopeIDs();
-  return (
-    <Page>
-      <PageHeader title="Sessions" />
-      <Show when={scope().projectID && scope().environmentID} fallback={<EmptyState title="Select a project and environment." />}>
-        <SessionList />
-      </Show>
-    </Page>
-  );
-}

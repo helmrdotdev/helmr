@@ -159,7 +159,7 @@ export function ConfirmDialog(props: {
   busyLabel?: string;
   tone?: "default" | "danger";
   target?: JSX.Element;
-  environment?: { name: string; colorHex: string | undefined; protected?: boolean | undefined } | undefined;
+  environment?: { name: string; colorHex: string | undefined } | undefined;
   onConfirm: () => Promise<void>;
   onClose: () => void;
   errorMessage?: (error: unknown) => string;
@@ -190,7 +190,7 @@ export function ConfirmDialog(props: {
               {(environment) => (
                 <>
                   <Show when={props.target}><span class="text-console-subtle">in</span></Show>
-                  <EnvChip name={environment().name} colorHex={environment().colorHex} protected={environment().protected} />
+                  <EnvChip name={environment().name} colorHex={environment().colorHex} />
                 </>
               )}
             </Show>

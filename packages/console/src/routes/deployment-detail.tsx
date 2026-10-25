@@ -11,7 +11,7 @@ import { IDText } from "../ui/IDText";
 import { shortVersion } from "../features/deployments/navigation";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
+import { isNotFound, NotFoundState, QueryState, NoScopeState } from "../ui/QueryState";
 import { LinesSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -154,7 +154,7 @@ export function DeploymentDetail() {
         }
       />
 
-      <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
+      <Show when={enabled()} fallback={<NoScopeState />}>
       <QueryState query={deployment} pending={<LinesSkeleton label="Loading deployment" />} error={(error) => deploymentError(error, "Could not load this deployment.")}
         notFound={<NotFoundState noun="deployment" id={deploymentID()} environment={environment()} back={{ href: "/deployments", label: "Go to deployments" }} />}
       >

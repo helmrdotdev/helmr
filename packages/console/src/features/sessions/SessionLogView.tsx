@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, type JSX } from "solid-js";
+import { Icon } from "../../ui/Icon";
 import type { JsonValue } from "../../../../../sdk/typescript/src/contract";
 import { askConsolePath, type SessionAddress, type SessionEvent, type SessionTurn } from "../../lib/sessions";
 import { JsonView } from "../../ui/PayloadView";
@@ -218,7 +219,7 @@ export function SessionLogView(props: {
         </div>
         <Show when={props.live}>
           <button type="button" aria-pressed={follow()} class={cx(ui.compactButton, follow() && "border-console-border-strong")} onClick={() => (follow() ? setFollow(false) : void goLatest())}>
-            {follow() ? "● Following" : "○ Follow"}
+            <span class={cx("size-1.5 rounded-full", follow() ? "bg-console-success" : "border border-console-subtle")} aria-hidden="true" />{follow() ? "Following" : "Follow"}
           </button>
         </Show>
       </div>
@@ -249,7 +250,7 @@ export function SessionLogView(props: {
               { value: "problems", label: "Problems", count: problemCount() },
             ]}
           />
-          <button ref={helpButton} type="button" class={cx(ui.payloadAction, "ml-auto text-console-subtle")} aria-label="Keyboard shortcuts" aria-expanded={help()} onClick={() => setHelp(!help())}>? Keys</button>
+          <button ref={helpButton} type="button" class={cx(ui.payloadAction, "ml-auto text-console-subtle")} aria-label="Keyboard shortcuts" aria-expanded={help()} onClick={() => setHelp(!help())}>Shortcuts</button>
           <Popover open={help()} anchor={helpButton} onDismiss={() => setHelp(false)} title="Keyboard shortcuts" role="dialog" label="Keyboard shortcuts" align="end" width={260}>
             <dl class="m-0 grid grid-cols-[72px_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 p-3 text-body">
               <For each={shortcuts}>{([key, label]) => <>
@@ -310,7 +311,7 @@ export function SessionLogView(props: {
       <Show when={!follow() && log.appended() > 0}>
         <div class="pointer-events-none sticky bottom-3 flex justify-center">
           <button type="button" class={cx(ui.button, "pointer-events-auto h-6 min-h-6")} onClick={() => void goLatest()}>
-            ↓ {log.appended()} new {log.appended() === 1 ? "event" : "events"} · Latest
+            <Icon name="arrow-down" />{log.appended()} new {log.appended() === 1 ? "event" : "events"} · Latest
           </button>
         </div>
       </Show>
@@ -389,7 +390,7 @@ function TurnGroup(props: {
       {/* A Turn with problems is itself a problem stop for e/E while it is closed. */}
       <div data-log-line data-turn-header data-problem={problems() && !props.open ? "" : undefined} class={cx(ui.logTurnHeader, tint())}>
         <button type="button" aria-expanded={props.open} class={ui.logTurnButton} onClick={() => props.onToggle()}>
-          <span aria-hidden="true" class="font-mono text-micro text-console-subtle">{props.open ? "▾" : "▸"}</span>
+          <span class="text-console-subtle"><Icon name={props.open ? "chevron-down" : "chevron-right"} class="size-2.5" /></span>
           <span class="font-mono text-chrome font-medium max-[720px]:text-right">{props.block.sequence === undefined ? "Turn" : `#${props.block.sequence}`}</span>
           <TurnStatus status={status()} />
           <span class="min-w-0 truncate max-[720px]:line-clamp-2 max-[720px]:whitespace-normal max-[720px]:wrap-anywhere">{inputSummary(props.record)}</span>

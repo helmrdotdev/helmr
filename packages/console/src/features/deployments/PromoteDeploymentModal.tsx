@@ -30,7 +30,7 @@ export function PromoteDeploymentModal(props: {
     <ConfirmDialog
       title="Promote deployment to current?"
       confirmLabel="Promote"
-      busyLabel="Promoting..."
+      busyLabel="Promoting…"
       target={shortVersion(props.deployment.version)}
       environment={environmentChip(props.environment)}
       onClose={props.onClose}

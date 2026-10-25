@@ -1,4 +1,5 @@
 import { useParams } from "@solidjs/router";
+import { SessionOrigin } from "../features/sessions/SessionOrigin";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createSignal, For, onCleanup, Show, type JSX } from "solid-js";
 import { CopyLinkButton } from "../components/CopyLinkButton";
@@ -37,7 +38,7 @@ import { Notice } from "../ui/Notice";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { DangerZone } from "../ui/Panel";
-import { EmptyState, isMissingSessionRead, NotFoundState, QueryState } from "../ui/QueryState";
+import { isMissingSessionRead, NotFoundState, QueryState, NoScopeState } from "../ui/QueryState";
 import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -148,20 +149,19 @@ function SessionDetailContent() {
         actions={
           <Show when={!notFound()}>
             <CopyLinkButton />
-            <Show when={can("sessions.close") && session.data?.status === "open"}><button type="button" class={ui.secondaryButton} onClick={() => void prepareClose()}>Close Session</button></Show>
             <Show when={can("sessions.interrupt") && live()}>
               <button type="button" class={ui.secondaryButton} onClick={() => setControl({ kind: "interrupt" })}>Interrupt session</button>
             </Show>
           </Show>
         }
       />
-      <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
+      <Show when={enabled()} fallback={<NoScopeState />}>
         <QueryState query={session} pending={<PageSkeleton label="Loading session" sections={["Log"]} />} error={(error) => loadError(error, "Could not load this session.")}
           missing={missing}
           notFound={<NotFoundState noun="session" id={sessionID()} environment={scope.selectedEnvironment()?.name} back={{ href: "/sessions", label: "Go to sessions" }} />}
         >
           {(current) => (
-            <div class="flex flex-col gap-3">
+            <div class={ui.sectionStack}>
               <SessionProperties session={current()} />
               <NeedsYou session={current()} log={log} address={address()} canResume={can("sessions.resume")} onResume={holdID => setControl({ kind: "resume", holdID })} />
               <Show when={receipt()}>
@@ -176,26 +176,28 @@ function SessionDetailContent() {
                 onInterruptTurn={(turnID) => setControl({ kind: "turn_interrupt", turnID })}
               />
               <Show when={current().slack_channel_id}><SessionDelivery address={address()} live={live()} canManage={hasPermission(me.data, "sessions.manage", { ...address(), agent: current().agent })} /></Show>
-              <Show when={can("sessions.cancel") && live()}>
+              <Show when={closeError()}>{message => <Notice tone="danger" role="alert">{message()}</Notice>}</Show>
+              <Show when={(can("sessions.close") && current().status === "open") || (can("sessions.cancel") && live())}>
                 <DangerZone
-                  class="mt-3"
-                  title="Cancel session"
-                  action={<button type="button" class={ui.dangerOutlineButton} onClick={() => setControl({ kind: "cancel" })}>Cancel session</button>}
+                  title="End session"
+                  action={<div class={ui.buttonGroup}>
+                    <Show when={can("sessions.close") && current().status === "open"}><button type="button" class={ui.dangerOutlineButton} onClick={() => void prepareClose()}>Close session</button></Show>
+                    <Show when={can("sessions.cancel") && live()}><button type="button" class={ui.dangerOutlineButton} onClick={() => setControl({ kind: "cancel" })}>Cancel session</button></Show>
+                  </div>}
                 >
-                  Cancel queued turns and request that active work in this session and its owned children stop. The session ends as cancelled.
+                  Close keeps finished work and stops new messages. Cancel also stops queued and running work in this session and its owned children.
                 </DangerZone>
               </Show>
             </div>
           )}
         </QueryState>
       </Show>
-      <Show when={closeError()}>{message => <Notice tone="danger" role="alert">{message()}</Notice>}</Show>
-      <Show when={closePreview()} keyed>{target => <ConfirmDialog title="Close Session" confirmLabel="Close Session" tone="danger" onClose={() => setClosePreview(undefined)} onConfirm={async () => {
+      <Show when={closePreview()} keyed>{target => <ConfirmDialog title="Close session" confirmLabel="Close session" tone="danger" onClose={() => setClosePreview(undefined)} onConfirm={async () => {
         await closeSession(address(), { idempotency_key: target.key, expected_scope: target.members.digest });
-        setReceipt("Close accepted. Accepted work will settle before closure. Wake cannot undo closure; other work may still occupy the Computer.");
+        setReceipt("Close accepted. Accepted work will settle before closure. Wake cannot undo closure; other work may still occupy the computer.");
         await refresh();
       }}>
-        <p>Close this Session{target.members.sessions.length > 1 ? " and its owned Sessions" : ""}? New messages will no longer be accepted. Native background tasks stop when their Session closes. Wake cannot undo this operation.</p>
+        <p>Close this session{target.members.sessions.length > 1 ? " and its owned sessions" : ""}? New messages will no longer be accepted. Native background tasks stop when their session closes. Wake cannot undo this operation.</p>
         <For each={target.members.sessions}>{id => <div><IDText value={id} mode="link" href={sessionConsolePath(id)} /></div>}</For>
       </ConfirmDialog>}</Show>
       <Show when={control()} keyed>
@@ -203,7 +205,7 @@ function SessionDetailContent() {
           <ConfirmDialog
             title={controlLabels[operation.kind]}
             confirmLabel={controlLabels[operation.kind]}
-            busyLabel="Requesting..."
+            busyLabel="Requesting…"
             tone={operation.kind === "cancel" ? "danger" : "default"}
             target={<IDText value={operation.kind === "turn_interrupt" ? operation.turnID : sessionID()} />}
             environment={environmentChip(scope.selectedEnvironment())}
@@ -215,7 +217,7 @@ function SessionDetailContent() {
               Request running work and initialization in this session and its owned children to stop, and hold queued work. Completed results remain available. Interrupted turns do not restart when the hold is released.
             </Show>
             <Show when={operation.kind === "resume"}>
-              Continue from the restored Computer state. Completed requests will not run again. Other reasons for pausing remain in place.
+              Continue from the restored computer state. Completed requests will not run again. Other reasons for pausing remain in place.
             </Show>
             <Show when={operation.kind === "turn_interrupt"}>
               Request this running turn to stop. Queued work can proceed after stopping is confirmed. Existing session holds remain in force.
@@ -241,12 +243,10 @@ function SessionProperties(props: { session: Session }) {
   return (
     <dl class={ui.propertyBar} aria-label="Session properties">
       <Property label="Agent"><PrimaryLink href={agentHref(props.session.agent)}>{props.session.agent}</PrimaryLink></Property>
-      <Property label={props.session.slack_channel_id ? "Conversation" : "Started from"}>
-        <Show when={props.session.slack_channel_id} fallback={<Show when={props.session.key} fallback="CLI or API">{key => <>key <code>{key()}</code></>}</Show>}>
-          {channel => <>{channel().startsWith("D") ? "Slack DM" : "Slack channel"} · <code>{channel()}</code></>}
-        </Show>
+      <Property label="Started from">
+        <SessionOrigin session={props.session} id />
       </Property>
-      <Property label="Suspension">{props.session.suspension === "after_turn" ? "After a settled Turn" : "Manual"}</Property>
+      <Property label="Suspension">{props.session.suspension === "after_turn" ? "After a settled turn" : "Manual"}</Property>
       <Property label="Automatic close">{props.session.close_after_idle_ms == null ? "Off" : `${props.session.close_after_idle_ms / 86_400_000} days without new user work; background tasks may stop`}</Property>
       <Property label="Created"><RelativeTime value={props.session.created_at} /></Property>
       <Property label="Deployment"><IDText value={props.session.deployment_id} mode="link" href={deploymentHref(props.session.deployment_id)} /></Property>

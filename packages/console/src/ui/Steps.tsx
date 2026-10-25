@@ -1,4 +1,5 @@
 import { For, Show, type JSX } from "solid-js";
+import { Icon } from "./Icon";
 import { cx, ui } from "./styles";
 
 export type Step = {
@@ -23,7 +24,7 @@ export function Steps(props: { steps: readonly Step[]; label: string }) {
         {(step, index) => (
           <li class="grid grid-cols-[22px_minmax(0,1fr)] gap-x-2.5" aria-current={step.state === "current" ? "step" : undefined}>
             <span class={cx("grid size-5.5 place-items-center rounded-xs border font-mono text-badge font-medium", MARKER[step.state])} aria-hidden="true">
-              {step.state === "done" ? "✓" : index() + 1}
+              {step.state === "done" ? <Icon name="check" /> : index() + 1}
             </span>
             <div class="grid min-w-0 gap-1 pt-0.5">
               <span class={cx("text-body font-medium", step.state === "upcoming" ? "text-console-muted" : "text-console-text")}>

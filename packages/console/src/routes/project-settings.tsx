@@ -12,7 +12,7 @@ import { IDText } from "../ui/IDText";
 import { InlineStatus, Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
 import { Panel } from "../ui/Panel";
-import { EmptyState, QueryState } from "../ui/QueryState";
+import { QueryState, NoScopeState } from "../ui/QueryState";
 import { LinesSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 
@@ -78,7 +78,7 @@ export function ProjectSettings() {
         }
       />
 
-      <Show when={project()} fallback={<EmptyState title="No project selected." />}>
+      <Show when={project()} fallback={<NoScopeState project />}>
         {(current) => (
           <div class={ui.sectionStack}>
             <Panel title="Profile">
@@ -89,7 +89,7 @@ export function ProjectSettings() {
                 <Show when={dirty()}>
                   <FormActions
                     submitLabel="Save changes"
-                    busyLabel="Saving..."
+                    busyLabel="Saving…"
                     busy={saving()}
                     disabled={!name().trim()}
                     onCancel={() => { setName(current().name); setSaveError(null); }}
@@ -178,7 +178,7 @@ function ProjectHistorySettings(props: { project: string }) {
             <fieldset class="m-0 border-0 p-0" disabled={!canManage() || saving()}>
               <HistoryRetentionFields value={draft()} onChange={value => { setDraft(value); setSaved(false); }} />
             </fieldset>
-            <Show when={!canManage()}><p class={ui.muted}>Manage organization permission is required to change this setting.</p></Show>
+            <Show when={!canManage()}><p class={ui.muted}>You need Manage organization permission to change this setting.</p></Show>
             <Show when={error()}>{(message) => <Notice tone="danger">{message()}</Notice>}</Show>
             <Show when={canManage()}>
               <div class="flex flex-wrap items-center justify-end gap-3">
@@ -186,7 +186,7 @@ function ProjectHistorySettings(props: { project: string }) {
                 <Show when={dirty()}>
                   <FormActions
                     submitLabel="Save history retention"
-                    busyLabel="Saving..."
+                    busyLabel="Saving…"
                     busy={saving()}
                     onCancel={() => { reset(); setError(null); setSaved(false); }}
                   />
@@ -201,7 +201,7 @@ function ProjectHistorySettings(props: { project: string }) {
           <ConfirmDialog
             title="Shorten history retention"
             confirmLabel="Shorten retention"
-            busyLabel="Saving..."
+            busyLabel="Saving…"
             tone="danger"
             onClose={() => setShortening(null)}
             onConfirm={() => save(next())}

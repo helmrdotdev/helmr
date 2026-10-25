@@ -63,7 +63,7 @@ function SecretDialog(props: {
     <FormDialog
       title={props.secret ? "Update secret" : "Set secret"}
       submitLabel="Save"
-      busyLabel="Saving..."
+      busyLabel="Saving…"
       busy={saving()}
       disabled={name().trim() === ""}
       error={error()}
@@ -198,7 +198,7 @@ export function Secrets() {
           <ConfirmDialog
             title="Revoke secret"
             confirmLabel="Revoke"
-            busyLabel="Revoking..."
+            busyLabel="Revoking…"
             tone="danger"
             target={current().secret.secret}
             environment={environmentChip(current().target.environment)}

@@ -54,7 +54,7 @@ export function SlackConnect() {
     }
   };
   const switchButton = () => <AuthLink disabled={busy()} onClick={() => void switchAccount()}>Use a different Helmr account</AuthLink>;
-  return <Switch fallback={<AuthWorking>Checking your linking request...</AuthWorking>}>
+  return <Switch fallback={<AuthWorking>Checking your linking request…</AuthWorking>}>
     <Match when={!token()}>
       <AuthWindow>
         <AuthMissing title="This Slack link is incomplete" action={<A class={cx(ui.button, "auth-full")} href="/">Go to the console</A>}>
@@ -95,7 +95,7 @@ export function SlackConnect() {
         </Show>
         <Show when={error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
         <Show when={context()} fallback={<A class={cx(ui.button, "auth-full")} href="/settings/account">My account</A>}>
-          <button type="button" class={ui.button} disabled={busy()} onClick={() => void start()}>{busy() ? "Opening Slack..." : "Verify my Slack account"}</button>
+          <button type="button" class={ui.button} disabled={busy()} onClick={() => void start()}>{busy() ? "Opening Slack…" : "Verify my Slack account"}</button>
         </Show>
         {switchButton()}
       </AuthWindow>

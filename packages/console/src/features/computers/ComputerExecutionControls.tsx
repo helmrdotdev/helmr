@@ -12,12 +12,12 @@ import { ui } from "../../ui/styles";
 function failureMessage(code: string | undefined): string {
   switch (code) {
     case "capture_refused": return "A consistent snapshot could not be made. Review active work and try again.";
-    case "capture_resumed": return "The Computer resumed before hibernation finished.";
+    case "capture_resumed": return "The computer resumed before hibernation finished.";
     case "new_execution_requested": return "New work cancelled the hibernation request.";
-    case "execution_deadline_exceeded": return "The operation did not finish in time. Review capacity and the Computer state before trying again.";
-    case "computer_deleted": return "The Computer was deleted.";
-    case "checkpoint_unavailable": return "The saved execution state is unavailable. Review the Computer details.";
-    default: return "Review the Computer state before trying again.";
+    case "execution_deadline_exceeded": return "The operation did not finish in time. Review capacity and the computer state before trying again.";
+    case "computer_deleted": return "The computer was deleted.";
+    case "checkpoint_unavailable": return "The saved execution state is unavailable. Review the computer details.";
+    default: return "Review the computer state before trying again.";
   }
 }
 
@@ -47,26 +47,26 @@ export function ComputerExecutionControls(props: { computer: Computer; scope: Co
     finally { setBusy(false); }
   };
   return <div class="flex flex-col gap-2">
-    <Show when={props.computer.residency === "parked"}><Notice tone="info">Background work is paused. Wake this Computer or send a new request to continue.</Notice></Show>
-    <Show when={props.computer.execution_control?.status === "accepted"}><Notice tone="info">{props.computer.execution_control?.kind === "hibernate" ? "Hibernating…" : "Waking…"}</Notice></Show>
+    <Show when={props.computer.residency === "parked"}><Notice tone="info">Background work is paused. Wake this computer or send a new request to continue.</Notice></Show>
+    <Show when={props.computer.execution_control?.status === "accepted"}><Notice tone="info">{props.computer.execution_control?.kind === "hibernate" ? "Hibernate requested." : "Wake requested."} The controls are available again when it finishes.</Notice></Show>
     <Show when={props.computer.execution_control?.status === "failed"}><Notice tone="danger">Could not {props.computer.execution_control?.kind}. {failureMessage(props.computer.execution_control?.error_code)}</Notice></Show>
     <Show when={hasPermission(me.data, "computers.update", props.scope) && props.computer.status === "available"}>
-      <div class="flex gap-2">
-        <button class={ui.secondaryButton} disabled={busy() || props.computer.execution_control?.status === "accepted"} onClick={() => void prepare()}>Hibernate Computer</button>
-        <button class={ui.secondaryButton} disabled={busy() || props.computer.execution_control?.status === "accepted"} onClick={() => void wake()}>Wake Computer</button>
+      <div class={ui.buttonGroup}>
+        <button type="button" class={ui.secondaryButton} disabled={busy() || props.computer.execution_control?.status === "accepted"} onClick={() => void prepare()}>Hibernate</button>
+        <button type="button" class={ui.secondaryButton} disabled={busy() || props.computer.execution_control?.status === "accepted"} onClick={() => void wake()}>Wake</button>
       </div>
     </Show>
     <Show when={error()}>{message => <Notice tone="danger" role="alert">{message()}</Notice>}</Show>
     <Show when={receipt()}>{message => <Notice tone="info" role="status">{message()}</Notice>}</Show>
-    <Show when={preview()} keyed>{target => <ConfirmDialog title="Hibernate Computer" confirmLabel="Hibernate Computer" onClose={() => setPreview(undefined)} target={<IDText value={target.id} />} onConfirm={async () => {
+    <Show when={preview()} keyed>{target => <ConfirmDialog title="Hibernate computer" confirmLabel="Hibernate computer" onClose={() => setPreview(undefined)} target={<IDText value={target.id} />} onConfirm={async () => {
       await controlComputerExecution(target.id, target.scope, "hibernate", target.key, target.members.digest);
-      setReceipt("Hibernate accepted. Background progress pauses when capture succeeds. The Computer state shows completion.");
+      setReceipt("Hibernate accepted. Background progress pauses when capture succeeds. The computer state shows completion.");
       await props.onChanged();
     }}>
-      <p>Background tasks on this Computer will stop progressing until you wake it or send a new request. State is preserved when capture succeeds. Active foreground work prevents hibernation.</p>
-      <p>Affected Sessions ({target.members.sessions.length}):</p>
+      <p>Background tasks on this computer will stop progressing until you wake it or send a new request. State is preserved when capture succeeds. Active foreground work prevents hibernation.</p>
+      <p>Affected sessions ({target.members.sessions.length}):</p>
       <For each={target.members.sessions}>{id => <div><IDText value={id} mode="link" href={sessionConsolePath(id)} /></div>}</For>
-      <Show when={target.members.commands.length}><p>Active Commands ({target.members.commands.length}):</p><For each={target.members.commands}>{id => <div><IDText value={id} /></div>}</For></Show>
+      <Show when={target.members.commands.length}><p>Active commands ({target.members.commands.length}):</p><For each={target.members.commands}>{id => <div><IDText value={id} /></div>}</For></Show>
     </ConfirmDialog>}</Show>
   </div>;
 }

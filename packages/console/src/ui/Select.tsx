@@ -1,4 +1,5 @@
 import { createMemo, createSignal, createUniqueId, For, onCleanup, Show, type JSX } from "solid-js";
+import { Icon } from "./Icon";
 import { useFieldControl } from "./Field";
 import { Popover } from "./Popover";
 import { cx, ui } from "./styles";
@@ -6,7 +7,7 @@ import { cx, ui } from "./styles";
 export type SelectOption<T extends string> = {
   value: T;
   label: string;
-  // Tags after the label in a fixed trailing column (a protected badge), also
+  // Tags after the label in a fixed trailing column (a working tag), also
   // shown in the trigger for the chosen option.
   trailing?: () => JSX.Element;
 };
@@ -240,8 +241,8 @@ export function Select<T extends string>(props: {
                     onFocus={() => setActiveIndex(index())}
                     onClick={() => choose(index())}
                   >
-                    <span class="text-center text-control font-medium leading-none text-console-accent" aria-hidden="true">
-                      {option.value === props.value ? "✓" : ""}
+                    <span class="grid place-items-center text-console-accent">
+                      {option.value === props.value ? <Icon name="check" /> : null}
                     </span>
                     <span class="overflow-hidden text-ellipsis whitespace-nowrap">{option.label}</span>
                     <span class="flex items-center justify-end gap-1.5">{option.trailing?.()}</span>

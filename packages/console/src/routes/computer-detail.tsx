@@ -20,7 +20,7 @@ import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { DetailLayout, KeyValue, KeyValueList } from "../ui/Panel";
 import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
-import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
+import { EmptyState, isNotFound, NotFoundState, QueryState, NoScopeState } from "../ui/QueryState";
 import { PageSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -116,7 +116,7 @@ export function ComputerDetail() {
         subtitle={<Show when={computer.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
       />
 
-      <Show when={hasScope()} fallback={<EmptyState title="Select a project and environment." />}>
+      <Show when={hasScope()} fallback={<NoScopeState />}>
         <QueryState query={computer} pending={<PageSkeleton label="Loading computer" sections={["Sessions"]} rail="Computer details" />} error={computerErrorMessage}
           notFound={<NotFoundState noun="computer" id={computerID()} environment={environment()} back={{ href: "/computers", label: "Go to computers" }} />}
         >
