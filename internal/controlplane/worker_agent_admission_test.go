@@ -243,3 +243,17 @@ func TestWorkerAgentRequiresToolEnvelopeForSessionOperations(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerAgentDeletedPinnedSpawnIsTerminalRejection(t *testing.T) {
+	f, _, _ := runtimeAdmissionOrigin(t)
+	target := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key,deleted_at) VALUES($1,$2,'deleted-child',clock_timestamp()); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,false FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, pgx.QueryExecModeSimpleProtocol, f.Environment, target, f.Agent)
+	server := httptest.NewServer(newPostgresServer(t, f.Pool))
+	defer server.Close()
+	secret := seedHostSecret(t, f.Pool, f.Worker)
+	payload, _ := json.Marshal(map[string]any{"tool": "spawn", "arguments": map[string]any{"agent": "deleted-child", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "idempotencyKey": "deleted-child"}})
+	response, err := secret.client(t, server.URL).AgentOperation(t.Context(), workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "deleted-target", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload})
+	if err != nil || response.Error == nil || response.Error.Code != "agent_deleted" {
+		t.Fatalf("deleted spawn was not a terminal tool rejection: %+v %v", response, err)
+	}
+}

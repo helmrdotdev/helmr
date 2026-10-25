@@ -126,6 +126,8 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		code = "start_message_too_large"
 	case errors.Is(err, slackroute.ErrConversationChanged):
 		code = "conversation_changed"
+	case errors.Is(err, session.ErrAgentDeleted):
+		code = "agent_deleted"
 	case errors.Is(err, session.ErrRootSessionRequired):
 		code = "root_session_required"
 	case errors.Is(err, session.ErrMessageClosed):
@@ -152,7 +154,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		return
 	}
 	message := "Operation was not newly admitted; preserve the original arguments and idempotency key when reconciling an uncertain outcome"
-	if errors.Is(err, slack.ErrSourceConversationPending) || errors.Is(err, slack.ErrSourceConversationUnavailable) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slack.ErrTargetWorkspaceMismatch) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slack.ErrStartMessageTooLarge) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, session.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, session.ErrResponseAlreadyStaged) {
+	if errors.Is(err, session.ErrAgentDeleted) || errors.Is(err, slack.ErrSourceConversationPending) || errors.Is(err, slack.ErrSourceConversationUnavailable) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slack.ErrTargetWorkspaceMismatch) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slack.ErrStartMessageTooLarge) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, session.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, session.ErrResponseAlreadyStaged) {
 		message = err.Error()
 	}
 	writeJSON(w, http.StatusOK, agentOperationFailure(id, code, message))

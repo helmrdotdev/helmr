@@ -36,3 +36,17 @@ func ValidateTriggerID(id string) error {
 	}
 	return nil
 }
+
+// TriggerOccurrence is a retained evaluation of one activation's scheduled time.
+type TriggerOccurrence struct {
+	ScheduledAt time.Time `json:"scheduled_at"`
+	Disposition string    `json:"disposition"`
+	Reason      *string   `json:"reason"`
+	SessionID   *string   `json:"session_id"`
+	TurnID      *string   `json:"turn_id"`
+	EvaluatedAt time.Time `json:"evaluated_at"`
+}
+type TriggerOccurrencesPage struct {
+	Occurrences []TriggerOccurrence `json:"occurrences"`
+	NextCursor  string              `json:"next_cursor,omitempty"`
+}

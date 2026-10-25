@@ -123,6 +123,7 @@ type Querier interface {
 	ListRegions(ctx context.Context) ([]Region, error)
 	ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error)
 	ListStaleWorkerFenceCandidates(ctx context.Context, arg ListStaleWorkerFenceCandidatesParams) ([]ListStaleWorkerFenceCandidatesRow, error)
+	ListTriggerOccurrences(ctx context.Context, arg ListTriggerOccurrencesParams) ([]ListTriggerOccurrencesRow, error)
 	ListTriggers(ctx context.Context, arg ListTriggersParams) ([]ListTriggersRow, error)
 	ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error)
 	ListWorkerGroupRetainedProfiles(ctx context.Context, arg ListWorkerGroupRetainedProfilesParams) ([]ListWorkerGroupRetainedProfilesRow, error)

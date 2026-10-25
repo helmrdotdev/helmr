@@ -1,10 +1,13 @@
+import { Segmented, SearchInput } from "../ui/Field";
+import { Dialog } from "../ui/Dialog";
+import { ui } from "../ui/styles";
 import { createInfiniteQuery } from "@tanstack/solid-query";
-import { createMemo, For, Show } from "solid-js";
+import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref } from "../features/deployments/navigation";
 import { agentHref } from "../lib/definitions";
 import { loadError } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
-import { listTriggers } from "../lib/triggers";
+import { listTriggers, listTriggerOccurrences } from "../lib/triggers";
 import { DataTable, LoadMore, PrimaryLink } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
 import { QueryState } from "../ui/QueryState";
@@ -18,9 +21,12 @@ const failure = (error: unknown) => loadError(error, "Could not load triggers.",
 export function TriggerList(props: { agent?: string }) {
   const scope = useScopeIDs();
   const agent = () => props.agent ?? "";
+  const [view,setView] = createSignal<"current" | "all">("current");
+  const [key,setKey] = createSignal("");
+  const [activation,setActivation] = createSignal("");
   const triggers = createInfiniteQuery(() => ({
-    queryKey: ["triggers", scope().projectID, scope().environmentID, agent()],
-    queryFn: ({ pageParam }) => listTriggers(scope(), pageParam || undefined, agent() || undefined),
+    queryKey: ["triggers", scope().projectID, scope().environmentID, agent(),view(),key()],
+    queryFn: ({ pageParam }) => listTriggers(scope(), pageParam || undefined, agent() || undefined,view(),key() || undefined),
     initialPageParam: "",
     getNextPageParam: page => page.next_cursor,
     enabled: !!scope().projectID && !!scope().environmentID,
@@ -37,7 +43,10 @@ export function TriggerList(props: { agent?: string }) {
     "Active until",
     "Deployment",
   ];
-  return (
+  return (<>
+    <div class="mb-3 flex flex-wrap gap-3"><Segmented label="Show triggers" value={view()} options={[{value:"current" as const,label:"Current"},{value:"all" as const,label:"All history"}]} onChange={setView} /><SearchInput aria-label="Trigger key" placeholder="Exact trigger key…" value={key()} onInput={e=>setKey(e.currentTarget.value)} /></div>
+    <p class="mb-3 text-control text-console-muted">Triggers are defined in code. Change code and deploy to change the schedule.</p>
+    <Show when={activation()}>{id=><TriggerOccurrences activation={id()} onClose={()=>setActivation("")} />}</Show>
     <QueryState
       query={triggers}
       pending={<TableSkeleton label="Loading triggers" columns={columns()} minWidth="min-w-230" />}
@@ -55,7 +64,7 @@ export function TriggerList(props: { agent?: string }) {
         >
           <For each={items()}>{trigger => (
             <tr>
-              <td><code>{trigger.trigger_key}</code></td>
+              <td><button class={ui.secondaryButton} onClick={()=>setActivation(trigger.id)}>{trigger.trigger_key}</button></td>
               <Show when={!agent()}>
                 <td><PrimaryLink href={agentHref(trigger.agent, "triggers")}>{trigger.agent}</PrimaryLink></td>
               </Show>
@@ -69,6 +78,13 @@ export function TriggerList(props: { agent?: string }) {
           )}</For>
         </DataTable>
       )}
-    </QueryState>
+    </QueryState></>
   );
+}
+
+function TriggerOccurrences(props: {activation:string;onClose:()=>void}) {
+ const scope=useScopeIDs();
+ const query=createInfiniteQuery(()=>({queryKey:["triggers","occurrences",scope().projectID,scope().environmentID,props.activation],queryFn:({pageParam})=>listTriggerOccurrences(scope(),props.activation,pageParam || undefined),initialPageParam:"",getNextPageParam:page=>page.next_cursor,retry:false}));
+ const items=()=>query.data?.pages.flatMap(p=>p.occurrences) ?? [];
+ return <Dialog title="Trigger execution history" onClose={props.onClose} class="max-w-180"><QueryState query={query} pending={<TableSkeleton label="Loading occurrences" columns={["Scheduled","Outcome","Reason","Session"]} />} error={failure} empty={{when:data=>data.pages.every(p=>p.occurrences.length===0),title:"No recorded occurrences."}}>{()=> <DataTable columns={["Scheduled","Outcome","Reason","Session"]} footer={<LoadMore count={items().length} noun={{one:"occurrence",other:"occurrences"}} hasMore={query.hasNextPage} loading={query.isFetchingNextPage} failed={query.isFetchNextPageError} onLoadMore={()=>void query.fetchNextPage()} />}><For each={items()}>{item=><tr><td><RelativeTime value={item.scheduled_at} /></td><td>{item.disposition}</td><td>{item.reason ?? "—"}</td><td><Show when={item.session_id} fallback="—">{id=><PrimaryLink href={`/sessions/${encodeURIComponent(id())}`}>Open Session</PrimaryLink>}</Show></td></tr>}</For></DataTable>}</QueryState></Dialog>;
 }

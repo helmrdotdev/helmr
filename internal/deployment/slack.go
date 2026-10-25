@@ -29,6 +29,9 @@ func prepareTriggerRoutes(ctx context.Context, pool db.TxBeginner, principal aut
 		if !allowed {
 			return ErrNotDeployable
 		}
+		if err := requireUndeletedAgents(ctx, tx, env, deployment); err != nil {
+			return err
+		}
 		rows, err := tx.Query(ctx, `SELECT DISTINCT agent_id,slack_channel_id FROM agent_triggers WHERE environment_id=$1 AND deployment_id=$2 AND slack_channel_id IS NOT NULL ORDER BY agent_id,slack_channel_id`, env, deployment)
 		if err != nil {
 			return err

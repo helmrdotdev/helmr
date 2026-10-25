@@ -40,7 +40,7 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environ
 			return err
 		}
 		var eligible bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agents a JOIN environments e ON e.id=a.environment_id JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(a.environment_id,a.id,e.current_deployment_id) WHERE a.environment_id=$1 AND a.id=$2 AND d.input_kind='text') AND NOT EXISTS(SELECT 1 FROM slack_connections WHERE environment_id=$1 AND agent_id=$2 AND revoked_at IS NULL)`, environment, agent).Scan(&eligible)
+		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agents a JOIN environments e ON e.id=a.environment_id JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(a.environment_id,a.id,e.current_deployment_id) WHERE a.environment_id=$1 AND a.id=$2 AND a.deleted_at IS NULL AND d.input_kind='text') AND NOT EXISTS(SELECT 1 FROM slack_connections WHERE environment_id=$1 AND agent_id=$2 AND revoked_at IS NULL)`, environment, agent).Scan(&eligible)
 		if err != nil {
 			return err
 		}
@@ -143,58 +143,82 @@ func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environme
 
 // DisconnectConnection fences the exact generation, including pending setup.
 // Running work remains available through Console/API and is not cancelled.
-func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.Actor, org, user, environment, connection uuid.UUID) error {
-	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockConnectionManager(ctx, tx, org, user, connection); err != nil {
+type ConnectionDisconnection struct {
+	registration                 uuid.UUID
+	installation                 *uuid.UUID
+	connection, environment, org uuid.UUID
+	active                       bool
+}
+
+// LockConnectionDisconnection takes the Slack generation locks before the
+// caller's Environment lock. Apply joins that caller's transaction.
+func LockConnectionDisconnection(ctx context.Context, tx pgx.Tx, org, user, environment, connection uuid.UUID) (*ConnectionDisconnection, error) {
+	if err := lockConnectionManager(ctx, tx, org, user, connection); err != nil {
+		return nil, err
+	}
+	var registration uuid.UUID
+	var installation *uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT p.slack_app_registration_id,p.slack_installation_id FROM slack_connections p JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND e.org_id=$3`, connection, environment, org).Scan(&registration, &installation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrConnectionUnavailable
+	}
+	if err != nil {
+		return nil, err
+	}
+	var id uuid.UUID
+	if err = tx.QueryRow(ctx, `SELECT id FROM slack_app_registrations WHERE id=$1 AND org_id=$2 FOR NO KEY UPDATE`, registration, org).Scan(&id); err != nil {
+		return nil, err
+	}
+	if installation != nil {
+		if err = tx.QueryRow(ctx, `SELECT id FROM slack_installations WHERE id=$1 AND app_registration_id=$2 FOR NO KEY UPDATE`, *installation, registration).Scan(&id); err != nil {
+			return nil, err
+		}
+	}
+	var current *uuid.UUID
+	var active bool
+	if err = tx.QueryRow(ctx, `SELECT slack_installation_id,revoked_at IS NULL FROM slack_connections WHERE id=$1 FOR NO KEY UPDATE`, connection).Scan(&current, &active); err != nil {
+		return nil, err
+	}
+	// Setup may have completed since optimistic discovery. Retry from the start
+	// to acquire the newly discovered installation before the connection gate.
+	if (installation == nil) != (current == nil) || current != nil && *current != *installation {
+		return nil, ErrConnectionUnavailable
+	}
+
+	return &ConnectionDisconnection{registration: registration, installation: installation, connection: connection, environment: environment, org: org, active: active}, nil
+}
+
+func (p *ConnectionDisconnection) Apply(ctx context.Context, tx pgx.Tx, actor audit.Actor) error {
+	var err error
+	if p.installation != nil {
+		if err = suppressInstallationPosts(ctx, tx, *p.installation); err != nil {
 			return err
 		}
-		var registration uuid.UUID
-		var installation *uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT p.slack_app_registration_id,p.slack_installation_id FROM slack_connections p JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND e.org_id=$3`, connection, environment, org).Scan(&registration, &installation)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrConnectionUnavailable
+		_, err = tx.Exec(ctx, `UPDATE slack_installations SET disconnected_at=COALESCE(disconnected_at,clock_timestamp()),credential_ciphertext=NULL,credential_nonce=NULL,credential_expires_at=NULL,refresh_attempt_id=NULL,refresh_deadline=NULL,last_refresh_attempt_id=NULL WHERE id=$1`, *p.installation)
+		if err != nil {
+			return err
 		}
+	}
+	if err = slackroute.RevokeConnection(ctx, tx, p.connection); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET retired_at=COALESCE(retired_at,clock_timestamp()),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, p.registration)
+	if err != nil || !p.active {
+		return err
+	}
+	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: p.org, EnvironmentID: p.environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: p.connection})
+}
+
+func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.Actor, org, user, environment, connection uuid.UUID) error {
+	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
+		p, err := LockConnectionDisconnection(ctx, tx, org, user, environment, connection)
 		if err != nil {
 			return err
 		}
 		var id uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT id FROM slack_app_registrations WHERE id=$1 AND org_id=$2 FOR NO KEY UPDATE`, registration, org).Scan(&id); err != nil {
-			return err
-		}
-		if installation != nil {
-			if err = tx.QueryRow(ctx, `SELECT id FROM slack_installations WHERE id=$1 AND app_registration_id=$2 FOR NO KEY UPDATE`, *installation, registration).Scan(&id); err != nil {
-				return err
-			}
-		}
-		var current *uuid.UUID
-		var active bool
-		if err = tx.QueryRow(ctx, `SELECT slack_installation_id,revoked_at IS NULL FROM slack_connections WHERE id=$1 FOR NO KEY UPDATE`, connection).Scan(&current, &active); err != nil {
-			return err
-		}
-		// Setup may have completed since optimistic discovery. Retry from the start
-		// to acquire the newly discovered installation before the connection gate.
-		if (installation == nil) != (current == nil) || current != nil && *current != *installation {
-			return ErrConnectionUnavailable
-		}
 		if err = tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 FOR SHARE`, environment, org).Scan(&id); err != nil {
 			return err
 		}
-		if installation != nil {
-			if err = suppressInstallationPosts(ctx, tx, *installation); err != nil {
-				return err
-			}
-			_, err = tx.Exec(ctx, `UPDATE slack_installations SET disconnected_at=COALESCE(disconnected_at,clock_timestamp()),credential_ciphertext=NULL,credential_nonce=NULL,credential_expires_at=NULL,refresh_attempt_id=NULL,refresh_deadline=NULL,last_refresh_attempt_id=NULL WHERE id=$1`, *installation)
-			if err != nil {
-				return err
-			}
-		}
-		if err = slackroute.RevokeConnection(ctx, tx, connection); err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `UPDATE slack_app_registrations SET retired_at=COALESCE(retired_at,clock_timestamp()),credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, registration)
-		if err != nil || !active {
-			return err
-		}
-		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, EnvironmentID: environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: connection})
+		return p.Apply(ctx, tx, actor)
 	})
 }

@@ -1,6 +1,7 @@
+import { AgentDeleteDialog } from "../features/agents/AgentDeleteDialog";
 import { hasPermission } from "../lib/auth";
 import { useLocation, useParams } from "@solidjs/router";
-import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
+import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { listAccessTargets } from "../lib/permissions";
 import { ResourceAccess } from "../features/access/ResourceAccess";
@@ -31,6 +32,7 @@ import { TriggerList } from "./triggers";
 const SHOW_OPTIONS = [
   { value: "current", label: "Current deployment" },
   { value: "all", label: "All agents" },
+  { value: "deleted", label: "Deleted agents" },
 ] as const;
 
 const failure = (error: unknown) => loadError(error, "Could not load agents.", { forbidden: "You do not have permission to view agents." });
@@ -68,15 +70,16 @@ function AccessAgentDirectory() {
 
 function OperationalAgentList() {
   const scope = useScopeIDs();
-  const [all, setAll] = createSignal(false);
+  const [catalogView, setCatalogView] = createSignal<"current" | "all" | "deleted">("current");
+  const all = () => catalogView() !== "current";
   const [search, setSearch] = createSignal("");
   const current = createQuery(() => ({ queryKey: ["deployments", "current", scope().projectID, scope().environmentID], queryFn: () => getCurrentDeployment(scope()), enabled: !all(), retry: false, refetchInterval: 15_000 }));
   const agents = createInfiniteQuery(() => ({
-    queryKey: ["agents", "catalog", scope().projectID, scope().environmentID, all(), all() ? null : current.data?.id],
+    queryKey: ["agents", "catalog", scope().projectID, scope().environmentID, catalogView(), all() ? null : current.data?.id],
     queryFn: async ({ pageParam }): Promise<{ agents: AgentRow[]; next_cursor?: string | undefined }> => {
-      if (all()) return listRetainedAgents(scope(), pageParam || undefined);
+      if (all()) return listRetainedAgents(scope(), pageParam || undefined, catalogView() === "deleted" ? "deleted" : "all");
       const page = await listAgentDefinitions({ ...scope(), deploymentID: current.data!.id, cursor: pageParam || undefined, limit: 100 });
-      return { agents: page.agents.map(item => ({ agent: item.agent, template: item.template, defined_in_current: true, current_deployment_id: page.deployment_id })), next_cursor: page.next_cursor };
+      return { agents: page.agents.map(item => ({ agent: item.agent, template: item.template, defined_in_current: true, deleted_at: null, revision: 0, current_deployment_id: page.deployment_id })), next_cursor: page.next_cursor };
     },
     initialPageParam: "", getNextPageParam: page => page.next_cursor,
     enabled: all() || (!!current.data && !current.isError), retry: false,
@@ -107,7 +110,7 @@ function OperationalAgentList() {
             <For each={shown()}>{item => <tr>
               <td><PrimaryLink href={agentHref(item.agent)}>{item.agent}</PrimaryLink></td>
               <Show when={all()}>
-                <td><Show when={!item.defined_in_current} fallback={<EmptyCell />}><StatusBadge resource="agent" status="not_defined" /></Show></td>
+                <td><Show when={item.deleted_at || !item.defined_in_current} fallback={<EmptyCell />}><StatusBadge resource="agent" status={item.deleted_at ? "deleted" : "not_defined"} /></Show></td>
               </Show>
               <Show when={!all()}>
                 <td><Show when={item.template} fallback={<EmptyCell />}>{template => <code>{template()}</code>}</Show></td>
@@ -120,7 +123,7 @@ function OperationalAgentList() {
   );
   return <>
     <Toolbar start={<>
-      <Segmented label="Show agents" value={all() ? "all" : "current"} options={SHOW_OPTIONS} onChange={value => setAll(value === "all")} />
+      <Segmented label="Show agents" value={catalogView()} options={SHOW_OPTIONS} onChange={setCatalogView} />
       <div class="w-56 max-sm:w-full">
         <SearchInput aria-label="Filter agents" placeholder="Filter agents…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
       </div>
@@ -161,6 +164,9 @@ const AGENT_TABS: { value: AgentTab; label: string }[] = [
 // Deployment, then its Sessions, triggers and Slack connection as tabs, each a
 // page of its own.
 export function AgentDetail(props: { children?: JSX.Element }) {
+  const cache = useQueryClient();
+  const [changeOpen, setChangeOpen] = createSignal(false);
+  const [changeMessage, setChangeMessage] = createSignal("");
   const me = useMe(); const [accessOpen, setAccessOpen] = createSignal(false);
   const scope = useScopeIDs();
   const scopeState = useScope();
@@ -185,7 +191,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
     <PageHeader
       title={missing() ? "Agent not found" : name()}
       breadcrumb={[{ href: "/agents", label: "Agents" }]}
-      badge={<Show when={agent.data}>{record => <StatusBadge resource="agent" status={record().defined_in_current ? "defined" : "not_defined"} />}</Show>}
+      badge={<Show when={agent.data}>{record => <StatusBadge resource="agent" status={record().deleted_at ? "deleted" : record().defined_in_current ? "defined" : "not_defined"} />}</Show>}
       meta={<>
         <Show when={agent.data}>{record => (
           <Show when={record().current_deployment_id}>
@@ -194,8 +200,14 @@ export function AgentDetail(props: { children?: JSX.Element }) {
         )}</Show>
         <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
       </>}
-      actions={<Show when={!missing()}><Show when={hasPermission(me.data, "access.manage")}><button class={ui.secondaryButton} onClick={() => setAccessOpen(true)}>Access</button></Show><CopyLinkButton /></Show>}
+      actions={<Show when={!missing()}><Show when={agent.data && hasPermission(me.data,"access.manage") && hasPermission(me.data,"agents.manage",{...scope(),agent:name()})}><button class={ui.secondaryButton} onClick={() => setChangeOpen(true)}>{agent.data?.deleted_at ? "Restore" : "Delete"}</button></Show><Show when={hasPermission(me.data, "access.manage")}><button class={ui.secondaryButton} onClick={() => setAccessOpen(true)}>Access</button></Show><CopyLinkButton /></Show>}
     />
+    <Show when={changeMessage()}><Notice tone="success">{changeMessage()}</Notice></Show>
+    <Show when={changeOpen()}><AgentDeleteDialog agent={name()} scope={scope()} restore={!!agent.data?.deleted_at} onClose={() => setChangeOpen(false)} onSaved={() => {
+      setChangeMessage(agent.data?.deleted_at ? "Agent restored. Removed access and Slack connections remain removed." : "Agent deleted. History is retained; access and connection cleanup completed.");
+      setChangeOpen(false);
+      for (const key of ["agents", "access", "me", "triggers", "slack"]) void cache.invalidateQueries({queryKey:[key]});
+    }} /></Show>
     <Show when={accessOpen()}><ResourceAccess environment={scope().environmentID} agent={name()} onClose={() => setAccessOpen(false)} /></Show>
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
       <Show when={!missing()} fallback={<NotFoundState noun="agent" id={name()} environment={environment()} back={{ href: "/agents", label: "Go to agents" }} />}>

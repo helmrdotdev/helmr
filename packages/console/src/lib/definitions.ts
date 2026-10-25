@@ -64,15 +64,15 @@ function agentPath(agent: string, options: DefinitionScope & { deploymentID?: st
   return `${base}/${encodeURIComponent(agent)}${query}`;
 }
 
-export type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean };
+export type RetainedAgent = { agent: string; current_deployment_id: string | null; defined_in_current: boolean; deleted_at: string | null; revision: number };
 // An Agent's page opens on its Sessions; its other tabs are pages below it.
 export type AgentTab = "sessions" | "triggers" | "slack";
 export function agentHref(agent: string, tab: AgentTab = "sessions"): string {
   const base = `/agents/${encodeURIComponent(agent)}`;
   return tab === "sessions" ? base : `${base}/${tab}`;
 }
-export function listRetainedAgents(scope: DefinitionScope, cursor?: string): Promise<{ agents: RetainedAgent[]; next_cursor?: string }> {
-  const query = new URLSearchParams({ view: "all", limit: "100" });
+export function listRetainedAgents(scope: DefinitionScope, cursor?: string, view: "all" | "deleted" = "all"): Promise<{ agents: RetainedAgent[]; next_cursor?: string }> {
+  const query = new URLSearchParams({ view, limit: "100" });
   if (cursor) query.set("cursor", cursor);
   return request(`${definitionPath("agents", scope)}?${query}`);
 }

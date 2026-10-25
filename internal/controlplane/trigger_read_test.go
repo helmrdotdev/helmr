@@ -21,7 +21,7 @@ import (
 )
 
 func TestTriggerListCursorRoundTripAndScope(t *testing.T) {
-	raw, err := encodeTriggerListCursor(triggerListCursor{
+	raw, err := encodeTriggerListCursor(triggerListCursor{View: "current",
 		ProjectID:     "project-1",
 		EnvironmentID: "environment-1",
 		AgentID:       "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37",
@@ -103,7 +103,7 @@ func TestTriggerResponseProjectsActivationInterval(t *testing.T) {
 
 func TestTriggerCursorRejectsFilterChange(t *testing.T) {
 	id := uuid.NewV7().String()
-	raw, err := encodeTriggerListCursor(triggerListCursor{ProjectID: "p", EnvironmentID: "e", AgentID: id, TriggerID: id, FilterAgent: id})
+	raw, err := encodeTriggerListCursor(triggerListCursor{View: "current", ProjectID: "p", EnvironmentID: "e", AgentID: id, TriggerID: id, FilterAgent: id})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,37 @@ func TestTriggerHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	token := httpFixture.session(t, f.User, org)
 	base := "/api/projects/project/environments/test/triggers"
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)
-	path := base + "?agent=agent&limit=1"
+
+	for _, query := range []struct {
+		suffix string
+		count  int
+	}{{"", 2}, {"?key=daily", 1}, {"?view=all&key=daily", 2}} {
+		response := httpFixture.request(t, http.MethodGet, base+query.suffix, token, "")
+		var page api.ListTriggersResponse
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &page) != nil || len(page.Triggers) != query.count {
+			t.Fatalf("current/filter %s: %d %s", query.suffix, response.Code, response.Body)
+		}
+	}
+	for i := 1; i <= 3; i++ {
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO trigger_occurrences(environment_id,agent_id,trigger_key,scheduled_at,activation_id,disposition,reason,evaluated_at) VALUES($1,$2,'daily',$3,$4,'missed','agent_deleted',$3)`, f.Environment, f.Agent, at.Add(time.Duration(i)*time.Minute), oldID)
+	}
+	occurrencePath := base + "/" + oldID.String() + "/occurrences?limit=2"
+	response := httpFixture.request(t, http.MethodGet, occurrencePath, token, "")
+	var occurrences api.TriggerOccurrencesPage
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &occurrences) != nil || len(occurrences.Occurrences) != 2 || occurrences.NextCursor == "" {
+		t.Fatalf("occurrences: %d %s", response.Code, response.Body)
+	}
+	cursor := occurrences.NextCursor
+	response = httpFixture.request(t, http.MethodGet, occurrencePath+"&cursor="+cursor, token, "")
+	occurrences = api.TriggerOccurrencesPage{}
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &occurrences) != nil || len(occurrences.Occurrences) != 1 || occurrences.NextCursor != "" {
+		t.Fatalf("occurrence pagination: %d %s", response.Code, response.Body)
+	}
+	response = httpFixture.request(t, http.MethodGet, base+"/"+currentID.String()+"/occurrences?cursor="+cursor, token, "")
+	if response.Code != 400 {
+		t.Fatalf("cross-activation cursor: %d %s", response.Code, response.Body)
+	}
+	path := base + "?view=all&agent=agent&limit=1"
 	seen := map[string]bool{}
 	for range 3 {
 		response := httpFixture.request(t, http.MethodGet, path, token, "")
@@ -190,7 +220,7 @@ func TestTriggerHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 		if len(seen) == 3 && page.NextCursor != "" {
 			t.Fatal("unexpected cursor")
 		}
-		path = base + "?agent=agent&limit=1&cursor=" + page.NextCursor
+		path = base + "?view=all&agent=agent&limit=1&cursor=" + page.NextCursor
 	}
 	item := httpFixture.request(t, http.MethodGet, base+"/"+oldID.String(), token, "")
 	if item.Code != http.StatusOK {

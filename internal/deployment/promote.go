@@ -59,6 +59,9 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 		} else if err != nil {
 			return err
 		}
+		if err := requireUndeletedAgents(ctx, tx, pgvalue.MustUUIDValue(env), id); err != nil {
+			return err
+		}
 		// The Environment lock also serializes connection configuration. An
 		// active conversational front cannot acquire a structured input contract.
 		var incompatible bool
@@ -161,4 +164,15 @@ func reconcileImageRefresh(ctx context.Context, tx pgx.Tx, env, deployment uuid.
 		return err
 	}
 	return computer.ApplyImageRefreshPolicy(ctx, tx, env, deployment, cutover)
+}
+
+func requireUndeletedAgents(ctx context.Context, q db.DBTX, env, deployment uuid.UUID) error {
+	var deleted DeletedAgentsError
+	if err := q.QueryRow(ctx, `WITH deleted AS (SELECT a.key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.deleted_at IS NOT NULL) SELECT (SELECT count(*) FROM deleted), ARRAY(SELECT key FROM deleted ORDER BY key LIMIT 20)`, env, deployment).Scan(&deleted.Count, &deleted.Keys); err != nil {
+		return err
+	}
+	if deleted.Count > 0 {
+		return deleted
+	}
+	return nil
 }

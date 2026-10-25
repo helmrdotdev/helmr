@@ -323,6 +323,8 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 		writeError(w, conflict(codedError{code: "conversation_changed", message: err.Error()}))
 	case errors.Is(err, slack.ErrSlackDestinationConflict):
 		writeError(w, conflict(codedError{code: "slack_destination_conflict", message: "session Slack destination conflicts"}))
+	case errors.Is(err, session.ErrAgentDeleted):
+		writeError(w, conflict(codedError{code: "agent_deleted", message: err.Error()}))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, agent.ErrDenied):
 		writeError(w, forbidden(errors.New("agent or Session operation is not authorized")))
 	case errors.Is(err, session.ErrControlScopeChanged):

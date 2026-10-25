@@ -644,6 +644,8 @@ CREATE TABLE agents (
     id uuid NOT NULL,
     environment_id uuid NOT NULL REFERENCES environments(id),
     key text NOT NULL CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'),
+    deleted_at timestamptz,
+    revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, key)
 );

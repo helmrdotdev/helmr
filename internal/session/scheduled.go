@@ -26,6 +26,9 @@ type ScheduledStart struct {
 // occurrence in the caller's transaction. The caller holds the Environment
 // admission lock and passes its policy.
 func AdmitScheduled(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, start ScheduledStart, policy org.AdmissionPolicy) (Admission, error) {
+	if err := requireAgentAvailable(ctx, tx, start.EnvironmentID, start.AgentID); err != nil {
+		return Admission{}, err
+	}
 	s := struct {
 		environment, id, agent, deployment uuid.UUID
 		input                              json.RawMessage

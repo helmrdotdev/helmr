@@ -97,7 +97,10 @@ the Agent and deploy a new Deployment, then promote it (`helmr deploy`
 promotes by default). Promotion closes the previous triggers' active interval
 and starts a new one for the triggers in the promoted Deployment. Removing a
 trigger stops future fires. Sessions already started keep running on the
-Deployment they were started with.
+Deployment they were started with. Accepted scheduled Sessions can continue,
+receive input, resume and delegate using their pinned definitions after the
+activation ends, including when the Agent is no longer in current. Changing
+current is not a stop operation.
 
 ## Reading triggers
 
@@ -107,11 +110,20 @@ active interval and next fire time:
 
 ```sh
 helmr trigger list --json
+helmr trigger list --agent daily-report --key morning --all --json
 helmr trigger get TRIGGER_ID --json
+helmr trigger occurrences TRIGGER_ID --json
 ```
 
-In the Console, open the Agent page to inspect its Trigger activations across
-Deployments. Each activation links to the Deployment that declared it.
+List defaults to current activations; `--all` includes history. In the Console,
+open the Agent page and switch between current and historical Trigger activations.
+Each activation links to its Deployment and recorded occurrence outcomes:
+`admitted`, `missed` or `rejected`, with reasons and Session links when available.
+
+Deleting an Agent seals unfinished historical activations. A due occurrence can
+be recorded as `missed` with reason `agent_deleted`; this does not imply that
+future scheduled times ran. Restoring the Agent does not replay the backlog.
+Promote a Deployment containing the restored Agent to activate new schedules.
 
 Use `helmr trigger list --agent AGENT` or `client.triggers.list({ agent: "support" })`
 to filter by the identifier declared in code. In TypeScript, retrieve one activation

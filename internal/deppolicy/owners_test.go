@@ -23,7 +23,7 @@ var ownerImports = map[string][]string{
 	"dispatch":    {"session", "command", "computer", "secret", "org", "workergroup"},
 	"slack":       {"session", "slackroute", "computer", "audit", "workergroup"},
 	"slackroute":  {},
-	"deployment":  {"agent", "computer", "slackroute", "org", "audit"},
+	"deployment":  {"agent", "computer", "slack", "slackroute", "session", "org", "audit"},
 	"command":     {"computer", "secret", "workergroup", "org"},
 	"identity":    {"org", "audit"},
 	"org":         {"audit"},
