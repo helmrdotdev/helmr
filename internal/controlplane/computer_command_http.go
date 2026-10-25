@@ -17,16 +17,16 @@ import (
 func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	computerID, err := ids.Parse(chi.URLParam(r, "computerID"))
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: "computer ID is invalid"}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: "computer ID is invalid"}))
 		return
 	}
 	var body api.ExecuteComputerRequest
 	if err := decodeRequestJSON(r, &body); err != nil {
 		if isRequestBodyTooLarge(err) {
-			writeError(w, err)
+			s.writeOperationError(w, r, err)
 			return
 		}
-		writeError(w, badRequest(codedError{code: "invalid_computer_command", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_command", message: err.Error()}))
 		return
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(body.IdempotencyKey)
@@ -34,14 +34,14 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			err = errors.New("idempotency_key is required")
 		}
-		writeError(w, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
 		return
 	}
 	var stdin []byte
 	if body.StdinBase64 != "" {
 		stdin, err = base64.StdEncoding.Strict().DecodeString(body.StdinBase64)
 		if err != nil {
-			writeError(w, badRequest(codedError{code: "invalid_computer_command", message: "stdin_base64 must be canonical padded base64"}))
+			s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_command", message: "stdin_base64 must be canonical padded base64"}))
 			return
 		}
 	}
@@ -54,7 +54,7 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 			command.MaxTimeout.Milliseconds(),
 		)
 		if err != nil {
-			writeError(w, badRequest(codedError{code: "invalid_computer_command", message: err.Error()}))
+			s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_command", message: err.Error()}))
 			return
 		}
 		timeout = time.Duration(timeoutMS) * time.Millisecond
@@ -63,14 +63,14 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
 	if !principal.HasPermission(auth.PermissionComputersExecute, scope) {
-		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+		s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
-	created, err := command.Create(r.Context(), s.tx, command.CreateRequest{
+	created, err := command.Create(r.Context(), s.auditPolicy, s.tx, command.CreateRequest{
 		OrgID:          principal.OrgID,
 		ProjectID:      pgvalue.MustUUIDValue(projectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(environmentID),
@@ -84,7 +84,7 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
-		s.writeCommandError(w, err, commandCreateOperation)
+		s.writeCommandError(w, r, err, commandCreateOperation)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, api.CommandReceipt{CommandID: pgvalue.MustUUIDValue(created.ID).String()})
@@ -97,17 +97,17 @@ func canAccessComputerCommandOutput(principal auth.Principal, scope auth.Scope) 
 func (s *Server) getComputerCommandHTTP(w http.ResponseWriter, r *http.Request) {
 	commandID, err := ids.Parse(chi.URLParam(r, "commandID"))
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_command_reference", message: "command ID is invalid"}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_command_reference", message: "command ID is invalid"}))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
 	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
-		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+		s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
 	process, err := command.Get(r.Context(), s.db, command.Ref{
@@ -115,12 +115,12 @@ func (s *Server) getComputerCommandHTTP(w http.ResponseWriter, r *http.Request) 
 		EnvironmentID: pgvalue.MustUUIDValue(environmentID), CommandID: commandID,
 	})
 	if err != nil {
-		s.writeCommandError(w, err, commandGetOperation)
+		s.writeCommandError(w, r, err, commandGetOperation)
 		return
 	}
 	resource, err := publicCommandInfo(process)
 	if err != nil {
-		s.writeCommandError(w, err, commandGetOperation)
+		s.writeCommandError(w, r, err, commandGetOperation)
 		return
 	}
 	writeJSON(w, http.StatusOK, resource)

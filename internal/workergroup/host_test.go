@@ -2,6 +2,7 @@ package workergroup
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"reflect"
 	"strings"
 	"testing"
@@ -212,7 +213,7 @@ func TestEnrollHostValidatesInputBeforeTheEnrollmentToken(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			// A call past validation has no database executor.
-			_, err := EnrollHost(t.Context(), nil, cfg, test.enrollment)
+			_, err := EnrollHost(t.Context(), nil, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, test.enrollment)
 			var input InputError
 			if test.input && !errors.As(err, &input) {
 				t.Fatalf("error = %v, want InputError", err)

@@ -20,24 +20,24 @@ import (
 func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	if principal.UserID == uuid.Nil() {
-		writeError(w, unauthorized(errors.New("session authentication is required")))
+		s.writeOperationError(w, r, unauthorized(errors.New("session authentication is required")))
 		return
 	}
 	var request api.CreateOrganizationRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid organization request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid organization request JSON: %w", err))
 		return
 	}
 	initialSetup := s.selfHostedMode()
 	if !initialSetup && s.organizationCreationAdminOnly && !principal.Admin {
-		writeError(w, forbidden(errors.New("organization creation requires an installation administrator")))
+		s.writeOperationError(w, r, forbidden(errors.New("organization creation requires an installation administrator")))
 		return
 	}
 	if initialSetup && !s.initialSetupTokenMatches(request.SetupToken) {
-		writeError(w, forbidden(errors.New("invalid setup token")))
+		s.writeOperationError(w, r, forbidden(errors.New("invalid setup token")))
 		return
 	}
-	created, err := identity.CreateOrganization(r.Context(), s.tx, org.OrganizationInput{
+	created, err := identity.CreateOrganization(r.Context(), s.tx, org.OrganizationInput{AuditPolicy: s.auditPolicy,
 		Actor:        audit.FromPrincipal(principal),
 		Slug:         request.Slug,
 		Name:         request.Name,
@@ -45,7 +45,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		InitialSetup: initialSetup,
 	})
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, organizationResponse(created))
@@ -54,7 +54,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
 	regions, err := s.db.ListRegions(r.Context())
 	if err != nil {
-		writeError(w, errors.New("list regions"))
+		s.writeOperationError(w, r, errors.New("list regions"))
 		return
 	}
 	response := api.ListRegionsResponse{Regions: make([]api.RegionSummary, 0, len(regions))}

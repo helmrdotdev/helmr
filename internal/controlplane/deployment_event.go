@@ -32,7 +32,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	events, err := deployment.ListEvents(r.Context(), s.tx, principal, scope, deploymentID, cursor, limit+1)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	hasNext := len(events) > int(limit)

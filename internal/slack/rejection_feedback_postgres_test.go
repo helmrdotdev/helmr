@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"strings"
@@ -20,7 +21,7 @@ func TestSlackRejectedFeedbackIsPrivateOnceAndDoesNotAdmitWork(t *testing.T) {
 	f := newStatusFixture(t)
 	for i := range 8 {
 		id := f.reply(t, fmt.Sprintf("unlinked-%d", i), false)
-		if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+		if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,7 +84,7 @@ func TestSlackRejectedFeedbackCutoffsAndExactControlDestination(t *testing.T) {
 					t.Fatal(err)
 				}
 				id = r.ID
-			} else if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+			} else if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 				t.Fatal(err)
 			}
 			// Leave only the exact chosen receipt eligible.
@@ -146,7 +147,7 @@ func TestSlackRejectedContentExpiryPreservesEventDeduplicationAndConflicts(t *te
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id,request_digest FROM slack_requests WHERE request_key='original'`).Scan(&id, &digest); err != nil {
 		t.Fatal(err)
 	}
-	if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := takeRejectedFeedback(t.Context(), f.Pool, testProjectionConfig()); err != nil || !found {
@@ -157,7 +158,7 @@ func TestSlackRejectedContentExpiryPreservesEventDeduplicationAndConflicts(t *te
 	send("same-source-new-event-id", http.StatusOK)
 	event["text"] = "<@bot> changed input"
 	send("original", http.StatusConflict)
-	if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 	var correct bool
@@ -169,14 +170,14 @@ func TestSlackRejectedContentExpiryPreservesEventDeduplicationAndConflicts(t *te
 func TestSlackRejectedContentDisposalRollsBackAndLeavesOtherOwnersAlone(t *testing.T) {
 	f := newStatusFixture(t)
 	rejected := f.reply(t, "rejected", false)
-	if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), rejected); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), rejected); err != nil {
 		t.Fatal(err)
 	}
 	pending := f.reply(t, "pending", false)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, pending)
 	f.link(t)
 	accepted := f.reply(t, "accepted", false)
-	if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), f.admissionClient(t), accepted); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), f.admissionClient(t), accepted); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE slack_requests ADD CONSTRAINT fixture_keep_payload CHECK(payload IS NOT NULL)`)

@@ -14,12 +14,12 @@ import (
 // UpdateProjectHistoryRetention changes the policy for all remaining history.
 // Cleanup takes a shared lock on the same Project until its deletion commits.
 func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, m ManagingMember, projectID uuid.UUID, seconds *int64) error {
-	orgID, actor := m.OrgID, m.Actor
+	orgID := m.OrgID
 	if seconds != nil && *seconds <= 0 {
 		return invalidInput("history retention must be positive")
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, auth.PermissionProjectsUpdateRetention); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionProjectsUpdateRetention); err != nil {
 			return err
 		}
 		var old pgtype.Int8
@@ -38,6 +38,6 @@ func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, 
 		if old.Valid {
 			before = &old.Int64
 		}
-		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: orgID, ProjectID: projectID, Action: "project.retention_changed", TargetKind: "project", TargetID: projectID, Details: audit.RetentionChangedDetails{OldRetentionSeconds: before, NewRetentionSeconds: seconds}})
+		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Actor: m.Actor, OrgID: orgID, ProjectID: projectID, Action: "project.retention_changed", TargetKind: "project", TargetID: projectID, Details: audit.RetentionChangedDetails{OldRetentionSeconds: before, NewRetentionSeconds: seconds}})
 	})
 }

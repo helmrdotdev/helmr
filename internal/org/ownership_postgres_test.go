@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -22,7 +23,7 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := insertUser(t, d.Pool, "Founder", "founder@example.test")
-	organization, err := identity.CreateOrganization(ctx, d.Pool, org.OrganizationInput{Actor: audit.System("test"), Slug: "bootstrap", OwnerUserID: user})
+	organization, err := identity.CreateOrganization(ctx, d.Pool, org.OrganizationInput{Actor: audit.System("test"), Slug: "bootstrap", OwnerUserID: user, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,9 +32,9 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := org.ManagingMember{Actor: audit.System("test"), OrgID: orgID, UserID: user, MemberID: principal.MemberID}
+	m := org.ManagingMember{Actor: audit.VerifiedLogin(user, "fixture"), OrgID: orgID, UserID: user, MemberID: principal.MemberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
 	roles, err := org.ListPermissionRoles(ctx, d.Pool, m)
-	if err != nil || len(roles) != 16 {
+	if err != nil || len(roles) != 17 {
 		t.Fatalf("roles: %d %v", len(roles), err)
 	}
 	var groupCount, grantCount int

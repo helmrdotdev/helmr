@@ -35,12 +35,12 @@ type projectListCursor struct {
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	if principal.MemberID == uuid.Nil() {
-		writeError(w, forbidden(errors.New("organization is required")))
+		s.writeOperationError(w, r, forbidden(errors.New("organization is required")))
 		return
 	}
 	limit, cursor, err := parseProjectListQuery(r, principal.OrgID)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	params := db.ListAuthorizedProjectsParams{OrgID: pgvalue.UUID(principal.OrgID), RowLimit: limit + 1, AllProjects: directoryAdministrator(principal), ProjectIds: []pgtype.UUID{}}
@@ -64,7 +64,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		projects = projects[:limit]
 	}
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	response := api.ListProjectsResponse{Projects: make([]api.ProjectSummary, 0, len(projects))}
@@ -78,7 +78,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 			Slug: last.Slug, ID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
-			writeError(w, errors.New("list projects"))
+			s.writeOperationError(w, r, errors.New("list projects"))
 			return
 		}
 	}
@@ -89,16 +89,16 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	project, err := org.GetProject(r.Context(), s.db, principal.OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	if !directoryVisible(principal, pgvalue.UUIDString(project.ID), "") {
-		writeError(w, notFound(org.ErrProjectNotFound))
+		s.writeOperationError(w, r, notFound(org.ErrProjectNotFound))
 		return
 	}
 	environments, err := org.ListEnvironments(r.Context(), s.db, project)
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	response := visibleProjectResponse(principal, project)
@@ -166,17 +166,17 @@ func decodeProjectListCursor(raw string) (projectListCursor, error) {
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	var request api.CreateProjectRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid project request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid project request JSON: %w", err))
 		return
 	}
 	principal := principalFromContext(r.Context())
-	project, environments, err := org.CreateProject(r.Context(), s.tx, managingMember(principal), org.ProjectInput{
+	project, environments, err := org.CreateProject(r.Context(), s.tx, s.managingMember(principal), org.ProjectInput{
 		ExecutionLimits: s.environmentExecutionLimits,
 		ProjectDetails:  org.ProjectDetails{Slug: request.Project, Name: request.Name},
 		DefaultRegionID: request.DefaultRegionID,
 	})
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, projectResponseWithEnvironments(project, environments))
@@ -185,21 +185,21 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	projectRecord, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	projectID := pgvalue.MustUUIDValue(projectRecord.ID)
 	var request api.UpdateProjectRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid project request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid project request JSON: %w", err))
 		return
 	}
 	principal := principalFromContext(r.Context())
-	project, err := org.UpdateProject(r.Context(), s.tx, managingMember(principal), projectID, org.ProjectDetails{
+	project, err := org.UpdateProject(r.Context(), s.tx, s.managingMember(principal), projectID, org.ProjectDetails{
 		Name: request.Name,
 	})
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, projectResponse(project))
@@ -208,26 +208,26 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 	projectRecord, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	projectID := pgvalue.MustUUIDValue(projectRecord.ID)
 	var request api.CreateEnvironmentRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid environment request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid environment request JSON: %w", err))
 		return
 	}
 	colorHex, err := normalizeEnvironmentColorHex(request.ColorHex)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	principal := principalFromContext(r.Context())
-	environment, err := org.CreateEnvironment(r.Context(), s.tx, managingMember(principal), projectID, org.EnvironmentDetails{
+	environment, err := org.CreateEnvironment(r.Context(), s.tx, s.managingMember(principal), projectID, org.EnvironmentDetails{
 		Slug: request.Environment, Name: request.Name, ColorHex: colorHex,
 	}, s.environmentExecutionLimits)
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, environmentResponse(environment, projectRecord.Slug))
@@ -236,18 +236,18 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 	projectRecord, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	projectID := pgvalue.MustUUIDValue(projectRecord.ID)
 	environmentRecord, err := org.GetEnvironmentByReference(r.Context(), s.db, principalFromContext(r.Context()).OrgID, projectID, chi.URLParam(r, "environment"))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	if !directoryVisible(principal, projectID.String(), pgvalue.UUIDString(environmentRecord.ID)) {
-		writeError(w, notFound(org.ErrEnvironmentNotFound))
+		s.writeOperationError(w, r, notFound(org.ErrEnvironmentNotFound))
 		return
 	}
 	writeJSON(w, http.StatusOK, visibleEnvironmentResponse(principal, environmentRecord, projectRecord.Slug))
@@ -256,32 +256,32 @@ func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	projectRecord, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	projectID := pgvalue.MustUUIDValue(projectRecord.ID)
 	environmentRecord, err := org.GetEnvironmentByReference(r.Context(), s.db, principalFromContext(r.Context()).OrgID, projectID, chi.URLParam(r, "environment"))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	environmentID := pgvalue.MustUUIDValue(environmentRecord.ID)
 	var request api.UpdateEnvironmentRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid environment request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid environment request JSON: %w", err))
 		return
 	}
 	colorHex, err := normalizeEnvironmentColorHex(request.ColorHex)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	principal := principalFromContext(r.Context())
-	environment, err := org.UpdateEnvironment(r.Context(), s.tx, managingMember(principal), projectID, environmentID, org.EnvironmentDetails{
+	environment, err := org.UpdateEnvironment(r.Context(), s.tx, s.managingMember(principal), projectID, environmentID, org.EnvironmentDetails{
 		Name: request.Name, ColorHex: colorHex,
 	})
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, environmentResponse(environment, projectRecord.Slug))
@@ -340,12 +340,12 @@ func projectSettingsResponse(project db.Project) api.ProjectSettings {
 func (s *Server) getProjectSettings(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
 	if !p.HasPermission(auth.PermissionProjectsRead, auth.Scope{OrgID: p.OrgID}) {
-		writeError(w, notFound(org.ErrProjectNotFound))
+		s.writeOperationError(w, r, notFound(org.ErrProjectNotFound))
 		return
 	}
 	project, err := org.GetProject(r.Context(), s.db, principalFromContext(r.Context()).OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, projectSettingsResponse(project))
@@ -355,21 +355,21 @@ func (s *Server) updateProjectSettings(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	project, err := org.GetProject(r.Context(), s.db, principal.OrgID, chi.URLParam(r, "project"))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	var request api.ProjectSettings
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid project settings JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid project settings JSON: %w", err))
 		return
 	}
 	seconds, err := api.ParseHistoryRetention(request.HistoryRetention)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
-	if err := org.UpdateProjectHistoryRetention(r.Context(), s.tx, managingMember(principal), pgvalue.MustUUIDValue(project.ID), seconds); err != nil {
-		writeError(w, orgError(err))
+	if err := org.UpdateProjectHistoryRetention(r.Context(), s.tx, s.managingMember(principal), pgvalue.MustUUIDValue(project.ID), seconds); err != nil {
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.ProjectSettings{HistoryRetention: api.FormatHistoryRetention(seconds)})

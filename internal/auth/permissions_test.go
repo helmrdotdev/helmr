@@ -7,7 +7,7 @@ import (
 )
 
 func TestPermissionCatalog(t *testing.T) {
-	expected := map[string]int{"agents": 4, "agent_connections": 5, "sessions": 10, "deployments": 3, "templates": 2, "triggers": 1, "computers": 9, "secrets": 4, "api_keys": 5, "projects": 4, "environments": 3, "members": 2, "invitations": 3, "groups": 6, "roles": 4, "assignments": 4}
+	expected := map[string]int{"audit_events": 1, "agents": 4, "agent_connections": 5, "sessions": 10, "deployments": 3, "templates": 2, "triggers": 1, "computers": 9, "secrets": 4, "api_keys": 5, "projects": 4, "environments": 3, "members": 2, "invitations": 3, "groups": 6, "roles": 4, "assignments": 4}
 	counts := map[string]int{}
 	seen := map[Permission]bool{}
 	for _, d := range PermissionCatalog() {
@@ -24,11 +24,16 @@ func TestPermissionCatalog(t *testing.T) {
 			scope = ScopeEnvironment
 		}
 		machine := scope != ScopeOrganization && d.ResourceType != "api_keys" && d.ResourceType != "agent_connections" && !slices.Contains([]Permission{"agents.delete", "agents.restore", "sessions.check_delivery", "sessions.abandon_delivery"}, d.ID)
-		if d.ScopeType != scope || d.APIKeyAssignable != machine {
+		scopes := []PermissionScope{scope}
+		if d.ID == PermissionAuditEventsRead {
+			scopes = []PermissionScope{ScopeOrganization, ScopeEnvironment}
+			machine = true
+		}
+		if !slices.Equal(d.ScopeTypes, scopes) || d.APIKeyAssignable != machine {
 			t.Fatalf("wrong scope or machine eligibility: %+v", d)
 		}
 	}
-	if len(seen) != 69 {
+	if len(seen) != 70 {
 		t.Fatalf("catalog size %d", len(seen))
 	}
 	for resource, count := range expected {
@@ -49,87 +54,89 @@ func TestEveryPermissionIsExactAndScopeBounded(t *testing.T) {
 	agent := env
 	agent.AgentID = uuid.NewV7().String()
 	for _, d := range PermissionCatalog() {
-		t.Run(string(d.ID), func(t *testing.T) {
-			permission := Permission(d.ID)
-			scope := env
-			if d.ScopeType == ScopeOrganization {
-				scope = Scope{OrgID: org}
-			} else if d.ScopeType == ScopeAgent {
-				scope = agent
-			}
-			grant := PermissionGrant{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, AgentID: scope.AgentID, Permission: permission}
-			p := Principal{Kind: PrincipalKindSession, OrgID: org, IsOwner: true, Grants: []PermissionGrant{grant}}
-			// The three execution actions intentionally require use on the same Agent.
-			if SessionExecutionOperation(permission) {
+		for _, scopeType := range d.ScopeTypes {
+			t.Run(string(d.ID)+"/"+string(scopeType), func(t *testing.T) {
+				permission := Permission(d.ID)
+				scope := env
+				if scopeType == ScopeOrganization {
+					scope = Scope{OrgID: org}
+				} else if scopeType == ScopeAgent {
+					scope = agent
+				}
+				grant := PermissionGrant{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, AgentID: scope.AgentID, Permission: permission}
+				p := Principal{Kind: PrincipalKindSession, OrgID: org, IsOwner: true, Grants: []PermissionGrant{grant}}
+				// The three execution actions intentionally require use on the same Agent.
+				if SessionExecutionOperation(permission) {
+					if p.HasPermission(permission, scope) {
+						t.Fatal("execution without Agent use")
+					}
+					use := grant
+					use.Permission = PermissionAgentsUse
+					p.Grants = append(p.Grants, use)
+				}
+				if !p.HasPermission(permission, scope) {
+					t.Fatal("dedicated permission denied")
+				}
+				for _, other := range AllPermissions() {
+					if other != permission && !(SessionExecutionOperation(permission) && other == PermissionAgentsUse) && p.HasPermission(other, scope) {
+						t.Errorf("implied %s", other)
+					}
+				}
+				other := scope
+				other.OrgID = uuid.NewV7()
+				if p.HasPermission(permission, other) {
+					t.Fatal("cross organization")
+				}
+				if scopeType != ScopeOrganization {
+					other = scope
+					other.EnvironmentID = uuid.NewV7().String()
+					if p.HasPermission(permission, other) {
+						t.Fatal("cross environment")
+					}
+					other = scope
+					other.ProjectID = uuid.NewV7().String()
+					if p.HasPermission(permission, other) {
+						t.Fatal("cross project")
+					}
+					if p.HasPermission(permission, Scope{OrgID: org}) {
+						t.Fatal("missing environment")
+					}
+				} else if p.HasPermission(permission, env) != SupportsScope(permission, ScopeEnvironment) {
+					t.Fatal("organization action accepted environment scope")
+				}
+				if scopeType == ScopeAgent {
+					other = scope
+					other.AgentID = uuid.NewV7().String()
+					if p.HasPermission(permission, other) || p.HasPermission(permission, env) {
+						t.Fatal("selected Agent escaped")
+					}
+					all, ids := p.AgentPermissionScope(permission, env)
+					if all || len(ids) != 1 || ids[0].String() != agent.AgentID {
+						t.Fatalf("targets: %v %v", all, ids)
+					}
+					for i := range p.Grants {
+						p.Grants[i].AgentID = ""
+					}
+					if !p.HasPermission(permission, other) {
+						t.Fatal("all Agents denied")
+					}
+				}
+				p.Kind = PrincipalKindAPIKey
+				p.ProjectID = env.ProjectID
+				p.EnvironmentID = env.EnvironmentID
+				if p.HasPermission(permission, scope) != (d.APIKeyAssignable && scopeType != ScopeOrganization) {
+					t.Fatal("machine eligibility mismatch")
+				}
+				p.EnvironmentID = uuid.NewV7().String()
 				if p.HasPermission(permission, scope) {
-					t.Fatal("execution without Agent use")
+					t.Fatal("machine borrowed another environment")
 				}
-				use := grant
-				use.Permission = PermissionAgentsUse
-				p.Grants = append(p.Grants, use)
-			}
-			if !p.HasPermission(permission, scope) {
-				t.Fatal("dedicated permission denied")
-			}
-			for _, other := range AllPermissions() {
-				if other != permission && !(SessionExecutionOperation(permission) && other == PermissionAgentsUse) && p.HasPermission(other, scope) {
-					t.Errorf("implied %s", other)
+				p.Grants = nil
+				if p.HasPermission(permission, scope) {
+					t.Fatal("owner or machine creator bypass")
 				}
-			}
-			other := scope
-			other.OrgID = uuid.NewV7()
-			if p.HasPermission(permission, other) {
-				t.Fatal("cross organization")
-			}
-			if d.ScopeType != ScopeOrganization {
-				other = scope
-				other.EnvironmentID = uuid.NewV7().String()
-				if p.HasPermission(permission, other) {
-					t.Fatal("cross environment")
-				}
-				other = scope
-				other.ProjectID = uuid.NewV7().String()
-				if p.HasPermission(permission, other) {
-					t.Fatal("cross project")
-				}
-				if p.HasPermission(permission, Scope{OrgID: org}) {
-					t.Fatal("missing environment")
-				}
-			} else if p.HasPermission(permission, env) {
-				t.Fatal("organization action accepted environment scope")
-			}
-			if d.ScopeType == ScopeAgent {
-				other = scope
-				other.AgentID = uuid.NewV7().String()
-				if p.HasPermission(permission, other) || p.HasPermission(permission, env) {
-					t.Fatal("selected Agent escaped")
-				}
-				all, ids := p.AgentPermissionScope(permission, env)
-				if all || len(ids) != 1 || ids[0].String() != agent.AgentID {
-					t.Fatalf("targets: %v %v", all, ids)
-				}
-				for i := range p.Grants {
-					p.Grants[i].AgentID = ""
-				}
-				if !p.HasPermission(permission, other) {
-					t.Fatal("all Agents denied")
-				}
-			}
-			p.Kind = PrincipalKindAPIKey
-			p.ProjectID = env.ProjectID
-			p.EnvironmentID = env.EnvironmentID
-			if p.HasPermission(permission, scope) != d.APIKeyAssignable {
-				t.Fatal("machine eligibility mismatch")
-			}
-			p.EnvironmentID = uuid.NewV7().String()
-			if p.HasPermission(permission, scope) {
-				t.Fatal("machine borrowed another environment")
-			}
-			p.Grants = nil
-			if p.HasPermission(permission, scope) {
-				t.Fatal("owner or machine creator bypass")
-			}
-		})
+			})
+		}
 	}
 }
 
@@ -160,7 +167,7 @@ func TestExecutionRequiresMatchingAgentUse(t *testing.T) {
 
 func TestStandardRolesContainOnlyExplicitCompatibleActions(t *testing.T) {
 	roles := StandardRoles()
-	if len(roles) != 16 {
+	if len(roles) != 17 {
 		t.Fatalf("roles: %d", len(roles))
 	}
 	keys := map[string]bool{}
@@ -176,7 +183,7 @@ func TestStandardRolesContainOnlyExplicitCompatibleActions(t *testing.T) {
 				t.Fatalf("invalid permission in %s: %s", role.Key, permission)
 			}
 			seen[permission] = true
-			if IsOrganizationPermission(permission) {
+			if SupportsScope(permission, ScopeOrganization) {
 				organization = true
 			} else {
 				workload = true
@@ -187,6 +194,64 @@ func TestStandardRolesContainOnlyExplicitCompatibleActions(t *testing.T) {
 		}
 		if role.Key == "agent_user" && (len(role.Permissions) != 1 || role.Permissions[0] != PermissionAgentsUse) {
 			t.Fatal("Agent User must only allow use")
+		}
+	}
+}
+
+func TestAuditScopeUsesCurrentTypedAuthority(t *testing.T) {
+	org := uuid.NewV7()
+	project := uuid.NewV7().String()
+	prod, dev := uuid.NewV7(), uuid.NewV7()
+	grant := PermissionGrant{Permission: PermissionAuditEventsRead, ProjectID: project, EnvironmentID: prod.String()}
+	p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{grant}}
+	all, ids := p.AuditScope()
+	if all || len(ids) != 1 || ids[0] != prod {
+		t.Fatalf("environment scope: %v %v", all, ids)
+	}
+	p.Grants = append(p.Grants, PermissionGrant{Permission: PermissionAuditEventsRead})
+	all, ids = p.AuditScope()
+	if !all || len(ids) != 0 {
+		t.Fatalf("organization scope: %v %v", all, ids)
+	}
+	p.Kind = PrincipalKindAPIKey
+	p.ProjectID = project
+	p.EnvironmentID = dev.String()
+	all, ids = p.AuditScope()
+	if all || len(ids) != 0 {
+		t.Fatal("key borrowed organization or foreign environment authority")
+	}
+	p.EnvironmentID = prod.String()
+	all, ids = p.AuditScope()
+	if all || len(ids) != 1 || ids[0] != prod {
+		t.Fatal("key lost its explicit environment grant")
+	}
+	p.Grants = nil
+	all, ids = p.AuditScope()
+	if all || len(ids) != 0 {
+		t.Fatal("revoked grant still visible")
+	}
+	p.Grants = []PermissionGrant{grant}
+	p.OrgID = uuid.Nil()
+	all, ids = p.AuditScope()
+	if all || len(ids) != 0 {
+		t.Fatal("unbound principal can inspect audit")
+	}
+}
+
+func TestRoleAssignmentLevelsPreserveAgentRefinement(t *testing.T) {
+	for _, tc := range []struct {
+		permissions []string
+		levels      []PermissionScope
+	}{
+		{[]string{"audit_events.read"}, []PermissionScope{ScopeOrganization, ScopeEnvironment}},
+		{[]string{"audit_events.read", "members.read"}, []PermissionScope{ScopeOrganization}},
+		{[]string{"audit_events.read", "sessions.read"}, []PermissionScope{ScopeEnvironment}},
+		{[]string{"computers.read", "sessions.read"}, []PermissionScope{ScopeEnvironment}},
+		{[]string{"members.read", "computers.read"}, []PermissionScope{}},
+		{[]string{"missing.read"}, []PermissionScope{}},
+	} {
+		if got := RoleAssignmentLevels(tc.permissions); !slices.Equal(got, tc.levels) {
+			t.Fatalf("%v: %v, want %v", tc.permissions, got, tc.levels)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -90,7 +91,7 @@ func TestPreparationUnattachedDemandWaitsForPhysicalExclusion(t *testing.T) {
 	}
 	reconcile := func() {
 		t.Helper()
-		if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+		if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -124,7 +125,7 @@ func TestPreparationUnattachedDemandExpiresWithoutAttempt(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE computers SET preparation_deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, fresh); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var settled bool
@@ -162,7 +163,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 		t.Fatalf("fresh demand preempted pending successor: %v", err)
 	}
 	for range 2 {
-		if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+		if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -184,7 +185,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	if err := dispatch.ExpireImageBuild(t.Context(), p.f.pool, p.f.env, successor); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var unchanged bool

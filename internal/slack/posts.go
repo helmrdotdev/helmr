@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
@@ -213,12 +214,12 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 // FinishPost records only this exact claim. The acknowledged revision may lag
 // desired content. A known rate rejection retains the exact request for retry;
 // every ambiguous outcome retains it for positive reconciliation, never replay.
-func FinishPost(ctx context.Context, pool db.TxBeginner, claim PostClaim, result DeliveryResult) error {
+func FinishPost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, claim PostClaim, result DeliveryResult) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		return finishPostClaim(ctx, tx, claim, result)
+		return finishPostClaim(ctx, tx, policy, claim, result)
 	})
 }
-func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result DeliveryResult) error {
+func finishPostClaim(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, claim PostClaim, result DeliveryResult) error {
 	var id uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT id FROM slack_installations WHERE id=$1 FOR NO KEY UPDATE`, claim.InstallationID).Scan(&id); err != nil {
 		return err
@@ -334,7 +335,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, claim PostClaim, result Del
 		}
 		switch result.Code {
 		case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive", "missing_scope":
-			return recordAuthorizationLoss(ctx, tx, audit.System("slack-provider"), claim.InstallationID, claim.CredentialRevision, claim.AuthorizedAt)
+			return recordAuthorizationLoss(ctx, tx, policy, audit.System("slack-provider"), claim.InstallationID, claim.CredentialRevision, claim.AuthorizedAt)
 		}
 		return nil
 	default:
@@ -373,7 +374,7 @@ func postClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim PostClai
 	return allowed, err
 }
 
-func ReconcilePost(ctx context.Context, pool db.TxBeginner, client Caller, post uuid.UUID) (bool, error) {
+func ReconcilePost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, client Caller, post uuid.UUID) (bool, error) {
 	claim, err := ClaimPost(ctx, pool, post)
 	if err != nil || claim == nil {
 		return false, err
@@ -384,17 +385,17 @@ func ReconcilePost(ctx context.Context, pool db.TxBeginner, client Caller, post 
 		if errors.As(err, &failure) {
 			result = failure.result
 		}
-		return false, FinishPost(ctx, pool, *claim, result)
+		return false, FinishPost(ctx, pool, policy, *claim, result)
 	}
 	allowed, err := postClaimAuthorized(ctx, pool, *claim)
 	if err != nil {
 		return false, err
 	}
 	if !allowed {
-		return false, FinishPost(ctx, pool, *claim, DeliveryResult{Disposition: Rejected, Code: "publication_authority_unavailable"})
+		return false, FinishPost(ctx, pool, policy, *claim, DeliveryResult{Disposition: Rejected, Code: "publication_authority_unavailable"})
 	}
 	requestCtx, cancel := context.WithDeadline(ctx, claim.ExpiresAt)
 	result := client.Call(requestCtx, claim.InstallationID, claim.CredentialRevision, claim.Method, claim.Payload)
 	cancel()
-	return true, FinishPost(ctx, pool, *claim, result)
+	return true, FinishPost(ctx, pool, policy, *claim, result)
 }

@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -18,7 +20,7 @@ type RuntimeTurnObservation struct {
 
 // RuntimeObserveTurn reads one attributable outcome under the current caller's
 // execution authority. It does not grant the caller the target's unrelated history.
-func RuntimeObserveTurn(ctx context.Context, pool db.TxBeginner, caller Caller, session, turn uuid.UUID) (RuntimeTurnObservation, error) {
+func RuntimeObserveTurn(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, session, turn uuid.UUID) (RuntimeTurnObservation, error) {
 	var result RuntimeTurnObservation
 	if caller.Kind != "session" || session == uuid.Nil() || turn == uuid.Nil() {
 		return result, ErrDenied
@@ -55,8 +57,14 @@ func RuntimeObserveTurn(ctx context.Context, pool db.TxBeginner, caller Caller, 
 				result.WaitBlocked = "capacity_wait_blocked"
 			}
 		}
+		if len(result.Result) > 0 || len(result.Response) > 0 || result.Error != nil {
+			return auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsRead, audit.Event{EnvironmentID: caller.Execution.EnvironmentID, SessionID: session, TurnID: turn, Action: "session.content_read", TargetKind: "session", TargetID: session, Details: audit.LifecycleDetails{}})
+		}
 		return nil
 	})
+	if err != nil {
+		return RuntimeTurnObservation{}, hideMissing(err)
+	}
 	return result, hideMissing(err)
 }
 

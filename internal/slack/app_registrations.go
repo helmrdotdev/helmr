@@ -90,6 +90,11 @@ func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.A
 		if err := lockRegistrationManager(ctx, tx, org, user, registration, auth.PermissionAgentConnectionsUpdateCredentials); err != nil {
 			return err
 		}
+		verified, proofErr := registrationAuditActor(ctx, tx, actor, org, user, registration)
+		if proofErr != nil {
+			return proofErr
+		}
+		actor = verified
 		var client *string
 		var revision int64
 		err := tx.QueryRow(ctx, `SELECT client_id,credential_revision FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND transport=$3 AND retired_at IS NULL FOR NO KEY UPDATE`, registration, org, s.mode).Scan(&client, &revision)
@@ -111,7 +116,7 @@ func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.A
 		if err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, Action: "slack_app.credentials_configured", TargetKind: "slack_app_registration", TargetID: registration})
+		return audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, OrgID: org, Action: "slack_app.credentials_configured", TargetKind: "slack_app_registration", TargetID: registration})
 	})
 }
 

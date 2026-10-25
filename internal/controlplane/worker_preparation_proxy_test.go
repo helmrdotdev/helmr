@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -25,7 +26,7 @@ import (
 func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testing.T) {
 	f, executor := preparationTransportFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1`, f.Worker)
-	store, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+	store, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}

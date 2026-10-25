@@ -3,6 +3,7 @@ package session_test
 import (
 	"bytes"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -38,7 +39,7 @@ func TestHostEnrollmentRetainsLostResourceCustody(t *testing.T) {
 				t.Fatal(err)
 			}
 			request := workergroup.Enrollment{TokenHash: make([]byte, 32), PoolName: "pool", ResourceID: "host"}
-			if _, err := workergroup.EnrollHost(t.Context(), f.pool, cfg, request); !errors.Is(err, workergroup.ErrHostCustody) {
+			if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, request); !errors.Is(err, workergroup.ErrHostCustody) {
 				t.Fatalf("lost resource enrollment: %v", err)
 			}
 			q := db.New(f.pool)
@@ -48,13 +49,13 @@ func TestHostEnrollmentRetainsLostResourceCustody(t *testing.T) {
 			}
 			other := request
 			other.ResourceID = "unrelated-host"
-			if _, err := workergroup.EnrollHost(t.Context(), f.pool, cfg, other); err != nil {
+			if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, other); err != nil {
 				t.Fatalf("custody blocked a different physical resource: %v", err)
 			}
 			if err := confirmComputerHostAbsent(t.Context(), f.fixture, f.worker); err != nil {
 				t.Fatal(err)
 			}
-			registered, err := workergroup.EnrollHost(t.Context(), f.pool, cfg, request)
+			registered, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, request)
 			if err != nil || registered.HostID == f.worker || registered.HostID == uuid.Nil() {
 				t.Fatalf("fresh enrollment after physical absence: %v", err)
 			}

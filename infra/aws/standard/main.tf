@@ -145,13 +145,18 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
-  ingress_mode               = "public"
-  slack_transport            = var.slack_transport
-  controlplane_environment   = var.controlplane_environment
-  capacity_token_secret_arn  = var.capacity_token_secret_arn
-  capacity_token_kms_key_arn = var.capacity_token_kms_key_arn
-  enable_deployment_rollback = var.enable_deployment_rollback
-  source                     = "../modules/controlplane"
+  audit_retention_seconds           = var.audit_retention_seconds
+  audit_purge_interval_minutes      = var.audit_purge_interval_minutes
+  audit_maintenance_timeout_seconds = var.audit_maintenance_timeout_seconds
+  audit_purge_max_batches           = var.audit_purge_max_batches
+  audit_maintenance_alarm_actions   = var.audit_maintenance_alarm_actions
+  ingress_mode                      = "public"
+  slack_transport                   = var.slack_transport
+  controlplane_environment          = var.controlplane_environment
+  capacity_token_secret_arn         = var.capacity_token_secret_arn
+  capacity_token_kms_key_arn        = var.capacity_token_kms_key_arn
+  enable_deployment_rollback        = var.enable_deployment_rollback
+  source                            = "../modules/controlplane"
 
   name                                       = var.name
   vpc_id                                     = module.controlplane_network.vpc_id

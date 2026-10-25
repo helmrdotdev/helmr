@@ -17,14 +17,14 @@ import (
 // Command admission uses Org's Environment gate. Dispatch composes Command and
 // Session failure transitions atomically when an execution admission expires.
 var ownerImports = map[string][]string{
-	"agent":       {"session", "slack", "slackroute", "computer", "org", "workergroup"},
-	"computer":    {"secret", "workergroup"},
-	"session":     {"computer", "slackroute", "secret", "org", "workergroup"},
-	"dispatch":    {"session", "command", "computer", "secret", "org", "workergroup"},
+	"agent":       {"audit", "session", "slack", "slackroute", "computer", "org", "workergroup"},
+	"computer":    {"audit", "secret", "workergroup"},
+	"session":     {"audit", "computer", "slackroute", "secret", "org", "workergroup"},
+	"dispatch":    {"audit", "session", "command", "computer", "secret", "org", "workergroup"},
 	"slack":       {"session", "slackroute", "computer", "audit", "workergroup"},
 	"slackroute":  {},
 	"deployment":  {"agent", "computer", "slack", "slackroute", "session", "org", "audit"},
-	"command":     {"computer", "secret", "workergroup", "org"},
+	"command":     {"audit", "computer", "secret", "workergroup", "org"},
 	"identity":    {"org", "audit"},
 	"org":         {"audit"},
 	"secret":      {"audit"},

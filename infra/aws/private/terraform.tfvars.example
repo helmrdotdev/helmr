@@ -100,3 +100,6 @@ worker_computer_devices = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
 # ENVIRONMENT_ADMISSION_RATE_PER_SECOND
 # ENVIRONMENT_ADMISSION_BURST
 # ENVIRONMENT_PREPARATION_TIMEOUT_MS
+
+# Choose finite audit retention explicitly before deployment.
+audit_retention_seconds = 7776000

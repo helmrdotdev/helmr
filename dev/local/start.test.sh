@@ -36,6 +36,8 @@ configure_stack() {
   # Lifecycle checks never touch object storage; the closed endpoint keeps it so.
   export CAS_URI="s3://helmr-dev-test-cas?endpoint=http://127.0.0.1:9"
   export PLATFORM_STORE_URI="s3://helmr-dev-test-platform?endpoint=http://127.0.0.1:9"
+  export AUDIT_RETENTION_SECONDS=3600
+  unset DATABASE_MIGRATION_URL DATABASE_AUDIT_MAINTENANCE_URL
   unset DATABASE_URL CLICKHOUSE_URL DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH
   unset CONTROL_PLANE_ADDR HELMR_DEV_BACKEND_URL
   helmr_dev_init "${ROOT}"

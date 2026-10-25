@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"strings"
 	"sync"
@@ -44,7 +45,7 @@ func preparationFixtureFor(t *testing.T, resident fixture) preparationFixture {
 	t.Helper()
 	f := preparationFixture{fixture: resident}
 	var err error
-	f.secrets, err = secret.New(db.New(f.pool), f.pool, bytes.Repeat([]byte{17}, 32))
+	f.secrets, err = secret.New(db.New(f.pool), f.pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T
 	if _, err := f.secrets.Rotate(t.Context(), audit.System("test-fixture"), f.env, f.secretID, []byte("v2"), "rotate-2"); err != nil {
 		t.Fatal(err)
 	}
-	exposed, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref)
+	exposed, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref)
 	if err != nil || len(exposed) != 2 || exposed[0].Version != 2 || exposed[0].VersionID != exposed[1].VersionID {
 		t.Fatalf("exposure: %+v %v", exposed, err)
 	}
@@ -185,14 +186,14 @@ func TestPreparationExposurePinsBeforeDeliveryAndNeverSwapsVersions(t *testing.T
 	if _, err = f.secrets.Rotate(t.Context(), audit.System("test-fixture"), f.env, f.secretID, []byte("v3"), "rotate-3"); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref)
+	replay, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref)
 	if err != nil || len(replay) != 2 || replay[0].VersionID != exposed[0].VersionID {
 		t.Fatalf("retry replaced pins: %+v %v", replay, err)
 	}
 	if _, err = f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if values, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) || values != nil {
+	if values, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) || values != nil {
 		t.Fatalf("revoked exposure: %+v %v", values, err)
 	}
 }
@@ -211,7 +212,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
 	ref := f.claim(t, p)
-	values, err := computer.RecordImageBuildExposure(t.Context(), failedPreparationCommit{f.pool}, *f.host(), ref)
+	values, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, failedPreparationCommit{f.pool}, *f.host(), ref)
 	if !errors.Is(err, errPreparationCommit) || values != nil {
 		t.Fatalf("failed commit released material: %+v %v", values, err)
 	}
@@ -228,7 +229,7 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), blocker, `SELECT id FROM image_specs WHERE environment_id=$1 AND id=$2 FOR UPDATE`, f.env, f.deployment)
 	done := make(chan error, 1)
 	go func() {
-		values, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref)
+		values, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref)
 		if values != nil {
 			err = errors.New("expired operation returned material")
 		}
@@ -267,7 +268,7 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 				ref = f.claim(t, p)
 			}
 			if kind == "revoked" {
-				if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+				if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke"); err != nil {
@@ -329,14 +330,18 @@ func TestPreparationProviderAbsenceAndHostRecoveryRequirePhysicalProof(t *testin
 		if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, p.ID); err != nil {
 			t.Fatal(err)
 		}
-		if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{ref.InstanceID}); err != nil {
+		if err := dispatch.ObserveRecoveredHost(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, host, []uuid.UUID{ref.InstanceID}); err != nil {
 			t.Fatal(err)
 		}
 		var stopped bool
 		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || stopped {
 			t.Fatalf("quarantine inferred stop=%v: %v", stopped, err)
 		}
-		if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
+		if err := dispatch.ObserveRecoveredHost(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, host, []uuid.UUID{}); err != nil {
 			t.Fatal(err)
 		}
 		if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NOT NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&stopped); err != nil || !stopped {
@@ -353,12 +358,12 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	sessionID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1))`, f.env, sessionID, f.agent, f.deployment, computerID)
 	request := session.EnqueueRequest{EnvironmentID: f.env, SessionID: sessionID, IdempotencyKey: "pending", Input: []byte(`[{"type":"text","text":"{\"input\":1}"}]`)}
-	admitted, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), request)
+	admitted, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET preparation_deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, computerID)
-	if _, more, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil || more {
+	if _, more, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil || more {
 		t.Fatalf("lifecycle more=%v: %v", more, err)
 	}
 	var state, lifecycle string
@@ -366,11 +371,11 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	if err = f.pool.QueryRow(t.Context(), `SELECT t.status,t.started_at IS NOT NULL,s.status,c.preparation_failed_at IS NOT NULL FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id) WHERE t.environment_id=$1 AND t.id=$2`, f.env, admitted.TurnID).Scan(&state, &started, &lifecycle, &failed); err != nil || state != "failed" || started || lifecycle != "closed" || !failed {
 		t.Fatalf("turn=%s started=%v session=%s failed=%v: %v", state, started, lifecycle, failed, err)
 	}
-	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), request); err != nil {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), request); err != nil {
 		t.Fatalf("original admission identity disappeared: %v", err)
 	}
 	request.IdempotencyKey = "new"
-	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), request); !errors.Is(err, session.ErrNotReady) {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), request); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("failed Computer admitted new work: %v", err)
 	}
 	// Failing a waiter never claims its shared preparation writer stopped.
@@ -381,7 +386,7 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 	if _, err = computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); err != nil {
 		t.Fatalf("waiter failure rewrote shared executor: %v", err)
 	}
-	if err = session.ExpireImageWaiter(t.Context(), f.pool, f.env, computerID); err != nil {
+	if err = session.ExpireImageWaiter(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, computerID); err != nil {
 		t.Fatal(err)
 	}
 	var events int
@@ -393,13 +398,13 @@ func TestPreparationLifecycleConvergesRevocationWithoutGuestConnection(t *testin
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
 	ref := f.claim(t, p)
-	if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if _, more, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil || more {
+	if _, more, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil || more {
 		t.Fatalf("lifecycle more=%v: %v", more, err)
 	}
 	var code string
@@ -415,7 +420,7 @@ func TestPreparationUnclaimedExecutorOperationsAreDenied(t *testing.T) {
 	for name, operation := range map[string]func() error{
 		"renew": func() error { _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); return err },
 		"expose": func() error {
-			_, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref)
+			_, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref)
 			return err
 		},
 		"fail": func() error { return computer.FailImageBuild(t.Context(), f.pool, *f.host(), ref, "failed") },
@@ -464,7 +469,9 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 	ref := f.claim(t, p)
 	host := recoveringComputerHost(t, f.fixture)
 	// Remove the fixture Computer's blocker so the preparation is the only custody.
-	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{ref.InstanceID}); err != nil {
+	if err := dispatch.ObserveRecoveredHost(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, host, []uuid.UUID{ref.InstanceID}); err != nil {
 		t.Fatal(err)
 	}
 	q := db.New(f.pool)
@@ -503,10 +510,12 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 		t.Fatal(err)
 	}
 	enrollment := workergroup.Enrollment{TokenHash: make([]byte, 32), PoolName: "pool", ResourceID: "host"}
-	if _, err := workergroup.EnrollHost(t.Context(), f.pool, cfg, enrollment); !errors.Is(err, workergroup.ErrHostCustody) {
+	if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment); !errors.Is(err, workergroup.ErrHostCustody) {
 		t.Fatalf("custody credential replacement: %v", err)
 	}
-	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
+	if err := dispatch.ObserveRecoveredHost(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, host, []uuid.UUID{}); err != nil {
 		t.Fatal(err)
 	}
 	assertCustody(0)
@@ -514,7 +523,7 @@ func TestPreparationOnlyHostCustodyBlocksActivationAndEnrollment(t *testing.T) {
 	if _, err := q.CompleteWorkerStartupRecovery(t.Context(), recovery); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := workergroup.EnrollHost(t.Context(), f.pool, cfg, enrollment); err != nil {
+	if _, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment); err != nil {
 		t.Fatalf("fenced preparation blocked enrollment: %v", err)
 	}
 	if _, err := q.ActivateWorkerHost(t.Context(), activation); err != nil {
@@ -530,7 +539,9 @@ func TestPreparationAllocationCommitPrecedesEnrollmentCustodyCheck(t *testing.T)
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	a, err := dispatch.NewAllocator(tx, bytes.Repeat([]byte{19}, 32), nil)
+	a, err := dispatch.NewAllocator(tx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, bytes.Repeat([]byte{19}, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -544,7 +555,7 @@ func TestPreparationAllocationCommitPrecedesEnrollmentCustodyCheck(t *testing.T)
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := workergroup.EnrollHost(t.Context(), f.pool, cfg, workergroup.Enrollment{TokenHash: make([]byte, 32), PoolName: "pool", ResourceID: "host"})
+		_, err := workergroup.EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, workergroup.Enrollment{TokenHash: make([]byte, 32), PoolName: "pool", ResourceID: "host"})
 		done <- err
 	}()
 	until := time.Now().Add(5 * time.Second)
@@ -583,7 +594,7 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 			if kind == "host" {
 				host = recoveringComputerHost(t, f.fixture)
 			} else {
-				if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, host, ref); err != nil {
+				if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, host, ref); err != nil {
 					t.Fatal(err)
 				}
 				if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, ""); err != nil {
@@ -598,7 +609,9 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 				if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, p.ID); err != nil {
 					t.Fatal(err)
 				}
-				if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
+				if err := dispatch.ObserveRecoveredHost(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, host, []uuid.UUID{}); err != nil {
 					t.Fatal(err)
 				}
 			} else {

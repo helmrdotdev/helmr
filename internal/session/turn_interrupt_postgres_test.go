@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 
@@ -24,11 +25,11 @@ func TestExactInterruptRetainsProcessAndRequiresStopAcknowledgement(t *testing.T
 	}
 	request := controlRequest(f, "turn_interrupt", "stop")
 	request.TurnID = first.TurnID
-	receipt, err := session.ControlSession(t.Context(), f.pool, f.caller(), request)
+	receipt, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	retry, err := session.ControlSession(t.Context(), f.pool, f.caller(), request)
+	retry, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), request)
 	if err != nil || receipt != retry {
 		t.Fatalf("retry: %+v %v", retry, err)
 	}
@@ -65,14 +66,14 @@ func TestExactInterruptRetainsProcessAndRequiresStopAcknowledgement(t *testing.T
 	if err != nil || dispatched.TurnID != next.TurnID {
 		t.Fatalf("next: %+v %v", dispatched, err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), request); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), request); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, next.TurnID).Scan(&status); err != nil || status != "running" {
 		t.Fatalf("retry changed successor: %s %v", status, err)
 	}
 	request.TurnID = next.TurnID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), request); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), request); err != nil {
 		t.Fatalf("same key another exact target: %v", err)
 	}
 }
@@ -83,7 +84,7 @@ func TestInterruptStopDeadlineSurvivesResumeAndReattachment(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	hold, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
+	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestInterruptStopDeadlineSurvivesResumeAndReattachment(t *testing.T) {
 	}
 	resume := controlRequest(f, "resume", "resume")
 	resume.HoldID = hold.HoldID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
 	e := f.execution()
@@ -109,7 +110,9 @@ func TestInterruptStopDeadlineSurvivesResumeAndReattachment(t *testing.T) {
 		t.Fatalf("deadline changed: %v %v %v", before, after, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET stop_deadline_at=clock_timestamp()-interval '1 second' WHERE session_id=$1`, f.session)
-	if err := session.ReconcileProcessStopDeadline(t.Context(), f.pool, f.env, f.session); err != nil {
+	if err := session.ReconcileProcessStopDeadline(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -129,7 +132,7 @@ func TestExactInterruptRejectsStateAndPreservesOwnedChildren(t *testing.T) {
 	queued := f.enqueue(t, "first")
 	request := controlRequest(f, "turn_interrupt", "stop")
 	request.TurnID = queued.TurnID
-	_, err := session.ControlSession(t.Context(), f.pool, f.caller(), request)
+	_, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), request)
 	var rejection session.TurnNotInterruptibleError
 	if !errors.As(err, &rejection) || rejection.Status != "queued" || rejection.Reason() != "not_started" {
 		t.Fatalf("queued rejection: %v", err)
@@ -143,7 +146,7 @@ func TestExactInterruptRejectsStateAndPreservesOwnedChildren(t *testing.T) {
 	if _, err := recordResultForTest(t.Context(), f.pool, f.execution(), queued.TurnID, []byte(`null`), "joined"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = session.ControlSession(t.Context(), f.pool, f.caller(), request)
+	_, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), request)
 	if !errors.As(err, &rejection) || rejection.Status != "completed" || rejection.Reason() != "already_terminal" {
 		t.Fatalf("finalizing rejection: %v", err)
 	}
@@ -165,7 +168,7 @@ func TestInterruptSetupRejectsStaleReadyAndRetainsQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "setup"))
+	receipt, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "setup"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +177,7 @@ func TestInterruptSetupRejectsStaleReadyAndRetainsQueue(t *testing.T) {
 	}
 	resume := controlRequest(f, "resume", "resume")
 	resume.HoldID = receipt.HoldID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
 	e := f.execution()
@@ -194,7 +197,7 @@ func TestInterruptSetupRejectsStaleReadyAndRetainsQueue(t *testing.T) {
 	if _, err := session.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, attachment.Sequence); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("shutdown acknowledgement allowed startup: %v", err)
 	}
-	view, err := session.GetSession(t.Context(), f.pool, f.caller(), f.env, f.session)
+	view, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session)
 	if err != nil || view.Activity.Process == nil || view.Activity.Process.Stop == nil || view.Activity.Process.Stop.TurnID != nil {
 		t.Fatalf("setup observation: %+v %v", view.Activity, err)
 	}

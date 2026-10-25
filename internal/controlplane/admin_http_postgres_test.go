@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -35,7 +36,7 @@ func newSupplyHTTPFixture(t *testing.T) httpPostgresFixture {
 // session token.
 func (f httpPostgresFixture) adminSession(t *testing.T) string {
 	t.Helper()
-	token, err := identity.SignIn(t.Context(), f.pool, identity.NewConfig(f.keys, identity.Lifetimes{}, []string{supplyAdminEmail}), identity.ExternalIdentity{
+	token, err := identity.SignIn(t.Context(), f.pool, identity.NewConfig(f.keys, identity.Lifetimes{}, []string{supplyAdminEmail}, auditpolicy.Policy{RetentionSeconds: 3600}), identity.ExternalIdentity{
 		Provider: "github", Subject: "supply-admin", DisplayName: "Administrator",
 		Email: supplyAdminEmail, EmailVerified: true,
 	})

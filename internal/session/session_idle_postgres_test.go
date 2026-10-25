@@ -3,6 +3,7 @@ package session_test
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -49,7 +50,7 @@ func TestSessionIdleClosesOnlyContinuouslyQuiescentSession(t *testing.T) {
 	if err := session.ReconcileSessionIdle(ctx, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ReconcileSessionClosure(ctx, f.pool, f.env, f.session); err != nil {
+	if err := session.ReconcileSessionClosure(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
 	var stopping bool
@@ -63,24 +64,24 @@ func TestStartSnapshotsIdlePolicyAndRejectsKeyedMismatch(t *testing.T) {
 	key := "retained"
 	req := f.startRequest("first")
 	req.SessionKey = &key
-	a, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+	a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil || a.CloseAfterIdleMs == nil || *a.CloseAfterIdleMs != lifetime.DefaultMilliseconds {
 		t.Fatalf("default: %+v %v", a, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET close_after_idle_never=true WHERE environment_id=$1`, f.env)
 	req.IdempotencyKey = "first"
-	b, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+	b, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil || b.SessionID != a.SessionID || !sameLifetime(a.CloseAfterIdleMs, b.CloseAfterIdleMs) {
 		t.Fatalf("redeployment changed policy: %+v %v", b, err)
 	}
 	req.IdempotencyKey = "mismatch"
 	req.CloseAfterIdle = lifetime.Policy{Set: true}
-	if _, err = session.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("keyed mismatch: %v", err)
 	}
 	req.SessionKey = nil
 	req.IdempotencyKey = "never"
-	c, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+	c, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil || c.CloseAfterIdleMs != nil {
 		t.Fatalf("explicit never: %+v %v", c, err)
 	}
@@ -198,7 +199,7 @@ func TestSessionIdleScanSkipsFutureQuietClock(t *testing.T) {
 	}
 	scan, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
-	if _, _, err := session.ReconcileSessionLifecycle(scan, f.pool, session.SessionLifecyclePosition{}); err != nil {
+	if _, _, err := session.ReconcileSessionLifecycle(scan, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatalf("future quiet clock unnecessarily locked: %v", err)
 	}
 }
@@ -206,7 +207,7 @@ func TestSessionIdleScanSkipsFutureQuietClock(t *testing.T) {
 func TestStartPinsSuspensionPolicyAcrossDeploymentPromotion(t *testing.T) {
 	f := newAdmissionFixture(t)
 	ctx := t.Context()
-	first, err := session.Start(ctx, f.pool, nil, f.caller(), f.startRequest("manual"))
+	first, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("manual"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,11 +216,11 @@ func TestStartPinsSuspensionPolicyAcrossDeploymentPromotion(t *testing.T) {
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension) SELECT environment_id,agent_id,$3,template_id,has_init,'after_turn' FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, promoted)
-	second, err := session.Start(ctx, f.pool, nil, f.caller(), f.startRequest("after-turn"))
+	second, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("after-turn"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := session.Start(ctx, f.pool, nil, f.caller(), f.startRequest("manual"))
+	replay, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("manual"))
 	if err != nil || replay.SessionID != first.SessionID {
 		t.Fatalf("replay: %+v %v", replay, err)
 	}
@@ -227,7 +228,7 @@ func TestStartPinsSuspensionPolicyAcrossDeploymentPromotion(t *testing.T) {
 		id     uuid.UUID
 		policy string
 	}{{first.SessionID, "manual"}, {second.SessionID, "after_turn"}} {
-		got, err := session.GetSession(ctx, f.pool, f.caller(), f.env, want.id)
+		got, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, want.id)
 		if err != nil || got.Suspension != want.policy {
 			t.Fatalf("policy = %q, want %q: %v", got.Suspension, want.policy, err)
 		}

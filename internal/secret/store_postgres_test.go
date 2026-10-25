@@ -2,6 +2,7 @@ package secret
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"uuid"
@@ -21,7 +22,7 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	environmentID := seedSecretEnvironment(t, database.Pool)
-	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32))
+	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +143,7 @@ func TestSecretMutationConcurrentRetriesAndEnvironmentScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := seedSecretEnvironment(t, database.Pool)
-	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32))
+	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +271,7 @@ func TestSecretDistinctConcurrentMutationsDoNotUpgradeForeignKeyLocks(t *testing
 		t.Fatal(err)
 	}
 	env := seedSecretEnvironment(t, database.Pool)
-	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32))
+	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}

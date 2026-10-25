@@ -2,6 +2,7 @@ package workergroup
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"testing"
 	"uuid"
@@ -16,7 +17,7 @@ import (
 func TestCreateGroupPostgres(t *testing.T) {
 	f := newSupplyFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO regions (id, display_name) VALUES ('us-west-2', 'West')`)
-	created, err := CreateGroup(t.Context(), f.pool, audit.System("test-fixture"), GroupInput{RegionID: "us-west-2", Name: "second", Description: "  runs  "})
+	created, err := CreateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), GroupInput{RegionID: "us-west-2", Name: "second", Description: "  runs  "})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,16 +37,16 @@ func TestCreateGroupPostgres(t *testing.T) {
 
 	var conflicting ConflictError
 	for _, duplicate := range []GroupInput{{RegionID: "us-west-2", Name: "second"}, {RegionID: fixtureRegionID, Name: "another-active"}} {
-		if _, err := CreateGroup(t.Context(), f.pool, audit.System("test-fixture"), duplicate); !errors.As(err, &conflicting) {
+		if _, err := CreateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), duplicate); !errors.As(err, &conflicting) {
 			t.Fatalf("CreateGroup(%+v) error = %v, want ConflictError", duplicate, err)
 		}
 	}
-	if _, err := CreateGroup(t.Context(), f.pool, audit.System("test-fixture"), GroupInput{RegionID: "missing", Name: "third"}); !errors.Is(err, region.ErrNotFound) {
+	if _, err := CreateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), GroupInput{RegionID: "missing", Name: "third"}); !errors.Is(err, region.ErrNotFound) {
 		t.Fatalf("missing region error = %v", err)
 	}
 	var input InputError
 	for _, bad := range []GroupInput{{RegionID: " padded ", Name: "third"}, {RegionID: fixtureRegionID, Name: "Upper"}} {
-		if _, err := CreateGroup(t.Context(), f.pool, audit.System("test-fixture"), bad); !errors.As(err, &input) {
+		if _, err := CreateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), bad); !errors.As(err, &input) {
 			t.Fatalf("CreateGroup(%+v) error = %v, want InputError", bad, err)
 		}
 	}
@@ -75,10 +76,10 @@ func TestGroupReadsAndUpdatesPostgres(t *testing.T) {
 	if _, err := UpdateGroupDescription(t.Context(), f.q, missing, ""); !errors.Is(err, ErrGroupNotFound) {
 		t.Fatalf("UpdateGroupDescription missing error = %v", err)
 	}
-	if _, err := RotateGroupToken(t.Context(), f.pool, audit.System("test-fixture"), missing); !errors.Is(err, ErrGroupNotFound) {
+	if _, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), missing); !errors.Is(err, ErrGroupNotFound) {
 		t.Fatalf("RotateGroupToken missing error = %v", err)
 	}
-	token, err := RotateGroupToken(t.Context(), f.pool, audit.System("test-fixture"), f.groupID())
+	token, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID())
 	if err != nil || !strings.HasPrefix(token, auth.EnrollmentTokenPrefix) {
 		t.Fatalf("RotateGroupToken = %q, %v", token, err)
 	}
@@ -86,22 +87,22 @@ func TestGroupReadsAndUpdatesPostgres(t *testing.T) {
 
 func TestGroupTransitionsPostgres(t *testing.T) {
 	f := newSupplyFixture(t)
-	paused, err := PauseGroup(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), f.group.ClaimVersion)
+	paused, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), f.group.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if paused.Status != db.WorkerGroupStatusPaused || paused.ClaimVersion != f.group.ClaimVersion+1 || !paused.TransitionApplied {
 		t.Fatalf("paused = %+v", paused)
 	}
-	replay, err := PauseGroup(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), f.group.ClaimVersion)
+	replay, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), f.group.ClaimVersion)
 	if err != nil || replay.TransitionApplied || replay.ClaimVersion != paused.ClaimVersion {
 		t.Fatalf("pause replay = %+v, %v", replay, err)
 	}
 	var conflicting ConflictError
-	if _, err := ActivateGroup(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), f.group.ClaimVersion); !errors.As(err, &conflicting) {
+	if _, err := ActivateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), f.group.ClaimVersion); !errors.As(err, &conflicting) {
 		t.Fatalf("stale activation error = %v, want ConflictError", err)
 	}
-	activated, err := ActivateGroup(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), paused.ClaimVersion)
+	activated, err := ActivateGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), paused.ClaimVersion)
 	if err != nil || activated.Status != db.WorkerGroupStatusActive {
 		t.Fatalf("activated = %+v, %v", activated, err)
 	}
@@ -109,14 +110,14 @@ func TestGroupTransitionsPostgres(t *testing.T) {
 	if err != nil || status.ClaimVersion != activated.ClaimVersion || status.Status != db.WorkerGroupStatusActive {
 		t.Fatalf("ReadGroupStatus = %+v, %v", status, err)
 	}
-	if _, err := DisableGroup(t.Context(), f.pool, audit.System("test-fixture"), uuid.NewV7(), 1); !errors.Is(err, ErrGroupNotFound) {
+	if _, err := DisableGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), uuid.NewV7(), 1); !errors.Is(err, ErrGroupNotFound) {
 		t.Fatalf("missing group transition error = %v", err)
 	}
 	if _, err := ReadGroupStatus(t.Context(), f.q, uuid.NewV7()); !errors.Is(err, ErrGroupNotFound) {
 		t.Fatalf("missing group status error = %v", err)
 	}
 	var input InputError
-	if _, err := DisableGroup(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), 0); !errors.As(err, &input) {
+	if _, err := DisableGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), 0); !errors.As(err, &input) {
 		t.Fatalf("zero claim version error = %v, want InputError", err)
 	}
 }
@@ -147,7 +148,7 @@ func TestGroupDrainClearsPrimaryPoolPostgres(t *testing.T) {
 		t.Fatalf("primary after replacement seal = %+v, %v", afterReplacementSeal, err)
 	}
 
-	status, err := BeginGroupDrain(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), group.ClaimVersion)
+	status, err := BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), group.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,11 +159,11 @@ func TestGroupDrainClearsPrimaryPoolPostgres(t *testing.T) {
 	if draining.Status != db.WorkerGroupStatusDraining || draining.ClaimVersion != group.ClaimVersion+1 || draining.PrimaryPoolID.Valid {
 		t.Fatalf("draining group = %+v", draining)
 	}
-	replay, err := BeginGroupDrain(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), group.ClaimVersion)
+	replay, err := BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), group.ClaimVersion)
 	if err != nil || replay.Status != db.WorkerGroupStatusDraining || replay.ClaimVersion != draining.ClaimVersion || replay.TransitionApplied {
 		t.Fatalf("group drain replay = %+v, %v", replay, err)
 	}
-	_, drained, err := DrainPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, pool.ClaimVersion)
+	_, drained, err := DrainPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, pool.ClaimVersion)
 	if err != nil || drained.Status != "draining" || drained.ClaimVersion != pool.ClaimVersion+1 {
 		t.Fatalf("drained pool = %+v, %v", drained, err)
 	}
@@ -183,14 +184,14 @@ func TestHostStatusPostgres(t *testing.T) {
 	if _, err := ReadHostStatus(t.Context(), f.q, f.groupID(), " "); !errors.As(err, &input) {
 		t.Fatalf("empty resource ID error = %v, want InputError", err)
 	}
-	if _, err := MarkHostLost(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), "host-1", 0); !errors.As(err, &input) {
+	if _, err := MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), "host-1", 0); !errors.As(err, &input) {
 		t.Fatalf("zero claim version error = %v, want InputError", err)
 	}
 	var conflicting ConflictError
-	if _, err := MarkHostLost(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), "host-1", status.ClaimVersion+1); !errors.As(err, &conflicting) {
+	if _, err := MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), "host-1", status.ClaimVersion+1); !errors.As(err, &conflicting) {
 		t.Fatalf("stale loss error = %v, want ConflictError", err)
 	}
-	lost, err := MarkHostLost(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), "host-1", status.ClaimVersion)
+	lost, err := MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), "host-1", status.ClaimVersion)
 	if err != nil || lost.Status != "lost" || lost.ClaimVersion != status.ClaimVersion+1 || !lost.TransitionApplied {
 		t.Fatalf("MarkHostLost = %+v, %v", lost, err)
 	}

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"log/slog"
 	"net/http"
@@ -128,11 +129,11 @@ func runningComputerCommand(t *testing.T, f sessiontest.Fixture) (uuid.UUID, uui
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1`, f.Worker)
-	created, err := command.Create(t.Context(), f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{Kind: string(auth.PrincipalKindSession), ID: uuid.NewV7(), UserID: f.User}, Argv: []string{"true"}, IdempotencyKey: "race"})
+	created, err := command.Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, command.CreateRequest{OrgID: org, ProjectID: project, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: command.Creator{Kind: string(auth.PrincipalKindSession), ID: uuid.NewV7(), UserID: f.User}, Argv: []string{"true"}, IdempotencyKey: "race"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := command.Claim(t.Context(), f.Pool, workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}, command.ClaimRequest{EnvironmentID: f.Environment, InstanceID: f.Computer, WriterGeneration: 1})
+	claimed, err := command.Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}, command.ClaimRequest{EnvironmentID: f.Environment, InstanceID: f.Computer, WriterGeneration: 1})
 	if err != nil || claimed.Start == nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -194,7 +195,7 @@ func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {
 			if test.stopping {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET status='stopping',cancel_requested_at=now() WHERE id=$1`, command)
 			}
-			server := &Server{db: db.New(f.Pool), tx: f.Pool, diagnosticDB: f.Pool, diagnosticBounds: completeServerConfig(t).DiagnosticBounds, secretDelivery: emptyTestSecretDelivery{}}
+			server := &Server{auditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}, db: db.New(f.Pool), tx: f.Pool, diagnosticDB: f.Pool, diagnosticBounds: completeServerConfig(t).DiagnosticBounds, secretDelivery: emptyTestSecretDelivery{}}
 			race := newWorkerClaimsRace(t, f, server, map[string]http.HandlerFunc{test.path: test.handler(server)}, map[string]func(context.Context) error{test.path: drainWorkerHost(f)})
 			test.call(t, f, race.client, command, instance, generation)
 			race.requireReplayed(t, test.path)

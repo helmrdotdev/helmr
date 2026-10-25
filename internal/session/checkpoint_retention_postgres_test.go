@@ -1,6 +1,7 @@
 package session_test
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -78,7 +79,9 @@ func TestCheckpointRetentionPreservesConsumedManifestAfterUnpinning(t *testing.T
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f.f, f.host, p)
-	if err := session.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err := session.CompleteComputerRestore(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='target physical closure' WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3`, f.f.env, f.f.computer, f.epoch)

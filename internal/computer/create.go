@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"uuid"
 
@@ -19,9 +21,14 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-type Creator struct{ ca TrustIssuer }
+type Creator struct {
+	ca          TrustIssuer
+	auditPolicy auditpolicy.Policy
+}
 
-func NewCreator(ca TrustIssuer) Creator { return Creator{ca: ca} }
+func NewCreator(ca TrustIssuer, policy auditpolicy.Policy) Creator {
+	return Creator{ca: ca, auditPolicy: policy}
+}
 
 type Request struct {
 	Principal         auth.Principal
@@ -76,7 +83,8 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 		if err := tx.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 FOR NO KEY UPDATE`, request.Scope.EnvironmentID, request.Scope.OrgID, request.Scope.ProjectID).Scan(&deployment); err != nil {
 			return err
 		}
-		if err := authorizeOperation(ctx, tx, request.Principal, request.Scope, auth.PermissionComputersCreate); err != nil {
+		actor, err := operationActor(ctx, tx, request.Principal, request.Scope, auth.PermissionComputersCreate)
+		if err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, retry, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -115,6 +123,9 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			result = Created{ComputerID: id, Snapshot: snapshot}
 			body, err := json.Marshal(createReceipt{Computer: snapshot})
 			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			if err = audit.Append(ctx, tx, c.auditPolicy, audit.Event{Actor: actor, EnvironmentID: request.Scope.EnvironmentID, ComputerID: id, DeploymentID: *deployment, Action: "computer.created", TargetKind: "computer", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
 				return idempotency.Completion{}, err
 			}
 			return idempotency.Completion{Target: idempotency.Target{ComputerID: id}, Receipt: body}, nil

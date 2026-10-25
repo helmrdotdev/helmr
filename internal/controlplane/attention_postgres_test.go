@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,7 +32,7 @@ func attentionSession(t *testing.T, f sessiontest.Fixture) uuid.UUID {
 // attentionFailedTurn admits a Turn in the Session and records it failed hoursAgo.
 func attentionFailedTurn(t *testing.T, f sessiontest.Fixture, sessionID uuid.UUID, key string, hoursAgo int) uuid.UUID {
 	t.Helper()
-	admission, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: sessionID, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: sessionID, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 
 	// A pending Question, newest of all.
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	asked, err := session.Enqueue(t.Context(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+	asked, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,14 +58,18 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 		t.Fatal(err)
 	}
 	question := uuid.NewV7()
-	if err := session.RuntimeAsk(t.Context(), f.Pool, fixtureHostFor(t, f.Pool, e), e, asked.TurnID, question, json.RawMessage(`{"prompt":[{"type":"json","value":1},{"type":"text","text":"Ship\n the  release?\u0000"}],"type":"text"}`)); err != nil {
+	if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, fixtureHostFor(t, f.Pool, e), e, asked.TurnID, question, json.RawMessage(`{"prompt":[{"type":"json","value":1},{"type":"text","text":"Ship\n the  release?\u0000"}],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
 	answered := uuid.NewV7()
-	if err := session.RuntimeAsk(t.Context(), f.Pool, fixtureHostFor(t, f.Pool, e), e, asked.TurnID, answered, json.RawMessage(`{"prompt":[{"type":"text","text":"Already answered"}],"type":"text"}`)); err != nil {
+	if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, fixtureHostFor(t, f.Pool, e), e, asked.TurnID, answered, json.RawMessage(`{"prompt":[{"type":"text","text":"Already answered"}],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.AnswerAsk(t.Context(), f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: answered, AnswerID: "reply", Answer: json.RawMessage(`"yes"`)}); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: answered, AnswerID: "reply", Answer: json.RawMessage(`"yes"`)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,7 +88,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	failed := attentionFailedTurn(t, f, failing, "failed", 2)
 	superseded := attentionSession(t, f)
 	attentionFailedTurn(t, f, superseded, "superseded", 2)
-	if _, err := session.Enqueue(t.Context(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: superseded, IdempotencyKey: "retry", Input: json.RawMessage(`[{"type":"text","text":"again"}]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: superseded, IdempotencyKey: "retry", Input: json.RawMessage(`[{"type":"text","text":"again"}]`)}); err != nil {
 		t.Fatal(err)
 	}
 	attentionFailedTurn(t, f, attentionSession(t, f), "old", 25)
@@ -101,7 +106,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
-	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
+	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +239,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	}
 
 	// Answering the Question removes it from the list.
-	if _, err := session.AnswerAsk(t.Context(), f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: question, AnswerID: "answer", Answer: json.RawMessage(`"ship"`)}); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: asked.TurnID, AskID: question, AnswerID: "answer", Answer: json.RawMessage(`"ship"`)}); err != nil {
 		t.Fatal(err)
 	}
 	if after := read(h.session(t, f.User, org)); (after.Counts.Question == nil || *after.Counts.Question != 0) || len(after.Items) != 2 {

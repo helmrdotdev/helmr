@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -58,7 +59,9 @@ func dispatchTurnForTest(ctx context.Context, pool db.TxBeginner, e session.Exec
 	if err != nil {
 		return session.TurnDispatch{}, fmt.Errorf("acquire attachment: %w", err)
 	}
-	dispatch, err := session.DispatchRuntimeTurn(ctx, pool, host, e, attachment, nil)
+	dispatch, err := session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, pool, host, e, attachment, nil)
 	if err != nil {
 		return session.TurnDispatch{}, fmt.Errorf("dispatch: %w", err)
 	}
@@ -73,7 +76,9 @@ func closeProcessingForTest(ctx context.Context, pool db.TxBeginner, e session.E
 	if err != nil {
 		return err
 	}
-	return session.RuntimeCloseProcessing(ctx, pool, host, e, turn)
+	return session.RuntimeCloseProcessing(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, pool, host, e, turn)
 }
 
 func recordResultForTest(ctx context.Context, pool db.TxBeginner, e session.Execution, turn uuid.UUID, result json.RawMessage, evidence string) (computer.SaveRequest, error) {
@@ -81,7 +86,7 @@ func recordResultForTest(ctx context.Context, pool db.TxBeginner, e session.Exec
 	if err != nil {
 		return computer.SaveRequest{}, err
 	}
-	if _, err := session.RuntimeFinalize(ctx, pool, host, e, turn, result, evidence); err != nil {
+	if _, err := session.RuntimeFinalize(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, host, e, turn, result, evidence); err != nil {
 		return computer.SaveRequest{}, err
 	}
 	var save computer.SaveRequest

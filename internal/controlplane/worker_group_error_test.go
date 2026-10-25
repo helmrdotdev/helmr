@@ -42,7 +42,7 @@ func TestWorkerGroupErrorMapsHTTPContract(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			(&Server{log: discardTestLogger()}).writeWorkerGroupError(recorder, test.err)
+			(&Server{log: discardTestLogger()}).writeWorkerGroupError(recorder, httptest.NewRequest(http.MethodGet, "/", nil), test.err)
 			if recorder.Code != test.status {
 				t.Fatalf("status = %d, want %d", recorder.Code, test.status)
 			}

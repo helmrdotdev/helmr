@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,8 +13,11 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/jackc/pgx/v5"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,7 +25,8 @@ import (
 
 func TestReadinessRejectsReadOnlyServingPool(t *testing.T) {
 	fixture := sessiontest.New(t)
-	cfg := fixture.Pool.Config()
+	runtime := readinessRuntimePool(t, fixture.Pool)
+	cfg := runtime.Config()
 	cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 	readOnly, err := pgxpool.NewWithConfig(t.Context(), cfg)
 	if err != nil {
@@ -34,10 +39,11 @@ func TestReadinessRejectsReadOnlyServingPool(t *testing.T) {
 		status int
 	}{
 		{"read only", readOnly, http.StatusServiceUnavailable},
-		{"writable", fixture.Pool, http.StatusOK},
+		{"writable", runtime, http.StatusOK},
+		{"migration owner", fixture.Pool, http.StatusServiceUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			server := &Server{readinessDB: test.pool, log: slog.Default()}
+			server := &Server{auditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}, readinessDB: test.pool, log: slog.Default()}
 			response := httptest.NewRecorder()
 			server.readyz(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 			if response.Header().Get("Cache-Control") != "no-store" {
@@ -79,14 +85,15 @@ func TestServingOutagePreservesHostsUntilRecovery(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				fixture := sessiontest.New(t)
 				secret := seedHostSecret(t, fixture.Pool, fixture.Worker)
-				cfg := fixture.Pool.Config()
+				runtime := readinessRuntimePool(t, fixture.Pool)
+				cfg := runtime.Config()
 				cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
 				readOnly, err := pgxpool.NewWithConfig(t.Context(), cfg)
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer readOnly.Close()
-				healthyHandler := newPostgresServer(t, fixture.Pool, func(cfg *ServerConfig) { cfg.ReadinessDB = fixture.Pool })
+				healthyHandler := newPostgresServer(t, fixture.Pool, func(cfg *ServerConfig) { cfg.ReadinessDB = runtime })
 				readOnlyHandler := newPostgresServer(t, readOnly, func(cfg *ServerConfig) { cfg.ReadinessDB = readOnly })
 				var unavailable atomic.Bool
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -186,4 +193,31 @@ func assertServingHostPreserved(t *testing.T, fixture sessiontest.Fixture, drain
 	if status != want || secrets != 1 || instances != 1 {
 		t.Fatalf("source not preserved: status=%s secrets=%d ready instances=%d", status, secrets, instances)
 	}
+}
+
+func readinessRuntimePool(t *testing.T, owner *pgxpool.Pool) *pgxpool.Pool {
+	t.Helper()
+	suffix := uuid.NewV7().String()
+	runtimeRole, maintenanceRole := "ready_runtime_"+suffix, "ready_maintenance_"+suffix
+	for _, role := range []string{runtimeRole, maintenanceRole} {
+		dbtest.MustExec(t, t.Context(), owner, "CREATE ROLE "+pgx.Identifier{role}.Sanitize()+" LOGIN")
+	}
+	t.Cleanup(func() {
+		for _, role := range []string{runtimeRole, maintenanceRole} {
+			_, _ = owner.Exec(context.Background(), "DROP OWNED BY "+pgx.Identifier{role}.Sanitize())
+			_, _ = owner.Exec(context.Background(), "DROP ROLE "+pgx.Identifier{role}.Sanitize())
+		}
+	})
+	dbtest.MustExec(t, t.Context(), owner, "REVOKE CREATE ON SCHEMA public FROM PUBLIC")
+	if err := schema.ConfigurePrivileges(t.Context(), owner.Config().ConnString(), runtimeRole, maintenanceRole); err != nil {
+		t.Fatal(err)
+	}
+	cfg := owner.Config()
+	cfg.ConnConfig.User = runtimeRole
+	runtime, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtime.Close)
+	return runtime
 }

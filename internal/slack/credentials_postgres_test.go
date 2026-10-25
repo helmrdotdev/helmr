@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"strings"
@@ -26,14 +27,14 @@ func credentialFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id FROM slack_installations WHERE id=$1`, f.installation).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), TransportHTTP)
+	store, err := NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), TransportHTTP, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
 	registration := f.registration
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_app_registrations SET credential_revision=0,client_id=NULL,credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, registration)
-	if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, registration, AppCredentials{ClientID: "client", ClientSecret: "secret", SigningSecret: "signing-secret"}); err != nil {
+	if err = store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, registration, AppCredentials{ClientID: "client", ClientSecret: "secret", SigningSecret: "signing-secret"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET app_registration_id=$2 WHERE id=$1`, f.installation, registration)
@@ -67,7 +68,7 @@ func TestCredentialRefreshSerializesAndPreservesConnectionAuthority(t *testing.T
 	if token, err := store.BotToken(t.Context(), f.installation, 1); err == nil || token != "" {
 		t.Fatal("in-flight refresh exposed old token")
 	}
-	if err := FinishPost(t.Context(), f.Pool, postClaim, DeliveryResult{Disposition: Rejected, Code: "token_expired"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, postClaim, DeliveryResult{Disposition: Rejected, Code: "token_expired"}); err != nil {
 		t.Fatal(err)
 	}
 	var preserved bool
@@ -98,7 +99,7 @@ func TestCredentialRefreshSerializesAndPreservesConnectionAuthority(t *testing.T
 	if retry.CredentialRevision != 2 || !bytes.Equal(retry.Payload, postClaim.Payload) {
 		t.Fatal("retry changed frozen payload or credential")
 	}
-	if err := FinishPost(t.Context(), f.Pool, retry, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, retry, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -107,7 +108,7 @@ func TestCredentialRefreshLossSuppressesOnlyUnsentAndRejectsLateReplacement(t *t
 	f, store, _ := credentialFixture(t)
 	uncertain := f.post(t, 1, "uncertain", "lifecycle", nil)
 	c := f.postClaim(t, uncertain)
-	if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	pending := f.post(t, 2, "pending", "lifecycle", nil)
@@ -143,7 +144,7 @@ func (f statusFixture) reauthorize(t *testing.T, store *CredentialStore, org uui
 	if err != nil {
 		return uuid.Nil(), err
 	}
-	return store.attachConnectionGrant(t.Context(), audit.System("test-fixture"), org, f.User, f.publication, observed, grant)
+	return store.attachConnectionGrant(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.publication, observed, grant)
 }
 
 func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t *testing.T) {
@@ -164,7 +165,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if token, err := store.BotToken(t.Context(), f.installation, 2); err != nil || token != "reauthorized" {
 		t.Fatal("late refresh overwrote reauthorization", err)
 	}
-	if err = store.DisconnectConnection(t.Context(), audit.System("test-fixture"), org, f.User, f.Environment, f.publication); err != nil {
+	if err = store.DisconnectConnection(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.Environment, f.publication); err != nil {
 		t.Fatal(err)
 	}
 	var retained bool
@@ -182,7 +183,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, setup.RegistrationID, AppCredentials{ClientID: "next-client", ClientSecret: "next-secret", SigningSecret: "next-signing"}); err != nil {
+	if err = store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, setup.RegistrationID, AppCredentials{ClientID: "next-client", ClientSecret: "next-secret", SigningSecret: "next-signing"}); err != nil {
 		t.Fatal(err)
 	}
 	f.publication = setup.ID
@@ -195,7 +196,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if _, err = f.reauthorize(t, store, org, grant); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("non-manager reauthorized", err)
 	}
-	if err = store.DisconnectConnection(t.Context(), audit.System("test-fixture"), org, f.User, f.Environment, f.publication); !errors.Is(err, errInstallationAuthority) {
+	if err = store.DisconnectConnection(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.Environment, f.publication); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("non-manager disconnected", err)
 	}
 }
@@ -317,7 +318,7 @@ func TestCredentialChangeBeforeHTTPKeepsExactUnsentMutation(t *testing.T) {
 	if result.Disposition != NotIssued || calls != 0 {
 		t.Fatal("stale credential request was issued")
 	}
-	if err := FinishPost(t.Context(), f.Pool, claim, result); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, result); err != nil {
 		t.Fatal(err)
 	}
 	var preserved bool
@@ -335,7 +336,7 @@ func TestCredentialReauthorizationDoesNotBackfillKnownUnsentCompletion(t *testin
 			if _, err := f.reauthorize(t, store, org, refreshResult().grant); err != nil {
 				t.Fatal(err)
 			}
-			if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: disposition, Code: "token_expired", RetryAfter: time.Second}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: disposition, Code: "token_expired", RetryAfter: time.Second}); err != nil {
 				t.Fatal(err)
 			}
 			var suppressed bool
@@ -384,7 +385,7 @@ func TestCredentialReauthorizationSuppressesDesiredUpdateAfterOldConfirmation(t 
 			claim := f.postClaim(t, post)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET desired_revision=2 WHERE id=$1`, post)
 			if path == "reconciliation" {
-				if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
+				if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -395,7 +396,7 @@ func TestCredentialReauthorizationSuppressesDesiredUpdateAfterOldConfirmation(t 
 				if confirmed, err := confirmMessage(t.Context(), f.Pool, f.installation, observedClaim(t, claim)); err != nil || !confirmed {
 					t.Fatal("issued content not reconciled", err)
 				}
-			} else if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+			} else if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 				t.Fatal(err)
 			}
 			var exact bool

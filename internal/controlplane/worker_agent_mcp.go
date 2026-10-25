@@ -28,9 +28,17 @@ func (server *Server) workerAgentMCP(w http.ResponseWriter, r *http.Request, req
 	}
 	switch call.Tool {
 	case "list_agents":
+		if err := session.AdmitMCP(r.Context(), server.auditPolicy, server.tx, caller, call.Tool); err != nil {
+			server.writeAgentAdmissionError(w, r, request.RequestID, err)
+			return
+		}
 		server.workerAgentListAgents(w, r, request.RequestID, caller, call.Arguments)
 		return
 	case "list_computers":
+		if err := session.AdmitMCP(r.Context(), server.auditPolicy, server.tx, caller, call.Tool); err != nil {
+			server.writeAgentAdmissionError(w, r, request.RequestID, err)
+			return
+		}
 		server.workerAgentListComputers(w, r, request.RequestID, caller, call.Arguments)
 		return
 	case "spawn":
@@ -75,6 +83,10 @@ func (server *Server) workerAgentMCP(w http.ResponseWriter, r *http.Request, req
 		writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "unsupported_operation", "Runtime operation is not available"))
 		return
 	}
+	if err := session.AdmitMCP(r.Context(), server.auditPolicy, server.tx, caller, call.Tool); err != nil {
+		server.writeAgentAdmissionError(w, r, request.RequestID, err)
+		return
+	}
 	request.Method, request.Payload = method, payload
 	server.dispatchAgentOperation(w, r, request, caller)
 }
@@ -90,7 +102,7 @@ func (server *Server) workerAgentListAgents(w http.ResponseWriter, r *http.Reque
 	}
 	page, err := agent.RuntimeListAgents(r.Context(), server.tx, caller, input.Operation, input.Cursor)
 	if err != nil {
-		server.writeAgentAdmissionError(w, requestID, err)
+		server.writeAgentAdmissionError(w, r, requestID, err)
 		return
 	}
 	body, _ := json.Marshal(page)

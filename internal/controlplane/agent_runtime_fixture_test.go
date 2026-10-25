@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -50,7 +51,9 @@ func dispatchRuntimeTurn(t *testing.T, pool db.TxBeginner, e session.Execution) 
 		}
 		sequence = a.Sequence
 	}
-	dispatch, err := session.DispatchRuntimeTurn(t.Context(), pool, host, e, sequence, nil)
+	dispatch, err := session.DispatchRuntimeTurn(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, pool, host, e, sequence, nil)
 	if err != nil {
 		return session.TurnDispatch{}, err
 	}
@@ -62,12 +65,14 @@ func dispatchRuntimeTurn(t *testing.T, pool db.TxBeginner, e session.Execution) 
 
 func closeRuntimeProcessing(t *testing.T, pool db.TxBeginner, e session.Execution, turn uuid.UUID) error {
 	t.Helper()
-	return session.RuntimeCloseProcessing(t.Context(), pool, fixtureHostFor(t, pool, e), e, turn)
+	return session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, pool, fixtureHostFor(t, pool, e), e, turn)
 }
 
 func finalizeRuntimeTurn(t *testing.T, pool db.TxBeginner, e session.Execution, turn uuid.UUID, result json.RawMessage, evidence string) (computer.SaveRequest, error) {
 	t.Helper()
-	if _, err := session.RuntimeFinalize(t.Context(), pool, fixtureHostFor(t, pool, e), e, turn, result, evidence); err != nil {
+	if _, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, pool, fixtureHostFor(t, pool, e), e, turn, result, evidence); err != nil {
 		return computer.SaveRequest{}, err
 	}
 	var save computer.SaveRequest

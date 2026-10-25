@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/url"
 	"time"
 	"uuid"
@@ -42,7 +43,7 @@ func (s *CredentialStore) claimRefresh(ctx context.Context, installation uuid.UU
 		}
 		if attempt != nil {
 			if expired {
-				return loseRefresh(ctx, tx, installation, *attempt, c.revision, c.authorized, "refresh_replacement_unrecoverable")
+				return loseRefresh(ctx, tx, s.auditPolicy, installation, *attempt, c.revision, c.authorized, "refresh_replacement_unrecoverable")
 			}
 			return nil
 		}
@@ -54,7 +55,7 @@ func (s *CredentialStore) claimRefresh(ctx context.Context, installation uuid.UU
 			if _, err = tx.Exec(ctx, `UPDATE slack_installations SET refresh_error='credential_unavailable' WHERE id=$1`, installation); err != nil {
 				return err
 			}
-			return recordAuthorizationLoss(ctx, tx, audit.System("slack-credential-refresh"), installation, c.revision, c.authorized)
+			return recordAuthorizationLoss(ctx, tx, s.auditPolicy, audit.System("slack-credential-refresh"), installation, c.revision, c.authorized)
 		}
 		c.attempt = uuid.NewV7()
 		if err = tx.QueryRow(ctx, `UPDATE slack_installations SET refresh_attempt_id=$2,refresh_deadline=clock_timestamp()+interval '60 seconds',refresh_error=NULL WHERE id=$1 RETURNING refresh_deadline`, installation, c.attempt).Scan(&c.deadline); err != nil {
@@ -134,18 +135,18 @@ func (s *CredentialStore) finishRefresh(ctx context.Context, c refreshClaim, res
 			return nil
 		}
 		if !eligible {
-			return loseRefresh(ctx, tx, c.installation, c.attempt, c.revision, c.authorized, "refresh_replacement_unrecoverable")
+			return loseRefresh(ctx, tx, s.auditPolicy, c.installation, c.attempt, c.revision, c.authorized, "refresh_replacement_unrecoverable")
 		}
 		if result.retryAfter > 0 {
 			_, err = tx.Exec(ctx, `UPDATE slack_installations SET refresh_attempt_id=NULL,refresh_deadline=NULL,refresh_next_at=clock_timestamp()+$3*interval '1 second',refresh_error='oauth_rate_limited' WHERE id=$1 AND refresh_attempt_id=$2`, c.installation, c.attempt, result.retryAfter.Seconds())
 			return err
 		}
 		if result.code != "" {
-			return loseRefresh(ctx, tx, c.installation, c.attempt, c.revision, c.authorized, result.code)
+			return loseRefresh(ctx, tx, s.auditPolicy, c.installation, c.attempt, c.revision, c.authorized, result.code)
 		}
 		ciphertext, nonce, err := s.seal(c.org, c.installation, c.revision+1, result.grant.bundle)
 		if err != nil {
-			return loseRefresh(ctx, tx, c.installation, c.attempt, c.revision, c.authorized, "credential_replacement_invalid")
+			return loseRefresh(ctx, tx, s.auditPolicy, c.installation, c.attempt, c.revision, c.authorized, "credential_replacement_invalid")
 		}
 		tag, err := tx.Exec(ctx, `UPDATE slack_installations SET credential_revision=credential_revision+1,credential_ciphertext=$3,credential_nonce=$4,credential_expires_at=$5,
  refresh_attempt_id=NULL,refresh_deadline=NULL,last_refresh_attempt_id=$2,refresh_error=NULL,refresh_next_at=clock_timestamp()
@@ -154,17 +155,17 @@ func (s *CredentialStore) finishRefresh(ctx context.Context, c refreshClaim, res
 			return err
 		}
 		if tag.RowsAffected() == 0 {
-			return loseRefresh(ctx, tx, c.installation, c.attempt, c.revision, c.authorized, "refresh_replacement_unrecoverable")
+			return loseRefresh(ctx, tx, s.auditPolicy, c.installation, c.attempt, c.revision, c.authorized, "refresh_replacement_unrecoverable")
 		}
 		return nil
 	})
 }
 
-func loseRefresh(ctx context.Context, tx pgx.Tx, installation, attempt uuid.UUID, revision int64, authorized time.Time, code string) error {
+func loseRefresh(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, installation, attempt uuid.UUID, revision int64, authorized time.Time, code string) error {
 	tag, err := tx.Exec(ctx, `UPDATE slack_installations SET refresh_attempt_id=NULL,refresh_deadline=NULL,refresh_error=$3
  WHERE id=$1 AND refresh_attempt_id=$2 AND credential_revision=$4 AND authorized_at=$5 AND disconnected_at IS NULL`, installation, attempt, code, revision, authorized)
 	if err != nil || tag.RowsAffected() == 0 {
 		return err
 	}
-	return recordAuthorizationLoss(ctx, tx, audit.System("slack-credential-refresh"), installation, revision, authorized)
+	return recordAuthorizationLoss(ctx, tx, policy, audit.System("slack-credential-refresh"), installation, revision, authorized)
 }

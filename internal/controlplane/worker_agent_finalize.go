@@ -27,7 +27,7 @@ func (server *Server) workerAgentFinalize(w http.ResponseWriter, r *http.Request
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	outcome, err := session.RuntimeFinalize(ctx, server.tx, host, execution, turn, input.Result, request.DrainEvidence)
+	outcome, err := session.RuntimeFinalize(ctx, server.auditPolicy, server.tx, host, execution, turn, input.Result, request.DrainEvidence)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -36,7 +36,7 @@ func (server *Server) workerAgentFinalize(w http.ResponseWriter, r *http.Request
 			writeError(w, unavailable(errors.New("turn finalization deadline elapsed")))
 			return
 		}
-		server.writeAgentAdmissionError(w, request.RequestID, err)
+		server.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
 	}
 	if outcome == nil {

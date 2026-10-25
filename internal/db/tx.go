@@ -23,8 +23,9 @@ type TxDB interface {
 }
 
 type txLifecycleError struct {
-	stage string
-	err   error
+	stage           string
+	err             error
+	commitAttempted bool
 }
 
 func (e txLifecycleError) Error() string {
@@ -78,6 +79,17 @@ func txError(stage string, err error) error {
 		return nil
 	}
 	return txLifecycleError{stage: stage, err: err}
+}
+
+// CommitOutcomeUnknown reports a commit attempt whose failure does not prove a
+// rollback. A lost acknowledgement may follow a durable commit.
+func CommitOutcomeUnknown(err error) bool {
+	var lifecycle txLifecycleError
+	if !errors.As(err, &lifecycle) || !lifecycle.commitAttempted {
+		return false
+	}
+	var postgres *pgconn.PgError
+	return !errors.Is(lifecycle.err, pgx.ErrTxCommitRollback) && !errors.Is(lifecycle.err, pgx.ErrTxClosed) && !errors.As(lifecycle.err, &postgres)
 }
 
 // errors.Join preserves identity but hides the joined errors' LogValue methods.
@@ -169,7 +181,7 @@ func runTransaction(ctx, lifecycleCtx context.Context, tx pgx.Tx, fn func(pgx.Tx
 		return txError("commit transaction", err)
 	}
 	if err := tx.Commit(lifecycleCtx); err != nil {
-		return txError("commit transaction", err)
+		return txLifecycleError{stage: "commit transaction", err: err, commitAttempted: true}
 	}
 	committed = true
 	return nil

@@ -192,7 +192,7 @@ func grantPermissionPreview(g api.RoleGrant, permissions []string) api.RoleGrant
 		}
 		if i < 0 {
 			t := api.GrantTarget{ResourceType: resource, Mode: "environment"}
-			if auth.IsOrganizationPermission(auth.Permission(p)) {
+			if g.EnvironmentID == "" {
 				t.Mode = "organization"
 			}
 			if auth.IsAgentPermission(auth.Permission(p)) {

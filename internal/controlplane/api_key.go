@@ -32,39 +32,39 @@ type apiKeyListCursor struct {
 func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	filter, err := identity.ParseAPIKeyFilter(r.URL.Query().Get("filter"))
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeOperationError(w, r, identityError(err))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	var after *identity.APIKeyPosition
 	if rawCursor := r.URL.Query().Get("cursor"); rawCursor != "" {
 		cursor, err := decodeAPIKeyListCursor(rawCursor)
 		if err != nil || cursor.ProjectID != scope.ProjectID || cursor.EnvironmentID != scope.EnvironmentID || cursor.Filter != string(filter) {
-			writeError(w, badRequest(errors.New("api key cursor is invalid")))
+			s.writeOperationError(w, r, badRequest(errors.New("api key cursor is invalid")))
 			return
 		}
 		createdAt, err := time.Parse(time.RFC3339Nano, cursor.CreatedAt)
 		if err != nil {
-			writeError(w, badRequest(errors.New("api key cursor is invalid")))
+			s.writeOperationError(w, r, badRequest(errors.New("api key cursor is invalid")))
 			return
 		}
 		after = &identity.APIKeyPosition{CreatedAt: createdAt, ID: uuid.MustParse(cursor.ID)}
 	}
 	rows, hasMore, metadata, err := identity.ListAPIKeys(r.Context(), s.tx, principal, scope, filter, apiKeyListLimit, after)
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeOperationError(w, r, identityError(err))
 		return
 	}
 	items := make([]api.APIKeySummary, 0, len(rows))
 	for _, row := range rows {
 		item, err := apiKeySummaryFromRow(row, chi.URLParam(r, "project"), chi.URLParam(r, "environment"))
 		if err != nil {
-			writeError(w, errors.New("format api key"))
+			s.writeOperationError(w, r, errors.New("format api key"))
 			return
 		}
 		item.RoleNames = row.RoleNames
@@ -81,7 +81,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano), ID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
-			writeError(w, errors.New("list api keys"))
+			s.writeOperationError(w, r, errors.New("list api keys"))
 			return
 		}
 	}
@@ -112,44 +112,44 @@ func decodeAPIKeyListCursor(raw string) (apiKeyListCursor, error) {
 func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 	var input api.IssueAPIKeyRequest
 	if err := decodeRequestJSON(r, &input); err != nil {
-		writeError(w, fmt.Errorf("invalid API key request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid API key request JSON: %w", err))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	var role *identity.APIKeyRole
 	if input.Role != nil {
 		roleID, err := ids.Parse(input.Role.RoleID)
 		if err != nil || roleID == uuid.Nil() {
-			writeError(w, badRequest(errors.New("invalid role_id")))
+			s.writeOperationError(w, r, badRequest(errors.New("invalid role_id")))
 			return
 		}
 		role = &identity.APIKeyRole{RoleID: roleID, ExpectedRoleRevision: input.Role.ExpectedRoleRevision, AgentsMode: input.Role.AgentsMode}
 		for _, value := range input.Role.AgentIDs {
 			id, err := ids.Parse(value)
 			if err != nil || id == uuid.Nil() {
-				writeError(w, badRequest(errors.New("invalid agent_id")))
+				s.writeOperationError(w, r, badRequest(errors.New("invalid agent_id")))
 				return
 			}
 			role.AgentIDs = append(role.AgentIDs, id)
 		}
 	}
-	issued, err := identity.IssueAPIKey(r.Context(), s.tx, principal, scope, identity.APIKeyInput{
+	issued, err := identity.IssueAPIKey(r.Context(), s.tx, s.auditPolicy, principal, scope, identity.APIKeyInput{
 		Name:          input.Name,
 		Role:          role,
 		ExpiresInDays: input.ExpiresInDays,
 	})
 	if err != nil {
-		writeError(w, apiKeyIssuanceError(err))
+		s.writeOperationError(w, r, apiKeyIssuanceError(err))
 		return
 	}
 	summary, err := apiKeySummaryFromRecord(issued.Record, chi.URLParam(r, "project"), chi.URLParam(r, "environment"))
 	if err != nil {
-		writeError(w, errors.New("format api key"))
+		s.writeOperationError(w, r, errors.New("format api key"))
 		return
 	}
 	summary.RoleNames = issued.RoleNames
@@ -159,17 +159,17 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, notFound(errors.New("api key not found")))
+		s.writeOperationError(w, r, notFound(errors.New("api key not found")))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
-	if err := identity.RevokeAPIKey(r.Context(), s.tx, principal, scope, id); err != nil {
-		writeError(w, identityError(err))
+	if err := identity.RevokeAPIKey(r.Context(), s.tx, s.auditPolicy, principal, scope, id); err != nil {
+		s.writeOperationError(w, r, identityError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -244,33 +244,33 @@ func apiKeySummary(id pgtype.UUID, createdBy pgtype.UUID, name string, keyPrefix
 func (s *Server) updateAPIKey(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, notFound(err))
+		s.writeOperationError(w, r, notFound(err))
 		return
 	}
 	var input api.UpdateAPIKeyRequest
 	if err := decodeRequestJSON(r, &input); err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
-	record, err := identity.UpdateAPIKey(r.Context(), s.tx, principal, scope, id, identity.APIKeyUpdate{Name: input.Name, ExpiresAt: input.ExpiresAt})
+	record, err := identity.UpdateAPIKey(r.Context(), s.tx, s.auditPolicy, principal, scope, id, identity.APIKeyUpdate{Name: input.Name, ExpiresAt: input.ExpiresAt})
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeOperationError(w, r, identityError(err))
 		return
 	}
 	summary, err := apiKeySummaryFromRecord(record, chi.URLParam(r, "project"), chi.URLParam(r, "environment"))
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	summary.RoleNames, err = s.db.ListAPIKeyRoleNames(r.Context(), db.ListAPIKeyRoleNamesParams{OrgID: record.OrgID, ApiKeyID: record.ID})
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
@@ -278,23 +278,23 @@ func (s *Server) updateAPIKey(w http.ResponseWriter, r *http.Request) {
 func (s *Server) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, notFound(err))
+		s.writeOperationError(w, r, notFound(err))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
-	result, err := identity.RotateAPIKey(r.Context(), s.tx, principal, scope, id)
+	result, err := identity.RotateAPIKey(r.Context(), s.tx, s.auditPolicy, principal, scope, id)
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeOperationError(w, r, identityError(err))
 		return
 	}
 	summary, err := apiKeySummaryFromRecord(result.Record, chi.URLParam(r, "project"), chi.URLParam(r, "environment"))
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	summary.RoleNames = result.RoleNames

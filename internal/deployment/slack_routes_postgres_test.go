@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -32,7 +33,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), registered.ID, nil); !errors.Is(err, slackroute.ErrTargetNotPublished) {
+			if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), registered.ID, nil); !errors.Is(err, slackroute.ErrTargetNotPublished) {
 				t.Fatal("unpublished trigger promoted", err)
 			}
 			installation, registration, publication, user := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
@@ -57,7 +58,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 				}
 				return json.RawMessage(`{"text":"Started agent."}`), nil
 			})
-			_, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), registered.ID, preflight)
+			_, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), registered.ID, preflight)
 			if race {
 				if !errors.Is(err, slackroute.ErrConversationChanged) {
 					t.Fatal(err)
@@ -85,7 +86,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal("offline registration required live connection", err)
 			}
-			if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), newer.ID, preflight); !errors.Is(err, slackroute.ErrTargetNotPublished) {
+			if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), newer.ID, preflight); !errors.Is(err, slackroute.ErrTargetNotPublished) {
 				t.Fatal("retired route promoted", err)
 			}
 			if calls != 1 {

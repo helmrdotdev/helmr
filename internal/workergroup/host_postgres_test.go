@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -31,7 +32,7 @@ func (f supplyFixture) enroll(t *testing.T, cfg HostAuthConfig, poolName string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	enrolled, err := EnrollHost(t.Context(), f.pool, cfg, Enrollment{TokenHash: tokenHash, PoolName: poolName, ResourceID: resourceID})
+	enrolled, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, Enrollment{TokenHash: tokenHash, PoolName: poolName, ResourceID: resourceID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func (f supplyFixture) start(t *testing.T, cfg HostAuthConfig, poolName string, 
 		t.Fatal(err)
 	}
 	activating := f.authenticate(t, AuthenticateActivatingHost, cfg, host.credential)
-	if err := ActivateHost(t.Context(), f.pool, activating, Activation{
+	if err := ActivateHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, activating, Activation{
 		Template: template, CPUEnvironment: []byte(`{"vendor":"test"}`), CPUEnvironmentDigest: f.cpuConfigDigest,
 	}); err != nil {
 		t.Fatal(err)
@@ -137,7 +138,7 @@ func TestHostLifecycleThroughCredentials(t *testing.T) {
 
 	template := validHostTemplate(t)
 	activating := f.authenticate(t, AuthenticateActivatingHost, cfg, credential)
-	if err := ActivateHost(t.Context(), f.pool, activating, Activation{
+	if err := ActivateHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, activating, Activation{
 		Template: template, CPUEnvironment: []byte(`{"vendor":"test"}`), CPUEnvironmentDigest: f.cpuConfigDigest,
 	}); err != nil {
 		t.Fatal(err)
@@ -230,10 +231,10 @@ func TestEnrollHostRejectsRotatedEnrollmentToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := RotateGroupToken(t.Context(), f.pool, audit.System("test-fixture"), f.groupID()); err != nil {
+	if _, err := RotateGroupToken(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnrollHost(t.Context(), f.pool, cfg, Enrollment{TokenHash: tokenHash, PoolName: "default", ResourceID: "i-rotated"}); !errors.Is(err, ErrInvalidEnrollmentToken) {
+	if _, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, Enrollment{TokenHash: tokenHash, PoolName: "default", ResourceID: "i-rotated"}); !errors.Is(err, ErrInvalidEnrollmentToken) {
 		t.Fatalf("error = %v, want ErrInvalidEnrollmentToken", err)
 	}
 }
@@ -242,7 +243,7 @@ func TestHostCredentialsGoStaleWithGroupTransitions(t *testing.T) {
 	f := newSupplyFixture(t)
 	cfg := testHostAuthConfig(t)
 	host := f.start(t, cfg, "default", "i-group", validHostTemplate(t))
-	if _, err := PauseGroup(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
+	if _, err := PauseGroup(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), f.currentGroup(t).ClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AuthenticateHost(t.Context(), f.q, cfg, host.credential.Value, time.Now()); !errors.Is(err, ErrUnauthenticated) {
@@ -267,7 +268,7 @@ func TestActivateHostRejectsTemplateMismatchWithSealedPool(t *testing.T) {
 	if err := RecordStartupRecovery(t.Context(), f.q, f.authenticate(t, AuthenticateRecoveringHost, cfg, credential), startupEvidence(t)); err != nil {
 		t.Fatal(err)
 	}
-	err := ActivateHost(t.Context(), f.pool, f.authenticate(t, AuthenticateActivatingHost, cfg, credential), Activation{
+	err := ActivateHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.authenticate(t, AuthenticateActivatingHost, cfg, credential), Activation{
 		Template: changed, CPUEnvironment: []byte(`{}`), CPUEnvironmentDigest: f.cpuConfigDigest,
 	})
 	var conflicting ConflictError
@@ -384,7 +385,7 @@ func TestInitialPrimaryPoolAuditAtomicityAndSingleGrant(t *testing.T) {
 	activation := Activation{Template: validHostTemplate(t), CPUEnvironment: []byte(`{"vendor":"test"}`), CPUEnvironmentDigest: f.cpuConfigDigest}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_primary_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_primary_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_primary_audit()`)
-	if err := ActivateHost(t.Context(), f.pool, activating, activation); err == nil {
+	if err := ActivateHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, activating, activation); err == nil {
 		t.Fatal("audit failure allowed primary selection")
 	}
 	var intact bool
@@ -392,7 +393,7 @@ func TestInitialPrimaryPoolAuditAtomicityAndSingleGrant(t *testing.T) {
 		t.Fatal("initial activation survived rollback", intact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_primary_audit ON audit_events`)
-	if err := ActivateHost(t.Context(), f.pool, activating, activation); err != nil {
+	if err := ActivateHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, activating, activation); err != nil {
 		t.Fatal(err)
 	}
 	f.start(t, cfg, "second", "i-second-pool", validHostTemplate(t))
@@ -400,7 +401,7 @@ func TestInitialPrimaryPoolAuditAtomicityAndSingleGrant(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_pool.primary_selected'`).Scan(&count); err != nil || count != 1 {
 		t.Fatal("primary selection missing or repeated", count, err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT target_id=$1 AND actor_kind='system' AND actor_source='worker-pool-bootstrap' AND actor_user_id IS NULL AND actor_credential_id IS NULL FROM audit_events WHERE action='worker_pool.primary_selected'`, enrolled.PoolID).Scan(&intact); err != nil || !intact {
+	if err := f.pool.QueryRow(t.Context(), `SELECT target_id=$1 AND actor_kind='service' AND actor_service='worker-pool-bootstrap' AND actor_id IS NULL AND credential_id IS NULL FROM audit_events WHERE action='worker_pool.primary_selected'`, enrolled.PoolID).Scan(&intact); err != nil || !intact {
 		t.Fatal("incorrect bootstrap primary fact", intact, err)
 	}
 }
@@ -415,7 +416,7 @@ func TestEnrolledPoolAuditAtomicityAndSingleCreation(t *testing.T) {
 	enrollment := Enrollment{TokenHash: tokenHash, PoolName: "new-pool", ResourceID: "i-first-enrollment"}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_pool_creation_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_pool_creation_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_pool_creation_audit()`)
-	if _, err := EnrollHost(t.Context(), f.pool, cfg, enrollment); err == nil {
+	if _, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment); err == nil {
 		t.Fatal("audit failure allowed pool bootstrap")
 	}
 	var count int
@@ -423,19 +424,19 @@ func TestEnrolledPoolAuditAtomicityAndSingleCreation(t *testing.T) {
 		t.Fatal("pool or host credentials survived rollback", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_pool_creation_audit ON audit_events`)
-	first, err := EnrollHost(t.Context(), f.pool, cfg, enrollment)
+	first, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment)
 	if err != nil {
 		t.Fatal(err)
 	}
 	enrollment.ResourceID = "i-second-enrollment"
-	second, err := EnrollHost(t.Context(), f.pool, cfg, enrollment)
+	second, err := EnrollHost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, enrollment)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.PoolID != second.PoolID {
 		t.Fatal("existing pool was not reused")
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_pool.created' AND target_id=$1 AND actor_kind='system' AND actor_source='worker-pool-bootstrap'`, first.PoolID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_pool.created' AND target_id=$1 AND actor_kind='service' AND actor_service='worker-pool-bootstrap'`, first.PoolID).Scan(&count); err != nil || count != 1 {
 		t.Fatal("pool bootstrap fact missing or repeated", count, err)
 	}
 }

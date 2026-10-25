@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -29,7 +31,9 @@ type TemplateBuild struct {
 
 // RefreshTemplate requests unfinished preparation for the current Template.
 // Existing Computers and the last eligible image retain their current pins.
-func RefreshTemplate(ctx context.Context, database db.TxBeginner, principal auth.Principal, scope auth.Scope, template, key string) (TemplateBuild, error) {
+func RefreshTemplate(ctx context.Context, auditPolicy auditpolicy.Policy,
+
+	database db.TxBeginner, principal auth.Principal, scope auth.Scope, template, key string) (TemplateBuild, error) {
 	if err := authorize(principal, scope, auth.PermissionTemplatesRefresh); err != nil {
 		return TemplateBuild{}, err
 	}
@@ -76,7 +80,8 @@ func RefreshTemplate(ctx context.Context, database db.TxBeginner, principal auth
 				return idempotency.Completion{}, err
 			}
 			var prepare bool
-			if err := tx.QueryRow(ctx, `SELECT d.image_spec_id,d.prepare FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key=$3`, env, result.DeploymentID, template).Scan(&result.ImageSpecID, &prepare); errors.Is(err, pgx.ErrNoRows) {
+			var templateID uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT d.image_spec_id,d.prepare,d.template_id FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key=$3`, env, result.DeploymentID, template).Scan(&result.ImageSpecID, &prepare, &templateID); errors.Is(err, pgx.ErrNoRows) {
 				return idempotency.Completion{}, ErrDefinitionNotFound
 			} else if err != nil {
 				return idempotency.Completion{}, err
@@ -99,6 +104,17 @@ func RefreshTemplate(ctx context.Context, database db.TxBeginner, principal auth
 			}
 			result.ImageBuildID = build
 			if err := readTemplateBuildState(ctx, tx, env, &result); err != nil {
+				return idempotency.Completion{}, err
+			}
+			current, err := currentPrincipal(ctx, tx, principal, scope)
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			actor, err := audit.Authorized(current, auth.PermissionTemplatesRefresh, scope)
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			if err := audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: env, DeploymentID: result.DeploymentID, Action: "template.refreshed", Outcome: "accepted", TargetKind: "template", TargetID: templateID, Details: audit.LifecycleDetails{RequestID: build}}); err != nil {
 				return idempotency.Completion{}, err
 			}
 			receipt, err := json.Marshal(result)

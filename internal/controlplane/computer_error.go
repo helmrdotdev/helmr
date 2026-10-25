@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"net/http"
 
@@ -63,14 +64,18 @@ func computerError(err error, operation computerOperation) error {
 	}
 }
 
-func (s *Server) writeComputerError(w http.ResponseWriter, err error, operation computerOperation, logMessage string) {
+func (s *Server) writeComputerError(w http.ResponseWriter, r *http.Request, err error, operation computerOperation, logMessage string) {
+	if errors.Is(err, audit.ErrCapture) {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	mapped := computerError(err, operation)
 	if errorStatus(mapped) != http.StatusInternalServerError {
-		writeError(w, mapped)
+		s.writeOperationError(w, r, mapped)
 		return
 	}
 	s.log.Error(logMessage, "error", err)
-	writeError(w, unavailable(codedError{
+	s.writeOperationError(w, r, unavailable(codedError{
 		code:      "computer_authority_unavailable",
 		message:   errComputerAuthorityUnavailable.Error(),
 		retryable: true,

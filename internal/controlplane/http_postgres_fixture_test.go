@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -151,7 +152,7 @@ type testAPIKeyInput struct {
 
 func issueAPIKeyWithRole(t *testing.T, ctx context.Context, database db.TxDB, issuer auth.Principal, scope auth.Scope, input testAPIKeyInput) (identity.IssuedAPIKey, error) {
 	t.Helper()
-	issued, err := identity.IssueAPIKey(ctx, database, issuer, scope, identity.APIKeyInput{Name: input.Name})
+	issued, err := identity.IssueAPIKey(ctx, database, auditpolicy.Policy{RetentionSeconds: 3600}, issuer, scope, identity.APIKeyInput{Name: input.Name})
 	if err != nil {
 		return issued, err
 	}

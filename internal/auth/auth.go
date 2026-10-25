@@ -19,6 +19,8 @@ const (
 )
 
 type Principal struct {
+	CredentialVersion int64
+
 	OrgID         uuid.UUID
 	UserID        uuid.UUID
 	MemberID      uuid.UUID

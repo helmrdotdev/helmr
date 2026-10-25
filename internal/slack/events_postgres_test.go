@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -239,7 +240,7 @@ func TestSlackEventReconcilesOnlyExactAuthenticatedProjection(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET message_ts='123.789' WHERE id=$1`, post)
 			}
 			claim := f.postClaim(t, post)
-			if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 				t.Fatal(err)
 			}
 			message := observedClaim(t, claim)
@@ -302,7 +303,7 @@ func TestSlackSignedStreamEventConfirmsUnknownPublication(t *testing.T) {
 			f := newStatusFixture(t)
 			post := f.streamPost(t, 1, "streamed")
 			claim := f.postClaim(t, post)
-			if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
 				t.Fatal(err)
 			}
 			message := observedStream(t, f, post, "streamed", "completed")
@@ -349,7 +350,9 @@ func TestSlackEventReceiptDoesNotWaitForCoreAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), id) }()
+	go func() {
+		done <- admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id)
+	}()
 	defer func() {
 		_ = blocker.Rollback(t.Context())
 		if err := <-done; err != nil {

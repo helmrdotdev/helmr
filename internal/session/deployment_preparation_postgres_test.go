@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -28,14 +29,14 @@ func TestPromotionRechecksPublishedImageEligibility(t *testing.T) {
 	principal := sessiontestPrincipal(t, p.f.fixture)
 	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: p.f.env.String()}
 	dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE template_definitions SET prepare=true WHERE environment_id=$1 AND deployment_id=$2`, p.f.env, p.f.deployment)
-	got, err := deployment.Promote(t.Context(), p.f.pool, principal, scope, p.f.deployment, nil)
+	got, err := deployment.Promote(t.Context(), p.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, p.f.deployment, nil)
 	if err != nil || got.PreparationState != "" {
 		t.Fatalf("eligible promotion: %+v %v", got, err)
 	}
 	if _, err := p.f.secrets.Rotate(t.Context(), audit.System("test-fixture"), p.f.env, p.f.secretID, []byte("v2"), "rotate"); err != nil {
 		t.Fatal(err)
 	}
-	got, err = deployment.Promote(t.Context(), p.f.pool, principal, scope, p.f.deployment, nil)
+	got, err = deployment.Promote(t.Context(), p.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, p.f.deployment, nil)
 	if err != nil || got.PreparationState != "preparing" {
 		t.Fatalf("rotated image promotion: %+v %v", got, err)
 	}
@@ -51,7 +52,7 @@ func TestPromotionRechecksPublishedImageEligibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err = deployment.Promote(t.Context(), p.f.pool, principal, scope, p.f.deployment, nil)
+	got, err = deployment.Promote(t.Context(), p.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, p.f.deployment, nil)
 	if err != nil || got.PreparationState != "preparing" {
 		t.Fatalf("coalescing successor: %+v %v", got, err)
 	}

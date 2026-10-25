@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"io"
 	"log/slog"
@@ -59,6 +60,9 @@ type SecretManager interface {
 }
 
 type Server struct {
+	auditRouter                chi.Router
+	auditAdmission             *auditAdmission
+	auditPolicy                auditpolicy.Policy
 	changes                    *dbnotify.Hub
 	slackConfig                *SlackConfig
 	diagnosticDB               db.TxDB
@@ -107,6 +111,7 @@ const (
 )
 
 type ServerConfig struct {
+	AuditPolicy                auditpolicy.Policy
 	Changes                    *dbnotify.Hub
 	Slack                      *SlackConfig
 	DiagnosticDB               db.TxDB
@@ -151,6 +156,9 @@ type ServerConfig struct {
 }
 
 func NewServer(cfg ServerConfig) (http.Handler, error) {
+	if err := cfg.AuditPolicy.Validate(); err != nil {
+		return nil, err
+	}
 	if cfg.Slack != nil && (len(cfg.Slack.ControlKey) != 32 || cfg.Slack.Credentials == nil || cfg.Slack.Client == nil || cfg.AppOrigin == nil || len(cfg.AuthKey) != 32) {
 		return nil, errors.New("complete Slack adapter configuration is required")
 	}
@@ -245,7 +253,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	checkpointPublisher, err := session.NewCheckpointPublisher(cfg.TX, cfg.CAS)
+	checkpointPublisher, err := session.NewCheckpointPublisher(cfg.TX, cfg.AuditPolicy, cfg.CAS)
 	if err != nil {
 		return nil, err
 	}
@@ -253,6 +261,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		return nil, errors.New("allocation owner is required")
 	}
 	server := &Server{
+		auditAdmission:                newAuditAdmission(),
+		auditPolicy:                   cfg.AuditPolicy,
 		organizationCreationAdminOnly: cfg.OrganizationCreationAdminOnly,
 
 		changes:                    cfg.Changes,
@@ -277,7 +287,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		secrets:                    cfg.Secrets,
 		secretDelivery:             cfg.SecretDelivery,
 		secretProxy:                cfg.SecretProxy,
-		computers:                  computer.NewCreator(cfg.SecretProxy),
+		computers:                  computer.NewCreator(cfg.SecretProxy, cfg.AuditPolicy),
 		telemetryReader:            telemetryReader,
 		diagnosticBounds:           cfg.DiagnosticBounds,
 		diagnosticDB:               cfg.DiagnosticDB,
@@ -296,10 +306,12 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 			MagicLink:          cfg.MagicLinkTTL,
 			DeviceCode:         cfg.DeviceCodeTTL,
 			DevicePollInterval: cfg.DevicePollEvery,
-		}, cfg.AdminEmails),
+		}, cfg.AdminEmails, cfg.AuditPolicy),
 		deploymentFinalizer: deployment.NewFinalizer(cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission, log),
 	}
 	router := chi.NewRouter()
+	router.Use(auditRequest)
+	router.Use(server.limitSecurityAdmission)
 	router.Use(server.recoverPanics)
 	router.Use(otelhttp.NewMiddleware("helmr-controlplane"))
 	router.Use(server.requestCorrelation)
@@ -333,6 +345,7 @@ func (s *Server) methodNotAllowed(routes chi.Routes, w http.ResponseWriter, r *h
 }
 
 func (s *Server) mountRoutes(router chi.Router) {
+	s.auditRouter = router
 	router.Get("/agent-setup/{harness}.md", s.agentSetup)
 	router.Get("/healthz", s.healthz)
 	router.Get("/readyz", s.readyz)
@@ -353,6 +366,7 @@ func (s *Server) mountRoutes(router chi.Router) {
 func (s *Server) mountAdminRoutes(r chi.Router) {
 	r.Use(limitRequestBody(adminRequestBodyLimit))
 	r.Use(s.requireAdmin)
+	r.Get("/audit-events", s.adminListAuditEvents)
 	r.Get("/regions", s.adminListRegions)
 	r.Post("/regions", s.adminCreateRegion)
 	r.Get("/regions/{regionID}", s.adminGetRegion)
@@ -423,6 +437,7 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 
 func (s *Server) mountManagementRoutes(r chi.Router) {
 	r.Use(limitAPIRequestBody)
+	r.With(s.requireSession).Get("/audit-events", s.listAuditEvents)
 	s.mountAuthRoutes(r)
 	s.mountSlackRoutes(r)
 	s.mountSessionRoutes(r)
@@ -592,6 +607,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 	r.Use(limitAPIRequestBody)
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireAPIKey)
+		r.Get("/audit-events", s.listAuditEvents)
 		r.Get("/deployments", s.listDeployments)
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
@@ -783,6 +799,14 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	}
 	if !databaseReady {
 		s.writeReadinessUnavailable(w, errors.New("regional control plane database session is read only"))
+		return
+	}
+	if err := s.auditPolicy.Validate(); err != nil {
+		s.writeReadinessUnavailable(w, err)
+		return
+	}
+	if err := audit.ValidatePrivileges(ctx, s.readinessDB, false); err != nil {
+		s.writeReadinessUnavailable(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})

@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -43,7 +44,7 @@ func (server *Server) workerAgentAuthority(w http.ResponseWriter, r *http.Reques
 	}
 	authority, err := session.RenewRuntimeAuthority(r.Context(), server.tx, host, execution)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentAuthorityResponse{AuthorityGeneration: authority.Generation, ExpiresAt: authority.ExpiresAt})
@@ -62,7 +63,7 @@ func (server *Server) workerAgentAttachment(w http.ResponseWriter, r *http.Reque
 	}
 	attachment, err := session.AcquireRuntimeAttachment(r.Context(), server.tx, host, execution)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentAttachmentResponse{Stopped: attachment.Stopped, Starting: attachment.Starting, RetireAbsent: attachment.RetireAbsent, AuthorityGeneration: attachment.Authority.Generation, AttachmentSequence: attachment.Sequence, ExpiresAt: attachment.Authority.ExpiresAt})
@@ -103,7 +104,11 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 	server.dispatchAgentOperation(w, r, request, caller)
 }
 
-func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string, err error) {
+func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, r *http.Request, id string, err error) {
+	if errors.Is(err, audit.ErrCapture) {
+		server.writeOperationError(w, r, err)
+		return
+	}
 	var notInterruptible session.TurnNotInterruptibleError
 	if errors.As(err, &notInterruptible) {
 		writeJSON(w, http.StatusOK, agentOperationFailure(id, notInterruptible.ErrorCode(), notInterruptible.Error()))
@@ -150,8 +155,13 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 		code = "admission_unavailable"
 	}
 	if code == "" {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
+	}
+	if code == "authority_changed" {
+		if !server.refuseOperation(w, r, "stale_authority") {
+			return
+		}
 	}
 	message := "Operation was not newly admitted; preserve the original arguments and idempotency key when reconciling an uncertain outcome"
 	if errors.Is(err, session.ErrAgentDeleted) || errors.Is(err, slack.ErrSourceConversationPending) || errors.Is(err, slack.ErrSourceConversationUnavailable) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slack.ErrTargetWorkspaceMismatch) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slack.ErrStartMessageTooLarge) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, session.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, session.ErrResponseAlreadyStaged) {
@@ -163,19 +173,28 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, id string,
 func agentOperationFailure(id, code, message string) workerapi.AgentOperationResponse {
 	return workerapi.AgentOperationResponse{RequestID: id, Error: &workerapi.AgentOperationError{Code: code, Message: message}}
 }
-func (server *Server) writeAgentWorkerError(w http.ResponseWriter, err error) {
+func (server *Server) writeAgentWorkerError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, audit.ErrCapture) {
+		server.writeOperationError(w, r, err)
+		return
+	}
 	switch {
 	case errors.Is(err, session.ErrConversationVerificationUnavailable):
 		server.log.Warn("Slack input is waiting because conversation verification is not configured")
-		writeError(w, conflict(errors.New("session execution authority is unavailable")))
+		server.writeOperationError(w, r, conflict(errors.New("session execution authority is unavailable")))
 	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, dispatch.ErrInvalidInput):
 		writeError(w, badRequest(errors.New("invalid Session worker operation")))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict), errors.Is(err, dispatch.ErrConflict):
-		writeError(w, conflict(errors.New("session control changed")))
+		server.writeOperationError(w, r, conflict(errors.New("session control changed")))
 	case errors.Is(err, workergroup.ErrStaleClaims):
-		writeError(w, unauthorized(errors.New("worker authentication is stale")))
-	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, dispatch.ErrDenied), errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, dispatch.ErrNotReady):
+		server.writeOperationError(w, r, unauthorized(errors.New("worker authentication is stale")))
+	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, dispatch.ErrDenied):
+		if !server.refuseOperation(w, r, "stale_authority") {
+			return
+		}
 		writeError(w, conflict(errors.New("session execution authority is unavailable")))
+	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, dispatch.ErrNotReady):
+		server.writeOperationError(w, r, conflict(errors.New("session execution authority is unavailable")))
 	case errors.Is(err, context.Canceled):
 		server.log.Info("Session worker operation cancelled", "error", err)
 		writeError(w, unavailable(errors.New("session operation is temporarily unavailable")))

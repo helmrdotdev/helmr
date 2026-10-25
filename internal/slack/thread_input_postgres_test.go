@@ -3,6 +3,7 @@ package slack
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"sync"
 	"testing"
@@ -25,7 +26,7 @@ func (f statusFixture) threadMessage(t *testing.T, key, text string, at time.Tim
 }
 func (f statusFixture) admitThreadMessage(t *testing.T, id uuid.UUID) {
 	t.Helper()
-	if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), id); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -48,7 +49,7 @@ func TestSlackThreadInputMuteIsPersistentAndNeverReplays(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 3 {
 		wg.Go(func() {
-			if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), mute); err != nil {
+			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), mute); err != nil {
 				t.Error(err)
 			}
 		})
@@ -109,7 +110,7 @@ func TestSlackThreadInputControlsDoNotReleaseStopOrChangeCoreWork(t *testing.T) 
 	f := newStatusFixture(t)
 	f.link(t)
 	stop := f.nativeStop(t, "stop")
-	if err := admitNativeStop(t.Context(), f.Pool, stop); err != nil {
+	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, stop); err != nil {
 		t.Fatal(err)
 	}
 	for _, text := range []string{"!mute", "!unmute", "!aside <@bot> discussion"} {
@@ -139,7 +140,7 @@ func TestSlackThreadInputControlAuthorityAndTerminalState(t *testing.T) {
 			case "read-only":
 				f.SetPermissions(t, "sessions.read")
 			case "closed":
-				if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			case "unbound":
@@ -170,13 +171,13 @@ func TestSlackThreadInputEventBoundaryAndMuteExclusion(t *testing.T) {
 	}
 	send("before-visible", "continue", "123.456", 0)
 	first := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	send("bound", "continue", "123.456", 1)
 	f.due(t)
 	refresh := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, refresh, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, refresh, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	send("bound-after-uncertainty", "continue", "123.456", 1)
@@ -184,7 +185,7 @@ func TestSlackThreadInputEventBoundaryAndMuteExclusion(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp() WHERE id=$1;
  UPDATE slack_delivery_limits SET next_status_at=clock_timestamp() WHERE installation_id=$2`, pgx.QueryExecModeSimpleProtocol, f.thread, f.installation)
 	retry := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, retry, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, retry, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	send("unbound", "continue", "999.123", 0)
@@ -203,7 +204,7 @@ func TestSlackThreadInputMuteReceiptFailureRollsBackState(t *testing.T) {
 	f.link(t)
 	id := f.threadMessage(t, "mute", "!mute", time.Now())
 	dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE slack_requests ADD CONSTRAINT no_acceptance CHECK(status<>'accepted')`)
-	if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), id); err == nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err == nil {
 		t.Fatal("expected receipt constraint failure")
 	}
 	f.assertThreadInput(t, false, 0)

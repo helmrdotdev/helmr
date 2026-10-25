@@ -3,6 +3,8 @@ package session_test
 import (
 	"crypto/sha256"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -112,7 +114,7 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 		t.Fatalf("acquiring dispatch: %v", err)
 	}
 	caller := session.Caller{Kind: "session", ID: f.f.session, Execution: e, Host: &f.host}
-	if _, err := session.Enqueue(ctx, f.f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.f.env, SessionID: f.f.session, IdempotencyKey: "acquiring-mutation", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.f.env, SessionID: f.f.session, IdempotencyKey: "acquiring-mutation", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("control authority admitted business mutation: %v", err)
 	}
 	attachment, err := session.AcquireRuntimeAttachment(ctx, f.f.pool, f.host, e)
@@ -137,23 +139,51 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 		t.Fatalf("old image retried: %v", err)
 	}
 	// A late duplicate source-stop receipt must not disturb the current target.
-	if err = dispatch.ObserveLeaseStopped(ctx, f.f.pool, *f.f.host(), leaseIdentity(f.f), uuid.Nil(), uuid.Nil()); err != nil {
+	if err = dispatch.ObserveLeaseStopped(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.f.pool, *f.f.host(), leaseIdentity(f.f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatalf("historical source fence lost current target: %v", err)
 	}
 	admitted := f.f.enqueue(t, "queued-through-restore")
-	if err = session.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, installed); !errors.Is(err, session.ErrNotReady) {
+	if err = session.CompleteComputerRestore(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.f.pool, f.host, f.f.env, p, installed); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("unactivated admitted: %v", err)
 	}
 	// Current controls are mandatory even after the activation reply is received.
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET authority_generation=3 WHERE environment_id=$1 AND id=$2`, f.f.env, f.f.session)
-	if err = session.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); !errors.Is(err, session.ErrNotReady) {
+	if err = session.CompleteComputerRestore(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("stale controls admitted: %v", err)
 	}
 	acknowledgeComputerMembers(t, f.f, f.host, p)
+	dbtest.MustExec(t, ctx, f.f.pool, `ALTER TABLE audit_events ADD CONSTRAINT reject_restore_audit CHECK(action<>'computer.restore_completed') NOT VALID`)
+	if err = session.CompleteComputerRestore(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); !errors.Is(err, audit.ErrCapture) {
+		t.Fatalf("restore escaped audit failure: %v", err)
+	}
+	var notReconciled bool
+	if err = f.f.pool.QueryRow(ctx, `SELECT controls_reconciled_at IS NULL FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&notReconciled); err != nil || !notReconciled {
+		t.Fatal("restore was not rolled back", notReconciled, err)
+	}
+	dbtest.MustExec(t, ctx, f.f.pool, `ALTER TABLE audit_events DROP CONSTRAINT reject_restore_audit`)
 	for range 2 {
-		if err = session.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
+		if err = session.CompleteComputerRestore(ctx, auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
 			t.Fatal(err)
 		}
+	}
+	var facts int
+	if err = f.f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='computer.restore_completed' AND computer_id=$1 AND credential_id=$2`, f.f.computer, f.host.HostID).Scan(&facts); err != nil || facts != 1 {
+		t.Fatal("restore replay or actor", facts, err)
+	}
+	dbtest.MustExec(t, ctx, f.f.pool, `DELETE FROM audit_events WHERE action='computer.restore_completed'`)
+	if err = session.CompleteComputerRestore(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='computer.restore_completed'`).Scan(&facts); err != nil || facts != 0 {
+		t.Fatal("restore fact recreated", facts, err)
 	}
 	e.AuthorityGeneration = 3
 	dispatched, err := dispatchTurnForTest(ctx, f.f.pool, e)
@@ -193,7 +223,9 @@ func TestComputerRestoreRetriesOnlyBeforeConsumption(t *testing.T) {
 	if _, err := session.PrepareComputerRestore(ctx, f.f.pool, f.host, f.f.env, f.manifest.CheckpointID, f.epoch, f.credential); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("consumed snapshot reloaded before loss: %v", err)
 	}
-	if err := dispatch.ObserveLeaseStopped(ctx, f.f.pool, f.host, computer.LeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, InstanceID: uuid.MustParse(second.Envelope.ComputerInstanceId), Epoch: f.epoch}, uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.f.pool, f.host, computer.LeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, InstanceID: uuid.MustParse(second.Envelope.ComputerInstanceId), Epoch: f.epoch}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	f.newTarget(t)
@@ -266,7 +298,9 @@ func TestComputerRestoreRetainsStopsAndHolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f.f, f.host, p)
-	if err := session.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err := session.CompleteComputerRestore(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.f.pool, f.host, f.f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	var held bool
@@ -413,7 +447,9 @@ func TestComputerRestoreRefreshesStopsBeforeInstallation(t *testing.T) {
 		t.Fatalf("installed identity replaced: %v", err)
 	}
 	acknowledgeComputerMembers(t, f.f, f.host, second)
-	if err := session.CompleteComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, true, true)); err != nil {
+	if err := session.CompleteComputerRestore(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, true, true)); err != nil {
 		t.Fatal(err)
 	}
 }

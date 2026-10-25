@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -19,14 +20,14 @@ type RecoveryCandidate struct {
 
 // Recover never rebinds or replays execution. Losing authority settles the logical
 // result; only a recorded physical fence reconciles the historical process scope.
-func Recover(ctx context.Context, txb db.TxBeginner, candidate RecoveryCandidate) error {
-	err := changed(db.RunTx(ctx, txb, func(tx pgx.Tx) error { return recoverCommand(ctx, tx, candidate) }))
+func Recover(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginner, candidate RecoveryCandidate) error {
+	err := changed(db.RunTx(ctx, txb, func(tx pgx.Tx) error { return recoverCommand(ctx, auditPolicy, tx, candidate) }))
 	if err != nil {
 		return fmt.Errorf("recover Command: %w", err)
 	}
 	return nil
 }
-func recoverCommand(ctx context.Context, tx pgx.Tx, candidate RecoveryCandidate) error {
+func recoverCommand(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, candidate RecoveryCandidate) error {
 	q := db.New(tx)
 	target, err := q.GetCommandTarget(ctx, db.GetCommandTargetParams{EnvironmentID: pgvalue.UUID(candidate.EnvironmentID), CommandID: pgvalue.UUID(candidate.CommandID)})
 	if err != nil {
@@ -71,6 +72,11 @@ func recoverCommand(ctx context.Context, tx pgx.Tx, candidate RecoveryCandidate)
  revision=revision+1,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, candidate.CommandID); err != nil {
 			return err
 		}
+		if !c.ComputerLeaseEpoch.Valid {
+			if err = auditServiceFailure(ctx, tx, auditPolicy, c, "command-recovery", "failed", "permission_denied"); err != nil {
+				return err
+			}
+		}
 	}
 	if !c.ComputerLeaseEpoch.Valid {
 		return nil
@@ -87,6 +93,9 @@ func recoverCommand(ctx context.Context, tx pgx.Tx, candidate RecoveryCandidate)
 		if _, err = tx.Exec(ctx, `UPDATE commands SET status='lost',failure_reason='guest_failure',terminal_reason_code='computer_lease_lost',
  error='{"code":"computer_lease_lost","retryable":false}'::jsonb,terminal_at=clock_timestamp(),result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
  WHERE environment_id=$1 AND id=$2 AND terminal_at IS NULL`, env, candidate.CommandID); err != nil {
+			return err
+		}
+		if err = auditServiceFailure(ctx, tx, auditPolicy, c, "command-recovery", "unknown", "worker_lost"); err != nil {
 			return err
 		}
 	}

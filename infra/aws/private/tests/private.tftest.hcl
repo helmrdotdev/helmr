@@ -1,4 +1,5 @@
 mock_provider "aws" {
+  mock_resource "aws_cloudwatch_event_rule" { defaults = { arn = "arn:aws:events:us-east-1:000000000000:rule/mock" } }
   mock_data "aws_availability_zones" { defaults = { names = ["us-east-1a", "us-east-1b"] } }
   mock_resource "aws_ecs_cluster" { defaults = { arn = "arn:aws:ecs:us-east-1:111122223333:cluster/test" } }
   mock_resource "aws_service_discovery_service" { defaults = { arn = "arn:aws:servicediscovery:us-east-1:111122223333:service/srv-1234567890123456" } }
@@ -39,6 +40,7 @@ mock_provider "http" {
 mock_provider "random" {}
 
 variables {
+  audit_retention_seconds = 2592000
   controlplane_environment = {
     ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
     ENVIRONMENT_MAX_CPU_MILLIS             = "16000"

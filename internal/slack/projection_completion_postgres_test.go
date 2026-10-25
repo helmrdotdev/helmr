@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"testing"
@@ -48,11 +49,13 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 			}
 			f.projectAll(t)
 			assertResponses(0)
-			if err := session.RuntimeCloseProcessing(t.Context(), f.Pool, host, execution, turn); err != nil {
+			if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.Pool, host, execution, turn); err != nil {
 				t.Fatal(err)
 			}
 			if kind != "failed" {
-				if outcome, err := session.RuntimeFinalize(t.Context(), f.Pool, host, execution, turn, json.RawMessage(`{"private":"PRIVATE_RESULT"}`), "callbacks drained"); err != nil || outcome == nil {
+				if outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, host, execution, turn, json.RawMessage(`{"private":"PRIVATE_RESULT"}`), "callbacks drained"); err != nil || outcome == nil {
 					t.Fatalf("finalize: %s %v", outcome, err)
 				}
 				// Completion and delivery intent are committed while the save
@@ -63,11 +66,11 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 				}
 			}
 			if kind == "failed" {
-				if _, err := session.RuntimeFail(t.Context(), f.Pool, host, execution, turn, session.TurnError{Code: "application_failure", Message: "PRIVATE_FAILURE"}, "callbacks drained"); err != nil {
+				if _, err := session.RuntimeFail(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, host, execution, turn, session.TurnError{Code: "application_failure", Message: "PRIVATE_FAILURE"}, "callbacks drained"); err != nil {
 					t.Fatal(err)
 				}
 			} else if kind == "cancelled" {
-				if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -103,7 +106,7 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 			settled := false
 			for range 20 {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp(); UPDATE slack_method_limits SET retry_after=clock_timestamp(); UPDATE slack_posts SET next_attempt_at=clock_timestamp(); UPDATE slack_threads SET next_attempt_at=clock_timestamp()`, pgx.QueryExecModeSimpleProtocol)
-				if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 64); err != nil {
+				if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 64); err != nil {
 					t.Fatal(err)
 				}
 				if err := f.Pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM slack_posts WHERE status<>'posted' OR confirmed_revision<>desired_revision OR (presentation_path='stream' AND stream_status<>'stopped'))`).Scan(&settled); err != nil {

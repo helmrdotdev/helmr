@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"reflect"
 	"sync"
 	"testing"
@@ -22,7 +23,7 @@ func TestEmptySessionCreationReceiptAndConcurrentFirstInputs(t *testing.T) {
 	req.Input = nil
 	key := "empty"
 	req.SessionKey = &key
-	first, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +36,7 @@ func TestEmptySessionCreationReceiptAndConcurrentFirstInputs(t *testing.T) {
 	}
 	conflict := req
 	conflict.IdempotencyKey = "occupied"
-	if _, err = session.Start(t.Context(), f.pool, nil, f.caller(), conflict); !errors.Is(err, session.ErrConflict) {
+	if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), conflict); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("occupied key: %v", err)
 	}
 	// A later promotion cannot alter the code or placement selected for this Session.
@@ -46,7 +47,7 @@ func TestEmptySessionCreationReceiptAndConcurrentFirstInputs(t *testing.T) {
 	var wg sync.WaitGroup
 	for range count {
 		wg.Go(func() {
-			a, e := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+			a, e := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 			results <- a
 			errs <- e
 		})
@@ -75,11 +76,11 @@ func TestEmptySessionCreationReceiptAndConcurrentFirstInputs(t *testing.T) {
 		t.Fatalf("first-input allocation: %v %v", valid, err)
 	}
 	for _, kind := range []string{"interrupt", "cancel"} {
-		if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: first.SessionID, Kind: kind, IdempotencyKey: kind}); err != nil {
+		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: first.SessionID, Kind: kind, IdempotencyKey: kind}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	replay, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+	replay, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil || !reflect.DeepEqual(replay, first) {
 		t.Fatalf("mutable create receipt: %+v %+v %v", first, replay, err)
 	}
@@ -94,15 +95,15 @@ func TestEmptySessionAccountingAndControls(t *testing.T) {
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_outstanding_admissions=1,admission_tokens=2,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.env)
 			req := f.startRequest("empty")
 			req.Input = nil
-			a, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+			a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 			if err != nil {
 				t.Fatal(err)
 			}
-			retry, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+			retry, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 			if err != nil || !reflect.DeepEqual(a, retry) {
 				t.Fatalf("retry: %+v %v", retry, err)
 			}
-			_, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: a.SessionID, IdempotencyKey: "blocked", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+			_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: a.SessionID, IdempotencyKey: "blocked", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 			if !errors.Is(err, session.ErrNotReady) {
 				t.Fatalf("Turn limit: %v", err)
 			}
@@ -115,16 +116,16 @@ func TestEmptySessionAccountingAndControls(t *testing.T) {
 				if err := session.ReconcileSessionIdle(t.Context(), f.pool, f.env, a.SessionID); err != nil {
 					t.Fatal(err)
 				}
-				if err := session.ReconcileSessionClosure(t.Context(), f.pool, f.env, a.SessionID); err != nil {
+				if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, a.SessionID); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				ctl, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: a.SessionID, Kind: kind, IdempotencyKey: kind})
+				ctl, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: a.SessionID, Kind: kind, IdempotencyKey: kind})
 				if err != nil {
 					t.Fatal(err)
 				}
 				if kind == "interrupt" {
-					if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: a.SessionID, Kind: "resume", HoldID: ctl.HoldID, IdempotencyKey: "resume"}); err != nil {
+					if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: a.SessionID, Kind: "resume", HoldID: ctl.HoldID, IdempotencyKey: "resume"}); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -142,7 +143,7 @@ func emptySession(t *testing.T, f fixture, key string) uuid.UUID {
 	t.Helper()
 	req := f.startRequest(key)
 	req.Input = nil
-	created, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+	created, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +168,7 @@ func TestFirstEnqueueLocksImageSpecBeforeSessions(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), holder, `SELECT id FROM image_specs WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, f.env, spec)
 	done := make(chan error, 1)
 	go func() {
-		_, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: sessionID, IdempotencyKey: "first", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: sessionID, IdempotencyKey: "first", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 		done <- err
 	}()
 	deadline := time.Now().Add(10 * time.Second)
@@ -217,7 +218,7 @@ func TestFirstEnqueueRetriesExactlyAfterCapacityExhaustion(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_reserved_storage_bytes=$2 WHERE id=$1`, f.env, disk.SeedCapacity)
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: sessionID, IdempotencyKey: "retry", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)}
-	if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, computer.ErrNotReady) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("capacity exhaustion: %v", err)
 	}
 	var clean bool
@@ -225,11 +226,11 @@ func TestFirstEnqueueRetriesExactlyAfterCapacityExhaustion(t *testing.T) {
 		t.Fatalf("rejected enqueue left partial work: %v %v", clean, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_reserved_storage_bytes=$2 WHERE id=$1`, f.env, limit)
-	first, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), req)
+	first, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), req)
+	again, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil || again != first {
 		t.Fatalf("exact retry: %+v %+v %v", first, again, err)
 	}

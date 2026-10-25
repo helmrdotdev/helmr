@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -80,7 +81,7 @@ func GetResourcePolicy(ctx context.Context, q db.Querier, groupID, poolID uuid.U
 
 // UpdateResourcePolicy serializes with supply admission without changing lifecycle
 // claims. The audit and invalidation commit with the policy itself.
-func UpdateResourcePolicy(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID, poolID uuid.UUID, update ResourcePolicyUpdate) (PoolResourcePolicy, error) {
+func UpdateResourcePolicy(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Actor, groupID, poolID uuid.UUID, update ResourcePolicyUpdate) (PoolResourcePolicy, error) {
 	if err := update.ResourcePolicy.Validate(); err != nil {
 		return PoolResourcePolicy{}, err
 	}
@@ -120,7 +121,7 @@ func UpdateResourcePolicy(ctx context.Context, txb db.TxBeginner, actor audit.Ac
 		if err != nil {
 			return fmt.Errorf("update resource policy: %w", err)
 		}
-		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_pool.resource_policy_updated", TargetKind: "worker_pool", TargetID: poolID}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Actor: actor, Action: "worker_pool.resource_policy_updated", TargetKind: "worker_pool", TargetID: poolID}); err != nil {
 			return err
 		}
 		result.Revision++

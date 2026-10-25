@@ -2,6 +2,7 @@ package slack
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"strings"
@@ -89,7 +90,7 @@ func TestSlackCloseConfirmationRejectsChangedScopeAndWrongActor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = admitControl(t.Context(), f.Pool, wrongActor.ID); err != nil {
+	if err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, wrongActor.ID); err != nil {
 		t.Fatal(err)
 	}
 	f.receiptStatus(t, wrongActor.ID, "rejected")
@@ -99,7 +100,7 @@ func TestSlackCloseConfirmationRejectsChangedScopeAndWrongActor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = admitControl(t.Context(), f.Pool, receipt.ID); err != nil {
+	if err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, receipt.ID); err != nil {
 		t.Fatal(err)
 	}
 	f.receiptStatus(t, receipt.ID, "rejected")
@@ -202,7 +203,9 @@ func TestSlackUnboundLifecycleCommandsHaveExplicitRejection(t *testing.T) {
 		t.Run(command, func(t *testing.T) {
 			f := newStatusFixture(t)
 			id := f.threadMessage(t, "unbound-"+command, "!"+command, time.Now())
-			if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error { return admitLifecycleMessage(t.Context(), tx, id, &messageAdmission{}, command) }); err != nil {
+			if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
+				return admitLifecycleMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, tx, id, &messageAdmission{}, command)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			var code string

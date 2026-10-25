@@ -127,7 +127,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 		t.Fatalf("Agent targets resurrected: %v", err)
 	}
 	var targetAudit bool
-	if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='role.updated' AND target_id=$1 AND details->'before_assignments' @> $2::jsonb AND details->'after_assignments' @> $3::jsonb)`, role.ID, `[{"grant_id":"`+grant.ID.String()+`","agent_keys":["faq"]}]`, `[{"grant_id":"`+grant.ID.String()+`","agents_mode":"none"}]`).Scan(&targetAudit); err != nil || !targetAudit {
+	if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='role_grant.updated' AND target_id=$1 AND environment_id IS NOT NULL AND details->'before' @> $2::jsonb AND details->'after' @> $3::jsonb)`, grant.ID, `{"grant_id":"`+grant.ID.String()+`","agent_ids":["`+faq.String()+`"]}`, `{"grant_id":"`+grant.ID.String()+`","agents_mode":"none"}`).Scan(&targetAudit); err != nil || !targetAudit {
 		t.Fatalf("role target audit missing: %v", err)
 	}
 	check(prod, faq, auth.PermissionAgentsUse, false)

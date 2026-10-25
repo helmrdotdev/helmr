@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -11,7 +12,7 @@ import (
 
 // Session discovery retains the original caller relationship across process
 // reconstruction. It exposes metadata and receipt identity, not target history.
-func RuntimeGetSession(ctx context.Context, database db.TxBeginner, caller Caller, id uuid.UUID) (SessionView, error) {
+func RuntimeGetSession(ctx context.Context, policy auditpolicy.Policy, database db.TxBeginner, caller Caller, id uuid.UUID) (SessionView, error) {
 	var result SessionView
 	err := runtimeSessionRead(ctx, database, caller, func(tx pgx.Tx) error {
 		if err := authorizeTarget(ctx, tx, caller, caller.Execution.EnvironmentID, id, auth.PermissionSessionsRead); err != nil {
@@ -32,9 +33,15 @@ func RuntimeGetSession(ctx context.Context, database db.TxBeginner, caller Calle
 		views := []SessionView{result}
 		err = redactSessionRelations(ctx, tx, caller, caller.Execution.EnvironmentID, views)
 		result = views[0]
-		return err
+		if err != nil {
+			return err
+		}
+		return recordSessionHoldsRead(ctx, policy, tx, caller, caller.Execution.EnvironmentID, views)
 	})
-	return result, err
+	if err != nil {
+		return SessionView{}, err
+	}
+	return result, nil
 }
 
 type RuntimeSessionListRequest struct {
@@ -44,7 +51,7 @@ type RuntimeSessionListRequest struct {
 	Limit    int
 }
 
-func RuntimeListSessions(ctx context.Context, database db.TxBeginner, caller Caller, req RuntimeSessionListRequest) (SessionPage, error) {
+func RuntimeListSessions(ctx context.Context, policy auditpolicy.Policy, database db.TxBeginner, caller Caller, req RuntimeSessionListRequest) (SessionPage, error) {
 	result := SessionPage{Sessions: []SessionView{}}
 	if req.Relation != "owned" && req.Relation != "requested" {
 		return result, ErrInvalidInput
@@ -80,9 +87,12 @@ func RuntimeListSessions(ctx context.Context, database db.TxBeginner, caller Cal
 		if err := redactSessionRelations(ctx, tx, caller, caller.Execution.EnvironmentID, result.Sessions); err != nil {
 			return err
 		}
-		return nil
+		return recordSessionHoldsRead(ctx, policy, tx, caller, caller.Execution.EnvironmentID, result.Sessions)
 	})
-	return result, err
+	if err != nil {
+		return SessionPage{}, err
+	}
+	return result, nil
 }
 
 func runtimeSessionRead(ctx context.Context, database db.TxBeginner, caller Caller, read func(pgx.Tx) error) error {

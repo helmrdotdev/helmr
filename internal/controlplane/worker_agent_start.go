@@ -30,17 +30,17 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 	}
 	start, err := session.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	program, err := server.sessionProgram(r.Context(), start)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
-	exposure, err := session.RecordSessionStartExposure(r.Context(), server.tx, host, execution, request.AttachmentSequence)
+	exposure, err := session.RecordSessionStartExposure(r.Context(), server.auditPolicy, server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	envelopes := make([]secret.DeliveryEnvelope, 0, len(exposure.Secrets))
@@ -56,13 +56,13 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	deliveries, err := projectSecretDeliveries(materials)
 	defer clearComputerSecretDeliveries(deliveries)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	var protected *workerapi.ProtectedEnv
@@ -73,7 +73,7 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 	// admission check, including the exact transport that will receive setup.
 	start, err = session.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -142,11 +142,11 @@ func (server *Server) workerAgentStartRelease(w http.ResponseWriter, r *http.Req
 	}
 	start, err := session.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	if start.BundleDigest != request.BundleDigest {
-		server.writeAgentWorkerError(w, session.ErrNotReady)
+		server.writeAgentWorkerError(w, r, session.ErrNotReady)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentAuthorityResponse{AuthorityGeneration: start.Authority.Generation, ExpiresAt: start.Authority.ExpiresAt})

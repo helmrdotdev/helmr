@@ -3,6 +3,7 @@ package session_test
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -14,7 +15,9 @@ import (
 
 func TestShortStoragePressureClearNotifiesWaitingWorker(t *testing.T) {
 	f := newFixture(t)
-	if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil {
+	if err := session.ReportStoragePressure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), saveIdentity(f), true); err != nil {
 		t.Fatal(err)
 	}
 	listener, err := f.pool.Acquire(t.Context())
@@ -25,7 +28,9 @@ func TestShortStoragePressureClearNotifiesWaitingWorker(t *testing.T) {
 	if _, err = listener.Exec(t.Context(), "LISTEN helmr_changes"); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), false); err != nil {
+	if err = session.ReportStoragePressure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), saveIdentity(f), false); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -55,7 +60,9 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
 	// Pressure reports carry no worker clock; elapsed time belongs to the server.
 	report := func(value bool) {
 		t.Helper()
-		if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), value); err != nil {
+		if err := session.ReportStoragePressure(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), saveIdentity(f), value); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,7 +90,7 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
 	}
 	manual := controlRequest(f, "resume", "pressure-is-automatic")
 	manual.HoldID = pressureHold
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), manual); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), manual); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("manual resume cleared automatic pressure hold %v", err)
 	}
 	independent := uuid.NewV7()
@@ -91,7 +98,7 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '301 seconds'`)
 	// The durable lifecycle owns timeout even without another worker report.
 	for range 2 {
-		if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+		if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -129,13 +136,15 @@ func TestStoragePressureCannotPreemptLostExecutionOutcome(t *testing.T) {
 				t.Fatal(err)
 			}
 			queued := f.enqueue(t, "queued")
-			if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil {
+			if err := session.ReportStoragePressure(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, *f.host(), saveIdentity(f), true); err != nil {
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '301 seconds'`)
 			dbtest.MustExec(t, t.Context(), f.pool, change.sql)
 			for range 2 {
-				if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+				if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -146,7 +155,9 @@ func TestStoragePressureCannotPreemptLostExecutionOutcome(t *testing.T) {
     AND NOT EXISTS(SELECT 1 FROM session_holds WHERE kind='storage_pressure')`, running.TurnID).Scan(&valid); err != nil || !valid {
 				t.Fatalf("pressure preempted lost execution: %v %v", valid, err)
 			}
-			if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+			if err := dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, f.env, f.computer, 1); err != nil {
 				t.Fatal(err)
 			}
 			if err := f.pool.QueryRow(t.Context(), `SELECT
@@ -165,16 +176,20 @@ func TestStoragePressureLossClearsHoldWithoutRecoveryPromise(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil {
+	if err := session.ReportStoragePressure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), saveIdentity(f), true); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '31 seconds'`)
-	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
 	for range 2 {
-		if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+		if err := dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, f.env, f.computer, 1); err != nil {
 			t.Fatal(err)
 		}
 	}

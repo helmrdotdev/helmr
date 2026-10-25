@@ -3,9 +3,11 @@ package session
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
@@ -335,7 +337,7 @@ func RuntimeAgentScope(ctx context.Context, tx pgx.Tx, caller Caller) (bool, []u
 	return scope.AllAgents, scope.Agents, err
 }
 
-func failQueuedPermission(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) error {
+func failQueuedPermission(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session uuid.UUID) error {
 	rows, err := tx.Query(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp(),error_code='permission_revoked',error_message=$3 WHERE environment_id=$1 AND session_id=$2 AND status='queued' RETURNING id`, env, session, []byte("Permission was revoked before execution"))
 	if err != nil {
 		return err
@@ -345,6 +347,9 @@ func failQueuedPermission(ctx context.Context, tx pgx.Tx, env, session uuid.UUID
 		return err
 	}
 	for _, id := range ids {
+		if err = auditServiceFact(ctx, tx, auditPolicy, "session-admission", audit.Event{EnvironmentID: env, SessionID: session, TurnID: id, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: id, Details: audit.FailureDetails{Reason: "permission_denied"}}); err != nil {
+			return err
+		}
 		if err = eventData(ctx, tx, env, session, id, "turn.failed", []byte(`{"code":"permission_revoked"}`)); err != nil {
 			return err
 		}

@@ -3,6 +3,7 @@ package slack
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -115,7 +116,7 @@ func TestSlackPersistentLifecycleButtonAdmitsFreshGesture(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_requests WHERE status='received'`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	if err := admitControl(t.Context(), f.Pool, id); err != nil {
+	if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, id); err != nil {
 		t.Fatal(err)
 	}
 	f.receiptStatus(t, id, "accepted")

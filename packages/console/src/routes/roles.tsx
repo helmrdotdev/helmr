@@ -5,7 +5,7 @@ import { ManagedMark } from "../features/access/AccessIcon";
 import { hasPermission } from "../lib/auth";
 import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
-import { deleteRole, isOrganizationRole, listRoles, permissionNames, roleHref, type PermissionRole } from "../lib/permissions";
+import { deleteRole, listRoles, permissionNames, roleHref, type PermissionRole } from "../lib/permissions";
 import { DataTable, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
 import { ConfirmDialog } from "../ui/Dialog";
 import { SearchInput } from "../ui/Field";
@@ -45,7 +45,7 @@ export function Roles() {
               {role => (
                 <tr>
                   <td><span class="inline-flex items-center gap-1.5"><PrimaryLink href={roleHref(role.id)}>{role.name}</PrimaryLink><Show when={role.builtin_key}><ManagedMark title={MANAGED_ROLE_NOTE} /></Show></span></td>
-                  <td>{isOrganizationRole(role.permissions, catalog()) ? "Organization" : "Environment"}</td>
+                  <td>{role.assignment_levels.map(level => level === "organization" ? "Organization" : "Environment").join(" / ")}</td>
                   <td>{role.permissions.length > LISTED_PERMISSIONS ? `${role.permissions.length} permissions` : permissionNames(role.permissions, catalog())}</td>
                   <td class="font-mono text-chrome!">{role.grant_count}</td>
                   <RowActions label={`Actions for ${role.name}`} items={[

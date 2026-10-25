@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,12 +37,12 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	scope, err := s.requestedRunListScope(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	limit, cursor, err := parseDeploymentListQuery(r, scope.ProjectID, scope.EnvironmentID)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	var after *deployment.Position
@@ -50,7 +51,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, hasMore, err := deployment.List(r.Context(), s.tx, principal, scope, limit, after)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	items := make([]api.DeploymentListItem, 0, len(rows))
@@ -68,7 +69,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: last.CreatedAt, ID: last.ID.String(),
 		})
 		if err != nil {
-			writeError(w, errors.New("list deployments"))
+			s.writeOperationError(w, r, errors.New("list deployments"))
 			return
 		}
 	}
@@ -130,18 +131,18 @@ func decodeDeploymentListCursor(raw string) (deploymentListCursor, error) {
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 	deploymentID, err := parseUUIDParam(r, "deploymentID")
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, err := s.requestedRunListScope(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	record, err := deployment.Get(r.Context(), s.tx, principal, scope, deploymentID)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, deploymentResponse(record))
@@ -151,12 +152,12 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	scope, err := s.requestedRunListScope(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	record, err := deployment.GetCurrent(r.Context(), s.tx, principal, scope)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, deploymentResponse(record))
@@ -165,25 +166,25 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	deploymentID, err := parseUUIDParam(r, "deploymentID")
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	var preflight slackroute.StartPreflight
 	if s.slackConfig != nil {
 		preflight = s.slackConfig.Client
 	}
-	record, err := deployment.Promote(r.Context(), s.tx, principal, scope, deploymentID, preflight)
+	record, err := deployment.Promote(r.Context(), s.tx, s.auditPolicy, principal, scope, deploymentID, preflight)
 	if err != nil {
 		if errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slackroute.ErrConversationChanged) {
-			s.writeAgentHTTPError(w, err)
+			s.writeAgentHTTPError(w, r, err)
 		} else {
-			s.writeDeploymentError(w, err)
+			s.writeDeploymentError(w, r, err)
 		}
 		return
 	}
@@ -243,12 +244,16 @@ func deploymentError(err error) error {
 
 // writeDeploymentError writes a deployment owner error, logging the failures
 // it does not describe to the client.
-func (s *Server) writeDeploymentError(w http.ResponseWriter, err error) {
+func (s *Server) writeDeploymentError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, audit.ErrCapture) {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	mapped := deploymentError(err)
 	if errorStatus(mapped) != http.StatusInternalServerError {
-		writeError(w, mapped)
+		s.writeOperationError(w, r, mapped)
 		return
 	}
 	s.log.Error("deployment request failed", "error", err)
-	writeError(w, errors.New("deployment request"))
+	s.writeOperationError(w, r, errors.New("deployment request"))
 }

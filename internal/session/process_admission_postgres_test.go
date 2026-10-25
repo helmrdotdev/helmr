@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -86,10 +87,14 @@ func TestProcessAdmissionFailedSetupRetainsInputUntilExplicitResume(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err := session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err := session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2); !errors.Is(err, session.ErrNotReady) {
@@ -103,7 +108,7 @@ func TestProcessAdmissionFailedSetupRetainsInputUntilExplicitResume(t *testing.T
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND process_epoch IS NULL AND started_at IS NULL FROM turns WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID).Scan(&queued); err != nil || !queued {
 		t.Fatalf("failed setup consumed input: %v %v", queued, err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume-setup", HoldID: hold}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume-setup", HoldID: hold}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2)
@@ -118,7 +123,7 @@ func TestProcessReadinessSupersededByShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "stop-before-ready"}); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "stop-before-ready"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = session.ObserveSessionReady(t.Context(), f.pool, *f.host(), e, attachment.Sequence+1); !errors.Is(err, session.ErrNotReady) {
@@ -143,7 +148,7 @@ func TestCancelledProcessAbsentBeforeSetupCanBeReclaimed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "cancel-before-setup"}); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "cancel", IdempotencyKey: "cancel-before-setup"}); err != nil {
 		t.Fatal(err)
 	}
 	current, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
@@ -153,7 +158,9 @@ func TestCancelledProcessAbsentBeforeSetupCanBeReclaimed(t *testing.T) {
 	if _, err = session.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, current.Sequence); err == nil {
 		t.Fatal("cancelled setup authorized")
 	}
-	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, old.Sequence); !errors.Is(err, session.ErrDenied) {
+	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, old.Sequence); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("stale absence accepted: %v", err)
 	}
 	var computerID uuid.UUID
@@ -165,20 +172,22 @@ func TestCancelledProcessAbsentBeforeSetupCanBeReclaimed(t *testing.T) {
 		t.Fatal(err)
 	}
 	deletion := computer.Deletion{Principal: sessiontestPrincipal(t, f), Scope: scope, ComputerID: computerID, IdempotencyKey: "delete-cancelled"}
-	if _, err = computer.Delete(t.Context(), f.pool, deletion); !errors.Is(err, computer.ErrBusy) {
+	if _, err = computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, deletion); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("unproved stop permitted deletion: %v", err)
 	}
 	delivery, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, current.Sequence)
 	if err != nil || delivery.Kind != "shutdown" {
 		t.Fatalf("cancelled control: %+v %v", delivery, err)
 	}
-	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, current.Sequence); err != nil {
+	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, current.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = session.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), e, current.Sequence); err == nil {
 		t.Fatal("stopped setup authorized")
 	}
-	if _, err = computer.Delete(t.Context(), f.pool, deletion); err != nil {
+	if _, err = computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, deletion); err != nil {
 		t.Fatalf("proved stop prevented deletion: %v", err)
 	}
 }
@@ -216,7 +225,9 @@ func TestProcessReadinessReplayDoesNotBlockRestoreCompletion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := session.CompleteComputerRestore(ctx, r.f.pool, r.host, r.f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err := session.CompleteComputerRestore(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, r.f.pool, r.host, r.f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatalf("Ready control cannot complete restoration: %v", err)
 	}
 	var active bool
@@ -242,17 +253,21 @@ func TestProcessAdmissionCommitsQueuedRevocationOnLiveComputer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	var hold uuid.UUID
 	if err = f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND released_at IS NULL`, e.SessionID).Scan(&hold); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume", HoldID: hold}); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume", HoldID: hold}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = f.pool.Exec(t.Context(), `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user); err != nil {

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -28,7 +29,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 	if next, err := client.NextAgentTurn(t.Context(), request); err != nil || next != nil {
 		t.Fatalf("empty queue: %+v %v", next, err)
 	}
-	admission, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "dispatch", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"hello\"}"}]`)})
+	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "dispatch", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"hello\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +90,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 	if _, err := client.ObserveAgentTurn(t.Context(), receipt); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("nonterminal Turn acknowledged: %v", err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

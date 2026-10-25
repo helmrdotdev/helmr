@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"log/slog"
 	"net/http"
 	"time"
@@ -18,7 +19,7 @@ import (
 // block independent threads. Durable claims and installation pacing remain the
 // send authority across workers and dispatcher processes. Cancellation joins all
 // in-flight workers before returning to the process supervisor.
-func RunDelivery(ctx context.Context, pool db.TxBeginner, client *WebClient, log *slog.Logger, changes *dbnotify.Hub) error {
+func RunDelivery(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, client *WebClient, log *slog.Logger, changes *dbnotify.Hub) error {
 	if pool == nil || client == nil || log == nil {
 		return errors.New("the Slack delivery dependencies are required")
 	}
@@ -31,7 +32,7 @@ func RunDelivery(ctx context.Context, pool db.TxBeginner, client *WebClient, log
 			ticker := time.NewTicker(time.Second)
 			defer ticker.Stop()
 			for {
-				_, err := ReconcileDelivery(ctx, pool, client, 4)
+				_, err := ReconcileDelivery(ctx, pool, policy, client, 4)
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}

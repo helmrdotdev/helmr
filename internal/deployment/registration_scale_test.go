@@ -3,6 +3,7 @@ package deployment
 import (
 	"context"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"os"
 	"runtime"
 	"sync/atomic"
@@ -86,7 +87,7 @@ func measureDeploymentRegistration(t *testing.T, computerCount, secretCount int)
 	counter.calls.Store(0)
 	runtime.ReadMemStats(&before)
 	started = time.Now()
-	if _, err := Promote(t.Context(), counter, f.principal(), f.scope(), record.ID, nil); err != nil {
+	if _, err := Promote(t.Context(), counter, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), record.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	elapsed = time.Since(started)

@@ -84,7 +84,7 @@ func (s *Server) finishSlackAuthorization(w http.ResponseWriter, r *http.Request
 	}
 	installation, err := s.slackConfig.Credentials.AuthorizeConnection(r.Context(), audit.FromPrincipal(principal), principal.OrgID, principal.UserID, connection, request.Code, s.slackRedirectURL(), s.slackConfig.Transport)
 	if err != nil {
-		s.writeSlackError(w, err)
+		s.writeSlackError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"installation_id": installation.String(), "return_url": flow.RedirectAfter})
@@ -94,15 +94,17 @@ func (s *Server) slackRedirectURL() string {
 	return s.appOrigin.JoinPath("auth/slack/callback").String()
 }
 
-func (s *Server) writeSlackError(w http.ResponseWriter, err error) {
+func (s *Server) writeSlackError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, audit.ErrCapture):
+		s.writeOperationError(w, r, err)
 	case slack.IsInstallationDenied(err):
-		writeError(w, forbidden(errors.New("the Slack connection is unavailable or Agent management authority changed")))
+		s.writeOperationError(w, r, forbidden(errors.New("the Slack connection is unavailable or Agent management authority changed")))
 	case errors.Is(err, slack.ErrConnectionUnavailable):
-		writeError(w, conflict(err))
+		s.writeOperationError(w, r, conflict(err))
 	case errors.Is(err, slack.ErrOAuthAuthorization):
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 	default:
-		writeError(w, errors.New("the Slack operation could not be completed"))
+		s.writeOperationError(w, r, errors.New("the Slack operation could not be completed"))
 	}
 }

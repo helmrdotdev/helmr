@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"sync"
 	"testing"
@@ -255,7 +256,7 @@ func TestPreparationImagePinSerializesSecretMutation(t *testing.T) {
 				case <-time.After(time.Millisecond):
 				}
 			}
-			store, err := secret.New(db.New(tx), tx, bytes.Repeat([]byte{17}, 32))
+			store, err := secret.New(db.New(tx), tx, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -295,7 +296,7 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 	if err := computer.ObserveImageBuildStopped(t.Context(), p.f.pool, *p.f.host(), preparationIdentity(p.ref)); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	next, err := computer.EnsureImageBuildSuccessor(t.Context(), p.f.pool, p.f.env, original.ID)
@@ -313,7 +314,7 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 	if err = p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "successor"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err = dispatch.ReconcileImageBuildLifecycle(t.Context(), p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+	if _, _, err = dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var attached, producer uuid.UUID
@@ -371,7 +372,7 @@ func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
 	// An expired per-candidate context is reported, but later keys still execute.
-	if _, _, err = dispatch.ReconcileImageBuildLifecycle(ctx, p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err == nil {
+	if _, _, err = dispatch.ReconcileImageBuildLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err == nil {
 		t.Fatal("blocked image did not report timeout")
 	}
 	var pinned, stopping bool

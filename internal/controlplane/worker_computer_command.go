@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"uuid"
 
@@ -31,12 +32,12 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(errors.New("canonical environment, Instance and positive writer generation are required")))
 		return
 	}
-	claimed, err := command.Claim(r.Context(), s.tx, workerFromContext(r.Context()), command.ClaimRequest{
+	claimed, err := command.Claim(r.Context(), s.auditPolicy, s.tx, workerFromContext(r.Context()), command.ClaimRequest{
 		EnvironmentID: environment, InstanceID: instance, WriterGeneration: request.WriterGeneration,
 		ActiveCommandIDs: activeCommandIDs(request.ActiveCommandIDs), ActiveCancellationIDs: activeCommandIDs(request.ActiveCancellationIDs),
 	})
 	if err != nil {
-		writeError(w, commandError(err, commandClaimOperation))
+		s.writeCommandError(w, r, err, commandClaimOperation)
 		return
 	}
 	if cancellation := claimed.Cancellation; cancellation != nil {
@@ -59,7 +60,7 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 	authority := claimed.Start
 	if authority.TailOnly {
 		if err := command.CheckStart(r.Context(), s.tx, workerFromContext(r.Context()), *authority); err != nil {
-			writeError(w, commandError(err, commandClaimOperation))
+			s.writeCommandError(w, r, err, commandClaimOperation)
 			return
 		}
 		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Command: &workerapi.ComputerCommand{TailOnly: true, CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), AllocationID: authority.Lease.InstanceID.String(), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: json.RawMessage(`{}`), WriterGeneration: authority.Lease.Epoch, ExpiresAt: *authority.Lease.ExpiresAt}})
@@ -110,7 +111,7 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err = command.CheckStart(r.Context(), s.tx, workerFromContext(r.Context()), *authority); err != nil {
-		writeError(w, commandError(err, commandClaimOperation))
+		s.writeCommandError(w, r, err, commandClaimOperation)
 		return
 	}
 
@@ -164,7 +165,7 @@ func (s *Server) workerCompleteComputerCommand(w http.ResponseWriter, r *http.Re
 func (s *Server) workerReconcileComputerCommand(w http.ResponseWriter, r *http.Request) {
 	s.workerCommandCompletion(w, r, command.Reconcile)
 }
-func (s *Server) workerCommandCompletion(w http.ResponseWriter, r *http.Request, settle func(context.Context, db.TxBeginner, workergroup.HostPrincipal, command.CompletionReport) error) {
+func (s *Server) workerCommandCompletion(w http.ResponseWriter, r *http.Request, settle func(context.Context, auditpolicy.Policy, db.TxBeginner, workergroup.HostPrincipal, command.CompletionReport) error) {
 	var request workerapi.ComputerCommandCompleteRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, err)
@@ -175,8 +176,8 @@ func (s *Server) workerCommandCompletion(w http.ResponseWriter, r *http.Request,
 		writeError(w, badRequest(err))
 		return
 	}
-	if err = settle(r.Context(), s.tx, workerFromContext(r.Context()), report); err != nil {
-		writeError(w, commandError(err, commandCompletionOperation))
+	if err = settle(r.Context(), s.auditPolicy, s.tx, workerFromContext(r.Context()), report); err != nil {
+		s.writeCommandError(w, r, err, commandCompletionOperation)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})

@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 
@@ -25,7 +26,9 @@ func pressureStopFixture(t *testing.T) (fixture, int64, session.SessionDelivery)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil {
+	if err = session.ReportStoragePressure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), saveIdentity(f), true); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '31 seconds'`)
@@ -43,7 +46,9 @@ func pressureStopFixture(t *testing.T) (fixture, int64, session.SessionDelivery)
 }
 func pressureReport(t *testing.T, f fixture, pressured bool) {
 	t.Helper()
-	if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), pressured); err != nil {
+	if err := session.ReportStoragePressure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), saveIdentity(f), pressured); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -68,17 +73,17 @@ func TestPressureStopSupersedesHoldACKAndOnlyMatchingStopReleasesDispatch(t *tes
 	if err = session.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a, hold.Sequence, hold.Generation, hold.Kind, "", hold.StopSequence); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("old hold ACK %v", err)
 	}
-	view, err := session.GetSession(t.Context(), f.pool, f.caller(), f.env, f.session)
+	view, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session)
 	if err != nil || view.Activity.Process == nil || view.Activity.Process.Stop == nil || view.Activity.Process.Stop.Deadline.IsZero() {
 		t.Fatalf("pending stop hidden: %+v %v", view.Activity, err)
 	}
-	turn, err := session.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, *stop.StopTurnID)
+	turn, err := session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session, *stop.StopTurnID)
 	if err != nil || turn.Stop == nil || turn.Stop.Deadline.IsZero() {
 		t.Fatalf("Turn stop hidden: %+v %v", turn.Stop, err)
 	}
 	exact := controlRequest(f, "turn_interrupt", "already-interrupted")
 	exact.TurnID = *stop.StopTurnID
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), exact); err == nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), exact); err == nil {
 		t.Fatal("exact interrupt unexpectedly changed terminal Turn")
 	}
 	if !pressureDeadline(t, f).Equal(deadline) {
@@ -128,7 +133,9 @@ func TestPressureStopDeadlineSurvivesRecurrenceAndExpiresUnderPressure(t *testin
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET stop_deadline_at=clock_timestamp()-interval '1 second' WHERE session_id=$1`, f.session)
 	pressureReport(t, f, true)
-	if err := session.ReconcileProcessStopDeadline(t.Context(), f.pool, f.env, f.session); err != nil {
+	if err := session.ReconcileProcessStopDeadline(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
 	var failed, computerLive bool
@@ -144,7 +151,9 @@ func TestPressureStopExplicitControlsAndActualFailureKeepDeadline(t *testing.T) 
 			deadline := pressureDeadline(t, f)
 			switch kind {
 			case "failure":
-				if err := session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a); err != nil {
+				if err := session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, *f.host(), f.execution(), a); err != nil {
 					t.Fatal(err)
 				}
 			case "lease_loss":
@@ -152,12 +161,12 @@ func TestPressureStopExplicitControlsAndActualFailureKeepDeadline(t *testing.T) 
 			case "integrity":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET integrity_fault_at=clock_timestamp(),integrity_fault_reason='test'`)
 			default:
-				if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, kind, "explicit")); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, kind, "explicit")); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if kind == "lease_loss" || kind == "integrity" {
-				if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+				if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -173,14 +182,15 @@ func TestPressureStopRevocationRetainsShutdown(t *testing.T) {
 	f, a, _ := pressureStopFixture(t)
 	_, _, store, secretID, _, _ := runtimeSecretsOnFixture(t, f, f.execution())
 	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		return computer.RecordSessionExposures(t.Context(), tx, f.env, f.session, 1, []uuid.UUID{secretID})
+		_, err := computer.RecordSessionExposures(t.Context(), tx, f.env, f.session, 1, []uuid.UUID{secretID})
+		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Revoke(t.Context(), audit.System("test-fixture"), f.env, secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var ended bool
@@ -205,7 +215,7 @@ func TestOrdinaryStopDeadlineSurvivesStoragePressure(t *testing.T) {
 	}
 	request := controlRequest(f, "turn_interrupt", "ordinary")
 	request.TurnID = turn.TurnID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), request); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), request); err != nil {
 		t.Fatal(err)
 	}
 	deadline := pressureDeadline(t, f)
@@ -237,7 +247,7 @@ func TestPressureStopChecksExactProcessLeaseWhenEpochsDiffer(t *testing.T) {
 			case "integrity":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET integrity_fault_at=clock_timestamp(),integrity_fault_reason='test'`)
 			}
-			if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+			if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 				t.Fatal(err)
 			}
 			if kind == "expired" {

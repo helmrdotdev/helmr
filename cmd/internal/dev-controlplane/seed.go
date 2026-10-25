@@ -31,7 +31,7 @@ func seedDevData(ctx context.Context, pool *pgxpool.Pool, cfg devConfig) error {
 	if err := seedDemoEnvironmentData(ctx, tx); err != nil {
 		return err
 	}
-	if err := seedPermissionData(ctx, tx); err != nil {
+	if err := seedPermissionData(ctx, tx, cfg.auditPolicy); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

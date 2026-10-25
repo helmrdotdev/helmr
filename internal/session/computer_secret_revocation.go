@@ -3,9 +3,11 @@ package session
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
@@ -14,7 +16,7 @@ import (
 // recordComputerSecretRevocationFailure is shared by reconciliation and physical observers.
 // The caller holds the Session/Computer and process locks. A prior failure marker
 // survives user hold release, so a late observation cannot add another hold.
-func recordComputerSecretRevocationFailure(ctx context.Context, tx pgx.Tx, e Execution) (bool, error) {
+func recordComputerSecretRevocationFailure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, e Execution) (bool, error) {
 	var record bool
 	if err := tx.QueryRow(ctx, `SELECT p.failure_recorded_at IS NULL AND s.status IN ('open','closing') AND EXISTS(
  SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=p.environment_id AND r.computer_id=p.computer_id)
@@ -25,7 +27,7 @@ func recordComputerSecretRevocationFailure(ctx context.Context, tx pgx.Tx, e Exe
 	if !record {
 		return false, nil
 	}
-	if err := recordSessionFailure(ctx, tx, e, "Computer exposed to a revoked Secret"); err != nil {
+	if err := recordSessionFailure(ctx, auditPolicy, tx, audit.System("secret-revocation"), e, "Computer exposed to a revoked Secret"); err != nil {
 		return false, err
 	}
 	_, err := tx.Exec(ctx, `UPDATE session_processes SET failure_recorded_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)
@@ -35,7 +37,7 @@ func recordComputerSecretRevocationFailure(ctx context.Context, tx pgx.Tx, e Exe
 // ReconcileComputerSecretRevocation interrupts exposed peers and preserves queued
 // input for explicit disposition. It does not cancel descendants on other Computers or erase
 // recorded results. Only existing exact lease stop evidence may fence a process.
-func ReconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) error {
+func ReconcileComputerSecretRevocation(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, env, computerID uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -81,10 +83,10 @@ func ReconcileComputerSecretRevocation(ctx context.Context, pool db.TxBeginner, 
 			return err
 		}
 		for _, e := range members {
-			if _, err = recordComputerSecretRevocationFailure(ctx, tx, e); err != nil {
+			if _, err = recordComputerSecretRevocationFailure(ctx, auditPolicy, tx, e); err != nil {
 				return err
 			}
-			if err = interruptRunningSessionTurn(ctx, tx, e); err != nil {
+			if err = interruptRunningSessionTurn(ctx, auditPolicy, tx, audit.System("secret-revocation"), e); err != nil {
 				return err
 			}
 			// A hibernated logical process may retain an already-fenced source lease.

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"path"
 	"regexp"
 	"strings"
@@ -77,9 +79,10 @@ func tooLarge(format string, args ...any) InputError {
 
 // Creator is the API key or session that creates a Command.
 type Creator struct {
-	UserID uuid.UUID
-	Kind   string
-	ID     uuid.UUID
+	CredentialVersion int64
+	UserID            uuid.UUID
+	Kind              string
+	ID                uuid.UUID
 }
 
 // CreateRequest asks to run a process on a Computer, once per idempotency
@@ -202,7 +205,7 @@ type createReceipt struct {
 // then locks the Computer's Secrets and the Computer, records the admission,
 // the Command, and completes the receipt. Secret versions are selected only
 // at the first possible delivery to this Command.
-func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.Command, error) {
+func Create(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginner, request CreateRequest) (db.Command, error) {
 	switch request.Creator.Kind {
 	case string(auth.PrincipalKindAPIKey), string(auth.PrincipalKindSession):
 	default:
@@ -236,7 +239,7 @@ func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.C
 			return err
 		}
 		var err error
-		created, err = create(ctx, tx, request, normalized, claimRequest)
+		created, err = create(ctx, auditPolicy, tx, request, normalized, claimRequest)
 		return err
 	})
 	if err != nil {
@@ -245,7 +248,7 @@ func Create(ctx context.Context, txb db.TxBeginner, request CreateRequest) (db.C
 	return created, nil
 }
 
-func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest *idempotency.Request) (db.Command, error) {
+func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, request CreateRequest, normalized normalizedRequest, claimRequest *idempotency.Request) (db.Command, error) {
 	var scoped bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id
@@ -260,14 +263,25 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 	if kind == string(auth.PrincipalKindSession) {
 		kind, id = "user", request.Creator.UserID
 	}
-	if err := access.Check(ctx, tx, kind, id, request.EnvironmentID, uuid.Nil(), auth.PermissionComputersExecute); err != nil {
+	principal, err := access.Principal(ctx, tx, kind, id, request.EnvironmentID)
+	if err == nil && kind == "api_key" && request.Creator.CredentialVersion > 0 && request.Creator.CredentialVersion != principal.CredentialVersion {
+		err = access.ErrDenied
+	}
+	if err != nil {
 		if errors.Is(err, access.ErrDenied) {
 			return db.Command{}, computer.ErrDenied
 		}
 		return db.Command{}, err
 	}
+	if kind == "user" {
+		principal.SessionID = request.Creator.ID
+	}
+	actor, err := audit.Authorized(principal, auth.PermissionComputersExecute, auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID})
+	if err != nil {
+		return db.Command{}, computer.ErrDenied
+	}
 	var result db.Command
-	err := idempotency.Run(ctx, tx, claimRequest, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
+	err = idempotency.Run(ctx, tx, claimRequest, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 		q := db.New(tx)
 		if !acquired.New {
 			replayed, err := q.GetCommandByIdempotencyReceipt(ctx, db.GetCommandByIdempotencyReceiptParams{
@@ -345,7 +359,7 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 		if err = computer.MarkUsed(ctx, tx, request.EnvironmentID, request.ComputerID); err != nil {
 			return idempotency.Completion{}, err
 		}
-		if err = computer.NoteExecutionDemand(ctx, tx, request.EnvironmentID, request.ComputerID); err != nil {
+		if err = computer.NoteExecutionDemand(ctx, auditPolicy, tx, request.EnvironmentID, request.ComputerID); err != nil {
 			return idempotency.Completion{}, err
 		}
 		created, err := q.CreateCommand(ctx, db.CreateCommandParams{
@@ -368,6 +382,9 @@ func create(ctx context.Context, tx pgx.Tx, request CreateRequest, normalized no
 			return idempotency.Completion{}, err
 		}
 
+		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: request.EnvironmentID, ComputerID: request.ComputerID, Action: "command.admitted", Outcome: "accepted", TargetKind: "command", TargetID: pgvalue.MustUUIDValue(created.ID), Details: audit.LifecycleDetails{}}); err != nil {
+			return idempotency.Completion{}, err
+		}
 		result = created
 		return idempotency.Completion{Target: idempotency.Target{CommandID: uuid.UUID(created.ID.Bytes)}, Receipt: receipt}, nil
 	})

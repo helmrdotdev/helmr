@@ -19,7 +19,7 @@ func (server *Server) workerRegisterAgentCheckpoint(w http.ResponseWriter, r *ht
 		err = server.checkpointPublisher.RegisterCheckpoint(r.Context(), session.CheckpointPublication{EnvironmentID: env, Host: workerFromContext(r.Context())}, request.Manifest)
 	}
 	if err != nil {
-		server.writeAgentSaveError(w, err)
+		server.writeAgentSaveError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -35,7 +35,7 @@ func (server *Server) workerCompleteAgentCheckpoint(w http.ResponseWriter, r *ht
 		err = server.checkpointPublisher.CompleteCheckpoint(r.Context(), session.CheckpointPublication{EnvironmentID: env, Host: workerFromContext(r.Context())}, request.Manifest)
 	}
 	if err != nil {
-		server.writeAgentSaveError(w, err)
+		server.writeAgentSaveError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

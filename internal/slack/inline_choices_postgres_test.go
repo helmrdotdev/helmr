@@ -2,6 +2,7 @@ package slack
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"strings"
 	"testing"
@@ -60,7 +61,7 @@ func TestInlineChoicesCommitOnlyOnSubmitWithCurrentHumanAuthority(t *testing.T) 
 				t.Fatal(err)
 			}
 			for range 2 {
-				if err := admitControl(t.Context(), f.Pool, receipt); err != nil {
+				if err := admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, receipt); err != nil {
 					t.Fatal(err)
 				}
 			}

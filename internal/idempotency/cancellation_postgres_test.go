@@ -3,6 +3,7 @@ package idempotency_test
 import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
 	retry "github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -62,7 +63,7 @@ func TestPlatformPublicSecretCancellationCannotCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer outer.Rollback(t.Context())
-	store, err := secret.New(db.New(outer), outer, make([]byte, 32))
+	store, err := secret.New(db.New(outer), outer, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}

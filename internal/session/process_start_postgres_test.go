@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 
@@ -76,7 +77,7 @@ func TestPrestartInterruptRetiresEpochAndAllowsFreshWork(t *testing.T) {
 	}
 	req := controlRequest(f, "interrupt", "early-stop")
 	req.InterruptQueued = true
-	stop, err := session.ControlSession(t.Context(), f.pool, f.caller(), req)
+	stop, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,9 @@ func TestPrestartInterruptRetiresEpochAndAllowsFreshWork(t *testing.T) {
 	if err != nil || again.Kind != "shutdown" || again.Sequence != control.Sequence {
 		t.Fatalf("control replay: %+v %v", again, err)
 	}
-	if err := session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err := session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	var clean bool
@@ -104,7 +107,7 @@ func TestPrestartInterruptRetiresEpochAndAllowsFreshWork(t *testing.T) {
 	}
 	resume := controlRequest(f, "resume", "resume-after-stop")
 	resume.HoldID = stop.HoldID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
 	next := f.enqueue(t, "new-message")

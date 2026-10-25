@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -37,7 +38,9 @@ func TestComputerProcessListingPreservesCustodyWithoutExecutionAuthority(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), e, attachment.Sequence); err != nil {
+	if err := session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	assertListed()
@@ -53,7 +56,9 @@ func TestComputerProcessListingPreservesCustodyWithoutExecutionAuthority(t *test
 	if rows, err := dispatch.ListHostProcesses(t.Context(), f.pool, host, identity, nil); err == nil || len(rows) != 0 {
 		t.Fatalf("foreign incarnation: %+v %v", rows, err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dispatch.ListHostProcesses(t.Context(), f.pool, *f.host(), identity, nil); !errors.Is(err, dispatch.ErrAllocationClosed) {

@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -59,7 +60,7 @@ func (s *Server) magicLinkInviteStart(w http.ResponseWriter, r *http.Request, re
 	}
 	invitation, _, err := s.resolveInvitation(r, request.Token)
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	debugURL, err := s.sendMagicLink(r, identity.MagicLinkRecipient{
@@ -91,6 +92,10 @@ func (s *Server) magicLinkLoginStart(w http.ResponseWriter, r *http.Request, req
 	}
 	debugURL, err := s.sendMagicLink(r, identity.MagicLinkRecipient{Purpose: db.MagicLinkPurposeLogin, Email: email}, validateRedirectAfter(request.Next))
 	if err != nil {
+		if errors.Is(err, audit.ErrCapture) {
+			s.writeOperationError(w, r, err)
+			return
+		}
 		s.log.Warn("send login magic link failed", "error", err)
 		writeJSON(w, http.StatusOK, api.MagicLinkStartResponse{Sent: true})
 		return
@@ -203,7 +208,7 @@ func (s *Server) magicLinkFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	completed, err := identity.CompleteMagicLink(r.Context(), s.tx, s.identity, request.Token)
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	setSessionCookie(w, r, completed.Session, s.identity.Lifetimes().Session)

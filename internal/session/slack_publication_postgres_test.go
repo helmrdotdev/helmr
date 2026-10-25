@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -31,11 +32,11 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			caller := session.Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 			req := f.startRequest("independent")
 			req.ComputerID = f.computer
-			if _, err := slack.Start(t.Context(), f.pool, nil, nil, caller, req); !errors.Is(err, slack.ErrSourceConversationUnavailable) {
+			if _, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, nil, caller, req); !errors.Is(err, slack.ErrSourceConversationUnavailable) {
 				t.Fatal(err)
 			}
 			req.IdempotencyKey = "child"
-			child, err := session.Spawn(t.Context(), f.pool, nil, caller, req)
+			child, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -81,7 +82,9 @@ func TestSlackRuntimeContentPreservesAdmissionRoute(t *testing.T) {
 			}
 			ask := uuid.NewV7()
 			for range 2 {
-				if err := session.RuntimeAsk(t.Context(), f.pool, *f.host(), f.execution(), turn.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"type":"text"}`)); err != nil {
+				if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, *f.host(), f.execution(), turn.TurnID, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"type":"text"}`)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -108,10 +111,12 @@ func TestSlackCompletionDoesNotCreateAnUnrequestedConversation(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+			if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 				t.Fatal(err)
 			}
-			if result, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"private":true}`), "joined"); err != nil || result == nil {
+			if result, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"private":true}`), "joined"); err != nil || result == nil {
 				t.Fatalf("prepare: %s %v", result, err)
 			}
 			var count int

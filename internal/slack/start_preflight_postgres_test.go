@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"strings"
@@ -86,7 +87,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 				input, _ = json.Marshal([]map[string]string{{"type": "text", "text": strings.Repeat("x", contentCharacters+1)}})
 			}
 			caller := session.Caller{Kind: "session", ID: f.Session, TurnID: turn, Execution: session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
-			result, err := Start(t.Context(), f.Pool, nil, client, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", ComputerID: f.Computer, IdempotencyKey: "cross-app", Input: input})
+			result, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", ComputerID: f.Computer, IdempotencyKey: "cross-app", Input: input})
 			accepted := kind == "valid" || kind == "source-stopped" || kind == "target-stopped" || kind == "unknown-opening" || kind == "source-revoked-after-issued" || kind == "source-disconnected-before-root-recognition"
 			if !accepted {
 				want := map[string]error{"pending-source": ErrSourceConversationPending, "unpublished-target": slackroute.ErrTargetNotPublished, "workspace-mismatch": ErrTargetWorkspaceMismatch, "target-denied": slackroute.ErrChannelUnavailable, "source-denied": slackroute.ErrChannelUnavailable, "source-revoked": slackroute.ErrConversationChanged, "permalink-unavailable": ErrSourceConversationUnavailable, "too-large": ErrStartMessageTooLarge}[kind]
@@ -112,7 +113,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 				if kind == "target-stopped" {
 					stopped = result.SessionID
 				}
-				if _, err = session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: stopped, Kind: "cancel", IdempotencyKey: "stop-after-start"}); err != nil {
+				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: stopped, Kind: "cancel", IdempotencyKey: "stop-after-start"}); err != nil {
 					t.Fatal(err)
 				}
 				if kind == "source-stopped" {
@@ -154,7 +155,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 			later := peer.post(t, 2, "target-response", "lifecycle", nil)
 			peer.noPostClaim(t, later)
 			if kind == "unknown-opening" || kind == "source-revoked-after-issued" || kind == "source-disconnected-before-root-recognition" {
-				if err = FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+				if err = FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 					t.Fatal(err)
 				}
 				if kind == "source-revoked-after-issued" {
@@ -167,7 +168,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 					t.Fatal("target identity confirmed source opening", ok, err)
 				}
 				if kind == "source-disconnected-before-root-recognition" {
-					store, err := NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), TransportHTTP)
+					store, err := NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), TransportHTTP, auditpolicy.Policy{RetentionSeconds: 3600})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -176,7 +177,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 						t.Fatal(err)
 					}
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
-					if err = store.DisconnectConnection(t.Context(), audit.System("test-fixture"), org, f.User, f.Environment, f.publication); err != nil {
+					if err = store.DisconnectConnection(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.Environment, f.publication); err != nil {
 						t.Fatal(err)
 					}
 					f.link(t)
@@ -191,7 +192,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 						raw, _ := json.Marshal(map[string]any{"ok": true, "messages": []observedMessage{message}})
 						return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(raw))}, nil
 					}))
-					if err = admitMessage(t.Context(), f.Pool, nil, client, gesture); err != nil {
+					if err = admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, gesture); err != nil {
 						t.Fatal(err)
 					}
 					var preserved bool
@@ -208,7 +209,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 					t.Fatal("late source proof did not bind target root", ok, err)
 				}
 			} else {
-				if err = FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.999"}); err != nil {
+				if err = FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.999"}); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -37,7 +37,7 @@ func Principal(ctx context.Context, database db.DBTX, kind string, id, env uuid.
 	case "api_key":
 		p.Kind, p.APIKeyID = auth.PrincipalKindAPIKey, id
 		var key uuid.UUID
-		if err := database.QueryRow(ctx, `SELECT id FROM api_keys WHERE id=$1 AND org_id=$2 AND environment_id=$3 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>statement_timestamp())`, id, org, env).Scan(&key); err != nil {
+		if err := database.QueryRow(ctx, `SELECT id,credential_version FROM api_keys WHERE id=$1 AND org_id=$2 AND environment_id=$3 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>statement_timestamp())`, id, org, env).Scan(&key, &p.CredentialVersion); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return p, ErrDenied
 			}
@@ -95,7 +95,15 @@ func Current(ctx context.Context, q db.DBTX, prior auth.Principal, scope auth.Sc
 		if prior.Kind != auth.PrincipalKindSession || (scope.OrgID != uuid.Nil() && scope.OrgID != prior.OrgID) {
 			return auth.Principal{}, ErrDenied
 		}
-		return OrganizationPrincipal(ctx, q, prior.OrgID, prior.UserID)
+		p, err := OrganizationPrincipal(ctx, q, prior.OrgID, prior.UserID)
+		if err != nil {
+			return p, err
+		}
+		if prior.MemberID != uuid.Nil() && p.MemberID != prior.MemberID {
+			return auth.Principal{}, ErrDenied
+		}
+		p.SessionID = prior.SessionID
+		return p, nil
 	}
 	env, err := uuid.Parse(scope.EnvironmentID)
 	if err != nil {
@@ -113,6 +121,15 @@ func Current(ctx context.Context, q db.DBTX, prior auth.Principal, scope auth.Sc
 	}
 	if p.OrgID != prior.OrgID || p.ProjectID != scope.ProjectID || scope.OrgID != uuid.Nil() && scope.OrgID != p.OrgID {
 		return auth.Principal{}, ErrDenied
+	}
+	if prior.Kind == auth.PrincipalKindAPIKey && prior.CredentialVersion != p.CredentialVersion {
+		return auth.Principal{}, ErrDenied
+	}
+	if prior.Kind == auth.PrincipalKindSession {
+		if prior.MemberID != uuid.Nil() && p.MemberID != prior.MemberID {
+			return auth.Principal{}, ErrDenied
+		}
+		p.SessionID = prior.SessionID
 	}
 	return p, nil
 }

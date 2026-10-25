@@ -32,17 +32,17 @@ func agentPageLimit(r *http.Request) (int, error) {
 func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	limit, err := agentPageLimit(r)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	before, filter, err := parseSessionListCursor(r, env)
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var key *string
@@ -55,14 +55,14 @@ func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 		if value := r.URL.Query().Get(name); value != "" {
 			*target, err = ids.Parse(value)
 			if err != nil {
-				s.writeAgentHTTPError(w, session.ErrInvalidInput)
+				s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 				return
 			}
 		}
 	}
-	result, err := session.ListSessions(r.Context(), s.tx, caller, session.SessionListRequest{EnvironmentID: env, Before: before, Limit: limit, Agent: r.URL.Query().Get("agent"), Key: key, Statuses: r.URL.Query()["status"], ParentSessionID: parent, RequesterSessionID: requester})
+	result, err := session.ListSessions(r.Context(), s.auditPolicy, s.tx, caller, session.SessionListRequest{EnvironmentID: env, Before: before, Limit: limit, Agent: r.URL.Query().Get("agent"), Key: key, Statuses: r.URL.Query()["status"], ParentSessionID: parent, RequesterSessionID: requester})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	response := api.AgentSessionsPage{Sessions: []api.AgentSession{}}
@@ -72,7 +72,7 @@ func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 	if result.NextCursor != uuid.Nil() {
 		raw, err := json.Marshal(sessionListCursor{EnvironmentID: env.String(), Filter: filter, Before: result.NextCursor.String()})
 		if err != nil {
-			s.writeAgentHTTPError(w, err)
+			s.writeAgentHTTPError(w, r, err)
 			return
 		}
 		response.NextCursor = base64.RawURLEncoding.EncodeToString(raw)
@@ -83,17 +83,17 @@ func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getAgentSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	id, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
-	result, err := session.GetSession(r.Context(), s.tx, caller, env, id)
+	result, err := session.GetSession(r.Context(), s.auditPolicy, s.tx, caller, env, id)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, agentSessionResponse(result))
@@ -102,30 +102,30 @@ func (s *Server) getAgentSessionHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listAgentTurnsHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	limit, err := agentPageLimit(r)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	var after int64
 	if cursor := r.URL.Query().Get("cursor"); cursor != "" {
 		after, err = strconv.ParseInt(cursor, 10, 64)
 		if err != nil || after < 0 {
-			s.writeAgentHTTPError(w, session.ErrInvalidInput)
+			s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 			return
 		}
 	}
-	result, err := session.ListTurns(r.Context(), s.tx, caller, session.TurnListRequest{EnvironmentID: env, SessionID: sessionID, After: after, Limit: limit})
+	result, err := session.ListTurns(r.Context(), s.auditPolicy, s.tx, caller, session.TurnListRequest{EnvironmentID: env, SessionID: sessionID, After: after, Limit: limit})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	response := api.AgentTurnsPage{Turns: []api.AgentTurn{}}
@@ -141,22 +141,22 @@ func (s *Server) listAgentTurnsHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getAgentTurnHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	turn, err := ids.Parse(chi.URLParam(r, "turnID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
-	result, err := session.GetTurn(r.Context(), s.tx, caller, env, sessionID, turn)
+	result, err := session.GetTurn(r.Context(), s.auditPolicy, s.tx, caller, env, sessionID, turn)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, agentTurnResponse(result))
@@ -203,19 +203,19 @@ func agentUTCTime(value *time.Time) *time.Time {
 func (s *Server) listAgentEventsHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	after := int64(0)
 	if value := r.URL.Query().Get("after"); value != "" {
 		after, err = strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			s.writeAgentHTTPError(w, session.ErrInvalidInput)
+			s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 			return
 		}
 	}
@@ -223,18 +223,18 @@ func (s *Server) listAgentEventsHTTP(w http.ResponseWriter, r *http.Request) {
 	if value := r.URL.Query().Get("limit"); value != "" {
 		limit, err = strconv.Atoi(value)
 		if err != nil {
-			s.writeAgentHTTPError(w, session.ErrInvalidInput)
+			s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 			return
 		}
 	}
-	result, err := session.ListEvents(r.Context(), s.tx, caller, session.TurnListRequest{EnvironmentID: env, SessionID: sessionID, After: after, Limit: limit})
+	result, err := session.ListEvents(r.Context(), s.auditPolicy, s.tx, caller, session.TurnListRequest{EnvironmentID: env, SessionID: sessionID, After: after, Limit: limit})
 	var expired *session.CursorExpired
 	if errors.As(err, &expired) {
 		writeJSON(w, http.StatusGone, api.HTTPErrorResponse{Error: api.HTTPError{Code: "cursor_expired", Message: expired.Error(), Details: map[string]json.RawMessage{"retained_after": json.RawMessage(strconv.FormatInt(expired.RetainedAfter, 10))}}})
 		return
 	}
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	response := api.AgentSessionEventPage{Records: []api.AgentSessionEvent{}, NextAfter: result.NextAfter, HasMore: result.HasMore, RetainedAfter: result.RetainedAfter}

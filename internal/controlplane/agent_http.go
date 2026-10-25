@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
@@ -25,9 +26,9 @@ import (
 func externalAgentCaller(principal auth.Principal) (session.Caller, error) {
 	switch principal.Kind {
 	case auth.PrincipalKindSession:
-		return session.Caller{Kind: "user", ID: principal.UserID}, nil
+		return session.Caller{Kind: "user", ID: principal.UserID, CredentialID: principal.SessionID, CredentialKind: "login_session"}, nil
 	case auth.PrincipalKindAPIKey:
-		return session.Caller{Kind: "api_key", ID: principal.APIKeyID}, nil
+		return session.Caller{Kind: "api_key", ID: principal.APIKeyID, CredentialID: principal.APIKeyID, CredentialKind: "api_key", CredentialVersion: principal.CredentialVersion}, nil
 	default:
 		return session.Caller{}, session.ErrDenied
 	}
@@ -58,11 +59,11 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 			ChannelID string `json:"channel_id"`
 		}
 		if err := decodeAgentPayload(request.Slack, &route); err != nil {
-			s.writeAgentHTTPError(w, session.ErrInvalidInput)
+			s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 			return
 		}
 		if !definition.ValidSlackChannelID(route.ChannelID) {
-			s.writeAgentHTTPError(w, session.ErrInvalidInput)
+			s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 			return
 		}
 		slackChannelID = &route.ChannelID
@@ -72,14 +73,14 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		if slackChannelID != nil && errors.Is(err, session.ErrDenied) {
 			err = slackroute.ErrChannelUnavailable
 		}
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	var computerID uuid.UUID
 	if request.ComputerID != "" {
 		computerID, err = ids.Parse(request.ComputerID)
 		if err != nil {
-			s.writeAgentHTTPError(w, session.ErrInvalidInput)
+			s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 			return
 		}
 	}
@@ -87,12 +88,12 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.slackConfig != nil {
 		preflight = s.slackConfig.Client
 	}
-	result, err := slack.Start(r.Context(), s.tx, s.secretProxy, preflight, caller, session.StartRequest{
+	result, err := slack.Start(r.Context(), s.auditPolicy, s.tx, s.secretProxy, preflight, caller, session.StartRequest{
 		EnvironmentID: environment, Agent: request.Agent, ComputerID: computerID,
 		CloseAfterIdle: request.CloseAfterIdle, SessionKey: request.Key, SlackChannelID: slackChannelID, IdempotencyKey: request.IdempotencyKey, Input: request.Input,
 	})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	var turn *api.TurnAdmission
@@ -106,12 +107,12 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) enqueueSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsSend)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var request api.EnqueueSessionRequest
@@ -119,11 +120,11 @@ func (s *Server) enqueueSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	result, err := session.Enqueue(r.Context(), s.tx, s.secretProxy, caller, session.EnqueueRequest{
+	result, err := session.Enqueue(r.Context(), s.auditPolicy, s.tx, s.secretProxy, caller, session.EnqueueRequest{
 		EnvironmentID: environment, SessionID: sessionID, IdempotencyKey: request.IdempotencyKey, Input: request.Input,
 	})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, agentAdmission(result))
@@ -132,12 +133,12 @@ func (s *Server) enqueueSessionHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) interruptSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsInterrupt)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var request api.InterruptSessionRequest
@@ -145,11 +146,11 @@ func (s *Server) interruptSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	result, err := session.ControlSession(r.Context(), s.tx, caller, session.SessionControlRequest{
+	result, err := session.ControlSession(r.Context(), s.auditPolicy, s.tx, caller, session.SessionControlRequest{
 		EnvironmentID: environment, SessionID: sessionID, Kind: "interrupt", IdempotencyKey: request.IdempotencyKey,
 	})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.SessionInterruptReceipt{ID: result.ID.String(), SessionID: result.SessionID.String(), HoldID: result.HoldID.String(), Status: "accepted"})
@@ -158,17 +159,17 @@ func (s *Server) interruptSessionHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) interruptTurnHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsInterrupt)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	turnID, err := ids.Parse(chi.URLParam(r, "turnID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var request api.InterruptTurnRequest
@@ -176,11 +177,11 @@ func (s *Server) interruptTurnHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	result, err := session.ControlSession(r.Context(), s.tx, caller, session.SessionControlRequest{
+	result, err := session.ControlSession(r.Context(), s.auditPolicy, s.tx, caller, session.SessionControlRequest{
 		EnvironmentID: environment, SessionID: sessionID, TurnID: turnID, Kind: "turn_interrupt", IdempotencyKey: request.IdempotencyKey,
 	})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.TurnInterruptReceipt{ID: result.ID.String(), SessionID: result.SessionID.String(), TurnID: turnID.String(), Status: "accepted"})
@@ -189,12 +190,12 @@ func (s *Server) interruptTurnHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsClose)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var request api.CloseSessionRequest
@@ -202,11 +203,11 @@ func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	result, err := session.ControlSession(r.Context(), s.tx, caller, session.SessionControlRequest{
+	result, err := session.ControlSession(r.Context(), s.auditPolicy, s.tx, caller, session.SessionControlRequest{
 		EnvironmentID: environment, SessionID: sessionID, Kind: "close", IdempotencyKey: request.IdempotencyKey, ExpectedScope: request.ExpectedScope,
 	})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.SessionCloseReceipt{ID: result.ID.String(), SessionID: result.SessionID.String(), Status: "accepted"})
@@ -215,12 +216,12 @@ func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) cancelSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsCancel)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var request api.CancelSessionRequest
@@ -228,11 +229,11 @@ func (s *Server) cancelSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	result, err := session.ControlSession(r.Context(), s.tx, caller, session.SessionControlRequest{
+	result, err := session.ControlSession(r.Context(), s.auditPolicy, s.tx, caller, session.SessionControlRequest{
 		EnvironmentID: environment, SessionID: sessionID, Kind: "cancel", IdempotencyKey: request.IdempotencyKey,
 	})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.SessionCancelReceipt{ID: result.ID.String(), SessionID: result.SessionID.String(), Status: "accepted"})
@@ -241,12 +242,12 @@ func (s *Server) cancelSessionHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) resumeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsResume)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var request api.ResumeSessionRequest
@@ -256,14 +257,14 @@ func (s *Server) resumeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	holdID, err := ids.Parse(request.HoldID)
 	if err != nil || holdID == uuid.Nil() {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
-	result, err := session.ControlSession(r.Context(), s.tx, caller, session.SessionControlRequest{
+	result, err := session.ControlSession(r.Context(), s.auditPolicy, s.tx, caller, session.SessionControlRequest{
 		EnvironmentID: environment, SessionID: sessionID, Kind: "resume", IdempotencyKey: request.IdempotencyKey, HoldID: holdID,
 	})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.SessionResumeReceipt{ID: result.ID.String(), SessionID: result.SessionID.String(), HoldID: result.HoldID.String(), Status: "accepted"})
@@ -273,24 +274,28 @@ func agentAdmission(receipt session.Admission) api.TurnAdmission {
 	return api.TurnAdmission{SessionID: receipt.SessionID.String(), TurnID: receipt.TurnID.String(), Sequence: receipt.Sequence}
 }
 
-func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
+func (s *Server) writeAgentHTTPError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, audit.ErrCapture) {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	var invalidScope environmentScopeReferenceError
 	var notInterruptible session.TurnNotInterruptibleError
 	switch {
 	case errors.Is(err, computer.ErrExecutionSettling):
-		writeError(w, conflict(codedError{code: "execution_settling", message: err.Error(), retryable: true}))
+		s.writeOperationError(w, r, conflict(codedError{code: "execution_settling", message: err.Error(), retryable: true}))
 	case errors.Is(err, workergroup.ErrCapacityUnavailable):
-		writeError(w, unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true}))
+		s.writeOperationError(w, r, unavailable(codedError{code: "execution_capacity_unavailable", message: err.Error(), retryable: true}))
 	case errors.Is(err, workergroup.ErrCapacityIncompatible):
-		writeError(w, conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "execution_capacity_incompatible", message: err.Error()}))
 	case errors.Is(err, workergroup.ErrCapacityExhausted):
-		writeError(w, conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()}))
 	case errors.Is(err, computer.ErrExecutionLimit):
-		writeError(w, conflict(codedError{code: "environment_execution_limit", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "environment_execution_limit", message: err.Error()}))
 	case errors.As(err, &notInterruptible):
-		writeError(w, conflict(notInterruptible))
+		s.writeOperationError(w, r, conflict(notInterruptible))
 	case errors.Is(err, session.ErrMessageClosed):
-		writeError(w, conflict(codedError{code: "message_closed", message: "turn is not accepting messages"}))
+		s.writeOperationError(w, r, conflict(codedError{code: "message_closed", message: "turn is not accepting messages"}))
 	case errors.Is(err, content.ErrUnsupported):
 		writeErrorStatus(w, http.StatusUnprocessableEntity, codedError{code: "content_kind_unsupported", message: "Content kind is unsupported by the pinned Agent"})
 	case errors.Is(err, content.ErrLimit):
@@ -298,45 +303,45 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, err error) {
 	case errors.Is(err, content.ErrAnswerInvalid):
 		writeErrorStatus(w, http.StatusUnprocessableEntity, codedError{code: "answer_invalid", message: "Answer does not match its declared control"})
 	case errors.Is(err, session.ErrAskAlreadyAnswered):
-		writeError(w, conflict(codedError{code: "ask_already_answered", message: "Ask already has a response"}))
+		s.writeOperationError(w, r, conflict(codedError{code: "ask_already_answered", message: "Ask already has a response"}))
 	case errors.Is(err, session.ErrAskCancelled):
-		writeError(w, conflict(codedError{code: "ask_cancelled", message: "Ask is cancelled"}))
+		s.writeOperationError(w, r, conflict(codedError{code: "ask_cancelled", message: "Ask is cancelled"}))
 	case errors.Is(err, content.ErrInvalid):
-		writeError(w, badRequest(codedError{code: "bad_request", message: "Input must be an array of text parts"}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "bad_request", message: "Input must be an array of text parts"}))
 	case errors.Is(err, session.ErrInvalidCursor):
-		writeError(w, badRequest(codedError{code: "invalid_cursor", message: "Session event cursor exceeds the allocated end"}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_cursor", message: "Session event cursor exceeds the allocated end"}))
 	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, agent.ErrInvalidInput), errors.As(err, &invalidScope):
-		writeError(w, badRequest(errors.New("invalid Agent or Session request")))
+		s.writeOperationError(w, r, badRequest(errors.New("invalid Agent or Session request")))
 	case errors.Is(err, slackroute.ErrChannelUnavailable):
-		writeError(w, notFound(codedError{code: "channel_unavailable", message: err.Error()}))
+		s.writeOperationError(w, r, notFound(codedError{code: "channel_unavailable", message: err.Error()}))
 	case errors.Is(err, slack.ErrSourceConversationPending):
-		writeError(w, conflict(codedError{code: "source_conversation_pending", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "source_conversation_pending", message: err.Error()}))
 	case errors.Is(err, slack.ErrSourceConversationUnavailable):
-		writeError(w, conflict(codedError{code: "source_conversation_unavailable", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "source_conversation_unavailable", message: err.Error()}))
 	case errors.Is(err, slackroute.ErrTargetNotPublished):
-		writeError(w, conflict(codedError{code: "target_not_published", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "target_not_published", message: err.Error()}))
 	case errors.Is(err, slack.ErrTargetWorkspaceMismatch):
-		writeError(w, conflict(codedError{code: "target_workspace_mismatch", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "target_workspace_mismatch", message: err.Error()}))
 	case errors.Is(err, slack.ErrStartMessageTooLarge):
-		writeError(w, conflict(codedError{code: "start_message_too_large", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "start_message_too_large", message: err.Error()}))
 	case errors.Is(err, slackroute.ErrConversationChanged):
-		writeError(w, conflict(codedError{code: "conversation_changed", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "conversation_changed", message: err.Error()}))
 	case errors.Is(err, slack.ErrSlackDestinationConflict):
-		writeError(w, conflict(codedError{code: "slack_destination_conflict", message: "session Slack destination conflicts"}))
+		s.writeOperationError(w, r, conflict(codedError{code: "slack_destination_conflict", message: "session Slack destination conflicts"}))
 	case errors.Is(err, session.ErrAgentDeleted):
-		writeError(w, conflict(codedError{code: "agent_deleted", message: err.Error()}))
+		s.writeOperationError(w, r, conflict(codedError{code: "agent_deleted", message: err.Error()}))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, agent.ErrDenied):
-		writeError(w, forbidden(errors.New("agent or Session operation is not authorized")))
+		s.writeOperationError(w, r, forbidden(errors.New("agent or Session operation is not authorized")))
 	case errors.Is(err, session.ErrControlScopeChanged):
-		writeError(w, conflict(codedError{code: "control_scope_changed", message: "The affected Sessions or Commands changed. Close this confirmation and review the scope again."}))
+		s.writeOperationError(w, r, conflict(codedError{code: "control_scope_changed", message: "The affected Sessions or Commands changed. Close this confirmation and review the scope again."}))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict):
-		writeError(w, conflict(codedError{code: "idempotency_conflict", message: "request conflicts with its recorded identity"}))
+		s.writeOperationError(w, r, conflict(codedError{code: "idempotency_conflict", message: "request conflicts with its recorded identity"}))
 	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, agent.ErrNotReady), errors.Is(err, session.ErrTerminal), errors.Is(err, computer.ErrTerminal):
 		// Unavailability also includes a closed Session. The code distinguishes
 		// admission state from conflicting identity without promising retryability.
-		writeError(w, conflict(codedError{code: "admission_unavailable", message: "Agent or Session is not available for admission"}))
+		s.writeOperationError(w, r, conflict(codedError{code: "admission_unavailable", message: "Agent or Session is not available for admission"}))
 	default:
 		s.log.Error("Agent admission failed", "error", err)
-		writeError(w, unavailable(errors.New("agent admission is temporarily unavailable")))
+		s.writeOperationError(w, r, unavailable(errors.New("agent admission is temporarily unavailable")))
 	}
 }

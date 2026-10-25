@@ -7,6 +7,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -38,7 +40,7 @@ type DeviceConsent struct {
 }
 
 // StartDeviceCode starts a device authorization.
-func StartDeviceCode(ctx context.Context, q db.Querier, cfg Config) (DeviceAuthorization, error) {
+func StartDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config) (DeviceAuthorization, error) {
 	codes, err := auth.GenerateDeviceCodes()
 	if err != nil {
 		return DeviceAuthorization{}, fmt.Errorf("generate device code: %w", err)
@@ -53,14 +55,24 @@ func StartDeviceCode(ctx context.Context, q db.Querier, cfg Config) (DeviceAutho
 	}
 	ttl := cfg.lifetimes.DeviceCode
 	pollInterval := cfg.lifetimes.DevicePollInterval
-	if _, err := q.CreateDeviceCode(ctx, db.CreateDeviceCodeParams{
-		ID:                  pgvalue.UUID(uuid.NewV7()),
-		UserCodeHash:        userHash,
-		DeviceCodeHash:      deviceHash,
-		ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(ttl)),
-		PollIntervalSeconds: int32(pollInterval.Seconds()),
-	}); err != nil {
-		return DeviceAuthorization{}, fmt.Errorf("create device code: %w", err)
+	id := uuid.NewV7()
+	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		if _, err := q.CreateDeviceCode(ctx, db.CreateDeviceCodeParams{
+			ID:                  pgvalue.UUID(id),
+			UserCodeHash:        userHash,
+			DeviceCodeHash:      deviceHash,
+			ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(ttl)),
+			PollIntervalSeconds: int32(pollInterval.Seconds()),
+		}); err != nil {
+			return fmt.Errorf("create device code: %w", err)
+		}
+		actor := audit.Anonymous("device_request")
+		actor.Authorization.Decision = "allowed"
+		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Actor: actor, Action: "identity.device_started", TargetKind: "device_code", TargetID: id, Details: audit.AuthenticationDetails{Method: "device_authorization"}})
+	})
+	if err != nil {
+		return DeviceAuthorization{}, err
 	}
 	return DeviceAuthorization{DeviceCode: codes.DeviceCode, UserCode: codes.UserCode, ExpiresIn: ttl, PollInterval: pollInterval}, nil
 }
@@ -84,18 +96,21 @@ func DeviceCodeStatus(ctx context.Context, q db.Querier, cfg Config, userCode st
 // ApproveDeviceCode approves the pending device code with the user code for
 // the approver's organization, so that the device can exchange it for a login
 // session of the approver. DenyDeviceCode denies it instead.
-func ApproveDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string) (DeviceCodeState, error) {
-	return decideDeviceCode(ctx, q, cfg, approver, consent, userCode, true)
+func ApproveDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string) (DeviceCodeState, error) {
+	return decideDeviceCode(ctx, database, cfg, approver, consent, userCode, true)
 }
 
 // DenyDeviceCode denies the pending device code with the user code.
-func DenyDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string) (DeviceCodeState, error) {
-	return decideDeviceCode(ctx, q, cfg, approver, consent, userCode, false)
+func DenyDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string) (DeviceCodeState, error) {
+	return decideDeviceCode(ctx, database, cfg, approver, consent, userCode, false)
 }
 
 // decideDeviceCode requires an approver with an organization whose account
 // and organization are the ones consented to.
-func decideDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string, approve bool) (DeviceCodeState, error) {
+func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string, approve bool) (result DeviceCodeState, resultErr error) {
+	actor := audit.FromPrincipal(approver)
+	actor.Authorization = audit.Authorization{Basis: "credential", Decision: "allowed"}
+	defer recordAuthenticationFailure(ctx, database, cfg, audit.Event{Actor: actor, OrgID: approver.OrgID, Action: "identity.device_authorized", TargetKind: "device_code"}, &resultErr)
 	hash, err := userCodeHash(cfg, userCode)
 	if err != nil {
 		return DeviceCodeState{}, err
@@ -107,24 +122,42 @@ func decideDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver au
 		return DeviceCodeState{}, ErrDeviceApproverChanged
 	}
 	var device db.DeviceCode
-	if approve {
-		device, err = q.ApproveDeviceCode(ctx, db.ApproveDeviceCodeParams{
-			OrgID:        pgvalue.UUID(approver.OrgID),
-			MemberID:     pgvalue.UUID(approver.MemberID),
-			UserCodeHash: hash,
-		})
-	} else {
-		device, err = q.DenyDeviceCode(ctx, db.DenyDeviceCodeParams{
-			OrgID:        pgvalue.UUID(approver.OrgID),
-			MemberID:     pgvalue.UUID(approver.MemberID),
-			UserCodeHash: hash,
-		})
-	}
-	if isNoRows(err) {
-		return DeviceCodeState{}, ErrDeviceCodeNotFound
-	}
+	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		current, err := access.Current(ctx, tx, approver, auth.Scope{OrgID: approver.OrgID})
+		if err != nil {
+			return err
+		}
+		approver = current
+		q := db.New(tx)
+		if approve {
+			device, err = q.ApproveDeviceCode(ctx, db.ApproveDeviceCodeParams{
+				OrgID:        pgvalue.UUID(approver.OrgID),
+				MemberID:     pgvalue.UUID(approver.MemberID),
+				UserCodeHash: hash,
+			})
+		} else {
+			device, err = q.DenyDeviceCode(ctx, db.DenyDeviceCodeParams{
+				OrgID:        pgvalue.UUID(approver.OrgID),
+				MemberID:     pgvalue.UUID(approver.MemberID),
+				UserCodeHash: hash,
+			})
+		}
+		if isNoRows(err) {
+			return ErrDeviceCodeNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("resolve device code: %w", err)
+		}
+		actor := audit.FromPrincipal(approver)
+		actor.Authorization = audit.Authorization{Basis: "credential", Decision: "allowed"}
+		action := "identity.device_authorized"
+		if !approve {
+			action = "identity.device_denied"
+		}
+		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Actor: actor, OrgID: approver.OrgID, Action: action, TargetKind: "device_code", TargetID: pgvalue.MustUUIDValue(device.ID), Details: audit.AuthenticationDetails{Method: "device_authorization", AuthorizingCredentialID: approver.SessionID}})
+	})
 	if err != nil {
-		return DeviceCodeState{}, fmt.Errorf("resolve device code: %w", err)
+		return DeviceCodeState{}, err
 	}
 	return DeviceCodeState{Status: deviceStatus(device), ExpiresAt: pgvalue.Time(device.ExpiresAt)}, nil
 }
@@ -135,7 +168,8 @@ func decideDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver au
 // ErrAuthorizationPending, a denied one ErrDeviceAccessDenied and an expired
 // one ErrDeviceCodeExpired; an unknown or already consumed one is
 // ErrInvalidDeviceCode.
-func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, deviceCode string) (string, error) {
+func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, deviceCode string) (result string, resultErr error) {
+	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Actor: audit.Anonymous("device_authorization"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
 	hash, err := auth.HashToken(cfg.deviceCodeKey, strings.TrimSpace(deviceCode))
 	if err != nil {
 		return "", ErrInvalidDeviceCode
@@ -172,7 +206,7 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		if err != nil || member.RemovedAt.Valid {
 			return ErrInvalidDeviceCode
 		}
-		rawSession, err = issueLoginSession(ctx, q, cfg, member.UserID, consumed.OrgID)
+		rawSession, err = issueLoginSession(ctx, tx, cfg, signedInUser{id: member.UserID, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(member.UserID), "device_authorization"), authentication: audit.AuthenticationDetails{Method: "device_authorization", DeviceCodeID: pgvalue.MustUUIDValue(consumed.ID)}}, consumed.OrgID)
 		return err
 	})
 	if err != nil {

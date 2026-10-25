@@ -14,7 +14,7 @@ import (
 const issueAPIKey = `-- name: IssueAPIKey :one
 INSERT INTO api_keys (id,org_id,project_id,environment_id,created_by_member_id,name,key_prefix,token_hash,expires_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, credential_version, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type IssueAPIKeyParams struct {
@@ -50,6 +50,7 @@ func (q *Queries) IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKe
 		&i.CreatedByMemberID,
 		&i.Name,
 		&i.KeyPrefix,
+		&i.CredentialVersion,
 		&i.TokenHash,
 		&i.CreatedAt,
 		&i.LastUsedAt,
@@ -189,7 +190,7 @@ func (q *Queries) ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]Lis
 }
 
 const lockActiveAPIKey = `-- name: LockActiveAPIKey :one
-SELECT id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at FROM api_keys WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
+SELECT id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, credential_version, token_hash, created_at, last_used_at, expires_at, revoked_at FROM api_keys WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
  AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) FOR UPDATE
 `
 
@@ -216,6 +217,7 @@ func (q *Queries) LockActiveAPIKey(ctx context.Context, arg LockActiveAPIKeyPara
 		&i.CreatedByMemberID,
 		&i.Name,
 		&i.KeyPrefix,
+		&i.CredentialVersion,
 		&i.TokenHash,
 		&i.CreatedAt,
 		&i.LastUsedAt,
@@ -256,9 +258,9 @@ func (q *Queries) RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int
 }
 
 const rotateActiveAPIKey = `-- name: RotateActiveAPIKey :one
-UPDATE api_keys SET token_hash=$5,key_prefix=$6
+UPDATE api_keys SET token_hash=$5,key_prefix=$6,credential_version=credential_version+1
 WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
- AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+ AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, credential_version, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type RotateActiveAPIKeyParams struct {
@@ -288,6 +290,7 @@ func (q *Queries) RotateActiveAPIKey(ctx context.Context, arg RotateActiveAPIKey
 		&i.CreatedByMemberID,
 		&i.Name,
 		&i.KeyPrefix,
+		&i.CredentialVersion,
 		&i.TokenHash,
 		&i.CreatedAt,
 		&i.LastUsedAt,
@@ -304,10 +307,11 @@ WITH matched AS (
      WHERE token_hash = $1
        AND revoked_at IS NULL
        AND (expires_at IS NULL OR expires_at > now())
-     RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+     RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, credential_version, token_hash, created_at, last_used_at, expires_at, revoked_at
 )
 SELECT
     matched.id,
+    matched.credential_version,
     matched.org_id,
     matched.project_id,
     matched.environment_id,
@@ -322,6 +326,7 @@ SELECT
 
 type TouchActiveAPIKeyByTokenHashRow struct {
 	ID                pgtype.UUID        `json:"id"`
+	CredentialVersion int64              `json:"credential_version"`
 	OrgID             pgtype.UUID        `json:"org_id"`
 	ProjectID         pgtype.UUID        `json:"project_id"`
 	EnvironmentID     pgtype.UUID        `json:"environment_id"`
@@ -338,6 +343,7 @@ func (q *Queries) TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []
 	var i TouchActiveAPIKeyByTokenHashRow
 	err := row.Scan(
 		&i.ID,
+		&i.CredentialVersion,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
@@ -354,7 +360,7 @@ func (q *Queries) TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []
 const updateActiveAPIKey = `-- name: UpdateActiveAPIKey :one
 UPDATE api_keys SET name=$5,expires_at=$6
 WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
- AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, token_hash, created_at, last_used_at, expires_at, revoked_at
+ AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING id, org_id, project_id, environment_id, created_by_member_id, name, key_prefix, credential_version, token_hash, created_at, last_used_at, expires_at, revoked_at
 `
 
 type UpdateActiveAPIKeyParams struct {
@@ -384,6 +390,7 @@ func (q *Queries) UpdateActiveAPIKey(ctx context.Context, arg UpdateActiveAPIKey
 		&i.CreatedByMemberID,
 		&i.Name,
 		&i.KeyPrefix,
+		&i.CredentialVersion,
 		&i.TokenHash,
 		&i.CreatedAt,
 		&i.LastUsedAt,

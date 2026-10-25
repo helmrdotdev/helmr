@@ -93,7 +93,7 @@ func (server *Server) workerCancelAgentComputerCapture(w http.ResponseWriter, r 
 		server.writeAgentComputerError(w, session.ErrInvalidInput)
 		return
 	}
-	if err := session.CancelUnsealedComputerCapture(r.Context(), server.tx, workerFromContext(r.Context()), env, checkpoint, session.UnsealedCaptureEvidence{Rejected: request.Rejected, AbsentObservedAt: request.AbsentObservedAt}); err != nil {
+	if err := session.CancelUnsealedComputerCapture(r.Context(), server.auditPolicy, server.tx, workerFromContext(r.Context()), env, checkpoint, session.UnsealedCaptureEvidence{Rejected: request.Rejected, AbsentObservedAt: request.AbsentObservedAt}); err != nil {
 		server.writeAgentComputerError(w, err)
 		return
 	}
@@ -201,7 +201,7 @@ func (server *Server) workerCompleteAgentComputerSourceAbort(w http.ResponseWrit
 		server.writeAgentComputerError(w, err)
 		return
 	}
-	if err := session.CompleteComputerSourceAbort(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
+	if err := session.CompleteComputerSourceAbort(r.Context(), server.auditPolicy, server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
 		server.writeAgentComputerError(w, err)
 		return
 	}
@@ -255,7 +255,7 @@ func (server *Server) workerCompleteAgentComputerRestore(w http.ResponseWriter, 
 		server.writeAgentComputerError(w, err)
 		return
 	}
-	if err := session.CompleteComputerRestore(r.Context(), server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
+	if err := session.CompleteComputerRestore(r.Context(), server.auditPolicy, server.tx, workerFromContext(r.Context()), env, p, receipt); err != nil {
 		server.writeAgentComputerError(w, err)
 		return
 	}

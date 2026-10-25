@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
@@ -133,7 +134,7 @@ func aggregateStatus(ctx context.Context, tx pgx.Tx, thread, env uuid.UUID) (str
 // FinishStatus cannot fence an issued HTTP request. A stale completion is ignored;
 // ambiguity releases this content-free lane so later current assertions can repair
 // delayed effects. Content/stream uncertainty belongs to the affected post instead.
-func FinishStatus(ctx context.Context, pool db.TxBeginner, claim StatusClaim, result DeliveryResult) error {
+func FinishStatus(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, claim StatusClaim, result DeliveryResult) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var installation uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM slack_installations WHERE id=$1 FOR NO KEY UPDATE`, claim.InstallationID).Scan(&installation); err != nil {
@@ -168,7 +169,7 @@ func FinishStatus(ctx context.Context, pool db.TxBeginner, claim StatusClaim, re
 		if result.Disposition == Rejected {
 			switch result.Code {
 			case "invalid_auth", "not_authed", "token_revoked", "token_expired", "account_inactive", "missing_scope":
-				return recordAuthorizationLoss(ctx, tx, audit.System("slack-provider"), installation, claim.CredentialRevision, claim.AuthorizedAt)
+				return recordAuthorizationLoss(ctx, tx, policy, audit.System("slack-provider"), installation, claim.CredentialRevision, claim.AuthorizedAt)
 			}
 		}
 		return nil
@@ -180,7 +181,7 @@ type Caller interface {
 	Call(context.Context, uuid.UUID, int64, string, []byte) DeliveryResult
 }
 
-func ReconcileStatus(ctx context.Context, pool db.TxBeginner, client Caller, thread uuid.UUID) (bool, error) {
+func ReconcileStatus(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, client Caller, thread uuid.UUID) (bool, error) {
 	claim, err := ClaimStatus(ctx, pool, thread)
 	if err != nil || claim == nil {
 		return false, err
@@ -191,19 +192,19 @@ func ReconcileStatus(ctx context.Context, pool db.TxBeginner, client Caller, thr
 		if errors.As(err, &failure) {
 			result = failure.result
 		}
-		return false, FinishStatus(ctx, pool, *claim, result)
+		return false, FinishStatus(ctx, pool, policy, *claim, result)
 	}
 	allowed, err := statusClaimAuthorized(ctx, pool, *claim)
 	if err != nil {
 		return false, err
 	}
 	if !allowed {
-		return false, FinishStatus(ctx, pool, *claim, DeliveryResult{Disposition: Rejected, Code: "publication_authority_unavailable"})
+		return false, FinishStatus(ctx, pool, policy, *claim, DeliveryResult{Disposition: Rejected, Code: "publication_authority_unavailable"})
 	}
 	requestCtx, cancel := context.WithDeadline(ctx, claim.ExpiresAt)
 	result := client.Call(requestCtx, claim.InstallationID, claim.CredentialRevision, "agents.sessions.setStatus", claim.Payload)
 	cancel()
-	return true, FinishStatus(ctx, pool, *claim, result)
+	return true, FinishStatus(ctx, pool, policy, *claim, result)
 }
 
 // Recheck a status claim immediately before HTTP, including deletion that may

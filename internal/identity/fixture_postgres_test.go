@@ -3,6 +3,7 @@ package identity
 import (
 	"bytes"
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -14,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -39,7 +41,7 @@ func newIdentityFixture(t *testing.T) identityFixture {
 		pool:    database.Pool,
 		queries: db.New(database.Pool),
 		keys:    keys,
-		cfg:     NewConfig(keys, Lifetimes{}, []string{" Admin@Example.test "}),
+		cfg:     NewConfig(keys, Lifetimes{}, []string{" Admin@Example.test "}, auditpolicy.Policy{RetentionSeconds: 3600}),
 	}
 }
 
@@ -84,7 +86,7 @@ func (f identityFixture) invitation(t *testing.T, orgID uuid.UUID, email string,
 	memberID := dbtest.GrantMember(t, f.pool, orgID, owner, nil, "invitations.create")
 	var delivered org.NewInvitation
 	results, err := org.CreateInvitations(t.Context(), f.pool, f.keys.Invitation,
-		org.ManagingMember{Actor: audit.System("test-fixture"), OrgID: orgID, UserID: owner, MemberID: memberID}, org.InvitationInput{Emails: []string{email}},
+		org.ManagingMember{Actor: audit.VerifiedLogin(owner, "fixture"), OrgID: orgID, UserID: owner, MemberID: memberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, org.InvitationInput{Emails: []string{email}},
 		func(_ context.Context, invitations []org.NewInvitation) error {
 			delivered = invitations[0]
 			return nil
@@ -104,7 +106,12 @@ func (f identityFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.UUID
 	if orgID != uuid.Nil() {
 		orgRef = pgvalue.UUID(orgID)
 	}
-	raw, err := issueLoginSession(t.Context(), f.queries, f.cfg, pgvalue.UUID(userID), orgRef)
+	var raw string
+	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		var err error
+		raw, err = issueLoginSession(t.Context(), tx, f.cfg, signedInUser{id: pgvalue.UUID(userID), actor: audit.VerifiedLogin(userID, "fixture"), authentication: audit.AuthenticationDetails{Method: "fixture"}}, orgRef)
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

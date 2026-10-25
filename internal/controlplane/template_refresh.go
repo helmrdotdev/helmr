@@ -19,9 +19,9 @@ func (s *Server) refreshTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	result, err := deployment.RefreshTemplate(r.Context(), s.tx, principal, scope, chi.URLParam(r, "template"), request.IdempotencyKey)
+	result, err := deployment.RefreshTemplate(r.Context(), s.auditPolicy, s.tx, principal, scope, chi.URLParam(r, "template"), request.IdempotencyKey)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, result)
@@ -45,7 +45,7 @@ func (s *Server) getTemplateBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := deployment.ReadTemplateBuild(r.Context(), s.tx, principal, scope, chi.URLParam(r, "template"), selected, build)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

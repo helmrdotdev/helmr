@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -116,7 +117,12 @@ func ListUserLinks(ctx context.Context, pool db.TxBeginner, org, user uuid.UUID,
 // LinkUser is called only after OpenID proof and explicit browser confirmation.
 // Uniqueness never performs a merge or replacement, and exact retries preserve
 // the original link time used to reject older Slack gestures.
-func LinkUser(ctx context.Context, pool db.TxBeginner, actor audit.Actor, org, user, installation uuid.UUID, identity UserIdentity) error {
+func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, actor audit.Actor, org, user, installation uuid.UUID, identity UserIdentity) error {
+	if actor.Kind != "human" || actor.ID != user {
+		return ErrUserLinkDenied
+	}
+	actor.Authorization = audit.Authorization{Basis: "credential", Decision: "allowed"}
+
 	if identity.TeamID == "" || identity.SlackUserID == "" || len(identity.TeamID) > 100 || len(identity.SlackUserID) > 100 {
 		return ErrUserLinkDenied
 	}
@@ -137,7 +143,7 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, actor audit.Actor, org, u
 			return err
 		}
 		if tag.RowsAffected() == 1 {
-			return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, Action: "slack_user.linked", TargetKind: "slack_user_link", TargetUserID: user, SlackTeamID: identity.TeamID, SlackUserID: identity.SlackUserID})
+			return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, OrgID: org, Action: "slack_user.linked", TargetKind: "slack_user_link", TargetUserID: user, SlackTeamID: identity.TeamID, SlackUserID: identity.SlackUserID})
 		}
 		var exact bool
 		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_user_links WHERE team_id=$1 AND slack_user_id=$2 AND user_id=$3)`, identity.TeamID, identity.SlackUserID, user).Scan(&exact)
@@ -153,7 +159,12 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, actor audit.Actor, org, u
 
 // An exact Slack user ID prevents a stale settings page from removing a newer
 // replacement link for the same workspace. Historical admitted requests remain.
-func UnlinkUser(ctx context.Context, pool db.TxBeginner, actor audit.Actor, org, user uuid.UUID, team, slackUser string) error {
+func UnlinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, actor audit.Actor, org, user uuid.UUID, team, slackUser string) error {
+	if actor.Kind != "human" || actor.ID != user {
+		return ErrUserLinkDenied
+	}
+	actor.Authorization = audit.Authorization{Basis: "credential", Decision: "allowed"}
+
 	if team == "" || slackUser == "" || len(team) > 100 || len(slackUser) > 100 {
 		return ErrUserLinkDenied
 	}
@@ -165,6 +176,6 @@ func UnlinkUser(ctx context.Context, pool db.TxBeginner, actor audit.Actor, org,
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
-		return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: org, Action: "slack_user.unlinked", TargetKind: "slack_user_link", TargetUserID: user, SlackTeamID: team, SlackUserID: slackUser})
+		return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, OrgID: org, Action: "slack_user.unlinked", TargetKind: "slack_user_link", TargetUserID: user, SlackTeamID: team, SlackUserID: slackUser})
 	})
 }

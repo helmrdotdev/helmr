@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"reflect"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestTurnDispatchRetainsAdmissionTimeAndExactOrigin(t *testing.T) {
 	}
 	peer := f.requestedPeer(t)
 	caller := session.Caller{Kind: "session", ID: f.session, TurnID: origin.TurnID, Execution: f.execution(), Host: f.host()}
-	admission, err := session.Enqueue(t.Context(), f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer-input", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"retained\"}"}]`)})
+	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer-input", Input: json.RawMessage(`[{"type":"text","text":"{\"message\":\"retained\"}"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

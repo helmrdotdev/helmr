@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"uuid"
@@ -35,7 +36,7 @@ func TestOutputOnlyWakesReadersWhileNewWorkWakesWorker(t *testing.T) {
 	if observed = topics(); !observed["worker:"+f.worker.String()] || !observed["dispatch"] {
 		t.Fatalf("queued Turn did not wake execution: %v", observed)
 	}
-	_, err := session.SendTurn(t.Context(), f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, running.TurnID)
+	_, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, running.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +53,7 @@ func TestWorkAdmissionNotificationsFollowOuterTransaction(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = session.Enqueue(t.Context(), tx, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[]`)})
+		_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, tx, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[]`)})
 		if err != nil {
 			_ = tx.Rollback(t.Context())
 			t.Fatal(err)
@@ -121,17 +122,17 @@ func TestClosingChildrenNotifyReadersBeforeTheirWorkDrains(t *testing.T) {
 			child.enqueue(t, "child")
 			if reconcile {
 				parent := f.enqueue(t, "parent")
-				if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 					t.Fatal(err)
 				}
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET status='failed',terminal_at=clock_timestamp() WHERE id=$1`, parent.TurnID)
 			}
 			topics := dbtest.ListenChanges(t, f.pool)
 			if reconcile {
-				if err := session.ReconcileSessionClosure(t.Context(), f.pool, f.env, f.session); err != nil {
+				if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
 					t.Fatal(err)
 				}
-			} else if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+			} else if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 				t.Fatal(err)
 			}
 			var state string
@@ -141,7 +142,7 @@ func TestClosingChildrenNotifyReadersBeforeTheirWorkDrains(t *testing.T) {
 			if got := topics(); !got["session:"+child.session.String()] {
 				t.Fatalf("child closing did not notify its readers: %v", got)
 			}
-			if err := session.ReconcileSessionClosure(t.Context(), f.pool, f.env, f.session); err != nil {
+			if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
 				t.Fatal(err)
 			}
 			if got := topics(); len(got) != 0 {
@@ -159,10 +160,10 @@ func TestShutdownReceiptReplayRetainsInterruptedTurnWithoutNotifying(t *testing.
 	}
 	interrupt := controlRequest(f, "turn_interrupt", "interrupt-turn")
 	interrupt.TurnID = turn.TurnID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), interrupt); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), interrupt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
 	delivery, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), sessiontest.SeededAttachment)
@@ -201,7 +202,9 @@ func TestIdleStopIntentNotifiesWithoutTurnOrNewHold(t *testing.T) {
 				}
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE id=$1`, f.session)
 				stop = func() error {
-					return session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+					return session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+						RetentionSeconds: 3600,
+					}, f.pool, *f.host(), f.execution(), a.Sequence)
 				}
 			case "revocation":
 				p := preparationResidentImage(t)
@@ -211,13 +214,17 @@ func TestIdleStopIntentNotifiesWithoutTurnOrNewHold(t *testing.T) {
 				}
 				// Revocation was already recorded, but the physical stop intent still needs delivery.
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET failure_recorded_at=clock_timestamp() WHERE session_id=$1`, f.session)
-				stop = func() error { return session.ReconcileComputerSecretRevocation(t.Context(), f.pool, f.env, f.computer) }
+				stop = func() error {
+					return session.ReconcileComputerSecretRevocation(t.Context(), auditpolicy.Policy{
+						RetentionSeconds: 3600,
+					}, f.pool, f.env, f.computer)
+				}
 			case "cancelled-child":
 				parent := f
 				f = ownedFixture(t, parent)
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE id=$1`, f.session)
 				stop = func() error {
-					_, err := session.ControlSession(t.Context(), parent.pool, parent.caller(), controlRequest(parent, "cancel", "cancel-tree"))
+					_, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, parent.pool, parent.caller(), controlRequest(parent, "cancel", "cancel-tree"))
 					return err
 				}
 			}

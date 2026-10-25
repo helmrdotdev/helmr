@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -101,7 +102,9 @@ func TestHostAllocationListingIncludesLostComputerAndAdvancesCursor(t *testing.T
 	if err != nil || len(next) != 0 {
 		t.Fatalf("cursor did not advance: %+v %v", next, err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: found.EnvironmentID, ComputerID: found.OwnerID, Epoch: found.Epoch, InstanceID: found.InstanceID}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	records, err = dispatch.ListHostAllocations(t.Context(), f.pool, *f.host(), nil)

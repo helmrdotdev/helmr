@@ -3,9 +3,11 @@ package computer
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -61,19 +63,25 @@ func BindHibernateCapture(ctx context.Context, tx pgx.Tx, env, id, checkpoint uu
 	return err
 }
 
-func settleHibernateCapture(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID, code string) error {
-	_, err := tx.Exec(ctx, `UPDATE computer_controls SET status=CASE WHEN $3='' THEN 'completed' ELSE 'failed' END,error_code=NULLIF($3,''),settled_at=clock_timestamp() WHERE environment_id=$1 AND checkpoint_id=$2 AND kind='hibernate' AND status='accepted'`, env, checkpoint, code)
-	return err
+func settleHibernateCapture(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, checkpoint uuid.UUID, code string) error {
+	rows, err := tx.Query(ctx, `UPDATE computer_controls SET status=CASE WHEN $3='' THEN 'completed' ELSE 'failed' END,error_code=NULLIF($3,''),settled_at=clock_timestamp() WHERE environment_id=$1 AND checkpoint_id=$2 AND kind='hibernate' AND status='accepted' RETURNING environment_id,computer_id,id,kind,status,caller_kind,caller_id`, env, checkpoint, code)
+	if err != nil {
+		return err
+	}
+	return auditControlSettlements(ctx, tx, auditPolicy, rows)
 }
 
 // NoteExecutionDemand cancels an uncompleted explicit sleep intent. This joins
 // the admission transaction, so rejected or duplicate input cannot wake a VM.
-func NoteExecutionDemand(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
+func NoteExecutionDemand(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, id uuid.UUID) error {
 	if err := RequireExecutionCapacity(ctx, tx, env, id); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE computer_controls SET status='failed',error_code='new_execution_requested',settled_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2 AND kind='hibernate' AND status='accepted'`, env, id)
-	return err
+	rows, err := tx.Query(ctx, `UPDATE computer_controls SET status='failed',error_code='new_execution_requested',settled_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2 AND kind='hibernate' AND status='accepted' RETURNING environment_id,computer_id,id,kind,status,caller_kind,caller_id`, env, id)
+	if err != nil {
+		return err
+	}
+	return auditControlSettlements(ctx, tx, auditPolicy, rows)
 }
 
 var ErrExecutionSettling = errors.New("previous execution deadline elapsed; retry after its pending work settles")
@@ -156,9 +164,12 @@ func RequireRetainedHostCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UU
 }
 
 // FailExecutionAdmission settles pending receipts with the provisioning episode.
-func FailExecutionAdmission(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE computer_controls SET status='failed',error_code='execution_deadline_exceeded',settled_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2 AND status='accepted'`, env, id)
-	return err
+func FailExecutionAdmission(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, id uuid.UUID) error {
+	rows, err := tx.Query(ctx, `UPDATE computer_controls SET status='failed',error_code='execution_deadline_exceeded',settled_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2 AND status='accepted' RETURNING environment_id,computer_id,id,kind,status,caller_kind,caller_id`, env, id)
+	if err != nil {
+		return err
+	}
+	return auditControlSettlements(ctx, tx, auditPolicy, rows)
 }
 
 // RunnableExecutionDemandSQL assumes a Computer row c. Held Turns do not ask for
@@ -176,4 +187,33 @@ func RetireUnusedExecutionAdmission(ctx context.Context, tx pgx.Tx, env, id uuid
  AND NOT `+RunnableExecutionDemandSQL+`
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.source_lease_epoch=l.epoch AND cp.status='ready'))`, env, id)
 	return err
+}
+
+// auditControlSettlements records receipt outcomes, not a claim that a physical
+// transition rolled back or that every process stopped. Only changed receipts
+// are returned by the owner UPDATE, so retries do not recreate expired facts.
+func auditControlSettlements(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, rows pgx.Rows) error {
+	type settlement struct {
+		environment, computer, request uuid.UUID
+		kind, status, callerKind       string
+		caller                         uuid.UUID
+	}
+	results, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (settlement, error) {
+		var r settlement
+		err := row.Scan(&r.environment, &r.computer, &r.request, &r.kind, &r.status, &r.callerKind, &r.caller)
+		return r, err
+	})
+	if err != nil {
+		return err
+	}
+	for _, r := range results {
+		outcome, reason := "succeeded", ""
+		if r.status == "failed" {
+			outcome, reason = "failed", "operation_failed"
+		}
+		if err := audit.Append(ctx, tx, policy, audit.Event{Actor: audit.System("computer-lifecycle"), EnvironmentID: r.environment, ComputerID: r.computer, Action: "computer.control_settled", Outcome: outcome, TargetKind: "computer", TargetID: r.computer, Causality: audit.Causality{InitiatorKind: r.callerKind, InitiatorID: r.caller}, Details: audit.ComputerControlDetails{Kind: r.kind, RequestID: r.request, Reason: reason}}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

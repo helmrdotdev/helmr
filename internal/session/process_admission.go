@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"math"
 	"uuid"
 
@@ -33,7 +34,7 @@ func ReadProcessAllocation(ctx context.Context, q db.DBTX, env, session uuid.UUI
 // holds the worker supply gate; admitting reports whether supply still admits
 // continuation work. An empty successful result means no process was assigned;
 // the caller must commit any queued-work settlement before reporting not ready.
-func AdmitProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch int64, admitting bool) (ProcessAllocation, error) {
+func AdmitProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch int64, admitting bool) (ProcessAllocation, error) {
 	o, err := lockSession(ctx, tx, env, session)
 	if err != nil {
 		return ProcessAllocation{}, err
@@ -46,7 +47,7 @@ func AdmitProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch 
 	if !admitting || (o.lifecycle != "open" && o.lifecycle != "closing") {
 		return ProcessAllocation{}, ErrNotReady
 	}
-	assigned, err := AssignProcess(ctx, tx, env, session, epoch, host, hostEpoch, 0)
+	assigned, err := AssignProcess(ctx, auditPolicy, tx, env, session, epoch, host, hostEpoch, 0)
 	if err != nil {
 		return ProcessAllocation{}, err
 	}
@@ -66,9 +67,9 @@ func AdmitProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch 
 // AssignProcess shares initial-cohort and later admission eligibility.
 // freshLease is nonzero only inside the transaction creating that acquiring lease.
 // Assignment does not authorize attachment or setup before VM readiness.
-func AssignProcess(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch, freshLease int64) (bool, error) {
+func AssignProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session uuid.UUID, epoch int64, host uuid.UUID, hostEpoch, freshLease int64) (bool, error) {
 	if err := authorizeRuntimeOrigin(ctx, tx, env, session); errors.Is(err, ErrDenied) {
-		return false, failQueuedPermission(ctx, tx, env, session)
+		return false, failQueuedPermission(ctx, auditPolicy, tx, env, session)
 	} else if err != nil {
 		return false, err
 	}
@@ -134,12 +135,12 @@ func LockInitialSessions(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID
 
 // AuthorizeInitialSessions settles revoked queued work before reserving a VM.
 // A false result means every Session in this cohort lost current authority.
-func AuthorizeInitialSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, sessions []uuid.UUID) (bool, error) {
+func AuthorizeInitialSessions(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env uuid.UUID, sessions []uuid.UUID) (bool, error) {
 	allowed := len(sessions) == 0
 	for _, id := range sessions {
 		err := authorizeRuntimeOrigin(ctx, tx, env, id)
 		if errors.Is(err, ErrDenied) {
-			if err := failQueuedPermission(ctx, tx, env, id); err != nil {
+			if err := failQueuedPermission(ctx, auditPolicy, tx, env, id); err != nil {
 				return false, err
 			}
 		} else if err != nil {
@@ -151,7 +152,7 @@ func AuthorizeInitialSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, ses
 	return allowed, nil
 }
 
-func AssignInitialProcesses(ctx context.Context, tx pgx.Tx, r computer.ComputerAllocation, sessions []uuid.UUID) error {
+func AssignInitialProcesses(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, r computer.ComputerAllocation, sessions []uuid.UUID) error {
 	for _, session := range sessions {
 		var epoch int64
 		if err := tx.QueryRow(ctx, `SELECT COALESCE(max(epoch),0) FROM session_processes WHERE environment_id=$1 AND session_id=$2`, r.EnvironmentID, session).Scan(&epoch); err != nil {
@@ -160,7 +161,7 @@ func AssignInitialProcesses(ctx context.Context, tx pgx.Tx, r computer.ComputerA
 		if epoch == math.MaxInt64 {
 			continue
 		}
-		if _, err := AssignProcess(ctx, tx, r.EnvironmentID, session, epoch+1, r.HostID, r.HostEpoch, r.Epoch); err != nil {
+		if _, err := AssignProcess(ctx, auditPolicy, tx, r.EnvironmentID, session, epoch+1, r.HostID, r.HostEpoch, r.Epoch); err != nil {
 			return err
 		}
 	}

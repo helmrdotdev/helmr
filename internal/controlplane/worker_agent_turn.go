@@ -26,9 +26,9 @@ func (server *Server) workerAgentTurn(w http.ResponseWriter, r *http.Request) {
 	if server.slackConfig != nil && server.slackConfig.Client != nil {
 		verifier = server.slackConfig.Client
 	}
-	dispatch, err := session.DispatchRuntimeTurn(r.Context(), server.tx, host, e, request.AttachmentSequence, verifier)
+	dispatch, err := session.DispatchRuntimeTurn(r.Context(), server.auditPolicy, server.tx, host, e, request.AttachmentSequence, verifier)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	var response *workerapi.AgentTurnDispatch
@@ -53,7 +53,7 @@ func (server *Server) workerAgentTurnReceipt(w http.ResponseWriter, r *http.Requ
 	}
 	sequence, err := session.ObserveRuntimeTurn(r.Context(), server.tx, host, e, request.AttachmentSequence, turn, request.Outcome)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentTurnAcknowledgment{Sequence: sequence})

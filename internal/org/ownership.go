@@ -5,6 +5,7 @@ import (
 	"errors"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -50,7 +51,8 @@ func RecoverOwnAccess(ctx context.Context, database db.TxBeginner, m ManagingMem
 		if !created {
 			return nil
 		}
-		return accessAudit(ctx, tx, m, "access.recovered", "role_grant", id, nil, grantSnapshot(result), nil)
+		m.Actor.Authorization = audit.Authorization{Basis: "ownership", Decision: "allowed"}
+		return accessAudit(ctx, tx, m, "access.recovered", "role_grant", id, nil, grantSnapshot(result))
 	})
 	return result, err
 }

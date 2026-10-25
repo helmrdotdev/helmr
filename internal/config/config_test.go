@@ -95,6 +95,7 @@ func TestLoadDispatcherRejectsInvalidComputerFencingKey(t *testing.T) {
 }
 
 func setDispatcherFencing(t *testing.T) {
+	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
 	setDiagnosticAdmissionEnv(t)
 	t.Setenv("DIAGNOSTIC_EXPORT_BATCH_RECORDS", "16")
 	t.Setenv("DIAGNOSTIC_EXPORT_BATCH_BYTES", "4096")
@@ -373,6 +374,7 @@ func TestLoadControlPlaneRejectsNonOriginAppOrigins(t *testing.T) {
 }
 
 func TestLoadControlPlaneRejectsInvalidMagicLinkDebugURLs(t *testing.T) {
+	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
 	t.Setenv("MAGIC_LINK_DEBUG_URLS", "sometimes")
 
 	_, err := LoadControlPlane()
@@ -487,6 +489,7 @@ func setControlPlaneRequiredEnv(t *testing.T) {
 }
 
 func setControlPlaneExecutionEnv(t *testing.T) {
+	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
 	setDiagnosticAdmissionEnv(t)
 	setEnvironmentExecutionLimits(t)
 	t.Setenv("COMPUTER_WRAPPING_KEY_ID", "test-computer-root")

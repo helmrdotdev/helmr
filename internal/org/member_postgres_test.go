@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -84,7 +85,7 @@ func TestCreateOrganizationPostgresInitialSetupAdmitsOneOrganization(t *testing.
 	}
 	queries := db.New(database.Pool)
 	userID := insertUser(t, database.Pool, "Owner", "owner@example.test")
-	created, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "Acme", OwnerUserID: userID, InitialSetup: true})
+	created, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "Acme", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
 	if err != nil || created.Slug != "acme" || created.Name != "acme" {
 		t.Fatalf("organization = %+v, err = %v", created, err)
 	}
@@ -96,10 +97,10 @@ func TestCreateOrganizationPostgresInitialSetupAdmitsOneOrganization(t *testing.
 	if err != nil || member.RemovedAt.Valid || !member.IsOwner {
 		t.Fatalf("owner member = %+v, err = %v", member, err)
 	}
-	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "second", OwnerUserID: userID, InitialSetup: true}); !errors.Is(err, org.ErrOrganizationExists) {
+	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "second", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); !errors.Is(err, org.ErrOrganizationExists) {
 		t.Fatalf("second setup error = %v", err)
 	}
-	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "acme", OwnerUserID: userID}); !errors.Is(err, org.ErrOrganizationSlugInUse) {
+	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "acme", OwnerUserID: userID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); !errors.Is(err, org.ErrOrganizationSlugInUse) {
 		t.Fatalf("duplicate slug error = %v", err)
 	}
 }
@@ -149,7 +150,7 @@ func TestInitialOrganizationRollsBackFailedAdministratorGrant(t *testing.T) {
 	user := insertUser(t, database.Pool, "Owner", "owner@example.test")
 	dbtest.MustExec(t, t.Context(), database.Pool, `CREATE FUNCTION reject_initial_admin() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected administrator grant failure'; END $$;
  CREATE TRIGGER reject_initial_admin BEFORE UPDATE ON users FOR EACH STATEMENT EXECUTE FUNCTION reject_initial_admin()`)
-	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "initial", OwnerUserID: user, InitialSetup: true}); err == nil {
+	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.System("test-fixture"), Slug: "initial", OwnerUserID: user, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); err == nil {
 		t.Fatal("failed administrator grant created an organization")
 	}
 	var intact bool
@@ -171,7 +172,9 @@ func newMemberFixture(t *testing.T) memberFixture {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.RunTx(t.Context(), database.Pool, func(tx pgx.Tx) error { return org.SeedStandardRoles(t.Context(), tx, orgID, audit.System("fixture")) }); err != nil {
+	if err := db.RunTx(t.Context(), database.Pool, func(tx pgx.Tx) error {
+		return org.SeedStandardRoles(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, orgID, audit.System("fixture"))
+	}); err != nil {
 		t.Fatal(err)
 	}
 	member := func(name, email, role string) org.ManagingMember {
@@ -180,7 +183,7 @@ func newMemberFixture(t *testing.T) memberFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := org.ManagingMember{Actor: audit.System("fixture"), OrgID: orgID, UserID: userID, MemberID: pgvalue.MustUUIDValue(record.ID)}
+		m := org.ManagingMember{Actor: audit.VerifiedLogin(userID, "fixture"), OrgID: orgID, UserID: userID, MemberID: pgvalue.MustUUIDValue(record.ID), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
 		if role == "owner" || role == "admin" {
 			dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO role_grants(id,org_id,member_id,role_id) SELECT $1,$2,$3,id FROM roles WHERE org_id=$2 AND builtin_key='access_administrator'`, uuid.NewV7(), orgID, m.MemberID)
 		}
@@ -256,7 +259,7 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 	// constraint, so acceptance runs on a transaction.
 	accept := func(invitation org.PendingInvitation, userID uuid.UUID, displayName string) error {
 		return db.RunTx(ctx, fixture.pool, func(tx pgx.Tx) error {
-			return identity.AcceptInvitation(ctx, tx, audit.VerifiedLogin(userID, "test-provider"), invitation, userID, displayName)
+			return identity.AcceptInvitation(ctx, tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(userID, "test-provider"), invitation, userID, displayName)
 		})
 	}
 	if _, err := org.PendingInvitationByTokenHash(ctx, q, []byte("unknown")); !errors.Is(err, org.ErrInvitationNotFound) {
@@ -302,7 +305,7 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 		t.Fatalf("re-enabled member = %+v, err = %v", member, err)
 	}
 	var newGrant bool
-	if err := fixture.pool.QueryRow(ctx, `SELECT NOT (details ? 'old_role') AND NOT (details ? 'new_role') AND actor_kind='verified_login' AND target_user_id=$2 FROM audit_events WHERE action='invitation.accepted' AND target_id=$1`, reinvitation.ID, joiner).Scan(&newGrant); err != nil || !newGrant {
+	if err := fixture.pool.QueryRow(ctx, `SELECT NOT (details ? 'old_role') AND NOT (details ? 'new_role') AND actor_kind='human' AND target_user_id=$2 FROM audit_events WHERE action='invitation.accepted' AND target_id=$1`, reinvitation.ID, joiner).Scan(&newGrant); err != nil || !newGrant {
 		t.Fatal("reinvitation recorded disabled membership as active authority", newGrant, err)
 	}
 }

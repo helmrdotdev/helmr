@@ -3,6 +3,7 @@ package computer
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"time"
 	"uuid"
@@ -255,7 +256,7 @@ func SealCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) e
 // CancelUnsealedCheckpoint cancels a capture that never sealed, together with
 // its still-requested disk save. It returns ErrConflict when the save already
 // has a recorded cut.
-func CancelUnsealedCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint, save uuid.UUID, reason string) error {
+func CancelUnsealedCheckpoint(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, checkpoint, save uuid.UUID, reason string) error {
 	tag, err := tx.Exec(ctx, `UPDATE computer_saves SET status='failed',failure_evidence=$3 WHERE environment_id=$1 AND id=$2 AND status='requested'`, env, save, reason)
 	if err != nil {
 		return err
@@ -267,7 +268,7 @@ func CancelUnsealedCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint, s
 	if err != nil {
 		return err
 	}
-	if err := settleHibernateCapture(ctx, tx, env, checkpoint, "capture_refused"); err != nil {
+	if err := settleHibernateCapture(ctx, auditPolicy, tx, env, checkpoint, "capture_refused"); err != nil {
 		return err
 	}
 	return notifySaveChanged(ctx, tx, env, save)
@@ -321,7 +322,7 @@ func ConsumeCheckpoint(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID
 
 // ReconcileCheckpointControls records that the members' controls match the
 // consumed checkpoint and drops its capture request.
-func ReconcileCheckpointControls(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) error {
+func ReconcileCheckpointControls(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, checkpoint uuid.UUID) error {
 	tag, err := tx.Exec(ctx, `UPDATE computers SET execution_deadline_at=NULL WHERE environment_id=$1 AND id=(SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2) AND (execution_deadline_at IS NULL OR execution_deadline_at>clock_timestamp())`, env, checkpoint)
 	if err != nil {
 		return err
@@ -333,11 +334,14 @@ func ReconcileCheckpointControls(ctx context.Context, tx pgx.Tx, env, checkpoint
 	if _, err := tx.Exec(ctx, `UPDATE checkpoints SET controls_reconciled_at=clock_timestamp(),capture_request=NULL WHERE environment_id=$1 AND id=$2`, env, checkpoint); err != nil {
 		return err
 	}
-	if err := settleHibernateCapture(ctx, tx, env, checkpoint, "capture_resumed"); err != nil {
+	if err := settleHibernateCapture(ctx, auditPolicy, tx, env, checkpoint, "capture_resumed"); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE computer_controls SET status='completed',settled_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=(SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2) AND kind='wake' AND status='accepted'`, env, checkpoint)
-	return err
+	rows, err := tx.Query(ctx, `UPDATE computer_controls SET status='completed',settled_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=(SELECT computer_id FROM checkpoints WHERE environment_id=$1 AND id=$2) AND kind='wake' AND status='accepted' RETURNING environment_id,computer_id,id,kind,status,caller_kind,caller_id`, env, checkpoint)
+	if err != nil {
+		return err
+	}
+	return auditControlSettlements(ctx, tx, auditPolicy, rows)
 }
 
 // FailSave records why a save can no longer publish.
@@ -373,24 +377,6 @@ func MarkPreparationFailed(ctx context.Context, tx pgx.Tx, env, computer uuid.UU
 // MarkUsed clears the Computer's unused clock when work is admitted to it.
 func MarkUsed(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
 	_, err := tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, env, computer)
-	return err
-}
-
-// RecordSessionExposures records the current versions of the active Secrets
-// exposed to a Session process.
-func RecordSessionExposures(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, epoch int64, secrets []uuid.UUID) error {
-	_, err := tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation)
-   SELECT uuidv7(),$1,$2,$3,s.id,s.current_version_id,s.revocation_generation FROM secrets s WHERE s.environment_id=$1 AND s.id=ANY($4::uuid[]) AND s.status='active'
-   ON CONFLICT(environment_id,session_id,process_epoch,secret_id) WHERE session_id IS NOT NULL DO NOTHING`, env, session, epoch, secrets)
-	return err
-}
-
-// RecordCommandExposures records the current versions of the active Secrets
-// exposed to a Command.
-func RecordCommandExposures(ctx context.Context, tx pgx.Tx, env, command uuid.UUID, secrets []uuid.UUID) error {
-	_, err := tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,command_id,secret_id,version_id,revocation_generation)
- SELECT uuidv7(),$1,$2,s.id,s.current_version_id,s.revocation_generation FROM secrets s WHERE s.environment_id=$1 AND s.id=ANY($3::uuid[]) AND s.status='active'
- ON CONFLICT(environment_id,command_id,secret_id) WHERE command_id IS NOT NULL DO NOTHING`, env, command, secrets)
 	return err
 }
 

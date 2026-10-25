@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"log/slog"
 	"net/http"
@@ -47,7 +48,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	f := &snapshotFixture{fixture: sessiontest.New(t)}
 	f.q = db.New(f.fixture.Pool)
 	var err error
-	f.store, err = secret.New(f.q, f.fixture.Pool, bytes.Repeat([]byte{71}, 32))
+	f.store, err = secret.New(f.q, f.fixture.Pool, bytes.Repeat([]byte{71}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}

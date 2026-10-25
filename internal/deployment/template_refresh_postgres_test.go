@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"uuid"
@@ -32,7 +33,9 @@ func TestTemplateRefreshCoalescesAndPinsReceiptAcrossPromotion(t *testing.T) {
 			if i == 2 {
 				key = "different"
 			}
-			builds[i], errs[i] = RefreshTemplate(t.Context(), f.pool, f.principal(), f.scope(), "repo", key)
+			builds[i], errs[i] = RefreshTemplate(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, f.principal(), f.scope(), "repo", key)
 		}()
 	}
 	wg.Wait()
@@ -54,7 +57,9 @@ func TestTemplateRefreshCoalescesAndPinsReceiptAcrossPromotion(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, env, second.ID)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET status='failed',error_code='authored_preparation_failed' WHERE environment_id=$1 AND id=$2`, env, original.ImageBuildID)
-	replay, err := RefreshTemplate(t.Context(), f.pool, f.principal(), f.scope(), "repo", "same")
+	replay, err := RefreshTemplate(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, f.principal(), f.scope(), "repo", "same")
 	if err != nil || replay.DeploymentID != first.ID || replay.ImageBuildID != original.ImageBuildID || replay.Status != "failed" || replay.Ready {
 		t.Fatalf("receipt drifted: %+v %v", replay, err)
 	}
@@ -62,7 +67,9 @@ func TestTemplateRefreshCoalescesAndPinsReceiptAcrossPromotion(t *testing.T) {
 	if err != nil || observed != replay {
 		t.Fatalf("observation: %+v %v", observed, err)
 	}
-	fresh, err := RefreshTemplate(t.Context(), f.pool, f.principal(), f.scope(), "repo", "new-current")
+	fresh, err := RefreshTemplate(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, f.principal(), f.scope(), "repo", "new-current")
 	if err != nil || fresh.DeploymentID != second.ID || fresh.ImageBuildID == original.ImageBuildID || fresh.Status != "queued" {
 		t.Fatalf("new current refresh: %+v %v", fresh, err)
 	}
@@ -107,11 +114,13 @@ func TestTemplateRefreshSerializesWithPromotion(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		refreshed, refreshErr = RefreshTemplate(t.Context(), f.pool, f.principal(), f.scope(), "repo", "racing-refresh")
+		refreshed, refreshErr = RefreshTemplate(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, f.principal(), f.scope(), "repo", "racing-refresh")
 	}()
 	go func() {
 		defer wg.Done()
-		_, promoteErr = Promote(t.Context(), f.pool, f.principal(), f.scope(), candidate.ID, nil)
+		_, promoteErr = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), candidate.ID, nil)
 	}()
 	if err := lock.Commit(t.Context()); err != nil {
 		t.Fatal(err)
@@ -124,7 +133,9 @@ func TestTemplateRefreshSerializesWithPromotion(t *testing.T) {
 		if refreshed.DeploymentID != current.ID {
 			t.Fatalf("mixed current resolution: %+v", refreshed)
 		}
-		replay, err := RefreshTemplate(t.Context(), f.pool, f.principal(), f.scope(), "repo", "racing-refresh")
+		replay, err := RefreshTemplate(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, f.principal(), f.scope(), "repo", "racing-refresh")
 		if err != nil || replay.ImageBuildID != refreshed.ImageBuildID || replay.DeploymentID != current.ID {
 			t.Fatalf("racing receipt: %+v %v", replay, err)
 		}

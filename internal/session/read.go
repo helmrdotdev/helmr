@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -157,9 +158,9 @@ func scanSession(row pgx.Row) (SessionView, error) {
 	return v, err
 }
 
-func GetSession(ctx context.Context, pool db.TxBeginner, caller Caller, env, id uuid.UUID) (SessionView, error) {
+func GetSession(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner, caller Caller, env, id uuid.UUID) (SessionView, error) {
 	var result SessionView
-	err := readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error {
+	err := discloseTransaction(ctx, policy, pool, caller, env, id, uuid.Nil(), func(tx pgx.Tx) error {
 		var err error
 		if err = authorizeSessionRead(ctx, tx, caller, env, id); err != nil {
 			return err
@@ -176,7 +177,10 @@ func GetSession(ctx context.Context, pool db.TxBeginner, caller Caller, env, id 
 		result.Permissions, err = externalSessionPermissions(ctx, tx, caller, env, id)
 		return err
 	})
-	return result, err
+	if err != nil {
+		return SessionView{}, err
+	}
+	return result, nil
 }
 
 func getSession(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) (SessionView, error) {
@@ -184,9 +188,12 @@ func getSession(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) (SessionView,
 	return result, err
 }
 
-func ListSessions(ctx context.Context, pool db.TxBeginner, caller Caller, req SessionListRequest) (SessionPage, error) {
+func ListSessions(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req SessionListRequest) (SessionPage, error) {
 	result := SessionPage{Sessions: []SessionView{}}
-	err := readTransaction(ctx, pool, caller, req.EnvironmentID, func(tx pgx.Tx) error {
+	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`); err != nil {
+			return err
+		}
 		var err error
 		filter, err := readScopeFor(ctx, tx, caller, req.EnvironmentID)
 		if err != nil {
@@ -199,9 +206,12 @@ func ListSessions(ctx context.Context, pool db.TxBeginner, caller Caller, req Se
 		if err := redactSessionRelations(ctx, tx, caller, req.EnvironmentID, result.Sessions); err != nil {
 			return err
 		}
-		return nil
+		return recordSessionHoldsRead(ctx, policy, tx, caller, req.EnvironmentID, result.Sessions)
 	})
-	return result, err
+	if err != nil {
+		return SessionPage{}, hideMissing(err)
+	}
+	return result, nil
 }
 
 const sessionReadPredicate = `($2::boolean OR agent_id=ANY($7::uuid[]) OR (origin_slack_connection_id=$8) OR (origin_slack_connection_id IS NULL AND (origin_user_id=$3 OR origin_api_key_id=$4) AND ($5::boolean OR agent_id=ANY($6::uuid[]))))`
@@ -267,9 +277,9 @@ func scanTurn(row pgx.Row) (TurnView, error) {
 	return v, err
 }
 
-func GetTurn(ctx context.Context, pool db.TxBeginner, caller Caller, env, session, id uuid.UUID) (TurnView, error) {
+func GetTurn(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, env, session, id uuid.UUID) (TurnView, error) {
 	var result TurnView
-	err := readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error {
+	err := discloseTransaction(ctx, auditPolicy, pool, caller, env, session, id, func(tx pgx.Tx) error {
 		var err error
 		if err = authorizeSessionRead(ctx, tx, caller, env, session); err != nil {
 			return err
@@ -277,15 +287,18 @@ func GetTurn(ctx context.Context, pool db.TxBeginner, caller Caller, env, sessio
 		result, err = scanTurn(tx.QueryRow(ctx, `SELECT `+turnViewColumns+` FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3`, env, session, id))
 		return err
 	})
+	if err != nil {
+		return TurnView{}, hideMissing(err)
+	}
 	return result, err
 }
 
-func ListTurns(ctx context.Context, pool db.TxBeginner, caller Caller, req TurnListRequest) (TurnPage, error) {
+func ListTurns(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req TurnListRequest) (TurnPage, error) {
 	result := TurnPage{Turns: []TurnView{}}
 	if req.Limit < 1 || req.Limit > 100 || req.After < 0 {
 		return result, ErrInvalidInput
 	}
-	err := readTransaction(ctx, pool, caller, req.EnvironmentID, func(tx pgx.Tx) error {
+	err := discloseTransaction(ctx, auditPolicy, pool, caller, req.EnvironmentID, req.SessionID, uuid.Nil(), func(tx pgx.Tx) error {
 		if err := authorizeSessionRead(ctx, tx, caller, req.EnvironmentID, req.SessionID); err != nil {
 			return err
 		}
@@ -317,6 +330,9 @@ func ListTurns(ctx context.Context, pool db.TxBeginner, caller Caller, req TurnL
 		}
 		return nil
 	})
+	if err != nil {
+		return TurnPage{}, hideMissing(err)
+	}
 	return result, err
 }
 
@@ -416,4 +432,25 @@ func redactSessionRelations(ctx context.Context, tx pgx.Tx, caller Caller, env u
 		}
 	}
 	return nil
+}
+
+// Metadata discovery records only selections containing unredacted free-form holds.
+func recordSessionHoldsRead(ctx context.Context, policy auditpolicy.Policy, tx pgx.Tx, caller Caller, env uuid.UUID, views []SessionView) error {
+	for _, view := range views {
+		for _, hold := range view.Holds {
+			if hold.ID != uuid.Nil() {
+				if err := RecordContentRead(ctx, policy, tx, caller, env, view.ID); err != nil {
+					return err
+				}
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// AuthorizeSessionRead checks a metadata-only invalidation subscription without
+// selecting or disclosing Session content.
+func AuthorizeSessionRead(ctx context.Context, pool db.TxBeginner, caller Caller, env, id uuid.UUID) error {
+	return readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error { return authorizeSessionRead(ctx, tx, caller, env, id) })
 }

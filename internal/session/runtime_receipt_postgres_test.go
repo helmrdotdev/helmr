@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -22,13 +23,13 @@ func TestRuntimeReceiptRecoveryRequiresCurrentGeneration(t *testing.T) {
 				case "create", "spawn":
 					req := f.startRequest("original-key")
 					req.ComputerID = f.computer
-					receipt, err := session.AdmitSession(t.Context(), f.pool, nil, caller, req, operation)
+					receipt, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, operation)
 					return receipt.TurnID.String(), err
 				case "enqueue":
-					receipt, err := session.Enqueue(t.Context(), f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: target.session, IdempotencyKey: "original-key", Input: []byte(`[]`)})
+					receipt, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: target.session, IdempotencyKey: "original-key", Input: []byte(`[]`)})
 					return receipt.TurnID.String(), err
 				default:
-					receipt, err := session.ControlSession(t.Context(), f.pool, caller, session.SessionControlRequest{EnvironmentID: f.env, SessionID: target.session, Kind: "interrupt", IdempotencyKey: "original-key"})
+					receipt, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionControlRequest{EnvironmentID: f.env, SessionID: target.session, Kind: "interrupt", IdempotencyKey: "original-key"})
 					return receipt.ID.String(), err
 				}
 			}

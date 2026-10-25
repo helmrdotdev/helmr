@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"log/slog"
 	"sync"
 	"testing"
@@ -49,7 +50,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("bootstrap local worker group: %v", err)
 	}
-	cfg := devConfig{environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
+	cfg := devConfig{auditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}, environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
 	if err := seedDevData(ctx, pool, cfg); err != nil {
 		t.Fatalf("seed dev data: %v", err)
 	}
@@ -122,7 +123,9 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	}
 	// The dev control plane's background owners leave the seeded history alone.
 	before := demoFingerprint(ctx, t, pool)
-	allocator, err := dispatch.NewAllocator(pool, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,12 +134,26 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	var loops sync.WaitGroup
 	for _, run := range []func(context.Context) error{
 		func(ctx context.Context) error { return allocator.Run(ctx, log, nil) },
-		func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) },
+		func(ctx context.Context) error {
+			return command.ReconcileCommands(ctx, auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, pool, log)
+		},
 		func(ctx context.Context) error { return slack.RunHistoryRetention(ctx, pool, log) },
-		func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) },
-		func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) },
-		func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) },
-		func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) },
+		func(ctx context.Context) error {
+			return session.RunSessionLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, log)
+		},
+		func(ctx context.Context) error {
+			return computer.RunRetention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, log)
+		},
+		func(ctx context.Context) error {
+			return dispatch.RunLeaseLifecycle(ctx, auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, pool, log)
+		},
+		func(ctx context.Context) error {
+			return dispatch.RunImageBuildLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, log)
+		},
 	} {
 		loops.Go(func() { _ = run(loopCtx) })
 	}
@@ -146,7 +163,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 		t.Fatalf("background reconciliation changed the demo history:\n%s\n%s", before, after)
 	}
 	// The Overview reads the held Session and the recent failure as waiting work.
-	attention, err := session.ListAttention(ctx, pool, session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}, uuid.MustParse(demoSeedEnvironmentID))
+	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101")}, uuid.MustParse(demoSeedEnvironmentID))
 	if err != nil || attention.HoldCount != 1 || attention.FailedTurnCount != 1 || attention.QuestionCount != 0 ||
 		attention.Holds[0].SessionID.String() != demoSeedHeldSessionID || attention.FailedTurns[0].ID.String() != demoSeedFailedTurnID {
 		t.Fatalf("demo attention: %+v %v", attention, err)
@@ -170,14 +187,14 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	env := uuid.MustParse(demoSeedEnvironmentID)
 	// The promoted Deployment is synthetic: its image spec has no Computer seed
 	// profile, so work sent to it is refused before anything is admitted.
-	if _, err := session.Start(ctx, pool, nil, caller, session.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, computer.ErrInvalidInput) {
+	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, nil, caller, session.StartRequest{EnvironmentID: env, Agent: "demo-agent", IdempotencyKey: "should-not-start", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, computer.ErrInvalidInput) {
 		t.Fatalf("synthetic Deployment start=%v, want refused", err)
 	}
 	var admitted int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE environment_id=$1`, demoSeedEnvironmentID).Scan(&admitted); err != nil || admitted != 10 {
 		t.Fatalf("Sessions after refused start=%d %v, want the 10 seeded", admitted, err)
 	}
-	if _, err := session.Enqueue(ctx, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("terminal demo enqueue=%v, want not ready", err)
 	}
 }
@@ -230,7 +247,7 @@ func TestDevSeedRestartPreservesEditsWithoutReseeding(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cfg := devConfig{environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
+	cfg := devConfig{auditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}, environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
 	if err := seedDevData(ctx, pool, cfg); err != nil {
 		t.Fatal(err)
 	}

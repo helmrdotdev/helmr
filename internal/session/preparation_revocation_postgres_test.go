@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -57,7 +58,7 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if _, err = dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("revoked dispatch: %v", err)
 	}
-	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, session.ErrNotReady) {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "after-revoke", Input: json.RawMessage(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("revoked enqueue: %v", err)
 	}
 	shutdown, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence)
@@ -71,7 +72,9 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 		t.Fatalf("revoked capture: %v", err)
 	}
 	for range 2 {
-		if err = session.ReconcileComputerSecretRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
+		if err = session.ReconcileComputerSecretRevocation(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, f.env, f.computer); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -100,7 +103,9 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if err = session.AcknowledgeSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, shutdown.Sequence, shutdown.Generation, shutdown.Kind, "", 0); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence); err != nil {
+	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -123,7 +128,7 @@ func TestPreparationImageRevocationLifecycleAndLease(t *testing.T) {
 	if _, err := computer.RenewLease(t.Context(), f.pool, *f.host(), identity); err == nil {
 		t.Fatal("revoked lease extended")
 	}
-	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var pending bool
@@ -140,7 +145,7 @@ func checkpointImageExposure(t *testing.T, f fixture) preparationFixture {
 	p := preparationFixtureFor(t, f)
 	attempt := p.attach(t, p.waiter(t))
 	ref := p.claim(t, attempt)
-	if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
 	broker, _ := computer.NewImageBuildKeyBroker(f.pool, preparationWrapper(t))
@@ -188,7 +193,9 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 			if err != nil || delivery.Kind != "shutdown" {
 				t.Fatalf("restore shutdown: %v %v", delivery, err)
 			}
-			if err = session.ReconcileComputerSecretRevocation(t.Context(), r.f.pool, r.f.env, r.f.computer); err != nil {
+			if err = session.ReconcileComputerSecretRevocation(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, r.f.pool, r.f.env, r.f.computer); err != nil {
 				t.Fatal(err)
 			}
 			var state string
@@ -203,7 +210,9 @@ func TestPreparationImageRevocationDuringRestoreKeepsStopControl(t *testing.T) {
 				t.Fatalf("cleanup protocol lost: %s", state)
 			}
 			if phase == "consumed" {
-				if err = session.CompleteComputerRestore(t.Context(), r.f.pool, r.host, r.f.env, request, restoreReceipt(request, true, true)); !errors.Is(err, computer.ErrDenied) {
+				if err = session.CompleteComputerRestore(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, r.f.pool, r.host, r.f.env, request, restoreReceipt(request, true, true)); !errors.Is(err, computer.ErrDenied) {
 					t.Fatalf("activate revoked: %v", err)
 				}
 			}
@@ -242,10 +251,12 @@ func TestPreparationImageRevocationPreservesQueueWithoutProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := session.ReconcileComputerSecretRevocation(t.Context(), p.f.pool, p.f.env, p.f.computer); err != nil {
+		if err := session.ReconcileComputerSecretRevocation(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, p.f.pool, p.f.env, p.f.computer); err != nil {
 			t.Fatal(err)
 		}
-		next, more, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), p.f.pool, dispatch.ImageBuildLifecyclePosition{})
+		next, more, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, dispatch.ImageBuildLifecyclePosition{})
 		if err != nil || more || next != (dispatch.ImageBuildLifecyclePosition{}) {
 			t.Fatalf("retained queue scheduled unnecessary reconciliation: %+v %v %v", next, more, err)
 		}
@@ -261,7 +272,7 @@ func TestPreparationImageRevocationPreservesQueueWithoutProcess(t *testing.T) {
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running','completed')`, p.f.env).Scan(&outstanding); err != nil || outstanding != 1 {
 		t.Fatalf("admission was released without disposition: %d %v", outstanding, err)
 	}
-	if _, err := session.ControlSession(t.Context(), p.f.pool, p.f.caller(), controlRequest(p.f.fixture, "cancel", "cancel-revoked-input")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, p.f.caller(), controlRequest(p.f.fixture, "cancel", "cancel-revoked-input")); err != nil {
 		t.Fatalf("explicit cancellation of retained input: %v", err)
 	}
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT status='cancelled' AND terminal_at IS NOT NULL FROM turns WHERE environment_id=$1 AND id=$2`, p.f.env, admission.TurnID).Scan(&retained); err != nil || !retained {
@@ -284,12 +295,18 @@ func TestPreparationImageRevocationObserverBeforeReaper(t *testing.T) {
 			}
 			switch observer {
 			case "stop":
-				err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+				err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, *f.host(), f.execution(), a.Sequence)
 			case "failure":
-				err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
+				err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, *f.host(), f.execution(), a.Sequence)
 			case "lease-expiry":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
-				err = dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1)
+				err = dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, f.env, f.computer, 1)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -299,7 +316,9 @@ func TestPreparationImageRevocationObserverBeforeReaper(t *testing.T) {
 				t.Fatalf("observer explanation %d: %v", holds, err)
 			}
 			for range 2 {
-				if err = session.ReconcileComputerSecretRevocation(t.Context(), f.pool, f.env, f.computer); err != nil {
+				if err = session.ReconcileComputerSecretRevocation(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, f.env, f.computer); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -316,7 +335,7 @@ func TestPreparationImageRevocationSettlesHibernatedSource(t *testing.T) {
 	if _, err := secrets.secrets.Revoke(t.Context(), audit.System("test-fixture"), r.f.env, secrets.secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), r.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, r.f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var inherited bool

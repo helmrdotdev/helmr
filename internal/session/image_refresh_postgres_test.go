@@ -3,6 +3,7 @@ package session_test
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"time"
@@ -208,7 +209,7 @@ func TestImageRefreshLifecycleConsumesDueSpec(t *testing.T) {
 	f := newPreparationFixture(t)
 	dueImageRefresh(t, f)
 	for range 2 {
-		if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+		if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -280,7 +281,7 @@ func TestImageRefreshLifecycleSkipsPermanentlyRevokedSecret(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), tx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, f.env)
 	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
 	defer cancel()
-	if _, _, err := dispatch.ReconcileImageBuildLifecycle(ctx, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	assertRefreshUnchanged(t, f, due, 0)

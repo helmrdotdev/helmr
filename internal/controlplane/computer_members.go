@@ -68,7 +68,7 @@ func (s *Server) listComputerUsageHTTP(w http.ResponseWriter, r *http.Request, k
 	}
 	page, err := computer.ListMembers(r.Context(), s.tx, computerScope(principal.OrgID, projectID, environmentID), computerID, query)
 	if err != nil {
-		s.writeComputerError(w, err, computerReadOperation, "list Computer usage failed")
+		s.writeComputerError(w, r, err, computerReadOperation, "list Computer usage failed")
 		return
 	}
 	items := make([]api.ComputerUsage, 0, len(page.Members))

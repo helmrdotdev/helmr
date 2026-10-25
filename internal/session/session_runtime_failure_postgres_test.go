@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -32,12 +33,14 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			}
 			// A public subtree hold is distinct from the failed process's local hold.
 			if alreadyInterrupted {
-				if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "public-stop")); err != nil {
+				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "public-stop")); err != nil {
 					t.Fatal(err)
 				}
 			}
 			for range 2 {
-				if err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+				if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -61,10 +64,12 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			}
 			req := controlRequest(f, "resume", "release-failure")
 			req.HoldID = hold
-			if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+			if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 				t.Fatal(err)
 			}
-			if err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+			if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE scope='local' AND released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
@@ -74,7 +79,9 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			if got, err := dispatchTurnForTest(t.Context(), peer.pool, peer.execution()); err != nil || got.TurnID != next.TurnID {
 				t.Fatalf("peer: %+v %v", got, err)
 			}
-			if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+			if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE scope='local' AND released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
@@ -91,7 +98,9 @@ func TestSessionRuntimeFailurePreservesResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+	if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	storage := newSaveStorageFixture(t, f)
@@ -119,10 +128,14 @@ func TestSessionRuntimeFailureRejectsObsoleteAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, session.ErrDenied) {
+	if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("obsolete attachment: %v", err)
 	}
-	if err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), newer.Sequence); err != nil {
+	if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), newer.Sequence); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -148,7 +161,9 @@ func TestSessionRuntimeFailureSurvivesControlReattachment(t *testing.T) {
 	if err != nil || got.Error != "failed native resume" || got.Sequence != original.Sequence {
 		t.Fatalf("reattachment erased failure: %+v %v", got, err)
 	}
-	if err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), next.Sequence); err != nil {
+	if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), next.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	stop, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), next.Sequence)
@@ -168,7 +183,9 @@ func TestSessionRuntimeFailureRejectsExpiredLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-	if err = session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, session.ErrDenied) {
+	if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.Sequence); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("expired failure accepted: %v", err)
 	}
 	var recorded, unfenced bool
@@ -239,7 +256,9 @@ func TestSessionRuntimeFailureSurvivesContinuationCommit(t *testing.T) {
 			if err != nil || got.Error != "retained rejection" || got.Kind != d.Kind || got.Sequence != d.Sequence {
 				t.Fatalf("continuation erased failure: %+v %v", got, err)
 			}
-			if err = session.ObserveSessionFailure(t.Context(), f.pool, host, e, a.Sequence); err != nil {
+			if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, host, e, a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			got, err = session.PrepareSessionDelivery(t.Context(), f.pool, host, e, a.Sequence)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"os"
 	"strings"
@@ -69,13 +70,13 @@ func (p *preparationPublicationTest) capture(t *testing.T, key computer.ImageBui
 }
 func (p *preparationPublicationTest) captureCapacity(t *testing.T, key computer.ImageBuildKey, capacity int64) disk.VersionRoot {
 	t.Helper()
-	if _, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, *p.f.host(), p.ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, capacity); err != nil {
 		t.Fatal(err)
 	}
-	if values, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); !errors.Is(err, computer.ErrDenied) || values != nil {
+	if values, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, *p.f.host(), p.ref); !errors.Is(err, computer.ErrDenied) || values != nil {
 		t.Fatalf("sealed delivery: %v", err)
 	}
 	file, err := os.CreateTemp(t.TempDir(), "disk")
@@ -231,7 +232,7 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 
 func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 	p, key := newPreparationPublicationTest(t)
-	if _, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, *p.f.host(), p.ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); err != nil {
@@ -272,7 +273,7 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 func TestPreparationPublicationRejectsUnrelatedCertifiedObject(t *testing.T) {
 	p, _ := newPreparationPublicationTest(t)
 	unrelated := newSaveStorageFixture(t, p.f.fixture)
-	if _, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, *p.f.host(), p.ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.publisher.BeginCapture(t.Context(), *p.f.host(), p.ref, disk.SeedCapacity); err != nil {

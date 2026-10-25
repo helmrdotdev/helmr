@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -111,7 +112,7 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET bundle_digest=$1 WHERE environment_id=$2 AND id=$3`, digest, f.Environment, f.Deployment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='starting' WHERE session_id=$1`, f.Session)
-	secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+	secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}

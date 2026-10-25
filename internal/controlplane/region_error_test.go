@@ -29,7 +29,7 @@ func TestRegionErrorMapsHTTPContract(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			(&Server{log: discardTestLogger()}).writeRegionError(recorder, test.err)
+			(&Server{log: discardTestLogger()}).writeRegionError(recorder, httptest.NewRequest(http.MethodGet, "/", nil), test.err)
 			if recorder.Code != test.status {
 				t.Fatalf("status = %d, want %d", recorder.Code, test.status)
 			}

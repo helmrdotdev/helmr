@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"time"
@@ -171,7 +172,7 @@ func TestBackgroundSaveAndCheckpointAdmissionSerialize(t *testing.T) {
 		t.Run(first+" first", func(t *testing.T) {
 			f := newFixture(t)
 			req := f.captureRequest()
-			if control, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
+			if control, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
 				t.Fatalf("idle hibernate intent: %+v %v", control, err)
 			}
 			var saveID uuid.UUID
@@ -244,7 +245,9 @@ func TestBackgroundSaveRequiresExactLiveAuthority(t *testing.T) {
 			case "expiry":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.env)
 			case "fenced":
-				if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
+				if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -306,7 +309,9 @@ func TestBackgroundSaveLossInterruptsWorkWithoutCompletingIt(t *testing.T) {
 	if err != nil || save == nil {
 		t.Fatalf("admission: %+v %v", save, err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), saveIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), saveIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var valid bool

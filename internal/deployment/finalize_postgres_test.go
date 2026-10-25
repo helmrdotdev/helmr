@@ -45,7 +45,7 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 	key := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,'fixture','fixture',convert_to('fixture','UTF8'))`, key, org, project, env)
 	dbtest.SetAPIKeyRole(t, database.Pool, key, "deployments.publish", "deployments.promote", "deployments.read", "templates.refresh", "templates.read", "agents.read")
-	principal := auth.Principal{Kind: auth.PrincipalKindAPIKey, APIKeyID: key, OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}
+	principal := auth.Principal{Kind: auth.PrincipalKindAPIKey, APIKeyID: key, CredentialVersion: 1, OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}
 	for _, permission := range []auth.Permission{auth.PermissionDeploymentsPublish, auth.PermissionDeploymentsPromote, auth.PermissionDeploymentsRead, auth.PermissionTemplatesRefresh, auth.PermissionTemplatesRead, auth.PermissionAgentsRead} {
 		principal.Grants = append(principal.Grants, auth.PermissionGrant{ProjectID: project.String(), EnvironmentID: env.String(), Permission: permission})
 	}

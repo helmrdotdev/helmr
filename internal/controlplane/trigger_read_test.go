@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -189,9 +190,19 @@ func TestTriggerHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	path := base + "?view=all&agent=agent&limit=1"
 	seen := map[string]bool{}
 	for range 3 {
+		var before, after int
+		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='trigger.content_read'`).Scan(&before); err != nil {
+			t.Fatal(err)
+		}
 		response := httpFixture.request(t, http.MethodGet, path, token, "")
 		if response.Code != http.StatusOK {
 			t.Fatalf("list=%d %s", response.Code, response.Body)
+		}
+		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='trigger.content_read'`).Scan(&after); err != nil {
+			t.Fatal(err)
+		}
+		if after-before != 1 {
+			t.Fatalf("page recorded %d disclosures, want one", after-before)
 		}
 		var page api.ListTriggersResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
@@ -226,6 +237,19 @@ func TestTriggerHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	if item.Code != http.StatusOK {
 		t.Fatalf("historical activation=%d %s", item.Code, item.Body)
 	}
+	var captured int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='trigger.content_read' AND target_id=$1`, oldID).Scan(&captured); err != nil || captured == 0 {
+		t.Fatalf("trigger disclosure not captured: %d %v", captured, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_trigger_read_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$`)
+	dbtest.MustExec(t, t.Context(), f.Pool, `CREATE TRIGGER reject_trigger_read_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_trigger_read_audit()`)
+	for _, path := range []string{base, base + "/" + oldID.String()} {
+		denied := httpFixture.request(t, http.MethodGet, path, token, "")
+		if denied.Code != http.StatusServiceUnavailable || strings.Contains(denied.Body.String(), "report") {
+			t.Fatalf("unaudited input: %d %s", denied.Code, denied.Body)
+		}
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `DROP TRIGGER reject_trigger_read_audit ON audit_events`)
 	foreignOrg := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO organizations(id,name,slug) VALUES($1,'Other','other')`, foreignOrg)
 	otherToken := httpFixture.session(t, f.User, foreignOrg)

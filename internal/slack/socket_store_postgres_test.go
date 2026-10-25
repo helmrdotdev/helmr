@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"testing"
 	"time"
@@ -17,11 +18,11 @@ func socketFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID) {
 	t.Helper()
 	f, _, org := credentialFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_app_registrations SET transport='socket' WHERE id=$1`, f.registration)
-	store, err := NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), TransportSocket)
+	store, err := NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), TransportSocket, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, f.registration, AppCredentials{ClientID: "client", ClientSecret: "secret", AppToken: "xapp-test"}); err != nil {
+	if err := store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.registration, AppCredentials{ClientID: "client", ClientSecret: "secret", AppToken: "xapp-test"}); err != nil {
 		t.Fatal(err)
 	}
 	return f, store, org
@@ -65,9 +66,9 @@ func TestSocketAuthorityChangesFenceReceipts(t *testing.T) {
 			}
 			switch change {
 			case "rotation":
-				err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, f.registration, AppCredentials{ClientID: "client", ClientSecret: "replacement", AppToken: "xapp-replacement"})
+				err = store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.registration, AppCredentials{ClientID: "client", ClientSecret: "replacement", AppToken: "xapp-replacement"})
 			case "disconnect":
-				err = store.DisconnectConnection(t.Context(), audit.System("test-fixture"), org, f.User, f.Environment, f.publication)
+				err = store.DisconnectConnection(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.Environment, f.publication)
 			case "revocation":
 				_, err = f.Pool.Exec(t.Context(), `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, f.installation)
 			}
@@ -115,7 +116,7 @@ func TestSocketCredentialRotationBypassesActionRequiredBackoff(t *testing.T) {
 	if claim, err := store.acquireSocket(t.Context(), uuid.NewV7()); err != nil || claim != nil {
 		t.Fatal("backoff ignored", err)
 	}
-	if err := store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, f.registration, AppCredentials{ClientID: "client", ClientSecret: "replacement", AppToken: "xapp-replacement"}); err != nil {
+	if err := store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.registration, AppCredentials{ClientID: "client", ClientSecret: "replacement", AppToken: "xapp-replacement"}); err != nil {
 		t.Fatal(err)
 	}
 	if claim, err := store.acquireSocket(t.Context(), uuid.NewV7()); err != nil || claim == nil || claim.Token != "xapp-replacement" {

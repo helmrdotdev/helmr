@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,7 +41,7 @@ func agentComputerBytes(t *testing.T, p proto.Message) []byte {
 func beginWorkerAgentCapture(t *testing.T, f sessiontest.Fixture, client *workerclient.Client) (workerapi.AgentComputerCaptureRequest, workerapi.AgentComputerCaptureResponse, *agentv1.ComputerSessionCapture) {
 	t.Helper()
 	request := workerapi.AgentComputerCaptureRequest{EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), CheckpointID: uuid.NewV7().String(), LeaseEpoch: 1, ChannelCredential: sessiontest.ChannelCredential}
-	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: request.CheckpointID}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: request.CheckpointID}); err != nil {
 		t.Fatal(err)
 	}
 	response, err := client.BeginAgentComputerCapture(t.Context(), request)

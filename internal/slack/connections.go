@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"time"
 	"uuid"
@@ -220,7 +221,7 @@ func lockConnectionDisconnection(ctx context.Context, tx pgx.Tx, org, environmen
 	return &ConnectionDisconnection{registration: registration, installation: installation, connection: connection, environment: environment, org: org, active: active}, nil
 }
 
-func (p *ConnectionDisconnection) Apply(ctx context.Context, tx pgx.Tx, actor audit.Actor) error {
+func (p *ConnectionDisconnection) Apply(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Actor) error {
 	var err error
 	if p.installation != nil {
 		if err = suppressInstallationPosts(ctx, tx, *p.installation); err != nil {
@@ -242,7 +243,7 @@ func (p *ConnectionDisconnection) Apply(ctx context.Context, tx pgx.Tx, actor au
 	if p.causeAgent != nil {
 		details = audit.AgentCleanupDetails{CauseAgentID: p.causeAgent.String(), Reason: "agent_deleted"}
 	}
-	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: p.org, EnvironmentID: p.environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: p.connection, Details: details})
+	return audit.Append(ctx, tx, policy, audit.Event{Actor: actor, OrgID: p.org, EnvironmentID: p.environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: p.connection, Details: details})
 }
 
 func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.Actor, org, user, environment, connection uuid.UUID) error {
@@ -255,6 +256,10 @@ func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.
 		if err = tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 FOR SHARE`, environment, org).Scan(&id); err != nil {
 			return err
 		}
-		return p.Apply(ctx, tx, actor)
+		verified, err := connectionAuditActor(ctx, tx, actor, org, user, connection, auth.PermissionAgentConnectionsDelete)
+		if err != nil {
+			return err
+		}
+		return p.Apply(ctx, tx, s.auditPolicy, verified)
 	})
 }

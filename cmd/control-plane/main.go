@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"log/slog"
 	"net"
 	"net/http"
@@ -71,6 +72,12 @@ func main() {
 				os.Exit(1)
 			}
 			fmt.Println("Environment configuration is valid; dependencies and runtime files were not checked.")
+			return
+		case "audit-maintenance":
+			if err := runAuditMaintenance(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+				log.Error("audit maintenance failed", "error", err)
+				os.Exit(1)
+			}
 			return
 		case "migrate":
 			if err := runMigrate(log, os.Args[2:]); err != nil {
@@ -164,6 +171,13 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("connect database: %w", err)
 	}
 	defer pool.Close()
+	if err := audit.ValidatePrivileges(ctx, pool, false); err != nil {
+		return fmt.Errorf("validate audit database privileges: %w", err)
+	}
+	if err := audit.ObservePolicy(ctx, pool, cfg.AuditPolicy, "control-plane"); err != nil {
+		return fmt.Errorf("record audit retention configuration: %w", err)
+	}
+
 	diagnosticConfig := poolConfig.Copy()
 	diagnosticConfig.MaxConns = cfg.DiagnosticAdmission.MaxConnections
 	diagnosticConfig.MinConns = 0
@@ -175,7 +189,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	log.Info("control plane database connection budget", "lifecycle", poolConfig.MaxConns, "diagnostic", diagnosticConfig.MaxConns, "notifications", 1)
 	queries := db.New(pool)
 	if cfg.Bootstrap.Enabled {
-		if err := workergroup.Bootstrap(ctx, pool, workergroup.BootstrapConfig{
+		if err := workergroup.Bootstrap(ctx, pool, workergroup.BootstrapConfig{AuditPolicy: cfg.AuditPolicy,
 			RegionID: cfg.Bootstrap.RegionID, RegionDisplayName: cfg.Bootstrap.RegionDisplayName,
 			RegionLocation: cfg.Bootstrap.RegionLocation, GroupName: cfg.Bootstrap.WorkerGroupName,
 			EnrollmentToken: cfg.Bootstrap.WorkerToken,
@@ -192,7 +206,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	mailer := configuredEmailSender(log, cfg, external)
 	shutdownTimeout := 10 * time.Second
 	magicLinkDelivery := controlplane.NewMagicLinkDelivery(log, shutdownTimeout)
-	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
+	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey, cfg.AuditPolicy)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
@@ -212,13 +226,13 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	allocator, err := dispatch.NewAllocator(pool, cfg.ComputerFencingKey, secretStore)
+	allocator, err := dispatch.NewAllocator(pool, cfg.AuditPolicy, cfg.ComputerFencingKey, secretStore)
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
 	var slackConfig *controlplane.SlackConfig
 	if cfg.SlackTransport != "disabled" {
-		credentials, err := slack.NewCredentialStore(pool, cfg.EncryptionKey, slack.Transport(cfg.SlackTransport))
+		credentials, err := slack.NewCredentialStore(pool, cfg.EncryptionKey, slack.Transport(cfg.SlackTransport), cfg.AuditPolicy)
 		if err != nil {
 			return fmt.Errorf("configure Slack credentials: %w", err)
 		}
@@ -231,7 +245,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	changes := dbnotify.New()
 	allocationWake, stopAllocationWake := changes.Subscribe("dispatch")
 	defer stopAllocationWake()
-	handler, err := controlplane.NewServer(controlplane.ServerConfig{
+	handler, err := controlplane.NewServer(controlplane.ServerConfig{AuditPolicy: cfg.AuditPolicy,
 		Changes:                        changes,
 		Slack:                          slackConfig,
 		Allocator:                      allocator,
@@ -284,14 +298,18 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "CAS reclamation", run: casReclaimer.Run},
 		{name: "Computer disk retention", run: func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) }},
 		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log, allocationWake) }},
-		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
+		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, cfg.AuditPolicy, pool, log) }},
 		{name: "Session history retention", run: func(ctx context.Context) error { return slack.RunHistoryRetention(ctx, pool, log) }},
-		{name: "Session lifecycle", run: func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) }},
-		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
-		{name: "Computer execution admissions", run: func(ctx context.Context) error { return dispatch.RunExecutionAdmissions(ctx, pool, log) }},
-		{name: "Computer execution controls", run: func(ctx context.Context) error { return computer.RunExecutionControls(ctx, pool, log) }},
-		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) }},
-		{name: "preparation lifecycle", run: func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) }},
+		{name: "Session lifecycle", run: func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, cfg.AuditPolicy, pool, log) }},
+		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, cfg.AuditPolicy, pool, log) }},
+		{name: "Computer execution admissions", run: func(ctx context.Context) error {
+			return dispatch.RunExecutionAdmissions(ctx, cfg.AuditPolicy, pool, log)
+		}},
+		{name: "Computer execution controls", run: func(ctx context.Context) error { return computer.RunExecutionControls(ctx, cfg.AuditPolicy, pool, log) }},
+		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, cfg.AuditPolicy, pool, log) }},
+		{name: "preparation lifecycle", run: func(ctx context.Context) error {
+			return dispatch.RunImageBuildLifecycle(ctx, cfg.AuditPolicy, pool, log)
+		}},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "operation receipt retention", run: func(ctx context.Context) error {
 			return idempotency.CollectReceipts(ctx, queries, log)
@@ -397,9 +415,17 @@ func runMigrate(log *slog.Logger, args []string) error {
 	if len(args) != 1 || args[0] != "up" {
 		return errors.New("usage: control-plane migrate up")
 	}
-	cfg, err := config.LoadDatabase()
-	if err != nil {
-		return fmt.Errorf("load database config: %w", err)
+	migrationURL := os.Getenv("DATABASE_MIGRATION_URL")
+	if migrationURL == "" {
+		return errors.New("DATABASE_MIGRATION_URL is required")
+	}
+	runtimeConfig, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil || os.Getenv("DATABASE_URL") == "" {
+		return errors.New("DATABASE_URL is required")
+	}
+	maintenanceConfig, err := pgxpool.ParseConfig(os.Getenv("DATABASE_AUDIT_MAINTENANCE_URL"))
+	if err != nil || os.Getenv("DATABASE_AUDIT_MAINTENANCE_URL") == "" {
+		return errors.New("DATABASE_AUDIT_MAINTENANCE_URL is required")
 	}
 	clickHouseCfg, err := config.LoadClickHouse()
 	if err != nil {
@@ -414,7 +440,10 @@ func runMigrate(log *slog.Logger, args []string) error {
 	}); err != nil {
 		return err
 	}
-	if err := dbschema.Up(ctx, cfg.URL); err != nil {
+	if err := dbschema.Up(ctx, migrationURL); err != nil {
+		return err
+	}
+	if err := dbschema.ConfigurePrivileges(ctx, migrationURL, runtimeConfig.ConnConfig.User, maintenanceConfig.ConnConfig.User); err != nil {
 		return err
 	}
 	log.Info("database migrations are up to date")

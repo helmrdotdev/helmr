@@ -3,6 +3,7 @@ package controlplane
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -76,6 +77,12 @@ func TestWorkerAgentAdmissionFences(t *testing.T) {
 			if test.code != "" && (response.Error == nil || response.Error.Code != test.code) {
 				t.Fatalf("response: %+v", response)
 			}
+			if test.code == "authority_changed" {
+				var captured bool
+				if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='runtime.operation_refused' AND org_id IS NULL AND actor_kind='service' AND credential_id=$1 AND details->>'reason'='stale_authority' AND details->>'operation'='POST /worker/v1/sessions/operations')`, f.Worker).Scan(&captured); err != nil || !captured {
+					t.Fatalf("missing verified refusal: %v %v", captured, err)
+				}
+			}
 			var count int
 			if err := f.Pool.QueryRow(t.Context(), "SELECT count(*) FROM turns").Scan(&count); err != nil || count != 0 {
 				t.Fatalf("turns=%d err=%v", count, err)
@@ -142,7 +149,7 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 			f := sessiontest.New(t)
 			handler := newPostgresServer(t, f.Pool)
 			client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
-			origin, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+			origin, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 			if err != nil {
 				t.Fatal(err)
 			}

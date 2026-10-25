@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"testing"
 	"uuid"
@@ -45,7 +46,9 @@ func TestSlackQuestionPromptBoundariesRemainVisibleAndAdvance(t *testing.T) {
 				execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 				host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 				ask := uuid.NewV7()
-				if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, tc.question); err != nil {
+				if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.Pool, host, execution, turn, ask, tc.question); err != nil {
 					t.Fatal(err)
 				}
 				last := write("after-question")

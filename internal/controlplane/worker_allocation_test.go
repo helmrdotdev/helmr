@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -85,7 +86,7 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 		t.Fatal(err)
 	}
 	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete"}
-	if _, err := computer.Delete(t.Context(), f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
+	if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("live member deletion: %v", err)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
@@ -94,13 +95,15 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.ObserveSessionStopped(t.Context(), f.Pool, host, execution, attachment.Sequence); err != nil {
+	if err := session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, host, execution, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := computer.Delete(t.Context(), f.Pool, deletion); err != nil {
+	if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion); err != nil {
 		t.Fatal(err)
 	}
 	wrong := identity

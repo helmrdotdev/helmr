@@ -64,7 +64,7 @@ func (s *Server) listDefinitions(w http.ResponseWriter, r *http.Request, kind de
 	}
 	page, err := deployment.ListDefinitions(r.Context(), s.tx, principal, scope, kind, selected, limit, after)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	deploymentID := page.DeploymentID.String()
@@ -104,7 +104,7 @@ func (s *Server) getDefinition(w http.ResponseWriter, r *http.Request, kind defi
 			writeError(w, notFound(deployedResourceMissing{Kind: string(kind), DeploymentID: deploymentID}))
 			return
 		}
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	writeDefinition(w, kind, item, deploymentID.String())

@@ -2,6 +2,7 @@ package workergroup
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -90,7 +91,7 @@ func TestHostLossRevokesCredentialsWithoutReleasingPhysicalCustody(t *testing.T)
 			var err error
 			switch path {
 			case "provider drift":
-				_, err = MarkHostLost(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, "host", 1)
+				_, err = MarkHostLost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, "host", 1)
 			case "worker fence":
 				err = FenceHost(t.Context(), f.Pool, HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1}, "provider_termination")
 			case "stale observation":
@@ -118,15 +119,15 @@ func TestGroupDisableWaitsForLostHostCustody(t *testing.T) {
  UPDATE worker_pools SET status='disabled' WHERE worker_group_id=$1;
  UPDATE worker_hosts SET status='lost',current_epoch=2,lost_at=clock_timestamp() WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.Group, f.Worker)
 	var conflict ConflictError
-	if _, err := DisableGroup(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, 1); !errors.As(err, &conflict) {
+	if _, err := DisableGroup(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, 1); !errors.As(err, &conflict) {
 		t.Fatalf("disabled with physical custody: %v", err)
 	}
 	fenceFixtureComputer(t, f)
-	if _, err := DisableGroup(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, 1); !errors.As(err, &conflict) {
+	if _, err := DisableGroup(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, 1); !errors.As(err, &conflict) {
 		t.Fatalf("disabled with preparation custody: %v", err)
 	}
 	fenceFixturePreparation(t, f)
-	result, err := DisableGroup(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, 1)
+	result, err := DisableGroup(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, 1)
 	if err != nil || result.Status != "disabled" {
 		t.Fatalf("group disable=%+v %v", result, err)
 	}

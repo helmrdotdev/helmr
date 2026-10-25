@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"strings"
@@ -43,7 +44,7 @@ func TestSlackDeliveryWorkerRotatesBlockedRootToIndependentThread(t *testing.T) 
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string { calls++; return `{"ok":true,"ts":"456.790","channel":"C1"}` })
 	for range 2 {
-		if n, err := ReconcileDelivery(t.Context(), f.Pool, client, 1); err != nil || n != 1 {
+		if n, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 1); err != nil || n != 1 {
 			t.Fatalf("scan: %d %v", n, err)
 		}
 	}
@@ -68,7 +69,7 @@ func TestSlackDeliveryWorkerRecoversExpiredMutationThroughReadOnlyEvidence(t *te
 		body, _ := json.Marshal(map[string]any{"ok": true, "messages": []observedMessage{observedClaim(t, claim)}})
 		return string(body)
 	})
-	if n, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil || n != 1 {
+	if n, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil || n != 1 {
 		t.Fatalf("recovery: %d %v", n, err)
 	}
 	var correct bool
@@ -86,7 +87,7 @@ func TestSlackDeliveryWorkersDoNotDuplicateMutation(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+			if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 				t.Error(err)
 			}
 		})
@@ -101,7 +102,7 @@ func TestSlackDeliveryWorkersDoNotDuplicateMutation(t *testing.T) {
 func TestSlackDeliveryWorkerRefreshesStatusAndPreservesRetryDelay(t *testing.T) {
 	f := newStatusFixture(t)
 	client := deliveryTestClient(func(r *http.Request) string { return `{"ok":true,"agent_status":"active"}` })
-	if n, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil || n != 1 {
+	if n, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil || n != 1 {
 		t.Fatalf("status: %d %v", n, err)
 	}
 	var confirmed bool
@@ -112,7 +113,7 @@ func TestSlackDeliveryWorkerRefreshesStatusAndPreservesRetryDelay(t *testing.T) 
 	f.due(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour'`)
 	limited := deliveryTestClient(func(r *http.Request) string { return `{"ok":false,"error":"ratelimited"}` })
-	if _, err := ReconcileDelivery(t.Context(), f.Pool, limited, 4); err != nil {
+	if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, limited, 4); err != nil {
 		t.Fatal(err)
 	}
 	var delayed bool
@@ -143,7 +144,7 @@ func TestSlackDeliveryWorkerSelectsQuestionAheadOfBlockedOutputBacklog(t *testin
 	f.projectAll(t)
 	first := f.firstPost(t)
 	claim := f.postClaim(t, first)
-	if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
 	// An ordinary authored output budget can create thousands of continuations.
@@ -159,7 +160,9 @@ func TestSlackDeliveryWorkerSelectsQuestionAheadOfBlockedOutputBacklog(t *testin
 	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	ask := uuid.NewV7()
-	if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Proceed?"}],"type":"text"}`)); err != nil {
+	if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Proceed?"}],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
 	f.projectAll(t)
@@ -167,7 +170,7 @@ func TestSlackDeliveryWorkerSelectsQuestionAheadOfBlockedOutputBacklog(t *testin
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour'`)
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string { calls++; return `{"ok":true,"ts":"123.791","channel":"C1"}` })
-	if n, err := ReconcileDelivery(t.Context(), f.Pool, client, 1); err != nil || n != 1 {
+	if n, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 1); err != nil || n != 1 {
 		t.Fatal(n, err)
 	}
 	var answered bool
@@ -193,7 +196,7 @@ func TestSlackDeliveryWorkerFairBatchDoesNotStarveQuestionBehindIdleStatus(t *te
 	f.due(t)
 	calls := 0
 	client := deliveryTestClient(func(r *http.Request) string { calls++; return `{"ok":true,"ts":"123.791","channel":"C1"}` })
-	if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+	if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 		t.Fatal(err)
 	}
 	var posted bool
@@ -223,7 +226,7 @@ func TestSlackDeliveryWorkerExpiresIssuedReplyAfterRootDeletion(t *testing.T) {
 				body, _ := json.Marshal(map[string]any{"ok": true, "messages": []observedMessage{observedClaim(t, claim)}})
 				return string(body)
 			})
-			if n, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil || n != 1 {
+			if n, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil || n != 1 {
 				t.Fatal(n, err)
 			}
 			var known bool
@@ -263,7 +266,7 @@ func TestSlackDeliveryWorkerQuestionGetsBudgetBeforeUnrelatedRoots(t *testing.T)
 		}
 		return `{"ok":true,"ts":"123.791","channel":"C1"}`
 	})
-	if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+	if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 		t.Fatal(err)
 	}
 	var posted bool
@@ -290,20 +293,20 @@ func TestSlackDeliveryWorkerRefreshesChangedStatusWithoutReplayingContent(t *tes
 		}
 		return `{"ok":true,"ts":"123.789","channel":"C1"}`
 	})
-	if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+	if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 		t.Fatal(err)
 	}
 	if len(methods) != 2 || !strings.HasSuffix(methods[0], "agents.sessions.setStatus") || !strings.HasSuffix(methods[1], "chat.postMessage") {
 		t.Fatal("initial assertion", methods)
 	}
 	// Change authoritative core state while retaining FinishStatus's refresh_at.
-	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH due AS (UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1) UPDATE slack_method_limits SET retry_after=clock_timestamp() WHERE installation_id=$1;
  UPDATE slack_threads SET next_attempt_at=clock_timestamp() WHERE id=$2;
  UPDATE slack_posts SET next_attempt_at=clock_timestamp() WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.installation, f.thread, post)
-	if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+	if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 		t.Fatal(err)
 	}
 	var posted bool
@@ -333,7 +336,7 @@ func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testin
 		}
 		return `{"ok":true,"ts":"123.789","channel":"C1"}`
 	})
-	if n, err := ReconcileDelivery(t.Context(), f.Pool, client, 2); err != nil || n != 2 {
+	if n, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 2); err != nil || n != 2 {
 		t.Fatalf("blocked content pass: %d %v", n, err)
 	}
 	var waiting bool
@@ -342,7 +345,7 @@ func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testin
 	}
 	// Observe a new core status while sending is deferred. Its old service age
 	// preceded this publication; successful service must move it behind content.
-	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "status-change", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, f.thread)
@@ -353,7 +356,7 @@ func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testin
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1;
  UPDATE slack_threads SET next_attempt_at=clock_timestamp() WHERE id=$2;
  UPDATE slack_posts SET next_attempt_at=clock_timestamp() WHERE id=$3`, pgx.QueryExecModeSimpleProtocol, f.installation, f.thread, post)
-	if n, err := ReconcileDelivery(t.Context(), f.Pool, client, 2); err != nil || n != 2 {
+	if n, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 2); err != nil || n != 2 {
 		t.Fatalf("released content pass: %d %v", n, err)
 	}
 	var exact bool
@@ -384,7 +387,7 @@ func TestSlackDeliveryWorkerWaitingContentPrecedesPeriodicRefreshPopulation(t *t
 		}
 		return `{"ok":true,"ts":"123.789","channel":"C1"}`
 	})
-	if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+	if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 		t.Fatal(err)
 	}
 	var posted bool
@@ -414,7 +417,7 @@ func TestSlackDeliveryWorkerAgeOrderingPreservesStreamRepair(t *testing.T) {
 		dbtest.MustExec(t, t.Context(), f.Pool, `WITH due AS (UPDATE slack_delivery_limits SET next_post_at=clock_timestamp(),next_status_at=clock_timestamp() WHERE installation_id=$1) UPDATE slack_method_limits SET retry_after=clock_timestamp() WHERE installation_id=$1;
  UPDATE slack_posts SET next_attempt_at=clock_timestamp();
  UPDATE slack_threads SET next_attempt_at=clock_timestamp()`, pgx.QueryExecModeSimpleProtocol, f.installation)
-		if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+		if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 			t.Fatal(err)
 		}
 		for index := range min(len(methods), len(want)) {
@@ -431,10 +434,10 @@ func TestSlackDeliveryWorkerAgeOrderingPreservesStreamRepair(t *testing.T) {
 func TestSlackDeliveryWorkerUnconfirmedStatusPrecedesNewerContent(t *testing.T) {
 	f := newStatusFixture(t)
 	initial := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, initial, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, initial, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "new-status", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "new-status", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	// Discover the core change while the previous call still owns the budget.
@@ -459,7 +462,7 @@ func TestSlackDeliveryWorkerUnconfirmedStatusPrecedesNewerContent(t *testing.T) 
 		}
 		return `{"ok":true,"agent_status":"processing"}`
 	})
-	if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+	if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool
@@ -486,7 +489,7 @@ func TestSlackDeliveryWorkerBlockedContinuationsDoNotHideReadyStream(t *testing.
 		}
 		return `{"ok":true,"ts":"123.789","channel":"C1"}`
 	})
-	if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+	if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 		t.Fatal(err)
 	}
 	var started bool
@@ -501,7 +504,7 @@ func TestSlackDeliveryWorkerSuppressesBlockedTailWhenConnectionAuthorityEnds(t *
 			f := newStatusFixture(t)
 			first := f.post(t, 1, "chain", "lifecycle", nil)
 			claim := f.postClaim(t, first)
-			if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
 				t.Fatal(err)
 			}
 			tail := f.post(t, 2, "tail", "lifecycle", nil)
@@ -519,7 +522,7 @@ func TestSlackDeliveryWorkerSuppressesBlockedTailWhenConnectionAuthorityEnds(t *
 				t.Fatal("unavailable authority made HTTP request", r.URL.Path)
 				return ""
 			})
-			if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+			if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 				t.Fatal(err)
 			}
 			var exact bool

@@ -25,6 +25,8 @@ type databaseBootstrapConfig struct {
 	adminURL        string
 	application     *pgxpool.Config
 	applicationRole string
+	migration       *pgxpool.Config
+	maintenance     *pgxpool.Config
 	databaseName    string
 	resetSchema     bool
 }
@@ -71,6 +73,22 @@ func loadDatabaseBootstrapConfig() (databaseBootstrapConfig, error) {
 	if application.ConnConfig.User == username {
 		return databaseBootstrapConfig{}, errors.New("application and administrative database roles must be distinct")
 	}
+	migration, err := parseApplicationDatabaseConfig(strings.TrimSpace(os.Getenv("DATABASE_MIGRATION_URL")))
+	if err != nil {
+		return databaseBootstrapConfig{}, errors.New("DATABASE_MIGRATION_URL must provide a separate TLS migration credential")
+	}
+	maintenance, err := parseApplicationDatabaseConfig(strings.TrimSpace(os.Getenv("DATABASE_AUDIT_MAINTENANCE_URL")))
+	if err != nil {
+		return databaseBootstrapConfig{}, errors.New("DATABASE_AUDIT_MAINTENANCE_URL must provide a separate TLS maintenance credential")
+	}
+	seen := map[string]bool{username: true, application.ConnConfig.User: true}
+	for _, role := range []*pgxpool.Config{migration, maintenance} {
+		c := role.ConnConfig
+		if c.Database != databaseName || !strings.EqualFold(c.Host, host) || c.Port != uint16(port) || seen[c.User] {
+			return databaseBootstrapConfig{}, errors.New("database roles must be distinct and target the same endpoint and database")
+		}
+		seen[c.User] = true
+	}
 	adminURL := (&url.URL{
 		Scheme:   "postgres",
 		User:     url.UserPassword(username, password),
@@ -79,7 +97,8 @@ func loadDatabaseBootstrapConfig() (databaseBootstrapConfig, error) {
 		RawQuery: "sslmode=require",
 	}).String()
 	return databaseBootstrapConfig{
-		adminURL:        adminURL,
+		adminURL:  adminURL,
+		migration: migration, maintenance: maintenance,
 		application:     application,
 		applicationRole: application.ConnConfig.User,
 		databaseName:    databaseName,
@@ -112,41 +131,9 @@ func bootstrapDatabase(ctx context.Context, cfg databaseBootstrapConfig) error {
 		return fmt.Errorf("connect to database as administrator: %w", err)
 	}
 
-	var exists, login, superuser, createDatabase, createRole, replication, bypassRLS, hasMembership bool
-	err = adminPool.QueryRow(ctx, `
-		SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1),
-		       COALESCE((SELECT rolcanlogin FROM pg_roles WHERE rolname = $1), false),
-		       COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = $1), false),
-		       COALESCE((SELECT rolcreatedb FROM pg_roles WHERE rolname = $1), false),
-		       COALESCE((SELECT rolcreaterole FROM pg_roles WHERE rolname = $1), false),
-		       COALESCE((SELECT rolreplication FROM pg_roles WHERE rolname = $1), false),
-		       COALESCE((SELECT rolbypassrls FROM pg_roles WHERE rolname = $1), false),
-		       EXISTS(
-		           SELECT 1 FROM pg_auth_members
-		            WHERE member = (SELECT oid FROM pg_roles WHERE rolname = $1)
-		       )
-	`, cfg.applicationRole).Scan(
-		&exists,
-		&login,
-		&superuser,
-		&createDatabase,
-		&createRole,
-		&replication,
-		&bypassRLS,
-		&hasMembership,
-	)
-	if err != nil {
-		return fmt.Errorf("inspect application database role: %w", err)
+	if cfg.migration == nil || cfg.maintenance == nil {
+		return errors.New("separate migration and maintenance roles are required")
 	}
-	if exists {
-		if !login || superuser || createDatabase || createRole || replication || bypassRLS || hasMembership {
-			return errors.New("application database role has administrative privileges")
-		}
-		if err := verifyApplicationDatabase(ctx, cfg.application); err != nil {
-			return errors.New("stored application database credential does not authenticate the existing role")
-		}
-	}
-
 	tx, err := adminPool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin database bootstrap: %w", err)
@@ -160,38 +147,53 @@ func bootstrapDatabase(ctx context.Context, cfg databaseBootstrapConfig) error {
 			return fmt.Errorf("create application database schema: %w", err)
 		}
 	}
-	if !exists {
-		passwordVerifier, err := scramPasswordVerifier(cfg.application.ConnConfig.Password)
-		if err != nil {
+	for _, role := range []*pgxpool.Config{cfg.application, cfg.migration, cfg.maintenance} {
+		name := role.ConnConfig.User
+		var exists, unsafe bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1), EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1 AND (NOT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls)) OR EXISTS(SELECT 1 FROM pg_auth_members WHERE member=(SELECT oid FROM pg_roles WHERE rolname=$1))`, name).Scan(&exists, &unsafe); err != nil {
 			return err
 		}
-		statement, err := formattedDatabaseStatement(
-			ctx,
-			tx,
-			"CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS",
-			cfg.applicationRole,
-			passwordVerifier,
-		)
-		if err != nil {
-			return err
+		if unsafe {
+			return errors.New("database role has administrative privileges or memberships")
 		}
-		if _, err := tx.Exec(ctx, statement); err != nil {
-			return fmt.Errorf("create application database role: %w", err)
+		if exists {
+			if err := verifyApplicationDatabase(ctx, role); err != nil {
+				return errors.New("stored database credential does not authenticate the existing role")
+			}
+		} else {
+			verifier, err := scramPasswordVerifier(role.ConnConfig.Password)
+			if err != nil {
+				return err
+			}
+			statement, err := formattedDatabaseStatement(ctx, tx, "CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS", name, verifier)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, statement); err != nil {
+				return err
+			}
 		}
 	}
-	for _, statementSpec := range []struct {
-		format    string
-		arguments []any
+	for _, spec := range []struct {
+		format string
+		args   []any
 	}{
-		{"GRANT CONNECT, CREATE, TEMPORARY ON DATABASE %I TO %I", []any{cfg.databaseName, cfg.applicationRole}},
-		{"GRANT USAGE, CREATE ON SCHEMA public TO %I", []any{cfg.applicationRole}},
+		{"REVOKE CREATE ON SCHEMA public FROM PUBLIC", nil},
+		{"REVOKE CREATE ON DATABASE %I FROM PUBLIC", []any{cfg.databaseName}},
+		{"GRANT %I TO CURRENT_USER", []any{cfg.migration.ConnConfig.User}},
+		{"GRANT CREATE ON DATABASE %I TO %I", []any{cfg.databaseName, cfg.migration.ConnConfig.User}},
+		{"ALTER SCHEMA public OWNER TO %I", []any{cfg.migration.ConnConfig.User}},
+		{"REVOKE ALL ON DATABASE %I FROM %I, %I", []any{cfg.databaseName, cfg.applicationRole, cfg.maintenance.ConnConfig.User}},
+		{"GRANT CONNECT ON DATABASE %I TO %I, %I, %I", []any{cfg.databaseName, cfg.applicationRole, cfg.migration.ConnConfig.User, cfg.maintenance.ConnConfig.User}},
+		{"REVOKE ALL ON SCHEMA public FROM %I, %I", []any{cfg.applicationRole, cfg.maintenance.ConnConfig.User}},
+		{"GRANT USAGE ON SCHEMA public TO %I, %I", []any{cfg.applicationRole, cfg.maintenance.ConnConfig.User}},
 	} {
-		statement, err := formattedDatabaseStatement(ctx, tx, statementSpec.format, statementSpec.arguments...)
+		statement, err := formattedDatabaseStatement(ctx, tx, spec.format, spec.args...)
 		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, statement); err != nil {
-			return fmt.Errorf("grant application database privileges: %w", err)
+			return fmt.Errorf("configure database role boundary: %w", err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

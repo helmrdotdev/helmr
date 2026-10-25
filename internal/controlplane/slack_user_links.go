@@ -31,12 +31,12 @@ func (s *Server) listSlackUserLinks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	p, err := slackLinkPrincipal(r)
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	limit, err := agentPageLimit(r)
 	if err != nil {
-		writeError(w, badRequest(errors.New("invalid page size")))
+		s.writeOperationError(w, r, badRequest(errors.New("invalid page size")))
 		return
 	}
 	after := ""
@@ -44,14 +44,14 @@ func (s *Server) listSlackUserLinks(w http.ResponseWriter, r *http.Request) {
 		raw, e := base64.RawURLEncoding.DecodeString(cursor)
 		user, team, ok := strings.Cut(string(raw), ":")
 		if e != nil || !ok || user != p.UserID.String() || team == "" || len(team) > 100 {
-			writeError(w, badRequest(errors.New("invalid cursor")))
+			s.writeOperationError(w, r, badRequest(errors.New("invalid cursor")))
 			return
 		}
 		after = team
 	}
 	links, err := slack.ListUserLinks(r.Context(), s.tx, p.OrgID, p.UserID, after, int(limit))
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	result := map[string]any{"links": links}
@@ -64,7 +64,7 @@ func (s *Server) listSlackLinkWorkspaces(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Cache-Control", "no-store")
 	p, err := slackLinkPrincipal(r)
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	if s.slackConfig == nil {
@@ -73,7 +73,7 @@ func (s *Server) listSlackLinkWorkspaces(w http.ResponseWriter, r *http.Request)
 	}
 	limit, err := agentPageLimit(r)
 	if err != nil {
-		writeError(w, badRequest(errors.New("invalid page size")))
+		s.writeOperationError(w, r, badRequest(errors.New("invalid page size")))
 		return
 	}
 	var before uuid.UUID
@@ -81,18 +81,18 @@ func (s *Server) listSlackLinkWorkspaces(w http.ResponseWriter, r *http.Request)
 		raw, e := base64.RawURLEncoding.DecodeString(cursor)
 		org, id, ok := strings.Cut(string(raw), ":")
 		if e != nil || !ok || org != p.OrgID.String() {
-			writeError(w, badRequest(errors.New("invalid cursor")))
+			s.writeOperationError(w, r, badRequest(errors.New("invalid cursor")))
 			return
 		}
 		before, err = ids.Parse(id)
 		if err != nil || before == uuid.Nil() {
-			writeError(w, badRequest(errors.New("invalid cursor")))
+			s.writeOperationError(w, r, badRequest(errors.New("invalid cursor")))
 			return
 		}
 	}
 	values, err := slack.ListLinkWorkspaces(r.Context(), s.tx, p.OrgID, p.UserID, before, int(limit))
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	result := map[string]any{"configured": true, "workspaces": values}
@@ -104,7 +104,7 @@ func (s *Server) listSlackLinkWorkspaces(w http.ResponseWriter, r *http.Request)
 func (s *Server) startSlackUserLink(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
 	if s.slackConfig == nil {
-		writeError(w, unavailable(errors.New("the Slack integration is not configured")))
+		s.writeOperationError(w, r, unavailable(errors.New("the Slack integration is not configured")))
 		return
 	}
 	var input struct {
@@ -112,7 +112,7 @@ func (s *Server) startSlackUserLink(w http.ResponseWriter, r *http.Request) {
 		Link           string `json:"link"`
 	}
 	if err := decodeRequestJSON(r, &input); err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	var origin slack.FirstUseLink
@@ -121,7 +121,7 @@ func (s *Server) startSlackUserLink(w http.ResponseWriter, r *http.Request) {
 	if input.Link != "" && input.InstallationID == "" {
 		origin, err = slack.ResolveFirstUseLink(r.Context(), s.tx, s.slackConfig.ControlKey, input.Link, p.UserID)
 		if err != nil {
-			s.writeSlackLinkError(w, err)
+			s.writeSlackLinkError(w, r, err)
 			return
 		}
 		p.OrgID = origin.OrganizationID
@@ -129,39 +129,39 @@ func (s *Server) startSlackUserLink(w http.ResponseWriter, r *http.Request) {
 	} else if input.Link == "" && input.InstallationID != "" {
 		p, err = slackLinkPrincipal(r)
 		if err != nil {
-			writeError(w, err)
+			s.writeOperationError(w, r, err)
 			return
 		}
 		installation, err = ids.Parse(input.InstallationID)
 	}
 	if err != nil || installation == uuid.Nil() {
-		writeError(w, badRequest(errors.New("select a connected Slack workspace")))
+		s.writeOperationError(w, r, badRequest(errors.New("select a connected Slack workspace")))
 		return
 	}
 	workspace, err := slack.CheckLinkWorkspace(r.Context(), s.tx, p.OrgID, p.UserID, installation)
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	registration, oauth, err := s.slackConfig.Credentials.InstallationOAuth(r.Context(), installation, s.slackConfig.Transport)
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	state, err := auth.GenerateOpaque(32)
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	nonce, err := auth.GenerateOpaque(32)
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	flow := browserAuthFlow{Kind: browserAuthSlackUser, State: state, Nonce: nonce, OrganizationID: p.OrgID.String(), UserID: p.UserID.String(), InstallationID: installation.String(), AppRegistrationID: registration.String(), SlackTeamID: workspace.TeamID, SlackUserID: origin.SlackUserID, SlackLinkToken: input.Link, SlackReturnURL: origin.ReturnURL}
 	encoded, err := s.encodeAuthFlow(flow)
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	http.SetCookie(w, authFlowCookie(r, encoded, int(authFlowTTL.Seconds())))
@@ -185,7 +185,7 @@ func (s *Server) slackUserLinkCallback(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if r.Method == http.MethodGet {
 		if len(r.URL.RawQuery) > 8192 {
-			writeError(w, badRequest(errors.New("invalid Slack identity callback")))
+			s.writeOperationError(w, r, badRequest(errors.New("invalid Slack identity callback")))
 			return
 		}
 		fields, err = url.ParseQuery(r.URL.RawQuery)
@@ -194,19 +194,19 @@ func (s *Server) slackUserLinkCallback(w http.ResponseWriter, r *http.Request) {
 		fields, err = decodeRequestForm(r)
 	}
 	if err != nil {
-		writeError(w, badRequest(errors.New("invalid Slack identity callback")))
+		s.writeOperationError(w, r, badRequest(errors.New("invalid Slack identity callback")))
 		return
 	}
 	values := url.Values{}
 	for _, key := range []string{"state", "code", "error"} {
 		items := fields[key]
 		if len(items) > 1 {
-			writeError(w, badRequest(errors.New("invalid Slack identity callback")))
+			s.writeOperationError(w, r, badRequest(errors.New("invalid Slack identity callback")))
 			return
 		}
 		if len(items) == 1 {
 			if len(items[0]) > 4096 {
-				writeError(w, badRequest(errors.New("invalid Slack identity callback")))
+				s.writeOperationError(w, r, badRequest(errors.New("invalid Slack identity callback")))
 				return
 			}
 			values.Set(key, items[0])
@@ -220,7 +220,7 @@ func (s *Server) verifySlackUserLink(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	p := principalFromContext(r.Context())
 	if s.slackConfig == nil {
-		writeError(w, unavailable(errors.New("the Slack integration is not configured")))
+		s.writeOperationError(w, r, unavailable(errors.New("the Slack integration is not configured")))
 		return
 	}
 	var input struct {
@@ -229,61 +229,61 @@ func (s *Server) verifySlackUserLink(w http.ResponseWriter, r *http.Request) {
 		Error string `json:"error"`
 	}
 	if err := decodeRequestJSON(r, &input); err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	flow, err := s.decodeAuthFlow(r)
 	if err != nil || flow.Kind != browserAuthSlackUser || input.State == "" || input.State != flow.State || flow.UserID != p.UserID.String() || (flow.SlackLinkToken == "" && flow.OrganizationID != p.OrgID.String()) {
-		writeError(w, badRequest(errors.New("the Slack identity flow expired or account changed; start linking again")))
+		s.writeOperationError(w, r, badRequest(errors.New("the Slack identity flow expired or account changed; start linking again")))
 		return
 	}
 	if err := s.resolveSlackLinkFlow(r, &p, flow); err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	clearAuthFlowCookie(w, r)
 	if input.Error != "" || input.Code == "" {
-		writeError(w, badRequest(slack.ErrUserIdentity))
+		s.writeOperationError(w, r, badRequest(slack.ErrUserIdentity))
 		return
 	}
 	installation, err := ids.Parse(flow.InstallationID)
 	if err != nil {
-		writeError(w, badRequest(slack.ErrUserIdentity))
+		s.writeOperationError(w, r, badRequest(slack.ErrUserIdentity))
 		return
 	}
 	workspace, err := slack.CheckLinkWorkspace(r.Context(), s.tx, p.OrgID, p.UserID, installation)
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	registration, oauth, err := s.slackConfig.Credentials.InstallationOAuth(r.Context(), installation, s.slackConfig.Transport)
 	if err != nil || registration.String() != flow.AppRegistrationID {
-		s.writeSlackLinkError(w, slack.ErrUserIdentity)
+		s.writeSlackLinkError(w, r, slack.ErrUserIdentity)
 		return
 	}
 	identity, err := oauth.VerifyIdentity(r.Context(), input.Code, s.slackUserRedirectURL(), flow.Nonce, flow.SlackTeamID)
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	if flow.SlackUserID != "" && identity.SlackUserID != flow.SlackUserID {
-		writeError(w, badRequest(errors.New("this is a different Slack account; return to Slack and link using the account that requested work")))
+		s.writeOperationError(w, r, badRequest(errors.New("this is a different Slack account; return to Slack and link using the account that requested work")))
 		return
 	}
 	account, err := s.db.GetUserOnboardingState(r.Context(), db.GetUserOnboardingStateParams{OrgID: pgvalue.UUID(p.OrgID), UserID: pgvalue.UUID(p.UserID)})
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	state, err := auth.GenerateOpaque(32)
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	confirmation := browserAuthFlow{Kind: browserAuthSlackUserConfirm, State: state, OrganizationID: p.OrgID.String(), UserID: p.UserID.String(), InstallationID: flow.InstallationID, AppRegistrationID: flow.AppRegistrationID, SlackTeamID: identity.TeamID, SlackUserID: identity.SlackUserID, SlackLinkToken: flow.SlackLinkToken, SlackReturnURL: flow.SlackReturnURL}
 	encoded, err := s.encodeAuthFlow(confirmation)
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	http.SetCookie(w, authFlowCookie(r, encoded, int(authFlowTTL.Seconds())))
@@ -297,26 +297,26 @@ func (s *Server) confirmSlackUserLink(w http.ResponseWriter, r *http.Request) {
 		Confirmed    bool   `json:"confirmed"`
 	}
 	if err := decodeRequestJSON(r, &input); err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
 	flow, err := s.decodeAuthFlow(r)
 	if err != nil || flow.Kind != browserAuthSlackUserConfirm || input.Confirmation == "" || input.Confirmation != flow.State || !input.Confirmed || flow.UserID != p.UserID.String() || (flow.SlackLinkToken == "" && flow.OrganizationID != p.OrgID.String()) {
-		writeError(w, badRequest(errors.New("confirm the verified Slack identity using the account that started linking")))
+		s.writeOperationError(w, r, badRequest(errors.New("confirm the verified Slack identity using the account that started linking")))
 		return
 	}
 	if err := s.resolveSlackLinkFlow(r, &p, flow); err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	installation, err := ids.Parse(flow.InstallationID)
 	if err != nil {
-		writeError(w, badRequest(slack.ErrUserIdentity))
+		s.writeOperationError(w, r, badRequest(slack.ErrUserIdentity))
 		return
 	}
-	err = slack.LinkUser(r.Context(), s.tx, audit.FromPrincipal(p), p.OrgID, p.UserID, installation, slack.UserIdentity{TeamID: flow.SlackTeamID, SlackUserID: flow.SlackUserID})
+	err = slack.LinkUser(r.Context(), s.tx, s.auditPolicy, audit.FromPrincipal(p), p.OrgID, p.UserID, installation, slack.UserIdentity{TeamID: flow.SlackTeamID, SlackUserID: flow.SlackUserID})
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	clearAuthFlowCookie(w, r)
@@ -325,28 +325,28 @@ func (s *Server) confirmSlackUserLink(w http.ResponseWriter, r *http.Request) {
 func (s *Server) unlinkSlackUser(w http.ResponseWriter, r *http.Request) {
 	p, err := slackLinkPrincipal(r)
 	if err != nil {
-		writeError(w, err)
+		s.writeOperationError(w, r, err)
 		return
 	}
-	err = slack.UnlinkUser(r.Context(), s.tx, audit.FromPrincipal(p), p.OrgID, p.UserID, chi.URLParam(r, "teamID"), chi.URLParam(r, "slackUserID"))
+	err = slack.UnlinkUser(r.Context(), s.tx, s.auditPolicy, audit.FromPrincipal(p), p.OrgID, p.UserID, chi.URLParam(r, "teamID"), chi.URLParam(r, "slackUserID"))
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-func (s *Server) writeSlackLinkError(w http.ResponseWriter, err error) {
+func (s *Server) writeSlackLinkError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, slack.ErrFirstUseLink):
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 	case errors.Is(err, slack.ErrUserIdentity):
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 	case errors.Is(err, slack.ErrUserLinkDenied):
-		writeError(w, forbidden(err))
+		s.writeOperationError(w, r, forbidden(err))
 	case errors.Is(err, slack.ErrUserLinkConflict):
-		writeError(w, conflict(err))
+		s.writeOperationError(w, r, conflict(err))
 	default:
-		s.writeSlackError(w, err)
+		s.writeSlackError(w, r, err)
 	}
 }
 
@@ -354,12 +354,12 @@ func (s *Server) getSlackFirstUseLink(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	if s.slackConfig == nil {
-		writeError(w, unavailable(errors.New("the Slack integration is not configured")))
+		s.writeOperationError(w, r, unavailable(errors.New("the Slack integration is not configured")))
 		return
 	}
 	link, err := slack.ResolveFirstUseLink(r.Context(), s.tx, s.slackConfig.ControlKey, r.URL.Query().Get("link"), principalFromContext(r.Context()).UserID)
 	if err != nil {
-		s.writeSlackLinkError(w, err)
+		s.writeSlackLinkError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, link)

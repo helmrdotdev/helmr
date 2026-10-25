@@ -89,7 +89,7 @@ def compile_config(raw):
         if not cp.get(key):
             raise ValueError(f'{key} is required')
     # The operator supplies execution policy; this host may use real capacity.
-    for key in ['ENVIRONMENT_MAX_RESIDENT_COMPUTERS', 'ENVIRONMENT_MAX_CPU_MILLIS', 'ENVIRONMENT_MAX_MEMORY_BYTES', 'ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES', 'ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS', 'ENVIRONMENT_MAX_CAUSAL_DEPTH', 'ENVIRONMENT_ADMISSION_RATE_PER_SECOND', 'ENVIRONMENT_ADMISSION_BURST', 'ENVIRONMENT_PREPARATION_TIMEOUT_MS']:
+    for key in ['AUDIT_RETENTION_SECONDS', 'ENVIRONMENT_MAX_RESIDENT_COMPUTERS', 'ENVIRONMENT_MAX_CPU_MILLIS', 'ENVIRONMENT_MAX_MEMORY_BYTES', 'ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES', 'ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS', 'ENVIRONMENT_MAX_CAUSAL_DEPTH', 'ENVIRONMENT_ADMISSION_RATE_PER_SECOND', 'ENVIRONMENT_ADMISSION_BURST', 'ENVIRONMENT_PREPARATION_TIMEOUT_MS']:
         value = cp.get(key, "")
         if not isinstance(value, str) or not value.isascii() or not value.isdigit() or not 0 < int(value) <= 9223372036854775807:
             raise ValueError(f"{key} must be explicitly configured as a positive integer")
@@ -99,6 +99,8 @@ def compile_config(raw):
     if cp['CAS_URI'] == cp['PLATFORM_STORE_URI']:
         raise ValueError('CAS and platform stores must be distinct')
     db_password = secrets.token_hex(32)
+    migration_password = secrets.token_hex(32)
+    maintenance_password = secrets.token_hex(32)
     owned = {
         'DEPLOYMENT_MODE': 'self-hosted', 'DATABASE_URL': f'postgres://helmr:{db_password}@127.0.0.1:55432/helmr?sslmode=disable',
         'CLICKHOUSE_URL': 'http://127.0.0.1:58123',
@@ -135,7 +137,7 @@ def compile_config(raw):
         'CPU_TEMPLATE_HELPER_PATH': '/usr/local/bin/cpu-template-helper',
         'CHECKPOINT_ENCRYPTION_KEY': base64.b64encode(secrets.token_bytes(32)).decode(),
     })
-    dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY', 'APP_ORIGIN']}
+    dispatcher = {key: cp[key] for key in ['AUDIT_RETENTION_SECONDS', 'DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY', 'APP_ORIGIN']}
     for key in ['SLACK_TRANSPORT', 'OUTBOUND_PROXY_URL', 'DIAGNOSTIC_EXPORT_BATCH_BYTES', 'DIAGNOSTIC_EXPORT_BATCH_RECORDS', 'DIAGNOSTIC_CHUNK_BYTES', 'DIAGNOSTIC_SOURCE_BYTES', 'DIAGNOSTIC_SOURCE_RECORDS', 'DIAGNOSTIC_ENVIRONMENT_BYTES', 'DIAGNOSTIC_ENVIRONMENT_RECORDS', 'DIAGNOSTIC_QUEUE_BYTES', 'DIAGNOSTIC_QUEUE_RECORDS', 'DIAGNOSTIC_DB_MAX_CONNECTIONS']:
         if key in cp:
             dispatcher[key] = cp[key]
@@ -145,6 +147,7 @@ def compile_config(raw):
         environment(values)
     return dict(binaries=binaries, control_plane=cp, worker=worker, dispatcher=dispatcher,
                 clickhouse=ch, database_password=db_password,
+                migration_password=migration_password, maintenance_password=maintenance_password,
                 services_candidate=raw['services_candidate'], worker_host_receipt=raw['worker_host_receipt'],
                 worker_runtime_receipt=raw['worker_runtime_receipt'])
 
@@ -331,14 +334,20 @@ def start(cfg):
     wait_for(lambda: sql('SELECT 1') == '1', 'PostgreSQL', unit_name=unit('postgres'))
     if sql("SELECT count(*) FROM pg_roles WHERE rolname='helmr'") == '0':
         sql(f"CREATE ROLE helmr LOGIN PASSWORD '{cfg['database_password']}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS")
+    for role, key in [('helmr_migration', 'migration_password'), ('helmr_audit_maintenance', 'maintenance_password')]:
+        if sql(f"SELECT count(*) FROM pg_roles WHERE rolname='{role}'") == '0':
+            sql(f"CREATE ROLE {role} LOGIN PASSWORD '{cfg[key]}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS")
     if sql("SELECT count(*) FROM pg_database WHERE datname='helmr'") == '0':
-        sql('CREATE DATABASE helmr OWNER helmr')
+        sql('CREATE DATABASE helmr OWNER helmr_migration')
+    service_run(b['psql'], '-h', str(DATA), '-p', '55432', '-d', 'helmr', '-X', '-v', 'ON_ERROR_STOP=1', input='REVOKE CREATE ON SCHEMA public FROM PUBLIC; ALTER SCHEMA public OWNER TO helmr_migration; GRANT USAGE ON SCHEMA public TO helmr, helmr_audit_maintenance;', text=True)
     wait_for(lambda: http_ready('http://127.0.0.1:58123/ping'), 'ClickHouse', unit_name=unit('clickhouse'))
     cp = cfg['control_plane']
     # Commands run as the same service identity, against real backing services.
     # runuser preserves supplied environment except its own identity variables.
     service_run(b['control-plane'], 'clickhouse-bootstrap', env=dict(os.environ) | cp | cfg['clickhouse'])
-    migration = cp | {'CLICKHOUSE_USER': cfg['clickhouse']['CLICKHOUSE_MIGRATION_USER'],
+    migration = cp | {'DATABASE_MIGRATION_URL': f"postgres://helmr_migration:{cfg['migration_password']}@127.0.0.1:55432/helmr?sslmode=disable",
+                      'DATABASE_AUDIT_MAINTENANCE_URL': f"postgres://helmr_audit_maintenance:{cfg['maintenance_password']}@127.0.0.1:55432/helmr?sslmode=disable",
+                      'CLICKHOUSE_USER': cfg['clickhouse']['CLICKHOUSE_MIGRATION_USER'],
                       'CLICKHOUSE_PASSWORD': cfg['clickhouse']['CLICKHOUSE_MIGRATION_PASSWORD']}
     service_run(b['control-plane'], 'migrate', 'up', env=dict(os.environ) | migration)
     for name in SERVICES[2:]:

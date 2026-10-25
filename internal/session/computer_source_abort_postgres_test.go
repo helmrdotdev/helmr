@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -85,12 +86,16 @@ func TestSourceAbortCommitConsumesImageAndWaitsForControls(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','explicit human hold')`, f.env, uuid.NewV7(), peer.session)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
-	if err := session.CompleteComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); !errors.Is(err, session.ErrNotReady) {
+	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("stale controls accepted: %v", err)
 	}
 	acknowledgeComputerMembers(t, f, *f.host(), p)
 	for range 2 {
-		if err := session.CompleteComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+		if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -154,11 +159,13 @@ func TestSourceAbortCancellationAndLossPreserveRecoveryHolds(t *testing.T) {
 	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "independent")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "independent")); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -196,7 +203,9 @@ func TestSourceAbortPreservesRecordedDiskCutAndLaterCancelledPeer(t *testing.T) 
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, peer.session)
 	acknowledgeComputerMembers(t, f, *f.host(), p)
-	if err := session.CompleteComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	if err := storage.publish(t, save, cut); err != nil {
@@ -220,7 +229,9 @@ func TestSourceAbortPublishesRetainedCutRecordedAfterContinuation(t *testing.T) 
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f, *f.host(), p)
-	if err := session.CompleteComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: save, LeaseEpoch: 1, DiskRoot: root, Evidence: "retained frozen cut recorded after source continuation"}); err != nil {
@@ -295,7 +306,9 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 			t.Fatal(err)
 		}
 		acknowledgeComputerMembers(t, f, *f.host(), p)
-		if err := session.CompleteComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+		if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 			t.Fatal(err)
 		}
 		var scrubbed bool
@@ -316,7 +329,9 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 	beginCapture(t, f, req)
 
 	for range 2 {
-		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -394,7 +409,9 @@ func TestSourceAbortArbitratesUnsealedCancellation(t *testing.T) {
 	}()
 	go func() {
 		<-start
-		results <- session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, uuid.MustParse(p.Capture.CheckpointId), session.UnsealedCaptureEvidence{Rejected: true})
+		results <- session.CancelUnsealedComputerCapture(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), f.env, uuid.MustParse(p.Capture.CheckpointId), session.UnsealedCaptureEvidence{Rejected: true})
 	}()
 	close(start)
 	a, b := <-results, <-results

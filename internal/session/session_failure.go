@@ -3,15 +3,17 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
 // The caller holds ownership/process locks and records the idempotent failure fact.
-func recordSessionFailure(ctx context.Context, tx pgx.Tx, e Execution, reason string) error {
+func recordSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Actor, e Execution, reason string) error {
 	hold := uuid.NewV7()
 	if _, err := tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason)
  VALUES($1,$2,$3,'local',$4)`, e.EnvironmentID, hold, e.SessionID, reason); err != nil {
@@ -27,15 +29,18 @@ func recordSessionFailure(ctx context.Context, tx pgx.Tx, e Execution, reason st
 	if err != nil {
 		return err
 	}
+	if err := auditActorFact(ctx, tx, auditPolicy, actor, audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, Action: "session.authority_changed", TargetKind: "session", TargetID: e.SessionID, Details: audit.LifecycleDetails{Generation: e.ProcessEpoch, RequestID: hold}}); err != nil {
+		return err
+	}
 	return eventData(ctx, tx, e.EnvironmentID, e.SessionID, uuid.Nil(), "session.process_failed", data)
 }
 
 // Definitive process failure or stop settles its exact running Turn, including revocation.
-func interruptRunningSessionTurn(ctx context.Context, tx pgx.Tx, e Execution) error {
-	return interruptRunningSessionTurnWithData(ctx, tx, e, nil)
+func interruptRunningSessionTurn(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Actor, e Execution) error {
+	return interruptRunningSessionTurnWithData(ctx, auditPolicy, tx, actor, e, nil)
 }
 
-func interruptRunningSessionTurnWithData(ctx context.Context, tx pgx.Tx, e Execution, data json.RawMessage) error {
+func interruptRunningSessionTurnWithData(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Actor, e Execution, data json.RawMessage) error {
 	if len(data) == 0 {
 		data = json.RawMessage(`{}`)
 	}
@@ -50,10 +55,13 @@ func interruptRunningSessionTurnWithData(ctx context.Context, tx pgx.Tx, e Execu
 		return err
 	}
 	for _, turn := range turns {
-		if err = cancelTurnAsks(ctx, tx, e.EnvironmentID, e.SessionID, turn); err != nil {
+		if err = auditActorFact(ctx, tx, auditPolicy, actor, audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: turn, Action: "turn.interrupted", TargetKind: "turn", TargetID: turn, Details: audit.LifecycleDetails{Generation: e.ProcessEpoch}}); err != nil {
 			return err
 		}
-		if err = rejectTurnMessages(ctx, tx, e.EnvironmentID, e.SessionID, turn, true, "turn_terminated"); err != nil {
+		if err = cancelTurnAsks(ctx, auditPolicy, tx, e.EnvironmentID, e.SessionID, turn); err != nil {
+			return err
+		}
+		if err = rejectTurnMessages(ctx, auditPolicy, tx, e.EnvironmentID, e.SessionID, turn, true, "turn_terminated"); err != nil {
 			return err
 		}
 		if err = eventData(ctx, tx, e.EnvironmentID, e.SessionID, turn, "turn.interrupted", data); err != nil {
@@ -65,7 +73,7 @@ func interruptRunningSessionTurnWithData(ctx context.Context, tx pgx.Tx, e Execu
 
 // ObserveSessionFailure records a definitive runtime rejection independently of
 // a possibly superseded control receipt. Transport loss is not such a rejection.
-func ObserveSessionFailure(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64) error {
+func ObserveSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockRuntimeHost(ctx, tx, Caller{Kind: "session", ID: e.SessionID, Execution: e, Host: &host}); err != nil {
 			return err
@@ -94,25 +102,25 @@ func ObserveSessionFailure(ctx context.Context, pool db.TxBeginner, host workerg
 		if recorded || stopped {
 			return nil
 		}
-		return observeSessionFailure(ctx, tx, e, "Session runtime control failed")
+		return observeSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host), e, "Session runtime control failed")
 	}))
 }
 
-func observeSessionFailure(ctx context.Context, tx pgx.Tx, e Execution, reason string) error {
+func observeSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Actor, e Execution, reason string) error {
 	var terminal bool
 	if err := tx.QueryRow(ctx, `SELECT s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) FROM sessions s  WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&terminal); err != nil {
 		return err
 	}
-	revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, tx, e)
+	revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, auditPolicy, tx, e)
 	if err != nil {
 		return err
 	}
 	if !terminal && !revocationRecorded {
-		if err = recordSessionFailure(ctx, tx, e, reason); err != nil {
+		if err = recordSessionFailure(ctx, auditPolicy, tx, actor, e, reason); err != nil {
 			return err
 		}
 	}
-	if err = interruptRunningSessionTurn(ctx, tx, e); err != nil {
+	if err = interruptRunningSessionTurn(ctx, auditPolicy, tx, actor, e); err != nil {
 		return err
 	}
 	// This is stop intent, never evidence that the physical process is absent.

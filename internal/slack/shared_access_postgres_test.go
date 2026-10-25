@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -23,7 +24,7 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=ARRAY['agents.use']`)
 	root := slackNow()
 	first := f.newMessage(t, "shared-start", root)
-	if err := admitMessage(ctx, f.Pool, nil, f.admissionClient(t), first); err != nil {
+	if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), first); err != nil {
 		t.Fatal(err)
 	}
 	var target, thread uuid.UUID
@@ -35,10 +36,10 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 		t.Fatal("shared runtime borrowed personal origin", shared, err)
 	}
 	// Slack participation never becomes Console access to all conversation history.
-	if _, err := session.GetSession(ctx, f.Pool, session.Caller{Kind: "user", ID: f.User}, f.Environment, target); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, f.Environment, target); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("channel participation became Console history access", err)
 	}
-	page, err := session.ListSessions(ctx, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionListRequest{EnvironmentID: f.Environment, Limit: 100})
+	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionListRequest{EnvironmentID: f.Environment, Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,7 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 		}
 	}
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'local','personal','user',$4),($1,uuidv7(),$3,'local','shared','user',$4)`, f.Environment, f.Session, target, f.User)
-	attention, err := session.ListAttention(ctx, f.Pool, session.Caller{Kind: "user", ID: f.User}, f.Environment)
+	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, f.Environment)
 	if err != nil || attention.HoldCount != 1 || len(attention.Holds) != 1 || attention.Holds[0].SessionID != f.Session {
 		t.Fatalf("shared creator gained personal attention access: %+v %v", attention, err)
 	}
@@ -71,7 +72,7 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := admitMessage(ctx, f.Pool, nil, f.admissionClient(t), r.ID); err != nil {
+		if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), r.ID); err != nil {
 			t.Fatal(err)
 		}
 		return r.ID
@@ -84,7 +85,7 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 	// A private Console session projected into Slack remains private to its owner
 	// and explicitly assigned operators; the shared route does not convert it.
 	input := session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "copied-private", Input: json.RawMessage(`[]`)}
-	if _, err := session.RouteSlackInput(ctx, f.Pool, nil, session.Caller{Kind: "user", ID: peer, SlackThreadID: f.thread}, input); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RouteSlackInput(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: peer, SlackThreadID: f.thread}, input); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("private projection became shared", err)
 	}
 	dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM role_grants WHERE member_id=$1`, member)
@@ -100,12 +101,14 @@ func TestSlackQueuedInputRejectsRemovedChannelParticipant(t *testing.T) {
 	f.link(t)
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET origin_slack_connection_id=$2 WHERE id=$1; UPDATE roles SET permissions=ARRAY['agents.use']`, pgx.QueryExecModeSimpleProtocol, f.Session, f.publication)
 	request := f.reply(t, "queued-participant", false)
-	if err := admitMessage(ctx, f.Pool, nil, f.admissionClient(t), request); err != nil {
+	if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
 		t.Fatal(err)
 	}
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	result, err := session.DispatchRuntimeTurn(ctx, f.Pool, host, e, 1, fixtureConversationVerifier(false))
+	result, err := session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, host, e, 1, fixtureConversationVerifier(false))
 	if err != nil || result != nil {
 		t.Fatalf("removed participant dispatched: %+v %v", result, err)
 	}
@@ -126,7 +129,7 @@ func TestSharedRuntimeCannotAttachToExistingComputer(t *testing.T) {
 		if method == "spawn" {
 			start = session.Spawn
 		}
-		if _, err := start(t.Context(), f.Pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+		if _, err := start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 			t.Fatalf("shared %s attached Computer: %v", method, err)
 		}
 	}
@@ -147,7 +150,7 @@ func TestSlackQueuedInputRechecksExactActorLinkAfterVerification(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET origin_slack_connection_id=$2 WHERE id=$1`, f.Session, f.publication)
 			}
 			request := f.reply(t, "queued-unlinked", false)
-			if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), request); err != nil {
+			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
 				t.Fatal(err)
 			}
 			verifier := callbackConversationVerifier(func() (bool, error) {
@@ -156,7 +159,9 @@ func TestSlackQueuedInputRechecksExactActorLinkAfterVerification(t *testing.T) {
 			})
 			e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-			result, err := session.DispatchRuntimeTurn(t.Context(), f.Pool, host, e, 1, verifier)
+			result, err := session.DispatchRuntimeTurn(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.Pool, host, e, 1, verifier)
 			if err != nil || result != nil {
 				t.Fatalf("unlinked input dispatched: %+v %v", result, err)
 			}
@@ -175,7 +180,7 @@ func TestSlackQueuedInputWaitsBeforeExternalVerification(t *testing.T) {
 			ctx := t.Context()
 			f.link(t)
 			request := f.reply(t, "queued-wait", false)
-			if err := admitMessage(ctx, f.Pool, nil, f.admissionClient(t), request); err != nil {
+			if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
 				t.Fatal(err)
 			}
 			e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
@@ -197,7 +202,9 @@ func TestSlackQueuedInputWaitsBeforeExternalVerification(t *testing.T) {
 			if blocked == "unconfigured" {
 				inputVerifier = nil
 			}
-			result, err := session.DispatchRuntimeTurn(ctx, f.Pool, host, e, attachment, inputVerifier)
+			result, err := session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.Pool, host, e, attachment, inputVerifier)
 			if blocked == "unconfigured" && !errors.Is(err, session.ErrConversationVerificationUnavailable) {
 				t.Fatal("missing configuration diagnostic", err)
 			}
@@ -219,7 +226,9 @@ func TestSlackQueuedInputWaitsBeforeExternalVerification(t *testing.T) {
 				t.Fatal("input lost while waiting", queued, err)
 			}
 			dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM session_holds WHERE session_id=$1; UPDATE session_processes SET control_acknowledged_at=clock_timestamp() WHERE session_id=$1; UPDATE computer_leases SET storage_pressure_since=NULL WHERE computer_id=$2`, pgx.QueryExecModeSimpleProtocol, f.Session, f.Computer)
-			result, err = session.DispatchRuntimeTurn(ctx, f.Pool, host, e, 1, fixtureConversationVerifier(true))
+			result, err = session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.Pool, host, e, 1, fixtureConversationVerifier(true))
 			if err != nil || result == nil {
 				t.Fatalf("retry did not dispatch: %+v %v", result, err)
 			}
@@ -239,12 +248,12 @@ func TestSharedRuntimeDiscoveryKeepsRelationshipsAndScheduleIsolation(t *testing
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
 	caller := session.Caller{Kind: "session", ID: f.Session, Execution: e, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
 	for _, relation := range []string{"owned", "requested"} {
-		page, err := session.RuntimeListSessions(ctx, f.Pool, caller, session.RuntimeSessionListRequest{Relation: relation, Limit: 100})
+		page, err := session.RuntimeListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.RuntimeSessionListRequest{Relation: relation, Limit: 100})
 		if err != nil || len(page.Sessions) != 0 {
 			t.Fatalf("unrelated channel listed: %+v %v", page, err)
 		}
 	}
-	if _, err := session.RuntimeGetSession(ctx, f.Pool, caller, other); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, other); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("unrelated shared runtime read", err)
 	}
 	// Eligible participants can control their shared conversation without an
@@ -271,7 +280,7 @@ func TestSharedRuntimeDiscoveryKeepsRelationshipsAndScheduleIsolation(t *testing
 		}
 	}
 	for _, relation := range []string{"owned", "requested"} {
-		page, err := session.RuntimeListSessions(ctx, f.Pool, caller, session.RuntimeSessionListRequest{Relation: relation, Limit: 100})
+		page, err := session.RuntimeListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.RuntimeSessionListRequest{Relation: relation, Limit: 100})
 		if err != nil || len(page.Sessions) != 0 {
 			t.Fatalf("schedule listed unrelated channel: %+v %v", page, err)
 		}

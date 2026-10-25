@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"log/slog"
 	"time"
 
@@ -14,7 +15,7 @@ const pendingTimeout = 10 * time.Minute
 
 // ExpirePending preserves the bounded wait for an ordinary command to acquire a
 // physical writer. Its execution timeout starts only after delivery, separately.
-func ExpirePending(ctx context.Context, database db.TxDB, limit int) (int, error) {
+func ExpirePending(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, limit int) (int, error) {
 	if limit <= 0 {
 		return 0, errors.New("command pending batch limit must be positive")
 	}
@@ -34,7 +35,7 @@ func ExpirePending(ctx context.Context, database db.TxDB, limit int) (int, error
 	}
 	for i, p := range candidates {
 		err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-			return FailPending(ctx, tx, p, Failure{Code: "computer_command_assignment_timed_out", Detail: []byte(`{"code":"computer_command_assignment_timed_out","retryable":false}`)})
+			return FailPending(ctx, auditPolicy, tx, p, Failure{Code: "computer_command_assignment_timed_out", Detail: []byte(`{"code":"computer_command_assignment_timed_out","retryable":false}`)})
 		})
 		if err != nil && !errors.Is(err, ErrChanged) {
 			return i, err
@@ -45,7 +46,7 @@ func ExpirePending(ctx context.Context, database db.TxDB, limit int) (int, error
 
 // ReconcileCommands is supervised independently of allocation and customer
 // Session execution. Persisted pending/lost rows are its restart discovery.
-func ReconcileCommands(ctx context.Context, database db.TxDB, log *slog.Logger) error {
+func ReconcileCommands(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, log *slog.Logger) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	var position RecoveryPosition
@@ -53,7 +54,7 @@ func ReconcileCommands(ctx context.Context, database db.TxDB, log *slog.Logger) 
 		// A pass pages through every candidate before the next tick, so one
 		// slow or failing Command delays the rest by one attempt, not by a pass.
 		batch, cancel := context.WithTimeout(ctx, 15*time.Second)
-		next, more, recoveryErr := RecoverBatch(batch, database, position, 256)
+		next, more, recoveryErr := RecoverBatch(batch, auditPolicy, database, position, 256)
 		cancel()
 		position = next
 		if recoveryErr != nil && ctx.Err() == nil {
@@ -63,7 +64,7 @@ func ReconcileCommands(ctx context.Context, database db.TxDB, log *slog.Logger) 
 			continue
 		}
 		batch, cancel = context.WithTimeout(ctx, 15*time.Second)
-		_, pendingErr := ExpirePending(batch, database, 256)
+		_, pendingErr := ExpirePending(batch, auditPolicy, database, 256)
 		cancel()
 		if pendingErr != nil && ctx.Err() == nil {
 			log.ErrorContext(ctx, "reconcile Computer commands", "error", pendingErr)

@@ -18,7 +18,7 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, MemberID: memberID}
 	consent := DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}
 
-	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
+	started, err := StartDeviceCode(ctx, fixture.pool, fixture.cfg)
 	if err != nil || started.ExpiresIn != fixture.cfg.Lifetimes().DeviceCode || started.PollInterval != fixture.cfg.Lifetimes().DevicePollInterval {
 		t.Fatalf("started = %+v, err = %v", started, err)
 	}
@@ -30,25 +30,25 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 		t.Fatalf("status = %+v, err = %v", state, err)
 	}
 
-	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession}, DeviceConsent{UserID: userID.String()}, started.UserCode); !errors.Is(err, ErrOrganizationRequired) {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession}, DeviceConsent{UserID: userID.String()}, started.UserCode); !errors.Is(err, ErrOrganizationRequired) {
 		t.Fatalf("approval without organization error = %v", err)
 	}
 	for _, changed := range []DeviceConsent{{UserID: userID.String()}, {UserID: uuid.NewV7().String(), OrgID: orgID.String()}, {}} {
-		if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, changed, started.UserCode); !errors.Is(err, ErrDeviceApproverChanged) {
+		if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, changed, started.UserCode); !errors.Is(err, ErrDeviceApproverChanged) {
 			t.Fatalf("changed consent %+v error = %v", changed, err)
 		}
 	}
-	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, consent, ""); !errors.Is(err, ErrInvalidDeviceCode) {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, ""); !errors.Is(err, ErrInvalidDeviceCode) {
 		t.Fatalf("empty user code error = %v", err)
 	}
-	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, consent, "ZZZZ-ZZZZ"); !errors.Is(err, ErrDeviceCodeNotFound) {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, "ZZZZ-ZZZZ"); !errors.Is(err, ErrDeviceCodeNotFound) {
 		t.Fatalf("unknown user code error = %v", err)
 	}
-	state, err = ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, consent, started.UserCode)
+	state, err = ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, started.UserCode)
 	if err != nil || state.Status != "approved" {
 		t.Fatalf("approval = %+v, err = %v", state, err)
 	}
-	if _, err := DenyDeviceCode(ctx, fixture.queries, fixture.cfg, approver, consent, started.UserCode); !errors.Is(err, ErrDeviceCodeNotFound) {
+	if _, err := DenyDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, started.UserCode); !errors.Is(err, ErrDeviceCodeNotFound) {
 		t.Fatalf("decided code denial error = %v", err)
 	}
 
@@ -80,18 +80,18 @@ func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, MemberID: memberID}
 	consent := DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}
 
-	denied, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
+	denied, err := StartDeviceCode(ctx, fixture.pool, fixture.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state, err := DenyDeviceCode(ctx, fixture.queries, fixture.cfg, approver, consent, denied.UserCode); err != nil || state.Status != "denied" {
+	if state, err := DenyDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, denied.UserCode); err != nil || state.Status != "denied" {
 		t.Fatalf("denial = %+v, err = %v", state, err)
 	}
 	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, denied.DeviceCode); !errors.Is(err, ErrDeviceAccessDenied) {
 		t.Fatalf("denied exchange error = %v", err)
 	}
 
-	expired, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
+	expired, err := StartDeviceCode(ctx, fixture.pool, fixture.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, expired.DeviceCode); !errors.Is(err, ErrDeviceCodeExpired) {
 		t.Fatalf("expired exchange error = %v", err)
 	}
-	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, consent, expired.UserCode); !errors.Is(err, ErrDeviceCodeNotFound) {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, expired.UserCode); !errors.Is(err, ErrDeviceCodeNotFound) {
 		t.Fatalf("expired approval error = %v", err)
 	}
 	if _, err := DeviceCodeStatus(ctx, fixture.queries, fixture.cfg, "ZZZZ-ZZZZ"); !errors.Is(err, ErrDeviceCodeNotFound) {
@@ -121,11 +121,11 @@ func TestDeviceCodePostgresFailedExchangeKeepsApprovedCode(t *testing.T) {
 	orgID := fixture.organization(t, "device-atomic")
 	memberID := fixture.member(t, orgID, userID, "member")
 	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, MemberID: memberID}
-	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
+	started, err := StartDeviceCode(ctx, fixture.pool, fixture.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}, started.UserCode); err != nil {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}, started.UserCode); err != nil {
 		t.Fatal(err)
 	}
 
@@ -160,11 +160,11 @@ func TestDeviceCodePostgresConcurrentExchangeIssuesOneSession(t *testing.T) {
 	orgID := fixture.organization(t, "device-concurrent")
 	memberID := fixture.member(t, orgID, userID, "member")
 	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, MemberID: memberID}
-	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
+	started, err := StartDeviceCode(ctx, fixture.pool, fixture.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}, started.UserCode); err != nil {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}, started.UserCode); err != nil {
 		t.Fatal(err)
 	}
 

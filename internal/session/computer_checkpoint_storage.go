@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -23,15 +25,19 @@ type CheckpointPublication struct {
 // CheckpointPublisher records checkpoints under the capture protocol: it takes
 // the capture's Session locks and asks the Computer owner for row writes.
 type CheckpointPublisher struct {
-	pool    db.TxBeginner
-	objects computer.SaveObjectStore
+	auditPolicy auditpolicy.Policy
+	pool        db.TxBeginner
+	objects     computer.SaveObjectStore
 }
 
-func NewCheckpointPublisher(pool db.TxBeginner, objects computer.SaveObjectStore) (*CheckpointPublisher, error) {
+func NewCheckpointPublisher(pool db.TxBeginner, auditPolicy auditpolicy.Policy, objects computer.SaveObjectStore) (*CheckpointPublisher, error) {
+	if err := auditPolicy.Validate(); err != nil {
+		return nil, err
+	}
 	if pool == nil || objects == nil {
 		return nil, errors.New("checkpoint database and object store are required")
 	}
-	return &CheckpointPublisher{pool: pool, objects: objects}, nil
+	return &CheckpointPublisher{pool: pool, auditPolicy: auditPolicy, objects: objects}, nil
 }
 
 // RegisterCheckpoint pins all runtime objects before upload. It neither makes
@@ -126,7 +132,10 @@ func (p *CheckpointPublisher) CompleteCheckpoint(ctx context.Context, ref Checkp
 		if err = computer.RequireSecretsNotRevoked(ctx, tx, ref.EnvironmentID, manifest.ComputerID); err != nil {
 			return err
 		}
-		return computer.MarkCheckpointReady(ctx, tx, ref.EnvironmentID, manifest.CheckpointID)
+		if err := computer.MarkCheckpointReady(ctx, p.auditPolicy, tx, ref.EnvironmentID, manifest.CheckpointID); err != nil {
+			return err
+		}
+		return audit.Append(ctx, tx, p.auditPolicy, audit.Event{Actor: auditWorkerActor(ref.Host), EnvironmentID: ref.EnvironmentID, ComputerID: manifest.ComputerID, TargetKind: "computer", TargetID: manifest.ComputerID, Action: "computer.checkpoint_published", Details: audit.LifecycleDetails{RequestID: manifest.CheckpointID, Generation: manifest.LeaseEpoch}})
 	}))
 }
 

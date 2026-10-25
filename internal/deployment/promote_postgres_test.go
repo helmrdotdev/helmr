@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -31,7 +32,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), first.ID, nil); err != nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), first.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	var previous uuid.UUID
@@ -44,7 +45,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT refresh_every_ms,next_refresh_at FROM image_specs`).Scan(&cadence, &nextRefresh); err != nil || cadence != every {
 		t.Fatalf("refresh=%d: %v", cadence, err)
 	}
-	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), first.ID, nil); err != nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), first.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	var until, started time.Time
@@ -72,7 +73,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), second.ID, nil); err != nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), second.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -84,7 +85,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT s.ctid::text FROM image_specs s JOIN template_definitions d ON (d.environment_id,d.image_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, first.ID).Scan(&beforeCTID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), second.ID, nil); err != nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), second.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT s.ctid::text FROM image_specs s JOIN template_definitions d ON (d.environment_id,d.image_spec_id)=(s.environment_id,s.id) WHERE d.deployment_id=$1`, first.ID).Scan(&afterCTID); err != nil || afterCTID != beforeCTID {
@@ -128,7 +129,7 @@ func TestPromoteRollsBackInvalidTrigger(t *testing.T) {
 	if _, err = f.pool.Exec(t.Context(), `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input) SELECT environment_id,agent_id,deployment_id,'bad','invalid','UTC','null' FROM agent_definitions WHERE deployment_id=$1 LIMIT 1`, pgx.QueryExecModeSimpleProtocol, r.ID); err != nil {
 		t.Fatal(err)
 	}
-	_, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), r.ID, nil)
+	_, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), r.ID, nil)
 	var input InputError
 	if !errors.As(err, &input) {
 		t.Fatalf("invalid trigger should be actionable input: %v", err)
@@ -148,7 +149,7 @@ func TestDeploymentReadsUseNewDefinitionsAndScope(t *testing.T) {
 	if _, err := GetCurrent(t.Context(), f.pool, f.principal(), f.scope()); !errors.Is(err, ErrNoCurrentDeployment) {
 		t.Fatal(err)
 	}
-	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), r.ID, nil); err != nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), r.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	current, err := GetCurrent(t.Context(), f.pool, f.principal(), f.scope())
@@ -181,7 +182,7 @@ func TestPromotePreservesTextInputAndNULTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Promote(t.Context(), f.pool, f.principal(), f.scope(), r.ID, nil); err != nil {
+	if _, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), r.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	var input []byte
@@ -273,7 +274,7 @@ func TestPromotionAuditGrantActorAndRollback(t *testing.T) {
 	principal := f.principal()
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_promotion_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_promotion_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_promotion_audit()`)
-	if _, err = Promote(t.Context(), f.pool, principal, f.scope(), record.ID, nil); err == nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, f.scope(), record.ID, nil); err == nil {
 		t.Fatal("audit failure allowed promotion")
 	}
 	var unchanged bool
@@ -281,11 +282,11 @@ func TestPromotionAuditGrantActorAndRollback(t *testing.T) {
 		t.Fatal("promotion survived rollback", unchanged, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DROP TRIGGER reject_promotion_audit ON audit_events`)
-	if _, err = Promote(t.Context(), f.pool, principal, f.scope(), record.ID, nil); err != nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, f.scope(), record.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	var count int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='deployment.promoted' AND target_id=$1 AND actor_kind='api_key' AND actor_credential_id=$2 AND actor_user_id IS NULL AND org_id=$3 AND project_id=$4 AND environment_id=$5 AND outcome='succeeded'`, record.ID, principal.APIKeyID, principal.OrgID, f.request.projectID, f.request.environmentID).Scan(&count); err != nil || count != 1 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='deployment.promoted' AND target_id=$1 AND actor_kind='api_key' AND credential_id=$2 AND actor_id=$2 AND org_id=$3 AND project_id=$4 AND environment_id=$5 AND outcome='succeeded'`, record.ID, principal.APIKeyID, principal.OrgID, f.request.projectID, f.request.environmentID).Scan(&count); err != nil || count != 1 {
 		t.Fatal("promotion fact differs", count, err)
 	}
 }
@@ -296,7 +297,7 @@ func TestPromoteRejectsStructuredContractForConnectedFront(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), first.ID, nil); err != nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), first.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	user, registration, connection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
@@ -309,7 +310,7 @@ func TestPromoteRejectsStructuredContractForConnectedFront(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), next.ID, nil); err == nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), next.ID, nil); err == nil {
 		t.Fatal("connected front changed its input contract")
 	}
 	var current uuid.UUID
@@ -317,7 +318,7 @@ func TestPromoteRejectsStructuredContractForConnectedFront(t *testing.T) {
 		t.Fatalf("failed promotion changed deployment: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, connection)
-	if _, err = Promote(t.Context(), f.pool, f.principal(), f.scope(), next.ID, nil); err != nil {
+	if _, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), next.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 }

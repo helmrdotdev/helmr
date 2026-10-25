@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"time"
 	"uuid"
@@ -43,7 +45,7 @@ func lockRuntimeOperationOwnerWithHostLocked(ctx context.Context, tx pgx.Tx, ori
 	return err
 }
 
-func RuntimeCloseProcessing(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn uuid.UUID) error {
+func RuntimeCloseProcessing(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockRuntimeOperationOwner(ctx, tx, host, e); err != nil {
 			return err
@@ -55,7 +57,7 @@ func RuntimeCloseProcessing(ctx context.Context, pool db.TxBeginner, host worker
 		if closed != nil {
 			return lockRuntimeOperationOwner(ctx, tx, host, e)
 		}
-		return closeProcessing(ctx, tx, e, turn)
+		return closeProcessing(ctx, auditPolicy, tx, e, turn)
 	}))
 }
 
@@ -63,7 +65,7 @@ var errResultDrainPending = errors.Join(ErrNotReady, errors.New("callback receip
 
 // RuntimeFinalize records the original result or observes its exact terminal
 // outcome. Nil means callback receipts are still pending.
-func RuntimeFinalize(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn uuid.UUID, result json.RawMessage, evidence string) (json.RawMessage, error) {
+func RuntimeFinalize(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn uuid.UUID, result json.RawMessage, evidence string) (json.RawMessage, error) {
 	digest, err := digestJSON(result)
 	if err != nil {
 		return nil, ErrInvalidInput
@@ -83,7 +85,7 @@ func RuntimeFinalize(ctx context.Context, pool db.TxBeginner, host workergroup.H
 		if err := lockRuntimeOperationOwnerWithHostLocked(ctx, tx, e, false); err != nil {
 			return err
 		}
-		if err := expireSessionDeadlineTx(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
+		if err := expireSessionDeadlineTx(ctx, auditPolicy, tx, e.EnvironmentID, e.SessionID); err != nil {
 			return err
 		}
 		var status string
@@ -113,6 +115,9 @@ func RuntimeFinalize(ctx context.Context, pool db.TxBeginner, host workergroup.H
 			return nil
 		}
 		if err != nil {
+			return err
+		}
+		if err = auditRuntimeEvent(ctx, tx, auditPolicy, e, turn, "turn.completed", "succeeded", audit.LifecycleDetails{}); err != nil {
 			return err
 		}
 		var sequence int64

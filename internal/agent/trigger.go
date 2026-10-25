@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -82,7 +83,7 @@ func evaluateTrigger(s triggerActivation, now time.Time) (triggerEvaluation, err
 // EvaluateTrigger serializes with Environment promotion. Occurrence identity,
 // admission (or its rejected/missed disposition), and the next cursor commit
 // together. The activation's pinned definition is never replaced by current defaults.
-func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, env, id uuid.UUID) error {
+func EvaluateTrigger(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, env, id uuid.UUID) error {
 	if env == uuid.Nil() || id == uuid.Nil() {
 		return ErrInvalidInput
 	}
@@ -154,7 +155,7 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Tru
 				if err != nil {
 					return err
 				}
-				receipt, admissionErr := admitScheduledSession(ctx, admissionTX, trust, s, *evaluation.latest, policy)
+				receipt, admissionErr := admitScheduledSession(ctx, auditPolicy, admissionTX, trust, s, *evaluation.latest, policy)
 				disposition, reason := "admitted", ""
 				if admissionErr != nil {
 					if err = admissionTX.Rollback(ctx); err != nil {
@@ -204,11 +205,11 @@ func recordTriggerOccurrence(ctx context.Context, tx pgx.Tx, s triggerActivation
 
 // admitScheduledSession admits a trigger occurrence's Session and, for a
 // Slack destination, its Slack root, in the evaluation transaction.
-func admitScheduledSession(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, s triggerActivation, at time.Time, policy org.AdmissionPolicy) (session.Admission, error) {
+func admitScheduledSession(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, trust computer.TrustIssuer, s triggerActivation, at time.Time, policy org.AdmissionPolicy) (session.Admission, error) {
 	if s.slackChannelID != nil && !s.slackRouteActive {
 		return session.Admission{}, slackroute.ErrChannelUnavailable
 	}
-	receipt, err := session.AdmitScheduled(ctx, tx, trust, session.ScheduledStart{EnvironmentID: s.environment, ActivationID: s.id, AgentID: s.agent, DeploymentID: s.deployment, Input: s.input, At: at}, policy)
+	receipt, err := session.AdmitScheduled(ctx, auditPolicy, tx, trust, session.ScheduledStart{EnvironmentID: s.environment, ActivationID: s.id, AgentID: s.agent, DeploymentID: s.deployment, Input: s.input, At: at}, policy)
 	if err != nil {
 		return session.Admission{}, err
 	}

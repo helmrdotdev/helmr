@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"strings"
 	"time"
@@ -54,7 +56,7 @@ type SessionControlReceipt struct {
 
 // ControlSession serializes controls with admission and settlement under the
 // ownership root. Retried acceptance never repeats its lifecycle transition.
-func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
+func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
 	var result SessionControlReceipt
 	if (req.ExpectedScope != "" && req.Kind != "close") || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) ||
 		len(req.Reason) > 4096 || !utf8.ValidString(req.Reason) || strings.ContainsRune(req.Reason, 0) || caller.ID == uuid.Nil() ||
@@ -193,7 +195,10 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 			if epoch == nil {
 				return ErrNotReady
 			}
-			if err = interruptControlledTurn(ctx, tx, req.EnvironmentID, req.SessionID, req.TurnID, *epoch); err != nil {
+			if err = interruptControlledTurn(ctx, auditPolicy, tx, req.EnvironmentID, req.SessionID, req.TurnID, *epoch); err != nil {
+				return err
+			}
+			if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsInterrupt, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: req.TurnID, Action: "turn.interrupted", TargetKind: "turn", TargetID: req.TurnID, Details: audit.LifecycleDetails{RequestID: result.ID}}); err != nil {
 				return err
 			}
 			if err = advanceControlAuthority(ctx, tx, req.EnvironmentID, []uuid.UUID{req.SessionID}); err != nil {
@@ -208,7 +213,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
  VALUES($1,$2,$3,'subtree',$4,$5,$6)`, req.EnvironmentID, result.HoldID, req.SessionID, req.Reason, caller.Kind, caller.ID); err != nil {
 				return err
 			}
-			if err = settleControlledTurns(ctx, tx, req.EnvironmentID, ids, false, req.InterruptQueued); err != nil {
+			if err = settleControlledTurns(ctx, auditPolicy, tx, caller, req.EnvironmentID, ids, false, req.InterruptQueued); err != nil {
 				return err
 			}
 			if _, err = tx.Exec(ctx, `UPDATE session_processes SET stop_sequence=stop_sequence+1,stop_deadline_at=clock_timestamp()+$3::bigint*interval '1 millisecond',control_acknowledged_at=NULL WHERE environment_id=$1 AND session_id=ANY($2) AND status='starting' AND fenced_at IS NULL AND stop_deadline_at IS NULL`, req.EnvironmentID, ids, processStopTimeout.Milliseconds()); err != nil {
@@ -250,7 +255,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				}
 			}
 		case "cancel":
-			if err = settleControlledTurns(ctx, tx, req.EnvironmentID, ids, true, false); err != nil {
+			if err = settleControlledTurns(ctx, auditPolicy, tx, caller, req.EnvironmentID, ids, true, false); err != nil {
 				return err
 			}
 			changed, err := tx.Query(ctx, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=ANY($2) AND status NOT IN ('closed','cancelled') RETURNING id`, req.EnvironmentID, ids)
@@ -262,6 +267,9 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 				return err
 			}
 			for _, id := range cancelled {
+				if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsCancel, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: id, Action: "session.cancelled", Outcome: "cancelled", TargetKind: "session", TargetID: id, Details: audit.LifecycleDetails{RequestID: result.ID}}); err != nil {
+					return err
+				}
 				if err = event(ctx, tx, req.EnvironmentID, id, uuid.Nil(), "session.cancelled"); err != nil {
 					return err
 				}
@@ -285,7 +293,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 			if _, err = tx.Exec(ctx, `UPDATE sessions SET status='closing' WHERE environment_id=$1 AND id=$2 AND status='open'`, req.EnvironmentID, req.SessionID); err != nil {
 				return err
 			}
-			if err = drainClosingSessions(ctx, tx, req.EnvironmentID, ids); err != nil {
+			if err = drainClosingSessions(ctx, auditPolicy, tx, req.EnvironmentID, ids); err != nil {
 				return err
 			}
 		}
@@ -304,7 +312,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 					return err
 				}
 				if runnable {
-					if err = computer.NoteExecutionDemand(ctx, tx, req.EnvironmentID, id); err != nil {
+					if err = computer.NoteExecutionDemand(ctx, auditPolicy, tx, req.EnvironmentID, id); err != nil {
 						return err
 					}
 				}
@@ -314,6 +322,9 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO session_controls(environment_id,id,session_id,kind,caller_kind,caller_id,idempotency_key,request_digest,hold_id,turn_id)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, req.EnvironmentID, result.ID, req.SessionID, req.Kind, caller.Kind, caller.ID, req.IdempotencyKey, digest[:], nullableID(result.HoldID), nullableID(req.TurnID)); err != nil {
+			return err
+		}
+		if err = auditOperation(ctx, tx, auditPolicy, caller, controlPermission(req.Kind), audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: req.TurnID, Action: "session.control_requested", Outcome: "accepted", TargetKind: "session", TargetID: req.SessionID, Details: audit.SessionControlDetails{Kind: req.Kind, RequestID: result.ID, HoldID: result.HoldID}}); err != nil {
 			return err
 		}
 		data, err := json.Marshal(struct {
@@ -336,7 +347,7 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 
 // ReconcileSessionClosure advances an accepted close after Turn settlement.
 // It is a control-plane reconciler, not a new externally authorized operation.
-func ReconcileSessionClosure(ctx context.Context, pool db.TxBeginner, env, session uuid.UUID) error {
+func ReconcileSessionClosure(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, env, session uuid.UUID) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		// A blocked tree must not exclude other reconciliation candidates.
 		// Once acquired, a large tree may finish without a fixed time cutoff.
@@ -351,11 +362,11 @@ func ReconcileSessionClosure(ctx context.Context, pool db.TxBeginner, env, sessi
 		if err != nil {
 			return err
 		}
-		return drainClosingSessions(ctx, tx, env, ids)
+		return drainClosingSessions(ctx, auditPolicy, tx, env, ids)
 	})
 }
 
-func drainClosingSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) error {
+func drainClosingSessions(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) error {
 	// A parent seals its children only after its own accepted work drains.
 	// Iterate top down so each newly sealed child's work is checked in turn.
 	rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND id=ANY($2) ORDER BY (parent_session_id IS NOT NULL),id`, env, ids)
@@ -399,6 +410,9 @@ func drainClosingSessions(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []u
 			continue
 		}
 		if _, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=$2 AND status IN ('starting','ready') AND fenced_at IS NULL`, env, id); err != nil {
+			return err
+		}
+		if err = auditServiceFact(ctx, tx, auditPolicy, "session-lifecycle", audit.Event{EnvironmentID: env, SessionID: id, Action: "session.closed", TargetKind: "session", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
 			return err
 		}
 		if err = event(ctx, tx, env, id, uuid.Nil(), "session.closed"); err != nil {
@@ -462,7 +476,7 @@ func advanceControlAuthority(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids 
 
 // Turn-bound saves remain ordered Computer cuts owned by save reconciliation,
 // even after their Turn is interrupted. Never infer capture absence here.
-func settleControlledTurns(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, cancel, interruptQueued bool) error {
+func settleControlledTurns(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, caller Caller, env uuid.UUID, ids []uuid.UUID, cancel, interruptQueued bool) error {
 	status := "interrupted"
 	if cancel {
 		status = "cancelled"
@@ -496,10 +510,17 @@ func settleControlledTurns(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids []
 				return err
 			}
 		}
-		if err = cancelTurnAsks(ctx, tx, env, turn.session, turn.id); err != nil {
+		if err = cancelTurnAsks(ctx, auditPolicy, tx, env, turn.session, turn.id); err != nil {
 			return err
 		}
-		if err = rejectTurnMessages(ctx, tx, env, turn.session, turn.id, true, "turn_terminated"); err != nil {
+		if err = rejectTurnMessages(ctx, auditPolicy, tx, env, turn.session, turn.id, true, "turn_terminated"); err != nil {
+			return err
+		}
+		permission, outcome := auth.PermissionSessionsInterrupt, "succeeded"
+		if cancel {
+			permission, outcome = auth.PermissionSessionsCancel, "cancelled"
+		}
+		if err = auditOperation(ctx, tx, auditPolicy, caller, permission, audit.Event{EnvironmentID: env, SessionID: turn.session, TurnID: turn.id, Action: "turn." + status, Outcome: outcome, TargetKind: "turn", TargetID: turn.id, Details: audit.LifecycleDetails{}}); err != nil {
 			return err
 		}
 		if err = event(ctx, tx, env, turn.session, turn.id, "turn."+status); err != nil {
@@ -517,17 +538,17 @@ func requestProcessStop(ctx context.Context, tx pgx.Tx, env, session, turn uuid.
 	return err
 }
 
-func interruptControlledTurn(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID, epoch int64) error {
+func interruptControlledTurn(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session, turn uuid.UUID, epoch int64) error {
 	if _, err := tx.Exec(ctx, `UPDATE turns SET status='interrupted',terminal_at=clock_timestamp(),processing_closed_at=COALESCE(processing_closed_at,clock_timestamp()) WHERE environment_id=$1 AND session_id=$2 AND id=$3 AND status='running'`, env, session, turn); err != nil {
 		return err
 	}
 	if err := requestProcessStop(ctx, tx, env, session, turn, epoch); err != nil {
 		return err
 	}
-	if err := cancelTurnAsks(ctx, tx, env, session, turn); err != nil {
+	if err := cancelTurnAsks(ctx, auditPolicy, tx, env, session, turn); err != nil {
 		return err
 	}
-	if err := rejectTurnMessages(ctx, tx, env, session, turn, true, "turn_terminated"); err != nil {
+	if err := rejectTurnMessages(ctx, auditPolicy, tx, env, session, turn, true, "turn_terminated"); err != nil {
 		return err
 	}
 	return event(ctx, tx, env, session, turn, "turn.interrupted")

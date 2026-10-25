@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"testing"
 	"time"
@@ -22,11 +23,13 @@ import (
 
 func confirmComputerHostAbsent(ctx context.Context, f fixture, host uuid.UUID) error {
 	return db.RunTx(ctx, f.pool, func(tx pgx.Tx) error {
-		absence, err := workergroup.ConfirmHostProviderAbsent(ctx, tx, audit.System("test-fixture"), host)
+		absence, err := workergroup.ConfirmHostProviderAbsent(ctx, tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), host)
 		if err != nil {
 			return err
 		}
-		return dispatch.ObserveProviderAbsentHost(ctx, absence)
+		return dispatch.ObserveProviderAbsentHost(ctx, auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, absence)
 	})
 }
 
@@ -174,7 +177,9 @@ func TestComputerHostAbsencePreservesStoppedMember(t *testing.T) {
 			if graceful {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopping' WHERE session_id=$1`, f.session)
 			}
-			if err := session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+			if err := session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			if !graceful {
@@ -184,7 +189,7 @@ func TestComputerHostAbsencePreservesStoppedMember(t *testing.T) {
 				}
 				req := controlRequest(f, "resume", "release-stop-hold")
 				req.HoldID = hold
-				if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -275,7 +280,9 @@ func TestComputerHostAbsenceOrdersRootsAcrossWorkerGroups(t *testing.T) {
 }
 
 func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
-	if err := dispatch.ObserveProviderAbsentHost(t.Context(), workergroup.ConfirmedProviderAbsence{}); !errors.Is(err, dispatch.ErrInvalidInput) {
+	if err := dispatch.ObserveProviderAbsentHost(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, workergroup.ConfirmedProviderAbsence{}); !errors.Is(err, dispatch.ErrInvalidInput) {
 		t.Fatalf("missing confirmation: %v", err)
 	}
 	f := newFixture(t)
@@ -283,36 +290,40 @@ func TestComputerHostAbsenceRequiresTransactionBoundConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, audit.System("test-fixture"), f.worker)
+	absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.worker)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err = dispatch.ObserveProviderAbsentHost(t.Context(), absence); !errors.Is(err, pgx.ErrTxClosed) {
+	if err = dispatch.ObserveProviderAbsentHost(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, absence); !errors.Is(err, pgx.ErrTxClosed) {
 		t.Fatalf("confirmation escaped its transaction: %v", err)
 	}
 }
 
 func TestProviderAbsenceAuditIncludesAlreadyLostHostWithPhysicalAllocations(t *testing.T) {
 	f := newFixture(t)
-	if _, err := workergroup.MarkHostLost(t.Context(), f.pool, audit.System("operator"), f.group, "host", 1); err != nil {
+	if _, err := workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("operator"), f.group, "host", 1); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
 		if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-			absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, audit.CapacityAuthority(), f.worker)
+			absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.CapacityAuthority(), f.worker)
 			if err != nil {
 				return err
 			}
-			return dispatch.ObserveProviderAbsentHost(t.Context(), absence)
+			return dispatch.ObserveProviderAbsentHost(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, absence)
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_host.provider_absence_confirmed' AND actor_kind='capacity' AND actor_user_id IS NULL AND actor_credential_id IS NULL AND target_id=$1 AND org_id IS NULL`, f.worker).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_host.provider_absence_confirmed' AND actor_kind='service' AND credential_kind='capacity_token' AND actor_id IS NULL AND credential_id IS NULL AND target_id=$1 AND org_id IS NULL`, f.worker).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("physical confirmation count=%d err=%v", count, err)
 	}
 }

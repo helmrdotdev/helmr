@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -24,7 +25,7 @@ type RecoveryPosition struct {
 // persistently failing Command costs one attempt per pass instead of blocking
 // the Commands behind it. The returned position continues the pass; more is
 // false when the pass reached the end of the candidates.
-func RecoverBatch(ctx context.Context, database db.TxDB, after RecoveryPosition, limit int) (RecoveryPosition, bool, error) {
+func RecoverBatch(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, after RecoveryPosition, limit int) (RecoveryPosition, bool, error) {
 	if limit <= 0 {
 		return after, false, errors.New("command recovery batch limit must be positive")
 	}
@@ -52,7 +53,7 @@ func RecoverBatch(ctx context.Context, database db.TxDB, after RecoveryPosition,
 	var failures []error
 	for _, c := range candidates {
 		after = RecoveryPosition{UpdatedAt: c.updatedAt, ID: c.CommandID}
-		if err := Recover(ctx, database, c.RecoveryCandidate); err != nil && !errors.Is(err, ErrChanged) {
+		if err := Recover(ctx, auditPolicy, database, c.RecoveryCandidate); err != nil && !errors.Is(err, ErrChanged) {
 			failures = append(failures, err)
 		}
 		if ctx.Err() != nil {

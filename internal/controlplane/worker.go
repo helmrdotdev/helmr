@@ -45,7 +45,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		tokenHash = nil
 	}
-	enrolled, err := workergroup.EnrollHost(r.Context(), s.tx, s.hostAuth, workergroup.Enrollment{
+	enrolled, err := workergroup.EnrollHost(r.Context(), s.tx, s.auditPolicy, s.hostAuth, workergroup.Enrollment{
 		TokenHash: tokenHash, PoolName: request.PoolName, ResourceID: request.ResourceID,
 	})
 	if err != nil {
@@ -116,7 +116,7 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		s.writeWorkerHostError(w, "activate worker", fmt.Errorf("encode Worker CPU environment: %w", err))
 		return
 	}
-	if err := workergroup.ActivateHost(r.Context(), s.tx, worker, workergroup.Activation{
+	if err := workergroup.ActivateHost(r.Context(), s.tx, s.auditPolicy, worker, workergroup.Activation{
 		Template:             workerTemplate(capabilities),
 		CPUEnvironment:       cpuEnvironment,
 		CPUEnvironmentDigest: capabilities.CPUEnvironment.Digest,
@@ -142,7 +142,7 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 	for i, value := range request.Quarantined {
 		quarantined[i] = uuid.MustParse(value)
 	}
-	if err := dispatch.ObserveRecoveredHost(r.Context(), s.tx, worker, quarantined); err != nil {
+	if err := dispatch.ObserveRecoveredHost(r.Context(), s.auditPolicy, s.tx, worker, quarantined); err != nil {
 		s.writeAgentComputerError(w, err)
 		return
 	}

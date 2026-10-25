@@ -3,10 +3,15 @@ package config
 import (
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 )
 
 func LoadControlPlane() (ControlPlane, error) {
+	policy, err := auditpolicy.Parse(env("AUDIT_RETENTION_SECONDS", ""))
+	if err != nil {
+		return ControlPlane{}, err
+	}
 	bootstrapConfig, err := LoadBootstrap()
 	if err != nil {
 		return ControlPlane{}, err
@@ -20,6 +25,7 @@ func LoadControlPlane() (ControlPlane, error) {
 		return ControlPlane{}, err
 	}
 	cfg := ControlPlane{
+		AuditPolicy:                     policy,
 		SlackTransport:                  env("SLACK_TRANSPORT", "http"),
 		OutboundProxyURL:                envText("OUTBOUND_PROXY_URL"),
 		Addr:                            env("CONTROL_PLANE_ADDR", ":8080"),

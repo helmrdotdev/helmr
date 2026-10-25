@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -15,7 +16,7 @@ func TestManualRefreshRejectsChangedSecretExposure(t *testing.T) {
 	for _, transition := range []string{"unchanged", "rotated", "revoked"} {
 		t.Run(transition, func(t *testing.T) {
 			p, _ := newPreparationPublicationTest(t)
-			if _, err := computer.RecordImageBuildExposure(t.Context(), p.f.pool, *p.f.host(), p.ref); err != nil {
+			if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, *p.f.host(), p.ref); err != nil {
 				t.Fatal(err)
 			}
 			switch transition {

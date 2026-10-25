@@ -31,8 +31,8 @@ func (s *Server) workerAgentAsk(w http.ResponseWriter, r *http.Request, req work
 		writeJSON(w, http.StatusOK, agentOperationFailure(req.RequestID, "invalid_arguments", "invalid question identity"))
 		return
 	}
-	if err := session.RuntimeAsk(r.Context(), s.tx, host, e, turn, id, input.Question); err != nil {
-		s.writeAgentAdmissionError(w, req.RequestID, err)
+	if err := session.RuntimeAsk(r.Context(), s.auditPolicy, s.tx, host, e, turn, id, input.Question); err != nil {
+		s.writeAgentAdmissionError(w, r, req.RequestID, err)
 		return
 	}
 	value, _ := json.Marshal(map[string]string{"id": id.String()})
@@ -62,8 +62,8 @@ func (s *Server) workerAgentWithdrawAsk(w http.ResponseWriter, r *http.Request, 
 		writeJSON(w, http.StatusOK, agentOperationFailure(req.RequestID, "invalid_arguments", err.Error()))
 		return
 	}
-	if err := session.RuntimeWithdrawAsk(r.Context(), s.tx, host, e, turn, id); err != nil {
-		s.writeAgentAdmissionError(w, req.RequestID, err)
+	if err := session.RuntimeWithdrawAsk(r.Context(), s.auditPolicy, s.tx, host, e, turn, id); err != nil {
+		s.writeAgentAdmissionError(w, r, req.RequestID, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: req.RequestID, Value: json.RawMessage(`null`)})
@@ -80,7 +80,7 @@ func (s *Server) workerAgentWaitAsk(w http.ResponseWriter, r *http.Request, req 
 
 	// A pending observation releases the host's shared operation slot. The SDK
 	// polls the same durable ask; waiting here can starve withdrawal and drainage.
-	view, err := session.RuntimeObserveAsk(ctx, s.tx, host, e, turn, id)
+	view, err := session.RuntimeObserveAsk(ctx, s.auditPolicy, s.tx, host, e, turn, id)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return
@@ -89,7 +89,7 @@ func (s *Server) workerAgentWaitAsk(w http.ResponseWriter, r *http.Request, req 
 			writeError(w, unavailable(errors.New("ask observation is temporarily unavailable")))
 			return
 		}
-		s.writeAgentAdmissionError(w, req.RequestID, err)
+		s.writeAgentAdmissionError(w, r, req.RequestID, err)
 		return
 	}
 	if view.Status == "cancelled" {

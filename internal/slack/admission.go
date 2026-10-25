@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"time"
 	"uuid"
@@ -134,7 +135,7 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 }
 
 // Admission never holds a SQL transaction across channel or root verification.
-func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, client *WebClient, id uuid.UUID) error {
+func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, client *WebClient, id uuid.UUID) error {
 	var p *messageAdmission
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error { var err error; p, err = readMessageAdmission(ctx, tx, id); return err })
 	if err != nil || p == nil {
@@ -208,7 +209,7 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 		// A concurrent mention may have created the same front during remote checks.
 		p.thread, p.session, p.source = current.thread, current.session, current.source
 		if lifecycleAction(command) {
-			return admitLifecycleMessage(ctx, tx, id, p, command)
+			return admitLifecycleMessage(ctx, auditPolicy, tx, id, p, command)
 		}
 		if handled, err := applyThreadInput(ctx, tx, id, p, command); err != nil || handled {
 			return err
@@ -224,11 +225,11 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				if slackroute.IsDirectMessage(p.message.Channel) {
 					destination = nil
 				}
-				caller := session.Caller{Kind: "user", ID: p.user}
+				caller := session.Caller{CredentialKind: "slack", Kind: "user", ID: p.user}
 				if destination != nil {
 					caller.SlackConnectionID = p.route.Target.ConnectionID
 				}
-				plan, err = session.PlanStart(caller, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: destination, IdempotencyKey: "slack:" + id.String(), Input: input}, "create")
+				plan, err = session.PlanStart(auditPolicy, caller, session.StartRequest{EnvironmentID: p.route.Target.EnvironmentID, Agent: p.route.Target.AgentName, SlackChannelID: destination, IdempotencyKey: "slack:" + id.String(), Input: input}, "create")
 				if err == nil {
 					err = session.LockStartCaller(ctx, core, plan)
 				}
@@ -239,10 +240,10 @@ func admitMessage(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 				}
 				err = session.StartError(err)
 			} else {
-				if err = resumeNativeStops(ctx, core, id, p); err != nil {
+				if err = resumeNativeStops(ctx, auditPolicy, core, id, p); err != nil {
 					return err
 				}
-				receipt, err = session.RouteSlackInput(ctx, core, trust, session.Caller{Kind: "user", ID: p.user, SlackThreadID: p.thread}, session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
+				receipt, err = session.RouteSlackInput(ctx, auditPolicy, core, trust, session.Caller{CredentialKind: "slack", Kind: "user", ID: p.user, SlackThreadID: p.thread}, session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {
 				return err
@@ -340,7 +341,7 @@ func applyThreadInput(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *messageAd
 	if !unexpired {
 		return true, rejectMessage(ctx, tx, id, "gesture_expired")
 	}
-	if err := session.AuthorizeSessionOperation(ctx, tx, session.Caller{Kind: "user", ID: p.user, SlackThreadID: p.thread}, p.route.Target.EnvironmentID, p.session, auth.PermissionSessionsInterrupt); err != nil {
+	if err := session.AuthorizeSessionOperation(ctx, tx, session.Caller{CredentialKind: "slack", Kind: "user", ID: p.user, SlackThreadID: p.thread}, p.route.Target.EnvironmentID, p.session, auth.PermissionSessionsInterrupt); err != nil {
 		if errors.Is(err, session.ErrDenied) {
 			return true, rejectMessage(ctx, tx, id, "permission_denied")
 		}

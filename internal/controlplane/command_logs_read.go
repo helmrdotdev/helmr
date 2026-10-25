@@ -38,17 +38,17 @@ type commandLogCursor struct {
 func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 	id, err := ids.Parse(chi.URLParam(r, "commandID"))
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_command_reference", message: "command ID is invalid"}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_command_reference", message: "command ID is invalid"}))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	if !canAccessComputerCommandOutput(principal, scope) {
-		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+		s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
 	// The scope read is neutral to result retention; log history keeps its
@@ -58,7 +58,7 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 		EnvironmentID: pgvalue.MustUUIDValue(environmentID), CommandID: id,
 	})
 	if errors.Is(err, command.ErrNotFound) {
-		writeError(w, notFound(codedError{code: "command_not_found", message: "command was not found"}))
+		s.writeOperationError(w, r, notFound(codedError{code: "command_not_found", message: "command was not found"}))
 		return
 	}
 	if err != nil {
@@ -67,12 +67,12 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		writeError(w, badRequest(errors.New("query string is malformed")))
+		s.writeOperationError(w, r, badRequest(errors.New("query string is malformed")))
 		return
 	}
 	for key, values := range query {
 		if (key != "cursor" && key != "limit") || len(values) != 1 {
-			writeError(w, badRequest(codedError{code: "invalid_command_log_query", message: "invalid command log query"}))
+			s.writeOperationError(w, r, badRequest(codedError{code: "invalid_command_log_query", message: "invalid command log query"}))
 			return
 		}
 	}
@@ -80,7 +80,7 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 	if raw, ok := query["limit"]; ok {
 		n, e := strconv.Atoi(raw[0])
 		if e != nil || n < 1 || n > 100 {
-			writeError(w, badRequest(codedError{code: "invalid_command_log_query", message: "limit must be in [1,100]"}))
+			s.writeOperationError(w, r, badRequest(codedError{code: "invalid_command_log_query", message: "limit must be in [1,100]"}))
 			return
 		}
 		limit = int32(n)
@@ -88,10 +88,14 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 	page, err := s.readCommandLogs(r.Context(), pgvalue.UUID(principal.OrgID), scoped, query.Get("cursor"), limit)
 	if err != nil {
 		if errors.Is(err, errTelemetryInvalidCursor) {
-			writeError(w, badRequest(err))
+			s.writeOperationError(w, r, badRequest(err))
 		} else {
 			writeTelemetryError(w, err)
 		}
+		return
+	}
+	if err = command.AdmitOutputRead(r.Context(), s.auditPolicy, s.tx, principal, command.Ref{OrgID: principal.OrgID, ProjectID: pgvalue.MustUUIDValue(projectID), EnvironmentID: pgvalue.MustUUIDValue(environmentID), CommandID: id}); err != nil {
+		s.writeCommandError(w, r, err, commandGetOperation)
 		return
 	}
 	writeJSON(w, http.StatusOK, page)

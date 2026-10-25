@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"math/big"
 	"net/http"
@@ -73,12 +74,13 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				raw, _ := json.Marshal(value)
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(bytes.NewReader(raw))}, nil
 			})
-			store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
+			store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP, auditpolicy.Policy{RetentionSeconds: 3600})
 			if err != nil {
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
-			if err = store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, registration, slack.AppCredentials{ClientID: "client", ClientSecret: "private-secret", SigningSecret: "secret"}); err != nil {
+			f.SetPermissions(t, "agents.use", "sessions.read", "sessions.send", "agent_connections.update_credentials")
+			if err = store.StoreAppCredentials(t.Context(), audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: f.User, OrgID: org}), org, f.User, registration, slack.AppCredentials{ClientID: "client", ClientSecret: "private-secret", SigningSecret: "secret"}); err != nil {
 				t.Fatal(err)
 			}
 			f.SetPermissions(t, "agents.use", "deployments.publish", "deployments.promote", "sessions.read", "sessions.send", "computers.execute", "secrets.create", "api_keys.create")

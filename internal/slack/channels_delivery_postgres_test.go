@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"strings"
@@ -62,7 +63,7 @@ func TestChannelReadFailureDoesNotFailUnsentOpening(t *testing.T) {
 				}
 				return &http.Response{StatusCode: status, Header: headers, Body: io.NopCloser(strings.NewReader(body))}, nil
 			}))
-			if sent, err := ReconcilePost(t.Context(), f.Pool, client, opening); err != nil || sent || mutations != 0 {
+			if sent, err := ReconcilePost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, opening); err != nil || sent || mutations != 0 {
 				t.Fatal(sent, mutations, err)
 			}
 			retryable := kind != "not-member" && kind != "auth-revoked"
@@ -84,7 +85,7 @@ func TestChannelReadFailureDoesNotFailUnsentOpening(t *testing.T) {
 			failedRead = false
 			f.due(t)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET next_attempt_at=clock_timestamp() WHERE id=$1`, opening)
-			if sent, err := ReconcilePost(t.Context(), f.Pool, client, opening); err != nil || !sent || mutations != 1 {
+			if sent, err := ReconcilePost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, opening); err != nil || !sent || mutations != 1 {
 				t.Fatal("read retry lost accepted opening", sent, mutations, err)
 			}
 			var bound bool
@@ -119,7 +120,7 @@ func TestHumanMentionRejectsConfirmedChannelDenialWithoutExpiring(t *testing.T) 
 				}
 				return &http.Response{StatusCode: status, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
 			}))
-			err := admitMessage(t.Context(), f.Pool, nil, client, id)
+			err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, id)
 			transient := kind == "transport" || kind == "rate_limited"
 			if transient {
 				if !errors.Is(err, ErrChannelVerification) {

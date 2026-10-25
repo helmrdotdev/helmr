@@ -68,7 +68,7 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 		strings.ToLower(principal.OrgID.String()), pgvalue.UUID(principal.OrgID), raw, manifest,
 	)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)

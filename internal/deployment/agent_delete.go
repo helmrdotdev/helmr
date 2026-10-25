@@ -3,6 +3,7 @@ package deployment
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strconv"
 	"uuid"
 
@@ -47,7 +48,7 @@ func (e DeletedAgentsError) Unwrap() error { return ErrAgentDeleted }
 // ChangeAgent joins access, Slack and scheduling owners in one durable operation.
 // Discovery takes earlier-order locks first, then the Environment and Agent fences.
 // A new earlier-order dependency rolls back rather than inverting lock order.
-func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, scope auth.Scope, key, revision string, restore, dryRun bool) (AgentChange, error) {
+func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, p auth.Principal, scope auth.Scope, key, revision string, restore, dryRun bool) (AgentChange, error) {
 	permission := auth.PermissionAgentsDelete
 	if restore {
 		permission = auth.PermissionAgentsRestore
@@ -61,7 +62,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, 
 		return result, err
 	}
 	env := uuid.MustParse(scope.EnvironmentID)
-	m := org.ManagingMember{Actor: audit.FromPrincipal(p), OrgID: p.OrgID, UserID: p.UserID, MemberID: p.MemberID}
+	m := org.ManagingMember{AuditPolicy: policy, Actor: audit.FromPrincipal(p), OrgID: p.OrgID, UserID: p.UserID, MemberID: p.MemberID}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		current, err := currentPrincipal(ctx, tx, p, scope)
 		if err != nil {
@@ -115,8 +116,9 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, 
 		if err != nil {
 			return err
 		}
-		if err = authorize(current, scope, permission); err != nil {
-			return err
+		m.Actor, err = audit.Authorized(current, permission, scope)
+		if err != nil {
+			return ErrPermissionRequired
 		}
 		if !dryRun && revision != strconv.FormatInt(result.Revision, 10) {
 			return org.ErrStaleRevision
@@ -164,7 +166,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, 
 		action := "agent.restored"
 		if !restore {
 			if disconnection != nil {
-				if err = disconnection.Apply(ctx, tx, m.Actor); err != nil {
+				if err = disconnection.Apply(ctx, tx, policy, m.Actor); err != nil {
 					return err
 				}
 			}
@@ -182,7 +184,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, 
 		}
 		result.Changed = true
 		e := result.Effects
-		return audit.Append(ctx, tx, audit.Event{Actor: m.Actor, OrgID: p.OrgID, EnvironmentID: env, Action: action, TargetKind: "agent", TargetID: id, Details: audit.AgentChangeDetails{Revision: result.Revision, EdgesRemoved: e.SelectedAgentEdgesRemoved, AssignmentsRemoved: e.IneffectiveAssignmentsRemoved, MixedPreserved: e.MixedAssignmentsPreserved, ConnectionID: e.SlackConnectionDisconnected, ActivationsSealed: e.TriggerActivationsSealed}})
+		return audit.Append(ctx, tx, policy, audit.Event{Actor: m.Actor, OrgID: p.OrgID, EnvironmentID: env, Action: action, TargetKind: "agent", TargetID: id, Details: audit.AgentChangeDetails{Revision: result.Revision, EdgesRemoved: e.SelectedAgentEdgesRemoved, AssignmentsRemoved: e.IneffectiveAssignmentsRemoved, MixedPreserved: e.MixedAssignmentsPreserved, ConnectionID: e.SlackConnectionDisconnected, ActivationsSealed: e.TriggerActivationsSealed}})
 	})
 	if errors.Is(err, access.ErrDenied) || slack.IsInstallationDenied(err) {
 		err = ErrPermissionRequired

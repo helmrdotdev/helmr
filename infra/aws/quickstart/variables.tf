@@ -831,3 +831,43 @@ variable "slack_transport" {
     error_message = "slack_transport must be disabled, http or socket."
   }
 }
+
+variable "audit_retention_seconds" {
+  description = "Explicit positive security audit retention policy in seconds."
+  type        = number
+  validation {
+    condition     = var.audit_retention_seconds > 0 && floor(var.audit_retention_seconds) == var.audit_retention_seconds
+    error_message = "audit_retention_seconds must be a positive integer."
+  }
+}
+
+variable "audit_purge_interval_minutes" {
+  description = "Interval for bounded audit purge; size with retention volume and replica count."
+  type        = number
+  default     = 15
+  validation {
+    condition     = var.audit_purge_interval_minutes >= 2 && var.audit_purge_interval_minutes <= 720 && floor(var.audit_purge_interval_minutes) == var.audit_purge_interval_minutes
+    error_message = "audit_purge_interval_minutes must be an integer between 2 and 720."
+  }
+}
+variable "audit_maintenance_timeout_seconds" {
+  type    = number
+  default = 300
+  validation {
+    condition     = var.audit_maintenance_timeout_seconds >= 1 && var.audit_maintenance_timeout_seconds <= 3600 && floor(var.audit_maintenance_timeout_seconds) == var.audit_maintenance_timeout_seconds
+    error_message = "audit_maintenance_timeout_seconds must be an integer between 1 and 3600."
+  }
+}
+variable "audit_purge_max_batches" {
+  type    = number
+  default = 50
+  validation {
+    condition     = var.audit_purge_max_batches >= 1 && var.audit_purge_max_batches <= 1000 && floor(var.audit_purge_max_batches) == var.audit_purge_max_batches
+    error_message = "audit_purge_max_batches must be an integer between 1 and 1000."
+  }
+}
+variable "audit_maintenance_alarm_actions" {
+  description = "Existing CloudWatch alarm action ARNs for missing audit purge success."
+  type        = list(string)
+  default     = []
+}

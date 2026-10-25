@@ -4,7 +4,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { errorDetails, errorMessage, loadError } from "../../lib/error";
 import { listMembers } from "../../lib/members";
 import {
-  assignRole, grantCoversAgent, listAccessTargets, listGrants, listGroups, listRoles, memberHref, permissionName, permissionScope, removeGrant,
+  assignRole, grantCoversAgent, listAccessTargets, listGrants, listGroups, listRoles, memberHref, permissionName, permissionHasScope, removeGrant,
   type RoleGrant,
 } from "../../lib/permissions";
 import { useScopeIDs } from "../../lib/scope";
@@ -91,7 +91,7 @@ export function AgentAccess(props: { agent: string }) {
       const member = active.find(m => m.membership_id === memberID);
       if (!member) return;
       const person = byID.get(memberID) ?? { id: memberID, name: member.display_name || member.email || memberID, email: member.email ?? "", permissions: new Set<string>(), sources: new Map() };
-      grant.permissions.filter(p => permissionScope(p, catalog()) === "agent").forEach(p => person.permissions.add(p));
+      grant.permissions.filter(p => permissionHasScope(p, "agent", catalog())).forEach(p => person.permissions.add(p));
       person.sources.set(`${source.kind}:${source.label}`, source);
       byID.set(memberID, person);
     };

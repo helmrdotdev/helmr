@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -177,7 +178,7 @@ func AcknowledgeSessionDelivery(ctx context.Context, pool db.TxBeginner, host wo
 // ObserveSessionStopped consumes the trusted guest's physical-close event. It
 // cannot be substituted with a shutdown command acknowledgement. A newer control
 // generation does not resurrect an already stopped process generation.
-func ObserveSessionStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64) error {
+func ObserveSessionStopped(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockRuntimeHost(ctx, tx, Caller{Kind: "session", ID: e.SessionID, Execution: e, Host: &host}); err != nil {
 			return err
@@ -210,15 +211,15 @@ func ObserveSessionStopped(ctx context.Context, pool db.TxBeginner, host workerg
 		if err != nil {
 			return err
 		}
-		revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, tx, e)
+		revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, auditPolicy, tx, e)
 		if err != nil {
 			return err
 		}
-		if err = interruptRunningSessionTurn(ctx, tx, e); err != nil {
+		if err = interruptRunningSessionTurn(ctx, auditPolicy, tx, auditWorkerActor(host), e); err != nil {
 			return err
 		}
 		if kind != "shutdown" && !revocationRecorded {
-			if err = recordSessionFailure(ctx, tx, e, "Session process stopped unexpectedly"); err != nil {
+			if err = recordSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host), e, "Session process stopped unexpectedly"); err != nil {
 				return err
 			}
 		}

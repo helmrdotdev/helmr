@@ -111,7 +111,7 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, inp
 		if _, err := q.LockOrganizationForProjectDefaults(ctx, pgvalue.UUID(orgID)); err != nil {
 			return fmt.Errorf("lock organization: %w", err)
 		}
-		if err := lockAccessMembers(ctx, tx, m, auth.PermissionProjectsCreate); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionProjectsCreate); err != nil {
 			return err
 		}
 		regionID, err := defaultRegionID(ctx, q, input.DefaultRegionID)
@@ -183,7 +183,7 @@ func UpdateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, pro
 	}
 	var project db.Project
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, auth.PermissionProjectsUpdate); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionProjectsUpdate); err != nil {
 			return err
 		}
 		q := db.New(tx)
@@ -218,7 +218,7 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember,
 	}
 	var environment db.Environment
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, auth.PermissionEnvironmentsCreate); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionEnvironmentsCreate); err != nil {
 			return err
 		}
 		q := db.New(tx)
@@ -270,7 +270,7 @@ func UpdateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember,
 	}
 	var environment db.Environment
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, auth.PermissionEnvironmentsUpdate); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionEnvironmentsUpdate); err != nil {
 			return err
 		}
 		q := db.New(tx)

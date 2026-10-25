@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"io"
 	"strings"
@@ -28,10 +29,11 @@ import (
 const envelopeDomain = "helmr.secret-envelope.v0"
 
 type Store struct {
-	db         db.Querier
-	tx         db.TxBeginner
-	encryption cipher.AEAD
-	rand       io.Reader
+	auditPolicy auditpolicy.Policy
+	db          db.Querier
+	tx          db.TxBeginner
+	encryption  cipher.AEAD
+	rand        io.Reader
 }
 
 type UnavailableError struct {
@@ -51,7 +53,10 @@ func IsUnavailable(err error) bool {
 	return errors.As(err, &unavailable)
 }
 
-func New(database db.Querier, transactions db.TxBeginner, encryptionKey []byte) (*Store, error) {
+func New(database db.Querier, transactions db.TxBeginner, encryptionKey []byte, policy auditpolicy.Policy) (*Store, error) {
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
 	if database == nil {
 		return nil, errors.New("secret database is required")
 	}
@@ -67,10 +72,11 @@ func New(database db.Querier, transactions db.TxBeginner, encryptionKey []byte) 
 		return nil, fmt.Errorf("configure secret cipher: %w", err)
 	}
 	return &Store{
-		db:         database,
-		tx:         transactions,
-		encryption: encryption,
-		rand:       rand.Reader,
+		auditPolicy: policy,
+		db:          database,
+		tx:          transactions,
+		encryption:  encryption,
+		rand:        rand.Reader,
 	}, nil
 }
 
@@ -142,7 +148,7 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, na
 				return err
 			}
 		}
-		if err := authorizeMutation(ctx, tx, actor, env, auth.PermissionSecretsCreate); err != nil {
+		if err := authorizeMutation(ctx, tx, &actor, env, auth.PermissionSecretsCreate); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -162,7 +168,7 @@ func (s *Store) Create(ctx context.Context, actor audit.Actor, env uuid.UUID, na
 				return idempotency.Completion{}, err
 			}
 
-			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.created", TargetKind: "secret", TargetID: pgvalue.MustUUIDValue(record.ID)}); err != nil {
+			if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.created", TargetKind: "secret", TargetID: pgvalue.MustUUIDValue(record.ID)}); err != nil {
 				return idempotency.Completion{}, err
 			}
 			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
@@ -187,7 +193,7 @@ func (s *Store) Rotate(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 		if err != nil {
 			return err
 		}
-		if err := authorizeMutation(ctx, tx, actor, env, auth.PermissionSecretsRotate); err != nil {
+		if err := authorizeMutation(ctx, tx, &actor, env, auth.PermissionSecretsRotate); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -220,7 +226,7 @@ func (s *Store) Rotate(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
-			if err := audit.Append(ctx, tx, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.rotated", TargetKind: "secret", TargetID: id}); err != nil {
+			if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.rotated", TargetKind: "secret", TargetID: id}); err != nil {
 				return idempotency.Completion{}, err
 			}
 			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: updated.ID})
@@ -248,7 +254,7 @@ func (s *Store) Revoke(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 				return err
 			}
 		}
-		if err := authorizeMutation(ctx, tx, actor, env, auth.PermissionSecretsRevoke); err != nil {
+		if err := authorizeMutation(ctx, tx, &actor, env, auth.PermissionSecretsRevoke); err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -261,7 +267,7 @@ func (s *Store) Revoke(ctx context.Context, actor audit.Actor, env, id uuid.UUID
 				if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedCurrentVersionID: record.CurrentVersionID}); err != nil {
 					return idempotency.Completion{}, err
 				}
-				if err := audit.Append(ctx, tx, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.revoked", TargetKind: "secret", TargetID: id}); err != nil {
+				if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Actor: actor, EnvironmentID: env, Action: "secret.revoked", TargetKind: "secret", TargetID: id}); err != nil {
 					return idempotency.Completion{}, err
 				}
 			}
@@ -349,16 +355,32 @@ func secretFromCreate(row db.CreateSecretRow) db.Secret {
 	return db.Secret(row)
 }
 
-func authorizeMutation(ctx context.Context, tx pgx.Tx, actor audit.Actor, env uuid.UUID, permission auth.Permission) error {
-	switch actor.Kind {
-	case "system":
-		if actor.Source != "" {
-			return nil
-		}
-	case "login":
-		return access.Check(ctx, tx, "user", actor.UserID, env, uuid.Nil(), permission)
-	case "api_key":
-		return access.Check(ctx, tx, "api_key", actor.CredentialID, env, uuid.Nil(), permission)
+func authorizeMutation(ctx context.Context, tx pgx.Tx, actor *audit.Actor, env uuid.UUID, permission auth.Permission) error {
+	if actor.Kind == "service" && actor.Source != "" {
+		return nil
 	}
-	return access.ErrDenied
+	kind := ""
+	switch actor.Kind {
+	case "human":
+		kind = "user"
+	case "api_key":
+		kind = "api_key"
+	default:
+		return access.ErrDenied
+	}
+	current, err := access.Principal(ctx, tx, kind, actor.ID, env)
+	if err != nil {
+		return err
+	}
+	if actor.Kind == "api_key" && current.CredentialVersion != actor.CredentialVersion {
+		return access.ErrDenied
+	}
+	current.SessionID = actor.CredentialID
+	scope := auth.Scope{OrgID: current.OrgID, ProjectID: current.ProjectID, EnvironmentID: current.EnvironmentID}
+	verified, err := audit.Authorized(current, permission, scope)
+	if err != nil {
+		return access.ErrDenied
+	}
+	*actor = verified
+	return nil
 }

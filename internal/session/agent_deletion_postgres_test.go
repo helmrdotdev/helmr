@@ -4,6 +4,7 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/agent"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -24,19 +25,19 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
  INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,status) VALUES($1,$4,$2,$5,$6,$6,$6,1,$7,'closed');`, pgx.QueryExecModeSimpleProtocol, f.env, target, f.agent, child, f.deployment, f.session, f.user)
 	turn := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET computer_id=$3 WHERE environment_id=$1 AND id=$2; INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,request_digest,terminal_at,processing_closed_at) VALUES($1,$4,$2,$3,1,'cancelled','session',$5,'spawn',$2,decode(repeat('00',32),'hex'),clock_timestamp(),clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, f.env, child, f.computer, turn, f.session)
-	if _, err := session.RuntimeObserveTurn(t.Context(), f.pool, caller, child, turn); err != nil {
+	if _, err := session.RuntimeObserveTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, child, turn); err != nil {
 		t.Fatalf("runtime historical outcome: %v", err)
 	}
-	if _, err := session.GetSession(t.Context(), f.pool, f.caller(), f.env, child); err != nil {
+	if _, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, child); err != nil {
 		t.Fatalf("human historical read: %v", err)
 	}
 	req := f.startRequest("deleted-child")
 	req.Agent = "child-agent"
 	req.ComputerID = f.computer
-	if _, err := session.AdmitSession(t.Context(), f.pool, nil, caller, req, "spawn"); !errors.Is(err, session.ErrAgentDeleted) {
+	if _, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, "spawn"); !errors.Is(err, session.ErrAgentDeleted) {
 		t.Fatalf("deleted pinned child admitted: %v", err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, caller, session.SessionControlRequest{EnvironmentID: f.env, SessionID: child, Kind: "cancel", IdempotencyKey: "stop-deleted-child"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionControlRequest{EnvironmentID: f.env, SessionID: child, Kind: "cancel", IdempotencyKey: "stop-deleted-child"}); err != nil {
 		t.Fatalf("runtime stop of settled deleted child: %v", err)
 	}
 	otherUser := uuid.NewV7()
@@ -47,29 +48,29 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'unrelated')`, otherUser)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, uuid.NewV7(), orgID, otherUser)
 	dbtest.GrantMember(t, f.pool, orgID, otherUser, &f.env, "agents.use")
-	if _, err := session.Enqueue(t.Context(), f.pool, nil, session.Caller{Kind: "user", ID: otherUser}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: child, IdempotencyKey: "unrelated", Input: []byte(`[{"type":"text","text":"unrelated"}]`)}); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "user", ID: otherUser}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: child, IdempotencyKey: "unrelated", Input: []byte(`[{"type":"text","text":"unrelated"}]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("unauthorized caller learned deletion state: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, otherUser)
-	if _, err := session.Start(t.Context(), f.pool, nil, session.Caller{Kind: "user", ID: otherUser}, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "user", ID: otherUser}, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("unauthorized start learned deletion state: %v", err)
 	}
-	held, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
+	held, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	resume := controlRequest(f, "resume", "resume")
 	resume.HoldID = held.HoldID
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 		t.Fatalf("deleted settled child blocks parent resume: %v", err)
 	}
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatalf("parent cancellation: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agents SET deleted_at=NULL,revision=revision+1 WHERE environment_id=$1 AND id=$2`, f.env, target)
 	// Runtime execution identity changed with the parent controls; use an external
 	// root admission to verify the restored target becomes available again.
-	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), req); err != nil {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); err != nil {
 		t.Fatalf("restored Agent unavailable: %v", err)
 	}
 
@@ -133,19 +134,19 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 			admitted := make(chan error, 1)
 			go func() {
 				<-start
-				_, err := deployment.ChangeAgent(t.Context(), f.pool, principal, scope, "child-agent", "1", false, false)
+				_, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "child-agent", "1", false, false)
 				deleted <- err
 			}()
 			go func() {
 				<-start
 				if kind == "schedule" {
-					admitted <- agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, activation)
+					admitted <- agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, activation)
 					return
 				}
 				req := f.startRequest("racing-child")
 				req.Agent = "child-agent"
 				req.ComputerID = f.computer
-				_, err := session.AdmitSession(t.Context(), f.pool, nil, caller, req, "spawn")
+				_, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, "spawn")
 				admitted <- err
 			}()
 			close(start)
@@ -165,10 +166,10 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 				t.Fatalf("race left deleted=%v sessions=%d errors=%v/%v", isDeleted, sessions, deletionErr, admissionErr)
 			}
 			if isDeleted && kind == "schedule" {
-				if _, err := deployment.ChangeAgent(t.Context(), f.pool, principal, scope, "child-agent", "2", true, false); err != nil {
+				if _, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "child-agent", "2", true, false); err != nil {
 					t.Fatal(err)
 				}
-				if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, activation); err != nil {
+				if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, activation); err != nil {
 					t.Fatal(err)
 				}
 				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE environment_id=$1 AND agent_id=$2`, f.env, target).Scan(&sessions); err != nil || sessions != 0 {

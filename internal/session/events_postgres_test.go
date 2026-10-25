@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -22,49 +23,49 @@ func TestSessionEventPagesAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 1}
-	page, err := session.ListEvents(t.Context(), f.pool, f.caller(), req)
+	page, err := session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil || len(page.Records) != 1 || !page.HasMore || page.Records[0].Kind != "turn.queued" {
 		t.Fatalf("first page %+v: %v", page, err)
 	}
 	req.After = page.NextAfter
 	req.Limit = 1000
-	page, err = session.ListEvents(t.Context(), f.pool, f.caller(), req)
+	page, err = session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil || len(page.Records) != 2 || page.HasMore || page.NextAfter != seq || string(page.Records[1].Data) != `[{"text":"live\u0000text","type":"text"}]` {
 		t.Fatalf("continuation %+v: %v", page, err)
 	}
 	req.After = seq + 1
-	if _, err := session.ListEvents(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrInvalidCursor) {
+	if _, err := session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrInvalidCursor) {
 		t.Fatalf("future cursor: %v", err)
 	}
 	req.After = seq
-	page, err = session.ListEvents(t.Context(), f.pool, f.caller(), req)
+	page, err = session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil || len(page.Records) != 0 || page.NextAfter != seq || page.HasMore {
 		t.Fatalf("empty %+v: %v", page, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_events SET data=NULL,payload_expired_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND seq<=$3`, f.env, f.session, seq-1)
 	req.After = 0
-	_, err = session.ListEvents(t.Context(), f.pool, f.caller(), req)
+	_, err = session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	var expired *session.CursorExpired
 	if !errors.As(err, &expired) || expired.RetainedAfter != seq-1 {
 		t.Fatalf("expired %+v: %v", expired, err)
 	}
 	req.After = seq - 1
-	page, err = session.ListEvents(t.Context(), f.pool, f.caller(), req)
+	page, err = session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil || len(page.Records) != 1 || page.RetainedAfter != seq-1 {
 		t.Fatalf("retained %+v: %v", page, err)
 	}
 	req.SessionID = uuid.NewV7()
-	if _, err = session.ListEvents(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("foreign Session: %v", err)
 	}
 	req.SessionID = f.session
 	req.EnvironmentID = uuid.NewV7()
-	if _, err = session.ListEvents(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("foreign environment: %v", err)
 	}
 	req.EnvironmentID = f.env
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.caller().ID)
-	if _, err = session.ListEvents(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked reader: %v", err)
 	}
 }

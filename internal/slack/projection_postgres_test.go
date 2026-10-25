@@ -3,6 +3,7 @@ package slack
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/url"
 	"strings"
 	"testing"
@@ -15,7 +16,7 @@ import (
 
 func (f statusFixture) outputWriter(t *testing.T) func(string) int64 {
 	t.Helper()
-	receipt, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "projection", Input: json.RawMessage(`[]`)})
+	receipt, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "projection", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,7 @@ func TestSlackProjectionAuthorizationCutoffDoesNotReintroduceCumulativeBytes(t *
 			write("SUPPRESSED-DESIRED")
 			f.projectAll(t)
 			if path == "reconciliation" {
-				if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
+				if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -81,7 +82,7 @@ func TestSlackProjectionAuthorizationCutoffDoesNotReintroduceCumulativeBytes(t *
 				if ok, err := confirmMessage(t.Context(), f.Pool, f.installation, observedClaim(t, claim)); err != nil || !ok {
 					t.Fatal(ok, err)
 				}
-			} else if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+			} else if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 				t.Fatal(err)
 			}
 			var oldClosed bool
@@ -181,7 +182,7 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	f.projectAll(t)
 	output := f.firstPost(t)
 	unknown := f.postClaim(t, output)
-	if err := FinishPost(t.Context(), f.Pool, unknown, DeliveryResult{Disposition: Uncertain}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, unknown, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
 	var turn uuid.UUID
@@ -192,7 +193,9 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	ask := uuid.NewV7()
 	question := json.RawMessage(`{"prompt":[{"type":"text","text":"Choose a path"}],"type":"choice","options":[{"id":"a","label":"Display label","description":"Why this choice","value":"PRIVATE_MACHINE_VALUE"}]}`)
-	if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, ask, question); err != nil {
+	if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, host, execution, turn, ask, question); err != nil {
 		t.Fatal(err)
 	}
 	f.projectAll(t)
@@ -206,10 +209,10 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	}
 	f.due(t)
 	q := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, q, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.791"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, q, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.791"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: "answer", Answer: json.RawMessage(`{"selectedIds":["a"]}`)}); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: "answer", Answer: json.RawMessage(`{"selectedIds":["a"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	f.projectAll(t)

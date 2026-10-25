@@ -26,7 +26,7 @@ func (server *Server) workerAgentReady(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, struct{}{})
 			return
 		}
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
@@ -46,7 +46,7 @@ func (server *Server) workerAgentControl(w http.ResponseWriter, r *http.Request)
 	}
 	control, err := session.PrepareSessionDelivery(r.Context(), server.tx, host, e, request.AttachmentSequence)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	var stopTurn *string
@@ -78,7 +78,7 @@ func (server *Server) workerAgentControlReceipt(w http.ResponseWriter, r *http.R
 			}{true})
 			return
 		}
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
@@ -96,8 +96,8 @@ func (server *Server) workerAgentStopped(w http.ResponseWriter, r *http.Request)
 		writeError(w, badRequest(errors.New("invalid Session stop identity")))
 		return
 	}
-	if err := session.ObserveSessionStopped(r.Context(), server.tx, host, e, request.AttachmentSequence); err != nil {
-		server.writeAgentWorkerError(w, err)
+	if err := session.ObserveSessionStopped(r.Context(), server.auditPolicy, server.tx, host, e, request.AttachmentSequence); err != nil {
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
@@ -115,8 +115,8 @@ func (server *Server) workerAgentFailure(w http.ResponseWriter, r *http.Request)
 		writeError(w, badRequest(errors.New("invalid Session failure identity")))
 		return
 	}
-	if err := session.ObserveSessionFailure(r.Context(), server.tx, host, e, request.AttachmentSequence); err != nil {
-		server.writeAgentWorkerError(w, err)
+	if err := session.ObserveSessionFailure(r.Context(), server.auditPolicy, server.tx, host, e, request.AttachmentSequence); err != nil {
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})

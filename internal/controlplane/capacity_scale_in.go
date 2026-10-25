@@ -27,9 +27,9 @@ func (s *Server) capacityScaleIn(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("operation_key must be a canonical UUIDv7")))
 		return
 	}
-	result, created, err := workergroup.SelectScaleIn(r.Context(), s.tx, audit.CapacityAuthority(), group, pool, key)
+	result, created, err := workergroup.SelectScaleIn(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), group, pool, key)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	status := http.StatusOK
@@ -51,7 +51,7 @@ func (s *Server) capacityGetScaleIn(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := workergroup.GetScaleInOperation(r.Context(), s.tx, group, key)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -63,12 +63,12 @@ func (s *Server) capacityPendingScaleIn(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if _, err := workergroup.GetGroup(r.Context(), s.db, group); err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	result, err := workergroup.PendingScaleInOperation(r.Context(), s.tx, group)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {

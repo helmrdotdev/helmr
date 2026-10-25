@@ -18,10 +18,10 @@ func (s *Server) workerAgentStoragePressure(w http.ResponseWriter, r *http.Reque
 	}
 	identity, err := allocationIdentity(request.AllocationIdentity)
 	if err == nil {
-		err = session.ReportStoragePressure(r.Context(), s.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), request.Active)
+		err = session.ReportStoragePressure(r.Context(), s.auditPolicy, s.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity), request.Active)
 	}
 	if err != nil {
-		s.writeAgentSaveError(w, err)
+		s.writeAgentSaveError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})

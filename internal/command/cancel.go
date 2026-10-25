@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -30,7 +32,7 @@ type CancelReceipt struct {
 // In one transaction Cancel reads the Command in its scope, acquires the
 // Computer lock before the idempotency claim and Command update, so cancelling
 // the last unallocated demand releases its execution reservation atomically.
-func Cancel(ctx context.Context, txb db.TxBeginner, principal auth.Principal, ref Ref) (CancelReceipt, error) {
+func Cancel(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginner, principal auth.Principal, ref Ref) (CancelReceipt, error) {
 	var receipt CancelReceipt
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		scope := auth.Scope{OrgID: ref.OrgID, ProjectID: ref.ProjectID.String(), EnvironmentID: ref.EnvironmentID.String()}
@@ -41,7 +43,7 @@ func Cancel(ctx context.Context, txb db.TxBeginner, principal auth.Principal, re
 		if !current.HasPermission(auth.PermissionComputersCancelCommand, scope) {
 			return access.ErrDenied
 		}
-		receipt, err = cancel(ctx, tx, principal, ref)
+		receipt, err = cancel(ctx, auditPolicy, tx, principal, ref)
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -53,7 +55,7 @@ func Cancel(ctx context.Context, txb db.TxBeginner, principal auth.Principal, re
 	return receipt, nil
 }
 
-func cancel(ctx context.Context, tx pgx.Tx, principal auth.Principal, ref Ref) (CancelReceipt, error) {
+func cancel(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, principal auth.Principal, ref Ref) (CancelReceipt, error) {
 	q := db.New(tx)
 	c, err := q.GetCommand(ctx, ref.params())
 	if err != nil {
@@ -89,16 +91,29 @@ func cancel(ctx context.Context, tx pgx.Tx, principal auth.Principal, ref Ref) (
 			result = replayed
 			return idempotency.Completion{}, nil
 		}
-		if _, err := q.RequestCommandCancellation(ctx, db.RequestCommandCancellationParams{
+		changed, changeErr := q.RequestCommandCancellation(ctx, db.RequestCommandCancellationParams{
 			EnvironmentID: pgvalue.UUID(ref.EnvironmentID), CommandID: pgvalue.UUID(ref.CommandID),
-		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return idempotency.Completion{}, err
+		})
+		if changeErr != nil && !errors.Is(changeErr, pgx.ErrNoRows) {
+			return idempotency.Completion{}, changeErr
 		}
 		body, err := json.Marshal(want)
 		if err != nil {
 			return idempotency.Completion{}, err
 		}
 
+		actor, err := audit.Authorized(current, auth.PermissionComputersCancelCommand, scope)
+		if err != nil {
+			return idempotency.Completion{}, err
+		}
+		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: ref.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.cancel_requested", Outcome: "accepted", TargetKind: "command", TargetID: ref.CommandID, Details: audit.LifecycleDetails{RequestID: pgvalue.MustUUIDValue(acquired.Claim.ID)}}); err != nil {
+			return idempotency.Completion{}, err
+		}
+		if changeErr == nil && changed.Status == "cancelled" {
+			if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Actor: actor, EnvironmentID: ref.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "command.cancelled", Outcome: "cancelled", TargetKind: "command", TargetID: ref.CommandID, Details: audit.LifecycleDetails{RequestID: pgvalue.MustUUIDValue(acquired.Claim.ID)}}); err != nil {
+				return idempotency.Completion{}, err
+			}
+		}
 		result = want
 		return idempotency.Completion{Target: idempotency.Target{CommandID: ref.CommandID}, Receipt: body}, nil
 	})

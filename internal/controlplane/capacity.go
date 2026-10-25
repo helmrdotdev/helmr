@@ -109,7 +109,7 @@ func (s *Server) capacityResolveWorkerGroup(w http.ResponseWriter, r *http.Reque
 	}
 	group, err := workergroup.ResolveGroup(r.Context(), s.db, regionID, name)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, group)
@@ -132,7 +132,7 @@ func (s *Server) capacityResolveWorkerPool(w http.ResponseWriter, r *http.Reques
 	}
 	pool, err := workergroup.ResolvePool(r.Context(), s.db, workerGroupID, name)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, pool)
@@ -157,9 +157,9 @@ func (s *Server) capacitySelectWorkerGroupPrimaryPool(w http.ResponseWriter, r *
 		writeError(w, badRequest(fmt.Errorf("pool_id: %w", err)))
 		return
 	}
-	response, err := workergroup.SelectPrimary(r.Context(), s.tx, audit.CapacityAuthority(), workerGroupID, poolID, request.ExpectedGroupClaimVersion, request.MinimumReadyHosts)
+	response, err := workergroup.SelectPrimary(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), workerGroupID, poolID, request.ExpectedGroupClaimVersion, request.MinimumReadyHosts)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -190,7 +190,7 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	response, err := workergroup.ObserveCapacityPlan(r.Context(), s.tx, workerGroupID, request, time.Now())
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -204,7 +204,7 @@ func (s *Server) capacityListWorkerHosts(w http.ResponseWriter, r *http.Request)
 	}
 	response, err := workergroup.ListHosts(r.Context(), s.db, filter)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -218,7 +218,7 @@ func (s *Server) capacityGetWorkerHost(w http.ResponseWriter, r *http.Request) {
 	}
 	host, err := workergroup.GetHost(r.Context(), s.db, id)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, host)
@@ -235,9 +235,9 @@ func (s *Server) capacityDrainWorkerHost(w http.ResponseWriter, r *http.Request)
 		writeError(w, fmt.Errorf("invalid worker drain JSON: %w", err))
 		return
 	}
-	host, err := workergroup.DrainHost(r.Context(), s.tx, audit.CapacityAuthority(), id, request)
+	host, err := workergroup.DrainHost(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), id, request)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 
@@ -256,11 +256,11 @@ func (s *Server) capacityConfirmWorkerHostProviderAbsent(w http.ResponseWriter, 
 	}
 	var host workergroup.WorkerHost
 	err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
-		absence, err := workergroup.ConfirmHostProviderAbsent(r.Context(), tx, audit.CapacityAuthority(), id)
+		absence, err := workergroup.ConfirmHostProviderAbsent(r.Context(), tx, s.auditPolicy, audit.CapacityAuthority(), id)
 		if err != nil {
 			return err
 		}
-		if err := dispatch.ObserveProviderAbsentHost(r.Context(), absence); err != nil {
+		if err := dispatch.ObserveProviderAbsentHost(r.Context(), s.auditPolicy, absence); err != nil {
 			return err
 		}
 		host, err = workergroup.GetHost(r.Context(), db.New(tx), id)
@@ -271,7 +271,7 @@ func (s *Server) capacityConfirmWorkerHostProviderAbsent(w http.ResponseWriter, 
 		if (errors.Is(err, dispatch.ErrNotReady) || errors.Is(err, computer.ErrNotReady) || errors.Is(err, session.ErrNotReady)) || (errors.As(err, &lock) && lock.Code == "55P03") {
 			s.writeAgentComputerError(w, session.ErrNotReady)
 		} else {
-			s.writeWorkerGroupError(w, err)
+			s.writeWorkerGroupError(w, r, err)
 		}
 		return
 	}
@@ -388,14 +388,14 @@ func (s *Server) capacityCreateWorkerPool(w http.ResponseWriter, r *http.Request
 		writeError(w, fmt.Errorf("invalid worker pool request JSON: %w", err))
 		return
 	}
-	_, created, err := workergroup.CreatePool(r.Context(), s.tx, audit.CapacityAuthority(), groupID, request.Name, request.ExpectedGroupClaimVersion)
+	_, created, err := workergroup.CreatePool(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), groupID, request.Name, request.ExpectedGroupClaimVersion)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	pool, err := workergroup.ResolvePool(r.Context(), s.db, groupID, created.Name)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, pool)
@@ -418,14 +418,14 @@ func (s *Server) capacityDisableWorkerPool(w http.ResponseWriter, r *http.Reques
 		writeError(w, fmt.Errorf("invalid worker pool lifecycle JSON: %w", err))
 		return
 	}
-	_, disabled, err := workergroup.DisablePool(r.Context(), s.tx, audit.CapacityAuthority(), groupID, poolID, request.ExpectedPoolClaimVersion)
+	_, disabled, err := workergroup.DisablePool(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), groupID, poolID, request.ExpectedPoolClaimVersion)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	pool, err := workergroup.ResolvePool(r.Context(), s.db, groupID, disabled.Name)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, pool)

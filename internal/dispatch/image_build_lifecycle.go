@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"log/slog"
 	"time"
 	"uuid"
@@ -195,7 +196,7 @@ type ImageBuildLifecyclePosition struct {
 
 // RunImageBuildLifecycle owns due waiter settlement, attempt expiry and revoked
 // exposure reconciliation and periodic image refresh independently of guest connectivity.
-func RunImageBuildLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) error {
+func RunImageBuildLifecycle(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return errors.New("preparation lifecycle database and logger are required")
 	}
@@ -203,7 +204,7 @@ func RunImageBuildLifecycle(ctx context.Context, database db.TxDB, log *slog.Log
 	defer ticker.Stop()
 	var after ImageBuildLifecyclePosition
 	for {
-		next, more, err := ReconcileImageBuildLifecycle(ctx, database, after)
+		next, more, err := ReconcileImageBuildLifecycle(ctx, auditPolicy, database, after)
 		after = next
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -221,7 +222,7 @@ func RunImageBuildLifecycle(ctx context.Context, database db.TxDB, log *slog.Log
 		}
 	}
 }
-func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after ImageBuildLifecyclePosition) (ImageBuildLifecyclePosition, bool, error) {
+func ReconcileImageBuildLifecycle(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, after ImageBuildLifecyclePosition) (ImageBuildLifecyclePosition, bool, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	rows, err := database.Query(scanCtx, `WITH candidates AS (
@@ -284,7 +285,7 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
 		var err error
 		switch candidate.kind {
 		case "waiter":
-			err = session.ExpireImageWaiter(ctx, database, candidate.environment, candidate.id)
+			err = session.ExpireImageWaiter(ctx, auditPolicy, database, candidate.environment, candidate.id)
 		case "attempt":
 			err = ExpireImageBuild(ctx, database, candidate.environment, candidate.id)
 		case "seed":
@@ -294,7 +295,7 @@ func ReconcileImageBuildLifecycle(ctx context.Context, database db.TxDB, after I
 		case "image":
 			err = reconcileComputerImage(ctx, database, candidate.environment, candidate.id)
 		case "secret_revocation":
-			err = session.ReconcileComputerSecretRevocation(ctx, database, candidate.environment, candidate.id)
+			err = session.ReconcileComputerSecretRevocation(ctx, auditPolicy, database, candidate.environment, candidate.id)
 		case "revocation":
 			err = ReconcileImageBuildRevocation(ctx, database, candidate.environment, candidate.id)
 		case "refresh":

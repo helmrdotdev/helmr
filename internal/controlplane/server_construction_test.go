@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"io"
 	"log/slog"
@@ -34,7 +35,9 @@ type constructionTelemetry struct{ telemetry.CommandLogReader }
 func completeServerConfig(t *testing.T) ServerConfig {
 	t.Helper()
 	store := newTestUploadStore(t)
-	allocator, err := dispatch.NewAllocator(constructionDB{}, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(constructionDB{}, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +58,7 @@ func completeServerConfig(t *testing.T) ServerConfig {
 		TelemetryReader:                constructionTelemetry{},
 		DiagnosticBounds:               diagnostic.Bounds{ChunkBytes: 1024, SourceBytes: 4096, SourceRecords: 16, EnvironmentBytes: 16384, EnvironmentRecords: 64, QueueBytes: 65536, QueueRecords: 256},
 		AuthKey:                        testAuthRootKey(),
-		WorkerHostCredentialSigningKey: testWorkerHostCredentialSigningKey(),
+		WorkerHostCredentialSigningKey: testWorkerHostCredentialSigningKey(), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600},
 	}
 }
 

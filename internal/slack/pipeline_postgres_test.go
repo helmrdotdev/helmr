@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"log/slog"
 	"net/http"
@@ -54,9 +55,13 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 	changes := dbnotify.New()
 	done := make(chan error, 4)
 	go func() { done <- changes.Run(ctx, f.Pool.Config().ConnConfig, log) }()
-	go func() { done <- RunRequests(ctx, f.Pool, nil, config, client, log, changes) }()
+	go func() {
+		done <- RunRequests(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, config, client, log, changes)
+	}()
 	go func() { done <- RunProjection(ctx, f.Pool, config, log, changes) }()
-	go func() { done <- RunDelivery(ctx, f.Pool, client, log, changes) }()
+	go func() {
+		done <- RunDelivery(ctx, f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, log, changes)
+	}()
 	defer func() {
 		if t.Failed() {
 			var state string
@@ -103,7 +108,9 @@ func TestSlackWorkerPipelineAdmitsProjectsAnswersAndJoins(t *testing.T) {
 		t.Fatal(err)
 	}
 	ask := uuid.NewV7()
-	if err := session.RuntimeAsk(ctx, f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"type":"text"}`)); err != nil {
+	if err := session.RuntimeAsk(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, host, execution, turn, ask, json.RawMessage(`{"prompt":[{"type":"text","text":"Continue?"}],"type":"text"}`)); err != nil {
 		t.Fatal(err)
 	}
 	wait("question delivered", `SELECT EXISTS(SELECT 1 FROM slack_posts WHERE ask_id=$1 AND status='posted')`, ask)

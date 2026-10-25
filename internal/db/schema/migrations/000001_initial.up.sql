@@ -199,6 +199,7 @@ CREATE TABLE api_keys (
     created_by_member_id uuid,
     name text NOT NULL CHECK (btrim(name) <> ''),
     key_prefix text NOT NULL CHECK (btrim(key_prefix) <> ''),
+    credential_version bigint NOT NULL DEFAULT 1 CHECK (credential_version > 0),
     token_hash bytea NOT NULL UNIQUE,
     created_at timestamptz NOT NULL DEFAULT now(),
     last_used_at timestamptz,
@@ -2319,34 +2320,72 @@ ALTER TABLE disk_encryption_keys
 -- Historical facts deliberately do not reference mutable or prunable authority rows.
 CREATE TABLE audit_events (
     id uuid PRIMARY KEY,
-    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    outcome text NOT NULL DEFAULT 'succeeded' CHECK (outcome = 'succeeded'),
-    actor_kind text NOT NULL CHECK (actor_kind IN ('login','api_key','verified_login','capacity','system')),
-    actor_user_id uuid,
-    actor_credential_id uuid,
-    actor_source text NOT NULL DEFAULT '',
     org_id uuid,
     project_id uuid,
     environment_id uuid,
-    action text NOT NULL CHECK (action <> ''),
-    target_kind text NOT NULL CHECK (target_kind <> ''),
+    schema_version smallint NOT NULL CHECK (schema_version > 0),
+    occurred_at timestamptz NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    retention_seconds bigint NOT NULL CHECK (retention_seconds > 0),
+    expires_at timestamptz NOT NULL,
+    CHECK (isfinite(occurred_at) AND isfinite(recorded_at) AND isfinite(expires_at)),
+    CHECK (expires_at > recorded_at AND
+           expires_at = recorded_at + retention_seconds * interval '1 second'),
+    actor_kind text NOT NULL CHECK (actor_kind IN ('human','api_key','session','service','installation_operator','anonymous')),
+    actor_id uuid,
+    actor_service text,
+    actor_member_id uuid,
+    actor_identity jsonb CHECK (jsonb_typeof(actor_identity)='object' AND pg_column_size(actor_identity)<=4096),
+    credential_kind text NOT NULL CHECK (octet_length(credential_kind) BETWEEN 1 AND 64),
+    credential_id uuid,
+    credential_version bigint CHECK (credential_version > 0),
+    runtime_generation bigint CHECK (runtime_generation > 0),
+    process_epoch bigint CHECK (process_epoch > 0),
+    action text NOT NULL CHECK (octet_length(action) BETWEEN 1 AND 128),
+    outcome text NOT NULL CHECK (outcome IN ('accepted','succeeded','denied','failed','cancelled','unknown')),
+    target_kind text NOT NULL CHECK (octet_length(target_kind) BETWEEN 1 AND 64),
     target_id uuid,
     target_user_id uuid,
-    slack_team_id text NOT NULL DEFAULT '',
-    slack_user_id text NOT NULL DEFAULT '',
-    details jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(details) = 'object'),
+    slack_team_id text CHECK (octet_length(slack_team_id) BETWEEN 1 AND 100),
+    slack_user_id text CHECK (octet_length(slack_user_id) BETWEEN 1 AND 100),
+    target_resolution text NOT NULL CHECK (target_resolution IN ('verified','unresolved')),
+    authorization_witness jsonb NOT NULL CHECK (jsonb_typeof(authorization_witness)='object' AND pg_column_size(authorization_witness)<=16384),
+    operation_id uuid NOT NULL,
+    session_id uuid,
+    turn_id uuid,
+    computer_id uuid,
+    deployment_id uuid,
+    cause_event_id uuid,
+    causality jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(causality)='object' AND pg_column_size(causality)<=4096),
+    source_ip inet,
+    channel text NOT NULL CHECK (octet_length(channel) BETWEEN 1 AND 64),
+    details jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(details)='object' AND pg_column_size(details)<=16384),
+    CHECK ((slack_team_id IS NULL AND slack_user_id IS NULL) OR
+           (target_kind='slack_user_link' AND target_id IS NULL AND
+            target_user_id IS NOT NULL AND slack_team_id IS NOT NULL AND slack_user_id IS NOT NULL)),
+    CHECK (target_kind<>'slack_user_link' OR target_resolution<>'verified' OR
+           (target_id IS NULL AND target_user_id IS NOT NULL AND slack_team_id IS NOT NULL AND slack_user_id IS NOT NULL)),
     CHECK (project_id IS NULL OR org_id IS NOT NULL),
     CHECK (environment_id IS NULL OR project_id IS NOT NULL),
-    CHECK (
-        (actor_kind = 'login' AND actor_user_id IS NOT NULL AND actor_credential_id IS NOT NULL AND actor_source = '') OR
-        (actor_kind = 'api_key' AND actor_user_id IS NULL AND actor_credential_id IS NOT NULL AND actor_source = '') OR
-        (actor_kind = 'verified_login' AND actor_user_id IS NOT NULL AND actor_credential_id IS NULL AND actor_source <> '') OR
-        (actor_kind = 'capacity' AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source = '') OR
-        (actor_kind = 'system' AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source <> '')
-    ),
-    CHECK (target_id IS NOT NULL OR (target_kind = 'slack_user_link' AND target_user_id IS NOT NULL AND slack_team_id <> '' AND slack_user_id <> ''))
+    CHECK ((actor_kind IN ('human','installation_operator') AND actor_id IS NOT NULL AND actor_identity IS NOT NULL AND actor_service IS NULL) OR
+           (actor_kind IN ('api_key','session') AND actor_id IS NOT NULL AND actor_identity IS NULL AND actor_service IS NULL) OR
+           (actor_kind='service' AND actor_id IS NULL AND actor_identity IS NULL AND actor_service IS NOT NULL AND octet_length(actor_service) BETWEEN 1 AND 128) OR
+           (actor_kind='anonymous' AND actor_id IS NULL AND actor_identity IS NULL AND actor_service IS NULL)),
+    CHECK (actor_member_id IS NULL OR (actor_kind IN ('human','installation_operator') AND org_id IS NOT NULL)),
+    CHECK (actor_kind NOT IN ('human','installation_operator') OR
+           (actor_identity ?& ARRAY['source','display_name'] AND
+            jsonb_typeof(actor_identity->'source')='string' AND
+            actor_identity->>'source'='account' AND
+            jsonb_typeof(actor_identity->'display_name')='string' AND
+            octet_length(actor_identity->>'display_name') > 0)),
+    CHECK (actor_kind<>'api_key' OR (credential_kind='api_key' AND credential_id IS NOT NULL AND credential_id=actor_id AND credential_version IS NOT NULL)),
+    CHECK (actor_kind<>'session' OR runtime_generation IS NOT NULL)
 );
-CREATE INDEX audit_events_scope_time ON audit_events (org_id, occurred_at, id);
+CREATE INDEX audit_events_time ON audit_events(org_id,recorded_at DESC,id DESC);
+CREATE INDEX audit_events_actor ON audit_events(org_id,actor_kind,actor_id,recorded_at DESC,id DESC);
+CREATE INDEX audit_events_target ON audit_events(org_id,target_kind,target_id,recorded_at DESC,id DESC);
+CREATE INDEX audit_events_expiry ON audit_events(expires_at,id);
+CREATE INDEX audit_events_environment_time ON audit_events(org_id,environment_id,recorded_at DESC,id DESC) WHERE environment_id IS NOT NULL;
 
 -- Per-channel routine pacing and provider method Retry-After are independent.
 CREATE TABLE slack_delivery_limits (

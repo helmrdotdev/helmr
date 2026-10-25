@@ -3,6 +3,7 @@ package workergroup
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ import (
 
 func TestCreatePoolPostgres(t *testing.T) {
 	f := newSupplyFixture(t)
-	group, pending, err := CreatePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), "run-next", f.group.ClaimVersion)
+	group, pending, err := CreatePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), "run-next", f.group.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,13 +27,13 @@ func TestCreatePoolPostgres(t *testing.T) {
 		t.Fatalf("created pool = %+v in group %+v", pending, group)
 	}
 	var conflicting ConflictError
-	if _, _, err := CreatePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), "run-next", f.group.ClaimVersion); !errors.As(err, &conflicting) {
+	if _, _, err := CreatePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), "run-next", f.group.ClaimVersion); !errors.As(err, &conflicting) {
 		t.Fatalf("duplicate pool error = %v, want ConflictError", err)
 	}
-	if _, _, err := CreatePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), "stale", f.group.ClaimVersion+1); !errors.As(err, &conflicting) {
+	if _, _, err := CreatePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), "stale", f.group.ClaimVersion+1); !errors.As(err, &conflicting) {
 		t.Fatalf("stale group claim error = %v, want ConflictError", err)
 	}
-	if _, _, err := CreatePool(t.Context(), f.pool, audit.System("test-fixture"), uuid.NewV7(), "missing", 1); !errors.Is(err, ErrGroupNotFound) {
+	if _, _, err := CreatePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), uuid.NewV7(), "missing", 1); !errors.Is(err, ErrGroupNotFound) {
 		t.Fatalf("missing group error = %v", err)
 	}
 	var input InputError
@@ -40,7 +41,7 @@ func TestCreatePoolPostgres(t *testing.T) {
 		name    string
 		version int64
 	}{{"Upper", 1}, {"valid", 0}} {
-		if _, _, err := CreatePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), bad.name, bad.version); !errors.As(err, &input) {
+		if _, _, err := CreatePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), bad.name, bad.version); !errors.As(err, &input) {
 			t.Fatalf("CreatePool(%q, %d) error = %v, want InputError", bad.name, bad.version, err)
 		}
 	}
@@ -58,7 +59,7 @@ func TestSelectPrimaryPoolPostgresIsAtomicAndReplaySafe(t *testing.T) {
 	pool := f.activePool(t, "current")
 	f.activeHost(t, pool, "ready-current")
 	group := f.currentGroup(t)
-	selection, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, group.ClaimVersion, 1)
+	selection, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, group.ClaimVersion, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,26 +71,26 @@ func TestSelectPrimaryPoolPostgresIsAtomicAndReplaySafe(t *testing.T) {
 	if stored.ClaimVersion != selection.Group.ClaimVersion || stored.PrimaryPoolID != pool.ID {
 		t.Fatalf("stored primary selection = %+v", stored)
 	}
-	replay, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, group.ClaimVersion, 1)
+	replay, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, group.ClaimVersion, 1)
 	if err != nil || replay.Applied || replay.Group.ClaimVersion != selection.Group.ClaimVersion {
 		t.Fatalf("replay = %+v, %v", replay, err)
 	}
 	var conflicting ConflictError
-	if _, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, selection.Group.ClaimVersion+1, 1); !errors.As(err, &conflicting) {
+	if _, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, selection.Group.ClaimVersion+1, 1); !errors.As(err, &conflicting) {
 		t.Fatalf("future claim error = %v, want ConflictError", err)
 	}
 	pending := f.pendingPool(t, "pending")
-	if _, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, f.currentGroup(t).ClaimVersion, 1); !errors.As(err, &conflicting) {
+	if _, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, f.currentGroup(t).ClaimVersion, 1); !errors.As(err, &conflicting) {
 		t.Fatalf("pending pool selection error = %v, want ConflictError", err)
 	}
-	if _, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), uuid.NewV7(), 1, 1); !errors.Is(err, ErrPoolNotFound) {
+	if _, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), uuid.NewV7(), 1, 1); !errors.Is(err, ErrPoolNotFound) {
 		t.Fatalf("missing pool error = %v", err)
 	}
 	var input InputError
-	if _, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), uuid.Nil(), 1, 1); !errors.As(err, &input) {
+	if _, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), uuid.Nil(), 1, 1); !errors.As(err, &input) {
 		t.Fatalf("zero pool error = %v, want InputError", err)
 	}
-	if _, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), uuid.NewV7(), uuid.Nil(), 1, 1); !errors.Is(err, ErrGroupNotFound) {
+	if _, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), uuid.NewV7(), uuid.Nil(), 1, 1); !errors.Is(err, ErrGroupNotFound) {
 		t.Fatalf("zero pool on missing group error = %v, want ErrGroupNotFound first", err)
 	}
 }
@@ -108,7 +109,7 @@ func TestSelectPrimaryPoolPostgresSerializesCompetingControllers(t *testing.T) {
 	for index, target := range targets {
 		wait.Go(func() {
 			<-start
-			_, errorsByController[index] = SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), target, group.ClaimVersion, 1)
+			_, errorsByController[index] = SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), target, group.ClaimVersion, 1)
 		})
 	}
 	close(start)
@@ -134,25 +135,25 @@ func TestPoolTransitionsPostgres(t *testing.T) {
 	f := newSupplyFixture(t)
 	pending := f.pendingPool(t, "unused")
 	var conflicting ConflictError
-	if _, _, err := DrainPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion); !errors.As(err, &conflicting) {
+	if _, _, err := DrainPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion); !errors.As(err, &conflicting) {
 		t.Fatalf("drain pending pool error = %v, want ConflictError", err)
 	}
-	_, disabled, err := DisablePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion)
+	_, disabled, err := DisablePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if disabled.Status != "disabled" || disabled.ClaimVersion != pending.ClaimVersion+1 || disabled.SealedAt.Valid {
 		t.Fatalf("disabled pending pool = %+v", disabled)
 	}
-	_, replay, err := DisablePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion)
+	_, replay, err := DisablePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion)
 	if err != nil || replay.ClaimVersion != disabled.ClaimVersion {
 		t.Fatalf("disable replay = %+v, %v", replay, err)
 	}
-	if _, _, err := DisablePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), uuid.NewV7(), 1); !errors.Is(err, ErrPoolNotFound) {
+	if _, _, err := DisablePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), uuid.NewV7(), 1); !errors.Is(err, ErrPoolNotFound) {
 		t.Fatalf("missing pool error = %v", err)
 	}
 	var input InputError
-	if _, _, err := DisablePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, 0); !errors.As(err, &input) {
+	if _, _, err := DisablePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, 0); !errors.As(err, &input) {
 		t.Fatalf("zero claim version error = %v, want InputError", err)
 	}
 }
@@ -165,11 +166,11 @@ func TestDisablePoolPostgresWaitsForRegisteringHostToBeLost(t *testing.T) {
 INSERT INTO worker_hosts (id, resource_id, worker_group_id, worker_pool_id, status)
 VALUES ($1, 'lost-before-activation', $2, $3, 'registering')`, hostID, f.group.ID, pending.ID)
 	var conflicting ConflictError
-	if _, _, err := DisablePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion); !errors.As(err, &conflicting) {
+	if _, _, err := DisablePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion); !errors.As(err, &conflicting) {
 		t.Fatalf("disable pending pool with registering host error = %v, want ConflictError", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET status = 'lost', lost_at = now() WHERE id = $1`, hostID)
-	_, disabled, err := DisablePool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion)
+	_, disabled, err := DisablePool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, pending.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,11 +183,11 @@ func TestDrainPoolPostgresRejectsPrimaryPool(t *testing.T) {
 	f := newSupplyFixture(t)
 	pool := f.activePool(t, "current")
 	f.activeHost(t, pool, "ready-current")
-	if _, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, f.currentGroup(t).ClaimVersion, 1); err != nil {
+	if _, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, f.currentGroup(t).ClaimVersion, 1); err != nil {
 		t.Fatal(err)
 	}
 	var conflicting ConflictError
-	if _, _, err := DrainPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, pool.ClaimVersion); !errors.As(err, &conflicting) {
+	if _, _, err := DrainPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, pool.ClaimVersion); !errors.As(err, &conflicting) {
 		t.Fatalf("drain primary pool error = %v, want ConflictError", err)
 	}
 	if got := f.currentGroup(t); got.Status != db.WorkerGroupStatusActive {
@@ -206,7 +207,7 @@ func TestSelectPrimaryPoolPostgresRequiresReadyHosts(t *testing.T) {
 			pool := f.activePool(t, "target")
 			host := f.activeHost(t, pool, "ready")
 			dbtest.MustExec(t, t.Context(), f.pool, "UPDATE worker_hosts SET "+mutation+" WHERE id=$1", host)
-			if _, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, f.currentGroup(t).ClaimVersion, 1); !errors.Is(err, ErrInsufficientReadyHosts) {
+			if _, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, f.currentGroup(t).ClaimVersion, 1); !errors.Is(err, ErrInsufficientReadyHosts) {
 				t.Fatalf("ineligible host selected: %v", err)
 			}
 		})
@@ -214,7 +215,7 @@ func TestSelectPrimaryPoolPostgresRequiresReadyHosts(t *testing.T) {
 	f := newSupplyFixture(t)
 	pool := f.activePool(t, "target")
 	f.activeHost(t, pool, "ready")
-	if _, err := SelectPrimaryPool(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, f.currentGroup(t).ClaimVersion, 2); !errors.Is(err, ErrInsufficientReadyHosts) {
+	if _, err := SelectPrimaryPool(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, f.currentGroup(t).ClaimVersion, 2); !errors.Is(err, ErrInsufficientReadyHosts) {
 		t.Fatalf("minimum ignored: %v", err)
 	}
 }
@@ -237,7 +238,7 @@ func TestSelectPrimaryPoolPostgresRechecksAfterConcurrentDrain(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := SelectPrimaryPool(ctx, f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, group.ClaimVersion, 1)
+		_, err := SelectPrimaryPool(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, group.ClaimVersion, 1)
 		done <- err
 	}()
 	for {
@@ -300,7 +301,7 @@ func TestPoolRetirementPostgresFencesWaitingEnrollment(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := EnrollHost(ctx, f.pool, cfg, Enrollment{TokenHash: token, PoolName: pool.Name, ResourceID: "late"})
+				_, err := EnrollHost(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, cfg, Enrollment{TokenHash: token, PoolName: pool.Name, ResourceID: "late"})
 				done <- err
 			}()
 			for {
@@ -352,7 +353,7 @@ func TestSelectPrimaryPoolPostgresFreshnessAfterHostLock(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := SelectPrimaryPool(ctx, f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, group.ClaimVersion, 1)
+		_, err := SelectPrimaryPool(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, group.ClaimVersion, 1)
 		done <- err
 	}()
 	for {

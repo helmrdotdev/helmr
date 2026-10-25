@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"time"
 	"uuid"
@@ -318,7 +319,7 @@ func CommitComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wor
 // CompleteComputerSourceAbort opens dispatch only after physical activation and
 // reconciliation of every member's current durable control generation. A control
 // changed while the worker was reconciling forces another reconciliation pass.
-func CompleteComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
+func CompleteComputerSourceAbort(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
 	identity, err := computerInstallationIdentity(p, true)
 	if err != nil {
 		return err
@@ -362,7 +363,7 @@ func CompleteComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host w
 		if _, err = computer.CurrentLease(ctx, tx, host, env, r.Computer, r.SourceEpoch); err != nil {
 			return err
 		}
-		return computer.ReconcileCheckpointControls(ctx, tx, env, checkpoint)
+		return computer.ReconcileCheckpointControls(ctx, auditPolicy, tx, env, checkpoint)
 	}))
 }
 

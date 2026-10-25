@@ -40,22 +40,22 @@ type secretListCursor struct {
 
 func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 	if s.secrets == nil {
-		writeError(w, unavailable(errors.New("secret store is not configured")))
+		s.writeOperationError(w, r, unavailable(errors.New("secret store is not configured")))
 		return
 	}
 	var request api.CreateSecretRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid secret create request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid secret create request JSON: %w", err))
 		return
 	}
 	request.Secret = strings.TrimSpace(request.Secret)
 	if err := secretname.Validate(request.Secret); err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	principal, environmentID, ok := s.secretMutationAuthority(w, r, auth.PermissionSecretsCreate)
@@ -70,12 +70,12 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 		idempotencyKey,
 	)
 	if err != nil {
-		s.writeSecretMutationError(w, principal, request.Secret, "create", err)
+		s.writeSecretMutationError(w, r, principal, request.Secret, "create", err)
 		return
 	}
 	response, err := secretSnapshotResponse(db.GetSecretSnapshotRow(record))
 	if err != nil {
-		writeError(w, errors.New("project secret"))
+		s.writeOperationError(w, r, errors.New("project secret"))
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
@@ -85,16 +85,16 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	if !principal.HasPermission(auth.PermissionSecretsRead, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
+		s.writeOperationError(w, r, forbidden(errors.New("permission is required")))
 		return
 	}
 	limit, cursor, err := parseSecretListQuery(r, scope.ProjectID, scope.EnvironmentID)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	response := api.ListSecretsResponse{Secrets: []api.SecretResponse{}}
@@ -111,7 +111,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		RowLimit:      limit + 1,
 	})
 	if err != nil {
-		writeError(w, errors.New("list secrets"))
+		s.writeOperationError(w, r, errors.New("list secrets"))
 		return
 	}
 	hasMore := len(rows) > int(limit)
@@ -128,7 +128,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 			row.RevokedAt,
 		)
 		if err != nil {
-			writeError(w, errors.New("project secret"))
+			s.writeOperationError(w, r, errors.New("project secret"))
 			return
 		}
 		response.Secrets = append(response.Secrets, projected)
@@ -141,7 +141,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			s.log.Error("encode Secret cursor failed", "error", err)
-			writeError(w, errors.New("list secrets"))
+			s.writeOperationError(w, r, errors.New("list secrets"))
 			return
 		}
 	}
@@ -152,7 +152,7 @@ func (s *Server) getSecretByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "secret")
 	err := secretname.Validate(id)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	s.getSecret(w, r, id)
@@ -162,27 +162,27 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id string) {
 	principal := principalFromContext(r.Context())
 	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	if !principal.HasPermission(auth.PermissionSecretsRead, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
+		s.writeOperationError(w, r, forbidden(errors.New("permission is required")))
 		return
 	}
 	record, err := s.db.GetSecretSnapshotByName(r.Context(), db.GetSecretSnapshotByNameParams{
 		EnvironmentID: environmentID, Name: id,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("secret not found")))
+		s.writeOperationError(w, r, notFound(errors.New("secret not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("load secret"))
+		s.writeOperationError(w, r, errors.New("load secret"))
 		return
 	}
 	response, err := secretSnapshotResponse(db.GetSecretSnapshotRow(record))
 	if err != nil {
-		writeError(w, errors.New("project secret"))
+		s.writeOperationError(w, r, errors.New("project secret"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -192,7 +192,7 @@ func (s *Server) rotateSecretByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "secret")
 	err := secretname.Validate(id)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	s.rotateSecret(w, r, id)
@@ -200,17 +200,17 @@ func (s *Server) rotateSecretByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id string) {
 	if s.secrets == nil {
-		writeError(w, unavailable(errors.New("secret store is not configured")))
+		s.writeOperationError(w, r, unavailable(errors.New("secret store is not configured")))
 		return
 	}
 	var request api.RotateSecretRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid secret rotate request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid secret rotate request JSON: %w", err))
 		return
 	}
 	idempotencyKey, err := requiredIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	principal, environmentID, ok := s.secretMutationAuthority(w, r, auth.PermissionSecretsRotate)
@@ -221,11 +221,11 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id string)
 		EnvironmentID: environmentID, Name: id,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("secret not found")))
+		s.writeOperationError(w, r, notFound(errors.New("secret not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("load secret"))
+		s.writeOperationError(w, r, errors.New("load secret"))
 		return
 	}
 	secretID := pgvalue.MustUUIDValue(record.ID)
@@ -237,12 +237,12 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id string)
 		idempotencyKey,
 	)
 	if err != nil {
-		s.writeSecretMutationError(w, principal, record.Name, "rotate", err)
+		s.writeSecretMutationError(w, r, principal, record.Name, "rotate", err)
 		return
 	}
 	response, err := secretSnapshotResponse(rotated)
 	if err != nil {
-		writeError(w, errors.New("project secret"))
+		s.writeOperationError(w, r, errors.New("project secret"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -252,7 +252,7 @@ func (s *Server) revokeSecretByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "secret")
 	err := secretname.Validate(id)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	s.revokeSecret(w, r, id)
@@ -260,17 +260,17 @@ func (s *Server) revokeSecretByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id string) {
 	if s.secrets == nil {
-		writeError(w, unavailable(errors.New("secret store is not configured")))
+		s.writeOperationError(w, r, unavailable(errors.New("secret store is not configured")))
 		return
 	}
 	var request api.RevokeSecretRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		writeError(w, fmt.Errorf("invalid secret revoke request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid secret revoke request JSON: %w", err))
 		return
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	principal, environmentID, ok := s.secretMutationAuthority(w, r, auth.PermissionSecretsRevoke)
@@ -281,11 +281,11 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id string)
 		EnvironmentID: environmentID, Name: id,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("secret not found")))
+		s.writeOperationError(w, r, notFound(errors.New("secret not found")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("load secret"))
+		s.writeOperationError(w, r, errors.New("load secret"))
 		return
 	}
 	secretID := pgvalue.MustUUIDValue(record.ID)
@@ -296,12 +296,12 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id string)
 		idempotencyKey,
 	)
 	if err != nil {
-		s.writeSecretMutationError(w, principal, record.Name, "revoke", err)
+		s.writeSecretMutationError(w, r, principal, record.Name, "revoke", err)
 		return
 	}
 	response, err := secretSnapshotResponse(revoked)
 	if err != nil {
-		writeError(w, errors.New("project secret"))
+		s.writeOperationError(w, r, errors.New("project secret"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -315,11 +315,11 @@ func (s *Server) secretMutationAuthority(
 	principal := principalFromContext(r.Context())
 	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return auth.Principal{}, pgtype.UUID{}, false
 	}
 	if !principal.HasPermission(permission, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
+		s.writeOperationError(w, r, forbidden(errors.New("permission is required")))
 		return auth.Principal{}, pgtype.UUID{}, false
 	}
 	return principal, environmentID, true
@@ -327,31 +327,36 @@ func (s *Server) secretMutationAuthority(
 
 func (s *Server) writeSecretMutationError(
 	w http.ResponseWriter,
+	r *http.Request,
 	principal auth.Principal,
 	name string,
 	operation string,
 	err error,
 ) {
+	if errors.Is(err, audit.ErrCapture) {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	var pgErr *pgconn.PgError
 	var expired idempotency.ExpiredError
 	var retryConflict idempotency.ConflictError
 	switch {
 	case errors.Is(err, access.ErrDenied):
-		writeError(w, forbidden(errors.New("permission is required")))
+		s.writeOperationError(w, r, forbidden(errors.New("permission is required")))
 	case errors.As(err, &expired):
-		writeError(w, gone(expired))
+		s.writeOperationError(w, r, gone(expired))
 	case errors.As(err, &retryConflict):
-		writeError(w, conflict(retryConflict))
+		s.writeOperationError(w, r, conflict(retryConflict))
 	case errors.Is(err, secret.ErrMutationConflict):
-		writeError(w, conflict(secret.ErrMutationConflict))
+		s.writeOperationError(w, r, conflict(secret.ErrMutationConflict))
 	case errors.Is(err, secret.ErrInvalidMutation):
-		writeError(w, badRequest(secret.ErrInvalidMutation))
+		s.writeOperationError(w, r, badRequest(secret.ErrInvalidMutation))
 	case secret.IsUnavailable(err):
-		writeError(w, conflict(err))
+		s.writeOperationError(w, r, conflict(err))
 	case errors.As(err, &pgErr) && pgErr.Code == "23505":
-		writeError(w, conflict(errors.New("secret name already exists")))
+		s.writeOperationError(w, r, conflict(errors.New("secret name already exists")))
 	case errors.Is(err, pgx.ErrNoRows):
-		writeError(w, notFound(errors.New("secret not found")))
+		s.writeOperationError(w, r, notFound(errors.New("secret not found")))
 	default:
 		s.log.Error(
 			operation+" Secret failed",
@@ -359,7 +364,7 @@ func (s *Server) writeSecretMutationError(
 			"name", name,
 			"error", err,
 		)
-		writeError(w, fmt.Errorf("%s secret", operation))
+		s.writeOperationError(w, r, fmt.Errorf("%s secret", operation))
 	}
 }
 

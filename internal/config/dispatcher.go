@@ -2,15 +2,20 @@ package config
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 )
 
 func LoadDispatcher() (Dispatcher, error) {
-	var err error
+	policy, err := auditpolicy.Parse(env("AUDIT_RETENTION_SECONDS", ""))
+	if err != nil {
+		return Dispatcher{}, err
+	}
 	appOrigin, err := normalizeOrigin("APP_ORIGIN", env("APP_ORIGIN", DefaultAppOrigin))
 	if err != nil {
 		return Dispatcher{}, err
 	}
 	cfg := Dispatcher{
+		AuditPolicy:        policy,
 		SlackTransport:     env("SLACK_TRANSPORT", "http"),
 		OutboundProxyURL:   envText("OUTBOUND_PROXY_URL"),
 		AppOrigin:          appOrigin,

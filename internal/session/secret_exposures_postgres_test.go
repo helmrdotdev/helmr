@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -16,7 +17,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
 	ref := f.claim(t, p)
-	values, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref)
+	values, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref)
 	if err != nil || len(values) == 0 {
 		t.Fatalf("exposure: %v", err)
 	}

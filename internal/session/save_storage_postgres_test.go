@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"testing"
 	"time"
@@ -88,7 +89,7 @@ func newSizedSaveStorageFixture(t *testing.T, f fixture, logicalBytes int64) *sa
 	if err != nil {
 		t.Fatal(err)
 	}
-	checkpoints, err := session.NewCheckpointPublisher(f.pool, remote)
+	checkpoints, err := session.NewCheckpointPublisher(f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, remote)
 	if err != nil {
 		t.Fatal(err)
 	}

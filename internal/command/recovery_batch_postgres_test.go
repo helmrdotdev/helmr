@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -146,7 +147,9 @@ func TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures(t *testing.T)
 	pages := 0
 	var position RecoveryPosition
 	for {
-		next, more, err := RecoverBatch(t.Context(), database, position, page)
+		next, more, err := RecoverBatch(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, database, position, page)
 		pages++
 		if err != nil && !errors.Is(err, errPoisoned) {
 			t.Fatalf("page %d: %v", pages, err)
@@ -171,7 +174,9 @@ func TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures(t *testing.T)
 	}
 	// A second pass finds only the failing candidates again: bounded work,
 	// still failing, still not blocking anything.
-	next, more, err := RecoverBatch(t.Context(), database, RecoveryPosition{}, page)
+	next, more, err := RecoverBatch(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, database, RecoveryPosition{}, page)
 	if !errors.Is(err, errPoisoned) || more || next != (RecoveryPosition{}) {
 		t.Fatalf("second pass: %+v more=%v %v", next, more, err)
 	}
@@ -187,7 +192,9 @@ func TestRecoveryPassRestartsFromTheBeginningAfterInterruption(t *testing.T) {
 	f := sessiontest.New(t)
 	const total, page = 300, 100
 	revokedCommands(t, f, total)
-	position, more, err := RecoverBatch(t.Context(), f.Pool, RecoveryPosition{}, page)
+	position, more, err := RecoverBatch(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, RecoveryPosition{}, page)
 	if err != nil || !more || position == (RecoveryPosition{}) {
 		t.Fatalf("first page: %+v more=%v %v", position, more, err)
 	}
@@ -196,12 +203,16 @@ func TestRecoveryPassRestartsFromTheBeginningAfterInterruption(t *testing.T) {
 	}
 	interrupted, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, _, err := RecoverBatch(interrupted, f.Pool, position, page); err == nil {
+	if _, _, err := RecoverBatch(interrupted, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, position, page); err == nil {
 		t.Fatal("interrupted page reported success")
 	}
 	pages := 0
 	for position = (RecoveryPosition{}); ; pages++ {
-		next, more, err := RecoverBatch(t.Context(), f.Pool, position, page)
+		next, more, err := RecoverBatch(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.Pool, position, page)
 		if err != nil {
 			t.Fatalf("restarted pass: %v", err)
 		}

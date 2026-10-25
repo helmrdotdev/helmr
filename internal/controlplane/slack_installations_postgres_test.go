@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -36,7 +37,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
-	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{3}, 32), slack.TransportHTTP)
+	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{3}, 32), slack.TransportHTTP, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +58,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	handler = handler
 	keys, err := auth.NewKeys(cfg.AuthKey)
 	if err != nil {
 		t.Fatal(err)

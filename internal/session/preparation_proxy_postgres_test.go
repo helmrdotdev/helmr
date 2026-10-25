@@ -3,6 +3,7 @@ package session_test
 import (
 	"bytes"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -57,7 +58,7 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 	if err := resolve("https://api.example.com", []string{marker}); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("value available before exposure commit: %v", err)
 	}
-	if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.secrets.Rotate(t.Context(), audit.System("test-fixture"), f.env, f.secretID, []byte("v2"), "rotate-proxy"); err != nil {
@@ -112,7 +113,7 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 	for _, transition := range []string{"capture", "failure", "physical stop", "deadline", "host epoch", "revocation"} {
 		t.Run(transition, func(t *testing.T) {
 			f, ref, _, marker := protectedPreparationAllocationFixture(t)
-			if _, err := computer.RecordImageBuildExposure(t.Context(), f.pool, *f.host(), ref); err != nil {
+			if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
 				t.Fatal(err)
 			}
 			switch transition {

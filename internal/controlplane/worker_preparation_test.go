@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -130,7 +131,7 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 		for _, kind := range []string{"env", "file"} {
 			t.Run(transition+"/"+kind, func(t *testing.T) {
 				f, request := preparationTransportFixture(t)
-				secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+				secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -382,7 +383,7 @@ func TestSeedOnlyPreparationPinsBindingsWithoutSecretDelivery(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET spec=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, string(specRaw))
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET bundle_digest=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, digest)
-	secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+	secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}

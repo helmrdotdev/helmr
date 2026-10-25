@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"time"
 	"uuid"
 
@@ -22,14 +25,14 @@ type SendReceipt struct {
 }
 
 // RouteSlackInput applies the Slack integration policy under one destination lock.
-func RouteSlackInput(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (SendReceipt, error) {
-	return admitSessionInput(ctx, pool, trust, caller, req, "slack_route", uuid.Nil())
+func RouteSlackInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (SendReceipt, error) {
+	return admitSessionInput(ctx, auditPolicy, pool, trust, caller, req, "slack_route", uuid.Nil())
 }
-func SendTurn(ctx context.Context, pool db.TxBeginner, caller Caller, req EnqueueRequest, turn uuid.UUID) (SendReceipt, error) {
+func SendTurn(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req EnqueueRequest, turn uuid.UUID) (SendReceipt, error) {
 	if turn == uuid.Nil() {
 		return SendReceipt{}, ErrInvalidInput
 	}
-	return admitSessionInput(ctx, pool, nil, caller, req, "turn_send", turn)
+	return admitSessionInput(ctx, auditPolicy, pool, nil, caller, req, "turn_send", turn)
 }
 
 func messageRetry(ctx context.Context, tx pgx.Tx, caller Caller, req EnqueueRequest, method string, target uuid.UUID, digest [32]byte, result *SendReceipt) (bool, error) {
@@ -47,7 +50,7 @@ func messageRetry(ctx context.Context, tx pgx.Tx, caller Caller, req EnqueueRequ
 	return true, nil
 }
 
-func admitMessage(ctx context.Context, tx pgx.Tx, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID, digest [32]byte, o owners, result *SendReceipt) (bool, error) {
+func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID, digest [32]byte, o owners, result *SendReceipt) (bool, error) {
 	e := Execution{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, AuthorityGeneration: o.generation}
 	var turn uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT t.id,t.process_epoch,p.computer_lease_epoch,l.worker_host_id,l.worker_epoch FROM turns t
@@ -86,6 +89,9 @@ func admitMessage(ctx context.Context, tx pgx.Tx, caller Caller, req EnqueueRequ
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO turn_messages(environment_id,id,session_id,turn_id,process_epoch,seq,message,caller_kind,caller_id,origin_turn_id,admission_method,target_id,idempotency_key,request_digest)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,''),$14)`, req.EnvironmentID, result.MessageID, req.SessionID, turn, e.ProcessEpoch, sequence, []byte(req.Input), caller.Kind, caller.ID, nullableID(caller.TurnID), method, target, req.IdempotencyKey, digest[:]); err != nil {
+		return false, err
+	}
+	if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsSend, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: turn, Action: "message.admitted", Outcome: "accepted", TargetKind: "message", TargetID: result.MessageID, Details: audit.LifecycleDetails{Sequence: sequence}}); err != nil {
 		return false, err
 	}
 	return true, messageEvent(ctx, tx, req.EnvironmentID, req.SessionID, turn, result.MessageID, "admitted", "")
@@ -217,7 +223,7 @@ func currentMessageAttachment(ctx context.Context, tx pgx.Tx, e Execution, attac
 	return nil
 }
 
-func CompleteRuntimeMessage(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64, turn, id uuid.UUID, reason string) error {
+func CompleteRuntimeMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64, turn, id uuid.UUID, reason string) error {
 	if reason != "" && reason != "message_rejected" && reason != "callback_failed" && reason != "turn_closed" {
 		return ErrInvalidInput
 	}
@@ -248,11 +254,14 @@ func CompleteRuntimeMessage(ctx context.Context, pool db.TxBeginner, host worker
 		if _, err := tx.Exec(ctx, `UPDATE turn_messages SET status=$3,rejection_reason=NULLIF($4,''),terminal_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, id, status, reason); err != nil {
 			return err
 		}
+		if err := auditActorFact(ctx, tx, auditPolicy, auditWorkerActor(host), audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: turn, Action: "message." + status, TargetKind: "message", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
+			return err
+		}
 		return messageEvent(ctx, tx, e.EnvironmentID, e.SessionID, turn, id, status, reason)
 	}))
 }
 
-func rejectTurnMessages(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID, includeStarted bool, reason string) error {
+func rejectTurnMessages(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session, turn uuid.UUID, includeStarted bool, reason string) error {
 	rows, err := tx.Query(ctx, `UPDATE turn_messages SET status='rejected',rejection_reason=$5,terminal_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND (status='admitted' OR ($4 AND status='started')) RETURNING id`, env, session, turn, includeStarted, reason)
 	if err != nil {
 		return err
@@ -262,6 +271,9 @@ func rejectTurnMessages(ctx context.Context, tx pgx.Tx, env, session, turn uuid.
 		return err
 	}
 	for _, id := range ids {
+		if err := auditServiceFact(ctx, tx, auditPolicy, "input-lifecycle", audit.Event{EnvironmentID: env, SessionID: session, TurnID: turn, Action: "message.rejected", TargetKind: "message", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
+			return err
+		}
 		if err = messageEvent(ctx, tx, env, session, turn, id, "rejected", reason); err != nil {
 			return err
 		}

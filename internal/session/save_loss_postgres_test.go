@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -45,10 +46,14 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 				for range 2 {
 					var err error
 					if stop {
-						err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil())
+						err = dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+							RetentionSeconds: 3600,
+						}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil())
 					} else {
 						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-						err = dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1)
+						err = dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+							RetentionSeconds: 3600,
+						}, f.pool, f.env, f.computer, 1)
 					}
 					if err != nil {
 						t.Fatal(err)
@@ -99,13 +104,15 @@ func TestComputerSaveLossDistinguishesCommittedPublication(t *testing.T) {
 func TestComputerSaveLossPreservesCancellation(t *testing.T) {
 	f := newFixture(t)
 	turn, save := f.finalize(t, "cancelled-save")
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel-before-loss")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel-before-loss")); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -153,9 +160,13 @@ func TestComputerSaveLossSerializesWithPublication(t *testing.T) {
 				}
 				endAuthority := func(pool db.TxBeginner) error {
 					if loss == "stop" {
-						return dispatch.ObserveLeaseStopped(t.Context(), pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil())
+						return dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+							RetentionSeconds: 3600,
+						}, pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil())
 					}
-					return dispatch.ExpireLease(t.Context(), pool, f.env, f.computer, 1)
+					return dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+						RetentionSeconds: 3600,
+					}, pool, f.env, f.computer, 1)
 				}
 				if publishFirst {
 					err = first.Publish(t.Context(), ref, cut, "publication before stop")
@@ -192,7 +203,7 @@ func TestComputerSaveLossSerializesWithPublication(t *testing.T) {
 				// Use the real lifecycle scan, including Sessions no longer in the live
 				// Computer member set, rather than calling the settlement helper directly.
 				for range 2 {
-					if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+					if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 						t.Fatal(err)
 					}
 				}

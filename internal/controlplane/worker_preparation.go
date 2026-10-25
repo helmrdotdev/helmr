@@ -191,7 +191,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 		return
 	}
 	host := workerFromContext(r.Context())
-	exposed, err := computer.RecordImageBuildExposure(r.Context(), server.tx, host, ref)
+	exposed, err := computer.RecordImageBuildExposure(r.Context(), server.auditPolicy, server.tx, host, ref)
 	if err != nil {
 		server.writeAllocationError(w, err)
 		return
@@ -229,7 +229,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 		server.writeAllocationError(w, err)
 		return
 	}
-	if _, err = computer.RecordImageBuildExposure(r.Context(), server.tx, host, ref); err != nil {
+	if _, err = computer.RecordImageBuildExposure(r.Context(), server.auditPolicy, server.tx, host, ref); err != nil {
 		server.writeAllocationError(w, err)
 		return
 	}
@@ -323,7 +323,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 	if seedOnly {
 		// Conservatively retain registered binding versions for eligibility, without
 		// decrypting or delivering any Secret to the fixed qualification probe.
-		if _, err := computer.RecordImageBuildExposure(r.Context(), server.tx, host, ref); err != nil {
+		if _, err := computer.RecordImageBuildExposure(r.Context(), server.auditPolicy, server.tx, host, ref); err != nil {
 			server.writeAllocationError(w, err)
 			return
 		}

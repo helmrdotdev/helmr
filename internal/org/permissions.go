@@ -3,6 +3,7 @@ package org
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,16 +36,17 @@ func (e *RoleGrantConflict) Error() string { return e.Cause.Error() }
 func (e *RoleGrantConflict) Unwrap() error { return e.Cause }
 
 type PermissionRole struct {
-	APIKeyAssignable bool      `json:"api_key_assignable"`
-	ID               uuid.UUID `json:"id"`
-	Name             string    `json:"name"`
-	Description      string    `json:"description"`
-	BuiltinKey       *string   `json:"builtin_key"`
-	Permissions      []string  `json:"permissions"`
-	GrantCount       int       `json:"grant_count"`
-	GroupCount       int       `json:"group_count"`
-	UpdatedAt        time.Time `json:"updated_at"`
-	Revision         int64     `json:"revision"`
+	AssignmentLevels []auth.PermissionScope `json:"assignment_levels"`
+	APIKeyAssignable bool                   `json:"api_key_assignable"`
+	ID               uuid.UUID              `json:"id"`
+	Name             string                 `json:"name"`
+	Description      string                 `json:"description"`
+	BuiltinKey       *string                `json:"builtin_key"`
+	Permissions      []string               `json:"permissions"`
+	GrantCount       int                    `json:"grant_count"`
+	GroupCount       int                    `json:"group_count"`
+	UpdatedAt        time.Time              `json:"updated_at"`
+	Revision         int64                  `json:"revision"`
 }
 type RoleInput struct {
 	ExpectedRevision string   `json:"-"`
@@ -114,8 +116,8 @@ type GrantInput struct {
 }
 
 // Lock memberships in stable order before changing membership-owned access.
-func lockAccessMembers(ctx context.Context, tx pgx.Tx, m ManagingMember, permission auth.Permission, targets ...uuid.UUID) error {
-	if err := lockActiveMembers(ctx, tx, m, targets...); err != nil {
+func lockAccessMembers(ctx context.Context, tx pgx.Tx, m *ManagingMember, permission auth.Permission, targets ...uuid.UUID) error {
+	if err := lockActiveMembers(ctx, tx, *m, targets...); err != nil {
 		return err
 	}
 	return m.Authorize(ctx, tx, permission)
@@ -157,7 +159,7 @@ func permissionRoleSnapshot(role PermissionRole) *audit.AccessSnapshot {
 	return &audit.AccessSnapshot{Name: role.Name, Description: role.Description, Permissions: role.Permissions}
 }
 func grantSnapshot(g RoleGrant) *audit.AccessSnapshot {
-	s := &audit.AccessSnapshot{GrantID: g.ID.String(), MemberName: g.MemberName, GroupName: g.GroupName, RoleName: g.RoleName, ProjectName: g.ProjectName, EnvironmentName: g.EnvironmentName, AgentsMode: g.AgentsMode, AgentKeys: g.AgentKeys, Revision: g.Revision, Permissions: g.Permissions, SubjectKind: g.SubjectKind, RoleID: g.RoleID.String(), ProjectID: g.ProjectID.String(), EnvironmentID: g.EnvironmentID.String(), TargetKind: g.TargetKind}
+	s := &audit.AccessSnapshot{GrantID: g.ID.String(), MemberName: g.MemberName, GroupName: g.GroupName, RoleName: g.RoleName, ProjectName: g.ProjectName, EnvironmentName: g.EnvironmentName, AgentsMode: g.AgentsMode, Revision: g.Revision, Permissions: g.Permissions, SubjectKind: g.SubjectKind, RoleID: g.RoleID.String(), ProjectID: g.ProjectID.String(), EnvironmentID: g.EnvironmentID.String(), TargetKind: g.TargetKind}
 	if g.MemberID != nil {
 		s.MemberID = g.MemberID.String()
 	}
@@ -173,8 +175,31 @@ func grantSnapshot(g RoleGrant) *audit.AccessSnapshot {
 	}
 	return s
 }
-func accessAudit(ctx context.Context, tx pgx.Tx, m ManagingMember, action, kind string, id uuid.UUID, before, after *audit.AccessSnapshot, grants []string) error {
-	return audit.Append(ctx, tx, audit.Event{Actor: m.Actor, OrgID: m.OrgID, Action: action, TargetKind: kind, TargetID: id, Details: audit.AccessChangeDetails{Before: before, After: after, AffectedGrantIDs: grants}})
+func accessAudit(ctx context.Context, tx pgx.Tx, m ManagingMember, action, kind string, id uuid.UUID, before, after *audit.AccessSnapshot) error {
+	e := audit.Event{Actor: m.Actor, OrgID: m.OrgID, Action: action, TargetKind: kind, TargetID: id, Details: audit.AccessChangeDetails{Before: before, After: after}}
+	if kind == "role_grant" {
+		snapshot := after
+		if snapshot == nil {
+			snapshot = before
+		}
+		if snapshot != nil {
+			if snapshot.EnvironmentID != "" {
+				id, err := uuid.Parse(snapshot.EnvironmentID)
+				if err != nil {
+					return err
+				}
+				e.EnvironmentID = id
+			}
+			if snapshot.ProjectID != "" {
+				id, err := uuid.Parse(snapshot.ProjectID)
+				if err != nil {
+					return err
+				}
+				e.ProjectID = id
+			}
+		}
+	}
+	return audit.Append(ctx, tx, m.AuditPolicy, e)
 }
 
 func validateRoleInput(input RoleInput) (RoleInput, error) {
@@ -183,16 +208,8 @@ func validateRoleInput(input RoleInput) (RoleInput, error) {
 		return input, err
 	}
 	input.Name = name
-	hasOrg, hasWorkload := false, false
-	for _, p := range input.Permissions {
-		if auth.IsOrganizationPermission(auth.Permission(p)) {
-			hasOrg = true
-		} else {
-			hasWorkload = true
-		}
-	}
-	if hasOrg && hasWorkload {
-		return input, invalidInput("organization and workload permissions cannot share a Role")
+	if len(auth.RoleAssignmentLevels(input.Permissions)) == 0 && len(input.Permissions) > 0 {
+		return input, invalidInput("permissions have no common assignment scope")
 	}
 	input.Description = strings.TrimSpace(input.Description)
 	if len(input.Description) > 1000 {
@@ -242,10 +259,12 @@ func roleSupportsTargets(permissions []string, organization bool, mode string, a
 	if allMembers && (mode != "selected" || !supportsAgent(permissions)) {
 		return false
 	}
-	for _, p := range permissions {
-		if auth.IsOrganizationPermission(auth.Permission(p)) != organization {
-			return false
-		}
+	level := auth.ScopeEnvironment
+	if organization {
+		level = auth.ScopeOrganization
+	}
+	if !slices.Contains(auth.RoleAssignmentLevels(permissions), level) {
+		return false
 	}
 	return !hasAgentPermissions(permissions) || mode != "none"
 }
@@ -271,7 +290,7 @@ func grantTargets(g RoleGrant) []GrantTarget {
 		i := slices.IndexFunc(targets, func(t GrantTarget) bool { return t.ResourceType == resource })
 		if i < 0 {
 			t := GrantTarget{ResourceType: resource, Mode: "environment", Permissions: []string{}}
-			if auth.IsOrganizationPermission(auth.Permission(permission)) {
+			if g.EnvironmentID == uuid.Nil() {
 				t.Mode = "organization"
 			}
 			if auth.IsAgentPermission(auth.Permission(permission)) {
@@ -298,6 +317,7 @@ func readPermissionRole(ctx context.Context, database db.DBTX, orgID, id uuid.UU
 		err = ErrAccessNotFound
 	}
 	r.APIKeyAssignable = machineAssignable(r.Permissions)
+	r.AssignmentLevels = auth.RoleAssignmentLevels(r.Permissions)
 	return r, err
 }
 
@@ -353,13 +373,12 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 	}
 	var result PermissionRole
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, permission); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, permission); err != nil {
 			return err
 		}
 		action := "role.created"
-		var beforeAssignments []*audit.AccessSnapshot
+		beforeAssignments := map[uuid.UUID]*audit.AccessSnapshot{}
 		var before *audit.AccessSnapshot
-		affected := []string{}
 		if id == uuid.Nil() {
 			id = uuid.NewV7()
 			if _, err := tx.Exec(ctx, `INSERT INTO roles(id,org_id,name,description,permissions) VALUES($1,$2,$3,$4,$5)`, id, m.OrgID, input.Name, input.Description, input.Permissions); err != nil {
@@ -397,7 +416,6 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 					rows.Close()
 					return err
 				}
-				affected = append(affected, gid.String())
 				if !roleSupportsTargets(input.Permissions, organization, grantAgentsMode(old.Permissions, allAgents), allMembers) || machine && !machineAssignable(input.Permissions) {
 					incompatible = append(incompatible, gid.String())
 				}
@@ -410,13 +428,16 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 			if len(incompatible) > 0 {
 				return &RoleGrantConflict{Cause: ErrRoleTarget, GrantIDs: incompatible}
 			}
-			oldGrants, err := readRoleGrants(ctx, tx, m.OrgID, GrantFilter{RoleID: id})
-			if err != nil {
-				return err
+			if hasAgentPermissions(old.Permissions) && !hasAgentPermissions(input.Permissions) {
+				oldGrants, err := readRoleGrants(ctx, tx, m.OrgID, GrantFilter{RoleID: id})
+				if err != nil {
+					return err
+				}
+				for _, g := range oldGrants {
+					beforeAssignments[g.ID] = grantSnapshot(g)
+				}
 			}
-			for _, g := range oldGrants {
-				beforeAssignments = append(beforeAssignments, grantSnapshot(g))
-			}
+
 			if _, err = tx.Exec(ctx, `UPDATE roles SET name=$3,description=$4,permissions=$5,revision=revision+1,updated_at=clock_timestamp() WHERE org_id=$1 AND id=$2`, m.OrgID, id, input.Name, input.Description, input.Permissions); err != nil {
 				return accessWriteError(err)
 			}
@@ -434,17 +455,19 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 		if err != nil {
 			return err
 		}
-		var afterAssignments []*audit.AccessSnapshot
 		if len(beforeAssignments) > 0 {
 			grants, err := readRoleGrants(ctx, tx, m.OrgID, GrantFilter{RoleID: id})
 			if err != nil {
 				return err
 			}
+			// Record actual target normalization, not unchanged inherited Role effects.
 			for _, g := range grants {
-				afterAssignments = append(afterAssignments, grantSnapshot(g))
+				if err := accessAudit(ctx, tx, m, "role_grant.updated", "role_grant", g.ID, beforeAssignments[g.ID], grantSnapshot(g)); err != nil {
+					return err
+				}
 			}
 		}
-		return audit.Append(ctx, tx, audit.Event{Actor: m.Actor, OrgID: m.OrgID, Action: action, TargetKind: "role", TargetID: id, Details: audit.AccessChangeDetails{Before: before, After: permissionRoleSnapshot(result), AffectedGrantIDs: affected, BeforeAssignments: beforeAssignments, AfterAssignments: afterAssignments}})
+		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Actor: m.Actor, OrgID: m.OrgID, Action: action, TargetKind: "role", TargetID: id, Details: audit.AccessChangeDetails{Before: before, After: permissionRoleSnapshot(result)}})
 	})
 	return result, err
 }
@@ -461,7 +484,7 @@ type RolePatch struct {
 func PatchPermissionRole(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID, patch RolePatch) (PermissionRole, error) {
 	var result PermissionRole
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, auth.PermissionRolesUpdate); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionRolesUpdate); err != nil {
 			return err
 		}
 		old, err := readPermissionRole(ctx, tx, m.OrgID, id)
@@ -486,7 +509,7 @@ func PatchPermissionRole(ctx context.Context, database db.TxBeginner, m Managing
 
 func DeletePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, auth.PermissionRolesDelete); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionRolesDelete); err != nil {
 			return err
 		}
 		var builtin *string
@@ -517,14 +540,14 @@ func DeletePermissionRole(ctx context.Context, database db.TxBeginner, m Managin
 		if _, err = tx.Exec(ctx, `DELETE FROM roles WHERE org_id=$1 AND id=$2`, m.OrgID, id); err != nil {
 			return err
 		}
-		return accessAudit(ctx, tx, m, "role.deleted", "role", id, permissionRoleSnapshot(role), nil, nil)
+		return accessAudit(ctx, tx, m, "role.deleted", "role", id, permissionRoleSnapshot(role), nil)
 	})
 }
 
 // SeedStandardRoles runs on organization creation, or explicit local fixture
 // initialization, with the caller's transaction. Existing definitions are never
 // rewritten merely because the initializer runs again.
-func SeedStandardRoles(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, actor audit.Actor) error {
+func SeedStandardRoles(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, orgID uuid.UUID, actor audit.Actor) error {
 	standards := auth.StandardRoles()
 	for _, standard := range standards {
 		permissions := make([]string, 0, len(standard.Permissions))
@@ -540,7 +563,7 @@ func SeedStandardRoles(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, actor au
 		if tag.RowsAffected() == 0 {
 			continue
 		}
-		if err = accessAudit(ctx, tx, ManagingMember{Actor: actor, OrgID: orgID}, "role.standard_created", "role", id, nil, &audit.AccessSnapshot{Name: standard.Name, Description: standard.Description, Permissions: permissions}, nil); err != nil {
+		if err = accessAudit(ctx, tx, ManagingMember{Actor: actor, OrgID: orgID, AuditPolicy: policy}, "role.standard_created", "role", id, nil, &audit.AccessSnapshot{Name: standard.Name, Description: standard.Description, Permissions: permissions}); err != nil {
 			return err
 		}
 	}
@@ -597,7 +620,7 @@ func savePermissionGroup(ctx context.Context, database db.TxBeginner, m Managing
 	}
 	result := PermissionGroup{ID: id, Name: name, MemberIDs: []uuid.UUID{}}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, permission); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, permission); err != nil {
 			return err
 		}
 		var before *audit.AccessSnapshot
@@ -629,13 +652,13 @@ func savePermissionGroup(ctx context.Context, database db.TxBeginner, m Managing
 		if err := tx.QueryRow(ctx, `SELECT updated_at,revision,ARRAY(SELECT member_id FROM permission_group_members WHERE org_id=$1 AND group_id=$2 ORDER BY member_id) FROM permission_groups WHERE org_id=$1 AND id=$2`, m.OrgID, id).Scan(&result.UpdatedAt, &result.Revision, &result.MemberIDs); err != nil {
 			return err
 		}
-		return accessAudit(ctx, tx, m, action, "permission_group", id, before, &audit.AccessSnapshot{Name: name}, nil)
+		return accessAudit(ctx, tx, m, action, "permission_group", id, before, &audit.AccessSnapshot{Name: name})
 	})
 	return result, err
 }
 func DeletePermissionGroup(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, auth.PermissionGroupsDelete); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionGroupsDelete); err != nil {
 			return err
 		}
 		var name string
@@ -645,23 +668,19 @@ func DeletePermissionGroup(ctx context.Context, database db.TxBeginner, m Managi
 			}
 			return err
 		}
-		var grants []string
-		if err := tx.QueryRow(ctx, `SELECT ARRAY(SELECT id::text FROM role_grants WHERE org_id=$1 AND group_id=$2 ORDER BY id)`, m.OrgID, id).Scan(&grants); err != nil {
-			return err
-		}
 		removed, err := readRoleGrants(ctx, tx, m.OrgID, GrantFilter{GroupID: id})
 		if err != nil {
 			return err
 		}
 		for _, grant := range removed {
-			if err := accessAudit(ctx, tx, m, "role_grant.deleted", "role_grant", grant.ID, grantSnapshot(grant), nil, nil); err != nil {
+			if err := accessAudit(ctx, tx, m, "role_grant.deleted", "role_grant", grant.ID, grantSnapshot(grant), nil); err != nil {
 				return err
 			}
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM permission_groups WHERE org_id=$1 AND id=$2`, m.OrgID, id); err != nil {
 			return err
 		}
-		return accessAudit(ctx, tx, m, "permission_group.deleted", "permission_group", id, &audit.AccessSnapshot{Name: name}, nil, grants)
+		return accessAudit(ctx, tx, m, "permission_group.deleted", "permission_group", id, &audit.AccessSnapshot{Name: name}, nil)
 	})
 }
 func SetPermissionGroupMember(ctx context.Context, database db.TxBeginner, m ManagingMember, group, user uuid.UUID, add bool) error {
@@ -670,7 +689,7 @@ func SetPermissionGroupMember(ctx context.Context, database db.TxBeginner, m Man
 		permission = auth.PermissionGroupsAddMember
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, permission, user); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, permission, user); err != nil {
 			return err
 		}
 		var existing uuid.UUID
@@ -708,7 +727,7 @@ func SetPermissionGroupMember(ctx context.Context, database db.TxBeginner, m Man
 		if _, err := tx.Exec(ctx, `UPDATE permission_groups SET revision=revision+1,updated_at=clock_timestamp() WHERE org_id=$1 AND id=$2`, m.OrgID, group); err != nil {
 			return err
 		}
-		return accessAudit(ctx, tx, m, action, "permission_group", group, before, after, nil)
+		return accessAudit(ctx, tx, m, action, "permission_group", group, before, after)
 	})
 }
 
@@ -797,7 +816,7 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		if input.Subject.MemberID != nil {
 			targets = append(targets, *input.Subject.MemberID)
 		}
-		if err := lockAccessMembers(ctx, tx, m, permission, targets...); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, permission, targets...); err != nil {
 			return err
 		}
 		var roleID uuid.UUID
@@ -939,7 +958,7 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		}
 		result = grants[0]
 		result.Created = created
-		return accessAudit(ctx, tx, m, action, "role_grant", id, before, grantSnapshot(result), nil)
+		return accessAudit(ctx, tx, m, action, "role_grant", id, before, grantSnapshot(result))
 	})
 	return result, err
 }
@@ -947,7 +966,7 @@ func equalUUID(a, b *uuid.UUID) bool { return a == nil && b == nil || a != nil &
 
 func RemoveRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMember, id uuid.UUID, revision string) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, m, auth.PermissionAssignmentsDelete); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionAssignmentsDelete); err != nil {
 			return err
 		}
 		var role uuid.UUID
@@ -984,7 +1003,7 @@ func RemoveRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMemb
 		if _, err := tx.Exec(ctx, `DELETE FROM role_grants WHERE org_id=$1 AND id=$2`, m.OrgID, id); err != nil {
 			return err
 		}
-		return accessAudit(ctx, tx, m, "role_grant.deleted", "role_grant", id, grantSnapshot(g), nil, nil)
+		return accessAudit(ctx, tx, m, "role_grant.deleted", "role_grant", id, grantSnapshot(g), nil)
 	})
 }
 
@@ -1020,7 +1039,7 @@ func RemovePermissionGroupMemberships(ctx context.Context, tx pgx.Tx, m Managing
 		if err != nil {
 			return err
 		}
-		if err = accessAudit(ctx, tx, m, "permission_group.member_removed", "permission_group", group, snapshot, nil, nil); err != nil {
+		if err = accessAudit(ctx, tx, m, "permission_group.member_removed", "permission_group", group, snapshot, nil); err != nil {
 			return err
 		}
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -23,7 +24,7 @@ func (f statusFixture) post(t *testing.T, seq int64, key, role string, turn *uui
 }
 func (f statusFixture) opening(t *testing.T) uuid.UUID {
 	t.Helper()
-	turn, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "opening-fixture", Input: json.RawMessage(`[]`)})
+	turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "opening-fixture", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,14 +58,14 @@ func TestSlackPostUnknownOpeningBlocksDependentContentWithoutReplay(t *testing.T
 	if err := json.Unmarshal(c.Payload, &payload); err != nil || payload["thread_ts"] != nil || payload["metadata"] == nil {
 		t.Fatalf("opening payload: %s %v", c.Payload, err)
 	}
-	if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
 	f.noPostClaim(t, opening)
 	f.noPostClaim(t, reply)
 	// A stale successful completion cannot convert an uncertain attempt to posted.
-	if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	var remains bool
@@ -79,7 +80,7 @@ func TestSlackPostOpeningAckAllowsReplyAndExpiredClaimStaysUncertain(t *testing.
 	opening := f.opening(t)
 	reply := f.post(t, 2, "later", "lifecycle", nil)
 	c := f.postClaim(t, opening)
-	if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -102,7 +103,7 @@ func TestSlackPostRateLimitRetriesFrozenRevisionBeforeNewerContent(t *testing.T)
 	f := newStatusFixture(t)
 	post := f.post(t, 1, "content", "lifecycle", nil)
 	first := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, first, DeliveryResult{Disposition: RateLimited, RetryAfter: 90 * time.Second}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: RateLimited, RetryAfter: 90 * time.Second}); err != nil {
 		t.Fatal(err)
 	}
 	f.noPostClaim(t, post)
@@ -114,10 +115,10 @@ func TestSlackPostRateLimitRetriesFrozenRevisionBeforeNewerContent(t *testing.T)
 	if retry.Revision != 1 || !bytes.Equal(first.Payload, retry.Payload) || retry.AttemptID == first.AttemptID {
 		t.Fatal("rate retry changed exact mutation")
 	}
-	if err := FinishPost(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := FinishPost(t.Context(), f.Pool, retry, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, retry, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -125,7 +126,7 @@ func TestSlackPostRateLimitRetriesFrozenRevisionBeforeNewerContent(t *testing.T)
 	if update.Method != "chat.update" || update.Revision != 2 || !bytes.Contains(update.Payload, []byte("new content")) {
 		t.Fatalf("new revision missing: %+v", update)
 	}
-	if err := FinishPost(t.Context(), f.Pool, update, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, update, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	var done bool
@@ -144,18 +145,18 @@ func TestSlackPostUncertainProgressBlocksContinuationButAllowsQuestionAndRespons
 	question := f.post(t, 4, "attention", "lifecycle", nil)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET role='question',turn_id=$2,ask_id=$3 WHERE id=$1`, question, turn, ask)
 	p := f.postClaim(t, progress)
-	if err := FinishPost(t.Context(), f.Pool, p, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, p, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
 	f.noPostClaim(t, continuation)
 	r := f.postClaim(t, response)
-	if err := FinishPost(t.Context(), f.Pool, r, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.099"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, r, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.099"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
 	q := f.postClaim(t, question)
-	if err := FinishPost(t.Context(), f.Pool, q, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.100"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, q, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.100"}); err != nil {
 		t.Fatal(err)
 	}
 	// An explicit unsuccessful disposition releases the dependency; the network
@@ -163,7 +164,7 @@ func TestSlackPostUncertainProgressBlocksContinuationButAllowsQuestionAndRespons
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='failed',error='delivery_abandoned',inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1`, progress)
 	f.due(t)
 	next := f.postClaim(t, continuation)
-	if err := FinishPost(t.Context(), f.Pool, next, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.101"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, next, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.101"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -236,10 +237,10 @@ func TestSlackPostHTTPRunsAfterFrozenClaimCommits(t *testing.T) {
 		}
 		return DeliveryResult{Disposition: Acknowledged, Timestamp: "123.100"}
 	})
-	if sent, err := ReconcilePost(t.Context(), f.Pool, client, post); err != nil || !sent || calls != 1 {
+	if sent, err := ReconcilePost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, post); err != nil || !sent || calls != 1 {
 		t.Fatalf("delivery: %v %d %v", sent, calls, err)
 	}
-	if sent, err := ReconcilePost(t.Context(), f.Pool, client, post); err != nil || sent || calls != 1 {
+	if sent, err := ReconcilePost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, post); err != nil || sent || calls != 1 {
 		t.Fatalf("posted content resent: %v %d %v", sent, calls, err)
 	}
 }
@@ -258,7 +259,7 @@ func TestSlackPostFreshUpdateCanUseMessageFromOlderAuthorization(t *testing.T) {
 	f := newStatusFixture(t)
 	post := f.post(t, 1, "card", "lifecycle", nil)
 	claim := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	// The reauthorization boundary suppresses pending intents, not retained posted
@@ -278,14 +279,14 @@ func TestSlackPostAuthorizationLossSuppressesPendingButPreservesUnknown(t *testi
 	f := newStatusFixture(t)
 	unknown := f.post(t, 1, "unknown", "lifecycle", nil)
 	c := f.postClaim(t, unknown)
-	if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	pending := f.post(t, 2, "pending", "lifecycle", nil)
 	failure := f.post(t, 3, "failure", "lifecycle", nil)
 	f.due(t)
 	c = f.postClaim(t, failure)
-	if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Rejected, Code: "token_revoked"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Rejected, Code: "token_revoked"}); err != nil {
 		t.Fatal(err)
 	}
 	for id, want := range map[uuid.UUID]string{unknown: "uncertain", pending: "suppressed", failure: "failed"} {
@@ -311,7 +312,7 @@ func TestDefinitivelyUnavailableOpeningSettlesDependentProjection(t *testing.T) 
 			f.projectAll(t)
 			if kind == "rejected" {
 				claim := f.postClaim(t, opening)
-				if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Rejected, Code: "invalid_blocks"}); err != nil {
+				if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Rejected, Code: "invalid_blocks"}); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -373,7 +374,7 @@ func TestSlackPostNewQuestionAndResponseFollowInitialNarrative(t *testing.T) {
 				t.Fatal("initial narrative was not discoverable")
 			}
 			claim := f.postClaim(t, work)
-			if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.101"}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.101"}); err != nil {
 				t.Fatal(err)
 			}
 			// A later edit has an established reading position and must not block the next message.

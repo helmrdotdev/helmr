@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"strings"
 	"time"
@@ -42,6 +44,10 @@ var (
 // Caller is transport-authenticated identity. Runtime requests carry the stable
 // Session and its current authority generation; a transport request ID is not identity.
 type Caller struct {
+	// Credential provenance is supplied by the authenticated transport.
+	CredentialID      uuid.UUID
+	CredentialKind    string
+	CredentialVersion int64
 	// Slack route provenance is supplied only by verified Slack admission, never request JSON.
 	SlackThreadID     uuid.UUID
 	SlackConnectionID uuid.UUID
@@ -174,12 +180,12 @@ func digestJSON(input json.RawMessage) ([32]byte, error) {
 // Enqueue atomically accepts one input and records its observation event. The
 // Environment lock serializes capacity/admission; the Session lock fixes queue
 // order and the model-owned retry receipt before live eligibility is considered.
-func Enqueue(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
-	result, err := admitSessionInput(ctx, pool, trust, caller, req, "enqueue", uuid.Nil())
+func Enqueue(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (Admission, error) {
+	result, err := admitSessionInput(ctx, auditPolicy, pool, trust, caller, req, "enqueue", uuid.Nil())
 	return result.Admission, err
 }
 
-func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
+func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest, method string, exactTurn uuid.UUID) (SendReceipt, error) {
 	var result SendReceipt
 	target := req.SessionID
 	if method == "turn_send" {
@@ -311,6 +317,9 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 			if _, err = tx.Exec(ctx, `UPDATE sessions SET computer_id=$3 WHERE environment_id=$1 AND id=$2 AND computer_id IS NULL`, req.EnvironmentID, req.SessionID, o.computer); err != nil {
 				return err
 			}
+			if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsSend, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, ComputerID: o.computer, Action: "computer.created", TargetKind: "computer", TargetID: o.computer, Details: audit.LifecycleDetails{}}); err != nil {
+				return err
+			}
 		}
 		var computerAvailable bool
 		if err = tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) FROM computers WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, o.computer).Scan(&computerAvailable); err != nil {
@@ -320,7 +329,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 			return ErrNotReady
 		}
 		if method != "enqueue" {
-			admitted, err := admitMessage(ctx, tx, caller, req, method, exactTurn, digest, o, &result)
+			admitted, err := admitMessage(ctx, auditPolicy, tx, caller, req, method, exactTurn, digest, o, &result)
 			if err != nil || admitted {
 				return err
 			}
@@ -345,7 +354,7 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 			return err
 		}
 		if runnable {
-			if err = computer.NoteExecutionDemand(ctx, tx, req.EnvironmentID, o.computer); err != nil {
+			if err = computer.NoteExecutionDemand(ctx, auditPolicy, tx, req.EnvironmentID, o.computer); err != nil {
 				return err
 			}
 		}
@@ -357,6 +366,9 @@ func admitSessionInput(ctx context.Context, pool db.TxBeginner, trust computer.T
 		_, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,origin_turn_id)
             VALUES($1,$2,$3,$4,$5,$6,$7,$12,$3,NULLIF($8,''),$9,$10,$11)`, req.EnvironmentID, result.TurnID, req.SessionID, o.computer, result.Sequence, caller.Kind, caller.ID, req.IdempotencyKey, digest[:], req.Input, nullableID(caller.TurnID), method)
 		if err != nil {
+			return err
+		}
+		if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsSend, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: result.TurnID, Action: "turn.admitted", Outcome: "accepted", TargetKind: "turn", TargetID: result.TurnID, Details: audit.LifecycleDetails{Sequence: result.Sequence}}); err != nil {
 			return err
 		}
 		return event(ctx, tx, req.EnvironmentID, req.SessionID, result.TurnID, "turn.queued")
@@ -552,7 +564,7 @@ func newTurnReady(ctx context.Context, tx pgx.Tx, e Execution, o owners) error {
 	return nil
 }
 
-func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispatch, check inputAuthorityCheck) error {
+func dispatchTurn(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, e Execution, result *TurnDispatch, check inputAuthorityCheck) error {
 	o, err := dispatchReady(ctx, tx, e)
 	if err != nil {
 		return err
@@ -587,6 +599,9 @@ func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispa
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp(),error_code='permission_revoked',error_message=$3 WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID, []byte("Permission was revoked before dispatch")); err != nil {
+			return err
+		}
+		if err = auditServiceFact(ctx, tx, auditPolicy, "turn-dispatcher", audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: result.TurnID, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: result.TurnID, Details: audit.FailureDetails{Reason: "permission_denied"}}); err != nil {
 			return err
 		}
 		if err = eventData(ctx, tx, e.EnvironmentID, e.SessionID, result.TurnID, "turn.failed", []byte(`{"code":"permission_revoked"}`)); err != nil {

@@ -4,14 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
-func LoseLeaseProcesses(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, epoch int64, members []ComputerMember, physicalStopped bool, disposition ComputerLossDisposition) error {
+func LoseLeaseProcesses(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, computerID uuid.UUID, epoch int64, members []ComputerMember, physicalStopped bool, disposition ComputerLossDisposition) error {
 	for _, member := range members {
 		if member.LeaseEpoch != epoch {
 			continue
@@ -34,7 +36,7 @@ func LoseLeaseProcesses(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUI
 			}
 		}
 		e := Execution{EnvironmentID: env, SessionID: member.Session, ProcessEpoch: member.Epoch, LeaseEpoch: epoch}
-		if err := loseProcess(ctx, tx, e, physicalStopped, disposition, computerID); err != nil {
+		if err := loseProcess(ctx, auditPolicy, tx, e, physicalStopped, disposition, computerID); err != nil {
 			return err
 		}
 	}
@@ -54,8 +56,8 @@ const (
 
 // LoseProcess exposes independent runtime loss to cross-package fixtures.
 // Production Computer loss uses LoseLeaseProcesses and its explicit disposition.
-func LoseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bool) error {
-	return loseProcess(ctx, tx, e, physicalStopped, ComputerLossRequiresAttention, uuid.Nil())
+func LoseProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, e Execution, physicalStopped bool) error {
+	return loseProcess(ctx, auditPolicy, tx, e, physicalStopped, ComputerLossRequiresAttention, uuid.Nil())
 }
 
 const ComputerExecutionLost = "computer_execution_lost"
@@ -69,7 +71,7 @@ type ComputerLossInterruption struct {
 	RecoveryGap bool      `json:"recoveryGap"`
 }
 
-func loseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bool, disposition ComputerLossDisposition, lossComputer uuid.UUID) error {
+func loseProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, e Execution, physicalStopped bool, disposition ComputerLossDisposition, lossComputer uuid.UUID) error {
 	var recorded, terminal, fenced, neverStarted bool
 	if err := tx.QueryRow(ctx, `SELECT p.failure_recorded_at IS NOT NULL,s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id),p.fenced_at IS NOT NULL, p.status IN ('starting','stopping') AND p.attachment_sequence=0 AND p.failure_recorded_at IS NULL AND l.initialized_at IS NULL AND l.restored_from_save_id IS NULL
  FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
@@ -81,7 +83,7 @@ func loseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bo
 	if fenced {
 		return nil
 	}
-	revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, tx, e)
+	revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, auditPolicy, tx, e)
 	if err != nil {
 		return err
 	}
@@ -98,7 +100,7 @@ func loseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bo
 		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 	}
 	if !recorded && !terminal && !revocationRecorded && disposition == ComputerLossRequiresAttention {
-		if err := recordSessionFailure(ctx, tx, e, "Computer execution authority lost without an eligible continuation"); err != nil {
+		if err := recordSessionFailure(ctx, auditPolicy, tx, audit.System("session-recovery"), e, "Computer execution authority lost without an eligible continuation"); err != nil {
 			return err
 		}
 	}
@@ -113,7 +115,7 @@ func loseProcess(ctx context.Context, tx pgx.Tx, e Execution, physicalStopped bo
 			return err
 		}
 	}
-	if err := interruptRunningSessionTurnWithData(ctx, tx, e, interruption); err != nil {
+	if err := interruptRunningSessionTurnWithData(ctx, auditPolicy, tx, audit.System("session-recovery"), e, interruption); err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `UPDATE session_processes SET status='lost',failure_recorded_at=COALESCE(failure_recorded_at,clock_timestamp()),

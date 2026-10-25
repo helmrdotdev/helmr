@@ -68,7 +68,7 @@ func (server *Server) workerAgentComputerStopped(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	if err = dispatch.ObserveLeaseStopped(r.Context(), server.tx, workerFromContext(r.Context()), identity, invalidCheckpoint, failedBootSeed); err != nil {
+	if err = dispatch.ObserveLeaseStopped(r.Context(), server.auditPolicy, server.tx, workerFromContext(r.Context()), identity, invalidCheckpoint, failedBootSeed); err != nil {
 		server.writeAgentComputerError(w, err)
 		return
 	}

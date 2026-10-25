@@ -3,6 +3,7 @@ package workergroup_test
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"time"
@@ -54,7 +55,7 @@ func TestPoolRetirementPostgresConcurrentLastRestorePath(t *testing.T) {
 	for index, id := range []uuid.UUID{f.poolID, alternative} {
 		wait.Go(func() {
 			<-start
-			_, _, results[index] = workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, id, 1)
+			_, _, results[index] = workergroup.DrainPool(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, id, 1)
 		})
 	}
 	close(start)
@@ -81,7 +82,7 @@ func TestPoolRetirementPostgresConcurrentLastRestorePath(t *testing.T) {
 
 func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 	f := newRetirementFixture(t)
-	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
 		t.Fatal(err)
 	}
 	cloneRestorePool(t, f)
@@ -101,7 +102,7 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := workergroup.DrainPool(ctx, f.Pool, audit.System("test-fixture"), f.Group, f.poolID, 1)
+		_, _, err := workergroup.DrainPool(ctx, f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, 1)
 		done <- err
 	}()
 	for {
@@ -138,7 +139,7 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 
 func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
 	f := newRetirementFixture(t)
-	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
 		t.Fatal(err)
 	}
 	request := f.capture()
@@ -149,24 +150,24 @@ func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
 	// supplier retirement, not VM capture or manifest certification.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM worker_hosts WHERE id=$3),ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture VM stopped' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, request.CheckpointID, f.Worker)
-	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "parked-input", Input: []byte(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "parked-input", Input: []byte(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	if demand, err := workergroup.HasQueuedDemand(t.Context(), f.Pool, f.Group); err != nil || !demand {
 		t.Fatalf("parked Session restore demand=%v: %v", demand, err)
 	}
-	if _, err := workergroup.DrainHost(t.Context(), f.Pool, audit.System("test-fixture"), f.Worker, workergroup.DrainWorkerHostRequest{ExpectedEpoch: 1, ExpectedClaimVersion: 1, Reason: workergroup.DrainReasonIdleScaleIn}); !errors.Is(err, workergroup.ErrQueuedDemand) {
+	if _, err := workergroup.DrainHost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Worker, workergroup.DrainWorkerHostRequest{ExpectedEpoch: 1, ExpectedClaimVersion: 1, Reason: workergroup.DrainReasonIdleScaleIn}); !errors.Is(err, workergroup.ErrQueuedDemand) {
 		t.Fatalf("idle drain with parked input=%v, want queued demand", err)
 	}
 	var conflict workergroup.ConflictError
-	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, 1); !errors.As(err, &conflict) {
+	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, 1); !errors.As(err, &conflict) {
 		t.Fatalf("last parked profile retired: %v", err)
 	}
 	alternative := cloneRestorePool(t, f)
-	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, 1); err != nil {
+	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, alternative, 1); !errors.As(err, &conflict) {
+	if _, _, err := workergroup.DrainPool(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, alternative, 1); !errors.As(err, &conflict) {
 		t.Fatalf("last alternative retired: %v", err)
 	}
 	profiles, err := workergroup.ResolvePool(t.Context(), db.New(f.Pool), f.Group, "pool")
@@ -190,37 +191,39 @@ func TestPoolRetirementPostgresCaptureRequiresRemainingSupplier(t *testing.T) {
 func TestPoolRetirementPostgresDisableWaitsForPhysicalStop(t *testing.T) {
 	f := newRetirementFixture(t)
 	cloneRestorePool(t, f)
-	lost, err := workergroup.MarkHostLost(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, "host", 1)
+	lost, err := workergroup.MarkHostLost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, "host", 1)
 	if err != nil || lost.Status != "lost" {
 		t.Fatalf("mark lost=%+v %v", lost, err)
 	}
-	_, drained, err := workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, 1)
+	_, drained, err := workergroup.DrainPool(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var conflict workergroup.ConflictError
-	if _, _, err = workergroup.DisablePool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, drained.ClaimVersion); !errors.As(err, &conflict) {
+	if _, _, err = workergroup.DisablePool(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, drained.ClaimVersion); !errors.As(err, &conflict) {
 		t.Fatalf("disabled while VM custody remains: %v", err)
 	}
 	err = db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-		absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, audit.System("test-fixture"), f.Worker)
+		absence, err := workergroup.ConfirmHostProviderAbsent(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Worker)
 		if err != nil {
 			return err
 		}
-		return dispatch.ObserveProviderAbsentHost(t.Context(), absence)
+		return dispatch.ObserveProviderAbsentHost(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, absence)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, receipt, err := workergroup.DisablePool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, drained.ClaimVersion)
+	_, receipt, err := workergroup.DisablePool(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, drained.ClaimVersion)
 	if err != nil || receipt.Status != "disabled" {
 		t.Fatalf("disable receipt=%+v: %v", receipt, err)
 	}
-	_, replay, err := workergroup.DisablePool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, drained.ClaimVersion)
+	_, replay, err := workergroup.DisablePool(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, drained.ClaimVersion)
 	if err != nil || replay.ClaimVersion != receipt.ClaimVersion {
 		t.Fatalf("disable replay=%+v: %v", replay, err)
 	}
-	if _, _, err = workergroup.DrainPool(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, receipt.ClaimVersion); !errors.As(err, &conflict) {
+	if _, _, err = workergroup.DrainPool(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, receipt.ClaimVersion); !errors.As(err, &conflict) {
 		t.Fatalf("disabled pool revived: %v", err)
 	}
 }
@@ -245,17 +248,17 @@ func TestScaleInSelectsPublishedRetainedSessionSource(t *testing.T) {
 	f := newRetirementFixture(t)
 	key := uuid.NewV7()
 	var blocked workergroup.ScaleInConflict
-	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) {
+	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) {
 		t.Fatalf("mandatory execution selected for scale-in: %v", err)
 	}
-	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
 		t.Fatal(err)
 	}
 	request := f.capture()
 	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host, request); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) {
+	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) {
 		t.Fatalf("unpublished source selected for scale-in: %v", err)
 	}
 	// Supply a certified publication without fencing the retained VM or its
@@ -267,17 +270,17 @@ func TestScaleInSelectsPublishedRetainedSessionSource(t *testing.T) {
 	// A wake arriving after an idle observation must block the final locked
 	// selection even though it creates no Turn.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_controls SET status='completed',settled_at=clock_timestamp() WHERE computer_id=$1 AND kind='hibernate' AND status='accepted'`, f.Computer)
-	if _, err := session.ControlComputerExecution(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "wake", IdempotencyKey: "wake-after-observation"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "wake", IdempotencyKey: "wake-after-observation"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) || len(blocked.Blockers) != 1 || blocked.Blockers[0] != "queued_work" {
+	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, key); !errors.As(err, &blocked) || len(blocked.Blockers) != 1 || blocked.Blockers[0] != "queued_work" {
 		t.Fatalf("accepted wake did not block scale-in: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, f.Computer)
-	if err := dispatch.ReconcileExecutionAdmissions(t.Context(), f.Pool); err != nil {
+	if err := dispatch.ReconcileExecutionAdmissions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool); err != nil {
 		t.Fatal(err)
 	}
-	selected, created, err := workergroup.SelectScaleIn(t.Context(), f.Pool, audit.System("test-fixture"), f.Group, f.poolID, key)
+	selected, created, err := workergroup.SelectScaleIn(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.System("test-fixture"), f.Group, f.poolID, key)
 	if err != nil || !created || selected.WorkerHostID != f.Worker.String() || selected.Phase != "draining" {
 		t.Fatalf("retained source prevented scale-in: %+v %v", selected, err)
 	}

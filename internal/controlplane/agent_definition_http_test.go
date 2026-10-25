@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -38,7 +39,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
-	store, err := secret.New(queries, f.Pool, bytes.Repeat([]byte{17}, 32))
+	store, err := secret.New(queries, f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +48,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	handler = handler
 	keys, err := auth.NewKeys(cfg.AuthKey)
 	if err != nil {
 		t.Fatal(err)

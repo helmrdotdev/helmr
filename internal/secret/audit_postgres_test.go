@@ -1,6 +1,7 @@
 package secret
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -17,14 +18,14 @@ func TestSecretAuditCommitsOnceAndRollsBackMutationOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := seedSecretEnvironment(t, d.Pool)
-	store, err := New(db.New(d.Pool), d.Pool, make([]byte, 32))
+	store, err := New(db.New(d.Pool), d.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
 	key := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $1,org_id,project_id,id,'fixture','fixture',convert_to('fixture','UTF8') FROM environments WHERE id=$2`, key, env)
 	dbtest.SetAPIKeyRole(t, d.Pool, key, "secrets.create", "secrets.rotate", "secrets.revoke")
-	actor := audit.Actor{Kind: "api_key", CredentialID: key}
+	actor := audit.Actor{Kind: "api_key", ID: key, CredentialKind: "api_key", CredentialID: key, CredentialVersion: 1}
 	created, err := store.Create(t.Context(), actor, env, "TOKEN", []byte("private-value"), "create")
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +42,7 @@ func TestSecretAuditCommitsOnceAndRollsBackMutationOnFailure(t *testing.T) {
 	}
 	var count int
 	var principal, scope, target bool
-	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_kind='api_key' AND actor_credential_id=$1 AND actor_user_id IS NULL),bool_and(org_id IS NOT NULL AND project_id IS NOT NULL AND environment_id=$2),bool_and(target_kind='secret' AND target_id=$3 AND outcome='succeeded' AND details='{}'::jsonb) FROM audit_events`, key, env, id).Scan(&count, &principal, &scope, &target); err != nil || count != 2 || !principal || !scope || !target {
+	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_kind='api_key' AND credential_id=$1 AND actor_id=$1),bool_and(org_id IS NOT NULL AND project_id IS NOT NULL AND environment_id=$2),bool_and(target_kind='secret' AND target_id=$3 AND outcome='succeeded' AND details='{}'::jsonb) FROM audit_events`, key, env, id).Scan(&count, &principal, &scope, &target); err != nil || count != 2 || !principal || !scope || !target {
 		t.Fatalf("audit count=%d actor=%v scope=%v target=%v err=%v", count, principal, scope, target, err)
 	}
 	before := currentSecretVersion(t, d.Pool, env, created.ID)

@@ -56,7 +56,7 @@ func TestComputerErrorPreservesPublicStatuses(t *testing.T) {
 
 			server := &Server{log: discardTestLogger()}
 			recorder := httptest.NewRecorder()
-			server.writeComputerError(recorder, fmt.Errorf("operation: %w", test.err), test.operation, "test")
+			server.writeComputerError(recorder, httptest.NewRequest(http.MethodPost, "/v1/computers", nil), fmt.Errorf("operation: %w", test.err), test.operation, "test")
 			if recorder.Code != test.status || decodeHTTPError(t, recorder.Body.Bytes()).Code != test.code {
 				t.Fatalf("public = %d %s, want %d %s", recorder.Code, recorder.Body, test.status, test.code)
 			}

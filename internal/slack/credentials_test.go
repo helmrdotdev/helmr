@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"strings"
@@ -15,13 +16,13 @@ import (
 )
 
 func TestCredentialEnvelopeBindsOwnerInstallationAndRevision(t *testing.T) {
-	store, err := NewCredentialStore(nil, make([]byte, 32), TransportHTTP)
+	store, err := NewCredentialStore(nil, make([]byte, 32), TransportHTTP, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err == nil || store != nil {
 		t.Fatal("missing database accepted")
 	}
 	// Encryption does not access the database; a typed test transaction owner is
 	// sufficient to exercise the independent authenticated envelope boundary.
-	store, err = NewCredentialStore(&unusedTransactions{}, bytes.Repeat([]byte{1}, 32), TransportHTTP)
+	store, err = NewCredentialStore(&unusedTransactions{}, bytes.Repeat([]byte{1}, 32), TransportHTTP, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}

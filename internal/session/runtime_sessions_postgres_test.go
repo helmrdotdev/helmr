@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -42,9 +44,9 @@ func TestRuntimeSessionDiscoveryRechecksCallerAfterLockWait(t *testing.T) {
 				go func() {
 					var err error
 					if operation == "get" {
-						_, err = session.RuntimeGetSession(t.Context(), reader, caller, target.session)
+						_, err = session.RuntimeGetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, reader, caller, target.session)
 					} else {
-						_, err = session.RuntimeListSessions(t.Context(), reader, caller, session.RuntimeSessionListRequest{Relation: "requested", Limit: 10})
+						_, err = session.RuntimeListSessions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, reader, caller, session.RuntimeSessionListRequest{Relation: "requested", Limit: 10})
 					}
 					result <- err
 				}()
@@ -63,7 +65,9 @@ func TestRuntimeSessionDiscoveryRechecksCallerAfterLockWait(t *testing.T) {
 					time.Sleep(time.Millisecond)
 				}
 				if change == "close" {
-					err = session.CloseProcessing(t.Context(), tx, f.execution(), caller.TurnID)
+					err = session.CloseProcessing(t.Context(), auditpolicy.Policy{
+						RetentionSeconds: 3600,
+					}, tx, f.execution(), caller.TurnID)
 				} else {
 					err = session.EventData(t.Context(), tx, f.env, f.session, caller.TurnID, "turn.output", json.RawMessage(`[{"type":"text","text":"still running"}]`))
 				}
@@ -97,29 +101,29 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	requestedTurn := independent.enqueue(t, "requested")
 	unrelated.enqueue(t, "unrelated")
 	// Agent use does not authorize runtime access to an unrelated personal Session.
-	if _, err := session.Enqueue(t.Context(), f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, IdempotencyKey: "sent", Input: json.RawMessage(`[]`)}); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, IdempotencyKey: "sent", Input: json.RawMessage(`[]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatal(err)
 	}
-	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, unrelated.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, unrelated.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("unrelated Session: %v", err)
 	}
-	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, uuid.NewV7()); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, uuid.NewV7()); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("unknown Session: %v", err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: independent.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: independent.session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
-	view, err := session.RuntimeGetSession(t.Context(), f.pool, caller, independent.session)
+	view, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, independent.session)
 	if err != nil || view.Status != "cancelled" || view.InitialTurnID == nil || *view.InitialTurnID != requestedTurn.TurnID || view.InitialTurnStatus == nil || *view.InitialTurnStatus != "cancelled" || view.RequesterSessionID == nil || *view.RequesterSessionID != f.session {
 		t.Fatalf("retained initial receipt: %+v %v", view, err)
 	}
-	page, err := session.RuntimeListSessions(t.Context(), f.pool, caller, session.RuntimeSessionListRequest{Relation: "owned", Limit: 100})
+	page, err := session.RuntimeListSessions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.RuntimeSessionListRequest{Relation: "owned", Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != owned.session || *page.Sessions[0].InitialTurnID != ownedTurn.TurnID {
 		t.Fatalf("owned page: %+v %v", page, err)
 	}
 	seen := map[uuid.UUID]bool{}
 	for before := uuid.Nil(); ; {
-		page, err = session.RuntimeListSessions(t.Context(), f.pool, caller, session.RuntimeSessionListRequest{Relation: "requested", Before: before, Limit: 1})
+		page, err = session.RuntimeListSessions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.RuntimeSessionListRequest{Relation: "requested", Before: before, Limit: 1})
 		if err != nil || len(page.Sessions) != 1 || seen[page.Sessions[0].ID] {
 			t.Fatalf("requested page: %+v %v", page, err)
 		}
@@ -132,28 +136,51 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	if len(seen) != 2 || !seen[owned.session] || !seen[independent.session] {
 		t.Fatalf("requester scope: %v", seen)
 	}
-	page, err = session.RuntimeListSessions(t.Context(), f.pool, caller, session.RuntimeSessionListRequest{Relation: "requested", Statuses: []string{"cancelled"}, Limit: 100})
+	page, err = session.RuntimeListSessions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.RuntimeSessionListRequest{Relation: "requested", Statuses: []string{"cancelled"}, Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != independent.session {
 		t.Fatalf("terminal filter: %+v %v", page, err)
 	}
 	for _, req := range []session.RuntimeSessionListRequest{{Relation: "all", Limit: 1}, {Relation: "owned", Limit: 0}, {Relation: "owned", Limit: 101}, {Relation: "requested", Limit: 1, Statuses: []string{"completed"}}} {
-		if _, err := session.RuntimeListSessions(t.Context(), f.pool, caller, req); !errors.Is(err, session.ErrInvalidInput) {
+		if _, err := session.RuntimeListSessions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, req); !errors.Is(err, session.ErrInvalidInput) {
 			t.Fatalf("invalid query %+v: %v", req, err)
 		}
 	}
 	if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), caller.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, owned.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, owned.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("closed invoking Turn: %v", err)
 	}
 	// MCP carries Session authority without borrowing the current/latest Turn.
 	caller.TurnID = uuid.Nil()
-	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, owned.session); err != nil {
+	if _, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, owned.session); err != nil {
 		t.Fatalf("Session-bound discovery: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=2 WHERE id=$1`, f.session)
-	if _, err := session.RuntimeListSessions(t.Context(), f.pool, caller, session.RuntimeSessionListRequest{Relation: "owned", Limit: 1}); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeListSessions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.RuntimeSessionListRequest{Relation: "owned", Limit: 1}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("old authority: %v", err)
+	}
+}
+
+func TestRuntimeHoldReadCaptureFailureWithholdsData(t *testing.T) {
+	f := newFixture(t)
+	caller := runtimeReadCaller(t, f)
+	target := f.peer(t)
+	policy := auditpolicy.Policy{RetentionSeconds: 3600}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET requester_session_id=$1,causal_depth=1 WHERE id=$2`, f.session, target.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','private hold')`, f.env, uuid.NewV7(), target.session)
+	if v, err := session.RuntimeGetSession(t.Context(), policy, f.pool, caller, target.session); err != nil || len(v.Holds) != 1 {
+		t.Fatalf("get: %+v %v", v, err)
+	}
+	if v, err := session.RuntimeListSessions(t.Context(), policy, f.pool, caller, session.RuntimeSessionListRequest{Relation: "requested", Limit: 100}); err != nil || len(v.Sessions) != 1 {
+		t.Fatalf("list: %+v %v", v, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_runtime_hold_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$`)
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_runtime_hold_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_runtime_hold_audit()`)
+	if v, err := session.RuntimeGetSession(t.Context(), policy, f.pool, caller, target.session); !errors.Is(err, audit.ErrCapture) || len(v.Holds) != 0 {
+		t.Fatalf("get escaped: %+v %v", v, err)
+	}
+	if v, err := session.RuntimeListSessions(t.Context(), policy, f.pool, caller, session.RuntimeSessionListRequest{Relation: "requested", Limit: 100}); !errors.Is(err, audit.ErrCapture) || len(v.Sessions) != 0 {
+		t.Fatalf("list escaped: %+v %v", v, err)
 	}
 }

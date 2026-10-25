@@ -33,7 +33,7 @@ func (server *Server) workerRegisterAgentSaveObject(w http.ResponseWriter, r *ht
 		err = server.savePublisher.RegisterBatch(r.Context(), ref, request.Inspections)
 	}
 	if err != nil {
-		server.writeAgentSaveError(w, err)
+		server.writeAgentSaveError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -49,7 +49,7 @@ func (server *Server) workerCertifyAgentSaveObject(w http.ResponseWriter, r *htt
 		err = server.savePublisher.CertifyBatch(r.Context(), ref, request.Inspections)
 	}
 	if err != nil {
-		server.writeAgentSaveError(w, err)
+		server.writeAgentSaveError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -65,7 +65,7 @@ func (server *Server) workerCaptureAgentSave(w http.ResponseWriter, r *http.Requ
 		err = server.savePublisher.Capture(r.Context(), ref, request.Root, request.Evidence)
 	}
 	if err != nil {
-		server.writeAgentSaveError(w, err)
+		server.writeAgentSaveError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -81,7 +81,7 @@ func (server *Server) workerPublishAgentSave(w http.ResponseWriter, r *http.Requ
 		err = server.savePublisher.Publish(r.Context(), ref, request.Root, request.Evidence)
 	}
 	if err != nil {
-		server.writeAgentSaveError(w, err)
+		server.writeAgentSaveError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -95,14 +95,14 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 	}
 	identity, err := allocationIdentity(request.AllocationIdentity)
 	if err != nil || identity.Kind != "computer" {
-		server.writeAgentWorkerError(w, session.ErrInvalidInput)
+		server.writeAgentWorkerError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var retirement *computer.SaveRetirement
 	if request.Retirement != nil {
 		id, parseErr := uuid.Parse(request.Retirement.SaveID)
 		if parseErr != nil {
-			server.writeAgentWorkerError(w, session.ErrInvalidInput)
+			server.writeAgentWorkerError(w, r, session.ErrInvalidInput)
 			return
 		}
 		retirement = &computer.SaveRetirement{SaveID: id, Root: request.Retirement.Root}
@@ -113,7 +113,7 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
-		server.writeAgentSaveError(w, err)
+		server.writeAgentSaveError(w, r, err)
 		return
 	}
 	result := workerapi.AgentSavePending{}
@@ -127,10 +127,10 @@ func (server *Server) workerNextAgentSave(w http.ResponseWriter, r *http.Request
 }
 
 // A settled save cannot become publishable by retrying the same writer.
-func (server *Server) writeAgentSaveError(w http.ResponseWriter, err error) {
+func (server *Server) writeAgentSaveError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, session.ErrTerminal) || errors.Is(err, computer.ErrTerminal) || errors.Is(err, computer.ErrDenied) {
-		writeError(w, conflict(codedError{code: workerapi.SaveAuthorityLost, message: "save writer authority is unavailable"}))
+		server.writeOperationError(w, r, conflict(codedError{code: workerapi.SaveAuthorityLost, message: "save writer authority is unavailable"}))
 		return
 	}
-	server.writeAgentWorkerError(w, err)
+	server.writeAgentWorkerError(w, r, err)
 }

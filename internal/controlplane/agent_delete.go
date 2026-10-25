@@ -20,18 +20,18 @@ func (s *Server) changeAgent(w http.ResponseWriter, r *http.Request, restore boo
 	p := principalFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, p)
 	if err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	key := chi.URLParam(r, "agent")
 	if err = api.ValidateDefinitionID(key); err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	dry := false
 	for name, values := range r.URL.Query() {
 		if restore || name != "dry_run" || len(values) != 1 || (values[0] != "true" && values[0] != "false") {
-			writeError(w, badRequest(errors.New("unsupported query parameter")))
+			s.writeOperationError(w, r, badRequest(errors.New("unsupported query parameter")))
 			return
 		}
 		dry = values[0] == "true"
@@ -41,45 +41,45 @@ func (s *Server) changeAgent(w http.ResponseWriter, r *http.Request, restore boo
 			DryRun bool `json:"dry_run"`
 		}
 		if err = decodeOptionalRequestJSON(r, &input); err != nil {
-			writeError(w, badRequest(err))
+			s.writeOperationError(w, r, badRequest(err))
 			return
 		}
 		dry = input.DryRun
 	} else if r.ContentLength != 0 {
-		writeError(w, badRequest(errors.New("DELETE uses query parameters, not a request body")))
+		s.writeOperationError(w, r, badRequest(errors.New("DELETE uses query parameters, not a request body")))
 		return
 	}
 	revision := ""
 	if !dry {
 		raw := r.Header.Get("If-Match")
 		if raw == "" {
-			writeError(w, apiError{kind: errPreconditionRequired, err: codedError{code: "revision_required", message: "If-Match from the displayed revision is required"}})
+			s.writeOperationError(w, r, apiError{kind: errPreconditionRequired, err: codedError{code: "revision_required", message: "If-Match from the displayed revision is required"}})
 			return
 		}
 		revision = strings.Trim(raw, `"`)
 		n, parseErr := strconv.ParseInt(revision, 10, 64)
 		if parseErr != nil || n < 1 || raw != `"`+strconv.FormatInt(n, 10)+`"` {
-			writeError(w, badRequest(errors.New("If-Match must contain one quoted revision")))
+			s.writeOperationError(w, r, badRequest(errors.New("If-Match must contain one quoted revision")))
 			return
 		}
 	}
-	result, err := deployment.ChangeAgent(r.Context(), s.tx, p, scope, key, revision, restore, dry)
+	result, err := deployment.ChangeAgent(r.Context(), s.tx, s.auditPolicy, p, scope, key, revision, restore, dry)
 	if err != nil {
 		switch {
 		case errors.Is(err, deployment.ErrAgentNotFound):
-			writeError(w, notFound(err))
+			s.writeOperationError(w, r, notFound(err))
 		case errors.Is(err, deployment.ErrPermissionRequired), errors.Is(err, org.ErrMemberManagementRequired):
-			writeError(w, forbidden(codedError{code: "permission_required", message: "the dedicated Agent lifecycle permission is required"}))
+			s.writeOperationError(w, r, forbidden(codedError{code: "permission_required", message: "the dedicated Agent lifecycle permission is required"}))
 		case errors.Is(err, org.ErrStaleRevision):
-			writeError(w, permissionManagementError(err))
+			s.writeOperationError(w, r, permissionManagementError(err))
 		case errors.Is(err, org.ErrAgentDependenciesChanged), errors.Is(err, slack.ErrConnectionUnavailable):
-			writeError(w, conflict(codedError{code: "agent_dependencies_changed", message: "Agent dependencies changed; refresh the preview and retry"}))
+			s.writeOperationError(w, r, conflict(codedError{code: "agent_dependencies_changed", message: "Agent dependencies changed; refresh the preview and retry"}))
 		case errors.Is(err, deployment.ErrAgentDeletionBlocked):
 			raw, _ := json.Marshal(agentChangeResponse(result))
-			writeError(w, conflict(codedError{code: "agent_deletion_blocked", message: err.Error(), details: map[string]json.RawMessage{"preview": raw}}))
+			s.writeOperationError(w, r, conflict(codedError{code: "agent_deletion_blocked", message: err.Error(), details: map[string]json.RawMessage{"preview": raw}}))
 		default:
 			s.log.Error("change Agent failed", "error", err)
-			writeError(w, errors.New("change Agent"))
+			s.writeOperationError(w, r, errors.New("change Agent"))
 		}
 		return
 	}

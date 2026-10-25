@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -32,16 +33,20 @@ type ImageBuildTrustIssuer interface {
 }
 
 type Allocator struct {
-	database db.TxDB
-	key      [32]byte
-	trust    ImageBuildTrustIssuer
+	auditPolicy auditpolicy.Policy
+	database    db.TxDB
+	key         [32]byte
+	trust       ImageBuildTrustIssuer
 }
 
-func NewAllocator(database db.TxDB, channelKey []byte, trust ImageBuildTrustIssuer) (*Allocator, error) {
+func NewAllocator(database db.TxDB, auditPolicy auditpolicy.Policy, channelKey []byte, trust ImageBuildTrustIssuer) (*Allocator, error) {
 	if database == nil || len(channelKey) != 32 {
 		return nil, ErrInvalidInput
 	}
-	a := &Allocator{database: database, trust: trust}
+	if err := auditPolicy.Validate(); err != nil {
+		return nil, err
+	}
+	a := &Allocator{database: database, trust: trust, auditPolicy: auditPolicy}
 	copy(a.key[:], channelKey)
 	return a, nil
 }
@@ -337,7 +342,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		allowed, err := initialSessionDemand(ctx, tx, env, computerID, sessions)
+		allowed, err := initialSessionDemand(ctx, a.auditPolicy, tx, env, computerID, sessions)
 		if err != nil {
 			return err
 		}
@@ -364,7 +369,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err := a.insertComputerAllocation(ctx, tx, &result); err != nil {
 			return err
 		}
-		if err := session.AssignInitialProcesses(ctx, tx, result, sessions); err != nil {
+		if err := session.AssignInitialProcesses(ctx, a.auditPolicy, tx, result, sessions); err != nil {
 			return err
 		}
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
@@ -510,8 +515,8 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 }
 
 // Independent command demand may still require a VM after Session revocation.
-func initialSessionDemand(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, sessions []uuid.UUID) (bool, error) {
-	allowed, err := session.AuthorizeInitialSessions(ctx, tx, env, sessions)
+func initialSessionDemand(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, computerID uuid.UUID, sessions []uuid.UUID) (bool, error) {
+	allowed, err := session.AuthorizeInitialSessions(ctx, auditPolicy, tx, env, sessions)
 	if err != nil || allowed {
 		return allowed, err
 	}

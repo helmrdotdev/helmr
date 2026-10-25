@@ -19,9 +19,9 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(err))
 		return
 	}
-	authorization, err := identity.StartDeviceCode(r.Context(), s.db, s.identity)
+	authorization, err := identity.StartDeviceCode(r.Context(), s.tx, s.identity)
 	if err != nil {
-		writeError(w, err)
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	verificationURI := s.appOrigin.ResolveReference(&url.URL{Path: "/auth/device"}).String()
@@ -43,7 +43,7 @@ func (s *Server) deviceStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := identity.DeviceCodeStatus(r.Context(), s.db, s.identity, r.URL.Query().Get("user_code"))
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.DeviceStatusResponse{
@@ -60,7 +60,7 @@ func (s *Server) denyDeviceCode(w http.ResponseWriter, r *http.Request) {
 	s.decideDeviceCode(w, r, identity.DenyDeviceCode)
 }
 
-func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide func(ctx context.Context, q db.Querier, cfg identity.Config, approver auth.Principal, consent identity.DeviceConsent, userCode string) (identity.DeviceCodeState, error)) {
+func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide func(ctx context.Context, q db.TxBeginner, cfg identity.Config, approver auth.Principal, consent identity.DeviceConsent, userCode string) (identity.DeviceCodeState, error)) {
 	if err := s.userAuthConfigured(); err != nil {
 		writeError(w, unavailable(err))
 		return
@@ -71,9 +71,9 @@ func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide
 		return
 	}
 	consent := identity.DeviceConsent{UserID: request.UserID, OrgID: request.OrgID}
-	state, err := decide(r.Context(), s.db, s.identity, principalFromContext(r.Context()), consent, request.UserCode)
+	state, err := decide(r.Context(), s.tx, s.identity, principalFromContext(r.Context()), consent, request.UserCode)
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, api.DeviceStatusResponse{Status: state.Status})
@@ -106,7 +106,7 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, identity.ErrInvalidDeviceCode):
 		writeDeviceTokenError(w, "invalid_request")
 	default:
-		writeError(w, err)
+		s.writeIdentityError(w, r, err)
 	}
 }
 

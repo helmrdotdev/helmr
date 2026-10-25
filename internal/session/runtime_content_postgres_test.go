@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"testing"
 	"uuid"
@@ -74,11 +75,13 @@ func TestRuntimeResponsePublishesAtCompletionBeforeSave(t *testing.T) {
 	if err := session.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, responseID, response); err != nil {
 		t.Fatal(err)
 	}
-	view, err := session.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
+	view, err := session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session, a.TurnID)
 	if err != nil || view.Response != nil {
 		t.Fatalf("premature response %+v: %v", view, err)
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	outputID := uuid.NewV7()
@@ -86,17 +89,17 @@ func TestRuntimeResponsePublishesAtCompletionBeforeSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined"); err != nil || outcome == nil {
+	if outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined"); err != nil || outcome == nil {
 		t.Fatalf("premature completion %s: %v", outcome, err)
 	}
 	if _, err := session.RuntimeOutput(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`"late"`)); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("late output %v", err)
 	}
-	page, err := session.ListEvents(t.Context(), f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, After: sequence - 1, Limit: 100})
+	page, err := session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, After: sequence - 1, Limit: 100})
 	if err != nil || len(page.Records) != 2 || page.Records[0].Kind != "turn.output" || page.Records[1].Kind != "turn.completed" || string(page.Records[0].Data) != `[{"text":"drained\u0000","type":"text"}]` {
 		t.Fatalf("progress while saving %+v: %v", page, err)
 	}
-	view, err = session.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
+	view, err = session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session, a.TurnID)
 	if err != nil || view.Status != "completed" || view.Response == nil || view.Result == nil {
 		t.Fatalf("unpublished while saving %+v: %v", view, err)
 	}
@@ -114,7 +117,7 @@ func TestRuntimeResponsePublishesAtCompletionBeforeSave(t *testing.T) {
 	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined")
+	outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`42`), "joined")
 	if err != nil {
 		t.Fatal(err)
 	}

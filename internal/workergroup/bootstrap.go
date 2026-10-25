@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"uuid"
 
@@ -18,6 +19,7 @@ import (
 // BootstrapConfig names the region and worker group a self-hosted control
 // plane seeds, and the enrollment token the seeded group accepts.
 type BootstrapConfig struct {
+	AuditPolicy       auditpolicy.Policy
 	RegionID          string
 	RegionDisplayName string
 	RegionLocation    string
@@ -68,7 +70,7 @@ func Bootstrap(ctx context.Context, txb db.TxBeginner, cfg BootstrapConfig) erro
 		if err != nil {
 			return fmt.Errorf("create bootstrap worker group: %w", err)
 		}
-		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("worker-group-bootstrap"), Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
+		if err := audit.Append(ctx, tx, cfg.AuditPolicy, audit.Event{Actor: audit.System("worker-group-bootstrap"), Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
 			return err
 		}
 		return nil
