@@ -1,14 +1,14 @@
 import { AgentDeleteDialog } from "../features/agents/AgentDeleteDialog";
-import { DangerZone } from "../ui/Panel";
 import { hasPermission } from "../lib/auth";
 import { useLocation, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
-import { listAccessTargets } from "../lib/permissions";
+import { grantCoversAgent, listAccessTargets, listGrants } from "../lib/permissions";
 import { AgentAccess } from "../features/access/AgentAccess";
 import { useMe } from "../lib/me";
-import { ui } from "../ui/styles";
-import { CopyLinkButton } from "../components/CopyLinkButton";
+import { useCopyLink } from "../components/copyLink";
+import type { ActionMenuItem } from "../ui/ActionMenu";
+import { Tag } from "../ui/Tag";
 import { SectionLayout } from "../components/SectionLayout";
 import { deploymentHref } from "../features/deployments/navigation";
 import { AgentSlackConnection } from "../features/slack/AgentSlackConnection";
@@ -16,13 +16,13 @@ import { getCurrentDeployment } from "../lib/deployments";
 import { agentHref, getAgentDefinition, getAgentStatus, listAgentDefinitions, listRetainedAgents, type AgentTab, type RetainedAgent } from "../lib/definitions";
 import { loadError } from "../lib/error";
 import { useScope, useScopeIDs } from "../lib/scope";
-import { DataTable, EmptyCell, LoadMore, TableCount, PrimaryLink } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions, TableCount } from "../ui/DataTable";
 import { Notice } from "../ui/Notice";
 import { IDText } from "../ui/IDText";
 import { SearchInput, Segmented } from "../ui/Field";
 import { Page, Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, isNotFound, NotFoundState, QueryState, NoScopeState } from "../ui/QueryState";
+import { EmptyState, isDenied, isNotFound, NotFoundState, QueryState, NoScopeState } from "../ui/QueryState";
 import { LinesSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { StatusBadge } from "../ui/StatusBadge";
 import { selectedLinkTab } from "../ui/linkTab";
@@ -56,22 +56,45 @@ export function AgentsSection(props: { children?: JSX.Element }) {
 
 type AgentRow = RetainedAgent & { template?: string | undefined };
 
-export function AgentList() {
- const me=useMe();
- const [view,setView]=createSignal<"workloads"|"access">();
- const selected=()=>view() ?? (hasPermission(me.data,"access.manage") ? "access" : "workloads");
- return <><Show when={hasPermission(me.data,"access.manage")}><div class="mb-4"><Segmented label="Agent view" value={selected()} options={[{value:"workloads" as const,label:"Workloads"},{value:"access" as const,label:"Manage access"}]} onChange={setView} /></div></Show><Show when={selected()==="access" && hasPermission(me.data,"access.manage")} fallback={<OperationalAgentList />}><AccessAgentDirectory /></Show></>;
+// The object menu for an Agent, the same in its list row and by its name.
+function agentMenu(options: { agent: string; deleted: boolean; manageAccess: boolean; canDelete: boolean; copyLink: ActionMenuItem; onChange: () => void }): ActionMenuItem[] {
+  return [
+    ...(options.manageAccess && !options.deleted ? [{ label: "Manage access", href: agentHref(options.agent, "access") }] : []),
+    ...(options.canDelete && options.deleted ? [{ label: "Restore", onSelect: options.onChange }] : []),
+    options.copyLink,
+    ...(options.canDelete && !options.deleted ? [{ label: "Delete agent", tone: "danger" as const, onSelect: options.onChange }] : []),
+  ];
 }
 
-function AccessAgentDirectory() {
- const scope=useScopeIDs();
- const targets=createQuery(()=>({queryKey:["access","targets",scope().projectID],queryFn:()=>listAccessTargets(scope().projectID),enabled:!!scope().projectID}));
- const agents=()=>targets.data?.targets.find(t=>t.environment===scope().environmentID)?.agents ?? [];
- return <QueryState query={targets} pending={<TableSkeleton label="Loading agents" columns={["Agent"]} />} error={failure} empty={{ when: () => agents().length === 0, title: "No agents registered in this environment" }}>{()=> <DataTable columns={["Agent"]} footer={<TableCount count={agents().length} noun={{ one: "agent", other: "agents" }} />}><For each={agents()}>{agent=><tr><td><PrimaryLink href={agentHref(agent.key, "access")}>{agent.key}</PrimaryLink></td></tr>}</For></DataTable>}</QueryState>;
-}
+const invalidateAfterChange = (cache: ReturnType<typeof useQueryClient>) => { for (const key of ["agents", "access", "me", "triggers", "slack"]) void cache.invalidateQueries({ queryKey: [key] }); };
 
-function OperationalAgentList() {
+// Who can use each agent, summarized from its role assignments.
+function useAgentAudience(enabled: () => boolean) {
   const scope = useScopeIDs();
+  const targets = createQuery(() => ({ queryKey: ["access", "targets", scope().projectID], queryFn: () => listAccessTargets(scope().projectID), enabled: enabled() && !!scope().projectID }));
+  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: enabled() }));
+  const environment = () => targets.data?.targets.find(t => t.environment === scope().environmentID);
+  return (agent: string) => {
+    const env = environment(); const id = env?.agents.find(a => a.key === agent)?.id;
+    if (!env || !id || !grants.data) return undefined;
+    const covering = grants.data.grants.filter(g => grantCoversAgent(g, env.environment_id, id));
+    const people = new Set(covering.filter(g => g.subject_kind === "member").map(g => g.member_id)).size;
+    const groups = new Set(covering.filter(g => g.subject_kind === "group").map(g => g.group_id)).size;
+    const keys = new Set(covering.filter(g => g.subject_kind === "api_key").map(g => g.api_key_id)).size;
+    const parts = [groups && `${groups} ${groups === 1 ? "group" : "groups"}`, people && `${people} ${people === 1 ? "person" : "people"}`, keys && `${keys} ${keys === 1 ? "API key" : "API keys"}`].filter(Boolean).join(" · ");
+    return { shared: covering.some(g => g.subject_kind === "all_members"), parts };
+  };
+}
+
+// Agents of the environment: one list for operating them and managing who can
+// use them. Someone who can manage access but not read workloads sees the
+// registered agents instead.
+export function AgentList() {
+  const scope = useScopeIDs(); const me = useMe(); const cache = useQueryClient();
+  const manageAccess = () => hasPermission(me.data, "access.manage");
+  const audience = useAgentAudience(manageAccess);
+  const copyLink = useCopyLink();
+  const [changing, setChanging] = createSignal<{ agent: string; restore: boolean }>();
   const [catalogView, setCatalogView] = createSignal<"current" | "all" | "deleted">("current");
   const all = () => catalogView() !== "current";
   const [search, setSearch] = createSignal("");
@@ -89,9 +112,16 @@ function OperationalAgentList() {
   const items = createMemo(() => agents.data?.pages.flatMap(page => page.agents) ?? []);
   const query = () => search().trim().toLowerCase();
   const shown = createMemo(() => query() ? items().filter(item => item.agent.toLowerCase().includes(query())) : items());
-  // The filter already says these Agents are in the current deployment; only
-  // "All agents" marks the ones that are not.
-  const columns = () => all() ? ["Agent", "Status"] : ["Agent", "Template"];
+  // The filter already says these agents are in the current deployment; only
+  // "All" and "Deleted" mark the ones that are not.
+  const columns = () => [...(all() ? ["Agent", "Status"] : ["Agent", "Template"]), ...(manageAccess() ? ["Who can use it"] : []), { label: "Actions", srOnly: true }];
+  const denied = () => manageAccess() && (isDenied(agents.error) || isDenied(current.error));
+  const audienceCell = (agent: string) => {
+    const who = audience(agent);
+    return <td><Show when={who} fallback={<EmptyCell />}>{w => <Show when={w().shared || w().parts} fallback={<span class="text-console-muted">Nobody yet</span>}>
+      <span class="inline-flex items-center gap-2"><Show when={w().shared}><Tag>all members</Tag></Show><Show when={w().parts}><span>{w().shared ? `+ ${w().parts}` : w().parts}</span></Show></span>
+    </Show>}</Show></td>;
+  };
   const table = () => (
     <QueryState
       query={agents}
@@ -99,8 +129,8 @@ function OperationalAgentList() {
       error={failure}
       empty={{
         when: (data) => data.pages.every(page => page.agents.length === 0),
-        title: all() ? "No agents registered in this environment." : "No agents in the current deployment.",
-        hint: all() ? "Define agents in code and deploy them." : "Show all agents to manage retained connections and history.",
+        title: catalogView() === "deleted" ? "No deleted agents." : all() ? "No agents registered in this environment." : "No agents in the current deployment.",
+        hint: all() ? undefined : "Show all agents to manage retained connections and history.",
       }}
     >
       {() => (
@@ -117,6 +147,13 @@ function OperationalAgentList() {
               <Show when={!all()}>
                 <td><Show when={item.template} fallback={<EmptyCell />}>{template => <code>{template()}</code>}</Show></td>
               </Show>
+              <Show when={manageAccess()}>{audienceCell(item.agent)}</Show>
+              <RowActions label={`Actions for ${item.agent}`} items={agentMenu({
+                agent: item.agent, deleted: !!item.deleted_at, manageAccess: manageAccess(),
+                canDelete: manageAccess() && hasPermission(me.data, "agents.manage", { ...scope(), agent: item.agent }),
+                copyLink: copyLink.item(agentHref(item.agent)),
+                onChange: () => setChanging({ agent: item.agent, restore: !!item.deleted_at }),
+              })} />
             </tr>}</For>
           </DataTable>
         </Show>
@@ -124,25 +161,36 @@ function OperationalAgentList() {
     </QueryState>
   );
   return <>
-    <Toolbar start={<>
-      <Segmented label="Show agents" value={catalogView()} options={SHOW_OPTIONS} onChange={setCatalogView} />
-      <div class="w-56 max-sm:w-full">
-        <SearchInput aria-label="Filter agents" placeholder="Filter agents…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
-      </div>
-    </>} />
-    <Show when={all()} fallback={
-      <QueryState
-        query={current}
-        pending={<TableSkeleton label="Loading agents" columns={columns()} />}
-        error={failure}
-        empty={{ when: (deployment) => !deployment, title: "No current deployment.", hint: "Show all agents to manage retained connections and history." }}
-      >
-        {table}
-      </QueryState>
-    }>
-      {table()}
+    <copyLink.LiveRegion />
+    <Show when={!denied()} fallback={<AccessAgentDirectory />}>
+      <Toolbar start={<>
+        <Segmented label="Show agents" value={catalogView()} options={SHOW_OPTIONS} onChange={setCatalogView} />
+        <div class="w-56 max-sm:w-full">
+          <SearchInput aria-label="Filter agents" placeholder="Filter agents…" value={search()} onInput={event => setSearch(event.currentTarget.value)} />
+        </div>
+      </>} />
+      <Show when={all()} fallback={
+        <QueryState
+          query={current}
+          pending={<TableSkeleton label="Loading agents" columns={columns()} />}
+          error={failure}
+          empty={{ when: (deployment) => !deployment, title: "No current deployment.", hint: "Show all agents to manage retained connections and history." }}
+        >
+          {table}
+        </QueryState>
+      }>
+        {table()}
+      </Show>
     </Show>
+    <Show when={changing()} keyed>{target => <AgentDeleteDialog agent={target.agent} scope={scope()} restore={target.restore} onClose={() => setChanging(undefined)} onSaved={() => { setChanging(undefined); invalidateAfterChange(cache); }} />}</Show>
   </>;
+}
+
+function AccessAgentDirectory() {
+  const scope = useScopeIDs();
+  const targets = createQuery(() => ({ queryKey: ["access", "targets", scope().projectID], queryFn: () => listAccessTargets(scope().projectID), enabled: !!scope().projectID }));
+  const agents = () => targets.data?.targets.find(t => t.environment === scope().environmentID)?.agents ?? [];
+  return <QueryState query={targets} pending={<TableSkeleton label="Loading agents" columns={["Agent", { label: "Actions", srOnly: true }]} />} error={failure} empty={{ when: () => agents().length === 0, title: "No agents registered in this environment" }}>{() => <DataTable columns={["Agent", { label: "Actions", srOnly: true }]} footer={<TableCount count={agents().length} noun={{ one: "agent", other: "agents" }} />}><For each={agents()}>{agent => <tr><td><PrimaryLink href={agentHref(agent.key, "access")}>{agent.key}</PrimaryLink></td><RowActions label={`Actions for ${agent.key}`} items={[{ label: "Manage access", href: agentHref(agent.key, "access") }]} /></tr>}</For></DataTable>}</QueryState>;
 }
 
 function agentStatusQuery(name: () => string) {
@@ -172,6 +220,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
   const me = useMe();
   const scope = useScopeIDs();
   const canDelete = () => hasPermission(me.data, "access.manage") && hasPermission(me.data, "agents.manage", { ...scope(), agent: name() });
+  const copyLink = useCopyLink();
   const scopeState = useScope();
   const params = useParams();
   const location = useLocation();
@@ -203,13 +252,15 @@ export function AgentDetail(props: { children?: JSX.Element }) {
         )}</Show>
         <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
       </>}
-      actions={<Show when={!missing()}><CopyLinkButton /><Show when={canDelete() && agent.data?.deleted_at}><button type="button" class={ui.secondaryButton} onClick={() => setChangeOpen(true)}>Restore</button></Show></Show>}
+      menu={missing() ? undefined : agentMenu({ agent: name(), deleted: !!agent.data?.deleted_at, manageAccess: hasPermission(me.data, "access.manage"), canDelete: canDelete() && !!agent.data, copyLink: copyLink.item(), onChange: () => setChangeOpen(true) })}
+      menuLabel="Agent actions"
     />
-    <Show when={changeMessage()}><Notice tone="success">{changeMessage()}</Notice></Show>
+    <copyLink.LiveRegion />
+    <Show when={changeMessage()}><Notice tone="success" class="mb-4" onDismiss={() => setChangeMessage("")}>{changeMessage()}</Notice></Show>
     <Show when={changeOpen()}><AgentDeleteDialog agent={name()} scope={scope()} restore={!!agent.data?.deleted_at} onClose={() => setChangeOpen(false)} onSaved={() => {
       setChangeMessage(agent.data?.deleted_at ? "Agent restored. Removed access and Slack connections remain removed." : "Agent deleted. History is retained; access and connection cleanup completed.");
       setChangeOpen(false);
-      for (const key of ["agents", "access", "me", "triggers", "slack"]) void cache.invalidateQueries({queryKey:[key]});
+      invalidateAfterChange(cache);
     }} /></Show>
     <Show when={enabled()} fallback={<NoScopeState />}>
       <Show when={!missing()} fallback={<NotFoundState noun="agent" id={name()} environment={environment()} back={{ href: "/agents", label: "Go to agents" }} />}>
@@ -222,11 +273,6 @@ export function AgentDetail(props: { children?: JSX.Element }) {
             <TabPanel tabs="agent-tabs" value={selected()} selected={selected()}>{props.children}</TabPanel>
           </>}
         </QueryState>}><AgentAccess agent={name()} /></Show>
-        <Show when={canDelete() && agent.data && !agent.data.deleted_at}>
-          <DangerZone title="Delete agent" class="mt-6" action={<button type="button" class={ui.dangerOutlineButton} onClick={() => setChangeOpen(true)}>Delete agent</button>}>
-            Removes the agent's individual access assignments and Slack connections. Its sessions are kept, and you can restore it.
-          </DangerZone>
-        </Show>
       </Show>
     </Show>
   </Page>;

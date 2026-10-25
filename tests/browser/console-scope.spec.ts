@@ -153,8 +153,8 @@ test("Copy link shares the page in this tab's scope and an Agent page survives a
   await page.goto(`/agents/support/triggers?project=${project}&environment=production`);
   await expect(page).toHaveURL("/agents/support/triggers");
   await expect(page.getByRole("tab", { name: "Triggers", exact: true })).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("button", { name: "Copy link" }).click();
-  await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+  await page.getByRole("button", { name: "Agent actions", exact: true }).click();
+  await page.getByRole("menu", { name: "Agent actions" }).getByRole("menuitem", { name: "Copy link", exact: true }).click();
   await expect(page.getByText("Link copied")).toBeAttached();
   const origin = new URL(page.url()).origin;
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${origin}/agents/support/triggers?project=${project}&environment=production`);
@@ -173,8 +173,8 @@ test("Copy link reports a clipboard failure", async ({ page }) => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText: () => Promise.reject(new Error("denied")) } });
   });
   await page.goto(`/agents/support?project=${project}&environment=production`);
-  await page.getByRole("button", { name: "Copy link" }).click();
-  await expect(page.getByRole("button", { name: "Could not copy" })).toBeVisible();
+  await page.getByRole("button", { name: "Agent actions", exact: true }).click();
+  await page.getByRole("menu", { name: "Agent actions" }).getByRole("menuitem", { name: "Copy link", exact: true }).click();
   await expect(page.getByText("Could not copy link")).toBeAttached();
 });
 

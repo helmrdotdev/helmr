@@ -10,13 +10,12 @@ import { useMe } from "../lib/me";
 import { isOrganizationRole, listGrants, listRoles, permissionResource, resourceLabel, roleHref, saveRole, type Capability, type PermissionRole } from "../lib/permissions";
 import { CheckboxGroup, Field, FormActions, Segmented, TextArea, TextInput } from "../ui/Field";
 import { Notice } from "../ui/Notice";
-import { DangerZone } from "../ui/Panel";
 import { PageHeader } from "../ui/PageHeader";
 import { NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { PageSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
-import { DeleteRoleDialog, MANAGED_ROLE_NOTE } from "./roles";
+import { DeleteRoleDialog, MANAGED_ROLE_NOTE, roleMenu } from "./roles";
 
 type Level = "environment" | "organization";
 type Tab = "permissions" | "assignments";
@@ -60,12 +59,8 @@ export function RoleDetail() {
       breadcrumb={[{ href: "/settings/roles", label: "Roles" }]}
       badge={<Show when={readonly()}><ManagedMark title={MANAGED_ROLE_NOTE} /></Show>}
       subtitle={readonly() ? role()?.description || undefined : undefined}
-      actions={<Show when={allowed() && role()}>
-        {r => <>
-          <button type="button" class={ui.secondaryButton} onClick={() => navigate(`/settings/roles/new?from=${encodeURIComponent(r().id)}`)}>Duplicate</button>
-          <button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant this role</button>
-        </>}
-      </Show>}
+      menu={allowed() && role() ? roleMenu(role()!, { grant: () => setGranting(true), remove: () => setDeleting(true) }) : undefined}
+      menuLabel="Role actions"
     />
     <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to manage roles." /></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="role" id={id()} back={{ href: "/settings/roles", label: "Go to roles" }} />}>
@@ -79,17 +74,6 @@ export function RoleDetail() {
             <div {...(creating() ? {} : { role: "tabpanel", id: "role-tabs-panel-permissions", "aria-labelledby": "role-tabs-tab-permissions" })} hidden={!creating() && tab() !== "permissions"}>
               <Show when={formKey()} keyed>
                 {_key => <RoleForm role={source()} copy={creating()} readonly={readonly()} catalog={catalog()} onSaved={saved => creating() ? navigate(roleHref(saved.id)) : undefined} />}
-              </Show>
-              <Show when={role() && !role()!.builtin_key}>
-                <DangerZone
-                  title="Delete role"
-                  class="mt-6"
-                  action={role()!.grant_count > 0
-                    ? <button type="button" class={ui.secondaryButton} onClick={() => setTab("assignments")}>View assignments</button>
-                    : <button type="button" class={ui.dangerOutlineButton} onClick={() => setDeleting(true)}>Delete role</button>}
-                >
-                  {role()!.grant_count > 0 ? "Remove this role's assignments before deleting it." : "Nobody has this role. Deleting it can't be undone."}
-                </DangerZone>
               </Show>
             </div>
             <TabPanel tabs="role-tabs" value="assignments" selected={tab()}>

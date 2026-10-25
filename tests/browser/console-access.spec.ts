@@ -81,7 +81,10 @@ test("groups list all members as a managed group and open a group's access and m
   const table = page.getByRole("table");
   const everyone = table.getByRole("row").filter({ hasText: "All members" });
   await expect(everyone.getByRole("img", { name: "Managed by Helmr" })).toBeVisible();
-  await expect(everyone.getByRole("button")).toHaveCount(0);
+  // All members is managed: its row menu only grants access.
+  await everyone.getByRole("button", { name: "Actions for All members", exact: true }).click();
+  await expect(page.getByRole("menu", { name: "Actions for All members" }).getByRole("menuitem")).toHaveText(["Grant access"]);
+  await page.keyboard.press("Escape");
   await table.getByRole("link", { name: "Release team" }).click();
   await expect(page).toHaveURL(/\/settings\/groups\/group-release$/);
   await expect(page.getByRole("heading", { level: 1, name: "Release team" })).toBeVisible();
@@ -102,7 +105,10 @@ test("roles list the organization's roles first and lock the ones Helmr maintain
   await rows.filter({ hasText: "Agent user" }).getByRole("link", { name: "Agent user" }).click();
   await expect(page.getByRole("checkbox", { name: "Use agents" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Save role" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Duplicate" })).toBeVisible();
+  await page.getByRole("button", { name: "Role actions", exact: true }).click();
+  const menu = page.getByRole("menu", { name: "Role actions" });
+  await expect(menu.getByRole("menuitem", { name: "Duplicate", exact: true })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Delete role", exact: true })).toHaveCount(0);
 });
 
 test("a member's effective access names where each permission comes from", async ({ page }) => {
@@ -120,7 +126,9 @@ test("a member's effective access names where each permission comes from", async
 test("granting to all members offers only agent use on selected agents", async ({ page }) => {
   const state = await fixture(page);
   await page.goto("/settings/groups/all-members");
-  await page.getByRole("button", { name: "Grant access" }).click();
+  await page.getByRole("button", { name: "Group actions", exact: true }).click();
+  await expect(page.getByRole("menu", { name: "Group actions" }).getByRole("menuitem")).toHaveText(["Grant access"]);
+  await page.getByRole("menu", { name: "Group actions" }).getByRole("menuitem", { name: "Grant access", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Grant access" });
   await expect(dialog).toContainText("3 roles can’t be granted to all members.");
   await dialog.getByRole("combobox", { name: "Role" }).click();

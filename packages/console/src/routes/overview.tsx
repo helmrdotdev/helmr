@@ -111,16 +111,17 @@ function DeploymentContext() {
 function QueueItem(props: { item: AttentionItem }) {
   return (
     <ListItem line class="max-sm:flex-wrap max-sm:gap-y-1.5 max-sm:py-2" label={`${KIND_LABELS[props.item.kind]}: ${summary(props.item)}`}>
-        <StatusBadge resource="attention" status={props.item.kind} />
+        {/* Fixed widths for the kind, context, time and action keep every row's parts in columns. */}
+        <span class="w-22 shrink-0"><StatusBadge resource="attention" status={props.item.kind} /></span>
         <span class="min-w-0 flex-1 truncate text-body max-sm:basis-full max-sm:order-first max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:wrap-anywhere" title={summary(props.item)}>{summary(props.item)}</span>
-        <span class="flex shrink-0 items-center gap-1.5 font-mono text-chrome text-console-muted">
+        <span class="flex w-60 shrink-0 items-center gap-1.5 truncate font-mono text-chrome text-console-muted max-sm:w-auto">
           <A class="text-console-accent hover:text-console-accent-hover" href={agentHref(props.item.agent)}>{props.item.agent}</A>
           <Show when={props.item.session_id}>
             {(session) => <>· <IDText value={session()} mode="link" href={sessionConsolePath(session())} /></>}
           </Show>
         </span>
-        <span class="shrink-0 font-mono text-chrome"><RelativeTime value={props.item.at} /></span>
-        <A class={cx(ui.compactButton, "ml-auto")} href={actionHref(props.item)}>{ACTIONS[props.item.kind]}</A>
+        <span class="w-28 shrink-0 text-right font-mono text-chrome max-sm:w-auto max-sm:text-left"><RelativeTime value={props.item.at} /></span>
+        <span class="flex w-24 shrink-0 justify-end max-sm:ml-auto max-sm:w-auto"><A class={ui.compactButton} href={actionHref(props.item)}>{ACTIONS[props.item.kind]}</A></span>
     </ListItem>
   );
 }

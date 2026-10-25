@@ -551,7 +551,7 @@ test("members and pending invitations share one table told apart by status", asy
   await expect(rows.nth(1)).toContainText("you");
   // Owners cannot be removed; ownership changes separately from ordinary roles.
   await page.getByRole("button", { name: "Actions for Local", exact: true }).click();
-  await expect(page.getByRole("menuitem")).toHaveText(["View access", "Change ownership"]);
+  await expect(page.getByRole("menuitem")).toHaveText(["Grant access", "Change ownership"]);
   await page.keyboard.press("Escape");
   await expect(rows.nth(1).getByRole("cell").nth(3)).toHaveText("Active");
   await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Member");
@@ -662,13 +662,13 @@ test("removing a member and revoking an invitation each confirm before the reque
   const state = await fixture(page, true);
   await page.goto(`/settings/members?${scope}`);
   await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove member", exact: true }).click();
   const remove = page.getByRole("dialog", { name: "Remove member" });
   await expect(remove).toContainText("Second Member");
   await remove.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(state.deletions).toEqual([]);
   await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove member", exact: true }).click();
   await remove.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(remove).toHaveCount(0);
   expect(state.deletions).toEqual(["/api/members/membership-2"]);

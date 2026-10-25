@@ -1,4 +1,5 @@
-import { useParams } from "@solidjs/router";
+import { useNavigate, useParams } from "@solidjs/router";
+import { assignableRoles, ChangeRoleDialog, memberMenu, RemoveMemberDialog, type OwnershipChoice } from "./members";
 import { Tag } from "../ui/Tag";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
@@ -9,7 +10,7 @@ import { GroupMemberRemovalImpact } from "../features/access/GrantRemovalImpact"
 import { hasPermission } from "../lib/auth";
 import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
-import { listMembers } from "../lib/members";
+import { listMembers, memberResourceID, updateMemberOwnership } from "../lib/members";
 import { useScope } from "../lib/scope";
 import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionGroup } from "../lib/permissions";
 import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
@@ -17,7 +18,6 @@ import { ConfirmDialog } from "../ui/Dialog";
 import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
-import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
 
 type Tab = "effective" | "assignments" | "groups";
@@ -75,6 +75,9 @@ export function MemberDetail() {
   const missing = () => canManage() && !!members.data && !member();
   const [tab, setTab] = createSignal<Tab>("effective");
   const [granting, setGranting] = createSignal(false);
+  const [changingOwnership, setChangingOwnership] = createSignal(false);
+  const [removing, setRemoving] = createSignal(false);
+  const navigate = useNavigate();
   const [leaving, setLeaving] = createSignal<PermissionGroup>();
   const direct = createMemo(() => grants.data?.grants.filter(g => g.subject_kind === "member" && g.member_id === id()) ?? []);
   const memberGroups = createMemo(() => groups.data?.groups.filter(g => g.member_ids.includes(id())) ?? []);
@@ -90,7 +93,12 @@ export function MemberDetail() {
       breadcrumb={canManage() ? [{ href: "/settings/members", label: "Members" }] : [{ href: "/settings/account", label: "My account" }]}
       badge={<Show when={member()?.is_owner || (self() && me.data?.is_owner)}><Tag title="Can appoint owners and recover access administration">owner</Tag></Show>}
       subtitle={member()?.email && member()?.email !== name() ? member()?.email : undefined}
-      actions={<Show when={canManage() && member()?.status === "active"}><button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant access</button></Show>}
+      menu={canManage() && member()?.status === "active" ? memberMenu({
+        grant: () => setGranting(true),
+        changeOwnership: me.data?.is_owner ? () => setChangingOwnership(true) : undefined,
+        remove: !member()?.is_owner ? () => setRemoving(true) : undefined,
+      }) : undefined}
+      menuLabel="Member actions"
     />
     <Show when={canManage() || self()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to see other members’ access." /></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="member" id={id()} back={{ href: "/settings/members", label: "Go to members" }} />}>
@@ -126,6 +134,12 @@ export function MemberDetail() {
         </TabPanel>
       </Show>
     </Show>
+    <Show when={changingOwnership() && member()}>{m => <ChangeRoleDialog member={m()} roles={assignableRoles(me.data?.is_owner, self())} onClose={() => setChangingOwnership(false)} onSave={async (role: OwnershipChoice) => {
+      if ((role === "owner") === m().is_owner) return;
+      try { await updateMemberOwnership(memberResourceID(m()), role === "owner", m().is_owner); }
+      finally { await cache.invalidateQueries({ queryKey: ["members"] }); }
+    }} />}</Show>
+    <Show when={removing() && member()}>{m => <RemoveMemberDialog member={m()} onClose={() => setRemoving(false)} onRemoved={async () => { await cache.invalidateQueries({ queryKey: ["members"] }); navigate("/settings/members"); }} />}</Show>
     <Show when={granting()}><GrantAccessDialog recipient={{ kind: "member", id: id(), name: name() }} onClose={() => setGranting(false)} /></Show>
     <Show when={leaving()}>
       {group => (

@@ -1,4 +1,6 @@
 import { useNavigate } from "@solidjs/router";
+import { GrantAccessDialog } from "../features/access/GrantAccessDialog";
+import type { ActionMenuItem } from "../ui/ActionMenu";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { ManagedMark } from "../features/access/AccessIcon";
@@ -26,6 +28,7 @@ export function Roles() {
   const query = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() }));
   const [filter, setFilter] = createSignal("");
   const [deleting, setDeleting] = createSignal<PermissionRole>();
+  const [granting, setGranting] = createSignal<PermissionRole>();
   // The organization's own roles first, then the ones Helmr maintains.
   const roles = createMemo(() => {
     const q = filter().trim().toLowerCase();
@@ -47,10 +50,7 @@ export function Roles() {
                   <td>{isOrganizationRole(role.permissions, catalog()) ? "Organization" : "Environment"}</td>
                   <td>{role.permissions.length > LISTED_PERMISSIONS ? `${role.permissions.length} permissions` : permissionNames(role.permissions, catalog())}</td>
                   <td class="font-mono text-chrome!">{role.grant_count}</td>
-                  <RowActions label={`Actions for ${role.name}`} items={[
-                    { label: "Duplicate", href: `/settings/roles/new?from=${encodeURIComponent(role.id)}` },
-                    ...(role.builtin_key || role.grant_count > 0 ? [] : [{ label: "Delete", tone: "danger" as const, onSelect: () => setDeleting(role) }]),
-                  ]} />
+                  <RowActions label={`Actions for ${role.name}`} items={roleMenu(role, { grant: () => setGranting(role), remove: () => setDeleting(role) })} />
                 </tr>
               )}
             </For>
@@ -58,8 +58,19 @@ export function Roles() {
         )}
       </QueryState>
     </Show>
+    <Show when={granting()} keyed>{role => <GrantAccessDialog roleID={role.id} onClose={() => setGranting(undefined)} />}</Show>
     <Show when={deleting()}>{role => <DeleteRoleDialog role={role()} onClose={() => setDeleting(undefined)} onDeleted={() => cache.invalidateQueries({ queryKey: ["access"] })} />}</Show>
   </>;
+}
+
+// The object menu for a role, the same in its list row and by its name. Only an
+// unassigned role the organization made can be deleted.
+export function roleMenu(role: PermissionRole, options: { grant: () => void; remove: () => void }): ActionMenuItem[] {
+  return [
+    { label: "Grant this role", onSelect: options.grant },
+    { label: "Duplicate", href: `/settings/roles/new?from=${encodeURIComponent(role.id)}` },
+    ...(role.builtin_key || role.grant_count > 0 ? [] : [{ label: "Delete role", tone: "danger" as const, onSelect: options.remove }]),
+  ];
 }
 
 export function DeleteRoleDialog(props: { role: PermissionRole; onClose: () => void; onDeleted: () => void }) {

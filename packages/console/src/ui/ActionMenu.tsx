@@ -1,4 +1,5 @@
 import { createMemo, createSignal, createUniqueId, For, Show } from "solid-js";
+import { Icon } from "./Icon";
 import { Popover } from "./Popover";
 import { actionMenuItemClass, ui } from "./styles";
 
@@ -27,9 +28,12 @@ function groupItems(items: ActionMenuItem[]): { main: ActionMenuItem[]; danger: 
 // Home and End move between items (items are out of the tab order), Enter
 // chooses; Space also chooses action buttons. Escape and Tab close onto the
 // trigger.
+// `chevron` is the trigger by a detail page's name; `dots` (default) ends a list row.
+// Both open the same menu for the same object.
 export function ActionMenu(props: {
   items: ActionMenuItem[];
   label?: string;
+  trigger?: "dots" | "chevron";
 }) {
   const [open, setOpen] = createSignal(false);
   const [trigger, setTrigger] = createSignal<HTMLButtonElement>();
@@ -128,11 +132,15 @@ export function ActionMenu(props: {
         aria-label={props.label ?? "Actions"}
         onClick={() => (open() ? setOpen(false) : openMenu())}
       >
-        <svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-          <circle cx="3" cy="8" r="1.4" />
-          <circle cx="8" cy="8" r="1.4" />
-          <circle cx="13" cy="8" r="1.4" />
-        </svg>
+        <Show when={props.trigger === "chevron"} fallback={
+          <svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <circle cx="3" cy="8" r="1.4" />
+            <circle cx="8" cy="8" r="1.4" />
+            <circle cx="13" cy="8" r="1.4" />
+          </svg>
+        }>
+          <Icon name="chevron-down" />
+        </Show>
       </button>
 
       <Popover

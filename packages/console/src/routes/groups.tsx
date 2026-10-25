@@ -1,4 +1,7 @@
 import { useNavigate } from "@solidjs/router";
+import { GrantAccessDialog } from "../features/access/GrantAccessDialog";
+import type { ActionMenuItem } from "../ui/ActionMenu";
+import { AddMembersDialog } from "../features/access/AddMembersDialog";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { ManagedMark } from "../features/access/AccessIcon";
@@ -33,6 +36,8 @@ export function Groups() {
   const [creating, setCreating] = createSignal(false);
   const [renaming, setRenaming] = createSignal<PermissionGroup>();
   const [deleting, setDeleting] = createSignal<PermissionGroup>();
+  const [granting, setGranting] = createSignal<{ id: string; name: string }>();
+  const [adding, setAdding] = createSignal<PermissionGroup>();
   const query = () => filter().trim().toLowerCase();
   const visible = createMemo(() => (groups.data?.groups ?? []).filter(g => !query() || g.name.toLowerCase().includes(query())));
   const showAll = () => !query() || "all members".includes(query());
@@ -54,7 +59,7 @@ export function Groups() {
                 <td class="font-mono text-chrome!">{members.data ? active().size : "—"}</td>
                 <td class="font-mono text-chrome!">{assignments(ALL_MEMBERS).length}</td>
                 <td><Show when={places(ALL_MEMBERS)} fallback={<EmptyCell />}>{text => <span class="font-mono text-chrome">{text()}</span>}</Show></td>
-                <RowActions label="Actions for All members" items={[]} />
+                <RowActions label="Actions for All members" items={groupMenu({ all: true, membersLoaded: !!members.data, grant: () => setGranting({ id: ALL_MEMBERS, name: "All members" }), add: () => undefined, rename: () => undefined, remove: () => undefined })} />
               </tr>
             </Show>
             <For each={visible()}>
@@ -64,7 +69,7 @@ export function Groups() {
                   <td class="font-mono text-chrome!">{memberCount(group.member_ids)}</td>
                   <td class="font-mono text-chrome!">{assignments(group.id).length}</td>
                   <td><Show when={places(group.id)} fallback={<EmptyCell />}>{text => <span class="font-mono text-chrome">{text()}</span>}</Show></td>
-                  <RowActions label={`Actions for ${group.name}`} items={[{ label: "Rename", onSelect: () => setRenaming(group) }, { label: "Delete", tone: "danger", onSelect: () => setDeleting(group) }]} />
+                  <RowActions label={`Actions for ${group.name}`} items={groupMenu({ all: false, membersLoaded: !!members.data, grant: () => setGranting({ id: group.id, name: group.name }), add: () => setAdding(group), rename: () => setRenaming(group), remove: () => setDeleting(group) })} />
                 </tr>
               )}
             </For>
@@ -74,8 +79,23 @@ export function Groups() {
     </Show>
     <Show when={creating()}><GroupNameDialog onClose={() => setCreating(false)} onSaved={g => navigate(groupHref(g.id))} /></Show>
     <Show when={renaming()} keyed>{group => <GroupNameDialog group={group} onClose={() => setRenaming(undefined)} />}</Show>
+    <Show when={granting()} keyed>{target => <GrantAccessDialog recipient={target.id === ALL_MEMBERS ? { kind: "all_members", id: "", name: "All members" } : { kind: "group", id: target.id, name: target.name }} onClose={() => setGranting(undefined)} />}</Show>
+    <Show when={adding()} keyed>{group => <AddMembersDialog groupID={group.id} candidates={(members.data?.members ?? []).filter(m => m.status === "active" && !group.member_ids.includes(m.membership_id))} onClose={() => setAdding(undefined)} />}</Show>
     <Show when={deleting()}>{group => <DeleteGroupDialog group={group()} onClose={() => setDeleting(undefined)} onDeleted={() => cache.invalidateQueries({ queryKey: ["access"] })} />}</Show>
   </>;
+}
+
+// The object menu for a group, the same in its list row and by its name. All
+// members can only be granted access. Adding waits for the member list.
+export function groupMenu(options: { all: boolean; membersLoaded: boolean; grant: () => void; add: () => void; rename: () => void; remove: () => void }): ActionMenuItem[] {
+  return [
+    { label: "Grant access", onSelect: options.grant },
+    ...(options.all ? [] : [
+      { label: "Add members", disabled: !options.membersLoaded, onSelect: options.add },
+      { label: "Rename", onSelect: options.rename },
+      { label: "Delete group", tone: "danger" as const, onSelect: options.remove },
+    ]),
+  ];
 }
 
 export function GroupNameDialog(props: { group?: PermissionGroup; onClose: () => void; onSaved?: (group: PermissionGroup) => void }) {

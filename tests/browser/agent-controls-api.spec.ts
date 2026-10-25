@@ -6,8 +6,11 @@ import { createAgentCatalog } from "./fixtures/agent-catalog";
 const inputLine = (page: Page, sequence: number) =>
   page.getByRole("region", { name: "Log" }).locator(`[data-turn-sequence="${sequence}"] [data-log-line]`).filter({ hasText: /^[\d:.]*input/ });
 
+const sessionMenu = (page: Page) => page.getByRole("menu", { name: "Session actions" });
+
 async function confirm(page: Page, label: string) {
-  await page.getByRole("button", { name: label, exact: true }).click();
+  await page.getByRole("button", { name: "Session actions", exact: true }).click();
+  await sessionMenu(page).getByRole("menuitem", { name: label, exact: true }).click();
   const dialog = page.getByRole("dialog", { name: label, exact: true });
   await dialog.getByRole("button", { name: label, exact: true }).click();
   await expect(dialog).toHaveCount(0);
@@ -41,7 +44,10 @@ test("Console inspects externally admitted work and applies interrupt and cancel
   await page.goto(`/sessions/${receipt.session_id}?${scope}`);
   await expandTurns(page);
   await confirm(page, "Cancel session");
-  await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Session actions", exact: true }).click();
+  await expect(sessionMenu(page).getByRole("menuitem", { name: "Copy link", exact: true })).toBeVisible();
+  await expect(sessionMenu(page).getByRole("menuitem", { name: "Cancel session", exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   const turns = await (await page.request.get(`${base}/sessions/${receipt.session_id}/turns`)).json();
   expect(turns.turns.map((turn: { status: string }) => turn.status)).toEqual(["cancelled", "cancelled"]);
   expect(turns.turns.map((turn: { input: unknown }) => turn.input)).toEqual([[{ type: "text", text: "retained" }], [{ type: "text", text: "queued" }]]);

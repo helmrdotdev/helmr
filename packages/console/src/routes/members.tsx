@@ -1,4 +1,6 @@
 import { listGrants, listGroups, memberGrantSources, memberHref } from "../lib/permissions";
+import { GrantAccessDialog } from "../features/access/GrantAccessDialog";
+import type { ActionMenuItem } from "../ui/ActionMenu";
 import { useMe } from "../lib/me";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
@@ -31,7 +33,7 @@ import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, toneClass, ui } from "../ui/styles";
 
-type OwnershipChoice = "owner" | "member";
+export type OwnershipChoice = "owner" | "member";
 const OWNER_ROLE_OPTION: SelectOption<OwnershipChoice> = { value: "owner", label: "Owner" };
 
 const NON_OWNER_ROLE_OPTIONS: SelectOption<OwnershipChoice>[] = [
@@ -210,7 +212,7 @@ function MemberCell(props: { name: string; owner?: boolean; you?: boolean; href?
 
 // The roles the signed-in account may give a member. An owner may step down to
 // admin on their own row; the server keeps the last owner.
-function assignableRoles(currentUserIsOwner: boolean | undefined, ownRow: boolean): SelectOption<OwnershipChoice>[] {
+export function assignableRoles(currentUserIsOwner: boolean | undefined, ownRow: boolean): SelectOption<OwnershipChoice>[] {
   if (ownRow) return [OWNER_ROLE_OPTION, NON_OWNER_ROLE_OPTIONS[0]!];
   return currentUserIsOwner ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS.filter(option=>option.value==="member");
 }
@@ -223,6 +225,7 @@ function MemberRow(props: {
   currentUserIsOwner: boolean | undefined;
   onChangeRole: (member: OrganizationMember) => void;
   onRemove: (member: OrganizationMember) => void;
+  onGrant: (member: OrganizationMember) => void;
 }) {
   const id = () => memberResourceID(props.member);
   const isOwner = () => props.member.is_owner;
@@ -238,11 +241,11 @@ function MemberRow(props: {
         <td><RelativeTime value={props.member.created_at} /></td>
         <RowActions
           label={`Actions for ${memberName(props.member)}`}
-          items={active() ? [
-            { label: "View access", href: memberHref(props.member.membership_id) },
-            ...(props.currentUserIsOwner ? [{label: "Change ownership", onSelect: () => props.onChangeRole(props.member)}] : []),
-            ...(!isOwner() ? [{label: "Remove", tone: "danger" as const, onSelect: () => props.onRemove(props.member)}] : []),
-          ] : []}
+          items={active() ? memberMenu({
+            grant: () => props.onGrant(props.member),
+            changeOwnership: props.currentUserIsOwner ? () => props.onChangeRole(props.member) : undefined,
+            remove: !isOwner() ? () => props.onRemove(props.member) : undefined,
+          }) : []}
         />
       </tr>
     </>
@@ -270,7 +273,25 @@ function InvitationRow(props: {
   );
 }
 
-function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOption<OwnershipChoice>[]; onClose: () => void; onSave: (role: OwnershipChoice) => Promise<void> }) {
+// The object menu for a member, the same in its list row and by its name.
+export function memberMenu(options: { grant: () => void; changeOwnership?: (() => void) | undefined; remove?: (() => void) | undefined }): ActionMenuItem[] {
+  return [
+    { label: "Grant access", onSelect: options.grant },
+    ...(options.changeOwnership ? [{ label: "Change ownership", onSelect: options.changeOwnership }] : []),
+    ...(options.remove ? [{ label: "Remove member", tone: "danger" as const, onSelect: options.remove }] : []),
+  ];
+}
+
+export function RemoveMemberDialog(props: { member: OrganizationMember; onClose: () => void; onRemoved: () => Promise<void> | void }) {
+  return (
+    <ConfirmDialog title="Remove member" confirmLabel="Remove" busyLabel="Removing…" tone="danger" target={memberName(props.member)} errorMessage={membersErrorMessage} onClose={props.onClose}
+      onConfirm={async () => { await removeMember(memberResourceID(props.member)); await props.onRemoved(); }}>
+      They lose access to this organization.
+    </ConfirmDialog>
+  );
+}
+
+export function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOption<OwnershipChoice>[]; onClose: () => void; onSave: (role: OwnershipChoice) => Promise<void> }) {
   const [role, setRole] = createSignal<OwnershipChoice>((props.member.is_owner ? "owner" : "member"));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -303,6 +324,7 @@ export function Members() {
   const [inviting, setInviting] = createSignal(false);
   const [inviteResults, setInviteResults] = createSignal<InvitationResult[] | null>(null);
   const [removing, setRemoving] = createSignal<OrganizationMember | null>(null);
+  const [granting, setGranting] = createSignal<OrganizationMember>();
   const [revoking, setRevoking] = createSignal<OrganizationInvitation | null>(null);
 
   const me = useMe();
@@ -403,6 +425,7 @@ export function Members() {
                   currentUserIsOwner={me.data?.is_owner}
                   onChangeRole={(member) => setChangingRoleID(memberResourceID(member))}
                   onRemove={setRemoving}
+                  onGrant={setGranting}
                 />
               )}
             </For>
@@ -434,24 +457,9 @@ export function Members() {
       </Show>
 
       <Show when={removing()}>
-        {(member) => (
-          <ConfirmDialog
-            title="Remove member"
-            confirmLabel="Remove"
-            busyLabel="Removing…"
-            tone="danger"
-            target={memberName(member())}
-            errorMessage={membersErrorMessage}
-            onClose={() => setRemoving(null)}
-            onConfirm={async () => {
-              await removeMember(memberResourceID(member()));
-              await queryClient.invalidateQueries({ queryKey: ["members"] });
-            }}
-          >
-            They lose access to this organization.
-          </ConfirmDialog>
-        )}
+        {(member) => <RemoveMemberDialog member={member()} onClose={() => setRemoving(null)} onRemoved={() => queryClient.invalidateQueries({ queryKey: ["members"] })} />}
       </Show>
+      <Show when={granting()} keyed>{member => <GrantAccessDialog recipient={{ kind: "member", id: member.membership_id, name: memberName(member) }} onClose={() => setGranting(undefined)} />}</Show>
 
       <Show when={revoking()}>
         {(invitation) => (

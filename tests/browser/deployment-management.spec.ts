@@ -6,7 +6,7 @@ const deploymentID = "00000000-0000-7000-8000-000000000501";
 const base = `/api/projects/${projectID}/environments/${environmentID}`;
 const now = "2026-10-09T00:00:00Z";
 
-async function catalog(page: Page, permissions = ["agents.read", "deployments.read", "deployments.write"], current = deploymentID) {
+async function catalog(page: Page, permissions = ["agents.read", "deployments.read", "deployments.write", "deployment.promote"], current = deploymentID) {
   const environment = { environment: environmentID, project: projectID, name: "Development", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
   const project = { project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
   const deployment = { id: deploymentID, version: "test-version", bundle_digest: `sha256:${"b".repeat(64)}`, created_at: now };
@@ -71,7 +71,11 @@ for (const condition of ["current", "no write permission", "unknown current"] as
       const currentRow = page.getByRole("row").filter({ has: page.getByRole("link", { name: "current-version", exact: true }) });
       await expect(currentRow.getByText("Current", { exact: true })).toBeVisible();
     }
-    await expect(row.getByRole("button", { name: "Actions for test-version", exact: true })).toHaveCount(0);
+    // The row menu stays for Copy link; it offers no Promote.
+    await row.getByRole("button", { name: "Actions for test-version", exact: true }).click();
+    const menu = page.getByRole("menu", { name: "Actions for test-version" });
+    await expect(menu.getByRole("menuitem", { name: "Copy link", exact: true })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: "Promote", exact: true })).toHaveCount(0);
   });
 }
 
@@ -136,7 +140,7 @@ test("a Computer's status is its residency, its lifecycle only while deleting, i
     else await route.fulfill({ json: [running, unavailable, deleting].find(item => url.pathname.endsWith(item.id)) });
   });
   await page.goto("/computers");
-  await expect(page.getByRole("columnheader")).toHaveText(["Computer", "Status", "Key", "Template", "Last activity", "Created"]);
+  await expect(page.getByRole("columnheader")).toHaveText(["Computer", "Status", "Key", "Template", "Last activity", "Created", "Actions"]);
   await expect(page.getByRole("columnheader", { name: "Residency" })).toHaveCount(0);
   const row = (id: string) => page.getByRole("row").filter({ hasText: id.slice(-12) });
   await expect(row(running.id).getByRole("cell").nth(1)).toHaveText("Awake");

@@ -1,4 +1,5 @@
 import { useNavigate, useParams } from "@solidjs/router";
+import { AddMembersDialog } from "../features/access/AddMembersDialog";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { ManagedMark } from "../features/access/AccessIcon";
@@ -6,21 +7,20 @@ import { AssignmentsTable } from "../features/access/AssignmentsTable";
 import { GrantAccessDialog } from "../features/access/GrantAccessDialog";
 import { GroupMemberRemovalImpact } from "../features/access/GrantRemovalImpact";
 import { hasPermission } from "../lib/auth";
-import { errorMessage, loadError } from "../lib/error";
+import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { listMembers, type OrganizationMember } from "../lib/members";
 import { ALL_MEMBERS, listGrants, listGroups, listRoles, memberHref, setGroupMember, subjectGrants } from "../lib/permissions";
 import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
-import { ConfirmDialog, FormDialog } from "../ui/Dialog";
+import { ConfirmDialog } from "../ui/Dialog";
 import { SearchInput } from "../ui/Field";
 import { Toolbar } from "../ui/Page";
-import { DangerZone } from "../ui/Panel";
 import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
-import { ALL_MEMBERS_NOTE, DeleteGroupDialog, GroupNameDialog } from "./groups";
+import { ALL_MEMBERS_NOTE, DeleteGroupDialog, GroupNameDialog, groupMenu } from "./groups";
 
 type Tab = "access" | "members";
 const memberName = (m: OrganizationMember) => m.display_name || m.email || m.membership_id;
@@ -59,10 +59,8 @@ export function GroupDetail() {
       breadcrumb={[{ href: "/settings/groups", label: "Groups" }]}
       badge={<Show when={isAll()}><ManagedMark title={ALL_MEMBERS_NOTE} /></Show>}
       subtitle={isAll() ? "Everyone in the organization, including people who join later. Only agent use on selected agents can be granted here." : undefined}
-      actions={<Show when={allowed() && !missing()}>
-        <Show when={!isAll()}><button type="button" class={ui.secondaryButton} onClick={() => setRenaming(true)}>Rename</button></Show>
-        <button type="button" class={ui.button} disabled={!isAll() && !group()} onClick={() => setGranting(true)}>Grant access</button>
-      </Show>}
+      menu={allowed() && !missing() && (isAll() || group()) ? groupMenu({ all: isAll(), membersLoaded: !!members.data, grant: () => setGranting(true), add: () => setAdding(true), rename: () => setRenaming(true), remove: () => setDeleting(true) }) : undefined}
+      menuLabel="Group actions"
     />
     <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to manage groups." /></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="group" id={id()} back={{ href: "/settings/groups", label: "Go to groups" }} />}>
@@ -98,11 +96,6 @@ export function GroupDetail() {
                 )}
               </QueryState>
             </TabPanel>
-            <Show when={group()}>{g => (
-              <DangerZone title="Delete group" class="mt-6" action={<button type="button" class={ui.dangerOutlineButton} onClick={() => setDeleting(true)}>Delete group</button>}>
-                Removes {g().name} with its members and access. Access from other sources stays.
-              </DangerZone>
-            )}</Show>
           </>}
         </QueryState>
       </Show>
@@ -122,43 +115,4 @@ export function GroupDetail() {
       )}
     </Show>
   </>;
-}
-
-function AddMembersDialog(props: { groupID: string; candidates: OrganizationMember[]; onClose: () => void }) {
-  const cache = useQueryClient();
-  const [chosen, setChosen] = createSignal<string[]>([]);
-  const [busy, setBusy] = createSignal(false); const [error, setError] = createSignal<string | null>(null);
-  return (
-    <FormDialog
-      title="Add members"
-      submitLabel="Add members"
-      busyLabel="Adding…"
-      busy={busy()}
-      disabled={chosen().length === 0}
-      error={error()}
-      onClose={props.onClose}
-      onSubmit={async () => {
-        setBusy(true); setError(null);
-        try {
-          for (const member of chosen()) await setGroupMember(props.groupID, member, true);
-          await Promise.all([cache.invalidateQueries({ queryKey: ["access"] }), cache.invalidateQueries({ queryKey: ["me"] })]);
-          props.onClose();
-        } catch (cause) { setError(errorMessage(cause)); await cache.invalidateQueries({ queryKey: ["access"] }); } finally { setBusy(false); }
-      }}
-    >
-      <Show when={props.candidates.length > 0} fallback={<p class={ui.muted}>Every active member is already in this group.</p>}>
-        <div class="grid max-h-72 gap-1.5 overflow-y-auto">
-          <For each={props.candidates}>
-            {member => (
-              <label class="flex cursor-pointer items-center gap-2 text-control text-console-text">
-                <input type="checkbox" class="accent-console-accent" checked={chosen().includes(member.membership_id)} disabled={busy()} onChange={e => setChosen(ids => e.currentTarget.checked ? [...ids, member.membership_id] : ids.filter(v => v !== member.membership_id))} />
-                <span>{memberName(member)}</span>
-                <Show when={member.email && member.email !== memberName(member)}><span class="text-console-muted">{member.email}</span></Show>
-              </label>
-            )}
-          </For>
-        </div>
-      </Show>
-    </FormDialog>
-  );
 }

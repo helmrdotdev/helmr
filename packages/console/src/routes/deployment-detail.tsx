@@ -4,7 +4,10 @@ import { createEffect, createMemo, createSignal, For, on, Show, type JSX } from 
 import { loadError } from "../lib/error";
 import { getCurrentDeployment, getDeployment, getDeploymentEvents } from "../lib/deployments";
 import { useScope, useScopeIDs } from "../lib/scope";
-import { CopyLinkButton } from "../components/CopyLinkButton";
+import { useCopyLink } from "../components/copyLink";
+import { canPromoteDeployment, PromoteDeploymentModal } from "../features/deployments/PromoteDeploymentModal";
+import { hasPermission } from "../lib/auth";
+import { useMe } from "../lib/me";
 import { agentHref, listAgentDefinitions, listTemplateDefinitions, templateResources } from "../lib/definitions";
 import { DataTable, LoadMore, PrimaryLink, type Noun } from "../ui/DataTable";
 import { IDText } from "../ui/IDText";
@@ -100,6 +103,11 @@ export function DeploymentDetail() {
   }));
   const notFound = () => !deployment.data && isNotFound(deployment.error);
   const isCurrent = createMemo(() => !!current.data && current.data.id === deploymentID());
+  const me = useMe();
+  const copyLink = useCopyLink();
+  const [promoting, setPromoting] = createSignal(false);
+  const canPromote = () => canPromoteDeployment({ permitted: hasPermission(me.data, "deployment.promote", resourceScope()), currentLoaded: current.isSuccess, isCurrent: isCurrent() });
+  const menu = () => [...(deployment.data && canPromote() ? [{ label: "Promote", onSelect: () => setPromoting(true) }] : []), copyLink.item()];
   const definitionOptions = () => ({ ...resourceScope(), deploymentID: deploymentID(), limit: 100 });
   const agents = createInfiniteQuery(() => ({
     queryKey: ["agents", deploymentID(), projectID(), environmentID()],
@@ -139,7 +147,8 @@ export function DeploymentDetail() {
         title={notFound() ? "Deployment not found" : deployment.data ? shortVersion(deployment.data.version) : "Deployment"}
         breadcrumb={[{ href: "/deployments", label: "Deployments" }]}
         current={deployment.data ? shortVersion(deployment.data.version) : "Deployment"}
-        actions={<Show when={!notFound()}><CopyLinkButton /></Show>}
+        menu={notFound() ? undefined : menu()}
+        menuLabel="Deployment actions"
         badge={<Show when={current.isSuccess && !notFound()}><StatusBadge resource="deployment" status={isCurrent() ? "current" : "not_current"} /></Show>}
         meta={
           <Show when={deployment.data}>
@@ -154,6 +163,8 @@ export function DeploymentDetail() {
         }
       />
 
+      <copyLink.LiveRegion />
+      <Show when={promoting() && deployment.data}>{record => <PromoteDeploymentModal deployment={record()} projectID={projectID()} environmentID={environmentID()} environment={scopeState.selectedEnvironment()} onClose={() => setPromoting(false)} />}</Show>
       <Show when={enabled()} fallback={<NoScopeState />}>
       <QueryState query={deployment} pending={<LinesSkeleton label="Loading deployment" />} error={(error) => deploymentError(error, "Could not load this deployment.")}
         notFound={<NotFoundState noun="deployment" id={deploymentID()} environment={environment()} back={{ href: "/deployments", label: "Go to deployments" }} />}

@@ -184,7 +184,8 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   expect((await turns()).map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
     ["interrupted", [{ type: "text", text: "retained" }]], ["queued", [{ type: "text", text: "retained after revocation" }]],
   ]);
-  await page.getByRole("button", { name: "Cancel session", exact: true }).click();
+  await page.getByRole("button", { name: "Session actions", exact: true }).click();
+  await page.getByRole("menu", { name: "Session actions" }).getByRole("menuitem", { name: "Cancel session", exact: true }).click();
   const cancel = page.getByRole("dialog", { name: "Cancel session", exact: true });
   await cancel.getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(cancel).toHaveCount(0);

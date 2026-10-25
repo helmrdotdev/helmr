@@ -170,10 +170,12 @@ Panel.
   title when it is text, or `current`, a short form for long titles), `title`,
   `badge`, `subtitle` (one line, only for what the page shows nowhere else, never a
   restatement of the title), `meta` (IDs and times as separate items, never joined
-  by "·"), `actions` (Copy link first, the primary action last). Every route page
-  starts with it. Layout: a 24px breadcrumb slot first, kept empty on pages
-  without a breadcrumb so every h1 sits at the same height; then the title row,
-  with the actions on its right; then subtitle and meta. The h1 is one line,
+  by "·"), `actions` (a list page's create action only) and `menu` (a detail
+  page's object menu, see Object menus). Every route page starts with it.
+  Layout: a 24px breadcrumb slot first, kept empty on pages without a breadcrumb
+  so every h1 sits at the same height; then the title row (the h1, the menu
+  trigger right after it, the badge), with the actions on its right; then
+  subtitle and meta. The h1 is one line,
   truncated with the full title in `title`. A breadcrumb separator ends the crumb
   before it, so a wrapped line never starts with "/". On phones the actions
   follow the meta.
@@ -189,18 +191,28 @@ Panel.
   actions at `end`. Filters never live in the page header.
 - **Panel.** The in-page container: optional `title`, `count` and `actions` in the
   container header, then the body (see Containers).
-- **DangerZone.** A destructive page action: the danger-tone header, the
-  consequence and its danger button, which opens a `ConfirmDialog`; related ends
-  of one thing share a zone (End session: Close and Cancel). Last in the rail or
-  in the main column. Destructive page actions live here, not
-  in the page header.
+- **Object menus.** Every action on an object lives in one menu, the same
+  wherever the object appears: the `RowActions` menu in its list and the chevron
+  menu after its name on its detail page (`PageHeader` `menu`). Each object
+  builds its items once (`agentMenu`, `groupMenu`, `roleMenu`, `memberMenu`,
+  session and computer controls) and both places use them. Items appear only
+  when the object's state and the account allow them; Copy link follows the
+  state actions; destructive items come last, after the divider, in danger text,
+  each with its `ConfirmDialog`. A detail page shows no action buttons of its
+  own. Actions on one part of a page stay on that part (resume a hold in its
+  notice, interrupt a turn on its row, grant access above an access table, add
+  members above a members table), and create actions stay in a list's header.
+- **DangerZone.** A destructive action on a part of a page that is not an
+  object with its own menu (an agent's Slack connection): the danger-tone
+  header, the consequence and its danger button, which opens a `ConfirmDialog`.
 - **DetailLayout**, **KeyValueList**, **KeyValue.** Detail pages: main column plus a
   300px rail, 24px apart; the rail's title is its container header, then
   label/value pairs; a missing value renders "—".
-- **CopyLinkButton** (`components/`). The first `PageHeader` action on Session,
-  Computer, Deployment and Agent detail pages. Project and Environment are tab
-  state, never part of in-app links; this button copies the one link that carries
-  them, and opening it switches the tab to that scope.
+- **Copy link** (`components/copyLink.tsx`). The object menu item on Session,
+  Computer, Deployment and Agent menus. Project and Environment are tab state,
+  never part of in-app links; it copies the one link that carries them, and
+  opening it switches the tab to that scope. The full ID on a detail page copies
+  on click.
 
 ## Data display
 

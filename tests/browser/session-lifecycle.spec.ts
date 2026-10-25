@@ -4,6 +4,12 @@ import { addEvent, makeTurn, serveSession, sessionPath, sessionURL, sessionWith,
 const now = new Date().toISOString();
 const log = (page: Page) => page.getByRole("region", { name: "Log" });
 const inputLine = (page: Page, sequence: number) => log(page).locator(`#turn-${turnID(sequence)}`).getByRole("button", { name: /^(\S+ )?input\b/ });
+// Every Session control is in the menu by the Session's name.
+const sessionMenu = (page: Page) => page.getByRole("menu", { name: "Session actions" });
+async function chooseSessionAction(page: Page, label: string) {
+  await page.getByRole("button", { name: "Session actions", exact: true }).click();
+  await sessionMenu(page).getByRole("menuitem", { name: label, exact: true }).click();
+}
 
 // Answers a control POST once the page asks for it; everything else falls through
 // to the in-memory Session.
@@ -35,7 +41,7 @@ test("retained queue shows independent holds and cancellation preserves input", 
   await expect(inputLine(page, 1)).toContainText("original input");
   await expect(page.getByText("Held: Operator pause (this session).", { exact: false })).toBeVisible();
   await expect(page.getByText("Held: Secret revoked (this session and its children).", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Cancel session", exact: true }).click();
+  await chooseSessionAction(page, "Cancel session");
   await expect(page.getByText("Other sessions sharing the computer are not cancelled.", { exact: false })).toBeVisible();
   await page.getByRole("dialog").getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(page.getByText("Cancel session requested.", { exact: false })).toBeVisible();
@@ -92,7 +98,7 @@ test("Session closure refreshes final progress and the waiting question", async 
   await page.goto(sessionURL);
   await expandTurns(page);
   await expect(page.getByText("Turn #1 is waiting on a question", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: "Cancel session", exact: true }).click();
+  await chooseSessionAction(page, "Cancel session");
   await page.getByRole("dialog").getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(log(page).getByText('"Last published output"')).toBeVisible();
   await expect(log(page).getByText("question cancelled")).toBeVisible();
@@ -129,12 +135,12 @@ for (const action of ["interrupt", "cancel"] as const) {
     });
     await page.goto(sessionURL);
     await expandTurns(page);
-    await page.getByRole("button", { name: label, exact: true }).click();
+    await chooseSessionAction(page, label);
     const dialog = page.getByRole("dialog", { name: label });
     await dialog.getByRole("button", { name: label, exact: true }).click();
     await expect(dialog.getByRole("alert")).toContainText("Reply unavailable");
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-    await page.getByRole("button", { name: label, exact: true }).click();
+    await chooseSessionAction(page, label);
     await dialog.getByRole("button", { name: label, exact: true }).click();
     await expect(dialog).toHaveCount(0);
     expect(attempts).toHaveLength(2);
@@ -155,18 +161,24 @@ test("inherited hold links its owner and cannot be released on a child", async (
 
 for (const status of ["open", "closing", "closed", "cancelled"] as const) {
   const active = status === "open" || status === "closing";
-  test(`Interrupt session and the Cancel session danger zone are ${active ? "offered" : "not offered"} for a ${status} Session`, async ({ page }) => {
+  test(`Interrupt session and Cancel session are ${active ? "offered" : "not offered"} in the menu for a ${status} Session`, async ({ page }) => {
     // Settled Turns only: whether work is running does not decide the action.
     await serveSession(page, sessionWith({ status }, [makeTurn(1, { status: "completed", terminal_at: now, result: null })]), ["sessions.read", "sessions.interrupt", "sessions.cancel"]);
     await page.goto(sessionURL);
     await expandTurns(page);
     await expect(inputLine(page, 1)).toContainText("original input");
-    await expect(page.getByRole("button", { name: "Interrupt session", exact: true })).toHaveCount(active ? 1 : 0);
-    await expect(page.getByRole("region", { name: "End session" }).getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(active ? 1 : 0);
+    await page.getByRole("button", { name: "Session actions", exact: true }).click();
+    await expect(sessionMenu(page).getByRole("menuitem", { name: "Copy link", exact: true })).toBeVisible();
+    await expect(sessionMenu(page).getByRole("menuitem", { name: "Interrupt session", exact: true })).toHaveCount(active ? 1 : 0);
+    await expect(sessionMenu(page).getByRole("menuitem", { name: "Cancel session", exact: true })).toHaveCount(active ? 1 : 0);
+    // The page itself carries no Session control buttons.
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "Interrupt session", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(0);
   });
 }
 
-test("Cancel session sits in a danger zone after the log and confirms before cancelling", async ({ page }) => {
+test("Cancel session sits after the divider in the Session menu and confirms before cancelling", async ({ page }) => {
   const data = sessionWith({}, [makeTurn(1)]);
   await serveSession(page, data);
   const mutations: string[] = [];
@@ -178,24 +190,34 @@ test("Cancel session sits in a danger zone after the log and confirms before can
   });
   await page.goto(sessionURL);
   await expandTurns(page);
-  const zone = page.getByRole("region", { name: "End session" });
-  await expect(zone).toBeVisible();
-  // The page header keeps Copy link and Interrupt; the destructive action is not there.
-  await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(1);
-  const logBox = (await log(page).boundingBox())!;
-  const zoneBox = (await zone.boundingBox())!;
-  expect(zoneBox.y).toBeGreaterThan(logBox.y + logBox.height);
-  await zone.getByRole("button", { name: "Cancel session", exact: true }).click();
+  // No danger zone and no header buttons: the destructive action is the menu's last item, after the separator.
+  await expect(page.getByRole("region", { name: "End session" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Cancel session", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Session actions", exact: true }).click();
+  const menu = sessionMenu(page);
+  const cancel = menu.getByRole("menuitem", { name: "Cancel session", exact: true });
+  await expect(cancel).toBeVisible();
+  await expect(menu.getByRole("separator")).toHaveCount(1);
+  await expect(menu.getByRole("menuitem").last()).toHaveText("Cancel session");
+  expect(await menu.evaluate(element => {
+    const separator = element.querySelector('[role="separator"]');
+    const items = Array.from(element.querySelectorAll('[role="menuitem"]'));
+    const cancelItem = items.find(item => item.textContent === "Cancel session");
+    return !!separator && !!cancelItem && !!(separator.compareDocumentPosition(cancelItem) & Node.DOCUMENT_POSITION_FOLLOWING);
+  })).toBe(true);
+  await expect(cancel).toHaveClass(/\btext-console-danger-text\b/);
+  await cancel.click();
   const dialog = page.getByRole("dialog", { name: "Cancel session" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(mutations).toHaveLength(0);
-  await zone.getByRole("button", { name: "Cancel session", exact: true }).click();
+  await chooseSessionAction(page, "Cancel session");
   await dialog.getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(mutations).toEqual(["cancel"]);
-  await expect(page.getByRole("region", { name: "End session" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Session actions", exact: true }).click();
+  await expect(sessionMenu(page).getByRole("menuitem", { name: "Cancel session", exact: true })).toHaveCount(0);
 });
 
 test("a Session without events says so instead of an empty log", async ({ page }) => {

@@ -1,4 +1,6 @@
 import { useMe } from "../lib/me";
+import { useCopyLink } from "../components/copyLink";
+import type { ActionMenuItem } from "../ui/ActionMenu";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref, shortVersion } from "../features/deployments/navigation";
@@ -26,6 +28,7 @@ function DeploymentRow(props: {
   current: boolean;
   canPromote: boolean;
   onPromote: (deployment: Deployment) => void;
+  copyLink: ActionMenuItem;
 }) {
   return (
     <tr>
@@ -41,7 +44,7 @@ function DeploymentRow(props: {
       <td><RelativeTime value={props.deployment.created_at} /></td>
       <RowActions
         label={`Actions for ${shortVersion(props.deployment.version)}`}
-        items={props.canPromote ? [{ label: "Promote", onSelect: () => props.onPromote(props.deployment) }] : []}
+        items={[...(props.canPromote ? [{ label: "Promote", onSelect: () => props.onPromote(props.deployment) }] : []), props.copyLink]}
       />
     </tr>
   );
@@ -73,10 +76,12 @@ export function Deployments() {
   const items = createMemo(() => deployments.data?.pages.flatMap((page) => page.deployments) ?? []);
   const currentID = createMemo(() => current.data?.id ?? "");
   const [promoting, setPromoting] = createSignal<Deployment | null>(null);
+  const copyLink = useCopyLink();
 
   return (
     <Page>
       <PageHeader title="Deployments" />
+      <copyLink.LiveRegion />
       <Show when={enabled()} fallback={<NoScopeState />}>
       <QueryState
         query={deployments}
@@ -105,6 +110,7 @@ export function Deployments() {
                     isCurrent: deployment.id === currentID(),
                   })}
                   onPromote={setPromoting}
+                  copyLink={copyLink.item(deploymentHref(deployment.id))}
                 />
               )}
             </For>
