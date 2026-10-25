@@ -141,6 +141,7 @@ func TestPressureStopExplicitControlsAndActualFailureKeepDeadline(t *testing.T) 
 	for _, kind := range []string{"interrupt", "cancel", "close", "failure", "lease_loss", "integrity"} {
 		t.Run(kind, func(t *testing.T) {
 			f, a, _ := pressureStopFixture(t)
+			deadline := pressureDeadline(t, f)
 			switch kind {
 			case "failure":
 				if err := session.ObserveSessionFailure(t.Context(), f.pool, *f.host(), f.execution(), a); err != nil {
@@ -160,9 +161,9 @@ func TestPressureStopExplicitControlsAndActualFailureKeepDeadline(t *testing.T) 
 					t.Fatal(err)
 				}
 			}
-			var ended bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT stop_deadline_at IS NOT NULL FROM session_processes WHERE session_id=$1`, f.session).Scan(&ended); err != nil || !ended {
-				t.Fatalf("exception persisted %v %v", ended, err)
+			var after time.Time
+			if err := f.pool.QueryRow(t.Context(), `SELECT stop_deadline_at FROM session_processes WHERE session_id=$1`, f.session).Scan(&after); err != nil || !after.Equal(deadline) {
+				t.Fatalf("deadline = %v, want %v: %v", after, deadline, err)
 			}
 		})
 	}
@@ -207,12 +208,12 @@ func TestOrdinaryStopDeadlineSurvivesStoragePressure(t *testing.T) {
 	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), request); err != nil {
 		t.Fatal(err)
 	}
+	deadline := pressureDeadline(t, f)
 	pressureReport(t, f, true)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '301 seconds'`)
 	pressureReport(t, f, true)
-	var ordinary bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT stop_deadline_at IS NOT NULL FROM session_processes WHERE session_id=$1`, f.session).Scan(&ordinary); err != nil || !ordinary {
-		t.Fatalf("ordinary stop gained exemption %v %v", ordinary, err)
+	if after := pressureDeadline(t, f); !after.Equal(deadline) {
+		t.Fatalf("ordinary deadline = %v, want %v", after, deadline)
 	}
 }
 

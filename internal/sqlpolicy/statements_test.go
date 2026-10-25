@@ -300,7 +300,7 @@ func splitStatements(sql string) []string {
 }
 
 // TestReportStatements prints the collected statements when SQLPOLICY_REPORT
-// is set; it is the survey behind the ownership table.
+// is set; it is the manual survey behind the ownership table, not a regression assertion.
 func TestReportStatements(t *testing.T) {
 	if os.Getenv("SQLPOLICY_REPORT") == "" {
 		t.Skip("SQLPOLICY_REPORT is not set")

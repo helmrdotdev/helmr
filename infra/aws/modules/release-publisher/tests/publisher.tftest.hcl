@@ -35,14 +35,71 @@ run "release_publisher_cannot_delete_controlplane_images" {
 
   assert {
     condition = (
-      strcontains(aws_iam_role_policy.platform_publisher.policy, var.controlplane_release_repository_arn) &&
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:PutImage") &&
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:BatchGetImage") &&
-      strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:DescribeImages") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:GetDownloadUrlForLayer") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:BatchDeleteImage") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:DeleteRepository") &&
-      !strcontains(aws_iam_role_policy.platform_publisher.policy, "ecr:SetRepositoryPolicy")
+      toset([for statement in jsondecode(aws_iam_role_policy.platform_publisher.policy).Statement : jsonencode(merge(statement, { Action = sort(flatten([statement.Action])), Resource = sort(flatten([statement.Resource])) }))]) ==
+      toset([for statement in [
+        {
+          Sid      = "ListPlatformObjects"
+          Effect   = "Allow"
+          Action   = ["s3:ListBucket"]
+          Resource = var.platform_store_bucket_arn
+          Condition = {
+            StringLike = {
+              "s3:prefix" = [
+                "objects/sha256",
+                "objects/sha256/*"
+              ]
+            }
+          }
+        },
+        {
+          Sid    = "CreateAndVerifyPlatformObjects"
+          Effect = "Allow"
+          Action = [
+            "s3:GetObject",
+            "s3:GetObjectVersion",
+            "s3:PutObject",
+            "s3:AbortMultipartUpload",
+            "s3:ListMultipartUploadParts"
+          ]
+          Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
+        },
+        {
+          Sid    = "EncryptPlatformObjects"
+          Effect = "Allow"
+          Action = [
+            "kms:Decrypt",
+            "kms:Encrypt",
+            "kms:GenerateDataKey"
+          ]
+          Resource = var.platform_store_kms_key_arn
+          Condition = {
+            StringEquals = {
+              "kms:ViaService" = "s3.us-east-1.amazonaws.com"
+            }
+          }
+        },
+        {
+          Sid      = "AuthenticateControlPlaneReleaseRegistry"
+          Effect   = "Allow"
+          Action   = ["ecr:GetAuthorizationToken"]
+          Resource = "*"
+        },
+        {
+          Sid    = "PublishAndVerifyControlPlaneReleaseImages"
+          Effect = "Allow"
+          Action = [
+            "ecr:BatchCheckLayerAvailability",
+            "ecr:BatchGetImage",
+            "ecr:CompleteLayerUpload",
+            "ecr:DescribeImages",
+            "ecr:DescribeRepositories",
+            "ecr:InitiateLayerUpload",
+            "ecr:PutImage",
+            "ecr:UploadLayerPart"
+          ]
+          Resource = var.controlplane_release_repository_arn
+        }
+      ] : jsonencode(merge(statement, { Action = sort(flatten([statement.Action])), Resource = sort(flatten([statement.Resource])) }))])
     )
     error_message = "release publisher authority must stop at publish and verification."
   }

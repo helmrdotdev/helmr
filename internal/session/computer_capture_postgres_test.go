@@ -8,6 +8,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -251,22 +252,40 @@ func TestComputerCaptureSourceLossRequiresFenceAndRetainsHolds(t *testing.T) {
 	peer := f.peer(t)
 	req := f.captureRequest()
 	beginCapture(t, f, req)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-	if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("bearer expiry treated as physical fence: %v", err)
-	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='VMM exited'`)
-	for range 2 {
-		if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); err != nil {
+
+	// Independent user holds survive alongside the ineligible-recovery hold.
+	for _, member := range []fixture{f, peer} {
+		if _, err := session.ControlSession(t.Context(), f.pool, member.caller(), controlRequest(member, "interrupt", "independent")); err != nil {
 			t.Fatal(err)
 		}
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
+	if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+		t.Fatal(err)
+	}
+	var unfenced bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NULL FROM computer_leases WHERE computer_id=$1 AND epoch=1`, f.computer).Scan(&unfenced); err != nil || !unfenced {
+		t.Fatalf("expiry treated as physical fence: %v %v", unfenced, err)
+	}
+	var retained bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT status<>'lost' AND capture_request IS NOT NULL FROM checkpoints WHERE id=$1`, req.CheckpointID).Scan(&retained); err != nil || !retained {
+		t.Fatalf("expiry discarded unfenced capture: %v %v", retained, err)
+	}
+	for range 2 {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var lost bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='lost' AND capture_request IS NULL FROM checkpoints WHERE id=$1`, req.CheckpointID).Scan(&lost); err != nil || !lost {
+		t.Fatalf("physical stop retained capture: %v %v", lost, err)
 	}
 	for _, member := range []fixture{f, peer} {
 		var holds, generation int
 		if err := f.pool.QueryRow(t.Context(), `SELECT authority_generation,(SELECT count(*) FROM session_holds WHERE session_id=s.id AND released_at IS NULL) FROM sessions s WHERE id=$1`, member.session).Scan(&generation, &holds); err != nil {
 			t.Fatal(err)
 		}
-		if holds != 1 || generation != 2 {
+		if holds != 2 || generation != 3 {
 			t.Fatalf("loss duplicated or omitted control: holds=%d generation=%d", holds, generation)
 		}
 	}
@@ -360,7 +379,7 @@ func TestComputerCaptureUnsealedCancelAllowsMemberFencing(t *testing.T) {
 	}
 }
 
-func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T) {
+func TestComputerCaptureLossFailsUnpublishedSaveAndScrubsRequest(t *testing.T) {
 	for _, recorded := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unacknowledged", true: "recorded"}[recorded], func(t *testing.T) {
 			f := newFixture(t)
@@ -372,8 +391,7 @@ func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T)
 					t.Fatal(err)
 				}
 			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='VMM exited'`)
-			if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			var state string
@@ -381,19 +399,16 @@ func TestComputerCaptureLossPreservesUnacknowledgedAndRecordedCuts(t *testing.T)
 			if err := f.pool.QueryRow(t.Context(), `SELECT s.status,c.capture_request IS NULL FROM computer_saves s JOIN checkpoints c ON c.disk_save_id=s.id WHERE s.id=$1`, result.SaveID).Scan(&state, &scrubbed); err != nil {
 				t.Fatal(err)
 			}
-			want := "requested"
-			if recorded {
-				want = "captured"
-			}
-			if state != want || !scrubbed {
+
+			if state != "failed" || !scrubbed {
 				t.Fatalf("lost source state: save=%s scrubbed=%v", state, scrubbed)
 			}
 			if !recorded {
-				if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "recovered original cut after lost acknowledgement"}); err != nil {
-					t.Fatal(err)
+				if err := recordCaptureForTest(t.Context(), f.pool, computer.CaptureEvidence{EnvironmentID: f.env, SaveID: result.SaveID, LeaseEpoch: 1, DiskRoot: root, Evidence: "late cut"}); err == nil {
+					t.Fatal("lost writer recorded a fresh cut")
 				}
 			}
-			if err := savePublicationForTest(t.Context(), f.pool, f.env, result.SaveID, root); !errors.Is(err, session.ErrNotReady) {
+			if err := savePublicationForTest(t.Context(), f.pool, f.env, result.SaveID, root); !errors.Is(err, session.ErrTerminal) {
 				t.Fatalf("uncommitted cut became published after source loss: %v", err)
 			}
 			var noHead bool

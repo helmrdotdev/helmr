@@ -509,8 +509,14 @@ func TestAllocationInitialReceiptSurvivesPayloadRetirement(t *testing.T) {
 	if _, err := a.AllocateFreshLease(t.Context(), f.env, f.computer, 2, f.worker); err == nil {
 		t.Fatal("retired initial payload authorized a new allocation")
 	}
-	if _, err := bindComputerLeaseDiskForTest(t.Context(), f.pool, *f.host(), f.env, f.computer, 1, key); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("historical initial evidence authorized materialization: %v", err)
+	broker, err := computer.NewKeyBroker(f.pool, preparationWrapper(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := broker.Source(t.Context(), *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: before.InstanceID, Epoch: 1})
+	defer source.Clear()
+	if !errors.Is(err, computer.ErrNotReady) || len(source.Keys) != 0 {
+		t.Fatalf("historical initial evidence authorized materialization: keys=%d error=%v", len(source.Keys), err)
 	}
 }
 

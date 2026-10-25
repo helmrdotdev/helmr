@@ -137,12 +137,18 @@ func (f *fakeCAS) Get(
 		f.getCalls = map[string]int{}
 	}
 	f.getCalls[digest]++
-	return io.NopCloser(bytes.NewReader(
-		append([]byte(nil), f.objects[digest]...),
-	)), nil
+	content, ok := f.objects[digest]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return io.NopCloser(bytes.NewReader(append([]byte(nil), content...))), nil
 }
 
-func (f *fakeCAS) Delete(context.Context, string) error {
+func (f *fakeCAS) Delete(_ context.Context, digest string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.objects, digest)
+	delete(f.metadata, digest)
 	return nil
 }
 

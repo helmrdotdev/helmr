@@ -99,10 +99,80 @@ run "execution_worker_is_immutable_and_launch_gated" {
 
   assert {
     condition = (
-      strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/objects/sha256/*") &&
-      strcontains(aws_iam_role_policy.worker.policy, var.platform_store_kms_key_arn) &&
-      !strcontains(aws_iam_role_policy.worker.policy, "CreatePlatformObjects") &&
-      !strcontains(aws_iam_role_policy.worker.policy, "EncryptPlatformObjects")
+      toset([for statement in jsondecode(aws_iam_role_policy.worker.policy).Statement : jsonencode(merge(statement, { Action = sort(flatten([statement.Action])), Resource = sort(flatten([statement.Resource])) }))]) ==
+      toset([for statement in concat([
+        {
+          Effect = "Allow"
+          Action = [
+            "s3:GetObject",
+            "s3:PutObject",
+            "s3:PutObjectTagging",
+            "s3:AbortMultipartUpload",
+            "s3:ListBucket"
+          ]
+          Resource = [
+            var.cas_bucket_arn,
+            "${var.cas_bucket_arn}/*"
+          ]
+        },
+        {
+          Effect = "Allow"
+          Action = [
+            "autoscaling:CompleteLifecycleAction",
+            "autoscaling:RecordLifecycleActionHeartbeat"
+          ]
+          Resource = "arn:aws:autoscaling:*:*:autoScalingGroup:*:autoScalingGroupName/${local.asg_name}"
+        },
+        {
+          Effect = "Allow"
+          Action = [
+            "kms:Decrypt",
+            "kms:Encrypt",
+            "kms:GenerateDataKey"
+          ]
+          Resource = var.kms_key_arn
+          Condition = {
+            StringEquals = {
+              "kms:ViaService" = [
+                "s3.us-east-1.amazonaws.com",
+                "secretsmanager.us-east-1.amazonaws.com"
+              ]
+            }
+          }
+        },
+        {
+          Effect = "Allow"
+          Action = [
+            "secretsmanager:GetSecretValue"
+          ]
+          Resource = [
+            var.secret_arns.checkpoint_encryption_key,
+            var.secret_arns.worker_enrollment_token,
+          ]
+        },
+        ], [
+        {
+          Sid    = "ReadPlatformObjects"
+          Effect = "Allow"
+          Action = [
+            "s3:GetObject"
+          ]
+          Resource = "${var.platform_store_bucket_arn}/objects/sha256/*"
+        },
+        {
+          Sid    = "DecryptPlatformObjects"
+          Effect = "Allow"
+          Action = [
+            "kms:Decrypt"
+          ]
+          Resource = var.platform_store_kms_key_arn
+          Condition = {
+            StringEquals = {
+              "kms:ViaService" = "s3.us-east-1.amazonaws.com"
+            }
+          }
+        },
+      ]) : jsonencode(merge(statement, { Action = sort(flatten([statement.Action])), Resource = sort(flatten([statement.Resource])) }))])
     )
     error_message = "execution workers must have read-only Platform Artifact authority"
   }

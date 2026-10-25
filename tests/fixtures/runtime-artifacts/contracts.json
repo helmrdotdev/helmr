@@ -1,0 +1,36 @@
+[
+  {
+    "name": "supported",
+    "value": "helmr.vm-runtime.v0",
+    "valid": true
+  },
+  {
+    "name": "unsupported",
+    "value": "unsupported.runtime-contract",
+    "valid": false
+  },
+  {
+    "name": "missing",
+    "valid": false
+  },
+  {
+    "name": "null",
+    "value": null,
+    "valid": false
+  },
+  {
+    "name": "number",
+    "value": 1,
+    "valid": false
+  },
+  {
+    "name": "object",
+    "value": {},
+    "valid": false
+  },
+  {
+    "name": "array",
+    "value": [],
+    "valid": false
+  }
+]

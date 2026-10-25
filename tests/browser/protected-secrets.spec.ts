@@ -3,7 +3,7 @@ import { createAgentCatalog, projectID } from "./fixtures/agent-catalog";
 
 test("Console inspects a Computer and all secret placement modes without submitting work", async ({ page }) => {
   await page.goto("/dev/login");
-  const { base, environmentID } = await createAgentCatalog(page);
+  const { base, environmentID } = await createAgentCatalog(page, ["secrets.manage", "computers.operate"]);
   const response = await page.request.post(`${base}/secrets`, {
     data: { secret: `browser-${crypto.randomUUID()}`, value: "synthetic-browser-only", idempotency_key: crypto.randomUUID() },
   });

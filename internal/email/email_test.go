@@ -3,6 +3,7 @@ package email
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ func TestSMTPSenderCancellationClosesActiveConnection(t *testing.T) {
 	}()
 	sender := NewSMTPSender(listener.Addr().String(), "", "", "noreply@example.test")
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() {
 		done <- sender.SendEmail(ctx, Message{To: "owner@example.test", Subject: "Hello"})
@@ -43,4 +45,13 @@ func TestSMTPSenderCancellationClosesActiveConnection(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("SMTP send did not stop after cancellation")
 	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	var b [1]byte
+	n, err := conn.Read(b[:])
+	if n != 0 || !errors.Is(err, io.EOF) {
+		t.Fatalf("peer after cancellation: read %d bytes, error %v; want EOF", n, err)
+	}
+
 }

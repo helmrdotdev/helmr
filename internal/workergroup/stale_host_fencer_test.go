@@ -46,7 +46,7 @@ func TestStaleHostFencerFencesStaleActiveWorker(t *testing.T) {
 	}
 }
 
-func TestStaleHostFencerExcludesFreshDisabledAndLostWorkers(t *testing.T) {
+func TestStaleHostFencerEmptyPageUsesConfiguredCutoffs(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	store := &fakeStaleHostFenceQueries{}
 	fencer := newTestStaleHostFencer(t, store, now)

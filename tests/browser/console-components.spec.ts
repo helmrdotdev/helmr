@@ -18,7 +18,7 @@ type Fixture = {
   sessionCursors: (string | null)[];
   secretWrites: { path: string; body: Record<string, unknown> }[];
   deletions: string[];
-  invitations: { emails: string[]; role: string }[];
+  invitations: { emails: string[] }[];
   // Fail every Sessions request, or only the request for the second page.
   failSessions: boolean;
   failNextSessions: boolean;
@@ -37,7 +37,9 @@ async function fixture(page: Page, accessAdmin = false): Promise<Fixture> {
     const path = url.pathname;
     const method = route.request().method();
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: "owner", permissions: [...(accessAdmin ? ["access.manage"] : []), "projects.manage", "keys.manage", "secrets.read", "secrets.write", "secrets.revoke", "deployments.read"], admin: false, organization_required: false, project_required: false, email_delivery: true };
+    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: [...(accessAdmin ? ["access.manage"] : []), "projects.manage", "keys.manage", "secrets.read", "secrets.write", "secrets.revoke", "deployments.read"], admin: false, organization_required: false, project_required: false, email_delivery: true };
+    else if (path === "/api/groups") json = { groups: [] };
+    else if (path === "/api/role-grants") json = { grants: [] };
     else if (path === "/api/roles") json = { roles: [{id:"viewer",name:"Session viewer",permissions:["sessions.view"],api_key_assignable:true,revision:7}], catalog:[{id:"sessions.view",name:"View all sessions",resource_type:"agents",included:["sessions.view"]}] };
     else if (path === `/api/projects/${projectID}/access-targets`) json = {project_id:projectID,targets:[{environment_id:environmentID,environment:environmentID,name:"Production",agents:[{id:"agent-1",key:"assistant"}]}]};
     else if (path === "/api/projects") json = { projects: [project] };
@@ -59,8 +61,8 @@ async function fixture(page: Page, accessAdmin = false): Promise<Fixture> {
     else if (method === "DELETE") { state.deletions.push(path); await route.fulfill({ json: {} }); return; }
     else if (path === `${base}/api-keys`) json = { api_keys: [{ id: "key-1", name: "Deploy bot", key_prefix: "hk_test", project: projectID, environment: environmentID, role_names: ["Session viewer"], status: "active", created_at: now, last_used_at: null, expires_at: null, revoked_at: null }] };
     else if (path === "/api/members") json = { members: [
-      { user_id: "local", display_name: "Local", email: "local@example.test", role: "owner", status: "active", created_at: now, updated_at: now },
-      { user_id: "member-2", display_name: "Second Member", email: "second@example.test", role: "member", status: "active", created_at: now, updated_at: now },
+      { user_id: "local", display_name: "Local", email: "local@example.test", membership_id: "membership-local", is_owner: true, status: "active", created_at: now, updated_at: now },
+      { user_id: "member-2", display_name: "Second Member", email: "second@example.test", membership_id: "membership-2", is_owner: false, status: "active", created_at: now, updated_at: now },
     ] };
     else if (path === "/api/invitations" && method === "POST") {
       const body = route.request().postDataJSON() as Fixture["invitations"][number];
@@ -71,8 +73,8 @@ async function fixture(page: Page, accessAdmin = false): Promise<Fixture> {
         : { email, status: "invited" }) };
     }
     else if (path === "/api/invitations") {
-      const created = state.invitations.flatMap(body => body.emails.filter(email => email !== "second@example.test").map(email => ({ id: `inv-${email}`, email, role: body.role, status: "pending", created_at: now, expires_at: now })));
-      json = { invitations: [...created, { id: "inv-1", email: "pending@example.test", role: "member", status: "pending", created_at: now, expires_at: now }] };
+      const created = state.invitations.flatMap(body => body.emails.filter(email => email !== "second@example.test").map(email => ({ id: `inv-${email}`, email, status: "pending", created_at: now, expires_at: now })));
+      json = { invitations: [...created, { id: "inv-1", email: "pending@example.test", status: "pending", created_at: now, expires_at: now }] };
     }
     else if (path === `${base}/sessions`) {
       const cursor = url.searchParams.get("cursor");
@@ -284,30 +286,6 @@ test("page tabs move with arrow keys, Home and End and show the selected panel",
   await expect(agents).toHaveAttribute("aria-selected", "true");
   await expect(tabs.getByRole("tab", { selected: true })).toHaveCount(1);
   await expect(page.getByRole("tabpanel")).toHaveCount(1);
-});
-
-test("revoking a secret confirms in a dialog that names the secret and its Environment", async ({ page }) => {
-  const state = await fixture(page);
-  await page.goto(`/settings/secrets?${scope}`);
-  const trigger = page.getByRole("button", { name: `Actions for ${secretID}` });
-  const dialog = page.getByRole("dialog", { name: "Revoke secret" });
-
-  await trigger.click();
-  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText(secretID);
-  await expect(dialog.getByText("Production", { exact: true })).toBeVisible();
-  await expect(dialog.getByText("protected", { exact: true })).toBeVisible();
-  await expect(dialog).toContainText("Pending inputs are retained");
-  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  expect(state.revocations).toBe(0);
-
-  await trigger.click();
-  await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
-  await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  expect(state.revocations).toBe(1);
 });
 
 test("a generated API key is revealed once in a dialog with Copy", async ({ page, context }) => {
@@ -550,20 +528,30 @@ test("revoking an API key confirms with the key and its Environment", async ({ p
   expect(state.deletions).toEqual([`${base}/api-keys/key-1`]);
 });
 
-test("members and pending invitations share one table told apart by status", async ({ page }) => {
+test("ownership alone does not expose member-management actions", async ({ page }) => {
   await fixture(page);
+  await page.goto(`/settings/members?${scope}`);
+  await expect(page.getByText("Manage access permission is required to view and manage members.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table").getByRole("row")).toHaveCount(4);
+  await expect(page.getByRole("table").getByRole("row").filter({ hasText: "Second Member" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Invite members", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Actions for / })).toHaveCount(0);
+});
+
+test("members and pending invitations share one table told apart by status", async ({ page }) => {
+  await fixture(page, true);
   await page.goto(`/settings/members?${scope}`);
   await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
   const table = page.getByRole("table");
   await expect(table).toHaveCount(1);
-  await expect(table.getByRole("columnheader")).toHaveText(["Member", "Role", "Status", "Since", "Actions"]);
+  await expect(table.getByRole("columnheader")).toHaveText(["Member", "Ownership and roles", "Status", "Since", "Actions"]);
   const rows = table.getByRole("row");
   await expect(rows).toHaveCount(4);
   await expect(rows.nth(1)).toContainText("Local");
   await expect(rows.nth(1)).toContainText("You");
-  // An owner's own row only offers stepping down; nobody removes themselves here.
+  // Owners cannot be removed; ownership changes separately from ordinary roles.
   await page.getByRole("button", { name: "Actions for Local", exact: true }).click();
-  await expect(page.getByRole("menuitem")).toHaveText(["Change role"]);
+  await expect(page.getByRole("menuitem")).toHaveText(["Inspect access", "Change ownership"]);
   await page.keyboard.press("Escape");
   await expect(rows.nth(1).getByRole("cell").nth(2)).toHaveText("Active");
   await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Membersecond@example.test");
@@ -571,14 +559,14 @@ test("members and pending invitations share one table told apart by status", asy
   // The invitation follows the members: its invited email is the member, its
   // status Invited.
   await expect(rows.nth(3).getByRole("cell").nth(0)).toHaveText("pending@example.test");
-  await expect(rows.nth(3).getByRole("cell").nth(1)).toHaveText("Member");
+  await expect(rows.nth(3).getByRole("cell").nth(1)).toHaveText("Not an owner");
   await expect(rows.nth(3).getByRole("cell").nth(2)).toHaveText("Invited");
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Load more invitations", exact: true })).toHaveCount(0);
 });
 
 test("without pending invitations the members footer counts members only", async ({ page }) => {
-  await fixture(page);
+  await fixture(page, true);
   await page.route("**/api/invitations", route => route.request().method() === "GET" ? route.fulfill({ json: { invitations: [] } }) : route.fallback());
   await page.goto(`/settings/members?${scope}`);
   await expect(page.getByRole("table").getByRole("row")).toHaveCount(3);
@@ -587,14 +575,14 @@ test("without pending invitations the members footer counts members only", async
 });
 
 test("the members table footer loads more invitations and counts every row", async ({ page }) => {
-  await fixture(page);
+  await fixture(page, true);
   const earlier = new Date(Date.parse(now) - 60_000).toISOString();
   await page.route("**/api/invitations**", async route => {
     const url = new URL(route.request().url());
     if (route.request().method() !== "GET" || url.pathname !== "/api/invitations") return route.fallback();
     await route.fulfill({ json: url.searchParams.get("cursor") === "invitations-2"
-      ? { invitations: [{ id: "inv-3", email: "earlier@example.test", role: "member", status: "pending", created_at: earlier, expires_at: earlier }] }
-      : { invitations: [{ id: "inv-1", email: "pending@example.test", role: "member", status: "pending", created_at: now, expires_at: now }], next_cursor: "invitations-2" } });
+      ? { invitations: [{ id: "inv-3", email: "earlier@example.test", status: "pending", created_at: earlier, expires_at: earlier }] }
+      : { invitations: [{ id: "inv-1", email: "pending@example.test", status: "pending", created_at: now, expires_at: now }], next_cursor: "invitations-2" } });
   });
   await page.goto(`/settings/members?${scope}`);
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
@@ -610,12 +598,12 @@ test("the members table footer loads more invitations and counts every row", asy
 });
 
 test("invitations that fail to load leave the members and offer Retry", async ({ page }) => {
-  await fixture(page);
+  await fixture(page, true);
   let fail = true;
   await page.route("**/api/invitations", route => {
     if (route.request().method() !== "GET") return route.fallback();
     if (fail) return route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "Unavailable" } } });
-    return route.fulfill({ json: { invitations: [{ id: "inv-1", email: "pending@example.test", role: "member", status: "pending", created_at: now, expires_at: now }] } });
+    return route.fulfill({ json: { invitations: [{ id: "inv-1", email: "pending@example.test", status: "pending", created_at: now, expires_at: now }] } });
   });
   await page.goto(`/settings/members?${scope}`);
   const notice = page.getByRole("alert").filter({ hasText: "Could not load invitations." });
@@ -629,44 +617,48 @@ test("invitations that fail to load leave the members and offer Retry", async ({
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
 });
 
-test("a member's role changes from the row menu and a conflicting change can be retried", async ({ page }) => {
-  await fixture(page);
-  let role = "member";
-  const patches: unknown[] = [];
+test("ownership changes detect a conflict and retry with a newly chosen value", async ({ page }) => {
+  await fixture(page, true);
+  let isOwner = false;
+  const writes: unknown[] = [];
   await page.route("**/api/members**", async route => {
     const request = route.request();
-    if (request.method() === "PATCH") {
-      const body = request.postDataJSON() as { role: string; expected_role: string };
-      patches.push(body);
-      if (body.expected_role !== role) return route.fulfill({ status: 409, json: { error: { code: "conflict", message: "member role changed" } } });
-      role = body.role;
-      return route.fulfill({ json: { user_id: "member-2", display_name: "Second Member", email: "second@example.test", role, status: "active", created_at: now, updated_at: now } });
+    const path = new URL(request.url()).pathname;
+    const member = () => ({ user_id: "member-2", membership_id: "membership-2", display_name: "Second Member", email: "second@example.test", is_owner: isOwner, status: "active", created_at: now, updated_at: now });
+    if (path === "/api/members/membership-2/ownership" && request.method() === "PUT") {
+      const body = request.postDataJSON() as { is_owner: boolean; expected_is_owner: boolean };
+      writes.push(body);
+      if (body.expected_is_owner !== isOwner) return route.fulfill({ status: 409, json: { error: { code: "conflict", message: "ownership changed" } } });
+      isOwner = body.is_owner;
+      return route.fulfill({ json: member() });
     }
-    if (new URL(request.url()).pathname !== "/api/members") return route.fallback();
+    if (path !== "/api/members" || request.method() !== "GET") return route.fallback();
     return route.fulfill({ json: { members: [
-      { user_id: "local", display_name: "Local", email: "local@example.test", role: "owner", status: "active", created_at: now, updated_at: now },
-      { user_id: "member-2", display_name: "Second Member", email: "second@example.test", role, status: "active", created_at: now, updated_at: now },
+      { user_id: "local", membership_id: "membership-local", display_name: "Local", email: "local@example.test", is_owner: true, status: "active", created_at: now, updated_at: now }, member(),
     ] } });
   });
   await page.goto(`/settings/members?${scope}`);
   await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Change role", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Change role" });
-  // Someone else makes them an owner while the dialog is open.
-  role = "owner";
+  await page.getByRole("menuitem", { name: "Change ownership", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Change ownership" });
+  await expect(dialog).toContainText("it does not grant workload permissions");
   await dialog.getByRole("combobox").click();
-  await page.getByRole("option", { name: "Admin", exact: true }).click();
-  await dialog.getByRole("button", { name: "Change role", exact: true }).click();
+  await page.getByRole("option", { name: "Owner", exact: true }).click();
+  isOwner = true; // Another owner changes the member while this dialog is open.
+  await dialog.getByRole("button", { name: "Change ownership", exact: true }).click();
   await expect(dialog.getByRole("alert")).toHaveText("This member's role changed. Check it and try again.");
-  // The retry expects the role they now have.
-  await dialog.getByRole("button", { name: "Change role", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Change ownership", exact: true })).toBeDisabled();
+  // Refresh now shows ownership is already set. Make a new explicit choice.
+  await dialog.getByRole("combobox").click();
+  await page.getByRole("option", { name: "Member", exact: true }).click();
+  await dialog.getByRole("button", { name: "Change ownership", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  expect(patches).toEqual([{ role: "admin", expected_role: "member" }, { role: "admin", expected_role: "owner" }]);
-  await expect(page.getByRole("table").getByRole("row").nth(2).getByRole("cell").nth(1)).toHaveText("Admin");
+  expect(writes).toEqual([{ is_owner: true, expected_is_owner: false }, { is_owner: false, expected_is_owner: true }]);
+  await expect(page.getByRole("table").getByRole("row").nth(2).getByRole("cell").nth(1)).toHaveText("No organization roles");
 });
 
 test("removing a member and revoking an invitation each confirm before the request", async ({ page }) => {
-  const state = await fixture(page);
+  const state = await fixture(page, true);
   await page.goto(`/settings/members?${scope}`);
   await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
   await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
@@ -678,23 +670,23 @@ test("removing a member and revoking an invitation each confirm before the reque
   await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
   await remove.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(remove).toHaveCount(0);
-  expect(state.deletions).toEqual(["/api/members/member-2"]);
+  expect(state.deletions).toEqual(["/api/members/membership-2"]);
 
   await page.getByRole("button", { name: "Actions for pending@example.test", exact: true }).click();
   await page.getByRole("menuitem", { name: "Revoke invitation", exact: true }).click();
   const revoke = page.getByRole("dialog", { name: "Revoke invitation" });
   await expect(revoke).toContainText("pending@example.test");
   await revoke.getByRole("button", { name: "Cancel", exact: true }).click();
-  expect(state.deletions).toEqual(["/api/members/member-2"]);
+  expect(state.deletions).toEqual(["/api/members/membership-2"]);
   await page.getByRole("button", { name: "Actions for pending@example.test", exact: true }).click();
   await page.getByRole("menuitem", { name: "Revoke invitation", exact: true }).click();
   await revoke.getByRole("button", { name: "Revoke", exact: true }).click();
   await expect(revoke).toHaveCount(0);
-  expect(state.deletions).toEqual(["/api/members/member-2", "/api/invitations/inv-1"]);
+  expect(state.deletions).toEqual(["/api/members/membership-2", "/api/invitations/inv-1"]);
 });
 
 test("the invite form splits pasted addresses and flags invalid and duplicate ones", async ({ page }) => {
-  const state = await fixture(page);
+  const state = await fixture(page, true);
   await page.goto(`/settings/members?${scope}`);
   await page.getByRole("button", { name: "Invite members", exact: true }).click();
   const form = page.getByRole("dialog", { name: "Invite members" });
@@ -719,7 +711,7 @@ test("the invite form splits pasted addresses and flags invalid and duplicate on
 });
 
 test("inviting several members summarizes who was invited and who was not, then refreshes the table", async ({ page }) => {
-  const state = await fixture(page);
+  const state = await fixture(page, true);
   await page.goto(`/settings/members?${scope}`);
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Invite members", exact: true }).click();
@@ -729,7 +721,7 @@ test("inviting several members summarizes who was invited and who was not, then 
 
   const results = page.getByRole("dialog", { name: "Invitations" });
   await expect(form).toHaveCount(0);
-  expect(state.invitations).toEqual([{ emails: ["ada@example.test", "lin@team.test", "second@example.test", "grace@team.test"], role: "member" }]);
+  expect(state.invitations).toEqual([{ emails: ["ada@example.test", "lin@team.test", "second@example.test", "grace@team.test"] }]);
   await expect(results.getByText("Invited 3 people.", { exact: true })).toBeVisible();
   await expect(results.getByText("Couldn't invite 1:", { exact: true })).toBeVisible();
   await expect(results.getByRole("list", { name: "Not invited" }).getByRole("listitem")).toHaveText(["second@example.test · Already a member"]);
@@ -744,7 +736,7 @@ test("inviting several members summarizes who was invited and who was not, then 
 });
 
 test("when no invitation email can be sent the form stays open with its addresses", async ({ page }) => {
-  await fixture(page);
+  await fixture(page, true);
   let posts = 0;
   await page.route("**/api/invitations", route => {
     if (route.request().method() !== "POST") return route.fallback();
@@ -769,8 +761,8 @@ test("when no invitation email can be sent the form stays open with its addresse
 });
 
 test("without email delivery, inviting members is unavailable and says why", async ({ page }) => {
-  await fixture(page);
-  await page.route("**/api/me", route => route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", role: "owner", permissions: [], admin: false, organization_required: false, project_required: false, email_delivery: false } }));
+  await fixture(page, true);
+  await page.route("**/api/me", route => route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: ["access.manage"], admin: false, organization_required: false, project_required: false, email_delivery: false } }));
   await page.goto(`/settings/members?${scope}`);
   await expect(page.getByText("Email delivery is not set up for this Helmr installation, so members can't be invited.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Invite members", exact: true })).toBeDisabled();

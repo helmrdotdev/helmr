@@ -6,6 +6,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -153,13 +154,15 @@ func TestSourceAbortCancellationAndLossPreserveRecoveryHolds(t *testing.T) {
 	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='physical owner destroyed' WHERE computer_id=$1`, f.computer)
+	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "independent")); err != nil {
+		t.Fatal(err)
+	}
 	for range 2 {
-		if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, uuid.MustParse(p.Capture.CheckpointId)); err != nil {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for sessionID, want := range map[uuid.UUID]int{f.session: 1, peer.session: 0} {
+	for sessionID, want := range map[uuid.UUID]int{f.session: 2, peer.session: 0} {
 		var count int
 		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1`, sessionID).Scan(&count); err != nil || count != want {
 			t.Fatalf("Session %s holds %d want %d: %v", sessionID, count, want, err)
@@ -276,11 +279,10 @@ func TestSourceAbortRequiresRetainedGuestAndBoundsUninstalledRetries(t *testing.
 
 func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 	f := newFixture(t)
-	var history []uuid.UUID
+	history := make(map[uuid.UUID]string)
 	for range 2 {
 		p, _ := sourceAbort(t, f)
 		id := uuid.MustParse(p.Capture.CheckpointId)
-		history = append(history, id)
 		if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, false, false)); err != nil {
 			t.Fatal(err)
 		}
@@ -303,25 +305,36 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 		if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 			t.Fatalf("scrubbed retry: %v", err)
 		}
+		var snapshot string
+		if err := f.pool.QueryRow(t.Context(), `SELECT to_jsonb(c)::text FROM checkpoints c WHERE id=$1`, id).Scan(&snapshot); err != nil {
+			t.Fatal(err)
+		}
+		history[id] = snapshot
+
 	}
 	req := f.captureRequest()
 	beginCapture(t, f, req)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='source destroyed' WHERE computer_id=$1`, f.computer)
-	for _, id := range history {
-		if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, id); !errors.Is(err, session.ErrNotReady) {
-			t.Fatalf("historical abort owns loss: %v", err)
+
+	for range 2 {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+			t.Fatal(err)
 		}
 	}
+	for id, before := range history {
+		var after string
+		if err := f.pool.QueryRow(t.Context(), `SELECT to_jsonb(c)::text FROM checkpoints c WHERE id=$1`, id).Scan(&after); err != nil || after != before {
+			t.Fatalf("historical abort rewritten: before=%s after=%s error=%v", before, after, err)
+		}
+	}
+	var lost bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='lost' AND capture_request IS NULL FROM checkpoints WHERE id=$1`, req.CheckpointID).Scan(&lost); err != nil || !lost {
+		t.Fatalf("current capture not lost: %v %v", lost, err)
+	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("history added holds %d: %v", count, err)
-	}
-	if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, req.CheckpointID); err != nil {
-		t.Fatal(err)
-	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("current loss holds %d: %v", count, err)
+		t.Fatalf("current ineligible loss holds %d: %v", count, err)
 	}
+
 }
 
 func TestSourceAbortSaveAbsenceRacesCapture(t *testing.T) {

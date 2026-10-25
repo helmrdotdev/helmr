@@ -76,6 +76,7 @@ func TestScheduledTextInputRetainsBytes(t *testing.T) {
 
 func TestStructuredInvocationPreservesJSONAndPinnedContract(t *testing.T) {
 	f := newAdmissionFixture(t)
+	var retained []uuid.UUID
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET input_kind='json',input_schema='{"status":"unavailable","reason":"missing_converter"}' WHERE environment_id=$1 AND agent_id=$2`, f.env, f.agent)
 	for i, raw := range []string{`{"count":"2","nested":[true,null]}`, `null`, `[]`, `"text"`, `3`} {
 		req := f.startRequest(fmt.Sprint("structured-", i))
@@ -89,10 +90,27 @@ func TestStructuredInvocationPreservesJSONAndPinnedContract(t *testing.T) {
 		if err != nil || string(view.Input) != string(want) {
 			t.Fatalf("structured input changed: %s %v", view.Input, err)
 		}
-		// A new current deployment does not change the retained Session contract.
-		if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: receipt.SessionID, Input: json.RawMessage(`{"next":true}`)}); err != nil {
+		retained = append(retained, receipt.SessionID)
+	}
+	other := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,'sha256:'||repeat('a',64))`, f.env, other)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO template_definitions SELECT (jsonb_populate_record(NULL::template_definitions,to_jsonb(d)||jsonb_build_object('deployment_id',$2::uuid))).* FROM template_definitions d WHERE environment_id=$1`, f.env, other)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,agent_id,$2,template_id,has_init FROM agent_definitions WHERE environment_id=$1`, f.env, other)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.env, other)
+	for _, id := range retained {
+		// The retained Session accepts JSON after the current definition becomes text.
+		if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: id, Input: json.RawMessage(`{"next":true}`)}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	req := f.startRequest("new-text-definition")
+	req.Input = json.RawMessage(`{"next":true}`)
+	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, content.ErrInvalid) && !errors.Is(err, content.ErrUnsupported) {
+		t.Fatalf("new text definition accepted JSON: %v", err)
+	}
+	req.Input = json.RawMessage(`[{"type":"text","text":"new deployment"}]`)
+	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), req); err != nil {
+		t.Fatalf("new text definition rejected text: %v", err)
 	}
 }
 

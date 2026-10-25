@@ -191,12 +191,18 @@ run "managed_controlplane_omits_setup_token" {
 run "execution_roles_are_pull_only" {
   command = plan
   assert {
-    condition = (
-      strcontains(aws_iam_role_policy.controlplane_execution.policy, var.controlplane_image_repository_arn) &&
-      strcontains(aws_iam_role_policy.dispatcher_execution.policy, var.controlplane_image_repository_arn) &&
-      !strcontains(aws_iam_role_policy.controlplane_execution.policy, "ecr:PutImage") &&
-      !strcontains(aws_iam_role_policy.dispatcher_execution.policy, "ecr:PutImage")
-    )
+    condition = alltrue([
+      for policy in [aws_iam_role_policy.controlplane_execution.policy, aws_iam_role_policy.dispatcher_execution.policy] :
+      alltrue([for statement in jsondecode(policy).Statement :
+        statement.Effect == "Allow" && !can(statement.NotAction) && !can(statement.NotResource) &&
+        alltrue([for action in flatten([statement.Action]) : contains(["logs:CreateLogStream", "logs:PutLogEvents", "secretsmanager:GetSecretValue", "kms:Decrypt", "ecr:GetAuthorizationToken", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"], action)])
+      ]) &&
+      toset([for statement in jsondecode(policy).Statement : jsonencode(merge(statement, { Action = sort(flatten([statement.Action])) })) if anytrue([for action in flatten([statement.Action]) : startswith(action, "ecr:")])]) ==
+      toset([
+        jsonencode({ Sid = "AuthenticateControlPlaneReleaseRegistry", Effect = "Allow", Action = ["ecr:GetAuthorizationToken"], Resource = "*" }),
+        jsonencode({ Sid = "PullControlPlaneReleaseImage", Effect = "Allow", Action = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"], Resource = var.controlplane_image_repository_arn })
+      ])
+    ])
     error_message = "ECS execution roles must have pull-only access to the exact Control Plane repository"
   }
 }

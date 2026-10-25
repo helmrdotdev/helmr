@@ -27,7 +27,7 @@ func TestWorkerConnectionAPIVersion(t *testing.T) {
 	}
 }
 
-func TestWorkerOrdinaryRoutesDoNotRequireAPIVersion(t *testing.T) {
+func TestWorkerOrdinaryRoutesRequireAuthentication(t *testing.T) {
 	router, err := NewServer(completeServerConfig(t))
 	if err != nil {
 		t.Fatal(err)

@@ -92,7 +92,7 @@ func TestDefaultConfigDirUsesOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(dir, "custom") {
+	if dir != os.Getenv(configDirEnv) {
 		t.Fatalf("dir = %s", dir)
 	}
 }

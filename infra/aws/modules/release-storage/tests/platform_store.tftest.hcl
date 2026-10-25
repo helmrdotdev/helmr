@@ -75,17 +75,66 @@ run "platform_store_immutability_is_bounded" {
 
   assert {
     condition = (
-      strcontains(aws_s3_bucket_policy.platform_store.policy, "DenyUnconditionalPlatformObjectWrites") &&
-      strcontains(aws_s3_bucket_policy.platform_store.policy, "DenyPlatformObjectMutation") &&
-      strcontains(aws_s3_bucket_policy.platform_store.policy, "s3:if-none-match") &&
-      one([
-        for statement in jsondecode(aws_s3_bucket_policy.platform_store.policy).Statement :
-        statement if statement.Sid == "DenyUnconditionalPlatformObjectWrites"
-      ]).Condition.Bool["s3:ObjectCreationOperation"] == "true" &&
-      one([
-        for statement in jsondecode(aws_s3_bucket_policy.platform_store.policy).Statement :
-        statement if statement.Sid == "DenyPlatformObjectCopies"
-      ]).Condition.Bool["s3:ObjectCreationOperation"] == "true"
+      toset([for statement in jsondecode(aws_s3_bucket_policy.platform_store.policy).Statement : jsonencode(merge(statement, { Action = sort(flatten([statement.Action])), Resource = sort(flatten([statement.Resource])) }))]) ==
+      toset([for statement in [
+        {
+          Sid       = "DenyInsecureTransport"
+          Effect    = "Deny"
+          Principal = "*"
+          Action    = "s3:*"
+          Resource = [
+            aws_s3_bucket.platform_store.arn,
+            "${aws_s3_bucket.platform_store.arn}/*"
+          ]
+          Condition = {
+            Bool = {
+              "aws:SecureTransport" = "false"
+            }
+          }
+        },
+        {
+          Sid       = "DenyUnconditionalPlatformObjectWrites"
+          Effect    = "Deny"
+          Principal = "*"
+          Action    = "s3:PutObject"
+          Resource  = "${aws_s3_bucket.platform_store.arn}/objects/sha256/*"
+          Condition = {
+            Null = {
+              "s3:if-none-match" = "true"
+            }
+            Bool = {
+              "s3:ObjectCreationOperation" = "true"
+            }
+          }
+        },
+        {
+          Sid       = "DenyPlatformObjectCopies"
+          Effect    = "Deny"
+          Principal = "*"
+          Action    = "s3:PutObject"
+          Resource  = "${aws_s3_bucket.platform_store.arn}/objects/sha256/*"
+          Condition = {
+            Null = {
+              "s3:x-amz-copy-source" = "false"
+            }
+            Bool = {
+              "s3:ObjectCreationOperation" = "true"
+            }
+          }
+        },
+        {
+          Sid       = "DenyPlatformObjectMutation"
+          Effect    = "Deny"
+          Principal = "*"
+          Action = [
+            "s3:DeleteObject",
+            "s3:DeleteObjectVersion",
+            "s3:PutObjectTagging",
+            "s3:DeleteObjectTagging"
+          ]
+          Resource = "${aws_s3_bucket.platform_store.arn}/objects/sha256/*"
+        }
+      ] : jsonencode(merge(statement, { Action = sort(flatten([statement.Action])), Resource = sort(flatten([statement.Resource])) }))])
     )
     error_message = "bucket policy must enforce conditional creates, the multipart exception, and immutable objects."
   }

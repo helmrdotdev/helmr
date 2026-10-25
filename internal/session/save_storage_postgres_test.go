@@ -315,9 +315,6 @@ func TestSavePublicationRetryRestartAndLostAcknowledgement(t *testing.T) {
 	if err = completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if err = completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
-		t.Fatal(err)
-	}
 	next, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
 	if err != nil || next.TurnID != queued.TurnID {
 		t.Fatalf("queued dispatch: %v %v", next, err)

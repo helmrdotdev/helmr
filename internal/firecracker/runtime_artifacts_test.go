@@ -83,29 +83,45 @@ func TestMakeRuntimeArtifactsLoad(t *testing.T) {
 	}
 }
 
-// Keep both infrastructure admission checks bound to the loader contract. The
-// executable producer and installer tests separately exercise their behavior.
-func TestRuntimeArtifactValidatorContractsMatchLoader(t *testing.T) {
-	_, source, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve runtime artifact test source")
+func TestRuntimeArtifactContractCases(t *testing.T) {
+	raw, err := os.ReadFile("../../tests/fixtures/runtime-artifacts/contracts.json")
+	if err != nil {
+		t.Fatal(err)
 	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
-	for _, check := range []struct {
-		name string
-		path string
-		want string
-	}{
-		{name: "image validation", path: "infra/aws/modules/worker-image/main.tf", want: `.vm_runtime_contract == \"` + vmplatform.Contract + `\"`},
-		{name: "installer", path: "infra/aws/modules/worker-image/templates/install-worker-host.sh", want: `.vm_runtime_contract == "` + vmplatform.Contract + `"`},
-	} {
-		t.Run(check.name, func(t *testing.T) {
-			body, err := os.ReadFile(filepath.Join(repoRoot, check.path))
+	var cases []struct {
+		Name  string
+		Value json.RawMessage
+		Valid bool
+	}
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			cfg, manifest := writeRuntimeArtifactFixture(t)
+			encoded, err := json.Marshal(manifest)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(string(body), check.want) {
-				t.Fatalf("%s does not validate loader contract %q", check.path, vmplatform.Contract)
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if len(tc.Value) == 0 {
+				delete(fields, "vm_runtime_contract")
+			} else {
+				fields["vm_runtime_contract"] = tc.Value
+			}
+			encoded, err = json.Marshal(fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cfg.RuntimeArtifactsPath, encoded, 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err = loadRuntimeArtifacts(cfg)
+			if (err == nil) != tc.Valid {
+				t.Fatalf("valid=%v: %v", tc.Valid, err)
 			}
 		})
 	}

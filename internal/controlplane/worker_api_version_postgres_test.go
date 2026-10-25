@@ -61,3 +61,31 @@ func workerHostState(t *testing.T, pool *pgxpool.Pool, hostID uuid.UUID) string 
 	}
 	return state
 }
+
+func TestWorkerOrdinaryRoutesDoNotRequireAPIVersion(t *testing.T) {
+	f := sessiontest.New(t)
+	handler := newPostgresServer(t, f.Pool)
+	hostSecret := seedHostSecret(t, f.Pool, f.Worker)
+	credential := issueWorkerHostCredential(t, handler, hostSecret.hostID.String(), hostSecret.secret, hostSecret.serviceID.String())
+	for i, header := range []string{"", "different"} {
+		sequence := int64(i + 1)
+		raw, err := json.Marshal(workerapi.ObserveRequest{Observation: workerapi.Observation{Resources: workerapi.ResourceObservation{Sequence: sequence, PolicyRevision: 1, ReadyLeafKeys: []workerapi.ReadyLeafKey{}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/observations", strings.NewReader(string(raw)))
+		req.Header.Set("Authorization", "Bearer "+credential)
+		if header != "" {
+			req.Header.Set("Helmr-Worker-Contract", header)
+		}
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		if out.Code != http.StatusOK {
+			t.Fatalf("header %q: %d %s", header, out.Code, out.Body)
+		}
+		var got int64
+		if err := f.Pool.QueryRow(t.Context(), `SELECT resource_observation_sequence FROM worker_hosts WHERE id=$1`, f.Worker).Scan(&got); err != nil || got != sequence {
+			t.Fatalf("header %q: stored sequence=%d want=%d error=%v", header, got, sequence, err)
+		}
+	}
+}
