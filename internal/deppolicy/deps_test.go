@@ -246,7 +246,9 @@ func TestCLIStateIsCLIOnly(t *testing.T) {
 	}
 }
 
-func TestDomainPackagesUseNaturalImportNames(t *testing.T) {
+// TestPolicyDomainPackagesUseNaturalImportNames enforces repository naming style,
+// not runtime behavior or dependency isolation.
+func TestPolicyDomainPackagesUseNaturalImportNames(t *testing.T) {
 	root := repositoryRoot(t)
 	for _, sourceRoot := range []string{"cmd", "internal"} {
 		err := filepath.WalkDir(filepath.Join(root, sourceRoot), func(filename string, d fs.DirEntry, err error) error {

@@ -579,12 +579,12 @@ test("hold receipt failure retains the original setup and convergence diagnosis"
 })
 
 
-test("the handler joins native callbacks and their output before settlement", async () => {
+test("settlement waits for the handler and its output", async () => {
   const admitted = deferred<void>(), write = deferred<void>()
   const { runtime, calls } = fixture({ turn: async turn => {
     admitted.resolve()
     await write.promise
-    await turn.output.write("native output before handler return")
+    await turn.output.write("output before handler return")
     return "returned"
   } })
   const pending = runtime.dispatch(request())

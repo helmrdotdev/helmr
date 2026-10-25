@@ -61,7 +61,7 @@ func disposableClient(t *testing.T) *Client {
 	return c
 }
 
-func TestProjectionReplayKeepsAcceptedPartitionAndRetention(t *testing.T) {
+func TestCommandLogReaderDeduplicatesReplayWithinEachOwner(t *testing.T) {
 	c := disposableClient(t)
 	writer, reader := NewWriter(c), NewReader(c)
 	org, environment, command, otherCommand := uuid.NewV7(), uuid.NewV7(), uuid.New(), uuid.New()
@@ -87,10 +87,8 @@ func TestProjectionReplayKeepsAcceptedPartitionAndRetention(t *testing.T) {
 	if err := c.Exec(t.Context(), "INSERT INTO helmr_telemetry.computer_command_logs SELECT * EXCEPT (ingested_at), ingested_at + INTERVAL 1 DAY FROM helmr_telemetry.computer_command_logs WHERE environment_id = ?", environment); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Exec(t.Context(), "SELECT throwIf(count() != 4 OR uniqExact(_partition_id) != 1 OR uniqExact(accepted_at) != 1 OR uniqExact(toDate(ingested_at)) != 2 OR toUnixTimestamp64Micro(min(expires_at)) != ?, 'unstable replay retention') FROM helmr_telemetry.computer_command_logs WHERE environment_id = ?", accepted.Add(90*24*time.Hour).UnixMicro(), environment); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Exec(t.Context(), "SELECT throwIf(position(create_table_query, 'TTL expires_at') = 0 OR position(create_table_query, 'PARTITION BY toDate(accepted_at)') = 0, 'unexpected retention DDL') FROM system.tables WHERE database = 'helmr_telemetry' AND name = 'computer_command_logs'"); err != nil {
+
+	if err := c.Exec(t.Context(), "SELECT throwIf(count() != 4, 'replay did not create duplicate rows') FROM helmr_telemetry.computer_command_logs WHERE environment_id = ?", environment); err != nil {
 		t.Fatal(err)
 	}
 

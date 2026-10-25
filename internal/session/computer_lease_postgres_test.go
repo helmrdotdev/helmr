@@ -196,17 +196,13 @@ func TestComputerLeaseLossAfterConsumptionDoesNotReplayCheckpoint(t *testing.T) 
 	if err := r.f.pool.QueryRow(t.Context(), `SELECT status='lost' AND fenced_at IS NULL AND failure_recorded_at IS NOT NULL FROM session_processes WHERE session_id=$1`, r.f.session).Scan(&lost); err != nil || !lost {
 		t.Fatalf("consumed continuation survived unknown execution %v %v", lost, err)
 	}
-	// Epoch replacement allows loss reconciliation, but is not physical fencing.
-	dbtest.MustExec(t, t.Context(), r.f.pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, r.host.HostID)
-	if err := loseUnreadyComputerCaptureForTest(t.Context(), r.f.pool, r.f.env, r.manifest.CheckpointID); err != nil {
-		t.Fatal(err)
+	var consumed bool
+	if err := r.f.pool.QueryRow(t.Context(), `SELECT status='consumed' FROM checkpoints WHERE id=$1`, r.manifest.CheckpointID).Scan(&consumed); err != nil || !consumed {
+		t.Fatalf("expiry changed consumed checkpoint: %v %v", consumed, err)
 	}
 	var holds int
 	if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1`, r.f.session).Scan(&holds); err != nil || holds != 0 {
-		t.Fatalf("checkpoint loss duplicated hold %d %v", holds, err)
-	}
-	if err := r.f.pool.QueryRow(t.Context(), `SELECT fenced_at IS NULL FROM session_processes WHERE session_id=$1`, r.f.session).Scan(&lost); err != nil || !lost {
-		t.Fatalf("worker epoch treated as physical fence %v %v", lost, err)
+		t.Fatalf("eligible disk recovery added hold %d %v", holds, err)
 	}
 }
 
@@ -318,7 +314,7 @@ func TestComputerCaptureLossPreservesStoppedMember(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			p, _ := sourceAbort(t, f)
+			sourceAbort(t, f)
 			if graceful {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopping' WHERE session_id=$1`, f.session)
 			}
@@ -336,9 +332,8 @@ func TestComputerCaptureLossPreservesStoppedMember(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='physical owner destroyed' WHERE computer_id=$1`, f.computer)
 			for range 2 {
-				if err := loseUnreadyComputerCaptureForTest(t.Context(), f.pool, f.env, uuid.MustParse(p.Capture.CheckpointId)); err != nil {
+				if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 					t.Fatal(err)
 				}
 			}

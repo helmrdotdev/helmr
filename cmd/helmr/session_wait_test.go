@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,17 +16,25 @@ import (
 func TestSessionTurnWaitObservesWithoutMutations(t *testing.T) {
 	const turn = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"
 	for _, tc := range []struct {
-		name, status, timeout, want string
-		httpStatus                  int
+		name, fixture, timeout, want string
+		httpStatus                   int
 	}{
-		{"success", "completed", "2s", `"status":"settled"`, 200},
+		{"success", "completed-null", "2s", `"status":"settled"`, 200},
+		{"expired", "completed-expired", "2s", `"status":"settled"`, 200},
 		{"failure", "failed", "2s", `"status":"failed"`, 200},
 		{"timeout", "running", "100ms", `"status":"timeout"`, 200},
 		{"forbidden", "", "2s", "forbidden", 403},
-		{"unknown", "future", "2s", "unknown Turn status", 200},
+		{"unknown", "running", "2s", "unknown Turn status", 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
+			var payload api.AgentTurn
+			if tc.httpStatus == 200 {
+				loadSessionWireFixture(t, tc.fixture, &payload)
+			}
+			if tc.name == "unknown" {
+				payload.Status = "future"
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls.Add(1)
 				if r.Method != "GET" || r.URL.Path != "/v1/sessions/"+testSessionID+"/turns/"+turn {
@@ -35,7 +45,7 @@ func TestSessionTurnWaitObservesWithoutMutations(t *testing.T) {
 					_, _ = w.Write([]byte(`{"error":{"code":"forbidden","message":"forbidden"}}`))
 					return
 				}
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": turn, "session_id": testSessionID, "status": tc.status, "result": nil, "payload_expired_at": "2026-10-01T00:00:00Z"})
+				_ = json.NewEncoder(w).Encode(payload)
 			}))
 			defer server.Close()
 			t.Setenv(helmrAPIURLEnv, server.URL)
@@ -56,9 +66,13 @@ func TestSessionTurnWaitObservesWithoutMutations(t *testing.T) {
 			if calls.Load() != 1 {
 				t.Fatalf("reads=%d", calls.Load())
 			}
-			if tc.status == "completed" && (!strings.Contains(out.String(), `"result":null`) || !strings.Contains(out.String(), `"payload_expired_at"`)) {
-				t.Fatalf("payload metadata lost: %s", out.String())
+			if tc.fixture == "completed-null" && (!strings.Contains(out.String(), `"result":null`) || strings.Contains(out.String(), `"payload_expired_at"`)) {
+				t.Fatalf("explicit null lost: %s", out.String())
 			}
+			if tc.fixture == "completed-expired" && (strings.Contains(out.String(), `"result"`) || !strings.Contains(out.String(), `"payload_expired_at"`)) {
+				t.Fatalf("expired payload fabricated: %s", out.String())
+			}
+
 		})
 	}
 }
@@ -98,14 +112,16 @@ func TestSessionTurnWaitObservesQueuedAndRunningBeforeSettlement(t *testing.T) {
 		if r.Method != "GET" {
 			t.Errorf("unexpected mutation: %s", r.Method)
 		}
-		status := "completed"
+		status := "completed-object"
 		switch calls.Add(1) {
 		case 1:
 			status = "queued"
 		case 2:
 			status = "running"
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"id": turn, "session_id": testSessionID, "status": status, "result": map[string]any{"done": true}})
+		var payload api.AgentTurn
+		loadSessionWireFixture(t, status, &payload)
+		_ = json.NewEncoder(w).Encode(payload)
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -120,5 +136,20 @@ func TestSessionTurnWaitObservesQueuedAndRunningBeforeSettlement(t *testing.T) {
 	}
 	if calls.Load() != 3 || !strings.Contains(out.String(), `"status":"settled"`) || !strings.Contains(out.String(), `"done":true`) {
 		t.Fatalf("calls=%d out=%s", calls.Load(), out.String())
+	}
+}
+
+func loadSessionWireFixture(t *testing.T, name string, target any) {
+	t.Helper()
+	raw, err := os.ReadFile("../../tests/fixtures/session-wire.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(fixtures[name], target); err != nil {
+		t.Fatal(err)
 	}
 }

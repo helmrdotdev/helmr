@@ -24,6 +24,10 @@ type retirementSaveClient struct {
 }
 
 func (c *retirementSaveClient) NextAgentSave(_ context.Context, r workerapi.AgentSaveDiscovery) (workerapi.AgentSavePending, error) {
+	if r.Retirement != nil {
+		floor := *r.Retirement
+		r.Retirement = &floor
+	}
 	c.discoveries = append(c.discoveries, r)
 	if c.lose {
 		c.lose = false
@@ -61,7 +65,7 @@ func TestAgentSaveRetirementWaitsForAdoptionAndRetriesExactFloor(t *testing.T) {
 	if err := s.step(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.discoveries) != 2 || client.discoveries[0].Retirement == nil || client.discoveries[0].Retirement != client.discoveries[1].Retirement || !reflect.DeepEqual(client.discoveries[0].Retirement, client.discoveries[1].Retirement) {
+	if len(client.discoveries) != 2 || client.discoveries[0].Retirement == nil || !reflect.DeepEqual(client.discoveries[0].Retirement, client.discoveries[1].Retirement) {
 		t.Fatalf("uncertain exact floor changed: %+v", client.discoveries)
 	}
 	if err := s.step(t.Context()); err != nil {

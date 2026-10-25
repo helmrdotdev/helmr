@@ -7,6 +7,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -134,7 +136,8 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 	if err = session.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, p, initial); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("old image retried: %v", err)
 	}
-	if err = loseUnreadyComputerCaptureForTest(ctx, f.f.pool, f.f.env, f.manifest.CheckpointID); !errors.Is(err, session.ErrNotReady) {
+	// A late duplicate source-stop receipt must not disturb the current target.
+	if err = dispatch.ObserveLeaseStopped(ctx, f.f.pool, *f.f.host(), leaseIdentity(f.f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatalf("historical source fence lost current target: %v", err)
 	}
 	admitted := f.f.enqueue(t, "queued-through-restore")
@@ -183,19 +186,30 @@ func TestComputerRestoreRetriesOnlyBeforeConsumption(t *testing.T) {
 	if err := session.CommitComputerRestore(ctx, f.f.pool, f.host, f.f.env, second, restoreReceipt(second, true, false)); err != nil {
 		t.Fatal(err)
 	}
+	var consumed bool
+	if err := f.f.pool.QueryRow(ctx, `SELECT status='consumed' FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&consumed); err != nil || !consumed {
+		t.Fatalf("installation did not consume checkpoint: %v %v", consumed, err)
+	}
+	if _, err := session.PrepareComputerRestore(ctx, f.f.pool, f.host, f.f.env, f.manifest.CheckpointID, f.epoch, f.credential); !errors.Is(err, session.ErrNotReady) {
+		t.Fatalf("consumed snapshot reloaded before loss: %v", err)
+	}
+	if err := dispatch.ObserveLeaseStopped(ctx, f.f.pool, f.host, computer.LeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, InstanceID: uuid.MustParse(second.Envelope.ComputerInstanceId), Epoch: f.epoch}, uuid.Nil(), uuid.Nil()); err != nil {
+		t.Fatal(err)
+	}
 	f.newTarget(t)
 	if _, err := session.PrepareComputerRestore(ctx, f.f.pool, f.host, f.f.env, f.manifest.CheckpointID, f.epoch, f.credential); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("consumed snapshot reloaded: %v", err)
+		t.Fatalf("lost snapshot reloaded: %v", err)
 	}
-	// Loss follows the consumed physical owner, not the newly admitted fixture lease.
-	if err := loseUnreadyComputerCaptureForTest(ctx, f.f.pool, f.f.env, f.manifest.CheckpointID); err != nil {
-		t.Fatal(err)
+	var lost bool
+	if err := f.f.pool.QueryRow(ctx, `SELECT status='lost' AND failure_recorded_at IS NOT NULL AND fenced_at IS NOT NULL FROM session_processes WHERE session_id=$1`, f.f.session).Scan(&lost); err != nil || !lost {
+		t.Fatalf("consumed physical owner not lost: %v %v", lost, err)
 	}
 	var holds int
 	if err := f.f.pool.QueryRow(ctx, `SELECT count(*) FROM session_holds WHERE environment_id=$1 AND released_at IS NULL`, f.f.env).Scan(&holds); err != nil || holds != len(second.Grants) {
-		t.Fatalf("loss holds=%d %v", holds, err)
+		t.Fatalf("ineligible recovery holds=%d: %v", holds, err)
 	}
 }
+
 func TestComputerRestoreRejectsChangedInstallation(t *testing.T) {
 	for _, which := range []string{"credential", "base", "version", "member", "instance", "expired", "unfrozen", "activation", "foreign"} {
 		t.Run(which, func(t *testing.T) {

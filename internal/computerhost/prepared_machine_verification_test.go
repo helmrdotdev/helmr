@@ -2,9 +2,10 @@ package computerhost
 
 import (
 	"context"
+	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -60,40 +61,48 @@ func TestPreparedMachinesMemoizesSuccessfulRuntimeVerification(t *testing.T) {
 	}
 }
 
-func TestPreparedMachinesAllowsConcurrentRuntimeVerificationMisses(t *testing.T) {
-	const workers = 8
-	machines := &PreparedMachines{}
-	descriptor := artifact.RuntimeDescriptor{Digest: "sha256:runtime"}
-	index := artifact.RuntimeIndex{RuntimeContract: definition.RuntimeContract}
-	entered := make(chan struct{}, workers)
-	release := make(chan struct{})
-	results := make(chan bool, workers)
-	var calls atomic.Int32
-	var wg sync.WaitGroup
-
-	for range workers {
-		wg.Go(func() {
-			got, _, err := machines.verifyRuntime(descriptor, func() (artifact.RuntimeIndex, error) {
-				calls.Add(1)
-				entered <- struct{}{}
-				<-release
-				return index, nil
-			})
-			results <- err == nil && got == index
+func TestPreparedMachinesConcurrentRuntimeVerification(t *testing.T) {
+	for _, distinct := range []bool{true, false} {
+		t.Run(map[bool]string{true: "distinct descriptors overlap", false: "same descriptor results"}[distinct], func(t *testing.T) {
+			const workers = 8
+			machines := &PreparedMachines{}
+			index := artifact.RuntimeIndex{RuntimeContract: definition.RuntimeContract}
+			entered := make(chan struct{}, workers)
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			var wg sync.WaitGroup
+			defer func() { releaseOnce.Do(func() { close(release) }); wg.Wait() }()
+			for i := range workers {
+				descriptor := artifact.RuntimeDescriptor{Digest: "sha256:runtime"}
+				if distinct {
+					descriptor.Digest = fmt.Sprintf("sha256:runtime-%d", i)
+				}
+				wg.Go(func() {
+					got, _, err := machines.verifyRuntime(descriptor, func() (artifact.RuntimeIndex, error) {
+						entered <- struct{}{}
+						<-release
+						return index, nil
+					})
+					if err != nil || got != index {
+						t.Errorf("verification = %+v, %v", got, err)
+					}
+				})
+			}
+			wantEntered := 1
+			if distinct {
+				wantEntered = workers
+			}
+			timer := time.NewTimer(5 * time.Second)
+			defer timer.Stop()
+			for range wantEntered {
+				select {
+				case <-entered:
+				case <-timer.C:
+					t.Fatal("independent verification blocked by shared lock")
+				}
+			}
+			releaseOnce.Do(func() { close(release) })
+			wg.Wait()
 		})
-	}
-	for range workers {
-		<-entered
-	}
-	close(release)
-	wg.Wait()
-	close(results)
-	for ok := range results {
-		if !ok {
-			t.Fatal("concurrent verification failed")
-		}
-	}
-	if calls.Load() != workers {
-		t.Fatalf("verification calls = %d, want %d", calls.Load(), workers)
 	}
 }

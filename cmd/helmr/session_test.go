@@ -18,14 +18,13 @@ const (
 )
 
 func TestSessionCommandsUseSessionID(t *testing.T) {
-	holdID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
+	holdID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/sessions/"+testSessionID:
-			_ = json.NewEncoder(w).Encode(api.AgentSession{
-				ID: testSessionID, AgentDefinitionID: "worker", DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", Status: "closing",
-				Holds: []api.AgentSessionHold{{ID: holdID, Scope: "session", Reason: "interrupted"}},
-			})
+			var payload api.AgentSession
+			loadSessionWireFixture(t, "session", &payload)
+			_ = json.NewEncoder(w).Encode(payload)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/"+testSessionID+"/turns/"+testSessionID+"/messages":
 			var request api.SessionDataRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -45,7 +44,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 				t.Fatalf("close request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.SessionCloseReceipt{
-				ID: "operation-2", SessionID: testSessionID, Status: "closing",
+				ID: "operation-2", SessionID: testSessionID, Status: "accepted",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
@@ -66,7 +65,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 	if !strings.Contains(out.String(), "session_status: closing") ||
 		strings.Contains(out.String(), "agent_id:") ||
 		!strings.Contains(out.String(), "agent: worker") ||
-		!strings.Contains(out.String(), "hold_scope: session") ||
+		!strings.Contains(out.String(), "hold_scope: local") ||
 		!strings.Contains(out.String(), "hold_id: "+holdID) ||
 		!strings.Contains(out.String(), "hold_reason: interrupted") {
 		t.Fatalf("get output = %q", out.String())
@@ -100,7 +99,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "session_id: "+testSessionID) ||
-		!strings.Contains(out.String(), "status: closing") {
+		!strings.Contains(out.String(), "status: accepted") {
 		t.Fatalf("close output = %q", out.String())
 	}
 }
@@ -119,8 +118,8 @@ func TestSessionEventsReadFiniteSequencePage(t *testing.T) {
 				SessionID: testSessionID,
 				CreatedAt: time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC),
 				Sequence:  8,
-				Kind:      "output",
-				Data:      json.RawMessage(`{"message":"ready"}`),
+				Kind:      "turn.output",
+				Data:      json.RawMessage(`[{"type":"text","text":"ready"}]`),
 			}},
 			NextAfter: 8,
 			HasMore:   true,
@@ -142,7 +141,7 @@ func TestSessionEventsReadFiniteSequencePage(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != "8\toutput\t{\"message\":\"ready\"}\nnext_after: 8\n" {
+	if out.String() != "8\tturn.output\t[{\"type\":\"text\",\"text\":\"ready\"}]\nnext_after: 8\n" {
 		t.Fatalf("output = %q", out.String())
 	}
 }

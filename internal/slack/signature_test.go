@@ -11,7 +11,10 @@ import (
 )
 
 func signedHeaders(secret, body []byte, at time.Time) http.Header {
-	stamp := strconv.FormatInt(at.Unix(), 10)
+	return signedTimestampHeaders(secret, body, strconv.FormatInt(at.Unix(), 10))
+}
+
+func signedTimestampHeaders(secret, body []byte, stamp string) http.Header {
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte("v0:" + stamp + ":"))
 	mac.Write(body)
@@ -43,8 +46,7 @@ func TestSlackSignatureRequiresRecentExactRawBody(t *testing.T) {
 		t.Fatal("ambiguous signature headers accepted")
 	}
 	for _, stamp := range []string{"9223372036854775807", "-9223372036854775808", "+1780000000", "not-a-timestamp"} {
-		malformed := headers.Clone()
-		malformed.Set("X-Slack-Request-Timestamp", stamp)
+		malformed := signedTimestampHeaders(secret, body, stamp)
 		if VerifyRequest(secret, malformed, body, now) {
 			t.Fatal("invalid timestamp accepted")
 		}

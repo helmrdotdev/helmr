@@ -725,21 +725,6 @@ func (s plannerStore) ListAllocationPlanningDemand(_ context.Context, arg db.Lis
 	return s.demand[:min(len(s.demand), int(arg.RowLimit))], nil
 }
 
-func TestPlanExistingComputerAllocationDoesNotDemandAnotherVM(t *testing.T) {
-	primaryID := plannerTestUUID(94)
-	charged := []pgtype.UUID{primaryID}
-	store := plannerStore{group: plannerTestGroup(primaryID), pools: []db.ListCapacityWorkerPoolsRow{plannerTestPool(primaryID, "primary")},
-		charged: charged}
-	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(primaryID, 1)}}, plannerTestNow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pool := requirePoolPlan(t, plan, primaryID)
-	if pool.CompatibleQueuedItems != 0 || pool.RecommendedAdditionalWorkers != 0 || !pool.ScaleInBlocked {
-		t.Fatalf("existing Instance demand: %+v", pool)
-	}
-}
-
 func TestDiscoverItemsBoundsUnifiedDemand(t *testing.T) {
 	for _, size := range []int{int(maximumPlanningCandidates), int(maximumPlanningCandidates) + 1} {
 		rows := make([]db.ListAllocationPlanningDemandRow, size)

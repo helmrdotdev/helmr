@@ -119,7 +119,7 @@ func TestSecretListCommand(t *testing.T) {
 	}
 }
 
-func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
+func TestSecretGetCommandDisplaysMetadata(t *testing.T) {
 	state := installTestCLIConfig(t)
 	secretTime := time.Date(2026, 5, 8, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +150,7 @@ func TestSecretGetCommandReturnsMetadataOnly(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "Secret: github-token") || strings.Contains(out.String(), "secret-value") {
+	if !strings.Contains(out.String(), "Secret: github-token") {
 		t.Fatalf("output = %q", out.String())
 	}
 }

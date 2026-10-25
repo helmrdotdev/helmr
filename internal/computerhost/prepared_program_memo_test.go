@@ -3,6 +3,7 @@ package computerhost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"runtime"
@@ -111,53 +112,68 @@ func TestPreparedProgramMemoPublishesOnlySuccess(t *testing.T) {
 }
 
 func TestPreparedProgramMemoConcurrentMisses(t *testing.T) {
-	machines := &PreparedMachines{}
-	const n = 8
-	entered := make(chan struct{}, n)
-	release := make(chan struct{})
-	var wg sync.WaitGroup
-	descriptor := artifact.ProgramDescriptor{Digest: "same"}
-	for range n {
-		wg.Go(func() {
-			got, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) {
-				entered <- struct{}{}
-				<-release
-				return artifact.ProgramMetadata{Definitions: []artifact.ProgramDefinition{{DeclaredID: "original"}}}, nil
-			})
-			if err != nil {
-				t.Error(err)
-				return
+	for _, distinct := range []bool{true, false} {
+		t.Run(map[bool]string{true: "distinct descriptors overlap", false: "same descriptor ownership"}[distinct], func(t *testing.T) {
+			machines := &PreparedMachines{}
+			const n = 8
+			entered := make(chan struct{}, n)
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			var wg sync.WaitGroup
+			defer func() { releaseOnce.Do(func() { close(release) }); wg.Wait() }()
+			descriptor := artifact.ProgramDescriptor{Digest: "same"}
+			for i := range n {
+				selected := descriptor
+				if distinct {
+					selected.Digest = fmt.Sprintf("descriptor-%d", i)
+				}
+				wg.Go(func() {
+					got, err := machines.verifyProgram(t.Context(), selected, func() (artifact.ProgramMetadata, error) {
+						entered <- struct{}{}
+						<-release
+						return artifact.ProgramMetadata{Definitions: []artifact.ProgramDefinition{{DeclaredID: "original"}}}, nil
+					})
+					if err != nil || len(got.Definitions) != 1 || got.Definitions[0].DeclaredID != "original" {
+						t.Error("invalid result", got, err)
+						return
+					}
+					got.Definitions[0].DeclaredID = "caller mutation"
+				})
 			}
-			got.Definitions[0].DeclaredID = "caller mutation"
-		})
-	}
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
-	for range n {
-		select {
-		case <-entered:
-		case <-timer.C:
-			close(release)
+			timer := time.NewTimer(5 * time.Second)
+			defer timer.Stop()
+			wantEntered := 1
+			if distinct {
+				wantEntered = n
+			}
+			for range wantEntered {
+				select {
+				case <-entered:
+				case <-timer.C:
+					t.Fatal("independent misses serialized under machines lock")
+				}
+			}
+			releaseOnce.Do(func() { close(release) })
 			wg.Wait()
-			t.Fatal("misses serialized under machines lock")
-		}
-	}
-	close(release)
-	wg.Wait()
-	for range n {
-		wg.Go(func() {
-			got, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) {
-				t.Error("missing published result")
-				return artifact.ProgramMetadata{}, nil
-			})
-			if err != nil || len(got.Definitions) != 1 || got.Definitions[0].DeclaredID != "original" {
-				t.Error("corrupted memo", err)
+			if distinct {
 				return
+			} // The memo retains only the last descriptor.
+			for range n {
+				wg.Go(func() {
+					got, err := machines.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramMetadata, error) {
+						t.Error("missing published result")
+						return artifact.ProgramMetadata{}, nil
+					})
+					if err != nil || len(got.Definitions) != 1 || got.Definitions[0].DeclaredID != "original" {
+						t.Error("corrupted memo", err)
+						return
+					}
+					got.Definitions[0].DeclaredID = "mutated hit"
+				})
 			}
-			got.Definitions[0].DeclaredID = "mutated hit"
+			wg.Wait()
 		})
 	}
-	wg.Wait()
 }
 
 func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T) {
@@ -185,16 +201,15 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 				t.Fatal(err)
 			}
 			program := &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}
-			tampered := false
 			run := func(want string) {
 				t.Helper()
 				dir := t.TempDir()
 				prepare := machines.prepareProgramArtifacts
-				if session && !tampered {
+				if session {
 					prepare = machines.prepareSessionProgramArtifacts
 				}
 				images, err := prepare(t.Context(), dir, "memo-test", program)
-				if err == nil && images != nil && !tampered {
+				if err == nil && images != nil {
 					if session && (images.runtime != nil || images.artifact != nil) {
 						t.Fatal("memo hit staged unrequested artifacts")
 					}
@@ -276,9 +291,12 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 			}
 			owned := index.Clone()
 			machines.programMetadata = &owned
-			tampered = true
-			store.objects[programObject.Digest] = []byte("tamper!")
-			run("digest")
+			if !session {
+				// Only preparation stages bytes on a memo hit; Session byte
+				// verification is covered by the transfer and guest tests.
+				store.objects[programObject.Digest] = []byte("tamper!")
+				run("digest")
+			}
 
 		})
 	}

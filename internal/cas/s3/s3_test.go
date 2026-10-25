@@ -97,7 +97,7 @@ func TestS3PresignQuarantineUsesSignedChecksumHeaders(t *testing.T) {
 		"If-None-Match":                "*",
 		"X-Amz-Checksum-Sha256":        checksum,
 		"X-Amz-Sdk-Checksum-Algorithm": string(types.ChecksumAlgorithmSha256),
-		"X-Amz-Tagging":                objectTagging(),
+		"X-Amz-Tagging":                "helmr-expirable=true",
 	} {
 		if got := upload.Headers[name]; got != want {
 			t.Fatalf("header %s = %q, want %q", name, got, want)
@@ -219,7 +219,7 @@ func exactPresignedQuarantineRequest(t *testing.T, descriptor cas.Descriptor) *a
 		"If-None-Match":                []string{"*"},
 		"X-Amz-Checksum-Sha256":        []string{checksum},
 		"X-Amz-Sdk-Checksum-Algorithm": []string{string(types.ChecksumAlgorithmSha256)},
-		"X-Amz-Tagging":                []string{objectTagging()},
+		"X-Amz-Tagging":                []string{"helmr-expirable=true"},
 	}
 	signed := make([]string, 0, len(headers))
 	for name := range headers {
@@ -251,6 +251,7 @@ func TestS3PutAndPromoteQuarantineVerifiesChecksums(t *testing.T) {
 	quarantineKey := "cas/quarantine/019abcde-1234/sha256/" + descriptor.Digest[len("sha256:"):]
 	if aws.ToString(client.putObject.Key) != quarantineKey ||
 		aws.ToString(client.putObject.ChecksumSHA256) != checksum ||
+		aws.ToString(client.putObject.Tagging) != "helmr-expirable=true" ||
 		string(client.putObjectBody) != string(body) {
 		t.Fatalf("quarantine put = %+v body=%q", client.putObject, client.putObjectBody)
 	}
@@ -276,7 +277,9 @@ func TestS3PutAndPromoteQuarantineVerifiesChecksums(t *testing.T) {
 	if client.copyObject == nil || aws.ToString(client.copyObject.Key) !=
 		"cas/sha256/"+descriptor.Digest[len("sha256:"):] ||
 		aws.ToString(client.copyObject.CopySource) != "bucket%2Fcas%2Fquarantine%2F019abcde-1234%2Fsha256%2F"+descriptor.Digest[len("sha256:"):] ||
-		aws.ToString(client.copyObject.IfNoneMatch) != "*" {
+		aws.ToString(client.copyObject.IfNoneMatch) != "*" ||
+		aws.ToString(client.copyObject.Tagging) != "helmr-expirable=true" ||
+		client.copyObject.TaggingDirective != types.TaggingDirectiveReplace {
 		t.Fatalf("copy object = %+v", client.copyObject)
 	}
 }
@@ -369,12 +372,6 @@ func TestS3QuarantineFailsClosed(t *testing.T) {
 	}
 }
 
-func TestObjectTagging(t *testing.T) {
-	if got := objectTagging(); got != "helmr-expirable=true" {
-		t.Fatalf("object tagging = %q", got)
-	}
-}
-
 func TestValidateDistinctS3Stores(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -432,6 +429,9 @@ func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
 	}
 	if client.putObject == nil {
 		t.Fatal("expected PutObject")
+	}
+	if aws.ToString(client.putObject.Tagging) != "helmr-expirable=true" {
+		t.Fatalf("tagging = %q", aws.ToString(client.putObject.Tagging))
 	}
 	if client.createdMultipart {
 		t.Fatal("did not expect multipart upload")

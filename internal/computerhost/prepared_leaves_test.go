@@ -1,6 +1,7 @@
 package computerhost
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -286,6 +287,95 @@ func TestPreparedSourceRenewsBeforeLeafIsReadyAndRejectsChangedContent(t *testin
 		time.Sleep(30 * time.Second)
 		if err := <-done; err == nil {
 			t.Fatal("changed content renewed")
+		}
+	})
+}
+
+func TestPreparedClaimTransfersReadyLeafExactlyOnce(t *testing.T) {
+	p, leaf, delivery, source, charge := readyLeafFixture(t)
+	got, err := p.claimPreparedLeaf(delivery.Identity, 1, delivery, source, charge)
+	if err != nil || got != leaf {
+		t.Fatalf("claim = %p, want %p: %v", got, leaf, err)
+	}
+	snapshot := p.Reservations.Snapshot()
+	if snapshot.Used != charge || len(snapshot.Optional) != 0 || len(p.optional.leaves) != 0 || snapshot.Reservations[instanceReservationKey(delivery.Identity.AllocationID, delivery.Identity.Epoch)] != charge {
+		t.Fatal("claim changed charge or lost its new owner", snapshot)
+	}
+	if leaf.ctx.Err() == nil || !leaf.claimed || leaf.ready {
+		t.Fatal("claimed leaf builder remains active or advertised")
+	}
+	if again, err := p.claimPreparedLeaf(delivery.Identity, 1, delivery, source, charge); err != nil || again != nil {
+		t.Fatal("leaf claimed twice", again, err)
+	}
+}
+
+type adoptionTestComputer struct {
+	adopt func(context.Context, vm.PreparedAdoption) (vm.CheckpointableMachine, error)
+}
+
+func (p *adoptionTestComputer) Adopt(ctx context.Context, r vm.PreparedAdoption) (vm.CheckpointableMachine, error) {
+	return p.adopt(ctx, r)
+}
+func (*adoptionTestComputer) Close(context.Context) error { return nil }
+
+func TestComputerAllocationAdoptsPreparedLeafWithCurrentAuthority(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		o, client, backend := allocationOwnerFixture(t)
+		manifest := bootseed.Manifest{EnvironmentID: uuid.MustParse(o.identity.EnvironmentID), BuildID: uuid.NewV7()}
+		client.source.BootSeed = &manifest
+		client.source.Disk.WriteKeyID = "current-writer"
+		client.source.Disk.Keys = []workerapi.ComputerKeyMaterial{{Scope: "scope", ID: "current-writer", Key: []byte("current-key")}}
+		charge, err := o.machines.computerReservation(client.delivery.Shape, client.source, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy := workerapi.ResourcePolicy{Revision: 1, Optional: workerapi.OptionalResources{CPUMillis: charge.CPUMillis, MemoryBytes: charge.MemoryBytes, DiskBytes: charge.HostDiskBytes, VMSlots: 1, MaxTasks: 1}}
+		o.machines.ApplyResourcePolicy(policy)
+		leafCtx, leafCancel := context.WithCancel(t.Context())
+		defer leafCancel()
+		builderDone := make(chan struct{})
+		var builderJoined sync.Once
+		defer builderJoined.Do(func() { close(builderDone) })
+		physical := o.identity
+		physical.AllocationID = uuid.NewV7().String()
+		physical.Epoch = o.hostEpoch
+		leafSource := client.source
+		leafSource.Disk.Keys = []workerapi.ComputerKeyMaterial{{Scope: "scope", ID: "old-writer", Key: []byte("old-key")}}
+		device := &failingCloseComputerDevice{}
+		leaf := &preparedLeaf{key: workerapi.ReadyLeafKey{EnvironmentID: o.identity.EnvironmentID, BuildID: manifest.BuildID.String()}, identity: physical, revision: 1, expires: time.Now().Add(time.Minute), ctx: leafCtx, cancel: leafCancel, done: builderDone, ready: true, running: true, manifest: manifest, source: leafSource, shape: client.delivery.Shape, charge: charge, device: device}
+		var calls int
+		leaf.machine = &adoptionTestComputer{adopt: func(_ context.Context, r vm.PreparedAdoption) (vm.CheckpointableMachine, error) {
+			calls++
+			if r.Binding != (vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: client.delivery.Shape.VMPlatformID}) || r.ComputerID != o.identity.OwnerID || r.Root != client.source.Disk.Root || r.WriteKeyID != "current-writer" || len(r.Keys) != 1 || !bytes.Equal(r.Keys["current-writer"], []byte("current-key")) || r.Source != o.machines.ComputerRanges {
+				t.Error("adoption did not use current allocation/source/key authority")
+			}
+			return backend.machine, nil
+		}}
+		o.machines.optional.leaves = map[workerapi.ReadyLeafKey]*preparedLeaf{leaf.key: leaf}
+		o.machines.computerDevices = map[preparedMachineRef]vm.ComputerDevice{{id: physical.AllocationID, epoch: physical.Epoch}: device}
+		if _, err := o.machines.Reservations.ReserveOptional(leaf.reservationKey(), charge, charge, reservation.Vector{}); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- o.Run(ctx) }()
+		synctest.Wait()
+		if leafCtx.Err() == nil || calls != 0 || o.machines.Reservations.Snapshot().Used != charge {
+			t.Fatal("adoption failed to cancel/join builder while retaining charge")
+		}
+		builderJoined.Do(func() { close(builderDone) })
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if calls != 1 || backend.starts.Load() != 0 || client.readiness.Load() != 2 || o.prepared != leaf {
+			t.Fatalf("prepared path: adopts=%d cold starts=%d readiness=%d", calls, backend.starts.Load(), client.readiness.Load())
+		}
+		cancel()
+		if err := <-done; err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+		if !o.Finished() || o.machines.Reservations.Snapshot().Used != (reservation.Vector{}) {
+			t.Fatal("adopted allocation retained custody after cleanup")
 		}
 	})
 }

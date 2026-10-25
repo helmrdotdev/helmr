@@ -32,6 +32,34 @@ func TestStaleWorkerFenceUsesStateAppropriateStrictBoundaries(t *testing.T) {
 	activeExactID := insertActiveWorkerWithObservation(t, ctx, pool, now)
 	activeStaleID := insertActiveWorkerWithObservation(t, ctx, pool, now)
 
+	// Terminal hosts must remain excluded even when their observations are stale.
+	for _, status := range []string{"lost", "termination_ready"} {
+		id := insertActiveWorkerWithObservation(t, ctx, pool, now)
+		dbtest.MustExec(t, ctx, pool, `UPDATE worker_hosts SET status=$2, observed_at=$3,
+ lost_at=CASE WHEN $2='lost' THEN $3::timestamptz END,
+ draining_at=CASE WHEN $2='termination_ready' THEN $3::timestamptz END,
+ drain_reason=CASE WHEN $2='termination_ready' THEN 'shutdown' END,
+ termination_ready_at=CASE WHEN $2='termination_ready' THEN $3::timestamptz END WHERE id=$1`, id, status, now.Add(-time.Hour))
+		var beforeVersion int64
+		if err := pool.QueryRow(ctx, `SELECT claim_version FROM worker_hosts WHERE id=$1`, id).Scan(&beforeVersion); err != nil {
+			t.Fatal(err)
+		}
+		_, err := db.New(pool).RecheckAndFenceStaleWorkerHost(ctx, db.RecheckAndFenceStaleWorkerHostParams{
+			ID: pgvalue.UUID(id), WorkerGroupID: dbtest.DefaultWorkerGroupID,
+			ExpectedEpoch:               pgtype.Int8{Int64: 1, Valid: true},
+			RegistrationStaleBefore:     pgvalue.Timestamptz(registrationCutoff),
+			ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
+		})
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("terminal %s recheck: %v", status, err)
+		}
+		var afterStatus string
+		var afterVersion int64
+		if err := pool.QueryRow(ctx, `SELECT status,claim_version FROM worker_hosts WHERE id=$1`, id).Scan(&afterStatus, &afterVersion); err != nil || afterStatus != status || afterVersion != beforeVersion {
+			t.Fatalf("terminal host changed: status=%s version=%d (was %d): %v", afterStatus, afterVersion, beforeVersion, err)
+		}
+	}
+
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

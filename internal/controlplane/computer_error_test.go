@@ -21,12 +21,12 @@ func TestComputerErrorPreservesPublicStatuses(t *testing.T) {
 	keyConflict := computer.KeyConflictError{Key: "taken"}
 	input := computer.ValidateKey(new(" padded "))
 	for _, test := range []struct {
-		name      string
-		err       error
-		operation computerOperation
-		status    int
-		code      string
-		retryable bool
+		name            string
+		err             error
+		operation       computerOperation
+		status          int
+		code            string
+		mappedRetryable bool
 	}{
 		{"create input", input, computerCreateOperation, http.StatusBadRequest, "invalid_computer_create", false},
 		{"create not deployed", computer.ErrNotDeployed, computerCreateOperation, http.StatusNotFound, "computer_not_deployed", false},
@@ -34,25 +34,35 @@ func TestComputerErrorPreservesPublicStatuses(t *testing.T) {
 		{"create idempotency", idempotency.ConflictError{}, computerCreateOperation, http.StatusConflict, "idempotency_conflict", false},
 		{"create key", keyConflict, computerCreateOperation, http.StatusConflict, "computer_key_conflict", false},
 		{"create expired", idempotency.ExpiredError{}, computerCreateOperation, http.StatusGone, "operation_expired", false},
-		{"create unexpected", errors.New("database unavailable"), computerCreateOperation, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
-		{"create receipt", computer.ErrReceiptInvalid, computerCreateOperation, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+		{"create unexpected", errors.New("database unavailable"), computerCreateOperation, http.StatusServiceUnavailable, "computer_authority_unavailable", false},
+		{"create receipt", computer.ErrReceiptInvalid, computerCreateOperation, http.StatusServiceUnavailable, "computer_authority_unavailable", false},
 		{"delete not found", computer.ErrNotFound, computerDeleteOperation, http.StatusNotFound, "computer_not_found", false},
 		{"delete busy", computer.ErrBusy, computerDeleteOperation, http.StatusConflict, "computer_busy", true},
 		{"delete idempotency", idempotency.ConflictError{}, computerDeleteOperation, http.StatusConflict, "idempotency_conflict", false},
 		{"delete expired", idempotency.ExpiredError{}, computerDeleteOperation, http.StatusGone, "operation_expired", false},
-		{"delete unexpected", errors.New("database unavailable"), computerDeleteOperation, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+		{"delete unexpected", errors.New("database unavailable"), computerDeleteOperation, http.StatusServiceUnavailable, "computer_authority_unavailable", false},
 		{"read not found", computer.ErrNotFound, computerReadOperation, http.StatusNotFound, "computer_not_found", false},
 		{"read input", computer.ValidateMembersQuery(uuid.NewV7(), uuid.NewV7(), computer.MembersQuery{Limit: 101}), computerReadOperation, http.StatusBadRequest, "invalid_computer_reference", false},
-		{"read unexpected", errors.New("database unavailable"), computerReadOperation, http.StatusServiceUnavailable, "computer_authority_unavailable", true},
+		{"read unexpected", errors.New("database unavailable"), computerReadOperation, http.StatusServiceUnavailable, "computer_authority_unavailable", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			// Unclassified errors acquire their public fallback only in the
+			// writer; retryability is an internal property, not a wire field.
+			mapped := computerError(test.err, test.operation)
+			var retryer interface{ ErrorRetryable() bool }
+			if got := errors.As(mapped, &retryer) && retryer.ErrorRetryable(); got != test.mappedRetryable {
+				t.Fatalf("mapped retryability = %v, want %v", got, test.mappedRetryable)
+			}
+
 			server := &Server{log: discardTestLogger()}
 			recorder := httptest.NewRecorder()
 			server.writeComputerError(recorder, fmt.Errorf("operation: %w", test.err), test.operation, "test")
 			if recorder.Code != test.status || decodeHTTPError(t, recorder.Body.Bytes()).Code != test.code {
 				t.Fatalf("public = %d %s, want %d %s", recorder.Code, recorder.Body, test.status, test.code)
 			}
-
+			if test.code == "computer_authority_unavailable" && decodeHTTPError(t, recorder.Body.Bytes()).Message != errComputerAuthorityUnavailable.Error() {
+				t.Fatal("fallback leaked internal error")
+			}
 		})
 	}
 }

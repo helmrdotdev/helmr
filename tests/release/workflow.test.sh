@@ -13,8 +13,6 @@ if rg -q 'workflow_run:' "$workflow"; then
 fi
 require_text 'workflow_dispatch:' "$workflow" 'manual checkpoint trigger missing'
 require_text 'uses: ./.github/workflows/build-artifacts.yaml' "$workflow" 'release must build its own exact cohort'
-require_text "needs.integration.result == 'success'" "$workflow" 'integration must pass before publication'
-require_text "needs.build.result == 'success'" "$workflow" 'artifact build must pass before publication'
 require_text 'publisher_run: ${{ github.run_id }}' "$workflow" \
   'publish job must export publisher run for readback verification'
 require_text 'group: release-checkpoint' "$workflow" 'checkpoint releases must serialize'
@@ -28,6 +26,32 @@ require_text 'environment: preview' "$workflow" \
   'preview jobs must use literal preview environment'
 require_text 'environment: release' "$workflow" \
   'formal tag jobs must use literal release environment'
+# Exercise each publishing job's actual condition independently. Only the
+# expression operations used by these guards are accepted by this probe.
+bun run - "$workflow" <<'JS'
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+const workflow = Bun.YAML.parse(readFileSync(process.argv[2], "utf8"))
+const results = ["success", "failure", "cancelled", "skipped"]
+for (const name of ["publish-preview", "publish-tag"]) {
+  const job = workflow.jobs[name]
+  assert.deepEqual([...job.needs].sort(), ["admission", "build", "integration"])
+  for (const admission of results) for (const build of results) for (const integration of results)
+  for (const complete of ["false", "true"]) for (const mode of ["preview", "tag"]) {
+    const values = { admission, build, integration }
+    const expression = job.if.trim().replace(/^\$\{\{([\s\S]*)\}\}$/, "$1")
+      .replace(/always\(\)/g, "true")
+      .replace(/fromJSON\(needs\.admission\.outputs\.selection\)\.build\.mode/g, JSON.stringify(mode))
+      .replace(/needs\.admission\.outputs\.complete/g, JSON.stringify(complete))
+      .replace(/needs\.(admission|build|integration)\.result/g, (_, key) => JSON.stringify(values[key]))
+    assert.match(expression, /^(?:true|false|'[^']*'|"[^"\\]*"|==|!=|&&|\|\||[()!\s])+$/, `${name}: unsupported guard expression`)
+    const allowed = Function(`"use strict"; return (${expression})`)()
+    const expected = admission === "success" && build === "success" && integration === "success" && complete !== "true" && ((mode === "tag") === (name === "publish-tag"))
+    assert.equal(allowed, expected, `${name}: ${JSON.stringify({ ...values, complete, mode })}`)
+  }
+  console.log(`ok - ${name} rejects failed, skipped, cancelled and already-complete publication`)
+}
+JS
 bash "$repo_root/tests/release/assume-preview-role.test.sh"
 python3 - "$workflow" "$repo_root" <<'PY'
 import re

@@ -159,6 +159,9 @@ func TestSquashFSArtifactReaderLeavesHeaderPolicyToPureVerifier(t *testing.T) {
 		"major": func(raw []byte) {
 			binary.LittleEndian.PutUint16(raw[28:30], 3)
 		},
+		"zero flags": func(raw []byte) {
+			binary.LittleEndian.PutUint16(raw[24:26], 0)
+		},
 		"minor": func(raw []byte) {
 			binary.LittleEndian.PutUint16(raw[30:32], 1)
 		},
@@ -254,45 +257,6 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 	}
 	if ids := reader.Filesystem().IDs; len(ids) != 1 || ids[0] != 1 {
 		t.Fatalf("IDs = %v", ids)
-	}
-}
-
-func TestVerifySquashFSPhysical(t *testing.T) {
-	t.Parallel()
-
-	exact, _ := squashFSTestArtifactImage(t, 0)
-	if err := squashFSPhysical(
-		context.Background(),
-		bytes.NewReader(exact),
-		int64(len(exact)),
-	); err != nil {
-		t.Fatalf("squashFSPhysical() error = %v", err)
-	}
-
-	tests := map[string][]byte{
-		"invalid superblock": func() []byte {
-			changed := append([]byte(nil), exact...)
-			binary.LittleEndian.PutUint16(changed[24:26], 0)
-			return changed
-		}(),
-		"nonzero padding": func() []byte {
-			changed := append([]byte(nil), exact...)
-			changed[len(changed)-1] = 1
-			return changed
-		}(),
-	}
-	for name, image := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-
-			if err := squashFSPhysical(
-				context.Background(),
-				bytes.NewReader(image),
-				int64(len(image)),
-			); err == nil {
-				t.Fatal("squashFSPhysical() accepted invalid image")
-			}
-		})
 	}
 }
 
@@ -454,25 +418,4 @@ func (reader *countingSquashFSReader) ReadCount() int {
 	reader.mu.Lock()
 	defer reader.mu.Unlock()
 	return reader.reads
-}
-
-// squashFSPhysical validates a complete squashfs image the way the verifier
-// composes its parts: context check, facts, projected filesystem validation.
-func squashFSPhysical(
-	ctx context.Context,
-	source io.ReaderAt,
-	physicalSize int64,
-) error {
-	if err := checkSquashFSContext(ctx); err != nil {
-		return err
-	}
-	facts, err := readSquashFSFacts(source, physicalSize)
-	if err != nil {
-		return err
-	}
-	return artifact.ValidateFilesystem(
-		projectSquashFSFilesystem(facts),
-		physicalSize,
-		false,
-	)
 }

@@ -19,7 +19,7 @@ async function mockConsole(page: Page) {
     const match = path.match(/^\/api\/projects\/([^/]+)\/environments\/([^/]+)(\/.*)?$/);
     const detail = projects.find((candidate) => path === `/api/projects/${candidate.project}`);
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "user", display_name: "User", org_id: "org", role: "member", permissions: ["sessions.read"], organization_required: false, project_required: false };
+    if (path === "/api/me") json = { user_id: "user", display_name: "User", org_id: "org", role: "member", permissions: ["sessions.read", "run_metadata.read", "deployment_metadata.read"], organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects };
     else if (detail) json = detail;
     else if (match?.[3] === "/sessions") json = { sessions: [{ id: sessionID, agent: "support", status: "open", holds: [], created_at: now }] };
@@ -42,7 +42,7 @@ async function open(page: Page, path = "/sessions") {
 }
 
 // A key press as an input method delivers it while composing text.
-async function composingKey(page: Page, target: "window" | "search", init: KeyboardEventInit) {
+async function composingKey(page: Page, target: "window" | "search", init: Pick<KeyboardEventInit, "key" | "ctrlKey" | "metaKey">) {
   if (target === "window") {
     await page.evaluate((init) => document.body.dispatchEvent(new KeyboardEvent("keydown", { ...init, isComposing: true, bubbles: true, cancelable: true })), init);
   } else {

@@ -126,3 +126,17 @@ Record the selected behavior, exact command, tested revision and result in the P
 including any database behavior left unproved. See the
 [selection details](e2e/README.md#real-postgresql) for supported patterns
 and the distinction between selected tests and the full database suite.
+
+## Policy checks and manual reports
+
+`internal/deppolicy` and `internal/sqlpolicy` contain repository policy checks.
+`TestPolicyDomainPackagesUseNaturalImportNames` is a naming convention check;
+it does not establish runtime correctness or dependency isolation.
+`TestReportStatements` is an opt-in diagnostic survey, not regression coverage:
+run `SQLPOLICY_REPORT=1 nix develop -c go test -v ./internal/sqlpolicy -run '^TestReportStatements$'`.
+The assertion-bearing ownership checks in that package remain separate.
+
+`bun run test:fixtures` runs the native-continuation performance-model helper
+unit tests without a native agent or credentials. Both TypeScript CI aggregates
+include it through `test:ts:prepared`. The issue-fixer `test:unit` entrypoint
+excludes command tests for composition; its standalone `test` includes both.

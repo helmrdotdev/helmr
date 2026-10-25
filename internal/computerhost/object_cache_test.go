@@ -4,6 +4,7 @@ package computerhost
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -202,9 +203,11 @@ func testPreparedObjectCacheAcrossConsumers(t *testing.T, shared bool) {
 	}
 	failedBoot := *boot
 	failedBoot.Artifact.Digest = sha256sum.DigestBytes([]byte("missing program"))
-	if failed, err := p.restoreBootProgram(t.Context(), t.TempDir(), &failedBoot); err == nil {
-		failed.close()
-		t.Fatal("missing Program accepted")
+	if failed, err := p.restoreBootProgram(t.Context(), t.TempDir(), &failedBoot); !errors.Is(err, os.ErrNotExist) {
+		if failed != nil {
+			failed.close()
+		}
+		t.Fatalf("missing Program error = %v, want not-exist", err)
 	}
 	// Missing second object must release the first lease, including on shutdown.
 	partial, err := objectcache.Open(filepath.Join(t.TempDir(), "partial"), 16384)

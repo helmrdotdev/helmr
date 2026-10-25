@@ -17,7 +17,7 @@ async function conversation(page: Page, kind: "text" | "choice" = "text") {
   expect(response.ok(), await response.text()).toBeTruthy();
   const { session_id: sessionID, turn: { turn_id: turnID } } = await response.json() as { session_id: string; turn: { turn_id: string } };
   const askID = `00000000-0000-7000-8000-${crypto.randomUUID().slice(-12)}`;
-  const seed = (mode: "text" | "choice" | "completed" | "output" | "disable-member" | "restore-member" | "expose-secret", referenceID = askID) => {
+  const seed = (mode: "text" | "choice" | "completed" | "output" | "remove-member" | "restore-member" | "expose-secret", referenceID = askID) => {
     execFileSync("bash", ["tests/browser/fixtures/session-conversation.sh", catalog.environmentInternalID, sessionID, turnID, referenceID, mode], { cwd: process.cwd() });
   };
   seed(kind);
@@ -111,8 +111,9 @@ test("real API rejects a loaded question after organization scope loss and accep
   const data = { answer: "retained draft", answer_id: crypto.randomUUID() };
   const before = await (await page.request.get("/api/me")).json();
   expect(before.org_id).toBeTruthy();
+  expect(before.is_owner).toBe(true);
   try {
-    f.seed("disable-member");
+    f.seed("remove-member");
     const revoked = await (await page.request.get("/api/me")).json();
     expect(revoked.org_id).toBeFalsy();
     expect(revoked.user_id).toBe(before.user_id);
@@ -135,11 +136,12 @@ test("real API rejects a loaded question after organization scope loss and accep
 
 test("real Secret revocation preserves queued input for inspection and explicit cancellation", async ({ page }, testInfo) => {
   const f = await conversation(page);
+  await f.grantEnvironmentPermissions(["secrets.manage"]);
   const created = await page.request.post(`${f.base}/secrets`, {
     data: { secret: "BROWSER_REVOCATION", value: "synthetic-browser-value", idempotency_key: crypto.randomUUID() },
   });
   expect(created.ok(), await created.text()).toBeTruthy();
-  const secret = await created.json() as { id: string };
+  const secret = await created.json() as { secret: string };
   // Exposure is a runtime fixture; revocation and its reconciliation use the real owners.
   f.seed("expose-secret", secret.secret);
   await page.goto(f.sessionURL);

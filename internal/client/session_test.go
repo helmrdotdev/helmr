@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"testing"
 
@@ -127,13 +128,17 @@ func TestSessionReads(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case prefix + "/sessions/" + testSessionID:
-					_, _ = io.WriteString(w, `{"id":"`+testSessionID+`","status":"closing","agent":"`+testTurnID+`","holds":[{"id":"`+testHoldID+`","scope":"session","reason":"interrupted"}]}`)
+					var payload api.AgentSession
+					loadSessionWireFixture(t, "session", &payload)
+					_ = json.NewEncoder(w).Encode(payload)
 				case prefix + "/sessions/" + testSessionID + "/turns/" + testTurnID:
-					result := ""
+					name := "completed-expired"
 					if explicitResult {
-						result = `,"result":null`
+						name = "completed-null"
 					}
-					_, _ = io.WriteString(w, `{"id":"`+testTurnID+`","sequence":1,"status":"completed"`+result+`}`)
+					var payload api.AgentTurn
+					loadSessionWireFixture(t, name, &payload)
+					_ = json.NewEncoder(w).Encode(payload)
 				case prefix + "/sessions":
 					if r.URL.RawQuery != "limit=5&status=closing" {
 						t.Errorf("query = %s", r.URL.RawQuery)
@@ -149,7 +154,7 @@ func TestSessionReads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if session.Status != "closing" || session.AgentDefinitionID != testTurnID || len(session.Holds) != 1 || session.Holds[0].ID != testHoldID || session.Holds[0].Reason != "interrupted" {
+			if session.Status != "closing" || session.AgentDefinitionID != "worker" || len(session.Holds) != 1 || session.Holds[0].ID != testHoldID || session.Holds[0].Scope != "local" || session.Holds[0].Reason != "interrupted" {
 				t.Fatalf("session = %+v", session)
 			}
 			for _, explicit := range []bool{false, true} {
@@ -187,7 +192,7 @@ func TestSessionEventPages(t *testing.T) {
 			errorCode       string
 		}{
 			{name: "defaults", query: "after=0&limit=100", response: `{"records":[],"next_after":0,"has_more":false,"retained_after":0}`},
-			{name: "maximum", after: 7, limit: 1000, query: "after=7&limit=1000", response: `{"records":[{"session_id":"` + testSessionID + `","turn_id":null,"sequence":8,"created_at":"2030-01-02T03:04:05Z","kind":"output","data":null}],"next_after":8,"has_more":true,"retained_after":3}`},
+			{name: "maximum", after: 7, limit: 1000, query: "after=7&limit=1000", response: `{"records":[{"session_id":"` + testSessionID + `","turn_id":null,"sequence":8,"created_at":"2030-01-02T03:04:05Z","kind":"turn.output","data":[]}],"next_after":8,"has_more":true,"retained_after":3}`},
 			{name: "empty retains cursor", after: 8, query: "after=8&limit=100", response: `{"records":[],"next_after":8,"has_more":false,"retained_after":3}`},
 			{name: "expired", after: 1, query: "after=1&limit=100", status: http.StatusGone, errorCode: "cursor_expired", response: `{"error":{"code":"cursor_expired","message":"cursor expired","details":{"retained_after":3}}}`},
 			{name: "beyond end", after: 99, query: "after=99&limit=100", status: http.StatusBadRequest, errorCode: "invalid_cursor", response: `{"error":{"code":"invalid_cursor","message":"cursor exceeds end"}}`},
@@ -311,5 +316,20 @@ func assertSessionJSON(t *testing.T, actual, want []byte) {
 	}
 	if !reflect.DeepEqual(actualValue, wantValue) {
 		t.Errorf("JSON = %s, want %s", actual, want)
+	}
+}
+
+func loadSessionWireFixture(t *testing.T, name string, target any) {
+	t.Helper()
+	raw, err := os.ReadFile("../../tests/fixtures/session-wire.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixtures map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fixtures); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(fixtures[name], target); err != nil {
+		t.Fatal(err)
 	}
 }

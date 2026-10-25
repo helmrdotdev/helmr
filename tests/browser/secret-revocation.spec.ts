@@ -7,7 +7,7 @@ test("Secret revocation explains running Turn interruption and retained pending 
   const environmentID = "production";
   const secretID = "SYNTHETIC_TOKEN";
   const now = new Date().toISOString();
-  const environment = { environment: environmentID, project: projectID, name: "Development", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
+  const environment = { environment: environmentID, project: projectID, name: "Production", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
   const project = { project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
   const secret = { secret: secretID, status: "active", created_at: now };
   const base = `/api/projects/${projectID}/environments/${environmentID}`;
@@ -33,7 +33,8 @@ test("Secret revocation explains running Turn interruption and retained pending 
     await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Revoke secret" });
     await expect(dialog).toContainText("SYNTHETIC_TOKEN");
-    await expect(dialog).toContainText("Development");
+    await expect(dialog.getByText("Production", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("protected", { exact: true })).toBeVisible();
     await expect(dialog).toContainText("Affected running turns may be interrupted and fail to complete.");
     await expect(dialog).toContainText("Pending inputs are retained but cannot run on affected computers.");
     if (accept) await dialog.getByRole("button", { name: "Revoke", exact: true }).click();

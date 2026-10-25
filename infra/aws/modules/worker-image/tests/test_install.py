@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -73,15 +74,42 @@ class InstallArtifacts(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('verified Worker host and runtime artifacts', result.stdout)
 
-    def test_runtime_contract_mismatch(self):
-        self.runtime_manifest['vm_runtime_contract'] = 'unsupported.runtime-contract'
-        raw = json.dumps(self.runtime_manifest).encode()
-        self.runtime['runtime-artifacts.json'] = (raw, 0o444)
-        self.runtime_manifest_digest = digest(raw)
-        # Recompute transport and manifest digests so rejection reaches validation.
-        result = self.verify()
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn('verified Worker host and runtime artifacts', result.stdout)
+    def test_runtime_contract_cases_at_installer_and_image_gate(self):
+        # Evaluate the real component document, then execute the emitted runtime
+        # validation command against relocated fixture files. Other image/host
+        # validation steps retain their own tests.
+        source = (INSTALL.parent.parent / 'main.tf').read_text()
+        expression = source.split('  component_document = ', 1)[1].split('\n  component_definition = ', 1)[0]
+        (self.root / 'main.tf').write_text(
+            'locals {\n build_script = ""\n prepare_root_digest = "fixture"\n'
+            'host_artifacts_manifest_digest = "fixture"\n runtime_artifacts_manifest_digest = "fixture"\n'
+            'component_document = ' + expression + '\n}\n')
+        result = subprocess.run(['tofu', 'console', '-no-color'], cwd=self.root,
+                                input='jsonencode(flatten([for p in yamldecode(local.component_document).phases : [for s in p.steps : s.inputs.commands] if p.name == "validate"]))\n',
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        commands = json.loads(json.loads(result.stdout))
+        prefix = 'cd /var/lib/helmr/images/guest/out && '
+        runtime_commands = [command for command in commands if command.startswith(prefix)]
+        self.assertEqual(len(runtime_commands), 1)
+        command = 'cd ' + shlex.quote(str(self.root)) + ' && ' + runtime_commands[0][len(prefix):]
+        cases = json.loads((ROOT / 'tests/fixtures/runtime-artifacts/contracts.json').read_text())
+        for case in cases:
+            with self.subTest(case=case['name']):
+                if 'value' in case:
+                    self.runtime_manifest['vm_runtime_contract'] = case['value']
+                else:
+                    self.runtime_manifest.pop('vm_runtime_contract', None)
+                raw = json.dumps(self.runtime_manifest).encode()
+                self.runtime['runtime-artifacts.json'] = (raw, 0o444)
+                self.runtime_manifest_digest = digest(raw)
+                # Correct outer digests ensure rejection reaches the contract gate.
+                result = self.verify()
+                self.assertEqual(result.returncode == 0, case['valid'], result.stdout + result.stderr)
+                for name, (data, _) in self.runtime.items():
+                    (self.root / name).write_bytes(data)
+                result = subprocess.run(['bash', '-e', '-c', command], text=True, capture_output=True)
+                self.assertEqual(result.returncode == 0, case['valid'], result.stdout + result.stderr)
 
     def test_restrictive_operator_umask(self):
         result = self.verify(umask=0o077)

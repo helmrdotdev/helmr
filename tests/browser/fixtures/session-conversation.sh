@@ -17,7 +17,7 @@ if [[ "$5" = expose-secret ]]; then
 else
   [[ "$4" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || exit 1
 fi
-case "$5" in text|choice|completed|output|disable-member|restore-member|expose-secret) ;; *) exit 1;; esac
+case "$5" in text|choice|completed|output|remove-member|restore-member|expose-secret) ;; *) exit 1;; esac
 export HELMR_DEV_DIR="${ROOT}/.helmr-dev-e2e"
 export HELMR_DEV_POSTGRES_PORT="$(( ${HELMR_E2E_PORT:-4173} + 1 ))"
 source "${ROOT}/dev/local/instance.sh"
@@ -38,7 +38,7 @@ WHERE e.id=:'environment_id' AND e.slug LIKE 'browser-agent-%' AND s.id=:'sessio
  AND t.caller_kind='user' AND t.admission_method='create';
 DO $$ BEGIN IF (SELECT count(*) FROM fixture) <> 1 THEN RAISE EXCEPTION 'not an owned browser Session'; END IF; END $$;
 SELECT :'mode' IN ('text','choice') AS seed, :'mode'='completed' AS completed,
- :'mode'='expose-secret' AS expose_secret, :'mode'='output' AS output, :'mode' IN ('disable-member','restore-member') AS membership \gset
+ :'mode'='expose-secret' AS expose_secret, :'mode'='output' AS output, :'mode' IN ('remove-member','restore-member') AS membership \gset
 \if :seed
 INSERT INTO regions(id,display_name) VALUES('browser-'||:'session_id','Browser fixture');
 INSERT INTO worker_group_tokens(id,token_hash) VALUES(:'reference_id',sha256(convert_to(:'reference_id','UTF8')));
@@ -93,8 +93,14 @@ JOIN secrets s ON s.environment_id=f.environment_id AND s.name=:'reference_id' A
 WHERE t.status='running' RETURNING secret_id AS exposed_secret_id \gset
 \endif
 \if :membership
-UPDATE org_members m SET disabled_at=CASE WHEN :'mode'='disable-member' THEN clock_timestamp() ELSE NULL END
-FROM fixture f WHERE m.org_id=f.org_id AND m.user_id=f.user_id;
+-- This disposable fixture's caller starts as an owner. Removal must clear
+-- ownership to satisfy the membership invariant; restoration reinstates both.
+CREATE TEMP TABLE changed_membership ON COMMIT DROP AS
+WITH changed AS (UPDATE org_members m SET is_owner=(:'mode'='restore-member'),
+ removed_at=CASE WHEN :'mode'='remove-member' THEN clock_timestamp() ELSE NULL END
+FROM fixture f WHERE m.org_id=f.org_id AND m.user_id=f.user_id RETURNING m.id)
+SELECT id FROM changed;
+DO $$ BEGIN IF (SELECT count(*) FROM changed_membership) <> 1 THEN RAISE EXCEPTION 'expected exactly one browser membership'; END IF; END $$;
 \endif
 COMMIT;
 SQL

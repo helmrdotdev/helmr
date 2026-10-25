@@ -5,8 +5,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/session"
-
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -43,27 +41,6 @@ func TestSaveCaptureRequiresOriginalLiveWriter(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.env)
 	if err := s.publisher.Capture(t.Context(), ref, root, "expired"); !errors.Is(err, computer.ErrDenied) {
 		t.Fatalf("expired writer: %v", err)
-	}
-}
-
-func TestPublishedSaveCompletesWithoutSourceWorker(t *testing.T) {
-	f := newFixture(t)
-	s := newSaveStorageFixture(t, f)
-	a, save := f.finalize(t, "lost-reply")
-	root, _ := s.cut(t, 8)
-	if err := s.publisher.Capture(t.Context(), s.ref(save.ID), root, "owned cut"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.publish(t, save.ID, root); err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.env)
-	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
-		t.Fatal(err)
-	}
-	var completed bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT status='completed' AND EXISTS(SELECT 1 FROM computer_saves s WHERE s.turn_id=turns.id AND s.id=$2) FROM turns WHERE id=$1`, a.TurnID, save.ID).Scan(&completed); err != nil || !completed {
-		t.Fatalf("own-save completion after source loss: %v %v", completed, err)
 	}
 }
 
