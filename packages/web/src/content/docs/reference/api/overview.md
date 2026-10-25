@@ -34,6 +34,7 @@ shared by the Console and CLI and do not accept workload API keys.
 | `GET` | `/v1/deployments/{deploymentID}/events` |
 | `GET` | `/v1/triggers` |
 | `GET` | `/v1/triggers/{triggerID}` |
+| `GET` | `/v1/triggers/{triggerID}/occurrences` |
 | `GET` | `/v1/secrets` |
 | `GET` | `/v1/secrets/{secret}` |
 | `GET` | `/v1/sessions` |
@@ -93,7 +94,8 @@ it does not fall back to another Deployment or claim the stable identity was del
 
 Session and Trigger lists accept the declared `agent` identifier.
 `agent` resolves stable identity independently of current membership, so retained
-history remains searchable after an Agent is removed from current.
+history remains searchable after an Agent is removed from current or deleted;
+Trigger history requires `view=all`.
 
 Computer `/sessions` and `/commands` return current usage, including work whose
 process cleanup is pending. They are not history endpoints. Entries contain `id`,
@@ -141,3 +143,22 @@ It requires `computers:update`.
 
 These families have their own authentication and are not alternatives to the
 Developer API.
+
+## Trigger activations and occurrences
+
+`GET /v1/triggers` accepts `agent`, logical trigger `key`, `view`, `limit` and
+`cursor`. `view=current` is the default; `view=all` includes retained historical
+activations. Keep the view and filters unchanged when using a cursor. A Trigger
+ID identifies one activation, not the logical key shared across promotions.
+
+`GET /v1/triggers/{triggerID}/occurrences` requires Session read access to the
+Agent. It accepts `limit` (1–100, default 50) and `cursor`, and returns an
+`occurrences` array with optional `next_cursor`. Each outcome has `scheduled_at`,
+`evaluated_at`, `disposition` (`admitted`, `missed` or `rejected`), and nullable
+`reason`, `session_id` and `turn_id`. A cursor belongs to that Environment and
+activation; it cannot be reused for another activation.
+
+Human-session equivalents are available under
+`/api/projects/{project}/environments/{environment}/triggers`.
+Agent Delete, Restore and retained status use separate human management routes;
+see [Agent lifecycle](/docs/reference/api/agents).

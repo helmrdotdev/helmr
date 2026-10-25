@@ -155,8 +155,8 @@ tools. Obtain the connection with `ctx.mcp.getConnectionOptions()` in `init` or
 ## Deployment definitions and existing work
 
 Each Deployment contains immutable Agent and Template definitions. The current
-Deployment determines which definitions are available for new Sessions and
-Computers. Inspect a specific Deployment to read its definitions, including ones
+Deployment determines which definitions are available for new independent
+Sessions and Computers. Inspect a specific Deployment to read its definitions, including ones
 that are absent from the current Deployment.
 
 Promoting a Deployment changes this selection for new work. Existing Sessions
@@ -164,7 +164,8 @@ keep their pinned Agent definition and continue on their current Computer;
 existing Computers keep their original Template definition. Promotion does not
 restart or upgrade either resource. An Agent can remain visible in the resource
 catalog while having no definition in the current Deployment; it cannot create a
-new Session until a Deployment containing that definition is promoted.
+new independent Session until a Deployment containing that definition is promoted.
+Existing parent Sessions can still create children from their pinned Deployment.
 
 The identifier declared as `agent({ id: "support" })` is the public Agent
 identifier within its Environment. Use `support` in the CLI, REST API and SDK
@@ -172,9 +173,9 @@ to inspect definitions or find Sessions and Triggers across Deployments.
 
 In the Console, open **Agents** to manage Slack Connections and inspect Sessions
 and Trigger activations. The list initially shows current Agents; choose
-**All Agents** to include identities absent from the current Deployment, even
+**All agents** to include identities absent from the current Deployment, even
 when the Environment has no current Deployment. Registration alone does not mean
-an Agent has ever been active. Existing connections remain manageable by an
+an Agent has ever been active. Existing connections remain manageable by a
 person with `agents.manage` on the Agent.
 
 Deployment details are read-only snapshots. They list each Agent with its
@@ -183,3 +184,48 @@ Deployment they were created from. Promote from the Deployment list to change
 current.
 Read access to definitions and history does not grant permission to create or
 control work.
+
+## Deleting and restoring an Agent
+
+Removing an Agent from a Deployment does not delete its identity. Delete is an
+explicit management operation in the Console or [`helmr agent`](/docs/reference/cli/agent).
+It requires a signed-in human with `access.manage` and `agents.manage` on the
+Agent. API keys and Agent runtimes cannot delete or restore Agents.
+
+To delete an Agent:
+
+1. Promote a Deployment that omits the Agent.
+2. Close its open Sessions and wait for closing Sessions and execution cleanup
+   to finish. Deletion does not force-stop work for you.
+3. Open the Agent in **Agents → All agents**, choose **Delete**, and inspect the
+   preview. Resolve any blockers, then confirm the refreshed preview.
+
+The preview reports current Deployment membership, active Sessions and pending
+cleanup. Session links require Session viewing permission; counts can be shown
+without exposing Session IDs. Deletion checks these prerequisites again when
+applied, so a successful preview does not reserve the Agent for deletion.
+
+Delete retains the Agent identity, immutable Deployment definitions and existing
+Session and Trigger history, subject to their normal retention and viewing
+permissions. It prevents execution through that identity, including child
+Sessions using older pinned definitions. Promoting a Deployment containing a
+deleted Agent fails until the Agent is restored.
+
+Deletion also removes explicit selections of this Agent from Role assignments,
+disconnects its Slack Connection and clears the installation credentials, and
+seals pending historical Trigger activations against catch-up. Assignments with
+other Agent targets or non-Agent permissions remain effective for those resources;
+assignments with no remaining effect are removed. Broad access assignments remain
+in place. If your own access came only from a removed Agent selection, another
+manager with surviving access, or an owner using access recovery, must restore it.
+
+Choose **Deleted agents** in the Console to find an identity and **Restore** it.
+Restore keeps the same Agent ID and removes the deletion mark. It does **not**
+restore removed Role selections, Slack Connections or old schedule backlog.
+Reconfigure that access and reconnect Slack as needed. Broad assignments apply
+again immediately, and an existing parent Session can create children from its
+pinned Deployment as soon as the target Agent is restored. New independent
+Sessions and schedules require promotion of a Deployment containing the Agent.
+
+See the [Agent lifecycle API](/docs/reference/api/agents) for previews, revisions
+and concurrent-change errors.

@@ -74,9 +74,12 @@ client.triggers.list(query?: { agent?: string; cursor?: string; limit?: number }
 ```
 
 `agent` is the identifier declared in code.
-This filter searches retained Triggers even when the
-Agent is absent from the current Deployment. An unknown `agent` returns an empty
-page. See [Agents](/docs/reference/sdk/agent#client-agents).
+List returns current activations. An unknown `agent`, or one absent from the
+current Deployment, returns an empty page. `get` can read a retained historical
+activation by its ID. The TypeScript client currently exposes only `agent`,
+`cursor` and `limit` for listing; use the [CLI](/docs/reference/cli/trigger) or
+[REST API](/docs/reference/api/overview#trigger-activations-and-occurrences) for
+historical listing, logical-key filtering and occurrence outcomes. See [Agents](/docs/reference/sdk/agent#client-agents).
 `limit` is 1–100.
 
 | `Trigger` field | Type | Description |

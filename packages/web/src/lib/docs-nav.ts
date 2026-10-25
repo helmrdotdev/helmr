@@ -93,6 +93,7 @@ export const docsNav = [
         ids: [
           "reference/api/overview",
           "reference/api/permissions",
+          "reference/api/agents",
           "reference/api/authentication",
           "reference/api/errors",
           "reference/api/pagination",
