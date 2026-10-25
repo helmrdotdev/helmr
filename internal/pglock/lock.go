@@ -14,11 +14,17 @@
 //     follow the row locks shared by all holders of that key.
 //  2. Worker supply: group, pool, host (share for runtime callers; host
 //     FOR UPDATE when allocating). Runtime-caller operations take this first.
+//     Administrative access operations first lock acting/target memberships,
+//     then Roles and their affected grants, before Slack and Environment rows.
+//     Agent deletion discovers those dependencies before admission fences and
+//     aborts if rediscovery would require an earlier-order lock.
 //  3. Slack: registration, installation, connection, channel binding.
 //  4. Environment.
 //  5. Deployment (share) and trigger activations. Enqueue takes the Deployment
 //     share lock after its Secret share, image spec and Session locks; no
 //     transaction takes deployments exclusively while holding those locks.
+//     Agent deletion locks the Agent FOR UPDATE after the Environment to fence
+//     selected grants; the Environment already serializes activation writers.
 //  6. Image spec, then image build. Secrets are taken FOR SHARE here; the only
 //     exclusive Secret locks are rotate and revoke, which take nothing
 //     exclusive afterwards.

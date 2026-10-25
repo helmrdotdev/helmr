@@ -149,6 +149,22 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 // authorizeTarget is used before target reads, mutations and receipt returns.
 // Runtime relations are additional constraints, never a replacement for origin.
 func authorizeTarget(ctx context.Context, tx pgx.Tx, caller Caller, env, target uuid.UUID, operation auth.Permission) error {
+	if err := authorizeTargetAuthority(ctx, tx, caller, env, target, operation); err != nil {
+		return err
+	}
+	if auth.SessionExecutionOperation(operation) {
+		o, err := loadSessionOrigin(ctx, tx, env, target)
+		if err != nil {
+			return err
+		}
+		if err := requireAgentAvailable(ctx, tx, env, o.Agent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env, target uuid.UUID, operation auth.Permission) error {
 	o, err := loadSessionOrigin(ctx, tx, env, target)
 	if err != nil {
 		return err
@@ -225,6 +241,9 @@ func authorizeTarget(ctx context.Context, tx pgx.Tx, caller Caller, env, target 
 func authorizeRuntimeOrigin(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
 	o, err := loadSessionOrigin(ctx, tx, env, id)
 	if err != nil {
+		return err
+	}
+	if err := requireAgentAvailable(ctx, tx, env, o.Agent); err != nil {
 		return err
 	}
 	return o.authorize(ctx, tx, env, o.Agent)
@@ -348,8 +367,8 @@ func externalSessionPermissions(ctx context.Context, tx pgx.Tx, caller Caller, e
 	}
 	scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, AgentID: o.Agent.String()}
 	own := o.mode() == "scoped" && o.kind() == caller.Kind && o.id() == caller.ID && p.HasPermission(auth.CapabilityAgentsUse, scope)
-	originAllowed := o.authorize(ctx, tx, env, o.Agent)
-	if originAllowed != nil && !errors.Is(originAllowed, ErrDenied) {
+	originAllowed := authorizeRuntimeOrigin(ctx, tx, env, id)
+	if originAllowed != nil && !errors.Is(originAllowed, ErrDenied) && !errors.Is(originAllowed, ErrAgentDeleted) {
 		return nil, originAllowed
 	}
 	for _, operation := range auth.AllPermissions() {

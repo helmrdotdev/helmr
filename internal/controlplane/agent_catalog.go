@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -13,12 +14,10 @@ import (
 )
 
 // Agent operational reads are independent of any selected definition snapshot.
-type retainedAgent struct {
-	Agent               string  `json:"agent"`
-	CurrentDeploymentID *string `json:"current_deployment_id"`
-	DefinedInCurrent    bool    `json:"defined_in_current"`
-}
+type retainedAgent = api.AgentStatus
+
 type retainedAgentCursor struct {
+	View        string `json:"view"`
 	Project     string `json:"project"`
 	Environment string `json:"environment"`
 	After       string `json:"after"`
@@ -48,8 +47,8 @@ func (s *Server) readRetainedAgents(w http.ResponseWriter, r *http.Request, sing
 			return
 		}
 	}
-	if !single && values.Get("view") != "all" {
-		writeError(w, badRequest(errors.New("view must be all")))
+	if !single && values.Get("view") != "all" && values.Get("view") != "deleted" {
+		writeError(w, badRequest(errors.New("view must be all or deleted")))
 		return
 	}
 	limit, err := agentPageLimit(r)
@@ -60,7 +59,7 @@ func (s *Server) readRetainedAgents(w http.ResponseWriter, r *http.Request, sing
 	after := ""
 	if raw := values.Get("cursor"); raw != "" {
 		cursor, err := decodeRetainedAgentCursor(raw)
-		if err != nil || cursor.Project != scope.ProjectID || cursor.Environment != scope.EnvironmentID {
+		if err != nil || cursor.View != values.Get("view") || cursor.Project != scope.ProjectID || cursor.Environment != scope.EnvironmentID {
 			writeError(w, badRequest(errors.New("invalid Agent cursor")))
 			return
 		}
@@ -74,27 +73,28 @@ func (s *Server) readRetainedAgents(w http.ResponseWriter, r *http.Request, sing
 			return
 		}
 	}
-	records, err := deployment.ListRetainedAgents(r.Context(), s.tx, principal, scope, key, after, limit)
+	records, err := deployment.ListRetainedAgents(r.Context(), s.tx, principal, scope, key, after, limit, values.Get("view") == "deleted")
 	if err != nil {
 		s.writeDeploymentError(w, err)
 		return
 	}
 	items := make([]retainedAgent, 0, len(records))
 	for _, record := range records {
-		items = append(items, retainedAgent{Agent: record.Agent, CurrentDeploymentID: record.CurrentDeploymentID, DefinedInCurrent: record.DefinedInCurrent})
+		items = append(items, retainedAgent{Agent: record.Agent, DeletedAt: record.DeletedAt, Revision: record.Revision, CurrentDeploymentID: record.CurrentDeploymentID, DefinedInCurrent: record.DefinedInCurrent})
 	}
 	if single {
 		if len(items) == 0 {
 			writeError(w, notFound(errors.New("agent not found")))
 			return
 		}
+		w.Header().Set("ETag", `"`+strconv.FormatInt(items[0].Revision, 10)+`"`)
 		writeJSON(w, http.StatusOK, items[0])
 		return
 	}
 	next := ""
 	if len(items) > limit {
 		items = items[:limit]
-		raw, _ := json.Marshal(retainedAgentCursor{Project: scope.ProjectID, Environment: scope.EnvironmentID, After: items[len(items)-1].Agent})
+		raw, _ := json.Marshal(retainedAgentCursor{View: values.Get("view"), Project: scope.ProjectID, Environment: scope.EnvironmentID, After: items[len(items)-1].Agent})
 		next = base64.RawURLEncoding.EncodeToString(raw)
 	}
 	writeJSON(w, http.StatusOK, struct {

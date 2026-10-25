@@ -13,12 +13,13 @@ func triggerCommand() *cobra.Command {
 		Use:   "trigger",
 		Short: "Inspect Triggers.",
 	}
-	cmd.AddCommand(triggerListCommand(), triggerGetCommand())
+	cmd.AddCommand(triggerListCommand(), triggerGetCommand(), triggerOccurrencesCommand())
 	return cmd
 }
 
 func triggerListCommand() *cobra.Command {
-	var agent string
+	var agent, key string
+	var all bool
 	var projectID string
 	var environmentID string
 	var cursor string
@@ -42,7 +43,7 @@ func triggerListCommand() *cobra.Command {
 				return err
 			}
 			response, err := controlPlane.ListTriggers(cmd.Context(), client.ListTriggersOptions{
-				Cursor: cursor, Limit: limit, Agent: agent, EnvironmentScopeOptions: scope,
+				Cursor: cursor, Limit: limit, Agent: agent, Key: key, View: map[bool]string{true: "all", false: "current"}[all], EnvironmentScopeOptions: scope,
 			})
 			if err != nil {
 				return err
@@ -65,6 +66,8 @@ func triggerListCommand() *cobra.Command {
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continue a prior Trigger page.")
 	cmd.Flags().StringVar(&agent, "agent", "", "Filter by the Agent identifier declared in code.")
+	cmd.Flags().StringVar(&key, "key", "", "Filter by logical trigger key.")
+	cmd.Flags().BoolVar(&all, "all", false, "Include historical trigger activations.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum Triggers (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.Flags().BoolVar(&jsonLines, "jsonl", false, "Emit one JSON Trigger per line.")
@@ -107,5 +110,38 @@ func triggerGetCommand() *cobra.Command {
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
+	return cmd
+}
+
+func triggerOccurrencesCommand() *cobra.Command {
+	var project, environment, cursor string
+	var jsonOutput bool
+	cmd := &cobra.Command{Use: "occurrences ACTIVATION", Short: "List retained trigger occurrence outcomes.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		cp, scope, err := scopedSessionClient(cmd, project, environment)
+		if err != nil {
+			return err
+		}
+		page, err := cp.ListTriggerOccurrences(cmd.Context(), args[0], scope, cursor)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return writeJSON(cmd.OutOrStdout(), page)
+		}
+		for _, o := range page.Occurrences {
+			reason := ""
+			if o.Reason != nil {
+				reason = *o.Reason
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", o.ScheduledAt.Format("2006-01-02T15:04:05Z07:00"), o.Disposition, reason)
+		}
+		if page.NextCursor != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", page.NextCursor)
+		}
+		return nil
+	}}
+	addScopeFlags(cmd, &project, &environment)
+	cmd.Flags().StringVar(&cursor, "cursor", "", "Continue the previous occurrence page.")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON page.")
 	return cmd
 }

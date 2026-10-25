@@ -69,6 +69,72 @@ func (q *Queries) GetTriggerByID(ctx context.Context, arg GetTriggerByIDParams) 
 	return i, err
 }
 
+const listTriggerOccurrences = `-- name: ListTriggerOccurrences :many
+SELECT o.scheduled_at,o.disposition,o.reason,o.session_id,o.turn_id,o.evaluated_at
+FROM trigger_occurrences o JOIN trigger_activations a ON (a.environment_id,a.id)=(o.environment_id,o.activation_id)
+JOIN environments e ON e.id=o.environment_id
+WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3 AND a.id=$4
+AND ($5::boolean OR a.agent_id=ANY($6::uuid[]))
+AND ($7::timestamptz IS NULL OR o.scheduled_at>$7::timestamptz)
+ORDER BY o.scheduled_at LIMIT $8
+`
+
+type ListTriggerOccurrencesParams struct {
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	ActivationID     pgtype.UUID        `json:"activation_id"`
+	AllAgents        bool               `json:"all_agents"`
+	AuthorizedAgents []pgtype.UUID      `json:"authorized_agents"`
+	AfterAt          pgtype.Timestamptz `json:"after_at"`
+	LimitCount       int32              `json:"limit_count"`
+}
+
+type ListTriggerOccurrencesRow struct {
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
+	Disposition string             `json:"disposition"`
+	Reason      pgtype.Text        `json:"reason"`
+	SessionID   pgtype.UUID        `json:"session_id"`
+	TurnID      pgtype.UUID        `json:"turn_id"`
+	EvaluatedAt pgtype.Timestamptz `json:"evaluated_at"`
+}
+
+func (q *Queries) ListTriggerOccurrences(ctx context.Context, arg ListTriggerOccurrencesParams) ([]ListTriggerOccurrencesRow, error) {
+	rows, err := q.db.Query(ctx, listTriggerOccurrences,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.ActivationID,
+		arg.AllAgents,
+		arg.AuthorizedAgents,
+		arg.AfterAt,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTriggerOccurrencesRow
+	for rows.Next() {
+		var i ListTriggerOccurrencesRow
+		if err := rows.Scan(
+			&i.ScheduledAt,
+			&i.Disposition,
+			&i.Reason,
+			&i.SessionID,
+			&i.TurnID,
+			&i.EvaluatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTriggers = `-- name: ListTriggers :many
 SELECT a.id,a.agent_id,a.deployment_id,a.trigger_key,t.cron,t.timezone,t.input,a.active_from,a.active_until,a.next_fire_at,ag.key AS agent
 FROM trigger_activations a
@@ -77,8 +143,10 @@ JOIN agents ag ON (ag.environment_id,ag.id)=(a.environment_id,a.agent_id)
 JOIN environments e ON e.id=a.environment_id
 WHERE ($1::boolean OR a.agent_id=ANY($2::uuid[])) AND e.org_id=$3 AND e.project_id=$4 AND e.id=$5
 AND ($6::text IS NULL OR ag.key=$6)
-AND ($7::uuid IS NULL OR (a.agent_id,a.id)>($8::uuid,$7::uuid))
-ORDER BY a.agent_id,a.id LIMIT $9
+AND ($7::boolean OR a.active_until IS NULL)
+AND ($8::text IS NULL OR a.trigger_key=$8)
+AND ($9::uuid IS NULL OR (a.agent_id,a.id)>($10::uuid,$9::uuid))
+ORDER BY a.agent_id,a.id LIMIT $11
 `
 
 type ListTriggersParams struct {
@@ -88,6 +156,8 @@ type ListTriggersParams struct {
 	ProjectID        pgtype.UUID   `json:"project_id"`
 	EnvironmentID    pgtype.UUID   `json:"environment_id"`
 	Agent            pgtype.Text   `json:"agent"`
+	IncludeHistory   bool          `json:"include_history"`
+	TriggerKey       pgtype.Text   `json:"trigger_key"`
 	AfterID          pgtype.UUID   `json:"after_id"`
 	AfterAgentID     pgtype.UUID   `json:"after_agent_id"`
 	LimitCount       int32         `json:"limit_count"`
@@ -115,6 +185,8 @@ func (q *Queries) ListTriggers(ctx context.Context, arg ListTriggersParams) ([]L
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Agent,
+		arg.IncludeHistory,
+		arg.TriggerKey,
 		arg.AfterID,
 		arg.AfterAgentID,
 		arg.LimitCount,

@@ -14,6 +14,8 @@ import (
 const maxTriggerListLimit = int32(100)
 
 type ListTriggersOptions struct {
+	View   string
+	Key    string
 	Agent  string
 	Cursor string
 	Limit  int32
@@ -39,6 +41,15 @@ func (c *Client) ListTriggers(
 		return api.ListTriggersResponse{}, err
 	}
 	query := url.Values{}
+	if opts.View != "" {
+		if opts.View != "current" && opts.View != "all" {
+			return api.ListTriggersResponse{}, fmt.Errorf("view must be current or all")
+		}
+		query.Set("view", opts.View)
+	}
+	if opts.Key != "" {
+		query.Set("key", opts.Key)
+	}
 	if opts.Agent != "" {
 		if err := api.ValidateDefinitionID(opts.Agent); err != nil {
 			return api.ListTriggersResponse{}, err
@@ -94,4 +105,24 @@ func (c *Client) GetTrigger(
 		return api.TriggerResponse{}, err
 	}
 	return response, nil
+}
+
+func (c *Client) ListTriggerOccurrences(ctx context.Context, id string, scope EnvironmentScopeOptions, cursor string) (api.TriggerOccurrencesPage, error) {
+	var out api.TriggerOccurrencesPage
+	if err := api.ValidateTriggerID(id); err != nil {
+		return out, err
+	}
+	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/triggers/"+url.PathEscape(id)+"/occurrences")
+	if err != nil {
+		return out, err
+	}
+	if cursor != "" {
+		path += "?cursor=" + url.QueryEscape(cursor)
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return out, err
+	}
+	err = c.doJSON(req, &out)
+	return out, err
 }

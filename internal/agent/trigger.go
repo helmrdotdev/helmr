@@ -173,6 +173,8 @@ func EvaluateTrigger(ctx context.Context, pool db.TxBeginner, trust computer.Tru
 						reason = "execution_capacity_unavailable"
 					case errors.Is(admissionErr, slackroute.ErrChannelUnavailable):
 						reason = "slack_channel_unavailable"
+					case errors.Is(admissionErr, session.ErrAgentDeleted):
+						reason = "agent_deleted"
 					case errors.Is(admissionErr, session.ErrDenied) || errors.Is(admissionErr, computer.ErrDenied):
 						reason = "execution_denied"
 					case errors.Is(admissionErr, session.ErrInvalidInput) || errors.Is(admissionErr, computer.ErrInvalidInput):

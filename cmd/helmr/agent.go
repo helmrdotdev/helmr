@@ -12,7 +12,7 @@ import (
 
 func agentCommand() *cobra.Command {
 	command := &cobra.Command{Use: "agent", Short: "Inspect deployed Agent definitions."}
-	command.AddCommand(agentDefinitionListCommand(), agentDefinitionGetCommand())
+	command.AddCommand(agentDefinitionListCommand(), agentDefinitionGetCommand(), agentChangeCommand(false), agentChangeCommand(true))
 	return command
 }
 

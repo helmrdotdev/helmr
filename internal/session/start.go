@@ -194,6 +194,9 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		if err != nil {
 			return err
 		}
+		if err = requireAgentAvailable(ctx, tx, req.EnvironmentID, agentID); err != nil {
+			return err
+		}
 		prior, err := sessionCreationReceipt(ctx, tx, caller, req.EnvironmentID, agentID, method, req.IdempotencyKey, digest)
 		if err != nil {
 			return err

@@ -134,7 +134,7 @@ export function AssignRoleDialog(props: { project:string; projectName:string; gr
   const sharedRole=()=>role()?.permissions.length === 1 && role()?.permissions[0] === "agents.use";
   const quickIncompatible=()=>!!props.fixedTarget?.agent_id && !supportsAgent(role()?.permissions ?? [],props.catalog);
   const incompatible=()=>quickIncompatible() || (kind() === "api_key" && !role()?.api_key_assignable) || (kind() === "all_members" && (!sharedRole() || mode() !== "selected"));
-  const valid=()=>!!role() && (kind() === "all_members" || !!recipient()) && !incompatible() && (organizationRole() || !!environment()) && (!hasAgents() || mode() === "all" || agents().length>0);
+  const valid=()=>!!role() && (kind() === "all_members" || !!recipient()) && !incompatible() && (organizationRole() || !!environment()) && (!hasAgents() || mode() === "all" || agents().length>0 || resources().some(r=>r!=="agents"));
   const actionNames=(resource:string)=>(role()?.permissions ?? []).filter(p=>props.catalog.find(c=>c.id===p)?.resource_type===resource).map(p=>props.catalog.find(c=>c.id===p)?.name ?? p).join(" · ");
   return <Dialog title={existing ? "Edit assignment targets" : "Assign role"} onClose={props.onClose} closeDisabled={busy()} class="max-w-180"><form class="space-y-4" onSubmit={async event=>{
     event.preventDefault();if(!valid())return;setBusy(true);setError("");

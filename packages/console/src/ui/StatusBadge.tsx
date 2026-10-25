@@ -26,7 +26,7 @@ const TONES = {
   secret: { active: "succeeded", revoked: "revoked" },
   member: { active: "succeeded", removed: "revoked", invited: "waiting" },
   worker_group: { active: "active", paused: "waiting", draining: "waiting", disabled: "revoked" },
-  agent: { defined: "active", not_defined: "expired" },
+  agent: { defined: "active", not_defined: "expired", deleted: "expired" },
   slack_connection: { configuration_mismatch: "waiting", setup_incomplete: "waiting", connected: "succeeded", reauthorization_required: "waiting", disconnected: "revoked" },
   computer_usage: { admitted: "expired", running: "active", waiting: "waiting", parked: "expired", draining: "waiting", unreconciled: "revoked" },
   process: { starting: "waiting", ready: "active", stopping: "waiting", stopped: "expired", lost: "revoked", recovery_required: "revoked" },
@@ -38,7 +38,7 @@ const TONES = {
 // Labels that read better than the status name.
 const LABELS: Partial<Record<keyof typeof TONES, Record<string, string>>> = {
   computer_residency: { parked: "Sleeping", parking: "Hibernating", restoring: "Waking", running: "Awake" },
-  agent: { defined: "In current deployment", not_defined: "Not in current deployment" },
+  agent: { defined: "In current deployment", not_defined: "Not in current deployment", deleted: "Deleted" },
   attention: { question: "Question", hold: "Held", failed_turn: "Failed", slack_reauthorization: "Connection" },
 };
 

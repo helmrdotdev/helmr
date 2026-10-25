@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 )
@@ -90,19 +91,30 @@ func (c *Client) readDiagnostic(ctx context.Context, path string, out any) error
 // RetainedAgentsPage includes Agents with retained Sessions or Slack connections,
 // even if they are absent from the current deployment.
 type RetainedAgentsPage struct {
-	Agents []struct {
-		Agent string `json:"agent"`
-	} `json:"agents"`
-	NextCursor string `json:"next_cursor"`
+	Agents     []api.AgentStatus `json:"agents"`
+	NextCursor string            `json:"next_cursor"`
 }
 
 func (c *Client) ListRetainedAgents(ctx context.Context, scope EnvironmentScopeOptions, cursor string) (RetainedAgentsPage, error) {
+	return c.ListAgentCatalog(ctx, scope, cursor, "all", 100)
+}
+func (c *Client) ListAgentCatalog(ctx context.Context, scope EnvironmentScopeOptions, cursor, view string, limit int32) (RetainedAgentsPage, error) {
+	if view != "all" && view != "deleted" {
+		return RetainedAgentsPage{}, errors.New("view must be all or deleted")
+	}
+	if limit == 0 {
+		limit = 50
+	}
+	if limit < 1 || limit > 100 {
+		return RetainedAgentsPage{}, errors.New("limit must be between 1 and 100")
+	}
+
 	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID, "/agents")
 	if err != nil {
 		return RetainedAgentsPage{}, err
 	}
 	var result RetainedAgentsPage
-	query := url.Values{"view": {"all"}, "limit": {"100"}}
+	query := url.Values{"view": {view}, "limit": {strconv.Itoa(int(limit))}}
 	if cursor != "" {
 		query.Set("cursor", cursor)
 	}

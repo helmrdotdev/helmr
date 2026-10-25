@@ -205,6 +205,7 @@ func deploymentResponse(record deployment.Record) api.DeploymentResponse {
 // deploymentError maps errors of the deployment owner to HTTP errors.
 func deploymentError(err error) error {
 	var input deployment.InputError
+	var deleted deployment.DeletedAgentsError
 	var expired idempotency.ExpiredError
 	var retryConflict idempotency.ConflictError
 	switch {
@@ -218,6 +219,9 @@ func deploymentError(err error) error {
 		return conflict(codedError{code: "preparation_unavailable", message: "An unusable preparation still owns this environment image; retry the operation after its cleanup"})
 	case errors.Is(err, computer.ErrSecretUnavailable):
 		return conflict(codedError{code: "secret_unavailable", message: "A declared Secret is missing or revoked in this Environment"})
+	case errors.As(err, &deleted):
+		raw, _ := json.Marshal(deleted)
+		return conflict(codedError{code: "agent_deleted", message: err.Error(), details: map[string]json.RawMessage{"conflicts": raw}})
 	case errors.Is(err, deployment.ErrFinalizationConflict):
 		return conflict(err)
 	case errors.Is(err, deployment.ErrPermissionRequired):

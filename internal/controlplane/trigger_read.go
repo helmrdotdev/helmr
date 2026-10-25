@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -25,6 +26,8 @@ const (
 )
 
 type triggerListCursor struct {
+	View          string `json:"view"`
+	FilterKey     string `json:"filter_key,omitempty"`
 	FilterAgent   string `json:"filter_agent,omitempty"`
 	ProjectID     string `json:"project_id"`
 	EnvironmentID string `json:"environment_id"`
@@ -70,13 +73,15 @@ func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 		afterID = pgvalue.UUID(id)
 	}
 	rows, err := s.db.ListTriggers(r.Context(), db.ListTriggersParams{AllAgents: allAgents, AuthorizedAgents: authorizedAgents,
-		OrgID:         pgvalue.UUID(principal.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		Agent:         pgtype.Text{String: r.URL.Query().Get("agent"), Valid: r.URL.Query().Has("agent")},
-		AfterAgentID:  afterAgent,
-		AfterID:       afterID,
-		LimitCount:    limit + 1,
+		IncludeHistory: r.URL.Query().Get("view") == "all",
+		TriggerKey:     pgtype.Text{String: r.URL.Query().Get("key"), Valid: r.URL.Query().Has("key")},
+		OrgID:          pgvalue.UUID(principal.OrgID),
+		ProjectID:      projectID,
+		EnvironmentID:  environmentID,
+		Agent:          pgtype.Text{String: r.URL.Query().Get("agent"), Valid: r.URL.Query().Has("agent")},
+		AfterAgentID:   afterAgent,
+		AfterID:        afterID,
+		LimitCount:     limit + 1,
 	})
 	if err != nil {
 		s.log.Error("list triggers failed", "error", err)
@@ -102,7 +107,7 @@ func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		last := rows[len(rows)-1]
 		response.NextCursor, err = encodeTriggerListCursor(triggerListCursor{
-			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, FilterAgent: r.URL.Query().Get("agent"),
+			View: triggerView(r), FilterKey: r.URL.Query().Get("key"), ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, FilterAgent: r.URL.Query().Get("agent"),
 			AgentID: pgvalue.UUIDString(last.AgentID), TriggerID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
@@ -121,12 +126,18 @@ func parseTriggerListQuery(
 ) (int32, *triggerListCursor, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
-		if name != "agent" && name != "cursor" && name != "limit" {
+		if name != "agent" && name != "key" && name != "view" && name != "cursor" && name != "limit" {
 			return 0, nil, fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || strings.TrimSpace(entries[0]) == "" {
 			return 0, nil, fmt.Errorf("query parameter %q must appear once", name)
 		}
+	}
+	if triggerView(r) != "current" && triggerView(r) != "all" {
+		return 0, nil, errors.New("view must be current or all")
+	}
+	if values.Has("key") && (len(values.Get("key")) > 256 || !utf8.ValidString(values.Get("key")) || strings.ContainsRune(values.Get("key"), 0)) {
+		return 0, nil, errors.New("invalid trigger key")
 	}
 	if values.Has("agent") {
 		if err := api.ValidateDefinitionID(values.Get("agent")); err != nil {
@@ -161,7 +172,7 @@ func parseTriggerListQuery(
 	if ids.Validate(cursor.TriggerID) != nil {
 		return 0, nil, errors.New("trigger cursor is invalid")
 	}
-	if cursor.FilterAgent != values.Get("agent") {
+	if cursor.FilterAgent != values.Get("agent") || cursor.FilterKey != values.Get("key") || cursor.View != triggerView(r) {
 		return 0, nil, errors.New("trigger cursor belongs to another filter")
 	}
 	return limit, &cursor, nil
@@ -251,4 +262,11 @@ func triggerResponse(row db.ListTriggersRow) (api.TriggerResponse, error) {
 		result.NextFireAt = pgvalue.TimePtr(row.NextFireAt)
 	}
 	return result, nil
+}
+
+func triggerView(r *http.Request) string {
+	if v := r.URL.Query().Get("view"); v != "" {
+		return v
+	}
+	return "current"
 }

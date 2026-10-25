@@ -723,8 +723,8 @@ func validateGrantInput(input GrantInput) error {
 			return invalidInput("only selected mode accepts Agent IDs")
 		}
 	case "selected":
-		if len(input.AgentIDs) == 0 || len(input.AgentIDs) > 100 {
-			return invalidInput("select 1–100 Agents")
+		if len(input.AgentIDs) > 100 {
+			return invalidInput("select at most 100 Agents")
 		}
 	default:
 		return invalidInput("agents_mode must be none, selected or all")
@@ -783,6 +783,17 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		if !roleSupportsTargets(role.Permissions, input.EnvironmentID == nil, input.AgentsMode, input.Subject.Type == "all_members") || (!hasAgentCapabilities(role.Permissions) && input.AgentsMode != "none") {
 			return ErrRoleTarget
 		}
+		if input.AgentsMode == "selected" && len(input.AgentIDs) == 0 {
+			mixed := false
+			for _, permission := range role.Permissions {
+				if auth.CapabilityResourceType(auth.Permission(permission)) != "agents" {
+					mixed = true
+				}
+			}
+			if !mixed {
+				return invalidInput("select at least one Agent for an Agent-only assignment")
+			}
+		}
 		if input.Subject.APIKeyID != nil {
 			if !machineAssignable(role.Permissions) {
 				return ErrRoleTarget
@@ -815,7 +826,7 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		}
 		for _, agent := range input.AgentIDs {
 			var found uuid.UUID
-			if err := tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND id=$2 FOR KEY SHARE`, input.EnvironmentID, agent).Scan(&found); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND id=$2 AND deleted_at IS NULL FOR KEY SHARE`, input.EnvironmentID, agent).Scan(&found); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return ErrAccessNotFound
 				}
@@ -1018,7 +1029,7 @@ func ListAccessTargets(ctx context.Context, database db.TxBeginner, m ManagingMe
 			return err
 		}
 		for i := range result {
-			rows, err = tx.Query(ctx, `SELECT id,key FROM agents WHERE environment_id=$1 ORDER BY key`, result[i].EnvironmentID)
+			rows, err = tx.Query(ctx, `SELECT id,key FROM agents WHERE environment_id=$1 AND deleted_at IS NULL ORDER BY key`, result[i].EnvironmentID)
 			if err != nil {
 				return err
 			}

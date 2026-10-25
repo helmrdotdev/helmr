@@ -118,9 +118,23 @@ type AccessChangeDetails struct {
 
 func (AccessChangeDetails) auditDetails() {}
 
+type AgentChangeDetails struct {
+	Revision           int64   `json:"revision"`
+	EdgesRemoved       int     `json:"selected_agent_edges_removed"`
+	AssignmentsRemoved int     `json:"ineffective_assignments_removed"`
+	MixedPreserved     int     `json:"mixed_assignments_preserved"`
+	ConnectionID       *string `json:"slack_connection_disconnected"`
+	ActivationsSealed  int64   `json:"trigger_activations_sealed"`
+}
+
+func (AgentChangeDetails) auditDetails() {}
+
 func marshalDetails(action string, details Details) ([]byte, error) {
 	valid := false
 	switch action {
+	case "agent.deleted", "agent.restored":
+		d, ok := details.(AgentChangeDetails)
+		valid = ok && d.Revision > 0
 	case "member.ownership_changed":
 		_, valid = details.(OwnershipChangedDetails)
 	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role.standard_created", "role_grant.created", "role_grant.updated", "role_grant.deleted":

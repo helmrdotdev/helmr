@@ -126,7 +126,13 @@ func ControlSession(ctx context.Context, pool db.TxBeginner, caller Caller, req 
 			return err
 		}
 		for _, id := range ids {
-			if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, id, controlPermission(req.Kind)); err != nil {
+			authorize := authorizeTarget
+			if req.Kind == "resume" && id != req.SessionID && (locked[id].lifecycle == "closed" || locked[id].lifecycle == "cancelled") {
+				// Settled descendants cannot resume execution. Retain authority
+				// checks without making their deleted Agent block the live tree.
+				authorize = authorizeTargetAuthority
+			}
+			if err := authorize(ctx, tx, caller, req.EnvironmentID, id, controlPermission(req.Kind)); err != nil {
 				return err
 			}
 		}

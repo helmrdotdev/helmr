@@ -48,6 +48,7 @@ DELETE /api/groups/{id}/members/{memberID}
 DELETE /api/invitations/{id}
 DELETE /api/members/{memberID}
 DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}
+DELETE /api/projects/{project}/environments/{environment}/agents/{agent}
 DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}
 DELETE /api/projects/{project}/environments/{environment}/computers/{computerID}
 DELETE /api/role-grants/{id}
@@ -107,6 +108,7 @@ GET /api/projects/{project}/environments/{environment}/templates/{template}
 GET /api/projects/{project}/environments/{environment}/templates/{template}/builds/{image_build}
 GET /api/projects/{project}/environments/{environment}/triggers
 GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}
+GET /api/projects/{project}/environments/{environment}/triggers/{triggerID}/occurrences
 GET /api/projects/{project}/settings
 GET /api/regions
 GET /api/role-grants
@@ -156,6 +158,7 @@ GET /v1/templates/{template}
 GET /v1/templates/{template}/builds/{image_build}
 GET /v1/triggers
 GET /v1/triggers/{triggerID}
+GET /v1/triggers/{triggerID}/occurrences
 GET /worker/v1/instance
 GET /worker/v1/updates
 PATCH /admin/api/v1/regions/{regionID}
@@ -198,6 +201,7 @@ POST /api/projects
 POST /api/projects/{project}/environments
 POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack
 POST /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/authorize
+POST /api/projects/{project}/environments/{environment}/agents/{agent}/restore
 POST /api/projects/{project}/environments/{environment}/api-keys
 POST /api/projects/{project}/environments/{environment}/api-keys/{id}/rotate
 POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel

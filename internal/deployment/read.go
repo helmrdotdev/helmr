@@ -257,6 +257,8 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 
 // RetainedAgent describes a stable Agent independently of definition membership.
 type RetainedAgent struct {
+	DeletedAt           *time.Time
+	Revision            int64
 	Agent               string
 	CurrentDeploymentID *string
 	DefinedInCurrent    bool
@@ -264,7 +266,7 @@ type RetainedAgent struct {
 
 // ListRetainedAgents returns up to limit+1 identities within the authorized scope.
 // A nonempty key selects one identity; after is an exclusive key cursor.
-func ListRetainedAgents(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, key, after string, limit int) ([]RetainedAgent, error) {
+func ListRetainedAgents(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, key, after string, limit int, deletedOnly bool) ([]RetainedAgent, error) {
 	principal, refreshErr := currentPrincipal(ctx, q, principal, scope)
 	if refreshErr != nil {
 		return nil, refreshErr
@@ -278,12 +280,12 @@ func ListRetainedAgents(ctx context.Context, q db.DBTX, principal auth.Principal
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.Query(ctx, `SELECT a.key,e.current_deployment_id::text,
+	rows, err := q.Query(ctx, `SELECT a.key,e.current_deployment_id::text,a.deleted_at,a.revision,
  EXISTS(SELECT 1 FROM agent_definitions d WHERE d.environment_id=a.environment_id AND d.agent_id=a.id AND d.deployment_id=e.current_deployment_id)
  FROM agents a JOIN environments e ON e.id=a.environment_id
  WHERE e.org_id=$1 AND e.project_id=$2 AND e.id=$3
- AND ($4='' OR a.key=$4) AND ($5='' OR a.key>$5) AND ($7::boolean OR a.id=ANY($8::uuid[]))
- ORDER BY a.key LIMIT $6`, principal.OrgID, project, environment, key, after, limit+1, allAgents, agentIDs)
+ AND (NOT $9::boolean OR a.deleted_at IS NOT NULL) AND ($4='' OR a.key=$4) AND ($5='' OR a.key>$5) AND ($7::boolean OR a.id=ANY($8::uuid[]))
+ ORDER BY a.key LIMIT $6`, principal.OrgID, project, environment, key, after, limit+1, allAgents, agentIDs, deletedOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +293,7 @@ func ListRetainedAgents(ctx context.Context, q db.DBTX, principal auth.Principal
 	items := []RetainedAgent{}
 	for rows.Next() {
 		var item RetainedAgent
-		if err := rows.Scan(&item.Agent, &item.CurrentDeploymentID, &item.DefinedInCurrent); err != nil {
+		if err := rows.Scan(&item.Agent, &item.CurrentDeploymentID, &item.DeletedAt, &item.Revision, &item.DefinedInCurrent); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

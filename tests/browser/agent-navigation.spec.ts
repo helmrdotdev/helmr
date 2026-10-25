@@ -169,3 +169,25 @@ test("the Templates page lists the current Deployment's Templates without links"
   await expect(page.getByRole("navigation", { name: "Sections" }).locator("[aria-current=page]")).toHaveText(["Computers"]);
   expect(paths.some(path => path.endsWith(`/templates?deployment_id=${deployment}&limit=100`))).toBe(true);
 });
+
+test("trigger history separates ended activations and shows occurrence outcomes", async ({ page }, testInfo) => {
+  await catalog(page);
+  await page.route("**/triggers**", async route => {
+    const url = new URL(route.request().url());
+    if (!url.pathname.startsWith(base)) return route.fallback();
+    if (url.pathname.endsWith("/occurrences")) {
+      await route.fulfill({ json: { occurrences: [{ scheduled_at: now, evaluated_at: now, disposition: "missed", reason: "agent_deleted", session_id: null, turn_id: null }] } });
+      return;
+    }
+    await route.fulfill({ json: { triggers: url.searchParams.get("view") === "all" ? [{ id: historical, agent: "support", deployment_id: historical, trigger_key: "daily", cron: { pattern: "0 9 * * *", timezone: "UTC" }, input: [], active_from: now, active_until: now }] : [] } });
+  });
+  await page.goto(`/triggers?${scope}`);
+  await expect(page.getByText("No trigger activations in this environment.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "All history", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Trigger key", exact: true }).fill("daily");
+  await page.getByRole("button", { name: "daily", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Trigger execution history" });
+  await expect(dialog).toContainText("missed");
+  await expect(dialog).toContainText("agent_deleted");
+  await page.screenshot({ path: testInfo.outputPath("trigger-occurrences.png"), fullPage: true });
+});
