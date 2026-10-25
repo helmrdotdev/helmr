@@ -132,7 +132,7 @@ var usageDailyPeopleSQL = usageTurns(usageWeekSpan) + usagePeople + `SELECT d,co
 var usageChannelsSQL = usageTurns(usageWindow) + `SELECT CASE WHEN b.slack_channel_id LIKE 'D%' THEN 'D' ELSE b.slack_channel_id END,CASE WHEN b.slack_channel_id LIKE 'D%' THEN '' ELSE COALESCE(n.name,'') END,count(DISTINCT t.caller_id)
  FROM turns_in t JOIN slack_threads st ON st.environment_id=$1 AND st.front_session_id=t.session_id
  JOIN slack_channel_bindings b ON b.id=st.slack_channel_binding_id
- LEFT JOIN slack_channel_names n ON n.installation_id=b.installation_id AND n.slack_channel_id=b.slack_channel_id
+ LEFT JOIN slack_channels n ON n.installation_id=b.installation_id AND n.slack_channel_id=b.slack_channel_id
  WHERE t.created_at>=now()-interval '7 days' AND t.caller_kind='user'
  GROUP BY 1,2 ORDER BY 3 DESC,1 LIMIT $10::int`
 

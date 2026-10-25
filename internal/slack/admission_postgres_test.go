@@ -60,7 +60,7 @@ func TestSlackAdmissionKeepsTheVerifiedChannelName(t *testing.T) {
 		t.Fatal(err)
 	}
 	var name string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT name FROM slack_channel_names WHERE installation_id=$1 AND slack_channel_id='C1'`, f.installation).Scan(&name); err != nil || name == "" {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT name FROM slack_channels WHERE installation_id=$1 AND slack_channel_id='C1'`, f.installation).Scan(&name); err != nil || name == "" {
 		t.Fatalf("channel name not kept: %q %v", name, err)
 	}
 }

@@ -142,15 +142,15 @@ func (c *WebClient) verifyConversation(ctx context.Context, installation uuid.UU
 	return v.Name, nil
 }
 
-// rememberChannelName keeps the name Slack reported for a channel so the
-// Console can show it; a DM has no name and is left out.
+// rememberChannelName keeps the name Slack reported for a channel in
+// slack_channels so the Console can show it; a DM has no name and is left out.
 func rememberChannelName(ctx context.Context, pool db.TxBeginner, installation uuid.UUID, channel, name string) error {
 	if name == "" {
 		return nil
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `INSERT INTO slack_channel_names(installation_id,slack_channel_id,name) VALUES($1,$2,left($3,255))
- ON CONFLICT(installation_id,slack_channel_id) DO UPDATE SET name=excluded.name,observed_at=clock_timestamp() WHERE slack_channel_names.name IS DISTINCT FROM excluded.name`, installation, channel, name)
+		_, err := tx.Exec(ctx, `INSERT INTO slack_channels(installation_id,slack_channel_id,name) VALUES($1,$2,left($3,255))
+ ON CONFLICT(installation_id,slack_channel_id) DO UPDATE SET name=excluded.name,observed_at=clock_timestamp() WHERE slack_channels.name IS DISTINCT FROM excluded.name`, installation, channel, name)
 		return err
 	})
 }

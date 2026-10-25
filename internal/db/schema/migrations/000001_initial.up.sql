@@ -2350,8 +2350,10 @@ CREATE TABLE audit_events (
 );
 CREATE INDEX audit_events_scope_time ON audit_events (org_id, occurred_at, id);
 
--- The latest name Slack reported for a channel when Helmr last verified it.
-CREATE TABLE slack_channel_names (
+-- A Slack channel Helmr has verified, one per workspace installation and
+-- channel, whichever agents use it: the name Slack reported when it was last
+-- verified.
+CREATE TABLE slack_channels (
     installation_id uuid NOT NULL REFERENCES slack_installations(id),
     slack_channel_id text NOT NULL CHECK (slack_channel_id<>''),
     name text NOT NULL CHECK (name<>'' AND char_length(name)<=255),
