@@ -69,7 +69,7 @@ type UsageAgent struct {
 	People      int64
 }
 
-// usageTurns reads the caller's Turns admitted within `span` of the read, plus
+// usageTurnsHead + span + usageTurnsTail reads the caller's Turns admitted within `span` of the read, plus
 // any still running, as `turns_in`. The window is $9 days back from the read;
 // the previous window is the same length before it. A Turn belongs to the
 // window it was admitted in for counts and run lengths (`current`, `seconds`);
@@ -77,13 +77,14 @@ type UsageAgent struct {
 // so a long run is split across them and a Turn still running from earlier
 // counts too. A running Turn runs up to the read. Each query reads only the
 // span it needs.
-func usageTurns(span string) string {
-	return `WITH visible AS (SELECT id,agent_id,origin_slack_connection_id FROM sessions WHERE ` + overviewReadable + `),
+const usageTurnsHead = `WITH visible AS (SELECT id,agent_id,origin_slack_connection_id FROM sessions WHERE ` + overviewReadable + `),
  turns_raw AS (
   SELECT t.id,t.session_id,t.status,t.caller_kind,t.caller_id,t.created_at,v.agent_id,v.origin_slack_connection_id,
    t.started_at,COALESCE(t.terminal_at,now()) AS ended
   FROM turns t JOIN visible v ON v.id=t.session_id
-  WHERE t.environment_id=$1 AND (t.created_at>=now()-` + span + ` OR t.status='running')
+  WHERE t.environment_id=$1 AND (t.created_at>=now()-`
+
+const usageTurnsTail = ` OR t.status='running')
  ), turns_in AS MATERIALIZED (
   SELECT r.*,
    CASE WHEN started_at IS NULL THEN 0 ELSE extract(epoch FROM ended-started_at) END AS seconds,
@@ -92,7 +93,6 @@ func usageTurns(span string) string {
    CASE WHEN started_at IS NULL THEN 0 ELSE GREATEST(0,extract(epoch FROM LEAST(ended,now()-make_interval(days => $9::int))-GREATEST(started_at,now()-make_interval(days => 2*$9::int)))) END AS previous_work
   FROM turns_raw r
  ) `
-}
 
 const (
 	usageWindow   = `make_interval(days => $9::int)`
@@ -100,12 +100,12 @@ const (
 	usageWeekSpan = `make_interval(days => $9::int+7)`
 )
 
-var usageWorkSQL = usageTurns(usageTwoSpans) + `SELECT COALESCE(sum(work),0),COALESCE(sum(previous_work),0),
+const usageWorkSQL = usageTurnsHead + usageTwoSpans + usageTurnsTail + `SELECT COALESCE(sum(work),0),COALESCE(sum(previous_work),0),
  count(*) FILTER (WHERE current),count(*) FILTER (WHERE NOT current AND created_at>=now()-` + usageTwoSpans + `) FROM turns_in`
 
 // Each day takes the part of every run that overlaps it, including runs
 // admitted before the window.
-var usageDailySQL = usageTurns(usageTwoSpans) + `SELECT d,sum(GREATEST(0,extract(epoch FROM LEAST(t.ended,now()-make_interval(days => d))-GREATEST(t.started_at,now()-make_interval(days => d+1)))))
+const usageDailySQL = usageTurnsHead + usageTwoSpans + usageTurnsTail + `SELECT d,sum(GREATEST(0,extract(epoch FROM LEAST(t.ended,now()-make_interval(days => d))-GREATEST(t.started_at,now()-make_interval(days => d+1)))))
  FROM generate_series(0,$9::int-1) d JOIN turns_in t ON t.started_at IS NOT NULL AND t.started_at<now()-make_interval(days => d) AND t.ended>now()-make_interval(days => d+1)
  GROUP BY d`
 
@@ -119,34 +119,34 @@ const usagePeople = `, people AS (
   WHERE t.caller_kind='user' GROUP BY t.caller_id,age
  ) `
 
-var usagePeopleSQL = usageTurns(usageWindow) + usagePeople + `, week AS (SELECT caller_id,bool_or(slack) AS slack FROM people WHERE age<7 GROUP BY caller_id)
+const usagePeopleSQL = usageTurnsHead + usageWindow + usageTurnsTail + usagePeople + `, week AS (SELECT caller_id,bool_or(slack) AS slack FROM people WHERE age<7 GROUP BY caller_id)
  SELECT count(*),count(*) FILTER (WHERE slack),count(*) FILTER (WHERE NOT slack),
  (SELECT count(*) FROM org_members m JOIN environments e ON e.org_id=m.org_id WHERE e.id=$1 AND m.removed_at IS NULL) FROM week`
 
 // Each day counts the distinct people of the seven days ending with it, from
 // one pass over the people active on each day.
-var usageDailyPeopleSQL = usageTurns(usageWeekSpan) + usagePeople + `SELECT d,count(DISTINCT p.caller_id) FROM generate_series(0,$9::int-1) d JOIN people p ON p.age BETWEEN d AND d+6 GROUP BY d`
+const usageDailyPeopleSQL = usageTurnsHead + usageWeekSpan + usageTurnsTail + usagePeople + `SELECT d,count(DISTINCT p.caller_id) FROM generate_series(0,$9::int-1) d JOIN people p ON p.age BETWEEN d AND d+6 GROUP BY d`
 
 // Conversations people started work from in the last seven days, matching the
 // weekly people count above them. Direct messages count as one, "D".
-var usageChannelsSQL = usageTurns(usageWindow) + `SELECT CASE WHEN b.slack_channel_id LIKE 'D%' THEN 'D' ELSE b.slack_channel_id END,CASE WHEN b.slack_channel_id LIKE 'D%' THEN '' ELSE COALESCE(n.name,'') END,count(DISTINCT t.caller_id)
+const usageChannelsSQL = usageTurnsHead + usageWindow + usageTurnsTail + `SELECT CASE WHEN b.slack_channel_id LIKE 'D%' THEN 'D' ELSE b.slack_channel_id END,CASE WHEN b.slack_channel_id LIKE 'D%' THEN '' ELSE COALESCE(n.name,'') END,count(DISTINCT t.caller_id)
  FROM turns_in t JOIN slack_threads st ON st.environment_id=$1 AND st.front_session_id=t.session_id
  JOIN slack_channel_bindings b ON b.id=st.slack_channel_binding_id
  LEFT JOIN slack_channels n ON n.installation_id=b.installation_id AND n.slack_channel_id=b.slack_channel_id
  WHERE t.created_at>=now()-interval '7 days' AND t.caller_kind='user'
  GROUP BY 1,2 ORDER BY 3 DESC,1 LIMIT $10::int`
 
-var usageRunsSQL = usageTurns(usageWindow) + `SELECT count(*) FILTER (WHERE seconds<$10),count(*) FILTER (WHERE seconds>=$10 AND seconds<$11),count(*) FILTER (WHERE seconds>=$11 AND seconds<$12),
+const usageRunsSQL = usageTurnsHead + usageWindow + usageTurnsTail + `SELECT count(*) FILTER (WHERE seconds<$10),count(*) FILTER (WHERE seconds>=$10 AND seconds<$11),count(*) FILTER (WHERE seconds>=$11 AND seconds<$12),
  count(*) FILTER (WHERE seconds>=$12 AND seconds<$13),count(*) FILTER (WHERE seconds>=$13),
  COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds),0),
  count(*) FILTER (WHERE status='completed'),
  count(*) FILTER (WHERE status='completed' AND NOT EXISTS(SELECT 1 FROM turn_asks a WHERE a.environment_id=$1 AND a.session_id=turns_in.session_id AND a.turn_id=turns_in.id))
  FROM turns_in WHERE current AND started_at IS NOT NULL`
 
-var usageLongestSQL = usageTurns(usageWindow) + `SELECT a.key,t.seconds,t.session_id,t.id FROM turns_in t JOIN agents a ON (a.environment_id,a.id)=($1,t.agent_id)
+const usageLongestSQL = usageTurnsHead + usageWindow + usageTurnsTail + `SELECT a.key,t.seconds,t.session_id,t.id FROM turns_in t JOIN agents a ON (a.environment_id,a.id)=($1,t.agent_id)
  WHERE t.current AND t.started_at IS NOT NULL ORDER BY t.seconds DESC,t.id LIMIT 1`
 
-var usageAgentsSQL = usageTurns(usageTwoSpans) + `SELECT a.key,sum(t.work),count(DISTINCT t.caller_id) FILTER (WHERE t.caller_kind='user' AND t.current)
+const usageAgentsSQL = usageTurnsHead + usageTwoSpans + usageTurnsTail + `SELECT a.key,sum(t.work),count(DISTINCT t.caller_id) FILTER (WHERE t.caller_kind='user' AND t.current)
  FROM turns_in t JOIN agents a ON (a.environment_id,a.id)=($1,t.agent_id) WHERE t.current OR t.work>0 GROUP BY 1 ORDER BY 2 DESC,1`
 
 // ReadUsage summarizes the window with the same authority as listing the
