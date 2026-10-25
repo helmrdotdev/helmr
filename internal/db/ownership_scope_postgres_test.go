@@ -22,7 +22,7 @@ func TestOwnershipSurvivingScopePathsRejectAndRollback(t *testing.T) {
 	rejectSchemaRow(t, tx, "23503", `UPDATE session_processes SET computer_lease_epoch=2 WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session)
 	rejectSchemaRow(t, tx, "23503", `UPDATE computer_leases SET worker_host_id=$3 WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer, uuid.NewV7())
 	command := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$3,ARRAY['true'],'{}','',1000,'session',uuidv7())`, f.Environment, command, f.Computer)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO commands(environment_id,id,computer_id,argv,env,stdin,timeout_ms,caller_kind,caller_id) VALUES($1,$2,$3,ARRAY['true'],'{}','',1000,'user',uuidv7())`, f.Environment, command, f.Computer)
 	for _, set := range []string{"environment_id", "computer_id"} {
 		rejectSchemaRow(t, tx, "23503", "UPDATE commands SET "+set+"=$3 WHERE environment_id=$1 AND id=$2", f.Environment, command, uuid.NewV7())
 	}
