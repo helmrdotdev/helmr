@@ -3,11 +3,11 @@ import { A, useLocation, useNavigate } from "@solidjs/router";
 import { createEffect, createMemo, createSignal, on, Show, type JSX } from "solid-js";
 import { environmentChip } from "../features/projects/display";
 import { NewEnvironmentDialog, NewProjectDialog } from "../features/projects/forms";
-import { isProtectedEnvironment, type Project } from "../lib/projects";
+import { type Project } from "../lib/projects";
 import { rememberProjectScope, useScope } from "../lib/scope";
 import { scopeSwitchPath } from "../lib/scope-navigation";
 import { CommandList, type CommandItem } from "../ui/CommandList";
-import { EnvDot, ProtectedBadge } from "../ui/EnvChip";
+import { EnvDot } from "../ui/EnvChip";
 import { Popover } from "../ui/Popover";
 import { Delayed, SkeletonBar } from "../ui/Skeleton";
 import { cx } from "../ui/styles";
@@ -132,7 +132,6 @@ export function ScopeSelector() {
     label: environment.name,
     keywords: environment.environment,
     leading: <EnvDot colorHex={environmentChip(environment)?.colorHex} />,
-    trailing: isProtectedEnvironment(environment) ? <ProtectedBadge /> : undefined,
     current: environment.environment === scope.selectedEnvironmentID(),
     onSelect: () => {
       setOpenEnvironment(false);
@@ -213,7 +212,6 @@ export function ScopeSelector() {
             <>
               <EnvDot colorHex={environment()?.colorHex} />
               <span class="max-w-40 truncate max-sm:max-w-22">{environment()?.name ?? "—"}</span>
-              <Show when={environment()?.protected}><span class="max-sm:hidden"><ProtectedBadge /></span></Show>
             </>
           }
           items={environmentItems()}

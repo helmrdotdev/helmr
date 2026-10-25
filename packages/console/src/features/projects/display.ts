@@ -1,4 +1,4 @@
-import { isProtectedEnvironment, type Environment } from "../../lib/projects";
+import { type Environment } from "../../lib/projects";
 
 export const ENVIRONMENT_COLOR_PRESETS = [
   "#315FCE",
@@ -47,12 +47,11 @@ function colorFromSlug(slug: string): (typeof CUSTOM_ENVIRONMENT_COLOR_PRESETS)[
   return CUSTOM_ENVIRONMENT_COLOR_PRESETS[hash % CUSTOM_ENVIRONMENT_COLOR_PRESETS.length]!;
 }
 
-// The Environment as a confirmation names it: its name, color and protected tag.
-export function environmentChip(environment: Environment | undefined): { name: string; colorHex: string; protected: boolean } | undefined {
+// The Environment as a confirmation names it: its name and color.
+export function environmentChip(environment: Environment | undefined): { name: string; colorHex: string } | undefined {
   if (!environment) return undefined;
   return {
     name: environment.name,
     colorHex: environment.color_hex || defaultEnvironmentColor(environment.environment),
-    protected: isProtectedEnvironment(environment),
   };
 }

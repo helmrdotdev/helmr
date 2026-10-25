@@ -54,7 +54,7 @@ function CreateWorkerGroupDialog(props: { regions: AdminRegion[]; onClose: () =>
     <FormDialog
       title="New worker group"
       submitLabel="Create"
-      busyLabel="Creating..."
+      busyLabel="Creating…"
       busy={submitting()}
       disabled={!regionID() || !name().trim()}
       error={error()}
@@ -102,7 +102,7 @@ function EditWorkerGroupDialog(props: { group: AdminWorkerGroup; onClose: () => 
     <FormDialog
       title={`Edit ${props.group.name}`}
       submitLabel="Save"
-      busyLabel="Saving..."
+      busyLabel="Saving…"
       busy={submitting()}
       error={error()}
       onSubmit={() => void submit()}

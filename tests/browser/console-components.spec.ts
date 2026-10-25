@@ -531,7 +531,7 @@ test("revoking an API key confirms with the key and its Environment", async ({ p
 test("ownership alone does not expose member-management actions", async ({ page }) => {
   await fixture(page);
   await page.goto(`/settings/members?${scope}`);
-  await expect(page.getByText("Manage access permission is required to view and manage members.", { exact: true })).toBeVisible();
+  await expect(page.getByText("You need Manage access permission to see and manage members.", { exact: true })).toBeVisible();
   await expect(page.getByRole("table").getByRole("row")).toHaveCount(4);
   await expect(page.getByRole("table").getByRole("row").filter({ hasText: "Second Member" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Invite members", exact: true })).toHaveCount(0);
@@ -544,23 +544,24 @@ test("members and pending invitations share one table told apart by status", asy
   await expect(page.getByRole("heading", { level: 2 })).toHaveCount(0);
   const table = page.getByRole("table");
   await expect(table).toHaveCount(1);
-  await expect(table.getByRole("columnheader")).toHaveText(["Member", "Ownership and roles", "Status", "Since", "Actions"]);
+  await expect(table.getByRole("columnheader")).toHaveText(["Member", "Email", "Organization roles", "Status", "Since", "Actions"]);
   const rows = table.getByRole("row");
   await expect(rows).toHaveCount(4);
   await expect(rows.nth(1)).toContainText("Local");
-  await expect(rows.nth(1)).toContainText("You");
+  await expect(rows.nth(1)).toContainText("you");
   // Owners cannot be removed; ownership changes separately from ordinary roles.
   await page.getByRole("button", { name: "Actions for Local", exact: true }).click();
-  await expect(page.getByRole("menuitem")).toHaveText(["View access", "Change ownership"]);
+  await expect(page.getByRole("menuitem")).toHaveText(["Grant access", "Change ownership"]);
   await page.keyboard.press("Escape");
-  await expect(rows.nth(1).getByRole("cell").nth(2)).toHaveText("Active");
-  await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Membersecond@example.test");
-  await expect(rows.nth(2).getByRole("cell").nth(2)).toHaveText("Active");
+  await expect(rows.nth(1).getByRole("cell").nth(3)).toHaveText("Active");
+  await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Member");
+  await expect(rows.nth(2).getByRole("cell").nth(1)).toHaveText("second@example.test");
+  await expect(rows.nth(2).getByRole("cell").nth(3)).toHaveText("Active");
   // The invitation follows the members: its invited email is the member, its
   // status Invited.
   await expect(rows.nth(3).getByRole("cell").nth(0)).toHaveText("pending@example.test");
-  await expect(rows.nth(3).getByRole("cell").nth(1)).toHaveText("Not an owner");
-  await expect(rows.nth(3).getByRole("cell").nth(2)).toHaveText("Invited");
+  await expect(rows.nth(3).getByRole("cell").nth(2)).toHaveText("—");
+  await expect(rows.nth(3).getByRole("cell").nth(3)).toHaveText("Invited");
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Load more invitations", exact: true })).toHaveCount(0);
 });
@@ -594,7 +595,7 @@ test("the members table footer loads more invitations and counts every row", asy
   await expect(rows).toHaveCount(5);
   await expect(rows.nth(3).getByRole("cell").first()).toHaveText("pending@example.test");
   await expect(rows.nth(4).getByRole("cell").first()).toHaveText("earlier@example.test");
-  await expect(rows.nth(4).getByRole("cell").nth(2)).toHaveText("Invited");
+  await expect(rows.nth(4).getByRole("cell").nth(3)).toHaveText("Invited");
 });
 
 test("invitations that fail to load leave the members and offer Retry", async ({ page }) => {
@@ -654,20 +655,20 @@ test("ownership changes detect a conflict and retry with a newly chosen value", 
   await dialog.getByRole("button", { name: "Change ownership", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(writes).toEqual([{ is_owner: true, expected_is_owner: false }, { is_owner: false, expected_is_owner: true }]);
-  await expect(page.getByRole("table").getByRole("row").nth(2).getByRole("cell").nth(1)).toHaveText("No organization roles");
+  await expect(page.getByRole("table").getByRole("row").nth(2).getByRole("cell").nth(2)).toHaveText("—");
 });
 
 test("removing a member and revoking an invitation each confirm before the request", async ({ page }) => {
   const state = await fixture(page, true);
   await page.goto(`/settings/members?${scope}`);
   await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove member", exact: true }).click();
   const remove = page.getByRole("dialog", { name: "Remove member" });
   await expect(remove).toContainText("Second Member");
   await remove.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(state.deletions).toEqual([]);
   await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove member", exact: true }).click();
   await remove.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(remove).toHaveCount(0);
   expect(state.deletions).toEqual(["/api/members/membership-2"]);
@@ -723,7 +724,7 @@ test("inviting several members summarizes who was invited and who was not, then 
   await expect(form).toHaveCount(0);
   expect(state.invitations).toEqual([{ emails: ["ada@example.test", "lin@team.test", "second@example.test", "grace@team.test"] }]);
   await expect(results.getByText("Invited 3 people.", { exact: true })).toBeVisible();
-  await expect(results.getByText("Couldn't invite 1:", { exact: true })).toBeVisible();
+  await expect(results.getByText("Could not invite 1:", { exact: true })).toBeVisible();
   await expect(results.getByRole("list", { name: "Not invited" }).getByRole("listitem")).toHaveText(["second@example.test · Already a member"]);
   await expect(results.getByRole("table")).toHaveCount(0);
   await expect(results.getByRole("button", { name: /copy/i })).toHaveCount(0);
@@ -781,7 +782,7 @@ for (const withRole of [false, true]) {
       await form.getByRole("combobox",{name:"Role",exact:true}).click();
       await page.getByRole("option",{name:"Session viewer",exact:true}).click();
       await form.getByRole("button",{name:"Generate key",exact:true}).click();
-      await expect(form).toContainText("Choose a Role and its targets");
+      await expect(form).toContainText("Choose a role and its targets");
       expect(state.apiKeyRequests).toHaveLength(0);
       await form.getByRole("checkbox",{name:"assistant",exact:true}).check();
     }

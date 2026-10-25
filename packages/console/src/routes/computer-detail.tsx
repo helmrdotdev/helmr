@@ -1,5 +1,5 @@
-import { ComputerExecutionControls } from "../features/computers/ComputerExecutionControls";
-import { CopyLinkButton } from "../components/CopyLinkButton";
+import { createComputerControls } from "../features/computers/ComputerExecutionControls";
+import { useCopyLink } from "../components/copyLink";
 import { useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
@@ -20,7 +20,7 @@ import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { DetailLayout, KeyValue, KeyValueList } from "../ui/Panel";
 import { TabPanel, Tabs, type TabItem } from "../ui/Tabs";
-import { EmptyState, isNotFound, NotFoundState, QueryState } from "../ui/QueryState";
+import { EmptyState, isNotFound, NotFoundState, QueryState, NoScopeState } from "../ui/QueryState";
 import { PageSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -105,18 +105,22 @@ export function ComputerDetail() {
   }));
 
   const notFound = () => !computer.data && isNotFound(computer.error);
+  const copyLink = useCopyLink();
+  const controls = createComputerControls({ computer: () => computer.data, scope: resourceScope, onChanged: () => computer.refetch() });
   const environment = () => scopeState.selectedEnvironment()?.name;
   return (
     <Page>
       <PageHeader
         title={notFound() ? "Computer not found" : "Computer"}
         breadcrumb={[{ href: "/computers", label: "Computers" }]}
-        actions={<Show when={!notFound()}><CopyLinkButton /></Show>}
+        menu={notFound() ? undefined : [...controls.items(), copyLink.item()]}
+        menuLabel="Computer actions"
         badge={<Show when={computer.data}>{(current) => <ComputerStatus computer={current()} />}</Show>}
         subtitle={<Show when={computer.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}
       />
 
-      <Show when={hasScope()} fallback={<EmptyState title="Select a project and environment." />}>
+      <copyLink.LiveRegion />
+      <Show when={hasScope()} fallback={<NoScopeState />}>
         <QueryState query={computer} pending={<PageSkeleton label="Loading computer" sections={["Sessions"]} rail="Computer details" />} error={computerErrorMessage}
           notFound={<NotFoundState noun="computer" id={computerID()} environment={environment()} back={{ href: "/computers", label: "Go to computers" }} />}
         >
@@ -137,7 +141,7 @@ export function ComputerDetail() {
               }
             >
               <div>
-                <Show when={current().id} keyed>{(_id) => <ComputerExecutionControls computer={current()} scope={resourceScope()} onChanged={() => computer.refetch()} />}</Show>
+                <div class="mb-4 flex flex-col gap-2 empty:hidden"><controls.Notices /></div>
                 <Tabs id="computer-sections" label="Computer sections" items={tabs(current().secrets.length)} selected={tab()} onSelect={setTab} />
                 <TabPanel tabs="computer-sections" value="sessions" selected={tab()}>
                   <ComputerUsage computerID={current().id} scope={resourceScope()} kind="sessions" />

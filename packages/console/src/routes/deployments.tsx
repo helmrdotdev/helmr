@@ -1,9 +1,10 @@
 import { useMe } from "../lib/me";
+import { useCopyLink } from "../components/copyLink";
+import type { ActionMenuItem } from "../ui/ActionMenu";
 import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { deploymentHref, shortVersion } from "../features/deployments/navigation";
 import { canPromoteDeployment, PromoteDeploymentModal } from "../features/deployments/PromoteDeploymentModal";
-import { defaultEnvironmentColor } from "../features/projects/display";
 import { loadError } from "../lib/error";
 import { hasPermission } from "../lib/auth";
 import { getCurrentDeployment, listDeployments, type Deployment } from "../lib/deployments";
@@ -12,11 +13,10 @@ import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/D
 import { IDText } from "../ui/IDText";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { QueryState } from "../ui/QueryState";
+import { NoScopeState, QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
-import { cx } from "../ui/styles";
 
 const COLUMNS = ["Version", "Status", "Digest", "Created", { label: "Actions", srOnly: true }] as const;
 
@@ -26,13 +26,13 @@ const deploymentsErrorMessage = (error: unknown) =>
 function DeploymentRow(props: {
   deployment: Deployment;
   current: boolean;
-  environmentColor: string;
   canPromote: boolean;
   onPromote: (deployment: Deployment) => void;
+  copyLink: ActionMenuItem;
 }) {
   return (
-    <tr class={cx(props.current && "bg-console-accent-soft/40")}>
-      <td style={props.current ? { "box-shadow": `inset 3px 0 0 ${props.environmentColor}` } : undefined}>
+    <tr>
+      <td>
         <PrimaryLink href={deploymentHref(props.deployment.id)} title={props.deployment.version}>{shortVersion(props.deployment.version)}</PrimaryLink>
       </td>
       <td>
@@ -44,7 +44,7 @@ function DeploymentRow(props: {
       <td><RelativeTime value={props.deployment.created_at} /></td>
       <RowActions
         label={`Actions for ${shortVersion(props.deployment.version)}`}
-        items={props.canPromote ? [{ label: "Promote", onSelect: () => props.onPromote(props.deployment) }] : []}
+        items={[...(props.canPromote ? [{ label: "Promote", onSelect: () => props.onPromote(props.deployment) }] : []), props.copyLink]}
       />
     </tr>
   );
@@ -75,15 +75,14 @@ export function Deployments() {
 
   const items = createMemo(() => deployments.data?.pages.flatMap((page) => page.deployments) ?? []);
   const currentID = createMemo(() => current.data?.id ?? "");
-  const environmentColor = createMemo(() => {
-    const environment = scope.selectedEnvironment();
-    return environment?.color_hex || defaultEnvironmentColor(environment?.environment);
-  });
   const [promoting, setPromoting] = createSignal<Deployment | null>(null);
+  const copyLink = useCopyLink();
 
   return (
     <Page>
       <PageHeader title="Deployments" />
+      <copyLink.LiveRegion />
+      <Show when={enabled()} fallback={<NoScopeState />}>
       <QueryState
         query={deployments}
         pending={<TableSkeleton label="Loading deployments" columns={COLUMNS} minWidth="min-w-180" />}
@@ -105,19 +104,20 @@ export function Deployments() {
                 <DeploymentRow
                   deployment={deployment}
                   current={deployment.id === currentID()}
-                  environmentColor={environmentColor()}
                   canPromote={canPromoteDeployment({
                     permitted: hasPermission(me.data, "deployments.promote", {projectID:projectID(),environmentID:environmentID()}),
                     currentLoaded: current.isSuccess,
                     isCurrent: deployment.id === currentID(),
                   })}
                   onPromote={setPromoting}
+                  copyLink={copyLink.item(deploymentHref(deployment.id))}
                 />
               )}
             </For>
           </DataTable>
         )}
       </QueryState>
+      </Show>
 
       <Show when={promoting()}>
         {(deployment) => (

@@ -1,5 +1,6 @@
-import { A } from "@solidjs/router";
 import { listGrants, listGroups, memberGrantSources, memberHref } from "../lib/permissions";
+import { GrantAccessDialog } from "../features/access/GrantAccessDialog";
+import type { ActionMenuItem } from "../ui/ActionMenu";
 import { useMe } from "../lib/me";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
@@ -19,19 +20,20 @@ import {
   type OrganizationInvitation,
   type OrganizationMember,
 } from "../lib/members";
-import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
+import { Tag } from "../ui/Tag";
 import { ConfirmDialog, Dialog, FormDialog } from "../ui/Dialog";
 import { Field, TextArea } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Notice } from "../ui/Notice";
-import { QueryState } from "../ui/QueryState";
+import { QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, toneClass, ui } from "../ui/styles";
 
-type OwnershipChoice = "owner" | "member";
+export type OwnershipChoice = "owner" | "member";
 const OWNER_ROLE_OPTION: SelectOption<OwnershipChoice> = { value: "owner", label: "Owner" };
 
 const NON_OWNER_ROLE_OPTIONS: SelectOption<OwnershipChoice>[] = [
@@ -119,7 +121,7 @@ function InviteMembersDialog(props: {
       title="Invite members"
       intro="Invitations expire after 7 days."
       submitLabel="Invite"
-      busyLabel="Inviting..."
+      busyLabel="Inviting…"
       busy={submitting()}
       disabled={valid().length === 0 || overLimit()}
       error={error()}
@@ -155,7 +157,7 @@ function InviteMembersDialog(props: {
           </ul>
         </div>
       </Show>
-      <p class={ui.fieldHint}>Invitations create members without access. An access administrator can assign Roles directly or through Groups after they join. Owners manage ownership separately.</p>
+      <p class={ui.fieldHint}>Invitations create members without access. An access administrator can grant roles directly or through groups after they join. Owners manage ownership separately.</p>
     </FormDialog>
   );
 }
@@ -173,7 +175,7 @@ function InvitationResultsDialog(props: { results: InvitationResult[]; onClose: 
         </Show>
         <Show when={failed().length > 0}>
           <div class="grid gap-1.5">
-            <p class="m-0 text-body leading-normal text-console-text">Couldn't invite {failed().length}:</p>
+            <p class="m-0 text-body leading-normal text-console-text">Could not invite {failed().length}:</p>
             <ul class="m-0 grid list-none gap-1 p-0" aria-label="Not invited">
               <For each={failed()}>
                 {(result) => (
@@ -193,26 +195,24 @@ function InvitationResultsDialog(props: { results: InvitationResult[]; onClose: 
   );
 }
 
-// Members and pending invitations in one table: a member's name over their
-// email, or an invitee's email; "Since" is when they joined or were invited.
-// Roles change from the row menu; your own row has none.
-const COLUMNS = ["Member", "Ownership and roles", "Status", "Since", { label: "Actions", srOnly: true }] as const;
+// Members and pending invitations in one table: a member's name, or an
+// invitee's email; "Since" is when they joined or were invited. Ownership and
+// your own row are tags after the name.
+const COLUMNS = ["Member", "Email", "Organization roles", "Status", "Since", { label: "Actions", srOnly: true }] as const;
 
-function MemberCell(props: { name: string; email?: string | null | undefined; you?: boolean; href?: string | undefined }) {
+function MemberCell(props: { name: string; owner?: boolean; you?: boolean; href?: string | undefined }) {
   return (
-    <div class="grid py-1 leading-tight">
-      <span class="flex items-center gap-1.5">
-        <Show when={props.href} fallback={<span class="font-medium text-console-text">{props.name}</span>}>{href => <A href={href()} class="font-medium text-console-accent hover:text-console-accent-hover">{props.name}</A>}</Show>
-        <Show when={props.you}><span class="border border-console-border px-1 font-mono text-micro text-console-muted">You</span></Show>
-      </span>
-      <Show when={props.email && props.email !== props.name}><span class="text-chrome text-console-muted">{props.email}</span></Show>
-    </div>
+    <span class="inline-flex items-center gap-1.5">
+      <Show when={props.href} fallback={<span class="font-mono text-chrome text-console-text">{props.name}</span>}>{href => <PrimaryLink href={href()}>{props.name}</PrimaryLink>}</Show>
+      <Show when={props.owner}><Tag title="Can appoint owners and recover access administration">owner</Tag></Show>
+      <Show when={props.you}><Tag>you</Tag></Show>
+    </span>
   );
 }
 
 // The roles the signed-in account may give a member. An owner may step down to
 // admin on their own row; the server keeps the last owner.
-function assignableRoles(currentUserIsOwner: boolean | undefined, ownRow: boolean): SelectOption<OwnershipChoice>[] {
+export function assignableRoles(currentUserIsOwner: boolean | undefined, ownRow: boolean): SelectOption<OwnershipChoice>[] {
   if (ownRow) return [OWNER_ROLE_OPTION, NON_OWNER_ROLE_OPTIONS[0]!];
   return currentUserIsOwner ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS.filter(option=>option.value==="member");
 }
@@ -221,11 +221,13 @@ function MemberRow(props: {
   member: OrganizationMember;
   canManage: boolean;
   canRemove: boolean;
+  canGrant: boolean;
   organizationRoles: string[];
   isCurrentUser: boolean;
   currentUserIsOwner: boolean | undefined;
   onChangeRole: (member: OrganizationMember) => void;
   onRemove: (member: OrganizationMember) => void;
+  onGrant: (member: OrganizationMember) => void;
 }) {
   const id = () => memberResourceID(props.member);
   const isOwner = () => props.member.is_owner;
@@ -234,17 +236,18 @@ function MemberRow(props: {
   return (
     <>
       <tr>
-        <td><MemberCell name={memberName(props.member)} email={props.member.email} you={props.isCurrentUser} href={props.member.status === "active" && props.canManage ? memberHref(props.member.membership_id) : undefined} /></td>
-        <td><Show when={props.member.is_owner}><span class="font-medium">Owner</span></Show><p class="text-control text-console-muted">{props.organizationRoles.join(" · ") || "No organization roles"}</p></td>
+        <td><MemberCell name={memberName(props.member)} owner={props.member.is_owner} you={props.isCurrentUser} href={props.member.status === "active" && props.canManage ? memberHref(props.member.membership_id) : undefined} /></td>
+        <td class="text-console-muted!">{props.member.email && props.member.email !== memberName(props.member) ? props.member.email : <EmptyCell />}</td>
+        <td><Show when={props.organizationRoles.length} fallback={<EmptyCell />}>{props.organizationRoles.join(" · ")}</Show></td>
         <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
         <td><RelativeTime value={props.member.created_at} /></td>
         <RowActions
           label={`Actions for ${memberName(props.member)}`}
-          items={active() ? [
-            { label: "View access", href: memberHref(props.member.membership_id) },
-            ...(props.currentUserIsOwner ? [{label: "Change ownership", onSelect: () => props.onChangeRole(props.member)}] : []),
-            ...(!isOwner() && props.canRemove ? [{label: "Remove", tone: "danger" as const, onSelect: () => props.onRemove(props.member)}] : []),
-          ] : []}
+          items={active() ? memberMenu({
+            grant: props.canGrant ? () => props.onGrant(props.member) : undefined,
+            changeOwnership: props.currentUserIsOwner ? () => props.onChangeRole(props.member) : undefined,
+            remove: !isOwner() && props.canRemove ? () => props.onRemove(props.member) : undefined,
+          }) : []}
         />
       </tr>
     </>
@@ -260,7 +263,8 @@ function InvitationRow(props: {
   return (
     <tr>
       <td><MemberCell name={props.invitation.email} /></td>
-      <td>{"Not an owner"}</td>
+      <td><EmptyCell /></td>
+      <td><EmptyCell /></td>
       <td><StatusBadge resource="member" status="invited" /></td>
       <td><RelativeTime value={props.invitation.created_at} /></td>
       <RowActions
@@ -271,7 +275,25 @@ function InvitationRow(props: {
   );
 }
 
-function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOption<OwnershipChoice>[]; onClose: () => void; onSave: (role: OwnershipChoice) => Promise<void> }) {
+// The object menu for a member, the same in its list row and by its name.
+export function memberMenu(options: { grant?: (() => void) | undefined; changeOwnership?: (() => void) | undefined; remove?: (() => void) | undefined }): ActionMenuItem[] {
+  return [
+    ...(options.grant ? [{ label: "Grant access", onSelect: options.grant }] : []),
+    ...(options.changeOwnership ? [{ label: "Change ownership", onSelect: options.changeOwnership }] : []),
+    ...(options.remove ? [{ label: "Remove member", tone: "danger" as const, onSelect: options.remove }] : []),
+  ];
+}
+
+export function RemoveMemberDialog(props: { member: OrganizationMember; onClose: () => void; onRemoved: () => Promise<void> | void }) {
+  return (
+    <ConfirmDialog title="Remove member" confirmLabel="Remove" busyLabel="Removing…" tone="danger" target={memberName(props.member)} errorMessage={membersErrorMessage} onClose={props.onClose}
+      onConfirm={async () => { await removeMember(memberResourceID(props.member)); await props.onRemoved(); }}>
+      They lose access to this organization.
+    </ConfirmDialog>
+  );
+}
+
+export function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOption<OwnershipChoice>[]; onClose: () => void; onSave: (role: OwnershipChoice) => Promise<void> }) {
   const [role, setRole] = createSignal<OwnershipChoice>((props.member.is_owner ? "owner" : "member"));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -280,7 +302,7 @@ function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOpti
       title="Change ownership"
       intro={<>Change ownership for <strong>{memberName(props.member)}</strong>. Ownership enables ownership transfer and access recovery; it does not grant workload permissions.</>}
       submitLabel="Change ownership"
-      busyLabel="Changing..."
+      busyLabel="Changing…"
       busy={busy()}
       disabled={role() === (props.member.is_owner ? "owner" : "member")}
       error={error()}
@@ -304,6 +326,7 @@ export function Members() {
   const [inviting, setInviting] = createSignal(false);
   const [inviteResults, setInviteResults] = createSignal<InvitationResult[] | null>(null);
   const [removing, setRemoving] = createSignal<OrganizationMember | null>(null);
+  const [granting, setGranting] = createSignal<OrganizationMember>();
   const [revoking, setRevoking] = createSignal<OrganizationInvitation | null>(null);
 
   const me = useMe();
@@ -371,7 +394,7 @@ export function Members() {
       />
 
       <Show when={!me.isPending && !canManage()}>
-        <Notice tone="info" class="mb-3">Read members permission is required to view members.</Notice>
+        <div class="mb-3"><DeniedState message="You need Read members permission to view members." /></div>
       </Show>
       <Show when={can("invitations.create") && !emailDelivery()}>
         <Notice tone="info" class="mb-3">{NO_EMAIL_DELIVERY}</Notice>
@@ -395,11 +418,13 @@ export function Members() {
                   member={member}
                   canManage={canManage()}
                   canRemove={can("members.remove")}
+                  canGrant={can("assignments.create")}
                   organizationRoles={member.status === "active" ? [...new Set(memberGrantSources(grants.data?.grants ?? [], groups.data?.groups ?? [], member.membership_id).filter(g=>g.target_kind === "organization").map(g=>g.role_name))] : []}
                   isCurrentUser={isCurrentUser(member)}
                   currentUserIsOwner={me.data?.is_owner}
                   onChangeRole={(member) => setChangingRoleID(memberResourceID(member))}
                   onRemove={setRemoving}
+                  onGrant={setGranting}
                 />
               )}
             </For>
@@ -430,31 +455,16 @@ export function Members() {
       </Show>
 
       <Show when={removing()}>
-        {(member) => (
-          <ConfirmDialog
-            title="Remove member"
-            confirmLabel="Remove"
-            busyLabel="Removing..."
-            tone="danger"
-            target={memberName(member())}
-            errorMessage={membersErrorMessage}
-            onClose={() => setRemoving(null)}
-            onConfirm={async () => {
-              await removeMember(memberResourceID(member()));
-              await queryClient.invalidateQueries({ queryKey: ["members"] });
-            }}
-          >
-            They lose access to this organization.
-          </ConfirmDialog>
-        )}
+        {(member) => <RemoveMemberDialog member={member()} onClose={() => setRemoving(null)} onRemoved={() => queryClient.invalidateQueries({ queryKey: ["members"] })} />}
       </Show>
+      <Show when={granting()} keyed>{member => <GrantAccessDialog recipient={{ kind: "member", id: member.membership_id, name: memberName(member) }} onClose={() => setGranting(undefined)} />}</Show>
 
       <Show when={revoking()}>
         {(invitation) => (
           <ConfirmDialog
             title="Revoke invitation"
             confirmLabel="Revoke"
-            busyLabel="Revoking..."
+            busyLabel="Revoking…"
             tone="danger"
             target={invitation().email}
             errorMessage={membersErrorMessage}

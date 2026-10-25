@@ -10,13 +10,12 @@ import { useMe } from "../lib/me";
 import { getPermissionCatalog, isOrganizationRole, listGrants, listRoles, permissionScope, resourceLabel, roleHref, saveRole, type PermissionDefinition, type PermissionRole } from "../lib/permissions";
 import { CheckboxGroup, Field, FormActions, Segmented, TextArea, TextInput } from "../ui/Field";
 import { Notice } from "../ui/Notice";
-import { DangerZone } from "../ui/Panel";
 import { PageHeader } from "../ui/PageHeader";
-import { NotFoundState, QueryState } from "../ui/QueryState";
+import { NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { PageSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
-import { DeleteRoleDialog, MANAGED_ROLE_NOTE } from "./roles";
+import { DeleteRoleDialog, MANAGED_ROLE_NOTE, roleMenu } from "./roles";
 
 type Level = "environment" | "organization";
 type Tab = "permissions" | "assignments";
@@ -61,14 +60,10 @@ export function RoleDetail() {
       breadcrumb={[{ href: "/settings/roles", label: "Roles" }]}
       badge={<Show when={readonly()}><ManagedMark title={MANAGED_ROLE_NOTE} /></Show>}
       subtitle={readonly() ? role()?.description || undefined : undefined}
-      actions={<Show when={allowed() && role()}>
-        {r => <>
-          <Show when={hasPermission(me.data, "roles.create")}><button type="button" class={ui.secondaryButton} onClick={() => navigate(`/settings/roles/new?from=${encodeURIComponent(r().id)}`)}>Duplicate</button></Show>
-          <Show when={hasPermission(me.data, "assignments.create")}><button type="button" class={ui.button} onClick={() => setGranting(true)}>Grant this role</button></Show>
-        </>}
-      </Show>}
+      menu={allowed() && role() ? roleMenu(role()!, { can: permission => hasPermission(me.data, permission), grant: () => setGranting(true), remove: () => setDeleting(true) }) : undefined}
+      menuLabel="Role actions"
     />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Read roles permission is required to view roles.</Notice></Show>}>
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read roles permission to view roles." /></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="role" id={id()} back={{ href: "/settings/roles", label: "Go to roles" }} />}>
         <QueryState query={query} pending={<PageSkeleton label="Loading role" sections={["Permissions"]} />} error={error => loadError(error, "Could not load this role.")}>
           {() => <>
@@ -90,19 +85,8 @@ export function RoleDetail() {
                   }} />}
                 </Show>
               </Show>
-              <Show when={hasPermission(me.data, "roles.delete") && role() && !role()!.builtin_key}>
-                <DangerZone
-                  title="Delete role"
-                  class="mt-6"
-                  action={role()!.grant_count > 0
-                    ? <button type="button" class={ui.secondaryButton} onClick={() => setTab("assignments")}>View assignments</button>
-                    : <button type="button" class={ui.dangerOutlineButton} onClick={() => setDeleting(true)}>Delete role</button>}
-                >
-                  {role()!.grant_count > 0 ? "Remove this role's assignments before deleting it." : "Nobody has this role. Deleting it can't be undone."}
-                </DangerZone>
-              </Show>
             </div>
-            <TabPanel tabs="role-tabs" value="assignments" selected={tab()}><Show when={hasPermission(me.data, "assignments.read")} fallback={<Notice tone="info">The assignments.read permission is required to view this section.</Notice>}>
+            <TabPanel tabs="role-tabs" value="assignments" selected={tab()}><Show when={hasPermission(me.data, "assignments.read")} fallback={<DeniedState message="You need Read assignments permission to view this section." />}>
               <QueryState query={grants} pending={<TableSkeleton label="Loading assignments" columns={["Recipient", "Where", "Agents", "Permissions"]} />} error={error => loadError(error, "Could not load assignments.")}>
                 {() => <AssignmentsTable grants={assignments()} catalog={catalog()} recipient role={false} empty="Nobody has this role" emptyHint="Grant it to give people, groups or API keys these permissions." />}
               </QueryState>

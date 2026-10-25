@@ -2,7 +2,8 @@ import { createEffect, createMemo, createSignal, createUniqueId, For, on, Show, 
 import { environmentChip } from "../features/projects/display";
 import type { Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
-import { EnvChip, ProtectedBadge } from "../ui/EnvChip";
+import { EnvChip } from "../ui/EnvChip";
+import { Tag } from "../ui/Tag";
 import { Panel } from "../ui/Panel";
 import { Select } from "../ui/Select";
 import { cx, ui } from "../ui/styles";
@@ -46,8 +47,8 @@ export function useEditedEnvironment(): EditedEnvironment {
 }
 
 // Marks the Environment the tab is working in.
-function WorkingTag() {
-  return <span class="font-mono text-micro text-console-subtle">working</span>;
+export function WorkingTag() {
+  return <Tag title="The environment you are working in">working</Tag>;
 }
 
 // An Environment-specific settings page: its content, and a rail listing the
@@ -60,10 +61,7 @@ export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; ch
     props.edited.environments().map((environment) => ({
       value: environment.environment,
       label: environment.name,
-      trailing: () => <>
-        <Show when={environmentChip(environment)?.protected}><ProtectedBadge /></Show>
-        <Show when={environment.environment === scope.selectedEnvironmentID()}><WorkingTag /></Show>
-      </>,
+      trailing: () => <Show when={environment.environment === scope.selectedEnvironmentID()}><WorkingTag /></Show>,
     })),
   );
 
@@ -99,7 +97,7 @@ export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; ch
                     checked={selected()}
                     onChange={(event) => { if (event.currentTarget.checked) props.edited.select(environment.environment); }}
                   />
-                  <EnvChip name={chip().name} colorHex={chip().colorHex} protected={chip().protected} />
+                  <EnvChip name={chip().name} colorHex={chip().colorHex} />
                   <Show when={environment.environment === scope.selectedEnvironmentID()} fallback={<span />}>
                     <WorkingTag />
                   </Show>

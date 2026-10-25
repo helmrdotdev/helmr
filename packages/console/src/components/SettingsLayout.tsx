@@ -1,4 +1,5 @@
 import { A, useLocation } from "@solidjs/router";
+import { Icon } from "../ui/Icon";
 import { createUniqueId, For, onMount, type JSX } from "solid-js";
 import { Page } from "../ui/Page";
 import { cx, ui } from "../ui/styles";
@@ -92,7 +93,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
       >
         <summary class="flex h-8 cursor-pointer list-none items-center justify-between border border-console-border bg-console-surface px-3 font-mono text-control [&::-webkit-details-marker]:hidden">
           <span>Settings · {current()?.label ?? "Sections"}</span>
-          <span aria-hidden="true" class="text-console-subtle">▾</span>
+          <span class="text-console-subtle"><Icon name="chevron-down" /></span>
         </summary>
         {nav({ class: "mt-1 flex flex-col gap-3 border border-console-border bg-console-surface p-1.5", onNavigate: () => { focusCompactOnMount = true; closeCompact(); } })}
       </details>

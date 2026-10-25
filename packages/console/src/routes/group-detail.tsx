@@ -1,4 +1,5 @@
 import { useNavigate, useParams } from "@solidjs/router";
+import { AddMembersDialog } from "../features/access/AddMembersDialog";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { ManagedMark } from "../features/access/AccessIcon";
@@ -6,22 +7,20 @@ import { AssignmentsTable } from "../features/access/AssignmentsTable";
 import { GrantAccessDialog } from "../features/access/GrantAccessDialog";
 import { GroupMemberRemovalImpact } from "../features/access/GrantRemovalImpact";
 import { hasPermission } from "../lib/auth";
-import { errorMessage, loadError } from "../lib/error";
+import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { listMembers, type OrganizationMember } from "../lib/members";
 import { ALL_MEMBERS, listGrants, listGroups, listRoles, memberHref, setGroupMember, subjectGrants } from "../lib/permissions";
-import { DataTable, EmptyCell, LoadMore, PrimaryLink, RowActions } from "../ui/DataTable";
-import { ConfirmDialog, FormDialog } from "../ui/Dialog";
+import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
+import { ConfirmDialog } from "../ui/Dialog";
 import { SearchInput } from "../ui/Field";
-import { Notice } from "../ui/Notice";
 import { Toolbar } from "../ui/Page";
-import { DangerZone } from "../ui/Panel";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, NotFoundState, QueryState } from "../ui/QueryState";
+import { EmptyState, NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
-import { ALL_MEMBERS_NOTE, DeleteGroupDialog, GroupNameDialog } from "./groups";
+import { ALL_MEMBERS_NOTE, DeleteGroupDialog, GroupNameDialog, groupMenu } from "./groups";
 
 type Tab = "access" | "members";
 const memberName = (m: OrganizationMember) => m.display_name || m.email || m.membership_id;
@@ -60,22 +59,20 @@ export function GroupDetail() {
       breadcrumb={[{ href: "/settings/groups", label: "Groups" }]}
       badge={<Show when={isAll()}><ManagedMark title={ALL_MEMBERS_NOTE} /></Show>}
       subtitle={isAll() ? "Everyone in the organization, including people who join later. Only agent use on selected agents can be granted here." : undefined}
-      actions={<Show when={allowed() && !missing()}>
-        <Show when={!isAll() && hasPermission(me.data, "groups.update")}><button type="button" class={ui.secondaryButton} onClick={() => setRenaming(true)}>Rename</button></Show>
-        <Show when={hasPermission(me.data, "assignments.create")}><button type="button" class={ui.button} disabled={!isAll() && !group()} onClick={() => setGranting(true)}>Grant access</button></Show>
-      </Show>}
+      menu={allowed() && !missing() && (isAll() || group()) ? groupMenu({ all: isAll(), membersLoaded: !!members.data, can: permission => hasPermission(me.data, permission), grant: () => setGranting(true), add: () => setAdding(true), rename: () => setRenaming(true), remove: () => setDeleting(true) }) : undefined}
+      menuLabel="Group actions"
     />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><Notice tone="info">Read groups permission is required to view groups.</Notice></Show>}>
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read groups permission to view groups." /></Show>}>
       <Show when={!missing()} fallback={<NotFoundState noun="group" id={id()} back={{ href: "/settings/groups", label: "Go to groups" }} />}>
         <QueryState query={groups} pending={<TableSkeleton label="Loading group" columns={["Role", "Where", "Agents", "Permissions"]} />} error={error => loadError(error, "Could not load this group.")}>
           {() => <>
             <Tabs id="group-tabs" label="Group" items={[{ value: "access", label: "Access", count: assignments().length }, { value: "members", label: "Members", count: inGroup().length }]} selected={tab()} onSelect={setTab} />
-            <TabPanel tabs="group-tabs" value="access" selected={tab()}><Show when={hasPermission(me.data, "assignments.read")} fallback={<Notice tone="info">The assignments.read permission is required to view this section.</Notice>}>
+            <TabPanel tabs="group-tabs" value="access" selected={tab()}><Show when={hasPermission(me.data, "assignments.read")} fallback={<DeniedState message="You need Read assignments permission to view this section." />}>
               <QueryState query={grants} pending={<TableSkeleton label="Loading access" columns={["Role", "Where", "Agents", "Permissions"]} />} error={error => loadError(error, "Could not load access.")}>
                 {() => <AssignmentsTable grants={assignments()} catalog={roles.data?.catalog ?? []} empty="No access yet" emptyHint={`Grant a role to give ${isAll() ? "everyone" : "this group's members"} access.`} />}
               </QueryState>
             </Show></TabPanel>
-            <TabPanel tabs="group-tabs" value="members" selected={tab()}><Show when={hasPermission(me.data, "members.read")} fallback={<Notice tone="info">The members.read permission is required to view this section.</Notice>}>
+            <TabPanel tabs="group-tabs" value="members" selected={tab()}><Show when={hasPermission(me.data, "members.read")} fallback={<DeniedState message="You need Read members permission to view this section." />}>
               <Toolbar
                 start={<SearchInput aria-label="Filter members" placeholder="Filter by name or email" value={filter()} onInput={e => setFilter(e.currentTarget.value)} />}
                 end={<Show when={!isAll() && hasPermission(me.data, "groups.add_member")}><button type="button" class={ui.secondaryButton} onClick={() => setAdding(true)}>Add members</button></Show>}
@@ -83,7 +80,7 @@ export function GroupDetail() {
               <QueryState query={members} pending={<TableSkeleton label="Loading members" columns={["Member", "Email", "Other groups"]} />} error={error => loadError(error, "Could not load members.")}>
                 {() => (
                   <Show when={inGroup().length > 0} fallback={<EmptyState title="No members yet" hint="Add people to give them this group's access." />}>
-                    <DataTable columns={["Member", "Email", "Other groups", { label: "Actions", srOnly: true }]} footer={<LoadMore count={visibleMembers().length} noun={{ one: "member", other: "members" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+                    <DataTable columns={["Member", "Email", "Other groups", { label: "Actions", srOnly: true }]} footer={<TableCount count={visibleMembers().length} noun={{ one: "member", other: "members" }} />}>
                       <For each={visibleMembers()}>
                         {member => (
                           <tr>
@@ -99,11 +96,6 @@ export function GroupDetail() {
                 )}
               </QueryState>
             </Show></TabPanel>
-            <Show when={hasPermission(me.data, "groups.delete") && group()}>{g => (
-              <DangerZone title="Delete group" class="mt-6" action={<button type="button" class={ui.dangerOutlineButton} onClick={() => setDeleting(true)}>Delete group</button>}>
-                Removes {g().name} with its members and access. Access from other sources stays.
-              </DangerZone>
-            )}</Show>
           </>}
         </QueryState>
       </Show>
@@ -123,43 +115,4 @@ export function GroupDetail() {
       )}
     </Show>
   </>;
-}
-
-function AddMembersDialog(props: { groupID: string; candidates: OrganizationMember[]; onClose: () => void }) {
-  const cache = useQueryClient();
-  const [chosen, setChosen] = createSignal<string[]>([]);
-  const [busy, setBusy] = createSignal(false); const [error, setError] = createSignal<string | null>(null);
-  return (
-    <FormDialog
-      title="Add members"
-      submitLabel="Add members"
-      busyLabel="Adding…"
-      busy={busy()}
-      disabled={chosen().length === 0}
-      error={error()}
-      onClose={props.onClose}
-      onSubmit={async () => {
-        setBusy(true); setError(null);
-        try {
-          for (const member of chosen()) await setGroupMember(props.groupID, member, true);
-          await Promise.all([cache.invalidateQueries({ queryKey: ["access"] }), cache.invalidateQueries({ queryKey: ["me"] })]);
-          props.onClose();
-        } catch (cause) { setError(errorMessage(cause)); await cache.invalidateQueries({ queryKey: ["access"] }); } finally { setBusy(false); }
-      }}
-    >
-      <Show when={props.candidates.length > 0} fallback={<p class={ui.muted}>Every active member is already in this group.</p>}>
-        <div class="grid max-h-72 gap-1.5 overflow-y-auto">
-          <For each={props.candidates}>
-            {member => (
-              <label class="flex cursor-pointer items-center gap-2 text-control text-console-text">
-                <input type="checkbox" class="accent-console-accent" checked={chosen().includes(member.membership_id)} disabled={busy()} onChange={e => setChosen(ids => e.currentTarget.checked ? [...ids, member.membership_id] : ids.filter(v => v !== member.membership_id))} />
-                <span>{memberName(member)}</span>
-                <Show when={member.email && member.email !== memberName(member)}><span class="text-console-muted">{member.email}</span></Show>
-              </label>
-            )}
-          </For>
-        </div>
-      </Show>
-    </FormDialog>
-  );
 }

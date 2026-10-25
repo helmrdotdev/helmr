@@ -9,7 +9,7 @@ import { useScope } from "../lib/scope";
 import { getAsk, sessionConsolePath, type AskAddress } from "../lib/sessions";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState, isMissingSessionRead, NotFoundState, QueryState } from "../ui/QueryState";
+import { isMissingSessionRead, NotFoundState, QueryState, NoScopeState } from "../ui/QueryState";
 import { PageSkeleton } from "../ui/Skeleton";
 
 export function QuestionDetail() {
@@ -32,7 +32,7 @@ function QuestionDetailContent(props: { address: AskAddress }) {
       { href: "/sessions", label: "Sessions" },
       { href: sessionConsolePath(props.address.sessionID), label: "Session" },
     ]} />
-    <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
+    <Show when={enabled()} fallback={<NoScopeState />}>
       <QueryState query={ask} pending={<PageSkeleton label="Loading question" sections={["Question"]} rail="Question details" />} error={(error) => loadError(error, "The question could not be loaded.", { forbidden: "You do not have permission to view this question." })}
         missing={missing}
         notFound={<NotFoundState noun="question" environment={scope.selectedEnvironment()?.name} back={{ href: sessionConsolePath(props.address.sessionID), label: "Go to session" }} />}

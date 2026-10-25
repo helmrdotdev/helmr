@@ -17,13 +17,13 @@ import { List, ListItem } from "../ui/List";
 import { Page } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { Panel } from "../ui/Panel";
-import { EmptyState, ErrorState } from "../ui/QueryState";
+import { EmptyState, ErrorState, NoScopeState } from "../ui/QueryState";
 import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, ui } from "../ui/styles";
 
-const overviewError = (error: unknown) => loadError(error, "Could not load what is waiting in this environment.", {forbidden:"You do not have run or Agent connection access in this environment. View your access in My account or ask an access administrator for a Role."});
+const overviewError = (error: unknown) => loadError(error, "Could not load what is waiting in this environment.", {forbidden:"You do not have run or agent connection access in this environment. View your access in My account or ask an access administrator for a role."});
 
 type Filter = "all" | AttentionKind;
 
@@ -111,16 +111,17 @@ function DeploymentContext() {
 function QueueItem(props: { item: AttentionItem }) {
   return (
     <ListItem line class="max-sm:flex-wrap max-sm:gap-y-1.5 max-sm:py-2" label={`${KIND_LABELS[props.item.kind]}: ${summary(props.item)}`}>
-        <StatusBadge resource="attention" status={props.item.kind} />
+        {/* Fixed widths for the kind, context, time and action keep every row's parts in columns. */}
+        <span class="w-22 shrink-0"><StatusBadge resource="attention" status={props.item.kind} /></span>
         <span class="min-w-0 flex-1 truncate text-body max-sm:basis-full max-sm:order-first max-sm:line-clamp-2 max-sm:whitespace-normal max-sm:wrap-anywhere" title={summary(props.item)}>{summary(props.item)}</span>
-        <span class="flex shrink-0 items-center gap-1.5 font-mono text-chrome text-console-muted">
+        <span class="flex w-60 shrink-0 items-center gap-1.5 truncate font-mono text-chrome text-console-muted max-sm:w-auto">
           <A class="text-console-accent hover:text-console-accent-hover" href={agentHref(props.item.agent)}>{props.item.agent}</A>
           <Show when={props.item.session_id}>
             {(session) => <>· <IDText value={session()} mode="link" href={sessionConsolePath(session())} /></>}
           </Show>
         </span>
-        <span class="shrink-0 font-mono text-chrome"><RelativeTime value={props.item.at} /></span>
-        <A class={cx(ui.compactButton, "ml-auto")} href={actionHref(props.item)}>{ACTIONS[props.item.kind]}</A>
+        <span class="w-28 shrink-0 text-right font-mono text-chrome max-sm:w-auto max-sm:text-left"><RelativeTime value={props.item.at} /></span>
+        <span class="flex w-24 shrink-0 justify-end max-sm:ml-auto max-sm:w-auto"><A class={ui.compactButton} href={actionHref(props.item)}>{ACTIONS[props.item.kind]}</A></span>
     </ListItem>
   );
 }
@@ -190,7 +191,7 @@ export function Overview() {
   return (
     <Page>
       <PageHeader title="Overview" meta={<DeploymentContext />} />
-      <Show when={enabled()} fallback={<EmptyState title="No environment selected" hint={<>Select an accessible project and environment. If none are available, ask an access administrator to assign a Role. <A href="/settings/account" class="underline">View your access</A>.</>} />}>
+      <Show when={enabled()} fallback={<NoScopeState hint={<>If none are available, ask an access administrator for a role. <A href="/settings/account" class="underline">View your access</A>.</>} />}>
         <Switch>
           <Match when={attention.isError && !attention.data}>
             <ErrorState message={overviewError(attention.error)} details={errorDetails(attention.error)} onRetry={() => void attention.refetch()} />
@@ -200,7 +201,7 @@ export function Overview() {
           </Match>
           <Match when={setUp()}>
             <div class={ui.sectionStack}>
-              <Show when={hasPermission(me.data, "deployments.publish", ids()) && hasPermission(me.data, "deployments.promote", ids())} fallback={<EmptyState title="No deployed agents are available to you in this environment." hint="Ask a member who can publish and activate deployments to make an Agent available." />}><SetUpPanel projectID={ids().projectID} environmentID={ids().environmentID} /></Show>
+              <Show when={hasPermission(me.data, "deployments.publish", ids()) && hasPermission(me.data, "deployments.promote", ids())} fallback={<EmptyState title="No deployed agents are available to you in this environment." hint="Ask a member who can publish and activate deployments to make an agent available." />}><SetUpPanel projectID={ids().projectID} environmentID={ids().environmentID} /></Show>
               <Show when={attention.data && total() > 0}>
                 <Queue items={attention.data!.items} counts={attention.data!.counts} />
               </Show>

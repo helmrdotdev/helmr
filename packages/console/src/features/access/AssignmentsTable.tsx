@@ -3,7 +3,7 @@ import { A } from "@solidjs/router";
 import { useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { ALL_MEMBERS, grantAgents, grantRecipientName, grantWhere, groupHref, memberHref, permissionNames, removeGrant, roleHref, type PermissionDefinition, type RoleGrant } from "../../lib/permissions";
-import { DataTable, EmptyCell, LoadMore, RowActions } from "../../ui/DataTable";
+import { DataTable, EmptyCell, TableCount, RowActions } from "../../ui/DataTable";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { EmptyState } from "../../ui/QueryState";
 import { ui } from "../../ui/styles";
@@ -43,7 +43,7 @@ export function AssignmentsTable(props: {
   return (
     <>
       <Show when={props.grants.length > 0} fallback={<EmptyState title={props.empty} hint={props.emptyHint} />}>
-        <DataTable columns={columns()} minWidth="min-w-180" footer={<LoadMore count={props.grants.length} noun={{ one: "assignment", other: "assignments" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}>
+        <DataTable columns={columns()} minWidth="min-w-180" footer={<TableCount count={props.grants.length} noun={{ one: "assignment", other: "assignments" }} />}>
           <For each={props.grants}>
             {grant => (
               <tr>

@@ -8,20 +8,23 @@ import { listTemplateDefinitions, templateResources } from "../lib/definitions";
 import { loadError } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import { listComputers, type ComputerListItem } from "../lib/computers";
-import { DataTable, EmptyCell, LoadMore } from "../ui/DataTable";
+import { DataTable, EmptyCell, LoadMore, RowActions } from "../ui/DataTable";
+import type { ActionMenuItem } from "../ui/ActionMenu";
+import { useCopyLink } from "../components/copyLink";
+import { createComputerControls } from "../features/computers/ComputerExecutionControls";
 import { IDText } from "../ui/IDText";
 import { type LinkTabItem } from "../ui/Tabs";
 import { QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 
-const COMPUTER_COLUMNS = ["Computer", "Status", "Key", "Template", "Last activity", "Created"] as const;
+const COMPUTER_COLUMNS = ["Computer", "Status", "Key", "Template", "Last activity", "Created", { label: "Actions", srOnly: true }] as const;
 const TEMPLATE_COLUMNS = ["Template", "Resources"] as const;
 
 const computersErrorMessage = (error: unknown) =>
   loadError(error, "Could not load computers.", { forbidden: "You do not have permission to view computers." });
 
-function ComputerRow(props: { computer: ComputerListItem }) {
+function ComputerRow(props: { computer: ComputerListItem; menu: ActionMenuItem[] }) {
   return (
     <tr>
       <td><IDText value={props.computer.id} mode="link" href={computerHref(props.computer.id)} /></td>
@@ -34,6 +37,7 @@ function ComputerRow(props: { computer: ComputerListItem }) {
       <td><code>{props.computer.template}</code></td>
       <td><RelativeTime value={props.computer.last_activity_at} /></td>
       <td><RelativeTime value={props.computer.created_at} /></td>
+      <RowActions label={`Actions for ${props.computer.id}`} items={props.menu} />
     </tr>
   );
 }
@@ -69,8 +73,13 @@ export function ComputerList() {
     retry: false,
   }));
   const items = createMemo(() => computers.data?.pages.flatMap((page) => page.computers) ?? []);
+  const copyLink = useCopyLink();
+  const controls = createComputerControls({ computer: () => undefined, scope: () => ({ projectID: projectID(), environmentID: environmentID() }), onChanged: () => computers.refetch() });
 
   return (
+    <>
+    <copyLink.LiveRegion />
+    <div class="mb-3 flex flex-col gap-2 empty:hidden"><controls.Feedback /></div>
     <QueryState
       query={computers}
       pending={<TableSkeleton label="Loading computers" columns={COMPUTER_COLUMNS} minWidth="min-w-190" />}
@@ -87,10 +96,11 @@ export function ComputerList() {
           minWidth="min-w-190"
           footer={<LoadMore count={items().length} noun={{ one: "computer", other: "computers" }} hasMore={computers.hasNextPage} loading={computers.isFetchingNextPage} failed={computers.isFetchNextPageError} onLoadMore={() => void computers.fetchNextPage()} />}
         >
-          <For each={items()}>{(computer) => <ComputerRow computer={computer} />}</For>
+          <For each={items()}>{(computer) => <ComputerRow computer={computer} menu={[...controls.items(computer), copyLink.item(computerHref(computer.id))]} />}</For>
         </DataTable>
       )}
     </QueryState>
+    </>
   );
 }
 

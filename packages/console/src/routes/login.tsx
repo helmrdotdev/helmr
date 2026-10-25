@@ -30,11 +30,11 @@ export function Login() {
   const [debugURL, setDebugURL] = createSignal<string | null>(null);
 
   const buttonText = () => {
-    if (busy()) return "Sending...";
+    if (busy()) return "Sending…";
     return "Send sign-in link";
   };
   const githubButtonText = () => {
-    if (githubBusy()) return "Redirecting...";
+    if (githubBusy()) return "Redirecting…";
     return "Continue with GitHub";
   };
 

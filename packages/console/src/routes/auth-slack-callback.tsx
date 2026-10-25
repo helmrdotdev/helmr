@@ -16,7 +16,7 @@ const MESSAGES = {
 
 // What to do next, by what went wrong.
 const NEXT_STEPS: Record<string, string> = {
-  forbidden: "Ask a manager of this Agent to check the agent’s Slack connection.",
+  forbidden: "Ask a manager of this agent to check the agent’s Slack connection.",
   service_unavailable: "Ask an administrator to configure the Slack integration, then start authorization again.",
 };
 const DEFAULT_NEXT_STEP = "Sign in with the account and organization that started this connection, then start authorization again from the agent’s Slack connection.";
@@ -44,7 +44,7 @@ export function AuthSlackCallback() {
     }
   });
   return (
-    <Show when={failure()} fallback={<AuthWorking>Connecting Slack...</AuthWorking>}>
+    <Show when={failure()} fallback={<AuthWorking>Connecting Slack…</AuthWorking>}>
       {(current) => (
         <AuthWindow>
           <AuthError

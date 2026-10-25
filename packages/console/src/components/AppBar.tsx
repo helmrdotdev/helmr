@@ -63,8 +63,8 @@ function MenuIcon(props: { open: boolean }) {
 
 // The one header bar for the console, settings, account and admin areas: what
 // leads (scope selector or brand), the section tabs, and the trailing controls.
-// A protected Environment draws a 2px line in its color along the top edge of the
-// bar, inside its 40px height. Below 720px the section tabs move into a menu
+// The tab's Environment draws a 2px line in its color along the top edge of the
+// bar, inside its 40px height, so the Environment is always in view. Below 720px the section tabs move into a menu
 // drawer with 44px targets; the bar keeps its leading and trailing controls.
 // `drawerEnd` adds content below the sections and receives a function that
 // closes the drawer.
@@ -73,7 +73,7 @@ export function AppBar(props: {
   nav?: readonly NavItem[];
   navLabel?: string;
   trailing?: JSX.Element;
-  protectedColor?: string | undefined;
+  environmentColor?: string | undefined;
   drawerEnd?: (close: () => void) => JSX.Element;
 }) {
   const location = useLocation();
@@ -93,8 +93,8 @@ export function AppBar(props: {
   return (
     <div class="sticky top-0 z-30">
       <header class="relative flex h-10 items-center gap-3 border-b border-console-border-strong gradient-bar px-5 max-[860px]:px-3">
-        <Show when={props.protectedColor}>
-          {(color) => <div class="pointer-events-none absolute inset-x-0 top-0 h-0.5" style={{ "background-color": color() }} aria-hidden="true" data-protected-stripe />}
+        <Show when={props.environmentColor}>
+          {(color) => <div class="pointer-events-none absolute inset-x-0 top-0 h-0.5" style={{ "background-color": color() }} aria-hidden="true" data-environment-stripe />}
         </Show>
         <Show when={props.nav?.length}>
           <button

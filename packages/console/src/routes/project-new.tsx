@@ -53,7 +53,7 @@ export function ProjectNew() {
           <Show when={signOut.error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
           <Show when={error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
           <button type="submit" class={ui.button} disabled={submitting() || signOut.busy() || !draft.valid()}>
-            {submitting() ? "Creating..." : "Create project"}
+            {submitting() ? "Creating…" : "Create project"}
           </button>
           <Show when={!firstProject()}>
             <AuthLink onClick={() => navigate(destination())}>Cancel</AuthLink>

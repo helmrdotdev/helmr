@@ -47,6 +47,11 @@ function TechnicalDetails(props: { details: string | undefined }) {
   );
 }
 
+// A page that needs a scope the tab does not have yet: one sentence everywhere.
+export function NoScopeState(props: { project?: boolean; hint?: JSX.Element }) {
+  return <EmptyState title={props.project ? "Select a project." : "Select a project and environment."} hint={props.hint} />;
+}
+
 // A read the account is not allowed to make: a neutral sentence and no Retry,
 // since retrying cannot change the answer.
 export function DeniedState(props: { message: string }) {

@@ -1,21 +1,23 @@
 import { EnvironmentAccess } from "../features/access/EnvironmentAccess";
+import { WorkingTag } from "../components/EnvironmentSelector";
 import { useMe } from "../lib/me";
 import { useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
+import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS, normalizeEnvironmentColor } from "../features/projects/display";
 import { NewEnvironmentDialog } from "../features/projects/forms";
 import { errorMessage } from "../lib/error";
 import { hasPermission } from "../lib/auth";
-import { isProtectedEnvironment, updateEnvironment, type Environment } from "../lib/projects";
+import { updateEnvironment, type Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
-import { DataTable, EmptyCell, RowActions } from "../ui/DataTable";
+import { DataTable, RowActions } from "../ui/DataTable";
 import { FormDialog } from "../ui/Dialog";
 import { EnvChip } from "../ui/EnvChip";
 import { ColorField, Field, TextInput } from "../ui/Field";
 import { IDText } from "../ui/IDText";
 import { PageHeader } from "../ui/PageHeader";
-import { EmptyState } from "../ui/QueryState";
-import { StatusBadge } from "../ui/StatusBadge";
+import { NoScopeState } from "../ui/QueryState";
+import { RelativeTime } from "../ui/RelativeTime";
+import { Tag } from "../ui/Tag";
 import { ui } from "../ui/styles";
 import { useClipboard } from "../ui/useClipboard";
 
@@ -25,7 +27,7 @@ function EditEnvironmentDialog(props: {
   onSaved: () => Promise<void>;
 }) {
   const [name, setName] = createSignal(props.env.name);
-  const [colorHex, setColorHex] = createSignal(normalizeEnvironmentColor(props.env.color_hex ?? "#64748B"));
+  const [colorHex, setColorHex] = createSignal(normalizeEnvironmentColor(props.env.color_hex ?? defaultEnvironmentColor(props.env.environment)));
   const [submitting, setSubmitting] = createSignal(false);
   const [formError, setFormError] = createSignal<string | null>(null);
 
@@ -47,7 +49,7 @@ function EditEnvironmentDialog(props: {
     <FormDialog
       title={`Edit ${props.env.name}`}
       submitLabel="Save"
-      busyLabel="Saving..."
+      busyLabel="Saving…"
       busy={submitting()}
       disabled={!name().trim()}
       error={formError()}
@@ -62,14 +64,6 @@ function EditEnvironmentDialog(props: {
       </Field>
       <ColorField value={colorHex()} onChange={setColorHex} presets={ENVIRONMENT_COLOR_PRESETS} ariaLabel="Environment color" />
     </FormDialog>
-  );
-}
-
-function EnvironmentStatus(props: { env: Environment; selected: boolean }) {
-  return (
-    <Show when={props.selected} fallback={<EmptyCell />}>
-      <StatusBadge resource="environment" status="working" />
-    </Show>
   );
 }
 
@@ -98,15 +92,20 @@ export function Environments() {
         }
       />
 
-      <Show when={project()} fallback={<EmptyState title="No project selected." />}>
-        <DataTable columns={["Name", "Status", "Environment ID", "Default", { label: "Actions", srOnly: true }]} minWidth="min-w-200">
+      <Show when={project()} fallback={<NoScopeState project />}>
+        <DataTable columns={["Name", "Environment ID", "Created", { label: "Actions", srOnly: true }]}>
           <For each={environments()}>
             {(env) => (
               <tr>
-                <td><EnvChip name={env.name} colorHex={env.color_hex} protected={isProtectedEnvironment(env)} /></td>
-                <td><EnvironmentStatus env={env} selected={scope.selectedEnvironmentID() === env.environment} /></td>
+                <td>
+                  <span class="inline-flex items-center gap-2">
+                    <EnvChip name={env.name} colorHex={env.color_hex} />
+                    <Show when={scope.selectedEnvironmentID() === env.environment}><WorkingTag /></Show>
+                    <Show when={env.is_default}><Tag title="Opens when no environment is chosen">default</Tag></Show>
+                  </span>
+                </td>
                 <td><IDText value={env.environment} /></td>
-                <td><Show when={env.is_default} fallback={<EmptyCell />}><StatusBadge resource="environment" status="default" /></Show></td>
+                <td><RelativeTime value={env.created_at} /></td>
                 <RowActions
                   label={`Actions for ${env.name}`}
                   items={[

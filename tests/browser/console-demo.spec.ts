@@ -14,7 +14,7 @@ async function selectDemoEnvironment(page: Page) {
   const demoRow = page.getByRole("row").filter({ hasText: "Demo" });
   await demoRow.getByRole("button", { name: "Actions for Demo", exact: true }).click();
   await page.getByRole("menuitem", { name: "Use", exact: true }).click();
-  await expect(demoRow.getByText("Working", { exact: true })).toBeVisible();
+  await expect(demoRow.getByText("working", { exact: true })).toBeVisible();
 }
 
 test("console demo shows its waiting work on the Overview and retained history in current navigation", async ({ page }) => {
@@ -46,7 +46,7 @@ test("console demo shows its waiting work on the Overview and retained history i
   }
   await page.getByRole("tab", { name: "Triggers", exact: true }).click();
   await expect(page.getByRole("tabpanel", { name: "Triggers" })).toContainText("daily");
-  await navigation.getByRole("link", { name: "Sessions", exact: true }).click();
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
   await expect(page).toHaveURL("/sessions");
   for (const id of ["000000000701", "000000000702", "000000000703", "000000000704"]) {
     await expect(page.getByRole("link", { name: id, exact: true })).toBeVisible();

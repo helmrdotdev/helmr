@@ -1,4 +1,6 @@
 import { For, Show } from "solid-js";
+import { Tag } from "../../ui/Tag";
+import { Icon } from "../../ui/Icon";
 import type { AskState } from "../../../../../sdk/typescript/src/contract";
 import type { ChoiceQuestion } from "../../../../../sdk/typescript/src/question";
 import type { Content } from "../../../../../sdk/typescript/src/content";
@@ -62,11 +64,11 @@ export function Question(props: { ask: AskState; address: AskAddress }) {
         <ul class="m-0 flex list-none flex-col gap-2.5 p-0" aria-label="Options">
           <For each={(question() as ChoiceQuestion).options}>{option => (
             <li class="grid grid-cols-[16px_minmax(0,1fr)] gap-x-2" data-selected={selected(option.id) ? "" : undefined}>
-              <span aria-hidden="true" class="pt-px font-mono text-chrome text-console-accent">{selected(option.id) ? "✓" : ""}</span>
+              <span class="pt-0.5 text-console-accent">{selected(option.id) ? <Icon name="check" /> : null}</span>
               <div class="grid gap-0.5">
                 <span class="flex flex-wrap items-center gap-2">
                   <span class={answered() && !selected(option.id) ? "text-console-muted" : "font-medium text-console-text"}>{option.label}</span>
-                  <Show when={selected(option.id)}><span class="border border-console-accent/40 bg-console-info-bg px-1.5 font-mono text-micro text-console-accent">Selected</span></Show>
+                  <Show when={selected(option.id)}><Tag>selected</Tag></Show>
                 </span>
                 <Show when={option.description}><p class="m-0 whitespace-pre-wrap break-words text-console-muted">{option.description}</p></Show>
               </div>
