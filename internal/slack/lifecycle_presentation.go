@@ -108,7 +108,7 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 			}
 			caller := session.Caller{Kind: "user", ID: user, SlackThreadID: target.Thread}
 			if action == "sleep" && computerID != nil {
-				if err := access.Check(ctx, tx, "user", user, target.Environment, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+				if err := access.Check(ctx, tx, "user", user, target.Environment, uuid.Nil(), auth.PermissionComputersHibernate); err != nil {
 					return "", nil, err
 				}
 				scope, err = session.ReadComputerExecutionScope(ctx, tx, target.Environment, *computerID)

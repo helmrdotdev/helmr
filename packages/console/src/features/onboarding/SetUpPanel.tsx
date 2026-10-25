@@ -51,7 +51,7 @@ function ModelKey(props: { projectID: string; environmentID: string; provider: P
     retry: false,
   }));
   const secret = () => secrets.data?.secrets.find((item) => item.secret === provider().secret);
-  const canWrite = () => permission.has("secrets.write", { projectID: props.projectID, environmentID: props.environmentID });
+  const canWrite = () => permission.has("secrets.create", { projectID: props.projectID, environmentID: props.environmentID });
   const [replacing, setReplacing] = createSignal(false);
   const [value, setValue] = createSignal("");
   const [saving, setSaving] = createSignal(false);

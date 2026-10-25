@@ -31,7 +31,7 @@ func MemberPermissions(ctx context.Context, database db.TxBeginner, caller auth.
 		if err != nil {
 			return err
 		}
-		admin := actor.HasPermission(auth.CapabilityAccessManage, auth.Scope{OrgID: actor.OrgID})
+		admin := actor.HasPermission(auth.PermissionAssignmentsRead, auth.Scope{OrgID: actor.OrgID})
 		if actor.MemberID != member && !admin {
 			return ErrDenied
 		}
@@ -64,7 +64,7 @@ func MemberPermissions(ctx context.Context, database db.TxBeginner, caller auth.
   LEFT JOIN agents a ON (a.environment_id,a.id)=(g.environment_id,g.agent_id)
   LEFT JOIN permission_groups pg ON (pg.org_id,pg.id)=(g.org_id,g.group_id)
   WHERE ($4='' OR p.slug=$4) AND ($5='' OR e.slug=$5)
-  AND ($6='' OR a.key=$6 OR (g.environment_id IS NOT NULL AND g.agent_id IS NULL)) ORDER BY g.id`, auth.CapabilityIDsForResource("agents"), caller.OrgID, member, filter.Project, filter.Environment, filter.Agent)
+  AND ($6='' OR a.key=$6 OR (g.environment_id IS NOT NULL AND g.agent_id IS NULL)) ORDER BY g.id`, auth.AgentPermissionIDs(), caller.OrgID, member, filter.Project, filter.Environment, filter.Agent)
 		if err != nil {
 			return err
 		}
@@ -76,17 +76,6 @@ func MemberPermissions(ctx context.Context, database db.TxBeginner, caller auth.
 				return err
 			}
 			s.data.Agent = s.agent
-			caps := map[string]bool{}
-			for _, p := range s.data.Permissions {
-				for _, c := range auth.IncludedCapabilities(auth.Permission(p)) {
-					caps[string(c)] = true
-				}
-			}
-			s.data.IncludedPermissions = []string{}
-			for c := range caps {
-				s.data.IncludedPermissions = append(s.data.IncludedPermissions, c)
-			}
-			sort.Strings(s.data.IncludedPermissions)
 			sources = append(sources, s)
 		}
 		err = rows.Err()
@@ -103,8 +92,8 @@ func MemberPermissions(ctx context.Context, database db.TxBeginner, caller auth.
 					visible = true
 				}
 				if s.environment != "" && s.agent == "" {
-					for _, permission := range s.data.IncludedPermissions {
-						if auth.CapabilityResourceType(auth.Permission(permission)) == "agents" {
+					for _, permission := range s.data.Permissions {
+						if auth.IsAgentPermission(auth.Permission(permission)) {
 							visible = true
 						}
 					}
@@ -143,7 +132,7 @@ func MemberPermissions(ctx context.Context, database db.TxBeginner, caller auth.
 					continue
 				}
 				item.Sources = append(item.Sources, s.data)
-				for _, c := range s.data.IncludedPermissions {
+				for _, c := range s.data.Permissions {
 					caps[c] = true
 				}
 			}

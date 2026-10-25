@@ -75,7 +75,7 @@ func (s *Server) getComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionRunMetadataRead, scope) {
+	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}
@@ -183,7 +183,7 @@ func (s *Server) updateComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersUpdate, scope) {
+	if !principal.HasPermission(auth.PermissionComputersUpdateRetention, scope) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}

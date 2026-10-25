@@ -184,6 +184,9 @@ func newMemberFixture(t *testing.T) memberFixture {
 		if role == "owner" || role == "admin" {
 			dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO role_grants(id,org_id,member_id,role_id) SELECT $1,$2,$3,id FROM roles WHERE org_id=$2 AND builtin_key='access_administrator'`, uuid.NewV7(), orgID, m.MemberID)
 		}
+		if role == "owner" {
+			dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO role_grants(id,org_id,member_id,role_id) SELECT $1,$2,$3,id FROM roles WHERE org_id=$2 AND builtin_key='organization_structure_administrator'`, uuid.NewV7(), orgID, m.MemberID)
+		}
 		return m
 	}
 	keys, err := auth.NewKeys(bytes.Repeat([]byte{7}, auth.RootKeySize))

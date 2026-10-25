@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -47,6 +48,10 @@ func (e DeletedAgentsError) Unwrap() error { return ErrAgentDeleted }
 // Discovery takes earlier-order locks first, then the Environment and Agent fences.
 // A new earlier-order dependency rolls back rather than inverting lock order.
 func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, scope auth.Scope, key, revision string, restore, dryRun bool) (AgentChange, error) {
+	permission := auth.PermissionAgentsDelete
+	if restore {
+		permission = auth.PermissionAgentsRestore
+	}
 	result := AgentChange{Blockers: []session.AgentDeletionBlocker{}, Warnings: []string{}}
 	if p.Kind != auth.PrincipalKindSession {
 		return result, ErrPermissionRequired
@@ -71,10 +76,10 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, 
 			return err
 		}
 		scope.AgentID = id.String()
-		if err := authorize(current, scope, auth.CapabilityAgentsManage); err != nil {
+		if err := authorize(current, scope, permission); err != nil {
 			return err
 		}
-		grants, err := org.LockAgentGrantCleanup(ctx, tx, m, env, id)
+		grants, err := org.LockAgentGrantCleanup(ctx, tx, m, env, id, restore)
 		if err != nil {
 			return err
 		}
@@ -84,7 +89,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, 
 		}
 		var disconnection *slack.ConnectionDisconnection
 		if connection != nil && !restore {
-			disconnection, err = slack.LockConnectionDisconnection(ctx, tx, p.OrgID, p.UserID, env, *connection)
+			disconnection, err = slack.LockAgentDeletionDisconnection(ctx, tx, p.OrgID, p.UserID, env, id, *connection)
 			if err != nil {
 				return err
 			}
@@ -110,10 +115,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, 
 		if err != nil {
 			return err
 		}
-		if err = authorize(current, scope, auth.CapabilityAgentsManage); err != nil {
-			return err
-		}
-		if err = m.Authorize(ctx, tx); err != nil {
+		if err = authorize(current, scope, permission); err != nil {
 			return err
 		}
 		if !dryRun && revision != strconv.FormatInt(result.Revision, 10) {
@@ -146,7 +148,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, 
 			}
 			broad := scope
 			broad.AgentID = ""
-			if !current.HasPermission(auth.CapabilityAgentsManage, broad) {
+			if !current.HasPermission(permission, broad) {
 				result.Warnings = append(result.Warnings, "Deletion removes your selected Agent management access. A manager with surviving broad access, or an owner using access recovery, must inspect status or restore it afterward.")
 			}
 			if !visible {
@@ -182,6 +184,9 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, p auth.Principal, 
 		e := result.Effects
 		return audit.Append(ctx, tx, audit.Event{Actor: m.Actor, OrgID: p.OrgID, EnvironmentID: env, Action: action, TargetKind: "agent", TargetID: id, Details: audit.AgentChangeDetails{Revision: result.Revision, EdgesRemoved: e.SelectedAgentEdgesRemoved, AssignmentsRemoved: e.IneffectiveAssignmentsRemoved, MixedPreserved: e.MixedAssignmentsPreserved, ConnectionID: e.SlackConnectionDisconnected, ActivationsSealed: e.TriggerActivationsSealed}})
 	})
+	if errors.Is(err, access.ErrDenied) || slack.IsInstallationDenied(err) {
+		err = ErrPermissionRequired
+	}
 	if err != nil {
 		result.Changed = false
 	}

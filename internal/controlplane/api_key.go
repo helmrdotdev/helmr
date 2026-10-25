@@ -55,7 +55,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 		after = &identity.APIKeyPosition{CreatedAt: createdAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, hasMore, err := identity.ListAPIKeys(r.Context(), s.tx, principal, scope, filter, apiKeyListLimit, after)
+	rows, hasMore, metadata, err := identity.ListAPIKeys(r.Context(), s.tx, principal, scope, filter, apiKeyListLimit, after)
 	if err != nil {
 		writeError(w, identityError(err))
 		return
@@ -68,6 +68,9 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		item.RoleNames = row.RoleNames
+		if !metadata {
+			item = api.APIKeySummary{ID: item.ID, Name: item.Name, Project: item.Project, Environment: item.Environment, Status: item.Status, RoleNames: item.RoleNames}
+		}
 		items = append(items, item)
 	}
 	response := api.ListAPIKeysResponse{APIKeys: items}

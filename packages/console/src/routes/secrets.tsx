@@ -1,3 +1,4 @@
+import { usePermission } from "../lib/me";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
 import { environmentChip } from "../features/projects/display";
@@ -9,7 +10,7 @@ import { ConfirmDialog, FormDialog } from "../ui/Dialog";
 import { EnvironmentTarget } from "../ui/EnvChip";
 import { Field, SecretTextArea, TextInput } from "../ui/Field";
 import { PageHeader } from "../ui/PageHeader";
-import { isDenied, QueryState } from "../ui/QueryState";
+import { QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
@@ -88,6 +89,8 @@ function SecretDialog(props: {
 
 function SecretRow(props: {
   secret: Secret;
+  canRotate: boolean;
+  canRevoke: boolean;
   onUpdate: (secret: Secret) => void;
   onRevoke: (secret: Secret) => void;
   onCopy: (secret: Secret) => void;
@@ -102,9 +105,9 @@ function SecretRow(props: {
       <RowActions
         label={`Actions for ${props.secret.secret}`}
         items={[
-          ...(active() ? [{ label: "Update", onSelect: () => props.onUpdate(props.secret) }] : []),
+          ...(active() && props.canRotate ? [{ label: "Update", onSelect: () => props.onUpdate(props.secret) }] : []),
           { label: "Copy ID", onSelect: () => props.onCopy(props.secret) },
-          ...(active() ? [{ label: "Revoke", tone: "danger" as const, onSelect: () => props.onRevoke(props.secret) }] : []),
+          ...(active() && props.canRevoke ? [{ label: "Revoke", tone: "danger" as const, onSelect: () => props.onRevoke(props.secret) }] : []),
         ]}
       />
     </tr>
@@ -113,6 +116,8 @@ function SecretRow(props: {
 
 export function Secrets() {
   const edited = useEditedEnvironment();
+  const permission = usePermission();
+  const can = (action: string) => permission.has(`secrets.${action}`, { projectID: edited.projectID(), environmentID: edited.environmentID() });
   const queryClient = useQueryClient();
   const clipboard = useClipboard({ copied: "Secret ID copied", failed: "Could not copy the secret ID" });
   const [editing, setEditing] = createSignal<{ secret: Secret | null; target: EditTarget }>();
@@ -140,8 +145,8 @@ export function Secrets() {
         title="Secrets"
         subtitle="Values are never displayed after saving."
         actions={
-          <Show when={!isDenied(secrets.error) && !secrets.isPending && secrets.data?.secrets.length !== 0}>
-            <button class={ui.button} type="button" disabled={!edited.environment()} onClick={() => edit(null)}>
+          <Show when={can("create")}>
+            <button class={ui.button} type="button" disabled={!edited.environment() || !can("create")} onClick={() => edit(null)}>
               {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}
             </button>
           </Show>
@@ -157,7 +162,7 @@ export function Secrets() {
             when: (data) => data.secrets.length === 0,
             title: `No secrets in ${edited.environment()?.name ?? "this environment"} yet.`,
             hint: "Secrets hold tokens and keys your agents read at run time, such as an OpenAI or Slack token.",
-            action: <button type="button" class={ui.button} disabled={!edited.environment()} onClick={() => edit(null)}>Set secret</button>,
+            action: <button type="button" class={ui.button} disabled={!edited.environment() || !can("create")} onClick={() => edit(null)}>Set secret</button>,
           }}
         >
           {(data) => (
@@ -166,6 +171,8 @@ export function Secrets() {
                 {(secret) => (
                   <SecretRow
                     secret={secret}
+                    canRotate={can("rotate")}
+                    canRevoke={can("revoke")}
                     onUpdate={edit}
                     onRevoke={revoke}
                     onCopy={(current) => void clipboard.copy(current.secret)}

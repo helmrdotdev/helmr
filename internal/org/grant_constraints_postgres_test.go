@@ -13,7 +13,7 @@ import (
 
 func TestGrantSchemaRejectsInvalidSubjectAndTenant(t *testing.T) {
 	f := newMemberFixture(t)
-	role, err := org.SavePermissionRole(t.Context(), f.pool, f.owner, uuid.Nil(), org.RoleInput{Name: "Constraint manager", Permissions: []string{"access.manage"}})
+	role, err := org.SavePermissionRole(t.Context(), f.pool, f.owner, uuid.Nil(), org.RoleInput{Name: "Constraint manager", Permissions: []string{"assignments.create"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,11 +26,14 @@ func TestGrantSchemaRejectsInvalidSubjectAndTenant(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO permission_groups(id,org_id,name) VALUES($1,$2,'Foreign group')`, foreignGroup, foreignOrg)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO regions(id,display_name) VALUES('constraints','Constraints')`)
 	input := org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "constraints", Name: "Constraints"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}}
-	_, environments, err := org.CreateProject(t.Context(), f.pool, f.owner.OrgID, input)
+	_, environments, err := org.CreateProject(t.Context(), f.pool, f.owner, input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, foreignEnvironments, err := org.CreateProject(t.Context(), f.pool, foreignOrg, input)
+	foreignMember := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, foreignMember, foreignOrg, f.owner.UserID)
+	dbtest.GrantMember(t, f.pool, foreignOrg, f.owner.UserID, nil, "projects.create")
+	_, foreignEnvironments, err := org.CreateProject(t.Context(), f.pool, org.ManagingMember{OrgID: foreignOrg, UserID: f.owner.UserID, MemberID: foreignMember, Actor: f.owner.Actor}, input)
 	if err != nil {
 		t.Fatal(err)
 	}

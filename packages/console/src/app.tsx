@@ -111,8 +111,8 @@ function AppShell(props: { children?: JSX.Element }) {
   const nav = (): NavItem[] => [
     { href: "/", label: "Overview", count: () => (attention.data ? attentionTotal(attention.data.counts) : undefined) },
     { href: "/agents", label: "Agents", match: ["/sessions", "/triggers"] },
-    ...(canRead("run_metadata.read") ? [{ href: "/computers", label: "Computers", match: ["/templates"] }] : []),
-    ...(canRead("deployment_metadata.read") ? [{ href: "/deployments", label: "Deployments" }] : []),
+    ...(canRead("computers.read") ? [{ href: "/computers", label: "Computers", match: ["/templates"] }] : []),
+    ...(canRead("deployments.read") ? [{ href: "/deployments", label: "Deployments" }] : []),
   ];
   const environmentColor = () => environmentChip(scope.selectedEnvironment())?.colorHex;
   return (

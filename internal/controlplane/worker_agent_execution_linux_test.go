@@ -257,13 +257,13 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 	}
 	var extraPermissions []auth.Permission
 	if sessionDiscovery || (os.Getenv("HELMR_CODEX_STARTER_PROOF") == "1" || os.Getenv("HELMR_CLAUDE_STARTER_PROOF") == "1" || os.Getenv("HELMR_EMBEDDED_STARTER_PROOF") == "1") {
-		extraPermissions = append(extraPermissions, auth.CapabilitySessionsManage)
+		extraPermissions = append(extraPermissions, auth.PermissionSessionsSend)
 	}
 	if secretBindings {
-		extraPermissions = []auth.Permission{auth.CapabilityComputersOperate, auth.CapabilitySecretsManage}
+		extraPermissions = []auth.Permission{auth.PermissionComputersExecute, auth.PermissionSecretsCreate}
 	}
 	if protectedModel != nil {
-		extraPermissions = append(extraPermissions, auth.CapabilitySessionsManage, auth.CapabilityComputersOperate, auth.CapabilitySecretsManage)
+		extraPermissions = append(extraPermissions, auth.PermissionSessionsSend, auth.PermissionComputersExecute, auth.PermissionSecretsCreate)
 	}
 	env, key, enrollment := seedNativeExecution(t, database.Pool, extraPermissions...)
 	platform, err := cass3.NewImmutable(ctx, input.PlatformURI)
@@ -1150,8 +1150,8 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
  INSERT INTO org_members(id,org_id,user_id,is_owner) VALUES(uuidv7(),$1,$2,true);
  INSERT INTO projects(id,org_id,default_region_id,slug,name) VALUES($3,$1,'native-proof','native-proof','Native proof');
  INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($4,$1,$3,'native-proof','Native proof','#112233',128,8,2,4000,17179869184,137438953472,600000,100,100,100,clock_timestamp());`, pgx.QueryExecModeSimpleProtocol, org, user, project, env)
-	memberID := dbtest.GrantMember(t, pool, org, user, &env, "keys.manage")
-	issued, err := issueAPIKeyWithRole(t, t.Context(), pool, auth.Principal{OrgID: org, UserID: user, MemberID: memberID, Grants: []auth.PermissionGrant{{ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.CapabilityKeysManage}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, testAPIKeyInput{Name: "native proof", RolePermissions: append([]auth.Permission{auth.CapabilityDeploymentsPublish, auth.CapabilityAgentsUse, auth.CapabilitySessionsView, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilitySessionsManage, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilityComputersOperate, auth.CapabilitySessionsManage}, extraPermissions...)})
+	memberID := dbtest.GrantMember(t, pool, org, user, &env, "api_keys.create")
+	issued, err := issueAPIKeyWithRole(t, t.Context(), pool, auth.Principal{OrgID: org, UserID: user, MemberID: memberID, Grants: []auth.PermissionGrant{{ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.PermissionAPIKeysCreate}}, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}, testAPIKeyInput{Name: "native proof", RolePermissions: append([]auth.Permission{auth.PermissionDeploymentsPublish, auth.PermissionDeploymentsPromote, auth.PermissionDeploymentsRead, auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionAgentsUse, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsCreateKeyed, auth.PermissionSessionsAnswer, auth.PermissionSessionsResume, auth.PermissionSessionsInterrupt, auth.PermissionSessionsCancel, auth.PermissionSessionsClose, auth.PermissionComputersRead, auth.PermissionComputersReadOutput, auth.PermissionComputersExecute, auth.PermissionComputersCancelCommand, auth.PermissionComputersCreate, auth.PermissionComputersWake, auth.PermissionComputersHibernate, auth.PermissionComputersUpdateRetention, auth.PermissionComputersDelete}, extraPermissions...)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -64,7 +64,7 @@ func accessError(err error) error {
 	}
 	return err
 }
-func requireCapability(ctx context.Context, q db.DBTX, kind string, id, env, agent uuid.UUID, permission auth.Permission) error {
+func requirePermission(ctx context.Context, q db.DBTX, kind string, id, env, agent uuid.UUID, permission auth.Permission) error {
 	return accessError(access.Check(ctx, q, kind, id, env, agent, permission))
 }
 func (o sessionOrigin) authorize(ctx context.Context, q db.DBTX, env, agent uuid.UUID) error {
@@ -86,11 +86,11 @@ func (o sessionOrigin) authorize(ctx context.Context, q db.DBTX, env, agent uuid
 		// The Session's composite foreign key guarantees its origin exists in env.
 		return nil
 	}
-	permission := auth.CapabilityAgentsUse
+	permission := auth.PermissionAgentsUse
 	if o.mode() != "scoped" {
 		return ErrDenied
 	}
-	return requireCapability(ctx, q, o.kind(), o.id(), env, agent, permission)
+	return requirePermission(ctx, q, o.kind(), o.id(), env, agent, permission)
 }
 func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req StartRequest, agent uuid.UUID) (sessionOrigin, error) {
 	var o sessionOrigin
@@ -116,7 +116,7 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 		}
 	}
 	if caller.Kind != "session" && caller.SlackConnectionID != uuid.Nil() {
-		if err := requireCapability(ctx, tx, caller.Kind, caller.ID, req.EnvironmentID, agent, auth.CapabilityAgentsUse); err != nil {
+		if err := requirePermission(ctx, tx, caller.Kind, caller.ID, req.EnvironmentID, agent, auth.PermissionAgentsUse); err != nil {
 			return o, err
 		}
 		connection := caller.SlackConnectionID
@@ -129,13 +129,13 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 		if o.mode() != "scoped" {
 			return o, ErrDenied
 		}
-		if err := requireCapability(ctx, tx, o.kind(), o.id(), req.EnvironmentID, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+		if err := requirePermission(ctx, tx, o.kind(), o.id(), req.EnvironmentID, uuid.Nil(), auth.PermissionComputersExecute); err != nil {
 			return o, err
 		}
 	}
 	if o.mode() == "scoped" {
 		if req.SessionKey != nil || req.SlackChannelID != nil {
-			if err := requireCapability(ctx, tx, caller.Kind, caller.ID, req.EnvironmentID, agent, auth.CapabilitySessionsManage); err != nil {
+			if err := requirePermission(ctx, tx, caller.Kind, caller.ID, req.EnvironmentID, agent, auth.PermissionSessionsCreateKeyed); err != nil {
 				return o, err
 			}
 		}
@@ -181,7 +181,7 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 			}
 			return nil
 		}
-		if ownSessionOperation(operation) && o.mode() == "shared" && caller.SlackThreadID != uuid.Nil() && p.HasPermission(auth.CapabilityAgentsUse, scope) {
+		if ownSessionOperation(operation) && o.mode() == "shared" && caller.SlackThreadID != uuid.Nil() && p.HasPermission(auth.PermissionAgentsUse, scope) {
 			var related bool
 			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions s JOIN slack_threads t ON t.environment_id=s.environment_id AND t.front_session_id=s.root_session_id JOIN slack_channel_bindings b ON b.id=t.slack_channel_binding_id JOIN slack_user_links l ON l.team_id=t.team_id AND l.user_id=$4 WHERE s.environment_id=$1 AND s.id=$2 AND t.id=$3 AND t.deleted_at IS NULL AND b.connection_id=s.origin_slack_connection_id AND left(t.slack_channel_id,1)<>'D')`, env, target, caller.SlackThreadID, caller.ID).Scan(&related)
 			if err != nil {
@@ -194,7 +194,7 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 		if !ownSessionOperation(operation) || o.mode() != "scoped" || o.kind() != caller.Kind || o.id() != caller.ID {
 			return ErrDenied
 		}
-		if !p.HasPermission(auth.CapabilityAgentsUse, scope) {
+		if !p.HasPermission(auth.PermissionAgentsUse, scope) {
 			return ErrDenied
 		}
 		return nil
@@ -270,7 +270,7 @@ func readScopeFor(ctx context.Context, q db.DBTX, caller Caller, env uuid.UUID) 
 	}
 	scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}
 	filter.All, filter.ViewAgents = p.AgentPermissionScope(auth.PermissionSessionsRead, scope)
-	filter.AllAgents, filter.Agents = p.AgentPermissionScope(auth.CapabilityAgentsUse, scope)
+	filter.AllAgents, filter.Agents = p.AgentPermissionScope(auth.PermissionAgentsUse, scope)
 	// An active principal with no grant gets an empty list, never an unfiltered one.
 	return filter, nil
 }
@@ -280,7 +280,7 @@ func authorizeSessionRead(ctx context.Context, tx pgx.Tx, caller Caller, env, id
 
 func ownSessionOperation(operation auth.Permission) bool {
 	switch operation {
-	case auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume, auth.PermissionAsksAnswer:
+	case auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume, auth.PermissionSessionsAnswer:
 		return true
 	}
 	return false
@@ -366,7 +366,7 @@ func externalSessionPermissions(ctx context.Context, tx pgx.Tx, caller Caller, e
 		return nil, accessError(err)
 	}
 	scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, AgentID: o.Agent.String()}
-	own := o.mode() == "scoped" && o.kind() == caller.Kind && o.id() == caller.ID && p.HasPermission(auth.CapabilityAgentsUse, scope)
+	own := o.mode() == "scoped" && o.kind() == caller.Kind && o.id() == caller.ID && p.HasPermission(auth.PermissionAgentsUse, scope)
 	originAllowed := authorizeRuntimeOrigin(ctx, tx, env, id)
 	if originAllowed != nil && !errors.Is(originAllowed, ErrDenied) && !errors.Is(originAllowed, ErrAgentDeleted) {
 		return nil, originAllowed

@@ -74,7 +74,7 @@ function actionHref(item: AttentionItem): string {
 function DeploymentContext() {
   const scope = useScopeIDs();
   const me = useMe();
-  const canRead = () => hasPermission(me.data, "deployment_metadata.read", scope());
+  const canRead = () => hasPermission(me.data, "deployments.read", scope());
   const enabled = () => !!scope().projectID && !!scope().environmentID;
   const current = createQuery(() => ({
     queryKey: ["deployments", "current", scope().projectID, scope().environmentID],
@@ -201,7 +201,7 @@ export function Overview() {
           </Match>
           <Match when={setUp()}>
             <div class={ui.sectionStack}>
-              <Show when={hasPermission(me.data, "deployments.write", ids()) && hasPermission(me.data, "deployment.promote", ids())} fallback={<EmptyState title="No deployed agents are available to you in this environment." hint="Ask a member who can publish and activate deployments to make an agent available." />}><SetUpPanel projectID={ids().projectID} environmentID={ids().environmentID} /></Show>
+              <Show when={hasPermission(me.data, "deployments.publish", ids()) && hasPermission(me.data, "deployments.promote", ids())} fallback={<EmptyState title="No deployed agents are available to you in this environment." hint="Ask a member who can publish and activate deployments to make an agent available." />}><SetUpPanel projectID={ids().projectID} environmentID={ids().environmentID} /></Show>
               <Show when={attention.data && total() > 0}>
                 <Queue items={attention.data!.items} counts={attention.data!.counts} />
               </Show>

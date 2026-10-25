@@ -28,10 +28,11 @@ const grantPlaces = (grants: readonly RoleGrant[]) => [...new Set(grants.map(gra
 
 export function Groups() {
   const me = useMe(); const cache = useQueryClient(); const navigate = useNavigate();
-  const allowed = () => hasPermission(me.data, "access.manage");
+  const allowed = () => hasPermission(me.data, "groups.read");
+  const can = (permission: string) => hasPermission(me.data, permission);
   const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: allowed() }));
-  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: allowed() }));
-  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: allowed() }));
+  const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants, enabled: hasPermission(me.data, "assignments.read") }));
+  const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: hasPermission(me.data, "members.read") }));
   const [filter, setFilter] = createSignal("");
   const [creating, setCreating] = createSignal(false);
   const [renaming, setRenaming] = createSignal<PermissionGroup>();
@@ -47,8 +48,8 @@ export function Groups() {
   const assignments = (id: string) => subjectGrants(grants.data?.grants ?? [], id);
   const places = (id: string) => grantPlaces(assignments(id));
   return <>
-    <PageHeader title="Groups" subtitle="Grant roles to several people at once." actions={<Show when={allowed()}><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create group</button></Show>} />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to manage groups." /></Show>}>
+    <PageHeader title="Groups" subtitle="Grant roles to several people at once." actions={<Show when={hasPermission(me.data, "groups.create")}><button type="button" class={ui.button} onClick={() => setCreating(true)}>Create group</button></Show>} />
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read groups permission to view groups." /></Show>}>
       <Toolbar start={<SearchInput aria-label="Filter groups" placeholder="Filter groups" value={filter()} onInput={e => setFilter(e.currentTarget.value)} />} />
       <QueryState query={groups} pending={<TableSkeleton label="Loading groups" columns={COLUMNS} />} error={failure}>
         {() => (
@@ -59,7 +60,7 @@ export function Groups() {
                 <td class="font-mono text-chrome!">{members.data ? active().size : "—"}</td>
                 <td class="font-mono text-chrome!">{assignments(ALL_MEMBERS).length}</td>
                 <td><Show when={places(ALL_MEMBERS)} fallback={<EmptyCell />}>{text => <span class="font-mono text-chrome">{text()}</span>}</Show></td>
-                <RowActions label="Actions for All members" items={groupMenu({ all: true, membersLoaded: !!members.data, grant: () => setGranting({ id: ALL_MEMBERS, name: "All members" }), add: () => undefined, rename: () => undefined, remove: () => undefined })} />
+                <RowActions label="Actions for All members" items={groupMenu({ all: true, membersLoaded: !!members.data, can, grant: () => setGranting({ id: ALL_MEMBERS, name: "All members" }), add: () => undefined, rename: () => undefined, remove: () => undefined })} />
               </tr>
             </Show>
             <For each={visible()}>
@@ -69,7 +70,7 @@ export function Groups() {
                   <td class="font-mono text-chrome!">{memberCount(group.member_ids)}</td>
                   <td class="font-mono text-chrome!">{assignments(group.id).length}</td>
                   <td><Show when={places(group.id)} fallback={<EmptyCell />}>{text => <span class="font-mono text-chrome">{text()}</span>}</Show></td>
-                  <RowActions label={`Actions for ${group.name}`} items={groupMenu({ all: false, membersLoaded: !!members.data, grant: () => setGranting({ id: group.id, name: group.name }), add: () => setAdding(group), rename: () => setRenaming(group), remove: () => setDeleting(group) })} />
+                  <RowActions label={`Actions for ${group.name}`} items={groupMenu({ all: false, membersLoaded: !!members.data, can, grant: () => setGranting({ id: group.id, name: group.name }), add: () => setAdding(group), rename: () => setRenaming(group), remove: () => setDeleting(group) })} />
                 </tr>
               )}
             </For>
@@ -87,14 +88,13 @@ export function Groups() {
 
 // The object menu for a group, the same in its list row and by its name. All
 // members can only be granted access. Adding waits for the member list.
-export function groupMenu(options: { all: boolean; membersLoaded: boolean; grant: () => void; add: () => void; rename: () => void; remove: () => void }): ActionMenuItem[] {
+export function groupMenu(options: { all: boolean; membersLoaded: boolean; can: (permission: string) => boolean; grant: () => void; add: () => void; rename: () => void; remove: () => void }): ActionMenuItem[] {
+  const { all, can } = options;
   return [
-    { label: "Grant access", onSelect: options.grant },
-    ...(options.all ? [] : [
-      { label: "Add members", disabled: !options.membersLoaded, onSelect: options.add },
-      { label: "Rename", onSelect: options.rename },
-      { label: "Delete group", tone: "danger" as const, onSelect: options.remove },
-    ]),
+    ...(can("assignments.create") ? [{ label: "Grant access", onSelect: options.grant }] : []),
+    ...(!all && can("groups.add_member") ? [{ label: "Add members", disabled: !options.membersLoaded, onSelect: options.add }] : []),
+    ...(!all && can("groups.update") ? [{ label: "Rename", onSelect: options.rename }] : []),
+    ...(!all && can("groups.delete") ? [{ label: "Delete group", tone: "danger" as const, onSelect: options.remove }] : []),
   ];
 }
 

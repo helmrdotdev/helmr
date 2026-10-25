@@ -106,7 +106,7 @@ export function DeploymentDetail() {
   const me = useMe();
   const copyLink = useCopyLink();
   const [promoting, setPromoting] = createSignal(false);
-  const canPromote = () => canPromoteDeployment({ permitted: hasPermission(me.data, "deployment.promote", resourceScope()), currentLoaded: current.isSuccess, isCurrent: isCurrent() });
+  const canPromote = () => canPromoteDeployment({ permitted: hasPermission(me.data, "deployments.promote", resourceScope()), currentLoaded: current.isSuccess, isCurrent: isCurrent() });
   const menu = () => [...(deployment.data && canPromote() ? [{ label: "Promote", onSelect: () => setPromoting(true) }] : []), copyLink.item()];
   const definitionOptions = () => ({ ...resourceScope(), deploymentID: deploymentID(), limit: 100 });
   const agents = createInfiniteQuery(() => ({

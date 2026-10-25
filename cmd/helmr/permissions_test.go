@@ -292,7 +292,7 @@ func TestPermissionCLIGrantPreviewUsesInspectedRoleRevision(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"id": grant, "revision": 3, "role_revision": 8, "subject_kind": "group", "group_id": group, "group_name": "Team", "role_id": role, "role_name": "Tools", "project": "work", "environment": "production", "target_kind": "environment", "agents_mode": "selected", "agent_ids": []string{agent}, "agent_keys": []string{"invoice"}, "permissions": []string{"agents.use"}, "targets": []any{map[string]any{"resource_type": "agents", "mode": "selected", "permissions": []string{"agents.use"}}}})
 		case "GET /api/roles/" + role:
 			// The Role changed after the assignment response was read.
-			json.NewEncoder(w).Encode(map[string]any{"id": role, "revision": 9, "name": "Tools", "permissions": []string{"agents.use", "sessions.manage", "secrets.manage"}})
+			json.NewEncoder(w).Encode(map[string]any{"id": role, "revision": 9, "name": "Tools", "permissions": []string{"agents.use", "sessions.send", "secrets.create"}})
 		case "GET /api/projects/work":
 			w.Write([]byte(`{"project":"work","name":"Work"}`))
 		case "GET /api/projects/work/access-targets":
@@ -316,11 +316,11 @@ func TestPermissionCLIGrantPreviewUsesInspectedRoleRevision(t *testing.T) {
 	t.Setenv(helmrAPIURLEnv, "")
 	args := []string{"role", "grant", "update", "--id", grant, "--agent", "invoice"}
 	_, stderr, err := runPermissionCLI(args...)
-	if err == nil || writes != 0 || !strings.Contains(stderr, "secrets: environment") || !strings.Contains(stderr, "sessions.manage") || !strings.Contains(stderr, "agents.use") || !strings.Contains(stderr, "Role revision: 9") {
+	if err == nil || writes != 0 || !strings.Contains(stderr, "secrets: environment") || !strings.Contains(stderr, "sessions.send") || !strings.Contains(stderr, "agents.use") || !strings.Contains(stderr, "Role revision: 9") {
 		t.Fatalf("incomplete or mutating preview: %s %v writes=%d", stderr, err, writes)
 	}
 	_, _, err = runPermissionCLI(append(args, "--json")...)
-	if err == nil || !strings.Contains(err.Error(), `"role_revision":9`) || !strings.Contains(err.Error(), "secrets.manage") {
+	if err == nil || !strings.Contains(err.Error(), `"role_revision":9`) || !strings.Contains(err.Error(), "secrets.create") {
 		t.Fatalf("JSON preview omitted inspected role: %v", err)
 	}
 	if _, _, err := runPermissionCLI(append(args, "--yes")...); err != nil || writes != 1 {
@@ -335,7 +335,7 @@ func TestPermissionCLIAPIKeyRecipient(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/roles/" + role:
-			json.NewEncoder(w).Encode(map[string]any{"id": role, "name": "Reader", "revision": 7, "permissions": []string{"sessions.view"}, "api_key_assignable": true})
+			json.NewEncoder(w).Encode(map[string]any{"id": role, "name": "Reader", "revision": 7, "permissions": []string{"sessions.read"}, "api_key_assignable": true})
 		case "GET /api/projects/work":
 			w.Write([]byte(`{"project":"work"}`))
 		case "GET /api/projects/work/access-targets":

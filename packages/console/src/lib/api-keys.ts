@@ -10,18 +10,18 @@ export type ApiKeyRoleAssignment = {
 };
 
 export type ApiKeySummary = {
-  created_by_member_id: string | null;
+  created_by_member_id?: string | null;
   id: string;
   name: string;
-  key_prefix: string;
+  key_prefix?: string;
   project: string;
   environment: string;
   role_names: string[];
   status: ApiKeyStatus;
-  created_at: string;
-  last_used_at: string | null;
-  expires_at: string | null;
-  revoked_at: string | null;
+  created_at?: string;
+  last_used_at?: string | null;
+  expires_at?: string | null;
+  revoked_at?: string | null;
 };
 
 export type ApiKeyIssued = ApiKeySummary & { raw_key: string };

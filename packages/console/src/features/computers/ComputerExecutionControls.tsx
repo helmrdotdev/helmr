@@ -57,9 +57,8 @@ export function createComputerControls(props: { computer: () => ComputerListItem
   // A list passes the row's computer; a detail page uses its own.
   const items = (computer = props.computer()): ActionMenuItem[] => {
     if (!computer || computer.status !== "available" || busy() || computer.execution_control?.status === "accepted") return [];
-    if (!hasPermission(me.data, "computers.update", props.scope())) return [];
-    if (computer.residency === "running") return [{ label: "Hibernate", onSelect: () => void prepare(computer) }];
-    if (computer.residency === "parked") return [{ label: "Wake", onSelect: () => void wake(computer) }];
+    if (computer.residency === "running" && hasPermission(me.data, "computers.hibernate", props.scope())) return [{ label: "Hibernate", onSelect: () => void prepare(computer) }];
+    if (computer.residency === "parked" && hasPermission(me.data, "computers.wake", props.scope())) return [{ label: "Wake", onSelect: () => void wake(computer) }];
     return [];
   };
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -12,11 +13,15 @@ import (
 
 // UpdateProjectHistoryRetention changes the policy for all remaining history.
 // Cleanup takes a shared lock on the same Project until its deletion commits.
-func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, actor audit.Actor, orgID, projectID uuid.UUID, seconds *int64) error {
+func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, m ManagingMember, projectID uuid.UUID, seconds *int64) error {
+	orgID, actor := m.OrgID, m.Actor
 	if seconds != nil && *seconds <= 0 {
 		return invalidInput("history retention must be positive")
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := lockAccessMembers(ctx, tx, m, auth.PermissionProjectsUpdateRetention); err != nil {
+			return err
+		}
 		var old pgtype.Int8
 		if err := tx.QueryRow(ctx, `SELECT history_retention_seconds FROM projects WHERE org_id=$1 AND id=$2 FOR NO KEY UPDATE`, orgID, projectID).Scan(&old); isNoRows(err) {
 			return ErrProjectNotFound

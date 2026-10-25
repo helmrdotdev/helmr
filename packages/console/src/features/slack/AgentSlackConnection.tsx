@@ -26,18 +26,16 @@ const MANIFEST_OPEN: ReadonlySet<string> = new Set(["oauth_config", "oauth_confi
 
 type Credentials = import("../../lib/slack").SlackAppCredentials;
 
-const MANAGERS = "Members with Manage agents access";
+const MANAGERS = "Members with Agent connection permissions";
 
-// An Agent's Slack connection in the tab's Environment. Members with Manage
-// agents set it up and manage it once connected. Other members see the required
-// permission without receiving connection details.
+// Connection details and each lifecycle action have separate permissions.
 export function AgentSlackConnection(props: { agentName: string }) {
   const permission = usePermission();
   const scope = useScope();
   const environmentName = () => scope.selectedEnvironment()?.name ?? "this environment";
   return (
     <Show
-      when={permission.has("agents.manage", {projectID:scope.selectedProjectID(), environmentID:scope.selectedEnvironmentID(), agent:props.agentName})}
+      when={permission.has("agent_connections.read", {projectID:scope.selectedProjectID(), environmentID:scope.selectedEnvironmentID(), agent:props.agentName})}
       fallback={
         <DetailLayout rail={<ConnectionFacts environmentName={environmentName()} />}>
           <Panel title="Slack connection">
@@ -70,6 +68,8 @@ function ConnectionFacts(props: { environmentName: string; installed?: boolean; 
 
 function ManagedConnection(props: { agentName: string; projectID: string; environmentID: string; environmentName: string }) {
   const scope = useScope();
+  const permission = usePermission();
+  const can = (action: string) => permission.has(`agent_connections.${action}`, {projectID: props.projectID, environmentID: props.environmentID, agent: props.agentName});
   const address = (): AgentSlackAddress => ({ projectID: props.projectID, environmentID: props.environmentID, agentName: props.agentName });
   const iconSeed = () => `${props.projectID}/${props.environmentID}/${props.agentName}`;
   const state = createQuery(() => ({ queryKey: ["agent-slack", props.projectID, props.environmentID, props.agentName], queryFn: () => getAgentSlackConnection(address()), retry: false, gcTime: 0, refetchOnWindowFocus: false, refetchInterval: 15000 }));
@@ -113,12 +113,12 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                 <Show
                   when={connection().installation_id}
                   fallback={
-                    <DangerZone title="Discard setup" action={<button type="button" class={ui.dangerOutlineButton} disabled={busy()} onClick={() => setRemoving(connection())}>Discard setup</button>}>
+                    <DangerZone title="Discard setup" action={<button type="button" class={ui.dangerOutlineButton} disabled={busy() || !can("delete")} onClick={() => setRemoving(connection())}>Discard setup</button>}>
                       Frees this agent’s connection. The app in Slack is not deleted.
                     </DangerZone>
                   }
                 >
-                  <DangerZone title="Disconnect Slack" action={<button type="button" class={ui.dangerOutlineButton} disabled={busy()} onClick={() => setRemoving(connection())}>Disconnect</button>}>
+                  <DangerZone title="Disconnect Slack" action={<button type="button" class={ui.dangerOutlineButton} disabled={busy() || !can("delete")} onClick={() => setRemoving(connection())}>Disconnect</button>}>
                     Stops Slack input, answers and output in this app’s threads.
                   </DangerZone>
                 </Show>
@@ -135,7 +135,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                 <Steps label="Slack setup" steps={setupSteps({
                   create: { state: "current", content: <>
                     <p class={ui.muted}>Each agent has one Slack app in this environment. Its app name and avatar identify it in conversations. Start to get the app manifest for <strong>{props.agentName}</strong>.</p>
-                    <div><button type="button" class={ui.button} disabled={busy()} onClick={() => attempt(() => beginAgentSlackConnection(address()))}>Connect Slack</button></div>
+                    <div><button type="button" class={ui.button} disabled={busy() || !can("create")} onClick={() => attempt(() => beginAgentSlackConnection(address()))}>Connect Slack</button></div>
                   </> },
                 })} />
               </SetupPanel>
@@ -149,6 +149,8 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                   agentName={props.agentName}
                   iconSeed={iconSeed()}
                   busy={busy()}
+                  canAuthorize={can("authorize")}
+                  canCredentials={can("update_credentials")}
                   authorize={() => authorize(connection)}
                   save={(credentials) => saveCredentials(connection, credentials)}
                 />
@@ -160,6 +162,8 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                   agentName={props.agentName}
                   iconSeed={iconSeed()}
                   busy={busy()}
+                  canAuthorize={can("authorize")}
+                  canCredentials={can("update_credentials")}
                   authorize={() => authorize(connection)}
                   save={(credentials) => saveCredentials(connection, credentials)}
                 />
@@ -222,6 +226,8 @@ function Setup(props: {
   agentName: string;
   iconSeed: string;
   busy: boolean;
+  canAuthorize: boolean;
+  canCredentials: boolean;
   authorize: () => void;
   save: (credentials: Credentials) => Promise<void>;
 }) {
@@ -244,12 +250,12 @@ function Setup(props: {
           : step() === 2 ? { state: "done", description: <button type="button" class={cx(ui.monoLink, "border-0 bg-transparent p-0 text-left")} onClick={() => setCreated(false)}>Show the manifest and icon again</button> }
           : { state: "done" },
         credentials: step() === 2
-          ? { state: "current", content: <CredentialForm connection={props.connection} busy={props.busy} save={props.save} /> }
+          ? { state: "current", content: <CredentialForm connection={props.connection} busy={props.busy || !props.canCredentials} save={props.save} /> }
           : step() > 2 ? { state: "done" } : undefined,
         install: step() === 3
           ? { state: "current", content: <div class={ui.blockStack}>
-              <div><button type="button" class={ui.button} disabled={props.busy} onClick={() => props.authorize()}>Install app in Slack</button></div>
-              <Disclosure summary="Replace app credentials"><CredentialForm connection={props.connection} busy={props.busy} save={props.save} /></Disclosure>
+              <div><button type="button" class={ui.button} disabled={props.busy || !props.canAuthorize} onClick={() => props.authorize()}>Install app in Slack</button></div>
+              <Disclosure summary="Replace app credentials"><CredentialForm connection={props.connection} busy={props.busy || !props.canCredentials} save={props.save} /></Disclosure>
             </div> }
           : undefined,
       })} />
@@ -263,10 +269,12 @@ function InstalledConnection(props: {
   agentName: string;
   iconSeed: string;
   busy: boolean;
+  canAuthorize: boolean;
+  canCredentials: boolean;
   authorize: () => void;
   save: (credentials: Credentials) => Promise<void>;
 }) {
-  const reauthorize = () => <button type="button" class={ui.button} disabled={props.busy} onClick={() => props.authorize()}>Reauthorize in Slack</button>;
+  const reauthorize = () => <button type="button" class={ui.button} disabled={props.busy || !props.canAuthorize} onClick={() => props.authorize()}>Reauthorize in Slack</button>;
   return (
     <SetupPanel status={props.connection.transport === "socket" && props.connection.status === "connected" ? "Authorized" : statusLabel(props.connection.status)}>
       <Show when={props.connection.status === "configuration_mismatch"}><Notice tone="warning">The deployment’s Slack delivery mode changed. Disconnect this connection and set it up again using the current configuration.</Notice></Show>
@@ -288,7 +296,7 @@ function InstalledConnection(props: {
         <div class={ui.buttonGroup}>{reauthorize()}</div>
       </Show>
       <Show when={props.connection.status !== "disconnected" && props.connection.status !== "configuration_mismatch"}>
-        <Disclosure summary="Update app credentials"><CredentialForm connection={props.connection} busy={props.busy} save={props.save} /></Disclosure>
+        <Disclosure summary="Update app credentials"><CredentialForm connection={props.connection} busy={props.busy || !props.canCredentials} save={props.save} /></Disclosure>
       </Show>
       <Disclosure summary="Update app manifest">
         <p class={ui.muted}>In this app’s Slack settings, replace its App Manifest with the current manifest below. Save it, then reauthorize if permissions changed. Keep token rotation enabled; Slack may show a setup notice for it.</p>

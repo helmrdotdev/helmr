@@ -93,8 +93,7 @@ func GetCurrent(ctx context.Context, q db.DBTX, principal auth.Principal, scope 
 	if refreshErr != nil {
 		return Record{}, refreshErr
 	}
-	allAgents, agentIDs := agentReadScope(principal, scope)
-	if !allAgents && len(agentIDs) == 0 {
+	if !principal.HasPermission(auth.PermissionDeploymentsRead, scope) {
 		return Record{}, ErrPermissionRequired
 	}
 
@@ -144,30 +143,34 @@ func validDefinitionKind(kind definition.Kind) error {
 	}
 	return invalidInput(fmt.Errorf("unsupported definition kind %q", kind))
 }
+
+// Resolve only a known deployment identity within the addressed Environment.
+// Definition callers separately authorize Agent or Template reads; enumerating
+// deployment history requires deployments.read.
 func definitionDeployment(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, selected *uuid.UUID) (Record, error) {
-	if selected != nil && !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
-		r, err := GetCurrent(ctx, q, principal, scope)
+	project, env, err := scopeIDs(scope)
+	if err != nil {
+		return Record{}, err
+	}
+	var id uuid.UUID
+	if selected != nil {
+		id = *selected
+	} else {
+		err = q.QueryRow(ctx, `SELECT current_deployment_id FROM environments WHERE id=$1 AND org_id=$2 AND project_id=$3 AND current_deployment_id IS NOT NULL`, env, principal.OrgID, project).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Record{}, ErrNoCurrentDefinitions
+		}
 		if err != nil {
 			return Record{}, err
 		}
-		if r.ID != *selected {
-			return Record{}, ErrSelectedDeploymentNotFound
-		}
-		return r, nil
 	}
-	if selected != nil {
-		r, err := Get(ctx, q, principal, scope, *selected)
-		if errors.Is(err, ErrNotFound) {
-			err = ErrSelectedDeploymentNotFound
-		}
-		return r, err
+	record, err := readRecord(ctx, q, pgvalue.MustUUIDValue(env), id)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (record.OrgID != principal.OrgID || record.ProjectID != pgvalue.MustUUIDValue(project)) {
+		return Record{}, ErrSelectedDeploymentNotFound
 	}
-	r, err := GetCurrent(ctx, q, principal, scope)
-	if errors.Is(err, ErrNoCurrentDeployment) {
-		err = ErrNoCurrentDefinitions
-	}
-	return r, err
+	return record, err
 }
+
 func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, limit int32, after *string) (DefinitionPage, error) {
 	principal, refreshErr := currentPrincipal(ctx, q, principal, scope)
 	if refreshErr != nil {
@@ -180,7 +183,8 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 		return DefinitionPage{}, err
 	}
 	allAgents, agentIDs := agentReadScope(principal, scope)
-	if kind == definition.KindTemplate && !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
+	allUse, useIDs := principal.AgentPermissionScope(auth.PermissionAgentsUse, scope)
+	if kind == definition.KindTemplate && !principal.HasPermission(auth.PermissionTemplatesRead, scope) {
 		return DefinitionPage{}, ErrPermissionRequired
 	}
 
@@ -190,7 +194,7 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	}
 	var rows pgx.Rows
 	if kind == definition.KindAgent {
-		rows, err = q.Query(ctx, agentDefinitionProjection+" WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR key>$3) AND ($5::boolean OR agent_id=ANY($6::uuid[])) ORDER BY key LIMIT $4", r.EnvironmentID, r.ID, after, limit+1, allAgents, agentIDs)
+		rows, err = q.Query(ctx, agentDefinitionProjection+" WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR key>$3) AND ($5::boolean OR agent_id=ANY($6::uuid[]) OR (deployment_id=(SELECT current_deployment_id FROM environments WHERE id=$1) AND ($7::boolean OR agent_id=ANY($8::uuid[])))) ORDER BY key LIMIT $4", r.EnvironmentID, r.ID, after, limit+1, allAgents, agentIDs, allUse, useIDs)
 	} else {
 		rows, err = q.Query(ctx, templateDefinitionProjection+definitionListClause, r.EnvironmentID, r.ID, after, limit+1)
 	}
@@ -204,8 +208,12 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 		if err := rows.Scan(&item.ID, &item.AgentID, &item.TemplateID, &item.Resources, &item.InputKind, &item.InputSchema); err != nil {
 			return DefinitionPage{}, err
 		}
-		if !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
-			item.TemplateID = nil
+		if item.AgentID != nil {
+			target := scope
+			target.AgentID = item.AgentID.String()
+			if !principal.HasPermission(auth.PermissionAgentsRead, target) {
+				item.TemplateID = nil
+			}
 		}
 		page.Items = append(page.Items, item)
 	}
@@ -227,7 +235,8 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 		return uuid.Nil(), DefinitionRecord{}, err
 	}
 	allAgents, agentIDs := agentReadScope(principal, scope)
-	if kind == definition.KindTemplate && !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
+	allUse, useIDs := principal.AgentPermissionScope(auth.PermissionAgentsUse, scope)
+	if kind == definition.KindTemplate && !principal.HasPermission(auth.PermissionTemplatesRead, scope) {
 		return uuid.Nil(), DefinitionRecord{}, ErrPermissionRequired
 	}
 
@@ -238,7 +247,7 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 	var found DefinitionRecord
 	var row pgx.Row
 	if kind == definition.KindAgent {
-		row = q.QueryRow(ctx, agentDefinitionProjection+definitionGetClause+" AND ($4::boolean OR agent_id=ANY($5::uuid[]))", r.EnvironmentID, r.ID, id, allAgents, agentIDs)
+		row = q.QueryRow(ctx, agentDefinitionProjection+definitionGetClause+" AND ($4::boolean OR agent_id=ANY($5::uuid[]) OR (deployment_id=(SELECT current_deployment_id FROM environments WHERE id=$1) AND ($6::boolean OR agent_id=ANY($7::uuid[]))))", r.EnvironmentID, r.ID, id, allAgents, agentIDs, allUse, useIDs)
 	} else {
 		row = q.QueryRow(ctx, templateDefinitionProjection+definitionGetClause, r.EnvironmentID, r.ID, id)
 	}
@@ -249,8 +258,12 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 	if err != nil {
 		return uuid.Nil(), DefinitionRecord{}, err
 	}
-	if !principal.HasPermission(auth.PermissionDeploymentMetadataRead, scope) {
-		found.TemplateID = nil
+	if found.AgentID != nil {
+		target := scope
+		target.AgentID = found.AgentID.String()
+		if !principal.HasPermission(auth.PermissionAgentsRead, target) {
+			found.TemplateID = nil
+		}
 	}
 	return r.ID, found, nil
 }

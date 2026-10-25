@@ -180,7 +180,7 @@ func cancelTurnAsks(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID
 // Answer authority is independent of Session browsing. Human membership and
 // service-key grants are rechecked and locked in the answer transaction.
 func authorizeAskAnswer(ctx context.Context, tx pgx.Tx, caller Caller, env, target uuid.UUID) error {
-	return authorizeTarget(ctx, tx, caller, env, target, auth.PermissionAsksAnswer)
+	return authorizeTarget(ctx, tx, caller, env, target, auth.PermissionSessionsAnswer)
 }
 
 type AskAnswerRequest struct {

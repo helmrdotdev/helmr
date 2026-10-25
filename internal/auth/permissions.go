@@ -2,63 +2,38 @@ package auth
 
 import (
 	"strings"
-
 	"uuid"
 )
 
 type Permission string
 
-const (
-	PermissionSecretMetadataRead     Permission = "secret_metadata.read"
-	PermissionAgentUse               Permission = "agent.use"
-	PermissionRunMetadataRead        Permission = "run_metadata.read"
-	PermissionDeploymentMetadataRead Permission = "deployment_metadata.read"
-	PermissionDeploymentsPromote     Permission = "deployment.promote"
-	PermissionAPIKeysManage          Permission = "api_keys.manage"
-	PermissionMembersManage          Permission = "members.manage"
-	PermissionProjectsManage         Permission = "projects.manage"
-	PermissionAsksAnswer             Permission = "asks.answer"
-	PermissionSessionsRead           Permission = "sessions.read"
-	PermissionSessionsCreate         Permission = "sessions.create"
-	PermissionSessionsSend           Permission = "sessions.send"
-	PermissionSessionsClose          Permission = "sessions.close"
-	PermissionSessionsCancel         Permission = "sessions.cancel"
-	PermissionSessionsInterrupt      Permission = "sessions.interrupt"
-	PermissionSessionsResume         Permission = "sessions.resume"
-	PermissionComputersCreate        Permission = "computers.create"
-	PermissionComputersRead          Permission = "computers.read"
-	PermissionComputersDelete        Permission = "computers.delete"
-	PermissionComputersUpdate        Permission = "computers.update"
-	PermissionComputerCommandCreate  Permission = "computer.exec.create"
-	PermissionSecretsWrite           Permission = "secrets.write"
-	PermissionDeploymentsWrite       Permission = "deployments.write"
-)
+// PermissionGrant is a request snapshot. Durable owners reauthorize current
+// authority at admission; this is not an effective-access cache.
+type PermissionGrant struct {
+	ProjectID     string     `json:"projectId"`
+	EnvironmentID string     `json:"environmentId"`
+	AgentID       string     `json:"agentId,omitempty"`
+	Permission    Permission `json:"permission"`
+}
 
-// AllPermissions lists every Permission in declaration order. Callers that
-// advertise or enumerate permissions iterate this list instead of repeating
-// the constants.
-func AllPermissions() []Permission {
-	return []Permission{
-		PermissionAgentUse, PermissionRunMetadataRead, PermissionDeploymentMetadataRead, PermissionDeploymentsPromote, PermissionSecretMetadataRead,
-		PermissionAsksAnswer,
-		PermissionAPIKeysManage,
-		PermissionMembersManage,
-		PermissionProjectsManage,
-		PermissionSessionsRead,
-		PermissionSessionsCreate,
-		PermissionSessionsSend,
-		PermissionSessionsClose,
-		PermissionSessionsCancel,
-		PermissionSessionsInterrupt,
-		PermissionSessionsResume,
-		PermissionComputersCreate,
-		PermissionComputersRead,
-		PermissionComputersDelete,
-		PermissionComputersUpdate,
-		PermissionComputerCommandCreate,
-		PermissionSecretsWrite,
-		PermissionDeploymentsWrite,
+func (g PermissionGrant) allows(operation Permission, scope Scope) bool {
+	if g.Permission != operation {
+		return false
 	}
+	d, ok := PermissionInfo(operation)
+	if !ok {
+		return false
+	}
+	if d.ScopeType == ScopeOrganization {
+		return g.ProjectID == "" && g.EnvironmentID == "" && g.AgentID == "" && scope.ProjectID == "" && scope.EnvironmentID == "" && scope.AgentID == ""
+	}
+	if scope.ProjectID == "" || scope.EnvironmentID == "" || g.ProjectID != scope.ProjectID || g.EnvironmentID != scope.EnvironmentID {
+		return false
+	}
+	if d.ScopeType == ScopeEnvironment {
+		return g.AgentID == ""
+	}
+	return g.AgentID == "" || (scope.AgentID != "" && g.AgentID == scope.AgentID)
 }
 
 type Scope struct {
@@ -72,20 +47,23 @@ type Scope struct {
 // Management alone can observe and stop work, but cannot submit or resume it.
 func SessionExecutionOperation(permission Permission) bool {
 	switch permission {
-	case PermissionSessionsSend, PermissionAsksAnswer, PermissionSessionsResume:
+	case PermissionSessionsSend, PermissionSessionsAnswer, PermissionSessionsResume:
 		return true
 	}
 	return false
 }
 
 func (a Principal) HasPermission(permission Permission, scope Scope) bool {
-	if SessionExecutionOperation(permission) {
-		return a.HasPermission(CapabilitySessionsManage, scope) && a.HasPermission(CapabilityAgentsUse, scope)
+	if !IsPermission(permission) {
+		return false
 	}
 	if scope.OrgID != uuid.Nil() && a.OrgID != uuid.Nil() && scope.OrgID != a.OrgID {
 		return false
 	}
-	if a.Kind == PrincipalKindAPIKey && !a.matchesEnvironmentScope(scope) {
+	if a.Kind == PrincipalKindAPIKey && (!IsMachinePermission(permission) || !a.matchesEnvironmentScope(scope)) {
+		return false
+	}
+	if SessionExecutionOperation(permission) && !a.HasPermission(PermissionAgentsUse, scope) {
 		return false
 	}
 	for _, grant := range a.Grants {

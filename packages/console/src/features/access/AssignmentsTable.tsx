@@ -1,7 +1,8 @@
+import { usePermission } from "../../lib/me";
 import { A } from "@solidjs/router";
 import { useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
-import { ALL_MEMBERS, grantAgents, grantRecipientName, grantWhere, groupHref, memberHref, permissionNames, removeGrant, roleHref, type Capability, type RoleGrant } from "../../lib/permissions";
+import { ALL_MEMBERS, grantAgents, grantRecipientName, grantWhere, groupHref, memberHref, permissionNames, removeGrant, roleHref, type PermissionDefinition, type RoleGrant } from "../../lib/permissions";
 import { DataTable, EmptyCell, TableCount, RowActions } from "../../ui/DataTable";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { EmptyState } from "../../ui/QueryState";
@@ -22,7 +23,7 @@ function recipientHref(grant: RoleGrant): string | undefined {
 // role column). Rows edit their agent targets or remove the assignment.
 export function AssignmentsTable(props: {
   grants: readonly RoleGrant[];
-  catalog: readonly Capability[];
+  catalog: readonly PermissionDefinition[];
   recipient?: boolean;
   role?: boolean;
   empty: string;
@@ -30,6 +31,7 @@ export function AssignmentsTable(props: {
   editable?: boolean;
 }) {
   const cache = useQueryClient();
+  const permission = usePermission();
   const [editing, setEditing] = createSignal<RoleGrant>();
   const [removing, setRemoving] = createSignal<RoleGrant>();
   const columns = () => [
@@ -61,8 +63,8 @@ export function AssignmentsTable(props: {
                 <RowActions
                   label={`Actions for ${props.recipient ? `${grantRecipientName(grant)}, ` : ""}${grant.role_name} in ${grantWhere(grant)}`}
                   items={[
-                    ...(props.editable !== false && grant.agents_mode !== "none" ? [{ label: "Edit agents", onSelect: () => setEditing(grant) }] : []),
-                    { label: "Remove", tone: "danger" as const, onSelect: () => setRemoving(grant) },
+                    ...(props.editable !== false && permission.has("assignments.update") && grant.agents_mode !== "none" ? [{ label: "Edit agents", onSelect: () => setEditing(grant) }] : []),
+                    ...(permission.has("assignments.delete") ? [{ label: "Remove", tone: "danger" as const, onSelect: () => setRemoving(grant) }] : []),
                   ]}
                 />
               </tr>

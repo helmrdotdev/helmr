@@ -220,6 +220,8 @@ export function assignableRoles(currentUserIsOwner: boolean | undefined, ownRow:
 function MemberRow(props: {
   member: OrganizationMember;
   canManage: boolean;
+  canRemove: boolean;
+  canGrant: boolean;
   organizationRoles: string[];
   isCurrentUser: boolean;
   currentUserIsOwner: boolean | undefined;
@@ -242,9 +244,9 @@ function MemberRow(props: {
         <RowActions
           label={`Actions for ${memberName(props.member)}`}
           items={active() ? memberMenu({
-            grant: () => props.onGrant(props.member),
+            grant: props.canGrant ? () => props.onGrant(props.member) : undefined,
             changeOwnership: props.currentUserIsOwner ? () => props.onChangeRole(props.member) : undefined,
-            remove: !isOwner() ? () => props.onRemove(props.member) : undefined,
+            remove: !isOwner() && props.canRemove ? () => props.onRemove(props.member) : undefined,
           }) : []}
         />
       </tr>
@@ -274,9 +276,9 @@ function InvitationRow(props: {
 }
 
 // The object menu for a member, the same in its list row and by its name.
-export function memberMenu(options: { grant: () => void; changeOwnership?: (() => void) | undefined; remove?: (() => void) | undefined }): ActionMenuItem[] {
+export function memberMenu(options: { grant?: (() => void) | undefined; changeOwnership?: (() => void) | undefined; remove?: (() => void) | undefined }): ActionMenuItem[] {
   return [
-    { label: "Grant access", onSelect: options.grant },
+    ...(options.grant ? [{ label: "Grant access", onSelect: options.grant }] : []),
     ...(options.changeOwnership ? [{ label: "Change ownership", onSelect: options.changeOwnership }] : []),
     ...(options.remove ? [{ label: "Remove member", tone: "danger" as const, onSelect: options.remove }] : []),
   ];
@@ -331,19 +333,22 @@ export function Members() {
   const members = createQuery(() => ({
     queryKey: ["members"],
     queryFn: listMembers,
+    enabled: me.data?.permissions.includes("members.read") === true,
     retry: false,
   }));
   const invitations = createInfiniteQuery(() => ({
     queryKey: ["invitations"],
+    enabled: me.data?.permissions.includes("invitations.read") === true,
     queryFn: ({ pageParam }) => listInvitations(pageParam || undefined),
     initialPageParam: "",
     getNextPageParam: (page) => page.next_cursor,
     retry: false,
   }));
 
-  const canManage = createMemo(() => me.data?.permissions.includes("access.manage") === true);
-  const grants = createQuery(()=>({queryKey:["access","grants"],queryFn:listGrants,enabled:canManage()}));
-  const groups = createQuery(()=>({queryKey:["access","groups"],queryFn:listGroups,enabled:canManage()}));
+  const can = (permission: string) => me.data?.permissions.includes(permission) === true;
+  const canManage = () => can("members.read");
+  const grants = createQuery(()=>({queryKey:["access","grants"],queryFn:listGrants,enabled:can("assignments.read")}));
+  const groups = createQuery(()=>({queryKey:["access","groups"],queryFn:listGroups,enabled:can("groups.read")}));
   const emailDelivery = () => me.data?.email_delivery === true;
   // The server lists pending invitations, newest first; further pages are
   // appended in that order.
@@ -380,7 +385,7 @@ export function Members() {
       <PageHeader
         title="Members"
         actions={
-          <Show when={canManage()}>
+          <Show when={can("invitations.create")}>
             <button class={ui.button} type="button" disabled={!emailDelivery()} onClick={() => setInviting(true)}>
               Invite members
             </button>
@@ -389,37 +394,31 @@ export function Members() {
       />
 
       <Show when={!me.isPending && !canManage()}>
-        <div class="mb-3"><DeniedState message="You need Manage access permission to see and manage members." /></div>
+        <div class="mb-3"><DeniedState message="You need Read members permission to view members." /></div>
       </Show>
-      <Show when={canManage() && !emailDelivery()}>
+      <Show when={can("invitations.create") && !emailDelivery()}>
         <Notice tone="info" class="mb-3">{NO_EMAIL_DELIVERY}</Notice>
       </Show>
 
-      <QueryState
-        query={members}
-        pending={<TableSkeleton label="Loading members" columns={COLUMNS} minWidth="min-w-160" />}
-        error={(error) => loadError(error, "Could not load members.", MEMBERS_ERROR_MESSAGES)}
-      >
-        {(data) => <>
-          <Show when={invitations.isError && !invitations.isFetchNextPageError}>
-            <Notice
-              tone="danger"
-              class="mb-3"
-              action={<button type="button" class={ui.compactButton} onClick={() => void invitations.refetch()}>Retry</button>}
-            >
-              Could not load invitations.
-            </Notice>
-          </Show>
+      <Show when={canManage()}>
+        <QueryState query={members} pending={<TableSkeleton label="Loading members" columns={COLUMNS} minWidth="min-w-160" />} error={error => loadError(error, "Could not load members.", MEMBERS_ERROR_MESSAGES)}>{() => null}</QueryState>
+      </Show>
+      <Show when={can("invitations.read")}>
+        <QueryState query={invitations} pending={<TableSkeleton label="Loading invitations" columns={COLUMNS} minWidth="min-w-160" />} error={error => loadError(error, "Could not load invitations.")}>{() => null}</QueryState>
+      </Show>
+      <Show when={(canManage() && members.data) || (can("invitations.read") && invitations.data)}>
           <DataTable
             columns={COLUMNS}
             minWidth="min-w-160"
-            footer={<LoadMore count={data().members.length} noun={{ one: "member", other: "members" }} extra={{ count: pendingInvitations().length, noun: { one: "invitation", other: "invitations" } }} hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
+            footer={<LoadMore count={canManage() ? members.data?.members.length ?? 0 : 0} noun={{ one: "member", other: "members" }} extra={{ count: pendingInvitations().length, noun: { one: "invitation", other: "invitations" } }} hasMore={invitations.hasNextPage} loading={invitations.isFetchingNextPage} failed={invitations.isFetchNextPageError} onLoadMore={() => void invitations.fetchNextPage()} />}
           >
-            <For each={data().members}>
+            <For each={canManage() ? members.data?.members ?? [] : []}>
               {(member) => (
                 <MemberRow
                   member={member}
                   canManage={canManage()}
+                  canRemove={can("members.remove")}
+                  canGrant={can("assignments.create")}
                   organizationRoles={member.status === "active" ? [...new Set(memberGrantSources(grants.data?.grants ?? [], groups.data?.groups ?? [], member.membership_id).filter(g=>g.target_kind === "organization").map(g=>g.role_name))] : []}
                   isCurrentUser={isCurrentUser(member)}
                   currentUserIsOwner={me.data?.is_owner}
@@ -430,11 +429,10 @@ export function Members() {
               )}
             </For>
             <For each={pendingInvitations()}>
-              {(invitation) => <InvitationRow invitation={invitation} canManage={canManage()} onRevoke={setRevoking} />}
+              {(invitation) => <InvitationRow invitation={invitation} canManage={can("invitations.revoke")} onRevoke={setRevoking} />}
             </For>
           </DataTable>
-        </>}
-      </QueryState>
+      </Show>
 
       <Show when={inviting()}>
         <InviteMembersDialog

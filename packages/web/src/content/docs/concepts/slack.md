@@ -15,7 +15,8 @@ between Slack messages and Turns.
 ## Connections
 
 Each Agent has its own Slack app and one Slack connection in each Environment.
-A person with `agents.manage` on the Agent creates the app from a manifest Helmr provides,
+A person with the Agent’s connection creation, credential update and authorization
+permissions creates the app from a manifest Helmr provides,
 saves its credentials and installs it in the workspace from the Console. See
 [Connect Slack](/docs/guides/connect-slack).
 

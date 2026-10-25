@@ -21,7 +21,7 @@ func TestScopedRoleGrantsAndSharedEdits(t *testing.T) {
 	ctx := t.Context()
 	m := f.owner
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('permissions','Permissions')`)
-	project, environments, err := org.CreateProject(ctx, f.pool, m.OrgID, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "permission-project", Name: "Permissions"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, environments, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "permission-project", Name: "Permissions"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestScopedRoleGrantsAndSharedEdits(t *testing.T) {
 		t.Fatal(err)
 	}
 	roles, err := org.ListPermissionRoles(ctx, f.pool, m)
-	if err != nil || len(roles) != 10 {
+	if err != nil || len(roles) != 16 {
 		t.Fatalf("standard roles=%v %v", roles, err)
 	}
 	if err = db.RunTx(ctx, f.pool, func(tx pgx.Tx) error { return org.SeedStandardRoles(ctx, tx, m.OrgID, m.Actor) }); err != nil {
@@ -62,11 +62,11 @@ func TestScopedRoleGrantsAndSharedEdits(t *testing.T) {
 			t.Fatalf("permission %s agent %s allowed=%t err=%v", p, agent, want, err)
 		}
 	}
-	check(agent, env, auth.PermissionSessionsCreate, true)
-	check(otherAgent, env, auth.PermissionSessionsCreate, false)
-	check(agent, otherEnv, auth.PermissionSessionsCreate, false)
+	check(agent, env, auth.PermissionAgentsUse, true)
+	check(otherAgent, env, auth.PermissionAgentsUse, false)
+	check(agent, otherEnv, auth.PermissionAgentsUse, false)
 	check(agent, env, auth.PermissionSessionsRead, false)
-	if _, err = org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"access.manage"}}); !errors.Is(err, org.ErrRoleTarget) {
+	if _, err = org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"assignments.create"}}); !errors.Is(err, org.ErrRoleTarget) {
 		t.Fatalf("incompatible edit: %v", err)
 	}
 	check(agent, env, auth.PermissionSessionsRead, false)
@@ -80,14 +80,14 @@ func TestScopedRoleGrantsAndSharedEdits(t *testing.T) {
 	if err = org.RemoveRoleGrant(ctx, f.pool, m, grants[0].ID, strconv.FormatInt(grants[0].Revision, 10)); err != nil {
 		t.Fatal(err)
 	}
-	check(agent, env, auth.PermissionSessionsCreate, true)
+	check(agent, env, auth.PermissionAgentsUse, true)
 	if _, err = org.AssignRole(ctx, f.pool, m, org.GrantInput{ProjectID: &projectID, Subject: org.GrantSubject{Type: "all_members"}, RoleID: role.ID, EnvironmentID: &env, AgentsMode: "all", ExpectedRoleRevision: role.Revision}); err == nil {
 		t.Fatal("All Users environment assignment accepted")
 	}
 	if err = identity.RemoveMember(ctx, f.pool, m, f.member.MemberID); err != nil {
 		t.Fatal(err)
 	}
-	check(agent, env, auth.PermissionSessionsCreate, false)
+	check(agent, env, auth.PermissionAgentsUse, false)
 	var count int
 	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM permission_group_members WHERE org_id=$1 AND member_id=(SELECT id FROM org_members WHERE org_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1)`, m.OrgID, f.member.UserID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("offboard group edges=%d %v", count, err)
@@ -103,7 +103,7 @@ func TestRoleEditRacesAgentGrant(t *testing.T) {
 	f := newMemberFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('race','Race')`)
-	project, environments, err := org.CreateProject(ctx, f.pool, f.owner.OrgID, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "race", Name: "Race"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, environments, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "race", Name: "Race"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestRoleEditRacesAgentGrant(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			_, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"sessions.view"}})
+			_, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"sessions.read"}})
 			results <- err
 		}()
 		close(start)

@@ -17,9 +17,11 @@ column agent_triggers.input bytea not null
 column agent_triggers.key text not null
 column agent_triggers.slack_channel_id text
 column agent_triggers.timezone text not null
+column agents.deleted_at timestamp with time zone
 column agents.environment_id uuid not null
 column agents.id uuid not null
 column agents.key text not null
+column agents.revision bigint not null default 1
 column api_keys.created_at timestamp with time zone not null default now()
 column api_keys.created_by_member_id uuid
 column api_keys.environment_id uuid not null
@@ -1197,6 +1199,7 @@ constraint agent_triggers c CHECK (timezone <> ''::text)
 constraint agent_triggers f FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
 constraint agent_triggers p PRIMARY KEY (environment_id, agent_id, deployment_id, key)
 constraint agents c CHECK (key ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'::text)
+constraint agents c CHECK (revision > 0)
 constraint agents f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint agents p PRIMARY KEY (environment_id, id)
 constraint agents u UNIQUE (environment_id, key)

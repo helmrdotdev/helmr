@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"time"
 	"uuid"
 
@@ -28,7 +29,7 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environ
 	}
 	setup := ConnectionSetup{ID: uuid.NewV7(), RegistrationID: uuid.NewV7()}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockAgentManager(ctx, tx, org, user, environment, agent); err != nil {
+		if err := lockAgentManager(ctx, tx, org, user, environment, agent, auth.PermissionAgentConnectionsCreate); err != nil {
 			return err
 		}
 		var id uuid.UUID
@@ -83,7 +84,10 @@ type ConnectionView struct {
 	AppIconURL               *string       `json:"app_icon_url"`
 }
 
-func ConnectionAgent(ctx context.Context, pool db.TxBeginner, org, user, environment uuid.UUID, name string) (uuid.UUID, error) {
+func ConnectionAgent(ctx context.Context, pool db.TxBeginner, org, user, environment uuid.UUID, name string, permission auth.Permission) (uuid.UUID, error) {
+	if auth.PermissionResourceType(permission) != "agent_connections" {
+		return uuid.Nil(), errInstallationAuthority
+	}
 	var agent uuid.UUID
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `SELECT a.id FROM agents a JOIN environments e ON e.id=a.environment_id WHERE a.environment_id=$1 AND a.key=$2 AND e.org_id=$3`, environment, name, org).Scan(&agent)
@@ -93,15 +97,18 @@ func ConnectionAgent(ctx context.Context, pool db.TxBeginner, org, user, environ
 		if err != nil {
 			return err
 		}
-		return lockAgentManager(ctx, tx, org, user, environment, agent)
+		return lockAgentManager(ctx, tx, org, user, environment, agent, permission)
 	})
 	return agent, err
 }
 
-func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID) (*ConnectionView, error) {
+func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID, permission auth.Permission) (*ConnectionView, error) {
+	if auth.PermissionResourceType(permission) != "agent_connections" {
+		return nil, errInstallationAuthority
+	}
 	var view *ConnectionView
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockAgentManager(ctx, tx, org, user, environment, agent); err != nil {
+		if err := lockAgentManager(ctx, tx, org, user, environment, agent, permission); err != nil {
 			return err
 		}
 		var value ConnectionView
@@ -144,6 +151,7 @@ func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environme
 // DisconnectConnection fences the exact generation, including pending setup.
 // Running work remains available through Console/API and is not cancelled.
 type ConnectionDisconnection struct {
+	causeAgent                   *uuid.UUID
 	registration                 uuid.UUID
 	installation                 *uuid.UUID
 	connection, environment, org uuid.UUID
@@ -153,9 +161,33 @@ type ConnectionDisconnection struct {
 // LockConnectionDisconnection takes the Slack generation locks before the
 // caller's Environment lock. Apply joins that caller's transaction.
 func LockConnectionDisconnection(ctx context.Context, tx pgx.Tx, org, user, environment, connection uuid.UUID) (*ConnectionDisconnection, error) {
-	if err := lockConnectionManager(ctx, tx, org, user, connection); err != nil {
+	if err := lockConnectionManager(ctx, tx, org, user, connection, auth.PermissionAgentConnectionsDelete); err != nil {
 		return nil, err
 	}
+	return lockConnectionDisconnection(ctx, tx, org, environment, connection)
+}
+
+// LockAgentDeletionDisconnection limits deletion authority to the connection of
+// the exact Agent being deleted. It does not grant connection administration.
+func LockAgentDeletionDisconnection(ctx context.Context, tx pgx.Tx, org, user, environment, agent, connection uuid.UUID) (*ConnectionDisconnection, error) {
+	if err := lockAgentManager(ctx, tx, org, user, environment, agent, auth.PermissionAgentsDelete); err != nil {
+		return nil, err
+	}
+	var matches bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_connections WHERE id=$1 AND environment_id=$2 AND agent_id=$3)`, connection, environment, agent).Scan(&matches); err != nil {
+		return nil, err
+	}
+	if !matches {
+		return nil, ErrConnectionUnavailable
+	}
+	plan, err := lockConnectionDisconnection(ctx, tx, org, environment, connection)
+	if err == nil {
+		plan.causeAgent = &agent
+	}
+	return plan, err
+}
+
+func lockConnectionDisconnection(ctx context.Context, tx pgx.Tx, org, environment, connection uuid.UUID) (*ConnectionDisconnection, error) {
 	var registration uuid.UUID
 	var installation *uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT p.slack_app_registration_id,p.slack_installation_id FROM slack_connections p JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND e.org_id=$3`, connection, environment, org).Scan(&registration, &installation)
@@ -206,7 +238,11 @@ func (p *ConnectionDisconnection) Apply(ctx context.Context, tx pgx.Tx, actor au
 	if err != nil || !p.active {
 		return err
 	}
-	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: p.org, EnvironmentID: p.environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: p.connection})
+	var details audit.Details
+	if p.causeAgent != nil {
+		details = audit.AgentCleanupDetails{CauseAgentID: p.causeAgent.String(), Reason: "agent_deleted"}
+	}
+	return audit.Append(ctx, tx, audit.Event{Actor: actor, OrgID: p.org, EnvironmentID: p.environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: p.connection, Details: details})
 }
 
 func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.Actor, org, user, environment, connection uuid.UUID) error {

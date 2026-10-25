@@ -15,6 +15,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -104,7 +105,7 @@ func TestCreateProjectSelectsFirstRegionWhenDefaultIsOmitted(t *testing.T) {
 	if _, err := fixture.queries.CreateRegion(t.Context(), db.CreateRegionParams{ID: "project-list-z", DisplayName: "Alpha"}); err != nil {
 		t.Fatal(err)
 	}
-	project, environments, err := CreateProject(t.Context(), fixture.pool, fixture.orgID, ProjectInput{
+	project, environments, err := CreateProject(t.Context(), fixture.pool, fixture.manager, ProjectInput{
 		ExecutionLimits: testExecutionLimits(),
 		ProjectDetails:  ProjectDetails{Slug: "project", Name: "Project"},
 	})
@@ -130,7 +131,7 @@ func TestCreateProjectRequiresARegionWhenDefaultIsOmitted(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := CreateProject(t.Context(), database.Pool, orgID, ProjectInput{
+	_, _, err := CreateProject(t.Context(), database.Pool, projectManager(t, database.Pool, orgID), ProjectInput{
 		ExecutionLimits: testExecutionLimits(),
 		ProjectDetails:  ProjectDetails{Slug: "project", Name: "Project"},
 	})
@@ -141,7 +142,7 @@ func TestCreateProjectRequiresARegionWhenDefaultIsOmitted(t *testing.T) {
 
 func TestCreateProjectRejectsUnknownDefaultRegion(t *testing.T) {
 	fixture := newProjectFixture(t, 0, 0)
-	_, _, err := CreateProject(t.Context(), fixture.pool, fixture.orgID, ProjectInput{
+	_, _, err := CreateProject(t.Context(), fixture.pool, fixture.manager, ProjectInput{
 		ExecutionLimits: testExecutionLimits(),
 		ProjectDetails:  ProjectDetails{Slug: "project"},
 		DefaultRegionID: "missing-region",
@@ -162,7 +163,7 @@ func TestCreateProjectsPostgresSerializesFirstDefaultSelection(t *testing.T) {
 		go func() {
 			ready.Done()
 			<-start
-			_, _, err := CreateProject(context.Background(), fixture.pool, fixture.orgID, ProjectInput{
+			_, _, err := CreateProject(context.Background(), fixture.pool, fixture.manager, ProjectInput{
 				ExecutionLimits: testExecutionLimits(),
 				ProjectDetails:  ProjectDetails{Slug: slug, Name: slug},
 			})
@@ -192,27 +193,27 @@ func TestCreateProjectsPostgresSerializesFirstDefaultSelection(t *testing.T) {
 
 func TestUpdateProjectAndEnvironmentPreserveIdentifiers(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	project, environments, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{ExecutionLimits: testExecutionLimits(), ProjectDetails: ProjectDetails{Slug: "project"}})
+	project, environments, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{ExecutionLimits: testExecutionLimits(), ProjectDetails: ProjectDetails{Slug: "project"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	projectID := pgvalue.MustUUIDValue(project.ID)
-	updated, err := UpdateProject(t.Context(), f.queries, f.orgID, projectID, ProjectDetails{Slug: "attempted-rename", Name: "New display name"})
+	updated, err := UpdateProject(t.Context(), f.pool, f.manager, projectID, ProjectDetails{Slug: "attempted-rename", Name: "New display name"})
 	if err != nil || updated.Slug != "project" || updated.Name != "New display name" {
 		t.Fatalf("project identity changed: %+v %v", updated, err)
 	}
-	preview, err := CreateEnvironment(t.Context(), f.pool, f.orgID, projectID, EnvironmentDetails{Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits())
+	preview, err := CreateEnvironment(t.Context(), f.pool, f.manager, projectID, EnvironmentDetails{Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
 	environments = append(environments, preview)
 	for _, environment := range environments {
-		updated, err := UpdateEnvironment(t.Context(), f.queries, f.orgID, projectID, pgvalue.MustUUIDValue(environment.ID), EnvironmentDetails{Name: "New display name", Slug: "attempted-rename", ColorHex: environment.ColorHex})
+		updated, err := UpdateEnvironment(t.Context(), f.pool, f.manager, projectID, pgvalue.MustUUIDValue(environment.ID), EnvironmentDetails{Name: "New display name", Slug: "attempted-rename", ColorHex: environment.ColorHex})
 		if err != nil || updated.Slug != environment.Slug || updated.Name != "New display name" {
 			t.Fatalf("environment identity changed: %+v %v", updated, err)
 		}
 	}
-	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, projectID, EnvironmentDetails{Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits()); !errors.Is(err, ErrEnvironmentSlugInUse) {
+	if _, err := CreateEnvironment(t.Context(), f.pool, f.manager, projectID, EnvironmentDetails{Slug: "preview", ColorHex: "#315FCE"}, testExecutionLimits()); !errors.Is(err, ErrEnvironmentSlugInUse) {
 		t.Fatalf("duplicate ID: %v", err)
 	}
 	if _, err := GetProject(t.Context(), f.queries, f.orgID, projectID.String()); !errors.Is(err, ErrProjectNotFound) {
@@ -311,6 +312,7 @@ func TestListProjectsPostgresCandidateScale(t *testing.T) {
 type projectFixture struct {
 	pool       *pgxpool.Pool
 	queries    *db.Queries
+	manager    ManagingMember
 	store      *countingQuerier
 	orgID      uuid.UUID
 	projectIDs []uuid.UUID
@@ -371,7 +373,7 @@ func newProjectFixture(t *testing.T, projectCount, environmentsEach int) project
 	}
 	return projectFixture{
 		pool: database.Pool, queries: queries, store: &countingQuerier{Querier: queries},
-		orgID: orgID, projectIDs: projectIDs,
+		orgID: orgID, projectIDs: projectIDs, manager: projectManager(t, database.Pool, orgID),
 	}
 }
 
@@ -479,7 +481,7 @@ func testExecutionLimits() ExecutionLimits {
 func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
 	input := ProjectInput{ProjectDetails: ProjectDetails{Slug: "configured", Name: "Configured"}}
-	if _, _, err := CreateProject(t.Context(), f.pool, f.orgID, input); err == nil {
+	if _, _, err := CreateProject(t.Context(), f.pool, f.manager, input); err == nil {
 		t.Fatal("missing operating limits accepted")
 	}
 	var count int
@@ -487,7 +489,7 @@ func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
 		t.Fatalf("failed configuration leaked Project: %d %v", count, err)
 	}
 	input.ExecutionLimits = testExecutionLimits()
-	_, environments, err := CreateProject(t.Context(), f.pool, f.orgID, input)
+	_, environments, err := CreateProject(t.Context(), f.pool, f.manager, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,20 +499,20 @@ func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
 			t.Fatalf("Environment limits not committed: %v %v", configured, err)
 		}
 	}
-	if _, _, err := CreateProject(t.Context(), f.pool, f.orgID, input); !errors.Is(err, ErrProjectSlugInUse) {
+	if _, _, err := CreateProject(t.Context(), f.pool, f.manager, input); !errors.Is(err, ErrProjectSlugInUse) {
 		t.Fatalf("duplicate Project accepted: %v", err)
 	}
 }
 
 func TestEnvironmentCreationRequiresExecutionLimits(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	project, envs, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{ProjectDetails: ProjectDetails{Slug: "limits", Name: "Limits"}, ExecutionLimits: testExecutionLimits()})
+	project, envs, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{ProjectDetails: ProjectDetails{Slug: "limits", Name: "Limits"}, ExecutionLimits: testExecutionLimits()})
 	if err != nil || len(envs) != 2 {
 		t.Fatalf("create project: %d %v", len(envs), err)
 	}
 	partial := testExecutionLimits()
 	partial.AdmissionBurst = 0
-	if _, err := CreateEnvironment(t.Context(), f.pool, f.orgID, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "partial", Name: "Partial", ColorHex: "#123456"}, partial); err == nil {
+	if _, err := CreateEnvironment(t.Context(), f.pool, f.manager, pgvalue.MustUUIDValue(project.ID), EnvironmentDetails{Slug: "partial", Name: "Partial", ColorHex: "#123456"}, partial); err == nil {
 		t.Fatal("Environment created without a complete limit set")
 	}
 	var count int
@@ -521,20 +523,20 @@ func TestEnvironmentCreationRequiresExecutionLimits(t *testing.T) {
 
 func TestHistoryRetentionPolicyDefaultsAndAtomic(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	project, envs, err := CreateProject(t.Context(), f.pool, f.orgID, ProjectInput{ProjectDetails: ProjectDetails{Slug: "history", Name: "History"}, ExecutionLimits: testExecutionLimits()})
+	project, envs, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{ProjectDetails: ProjectDetails{Slug: "history", Name: "History"}, ExecutionLimits: testExecutionLimits()})
 	if err != nil || len(envs) != 2 || !project.HistoryRetentionSeconds.Valid || project.HistoryRetentionSeconds.Int64 != 2592000 {
 		t.Fatalf("default: %+v %v", project, err)
 	}
 	id := pgvalue.MustUUIDValue(project.ID)
 	zero, positive := int64(0), int64(3600)
-	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), f.orgID, id, &zero); err == nil {
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, f.manager, id, &zero); err == nil {
 		t.Fatal("accepted zero")
 	}
-	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), uuid.NewV7(), id, nil); !errors.Is(err, ErrProjectNotFound) {
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, ManagingMember{OrgID: uuid.NewV7(), UserID: f.manager.UserID, MemberID: f.manager.MemberID}, id, nil); !errors.Is(err, ErrMemberManagementRequired) {
 		t.Fatalf("cross-organization: %v", err)
 	}
 	for range 2 {
-		if err := UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), f.orgID, id, nil); err != nil {
+		if err := UpdateProjectHistoryRetention(t.Context(), f.pool, f.manager, id, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -544,11 +546,84 @@ func TestHistoryRetentionPolicyDefaultsAndAtomic(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_retention_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected audit failure'; END $$`)
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_retention_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_retention_audit()`)
-	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, audit.System("test"), f.orgID, id, &positive); err == nil {
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, f.manager, id, &positive); err == nil {
 		t.Fatal("audit failure committed policy")
 	}
 	var kept bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT history_retention_seconds IS NULL FROM projects WHERE id=$1`, id).Scan(&kept); err != nil || !kept {
 		t.Fatalf("rollback: %v %v", kept, err)
+	}
+}
+
+func projectManager(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) ManagingMember {
+	t.Helper()
+	userID, memberID := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO users(id,display_name) VALUES($1,'Project manager'); INSERT INTO org_members(id,org_id,user_id) VALUES($2,$3,$1)`, pgx.QueryExecModeSimpleProtocol, userID, memberID, orgID)
+	for _, role := range auth.StandardRoles() {
+		if role.Key == "organization_structure_administrator" {
+			permissions := []string{}
+			for _, p := range role.Permissions {
+				permissions = append(permissions, string(p))
+			}
+			dbtest.GrantMember(t, pool, orgID, userID, nil, permissions...)
+		}
+	}
+	return ManagingMember{Actor: audit.System("fixture"), OrgID: orgID, UserID: userID, MemberID: memberID}
+}
+
+func TestCreateProjectWaitsBeforeLockingMemberAndRechecksRemoval(t *testing.T) {
+	f := newProjectFixture(t, 0, 0)
+	tx, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := db.New(tx).LockOrganizationForProjectDefaults(t.Context(), pgvalue.UUID(f.orgID)); err != nil {
+		t.Fatal(err)
+	}
+	var blocker int
+	if err := tx.QueryRow(t.Context(), `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := CreateProject(ctx, f.pool, f.manager, ProjectInput{ExecutionLimits: testExecutionLimits(), ProjectDetails: ProjectDetails{Slug: "revoked", Name: "Revoked"}})
+		done <- err
+	}()
+	for {
+		var waiting bool
+		if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("creation did not wait: %v", err)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	// Member removal owns the organization before the member. A waiting creator
+	// must not hold the member lock in the reverse order.
+	if _, err := tx.Exec(ctx, `SELECT id FROM org_members WHERE id=$1 FOR UPDATE NOWAIT`, f.manager.MemberID); err != nil {
+		t.Fatalf("creator inverted organization/member locks: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE org_members SET removed_at=clock_timestamp() WHERE id=$1`, f.manager.MemberID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrMemberManagementRequired) {
+		t.Fatalf("removed member result after waiting: %v", err)
+	}
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM projects WHERE org_id=$1`, f.orgID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("project persisted: %d %v", count, err)
 	}
 }

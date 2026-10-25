@@ -58,7 +58,7 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	principal, environmentID, ok := s.secretMutationAuthority(w, r)
+	principal, environmentID, ok := s.secretMutationAuthority(w, r, auth.PermissionSecretsCreate)
 	if !ok {
 		return
 	}
@@ -88,7 +88,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionSecretMetadataRead, scope) {
+	if !principal.HasPermission(auth.PermissionSecretsRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -165,7 +165,7 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionSecretMetadataRead, scope) {
+	if !principal.HasPermission(auth.PermissionSecretsRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -213,7 +213,7 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id string)
 		writeError(w, badRequest(err))
 		return
 	}
-	principal, environmentID, ok := s.secretMutationAuthority(w, r)
+	principal, environmentID, ok := s.secretMutationAuthority(w, r, auth.PermissionSecretsRotate)
 	if !ok {
 		return
 	}
@@ -273,7 +273,7 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id string)
 		writeError(w, badRequest(err))
 		return
 	}
-	principal, environmentID, ok := s.secretMutationAuthority(w, r)
+	principal, environmentID, ok := s.secretMutationAuthority(w, r, auth.PermissionSecretsRevoke)
 	if !ok {
 		return
 	}
@@ -310,6 +310,7 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id string)
 func (s *Server) secretMutationAuthority(
 	w http.ResponseWriter,
 	r *http.Request,
+	permission auth.Permission,
 ) (auth.Principal, pgtype.UUID, bool) {
 	principal := principalFromContext(r.Context())
 	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
@@ -317,7 +318,7 @@ func (s *Server) secretMutationAuthority(
 		writeError(w, badRequest(err))
 		return auth.Principal{}, pgtype.UUID{}, false
 	}
-	if !principal.HasPermission(auth.PermissionSecretsWrite, scope) {
+	if !principal.HasPermission(permission, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return auth.Principal{}, pgtype.UUID{}, false
 	}

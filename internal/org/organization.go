@@ -70,7 +70,7 @@ func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput)
 	if err := SeedStandardRoles(ctx, tx, orgID, input.Actor); err != nil {
 		return db.Organization{}, err
 	}
-	for _, key := range []string{"access_administrator", "organization_manager"} {
+	for _, key := range []string{"access_administrator", "organization_structure_administrator"} {
 		var role uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM roles WHERE org_id=$1 AND builtin_key=$2`, orgID, key).Scan(&role); err != nil {
 			return db.Organization{}, err

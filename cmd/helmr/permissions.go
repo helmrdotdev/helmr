@@ -136,7 +136,7 @@ func permissionOutput(cmd *cobra.Command, value any) error {
 			}
 			fmt.Fprintf(out, "%s/%s/%s: %s\n", scope.Project, scope.Environment, target, strings.Join(scope.Permissions, ", "))
 			for _, source := range scope.Sources {
-				fmt.Fprintf(out, "  %s: %s → %s (%s %s): %s\n", source.Kind, source.GroupName, source.RoleName, source.TargetKind, source.Agent, strings.Join(source.IncludedPermissions, ", "))
+				fmt.Fprintf(out, "  %s: %s → %s (%s %s): %s\n", source.Kind, source.GroupName, source.RoleName, source.TargetKind, source.Agent, strings.Join(source.Permissions, ", "))
 			}
 		}
 		fmt.Fprintln(out, v.Notice)
@@ -173,7 +173,7 @@ func writeGrantSummary(out io.Writer, v api.RoleGrant) {
 				selection = "No remaining Agent targets"
 			}
 		}
-		fmt.Fprintf(out, "  %s: %s; actions: %s; includes: %s\n", t.ResourceType, selection, strings.Join(t.Permissions, ", "), strings.Join(t.IncludedPermissions, ", "))
+		fmt.Fprintf(out, "  %s: %s; actions: %s\n", t.ResourceType, selection, strings.Join(t.Permissions, ", "))
 	}
 	fmt.Fprintf(out, "  Assignment revision: %d; Role revision: %d\n", v.Revision, v.RoleRevision)
 
@@ -183,7 +183,7 @@ func grantPermissionPreview(g api.RoleGrant, permissions []string) api.RoleGrant
 	g.Permissions = permissions
 	g.Targets = []api.GrantTarget{}
 	for _, p := range permissions {
-		resource := auth.CapabilityResourceType(auth.Permission(p))
+		resource := auth.PermissionResourceType(auth.Permission(p))
 		i := -1
 		for j, t := range g.Targets {
 			if t.ResourceType == resource {
@@ -192,10 +192,10 @@ func grantPermissionPreview(g api.RoleGrant, permissions []string) api.RoleGrant
 		}
 		if i < 0 {
 			t := api.GrantTarget{ResourceType: resource, Mode: "environment"}
-			if resource == "organization" {
+			if auth.IsOrganizationPermission(auth.Permission(p)) {
 				t.Mode = "organization"
 			}
-			if resource == "agents" {
+			if auth.IsAgentPermission(auth.Permission(p)) {
 				t.Mode = g.AgentsMode
 				t.AgentIDs = g.AgentIDs
 				t.AgentKeys = g.AgentKeys
@@ -207,9 +207,6 @@ func grantPermissionPreview(g api.RoleGrant, permissions []string) api.RoleGrant
 			i = len(g.Targets) - 1
 		}
 		g.Targets[i].Permissions = append(g.Targets[i].Permissions, p)
-		for _, c := range auth.IncludedCapabilities(auth.Permission(p)) {
-			g.Targets[i].IncludedPermissions = append(g.Targets[i].IncludedPermissions, string(c))
-		}
 	}
 	return g
 }
@@ -374,7 +371,7 @@ func roleActionCommand(action string) *cobra.Command {
 		cmd.Flags().StringArrayVar(&permissions, "permission", nil, "Public permission ID; repeat for the complete set. "+permissionHelp())
 		_ = cmd.RegisterFlagCompletionFunc("permission", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			ids := []string{}
-			for _, cap := range auth.CapabilityCatalog() {
+			for _, cap := range auth.PermissionCatalog() {
 				ids = append(ids, string(cap.ID)+"\t"+cap.Name)
 			}
 			return ids, cobra.ShellCompDirectiveNoFileComp
@@ -513,7 +510,7 @@ func roleActionCommand(action string) *cobra.Command {
 }
 func permissionHelp() string {
 	ids := []string{}
-	for _, cap := range auth.CapabilityCatalog() {
+	for _, cap := range auth.PermissionCatalog() {
 		ids = append(ids, string(cap.ID))
 	}
 	return strings.Join(ids, ", ")
@@ -851,7 +848,7 @@ func roleGrantActionCommand(action string) *cobra.Command {
 		}
 		hasAgents := false
 		for _, p := range role.Permissions {
-			if auth.CapabilityResourceType(auth.Permission(p)) == "agents" {
+			if auth.IsAgentPermission(auth.Permission(p)) {
 				hasAgents = true
 			}
 		}
@@ -897,7 +894,7 @@ func memberCommand() *cobra.Command {
 	root := permissionNamespace("member", "Inspect organization member permissions.")
 	var email, id, project, env, agent string
 	var self bool
-	cmd := &cobra.Command{Use: "permissions", Short: "Show current effective capabilities and their sources; this does not authorize runtime admission."}
+	cmd := &cobra.Command{Use: "permissions", Short: "Show current effective permissions and their sources; this does not authorize runtime admission."}
 	cmd.Flags().StringVar(&email, "user", "", "Exact member email (requires member-management access).")
 	cmd.Flags().StringVar(&id, "member-id", "", "Stable member ID.")
 	cmd.Flags().BoolVar(&self, "self", false, "Inspect the logged-in member.")

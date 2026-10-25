@@ -105,7 +105,7 @@ export function Deployments() {
                   deployment={deployment}
                   current={deployment.id === currentID()}
                   canPromote={canPromoteDeployment({
-                    permitted: hasPermission(me.data, "deployment.promote", {projectID:projectID(),environmentID:environmentID()}),
+                    permitted: hasPermission(me.data, "deployments.promote", {projectID:projectID(),environmentID:environmentID()}),
                     currentLoaded: current.isSuccess,
                     isCurrent: deployment.id === currentID(),
                   })}

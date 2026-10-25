@@ -32,7 +32,7 @@ function MemberGrantRemovalImpact(props: { grant: RoleGrant }) {
   const effective = createQuery(() => ({ queryKey: ["access", "member", user(), "permissions"], queryFn: () => getMemberPermissions(user()), enabled: !!user() }));
   const scopes = createMemo(() => effective.data?.scopes.filter(s => s.sources.some(source => source.grant_id === props.grant.id)).map(s => {
     const sources = s.sources.filter(source => source.grant_id !== props.grant.id);
-    return { ...s, sources, permissions: [...new Set(sources.flatMap(source => source.included_permissions))].sort() };
+    return { ...s, sources, permissions: [...new Set(sources.flatMap(source => source.permissions))].sort() };
   }) ?? []);
   const error = () => groups.error || members.error || effective.error;
   return <div class="mt-4 space-y-3 border-t border-console-border pt-3">
@@ -57,7 +57,7 @@ export function GroupMemberRemovalImpact(props: { memberID: string; groupID: str
  return <div class="mt-3 space-y-3">
   <Show when={effective.isPending}><LinesSkeleton label="Loading remaining access" /></Show>
   <Show when={effective.error}><Notice tone="danger">{errorMessage(effective.error)}</Notice></Show>
-  <For each={affected()}>{scope=>{const remaining=()=>scope.sources.filter(source=>source.group_id!==props.groupID);return <div class="text-control"><p class="font-medium">{scope.project} / {scope.environment} / {scope.agent || "Entire environment"}</p><p>Remaining permissions: {[...new Set(remaining().flatMap(source=>source.included_permissions))].join(" · ") || "—"}</p><For each={remaining()}>{source=><p>{source.subject_kind === "member" ? "Direct assignment" : source.subject_kind === "all_members" ? "All members" : source.group_name} · {source.role_name}</p>}</For></div>;}}</For>
+  <For each={affected()}>{scope=>{const remaining=()=>scope.sources.filter(source=>source.group_id!==props.groupID);return <div class="text-control"><p class="font-medium">{scope.project} / {scope.environment} / {scope.agent || "Entire environment"}</p><p>Remaining permissions: {[...new Set(remaining().flatMap(source=>source.permissions))].join(" · ") || "—"}</p><For each={remaining()}>{source=><p>{source.subject_kind === "member" ? "Direct assignment" : source.subject_kind === "all_members" ? "All members" : source.group_name} · {source.role_name}</p>}</For></div>;}}</For>
   <Show when={!effective.isPending && !effective.error && affected().length===0}><p>This group currently supplies no permissions to this member.</p></Show>
   <p class="text-control text-console-muted">Other direct, group and all members assignments remain. Effects already admitted by running workloads are not stopped.</p>
  </div>;

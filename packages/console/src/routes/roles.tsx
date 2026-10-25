@@ -24,7 +24,7 @@ const LISTED_PERMISSIONS = 3;
 
 export function Roles() {
   const me = useMe(); const cache = useQueryClient(); const navigate = useNavigate();
-  const allowed = () => hasPermission(me.data, "access.manage");
+  const allowed = () => hasPermission(me.data, "roles.read");
   const query = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() }));
   const [filter, setFilter] = createSignal("");
   const [deleting, setDeleting] = createSignal<PermissionRole>();
@@ -37,8 +37,8 @@ export function Roles() {
   });
   const catalog = () => query.data?.catalog ?? [];
   return <>
-    <PageHeader title="Roles" subtitle="Sets of permissions you grant to people, groups and API keys." actions={<Show when={allowed()}><button type="button" class={ui.button} onClick={() => navigate("/settings/roles/new")}>Create role</button></Show>} />
-    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Manage access permission to manage roles." /></Show>}>
+    <PageHeader title="Roles" subtitle="Sets of permissions you grant to people, groups and API keys." actions={<Show when={hasPermission(me.data, "roles.create")}><button type="button" class={ui.button} onClick={() => navigate("/settings/roles/new")}>Create role</button></Show>} />
+    <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read roles permission to view roles." /></Show>}>
       <Toolbar start={<SearchInput aria-label="Filter roles" placeholder="Filter roles" value={filter()} onInput={e => setFilter(e.currentTarget.value)} />} />
       <QueryState query={query} pending={<TableSkeleton label="Loading roles" columns={COLUMNS} />} error={error => loadError(error, "Could not load roles.")}>
         {() => (
@@ -50,7 +50,7 @@ export function Roles() {
                   <td>{isOrganizationRole(role.permissions, catalog()) ? "Organization" : "Environment"}</td>
                   <td>{role.permissions.length > LISTED_PERMISSIONS ? `${role.permissions.length} permissions` : permissionNames(role.permissions, catalog())}</td>
                   <td class="font-mono text-chrome!">{role.grant_count}</td>
-                  <RowActions label={`Actions for ${role.name}`} items={roleMenu(role, { grant: () => setGranting(role), remove: () => setDeleting(role) })} />
+                  <RowActions label={`Actions for ${role.name}`} items={roleMenu(role, { can: permission => hasPermission(me.data, permission), grant: () => setGranting(role), remove: () => setDeleting(role) })} />
                 </tr>
               )}
             </For>
@@ -65,11 +65,12 @@ export function Roles() {
 
 // The object menu for a role, the same in its list row and by its name. Only an
 // unassigned role the organization made can be deleted.
-export function roleMenu(role: PermissionRole, options: { grant: () => void; remove: () => void }): ActionMenuItem[] {
+export function roleMenu(role: PermissionRole, options: { can: (permission: string) => boolean; grant: () => void; remove: () => void }): ActionMenuItem[] {
+  const { can } = options;
   return [
-    { label: "Grant this role", onSelect: options.grant },
-    { label: "Duplicate", href: `/settings/roles/new?from=${encodeURIComponent(role.id)}` },
-    ...(role.builtin_key || role.grant_count > 0 ? [] : [{ label: "Delete role", tone: "danger" as const, onSelect: options.remove }]),
+    ...(can("assignments.create") ? [{ label: "Grant this role", onSelect: options.grant }] : []),
+    ...(can("roles.create") ? [{ label: "Duplicate", href: `/settings/roles/new?from=${encodeURIComponent(role.id)}` }] : []),
+    ...(!can("roles.delete") || role.builtin_key || role.grant_count > 0 ? [] : [{ label: "Delete role", tone: "danger" as const, onSelect: options.remove }]),
   ];
 }
 

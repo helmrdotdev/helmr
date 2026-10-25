@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"net/http"
 	"net/url"
 	"uuid"
@@ -25,7 +26,7 @@ type connectionAuthorization struct {
 func (s *CredentialStore) connectionAuthorization(ctx context.Context, org, user, connection uuid.UUID) (connectionAuthorization, error) {
 	var value connectionAuthorization
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockConnectionManager(ctx, tx, org, user, connection); err != nil {
+		if err := lockConnectionManager(ctx, tx, org, user, connection, auth.PermissionAgentConnectionsAuthorize); err != nil {
 			return err
 		}
 		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.org_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0 AND r.transport=$3`, connection, org, s.mode).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
@@ -82,7 +83,7 @@ func (s *CredentialStore) AuthorizeConnection(ctx context.Context, actor audit.A
 func (s *CredentialStore) attachConnectionGrant(ctx context.Context, actor audit.Actor, org, user, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant) (uuid.UUID, error) {
 	installation := uuid.NewV7()
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockConnectionManager(ctx, tx, org, user, connection); err != nil {
+		if err := lockConnectionManager(ctx, tx, org, user, connection, auth.PermissionAgentConnectionsAuthorize); err != nil {
 			return err
 		}
 		var revision int64

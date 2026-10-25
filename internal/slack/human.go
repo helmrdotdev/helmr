@@ -27,10 +27,7 @@ func linkedHuman(ctx context.Context, tx pgx.Tx, team, actor string, environment
 	if source.Before(linked) {
 		return uuid.Nil(), "identity_unlinked", nil
 	}
-	err = access.Check(ctx, tx, "user", user, environment, agent, auth.CapabilityAgentsUse)
-	if errors.Is(err, access.ErrDenied) {
-		err = access.Check(ctx, tx, "user", user, environment, agent, auth.CapabilitySessionsManage)
-	}
+	_, err = access.Principal(ctx, tx, "user", user, environment)
 	if errors.Is(err, access.ErrDenied) {
 		return uuid.Nil(), "permission_denied", nil
 	}
@@ -72,7 +69,7 @@ func directRecipientAuthorized(ctx context.Context, tx pgx.Tx, thread uuid.UUID)
 	if user == nil || !bound {
 		return false, nil
 	}
-	err = access.Check(ctx, tx, "user", *user, env, agent, auth.CapabilityAgentsUse)
+	err = access.Check(ctx, tx, "user", *user, env, agent, auth.PermissionAgentsUse)
 	if errors.Is(err, access.ErrDenied) {
 		return false, nil
 	}

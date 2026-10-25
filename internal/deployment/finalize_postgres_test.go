@@ -44,8 +44,11 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 	}
 	key := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,'fixture','fixture',convert_to('fixture','UTF8'))`, key, org, project, env)
-	dbtest.SetAPIKeyRole(t, database.Pool, key, "deployments.publish", "deployments.promote")
-	principal := auth.Principal{Kind: auth.PrincipalKindAPIKey, APIKeyID: key, OrgID: org, ProjectID: project.String(), EnvironmentID: env.String(), Grants: []auth.PermissionGrant{{ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.CapabilityDeploymentsPublish}, {ProjectID: project.String(), EnvironmentID: env.String(), Permission: auth.CapabilityDeploymentsPromote}}}
+	dbtest.SetAPIKeyRole(t, database.Pool, key, "deployments.publish", "deployments.promote", "deployments.read", "templates.refresh", "templates.read", "agents.read")
+	principal := auth.Principal{Kind: auth.PrincipalKindAPIKey, APIKeyID: key, OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}
+	for _, permission := range []auth.Permission{auth.PermissionDeploymentsPublish, auth.PermissionDeploymentsPromote, auth.PermissionDeploymentsRead, auth.PermissionTemplatesRefresh, auth.PermissionTemplatesRead, auth.PermissionAgentsRead} {
+		principal.Grants = append(principal.Grants, auth.PermissionGrant{ProjectID: project.String(), EnvironmentID: env.String(), Permission: permission})
+	}
 	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()}
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
 	return deploymentFinalizePostgresFixture{pool: database.Pool, request: Finalization{principal: principal, scope: scope, orgID: org, projectID: pgvalue.UUID(project), environmentID: pgvalue.UUID(env), idempotencyKey: "finalize", bundle: preparedBundle{root: cas.Descriptor{Digest: artifacttest.Digest("bundle"), SizeBytes: 1024, MediaType: bundle.MediaType}, bundle: bundle.Manifest{Program: output, Preparations: artifacttest.PreparationOutputs(t, output)}, objects: []cas.Descriptor{{Digest: output.Artifact.Digest, SizeBytes: output.Artifact.SizeBytes, MediaType: output.Artifact.MediaType}, {Digest: output.Metadata.Definitions[2].Template.Seed.ArtifactDigest, SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType}}}}}

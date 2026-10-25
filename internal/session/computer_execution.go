@@ -36,7 +36,7 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 				return err
 			}
 		}
-		if err := authorizeComputerExecution(ctx, tx, caller, req.EnvironmentID); err != nil {
+		if err := authorizeComputerExecution(ctx, tx, caller, req.EnvironmentID, req.Kind); err != nil {
 			return err
 		}
 		if _, err := org.LockAdmission(ctx, tx, req.EnvironmentID); err != nil {
@@ -45,7 +45,7 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 		if _, err := LockComputerMembers(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {
 			return err
 		}
-		if err := authorizeComputerExecution(ctx, tx, caller, req.EnvironmentID); err != nil {
+		if err := authorizeComputerExecution(ctx, tx, caller, req.EnvironmentID, req.Kind); err != nil {
 			return err
 		}
 		if req.OpenSessionID != uuid.Nil() {
@@ -124,6 +124,12 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 	return result, nil
 }
 
-func authorizeComputerExecution(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID) error {
-	return requireCapability(ctx, tx, caller.Kind, caller.ID, env, uuid.Nil(), auth.CapabilityComputersOperate)
+func authorizeComputerExecution(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID, kind string) error {
+	permission := auth.PermissionComputersWake
+	if kind == "hibernate" {
+		permission = auth.PermissionComputersHibernate
+	} else if kind != "wake" {
+		return ErrInvalidInput
+	}
+	return requirePermission(ctx, tx, caller.Kind, caller.ID, env, uuid.Nil(), permission)
 }

@@ -33,7 +33,7 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(err))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionDeploymentsWrite, scope) {
+	if !principal.HasPermission(auth.PermissionDeploymentsPublish, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}

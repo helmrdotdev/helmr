@@ -14,8 +14,8 @@ import (
 
 func TestRolePermissionSetIsCanonicalAndNonempty(t *testing.T) {
 	f := newMachineGrantFixture(t)
-	role := f.role(t, "secrets.manage", "agents.use", "agents.use")
-	want := []string{"agents.use", "secrets.manage"}
+	role := f.role(t, "secrets.create", "agents.use", "agents.use")
+	want := []string{"agents.use", "secrets.create"}
 	if !slices.Equal(role.Permissions, want) || role.Revision != 1 {
 		t.Fatalf("created Role: %+v", role)
 	}
@@ -29,7 +29,7 @@ func TestRolePermissionSetIsCanonicalAndNonempty(t *testing.T) {
 			t.Fatalf("invalid permission set accepted: %v", err)
 		}
 	}
-	for _, value := range []string{"{}", "{NULL}", "{{agents.use,secrets.manage},{agents.use,secrets.manage}}"} {
+	for _, value := range []string{"{}", "{NULL}", "{{agents.use,secrets.create},{agents.use,secrets.create}}"} {
 		_, err := f.pool.Exec(t.Context(), `UPDATE roles SET permissions=$2::text[] WHERE id=$1`, role.ID, value)
 		var constraint *pgconn.PgError
 		if !errors.As(err, &constraint) || constraint.Code != "23514" {
@@ -41,7 +41,7 @@ func TestRolePermissionSetIsCanonicalAndNonempty(t *testing.T) {
 func TestGrantRevisionAndAuditFollowLogicalMutation(t *testing.T) {
 	f := newMachineGrantFixture(t)
 	ctx := t.Context()
-	role := f.role(t, "agents.use", "secrets.manage")
+	role := f.role(t, "agents.use", "secrets.create")
 	input := f.input(role)
 	input.AgentIDs = []uuid.UUID{f.agent, f.otherAgent}
 	grants, err := org.AssignRole(ctx, f.pool, f.owner, input)
@@ -67,7 +67,7 @@ func TestGrantRevisionAndAuditFollowLogicalMutation(t *testing.T) {
 		t.Fatal("unaudited assignment update committed")
 	}
 	check(grant)
-	if _, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"secrets.manage"}}); err == nil {
+	if _, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"secrets.create"}}); err == nil {
 		t.Fatal("unaudited Role edit committed")
 	}
 	check(grant)
@@ -93,7 +93,7 @@ func TestGrantRevisionAndAuditFollowLogicalMutation(t *testing.T) {
 		grant = changed
 		check(grant)
 	}
-	updated, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"secrets.manage"}})
+	updated, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"secrets.create"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestGrantRevisionAndAuditFollowLogicalMutation(t *testing.T) {
 	if err := f.pool.QueryRow(ctx, `SELECT all_agents FROM role_grants WHERE id=$1`, grant.ID).Scan(&allAgents); err != nil || allAgents {
 		t.Fatalf("Role removal retained all-Agent intent: %t %v", allAgents, err)
 	}
-	if _, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(updated.Revision, 10), Permissions: []string{"agents.use", "secrets.manage"}}); !errors.Is(err, org.ErrRoleTarget) {
+	if _, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(updated.Revision, 10), Permissions: []string{"agents.use", "secrets.create"}}); !errors.Is(err, org.ErrRoleTarget) {
 		t.Fatalf("Agent capability restored without explicit targets: %v", err)
 	}
 }
@@ -153,7 +153,7 @@ func TestFirstAgentCapabilityRacesUntargetedAssignment(t *testing.T) {
 	f := newMachineGrantFixture(t)
 	ctx := t.Context()
 	for range 4 {
-		role := f.role(t, "secrets.manage")
+		role := f.role(t, "secrets.create")
 		input := f.input(role)
 		input.AgentsMode, input.AgentIDs = "none", nil
 		start := make(chan struct{})
@@ -165,7 +165,7 @@ func TestFirstAgentCapabilityRacesUntargetedAssignment(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			_, err := org.SavePermissionRole(ctx, f.pool, f.admin, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"agents.use", "secrets.manage"}})
+			_, err := org.SavePermissionRole(ctx, f.pool, f.admin, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"agents.use", "secrets.create"}})
 			edited <- err
 		}()
 		close(start)

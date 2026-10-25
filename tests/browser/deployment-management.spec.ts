@@ -6,7 +6,7 @@ const deploymentID = "00000000-0000-7000-8000-000000000501";
 const base = `/api/projects/${projectID}/environments/${environmentID}`;
 const now = "2026-10-09T00:00:00Z";
 
-async function catalog(page: Page, permissions = ["agents.read", "deployments.read", "deployments.write", "deployment.promote"], current = deploymentID) {
+async function catalog(page: Page, permissions = ["agents.read", "deployments.read", "deployments.write", "deployments.promote"], current = deploymentID) {
   const environment = { environment: environmentID, project: projectID, name: "Development", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
   const project = { project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
   const deployment = { id: deploymentID, version: "test-version", bundle_digest: `sha256:${"b".repeat(64)}`, created_at: now };

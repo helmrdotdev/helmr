@@ -22,7 +22,11 @@ func (s *Server) wakeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) controlComputerExecutionHTTP(w http.ResponseWriter, r *http.Request, kind string) {
-	caller, env, err := s.agentRequestAuthority(r, auth.PermissionComputersUpdate)
+	permission := auth.PermissionComputersWake
+	if kind == "hibernate" {
+		permission = auth.PermissionComputersHibernate
+	}
+	caller, env, err := s.agentRequestAuthority(r, permission)
 	if err != nil {
 		s.writeAgentHTTPError(w, err)
 		return
@@ -72,7 +76,7 @@ func (s *Server) sessionCloseScopeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.executionScopeHTTP(w, r, true)
 }
 func (s *Server) executionScopeHTTP(w http.ResponseWriter, r *http.Request, close bool) {
-	permission, param := auth.PermissionComputersUpdate, "computerID"
+	permission, param := auth.PermissionComputersRead, "computerID"
 	if close {
 		permission, param = auth.PermissionSessionsClose, "sessionID"
 	}

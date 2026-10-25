@@ -131,7 +131,7 @@ func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	manager := managingMember(principal)
-	if err := manager.Authorize(r.Context(), s.tx); err != nil {
+	if err := manager.Authorize(r.Context(), s.tx, auth.PermissionInvitationsCreate); err != nil {
 		writeError(w, orgError(err))
 		return
 	}

@@ -281,18 +281,18 @@ func TestSessionControlAPIKeyRequiresExactPermissionAndHumanAttribution(t *testi
 	key := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash)
  SELECT $1,org_id,project_id,id,'test','test',$2 FROM environments WHERE id=$3`, key, []byte(key.String()), f.env)
-	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.view")
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.read")
 	caller := session.Caller{Kind: "api_key", ID: key}
 	req := controlRequest(f, "interrupt", "interrupt")
 	if _, err := session.ControlSession(t.Context(), f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("view permission authorized interrupt: %v", err)
 	}
-	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.manage")
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.interrupt")
 	r, err := session.ControlSession(t.Context(), f.pool, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.manage")
+	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.resume")
 	resume := controlRequest(f, "resume", "resume")
 	resume.HoldID = r.HoldID
 	if _, err := session.ControlSession(t.Context(), f.pool, caller, resume); err != nil {

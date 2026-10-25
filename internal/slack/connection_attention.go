@@ -40,7 +40,7 @@ func ReauthorizationRequired(ctx context.Context, pool db.TxBeginner, org, user,
 		all := false
 		agents := []string{}
 		for _, grant := range principal.Grants {
-			if grant.EnvironmentID == environment.String() && auth.CapabilityAllows(grant.Permission, auth.CapabilityAgentsManage) {
+			if grant.EnvironmentID == environment.String() && grant.Permission == auth.PermissionAgentConnectionsRead {
 				if grant.AgentID == "" {
 					all = true
 				} else {

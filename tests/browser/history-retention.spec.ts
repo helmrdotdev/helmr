@@ -19,7 +19,7 @@ async function scope(page: Page, options: { policy?: string; manage?: boolean; f
       if (path === "/api/projects") return route.fulfill({ json: { ...project(), ...body } });
       environment = { ...environment, ...body }; return route.fulfill({ json: environment });
     }
-    if (path === "/api/me") return route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", permissions: options.manage === false ? [] : ["projects.manage"], admin: false, organization_required: false, project_required: false } });
+    if (path === "/api/me") return route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", permissions: options.manage === false ? [] : ["projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], admin: false, organization_required: false, project_required: false } });
     if (path === "/api/projects") return route.fulfill({ json: { projects: [project()] } });
     if (path === `/api/projects/${projectID}`) return route.fulfill({ json: project() });
     if (path.endsWith("/settings")) {

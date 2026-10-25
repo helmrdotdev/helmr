@@ -27,7 +27,7 @@ func (s *Server) listComputerUsageHTTP(w http.ResponseWriter, r *http.Request, k
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionRunMetadataRead, scope) {
+	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
 		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
 		return
 	}

@@ -33,19 +33,19 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 	}
 	m := org.ManagingMember{Actor: audit.System("test"), OrgID: orgID, UserID: user, MemberID: principal.MemberID}
 	roles, err := org.ListPermissionRoles(ctx, d.Pool, m)
-	if err != nil || len(roles) != 10 {
+	if err != nil || len(roles) != 16 {
 		t.Fatalf("roles: %d %v", len(roles), err)
 	}
 	var groupCount, grantCount int
 	if err = d.Pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM permission_groups),(SELECT count(*) FROM role_grants)`).Scan(&groupCount, &grantCount); err != nil || groupCount != 0 || grantCount != 2 {
 		t.Fatalf("initial policy: %d %d %v", groupCount, grantCount, err)
 	}
-	if !principal.IsOwner || len(principal.Grants) != 2 {
+	if !principal.IsOwner || len(principal.Grants) != 26 {
 		t.Fatalf("bootstrap principal: %+v", principal)
 	}
 	var grantID uuid.UUID
-	// Remove Organization Manager first, then Access Administrator through the writer.
-	for _, capability := range []string{"organization.manage", "access.manage"} {
+	// Remove Organization Structure Administrator first, then Access Administrator through the writer.
+	for _, capability := range []string{"projects.create", "assignments.create"} {
 		if err = d.Pool.QueryRow(ctx, `SELECT g.id FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.org_id=$1 AND p.permission=$2`, orgID, capability).Scan(&grantID); err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +78,7 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(principal.Grants) != 1 || principal.Grants[0].Permission != auth.CapabilityAccessManage {
+	if len(principal.Grants) != 19 || !principal.HasPermission(auth.PermissionAssignmentsCreate, auth.Scope{OrgID: orgID}) {
 		t.Fatalf("recovery exceeded fixed grant: %+v", principal.Grants)
 	}
 	var recoveries int
@@ -97,7 +97,7 @@ func TestRemovedMembershipCannotReceiveAssignmentsAfterRejoin(t *testing.T) {
 	if err = org.SetPermissionGroupMember(ctx, f.pool, f.owner, group.ID, f.member.MemberID, true); err != nil {
 		t.Fatal(err)
 	}
-	role, err := org.SavePermissionRole(ctx, f.pool, f.owner, uuid.Nil(), org.RoleInput{Name: "Lifecycle organization manager", Permissions: []string{"organization.manage"}})
+	role, err := org.SavePermissionRole(ctx, f.pool, f.owner, uuid.Nil(), org.RoleInput{Name: "Lifecycle organization manager", Permissions: []string{"projects.create"}})
 	if err != nil {
 		t.Fatal(err)
 	}

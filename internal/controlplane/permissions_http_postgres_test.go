@@ -134,12 +134,12 @@ func TestPermissionManagementHTTP(t *testing.T) {
 	if role.Description != "Original" || len(role.Permissions) != 1 || role.Revision == oldRevision {
 		t.Fatal(role)
 	}
-	check(request("PATCH", "/api/roles/"+role.ID, `{"permissions":["sessions.manage"]}`, owner, strconv.FormatInt(oldRevision, 10)), 412, nil)
+	check(request("PATCH", "/api/roles/"+role.ID, `{"permissions":["sessions.send"]}`, owner, strconv.FormatInt(oldRevision, 10)), 412, nil)
 	for _, conflict := range []struct {
 		method, body, code string
 		status             int
 	}{
-		{"PATCH", `{"permissions":["access.manage"]}`, "role_target_incompatible", 409},
+		{"PATCH", `{"permissions":["assignments.create"]}`, "role_target_incompatible", 409},
 		{"DELETE", "", "role_in_use", 409},
 	} {
 		var response struct {
@@ -196,7 +196,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 		t.Fatal(effective)
 	}
 	source := effective.Scopes[0].Sources[0]
-	if source.TargetKind != "agent" || source.Agent != "invoice" || source.AgentID != agent.String() || len(source.IncludedPermissions) != 1 {
+	if source.TargetKind != "agent" || source.Agent != "invoice" || source.AgentID != agent.String() || len(source.Permissions) != 1 {
 		t.Fatalf("source target: %+v", source)
 	}
 	check(request("GET", "/api/members/"+outsiderMemberID.String()+"/permissions?project=work&environment="+env.Environment+"&agent=invoice", "", outsiderToken, ""), 404, nil)
@@ -226,7 +226,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 	// An Agent projection preserves the breadth and implied capabilities of
 	// Environment grants alongside an exact-Agent grant.
 	var operator api.PermissionRole
-	check(request("POST", "/api/roles", `{"name":"Operator","permissions":["sessions.manage"]}`, owner, ""), 201, &operator)
+	check(request("POST", "/api/roles", `{"name":"Operator","permissions":["sessions.send"]}`, owner, ""), 201, &operator)
 	input.Subject = api.GrantSubject{Type: "group", GroupID: &group.ID}
 	input.RoleID = operator.ID
 	input.AgentsMode = "all"
@@ -238,7 +238,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 		t.Fatal(effective)
 	}
 	for _, source := range effective.Scopes[0].Sources {
-		if source.RoleID == operator.ID && (source.TargetKind != "environment" || source.AgentID != "" || len(source.IncludedPermissions) != 2) {
+		if source.RoleID == operator.ID && (source.TargetKind != "environment" || source.AgentID != "" || len(source.Permissions) != 1) {
 			t.Fatalf("environment source: %+v", source)
 		}
 	}

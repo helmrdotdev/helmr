@@ -176,7 +176,7 @@ and Trigger activations. The list initially shows current Agents; choose
 **All agents** to include identities absent from the current Deployment, even
 when the Environment has no current Deployment. Registration alone does not mean
 an Agent has ever been active. Existing connections remain manageable by a
-person with `agents.manage` on the Agent.
+person with the corresponding `agent_connections` permissions on the Agent.
 
 Deployment details are read-only snapshots. They list each Agent with its
 Template and each Template with its resources; Sessions and Computers link to the
@@ -189,8 +189,9 @@ control work.
 
 Removing an Agent from a Deployment does not delete its identity. Delete is an
 explicit management operation in the Console or [`helmr agent`](/docs/reference/cli/agent).
-It requires a signed-in human with `access.manage` and `agents.manage` on the
-Agent. API keys and Agent runtimes cannot delete or restore Agents.
+Delete requires a signed-in human with `agents.delete` on the Agent; Restore
+requires `agents.restore`. These permissions include the operation’s bounded cleanup
+without requiring assignment or connection management permissions. API keys and Agent runtimes cannot delete or restore Agents.
 
 To delete an Agent:
 

@@ -27,7 +27,7 @@ func RuntimeListComputers(ctx context.Context, pool db.TxBeginner, caller Caller
 			if origin.mode() != "scoped" {
 				return ErrDenied
 			}
-			if err := requireCapability(ctx, tx, origin.kind(), origin.id(), caller.Execution.EnvironmentID, uuid.Nil(), auth.CapabilityComputersOperate); err != nil {
+			if err := requirePermission(ctx, tx, origin.kind(), origin.id(), caller.Execution.EnvironmentID, uuid.Nil(), auth.PermissionComputersRead); err != nil {
 				return err
 			}
 		}
