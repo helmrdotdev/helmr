@@ -551,7 +551,7 @@ test("members and pending invitations share one table told apart by status", asy
   await expect(rows.nth(1)).toContainText("You");
   // Owners cannot be removed; ownership changes separately from ordinary roles.
   await page.getByRole("button", { name: "Actions for Local", exact: true }).click();
-  await expect(page.getByRole("menuitem")).toHaveText(["Inspect access", "Change ownership"]);
+  await expect(page.getByRole("menuitem")).toHaveText(["View access", "Change ownership"]);
   await page.keyboard.press("Escape");
   await expect(rows.nth(1).getByRole("cell").nth(2)).toHaveText("Active");
   await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Membersecond@example.test");

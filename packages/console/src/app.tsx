@@ -29,15 +29,18 @@ import { AccountSettings } from "./routes/account-settings";
 import { AuthGitHubCallback, AuthMagicLinkCallback } from "./routes/auth-callback";
 import { SessionsPage } from "./routes/sessions";
 import { TriggerList } from "./routes/triggers";
-import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab } from "./routes/agents";
+import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab, AgentAccessTab } from "./routes/agents";
 import { ComputersSection, ComputerList, TemplateList } from "./routes/computers";
 import { Deployments } from "./routes/deployments";
 import { DeploymentDetail } from "./routes/deployment-detail";
 import { ApiKeys } from "./routes/api-keys";
 import { Secrets } from "./routes/secrets";
 import { Groups } from "./routes/groups";
+import { GroupDetail } from "./routes/group-detail";
 import { Roles } from "./routes/roles";
+import { RoleDetail } from "./routes/role-detail";
 import { Members } from "./routes/members";
+import { MemberDetail } from "./routes/member-detail";
 import { ProjectSettings } from "./routes/project-settings";
 import { Environments } from "./routes/environments";
 import { ProjectNew } from "./routes/project-new";
@@ -228,6 +231,7 @@ export function App() {
         <Route path="/" component={AgentSessionsTab} />
         <Route path="/triggers" component={AgentTriggersTab} />
         <Route path="/slack" component={AgentSlackTab} />
+        <Route path="/access" component={AgentAccessTab} />
       </Route>
       <Route path="/sessions" component={wrap(SessionsPage)} />
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
@@ -252,8 +256,11 @@ export function App() {
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />
       <Route path="/settings/api-keys" component={wrapSettings(ApiKeys)} />
       <Route path="/settings/groups" component={wrapSettings(Groups)} />
+      <Route path="/settings/groups/:group" component={wrapSettings(GroupDetail)} />
       <Route path="/settings/roles" component={wrapSettings(Roles)} />
+      <Route path="/settings/roles/:role" component={wrapSettings(RoleDetail)} />
       <Route path="/settings/members" component={wrapSettings(Members)} />
+      <Route path="/settings/members/:member" component={wrapSettings(MemberDetail, "organization")} />
       <Route path="*" component={Missing} />
     </Router>
   );

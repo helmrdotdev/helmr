@@ -32,7 +32,9 @@ export function SettingsLayout(props: { children: JSX.Element }) {
     },
   ];
 
-  const current = () => groups.flatMap((group) => group.links).find((link) => link.href === location.pathname);
+  // A detail page (a member, group or role) belongs to its list's link.
+  const isCurrent = (href: string) => location.pathname === href || location.pathname.startsWith(`${href}/`);
+  const current = () => groups.flatMap((group) => group.links).find((link) => isCurrent(link.href));
   let compact: HTMLDetailsElement | undefined;
   // Closing returns focus to the control, as the Console's other pickers do.
   const closeCompact = () => {
@@ -59,9 +61,9 @@ export function SettingsLayout(props: { children: JSX.Element }) {
                     href={link.href}
                     class={cx(
                       ui.settingsNavLink,
-                      location.pathname === link.href ? ui.activeBar : ui.settingsNavLinkHover,
+                      isCurrent(link.href) ? ui.activeBar : ui.settingsNavLinkHover,
                     )}
-                    aria-current={location.pathname === link.href ? "page" : undefined}
+                    aria-current={isCurrent(link.href) ? "page" : undefined}
                     onClick={() => props.onNavigate?.()}
                   >
                     {link.label}

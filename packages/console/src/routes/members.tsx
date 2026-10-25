@@ -1,5 +1,5 @@
-import { listGrants, listGroups, memberGrantSources } from "../lib/permissions";
-import { MemberAccess } from "../features/access/MemberAccess";
+import { A } from "@solidjs/router";
+import { listGrants, listGroups, memberGrantSources, memberHref } from "../lib/permissions";
 import { useMe } from "../lib/me";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
@@ -198,11 +198,11 @@ function InvitationResultsDialog(props: { results: InvitationResult[]; onClose: 
 // Roles change from the row menu; your own row has none.
 const COLUMNS = ["Member", "Ownership and roles", "Status", "Since", { label: "Actions", srOnly: true }] as const;
 
-function MemberCell(props: { name: string; email?: string | null | undefined; you?: boolean }) {
+function MemberCell(props: { name: string; email?: string | null | undefined; you?: boolean; href?: string | undefined }) {
   return (
     <div class="grid py-1 leading-tight">
       <span class="flex items-center gap-1.5">
-        <span class="font-medium text-console-text">{props.name}</span>
+        <Show when={props.href} fallback={<span class="font-medium text-console-text">{props.name}</span>}>{href => <A href={href()} class="font-medium text-console-accent hover:text-console-accent-hover">{props.name}</A>}</Show>
         <Show when={props.you}><span class="border border-console-border px-1 font-mono text-micro text-console-muted">You</span></Show>
       </span>
       <Show when={props.email && props.email !== props.name}><span class="text-chrome text-console-muted">{props.email}</span></Show>
@@ -223,7 +223,6 @@ function MemberRow(props: {
   organizationRoles: string[];
   isCurrentUser: boolean;
   currentUserIsOwner: boolean | undefined;
-  onInspect: (member: OrganizationMember) => void;
   onChangeRole: (member: OrganizationMember) => void;
   onRemove: (member: OrganizationMember) => void;
 }) {
@@ -234,14 +233,14 @@ function MemberRow(props: {
   return (
     <>
       <tr>
-        <td><MemberCell name={memberName(props.member)} email={props.member.email} you={props.isCurrentUser} /></td>
+        <td><MemberCell name={memberName(props.member)} email={props.member.email} you={props.isCurrentUser} href={props.member.status === "active" && props.canManage ? memberHref(props.member.membership_id) : undefined} /></td>
         <td><Show when={props.member.is_owner}><span class="font-medium">Owner</span></Show><p class="text-control text-console-muted">{props.organizationRoles.join(" · ") || "No organization roles"}</p></td>
         <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
         <td><RelativeTime value={props.member.created_at} /></td>
         <RowActions
           label={`Actions for ${memberName(props.member)}`}
           items={active() ? [
-            {label:"Inspect access",onSelect:()=>props.onInspect(props.member)},
+            { label: "View access", href: memberHref(props.member.membership_id) },
             ...(props.currentUserIsOwner ? [{label: "Change ownership", onSelect: () => props.onChangeRole(props.member)}] : []),
             ...(!isOwner() ? [{label: "Remove", tone: "danger" as const, onSelect: () => props.onRemove(props.member)}] : []),
           ] : []}
@@ -301,7 +300,6 @@ function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOpti
 
 export function Members() {
   const queryClient = useQueryClient();
-  const [inspecting,setInspecting]=createSignal<OrganizationMember>();
   const [inviting, setInviting] = createSignal(false);
   const [inviteResults, setInviteResults] = createSignal<InvitationResult[] | null>(null);
   const [removing, setRemoving] = createSignal<OrganizationMember | null>(null);
@@ -403,7 +401,6 @@ export function Members() {
                   organizationRoles={member.status === "active" ? [...new Set(memberGrantSources(grants.data?.grants ?? [], groups.data?.groups ?? [], member.membership_id).filter(g=>g.target_kind === "organization").map(g=>g.role_name))] : []}
                   isCurrentUser={isCurrentUser(member)}
                   currentUserIsOwner={me.data?.is_owner}
-                  onInspect={setInspecting}
                   onChangeRole={(member) => setChangingRoleID(memberResourceID(member))}
                   onRemove={setRemoving}
                 />
@@ -432,7 +429,6 @@ export function Members() {
         {(results) => <InvitationResultsDialog results={results()} onClose={() => setInviteResults(null)} />}
       </Show>
 
-      <Show when={inspecting()}>{member=><Dialog title={`Access: ${memberName(member())}`} onClose={()=>setInspecting(undefined)}><MemberAccess membershipID={member().membership_id} /></Dialog>}</Show>
       <Show when={changingRole()}>
         {(member) => <ChangeRoleDialog member={member()} roles={assignableRoles(me.data?.is_owner, isCurrentUser(member()))} onClose={() => setChangingRoleID(null)} onSave={(role) => changeOwnershipChoice(member(), role)} />}
       </Show>

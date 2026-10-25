@@ -4,7 +4,7 @@ import { useLocation, useParams } from "@solidjs/router";
 import { createInfiniteQuery, createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { listAccessTargets } from "../lib/permissions";
-import { ResourceAccess } from "../features/access/ResourceAccess";
+import { AgentAccess } from "../features/access/AgentAccess";
 import { useMe } from "../lib/me";
 import { ui } from "../ui/styles";
 import { CopyLinkButton } from "../components/CopyLinkButton";
@@ -62,10 +62,10 @@ export function AgentList() {
 }
 
 function AccessAgentDirectory() {
- const scope=useScopeIDs(); const [sharing,setSharing]=createSignal("");
+ const scope=useScopeIDs();
  const targets=createQuery(()=>({queryKey:["access","targets",scope().projectID],queryFn:()=>listAccessTargets(scope().projectID),enabled:!!scope().projectID}));
  const agents=()=>targets.data?.targets.find(t=>t.environment===scope().environmentID)?.agents ?? [];
- return <><p class="mb-3 text-control text-console-muted">Manage access to registered Agents in this environment.</p><QueryState query={targets} pending={<LinesSkeleton label="Loading agents" />} error={failure}>{()=> <DataTable columns={["Agent","Access"]}><For each={agents()}>{agent=><tr><td>{agent.key}</td><td><button class={ui.secondaryButton} onClick={()=>setSharing(agent.key)}>Access</button></td></tr>}</For></DataTable>}</QueryState><Show when={sharing()}>{agent=><ResourceAccess environment={scope().environmentID} agent={agent()} onClose={()=>setSharing("")} />}</Show></>;
+ return <QueryState query={targets} pending={<TableSkeleton label="Loading agents" columns={["Agent"]} />} error={failure} empty={{ when: () => agents().length === 0, title: "No agents registered in this environment" }}>{()=> <DataTable columns={["Agent"]} footer={<LoadMore count={agents().length} noun={{ one: "agent", other: "agents" }} hasMore={false} loading={false} onLoadMore={() => undefined} />}><For each={agents()}>{agent=><tr><td><PrimaryLink href={agentHref(agent.key, "access")}>{agent.key}</PrimaryLink></td></tr>}</For></DataTable>}</QueryState>;
 }
 
 function OperationalAgentList() {
@@ -167,7 +167,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
   const cache = useQueryClient();
   const [changeOpen, setChangeOpen] = createSignal(false);
   const [changeMessage, setChangeMessage] = createSignal("");
-  const me = useMe(); const [accessOpen, setAccessOpen] = createSignal(false);
+  const me = useMe();
   const scope = useScopeIDs();
   const scopeState = useScope();
   const params = useParams();
@@ -185,7 +185,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
   const accessIdentity=()=>accessTargets.data?.targets.find(t=>t.environment===scope().environmentID)?.agents.find(a=>a.key===name());
   const missing = () => !agent.data && !accessIdentity() && isNotFound(agent.error);
   const environment = () => scopeState.selectedEnvironment()?.name;
-  const tabs = createMemo(() => AGENT_TABS.map(tab => ({ ...tab, href: agentHref(name(), tab.value) })));
+  const tabs = createMemo(() => [...AGENT_TABS, ...(hasPermission(me.data, "access.manage") && !agent.data?.deleted_at ? [{ value: "access" as const, label: "Access" }] : [])].map(tab => ({ ...tab, href: agentHref(name(), tab.value) })));
   const selected = () => selectedLinkTab(tabs(), location.pathname);
   return <Page>
     <PageHeader
@@ -200,7 +200,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
         )}</Show>
         <Show when={currentDeploymentID() && definition.data?.template}>{template => <span>Template <code>{template()}</code></span>}</Show>
       </>}
-      actions={<Show when={!missing()}><Show when={agent.data && hasPermission(me.data,"access.manage") && hasPermission(me.data,"agents.manage",{...scope(),agent:name()})}><button class={ui.secondaryButton} onClick={() => setChangeOpen(true)}>{agent.data?.deleted_at ? "Restore" : "Delete"}</button></Show><Show when={hasPermission(me.data, "access.manage")}><button class={ui.secondaryButton} onClick={() => setAccessOpen(true)}>Access</button></Show><CopyLinkButton /></Show>}
+      actions={<Show when={!missing()}><Show when={agent.data && hasPermission(me.data,"access.manage") && hasPermission(me.data,"agents.manage",{...scope(),agent:name()})}><button class={ui.secondaryButton} onClick={() => setChangeOpen(true)}>{agent.data?.deleted_at ? "Restore" : "Delete"}</button></Show><CopyLinkButton /></Show>}
     />
     <Show when={changeMessage()}><Notice tone="success">{changeMessage()}</Notice></Show>
     <Show when={changeOpen()}><AgentDeleteDialog agent={name()} scope={scope()} restore={!!agent.data?.deleted_at} onClose={() => setChangeOpen(false)} onSaved={() => {
@@ -208,7 +208,6 @@ export function AgentDetail(props: { children?: JSX.Element }) {
       setChangeOpen(false);
       for (const key of ["agents", "access", "me", "triggers", "slack"]) void cache.invalidateQueries({queryKey:[key]});
     }} /></Show>
-    <Show when={accessOpen()}><ResourceAccess environment={scope().environmentID} agent={name()} onClose={() => setAccessOpen(false)} /></Show>
     <Show when={enabled()} fallback={<EmptyState title="Select a project and environment." />}>
       <Show when={!missing()} fallback={<NotFoundState noun="agent" id={name()} environment={environment()} back={{ href: "/agents", label: "Go to agents" }} />}>
         <Show when={!agent.data && accessIdentity()} fallback={<QueryState query={agent} pending={<LinesSkeleton label="Loading agent" />} error={failure}>
@@ -219,7 +218,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
             <LinkTabs id="agent-tabs" label="Agent" items={tabs()} selected={selected()} />
             <TabPanel tabs="agent-tabs" value={selected()} selected={selected()}>{props.children}</TabPanel>
           </>}
-        </QueryState>}><Notice tone="info">You can manage access to this Agent. Workload details require a separate Role.</Notice></Show>
+        </QueryState>}><AgentAccess agent={name()} /></Show>
       </Show>
     </Show>
   </Page>;
@@ -233,6 +232,11 @@ export function AgentSessionsTab() {
 export function AgentTriggersTab() {
   const params = useParams();
   return <TriggerList agent={params["agent"] ?? ""} />;
+}
+
+export function AgentAccessTab() {
+  const params = useParams();
+  return <Show when={params["agent"]} keyed>{name => <AgentAccess agent={name} />}</Show>;
 }
 
 export function AgentSlackTab() {

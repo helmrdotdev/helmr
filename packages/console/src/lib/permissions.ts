@@ -5,7 +5,7 @@ export type PermissionRole = { api_key_assignable: boolean; id: string; name: st
 export type RoleInput = Pick<PermissionRole, "name" | "description" | "permissions">;
 export type PermissionGroup = { id: string; name: string; member_ids: string[]; revision: number };
 export type GrantTarget = { resource_type:string; mode:string; agent_ids?:string[]; agent_keys?:string[]; permissions:string[]; included_permissions:string[] };
-export type RoleGrant = { api_key_id?: string; api_key_name?: string; id:string; revision:number; subject_kind:"member"|"group"|"api_key"|"all_members"; member_id?:string; member_name?:string; group_id:string|null; role_id:string; project_id:string; project:string; environment_id:string; environment:string; target_kind:"organization"|"environment"; agents_mode:"none"|"selected"|"all"; agent_ids:string[]; agent_keys:string[]; targets:GrantTarget[]; role_name:string; project_name:string; environment_name:string; permissions:string[] };
+export type RoleGrant = { api_key_id?: string; api_key_name?: string; id:string; revision:number; subject_kind:"member"|"group"|"api_key"|"all_members"; member_id?:string; member_name?:string; group_id:string|null; group_name?:string; role_id:string; project_id:string; project:string; environment_id:string; environment:string; target_kind:"organization"|"environment"; agents_mode:"none"|"selected"|"all"; agent_ids:string[]; agent_keys:string[]; targets:GrantTarget[]; role_name:string; project_name:string; environment_name:string; permissions:string[] };
 export type GrantInput = { api_key_id?: string|undefined; subject_kind:"member"|"group"|"api_key"|"all_members"; member_id?:string|undefined; group_id:string|null; role_id:string; environment_id:string; target_kind:"organization"|"environment"; agents_mode:"none"|"selected"|"all"; agent_ids:string[]; expected_role_revision:number };
 export type AccessTarget = { environment_id: string; environment: string; name: string; agents: { id: string; key: string }[] };
 export async function listRoles():Promise<{roles:PermissionRole[];catalog:Capability[]}> {
@@ -35,14 +35,45 @@ export async function assignRole(project:string,input:GrantInput,existing?:Pick<
  return request(`/api/role-grants${existing ? `/${encodeURIComponent(existing.id)}` : ""}`,{method:existing ? "PATCH" : "POST",headers:existing ? {"If-Match":`"${existing.revision}"`} : {},body:JSON.stringify({role_id:input.role_id,subject,project_id:projectID,environment_id:input.target_kind === "organization" ? undefined : input.environment_id,agents_mode:input.agents_mode,agent_ids:input.agent_ids,expected_role_revision:input.expected_role_revision})});
 }
 export const removeGrant=(id:string,revision:number)=>request(`/api/role-grants/${encodeURIComponent(id)}`,{method:"DELETE",headers:{"If-Match":`"${revision}"`}});
-export const supportsAgent=(permissions:readonly string[],catalog:readonly Capability[])=>permissions.length>0 && permissions.every(p=>catalog.find(c=>c.id===p)?.resource_type === "agents");
 export const resourceLabel=(type:string)=>({agents:"Agents",runs:"Runs",deployments:"Deployments",computers:"Computers",secrets:"Secrets",api_keys:"API keys",organization:"Organization"}[type] ?? type);
 export const targetSummary=(grant:RoleGrant)=>grant.targets.map(t=>`${resourceLabel(t.resource_type)}: ${t.mode === "selected" ? t.agent_keys?.join(", ") || "No remaining Agent targets" : t.mode === "all" ? "All current and future Agents" : t.mode === "organization" ? "Organization" : "Entire environment"}`).join(" · ");
-export function includedPermissions(permissions: readonly string[], catalog: readonly Capability[]): string[] {
-  return [...new Set(permissions.flatMap(p => catalog.find(c => c.id === p)?.included ?? [p]))];
+// The route ID of the built-in all-members audience on the Groups pages.
+export const ALL_MEMBERS = "all-members";
+export const memberHref = (id: string) => `/settings/members/${encodeURIComponent(id)}`;
+export const groupHref = (id: string) => `/settings/groups/${encodeURIComponent(id)}`;
+export const roleHref = (id: string) => `/settings/roles/${encodeURIComponent(id)}`;
+
+export const permissionName = (id: string, catalog: readonly Capability[]) => catalog.find(c => c.id === id)?.name ?? id;
+export const permissionNames = (ids: readonly string[], catalog: readonly Capability[]) => ids.map(id => permissionName(id, catalog)).join(" · ");
+export const permissionResource = (id: string, catalog: readonly Capability[]) => catalog.find(c => c.id === id)?.resource_type ?? "";
+export const permissionResources = (ids: readonly string[], catalog: readonly Capability[]) => [...new Set(ids.map(id => permissionResource(id, catalog)).filter(Boolean))];
+// Organization roles hold only organization permissions; every other role is granted in one environment.
+export const isOrganizationRole = (permissions: readonly string[], catalog: readonly Capability[]) => permissions.some(p => permissionResource(p, catalog) === "organization");
+
+// The recipient of an assignment, as its pages name it.
+export function grantRecipientName(grant: RoleGrant): string {
+  if (grant.subject_kind === "all_members") return "All members";
+  if (grant.subject_kind === "api_key") return grant.api_key_name || grant.api_key_id || "API key";
+  if (grant.subject_kind === "member") return grant.member_name || grant.member_id || "Member";
+  return grant.group_name || grant.group_id || "Group";
 }
+
+// The agents an assignment selects: "All agents", their keys, or "" without agent permissions.
+export function grantAgents(grant: RoleGrant): string {
+  if (grant.agents_mode === "all") return "All agents";
+  if (grant.agents_mode === "selected") return grant.agent_keys.join(", ") || "No agents";
+  return "";
+}
+
+export const grantWhere = (grant: RoleGrant) => grant.target_kind === "organization" ? "Organization" : grant.environment_name;
+
+export function grantCoversAgent(grant: RoleGrant, environmentID: string, agentID: string): boolean {
+  return grant.target_kind === "environment" && grant.environment_id === environmentID && (grant.agents_mode === "all" || grant.agent_ids.includes(agentID));
+}
+
+// A group's assignments, or all members' for the ALL_MEMBERS route ID.
 export function subjectGrants(grants: readonly RoleGrant[], group: string): RoleGrant[] {
-  return grants.filter((g) => group === "all_members" ? g.subject_kind === "all_members" : g.subject_kind === "group" && g.group_id === group);
+  return grants.filter((g) => group === ALL_MEMBERS ? g.subject_kind === "all_members" : g.subject_kind === "group" && g.group_id === group);
 }
 export function memberGrantSources(grants: readonly RoleGrant[], groups: readonly PermissionGroup[], user: string): RoleGrant[] {
   const memberships = new Set(groups.filter((g) => g.member_ids.includes(user)).map((g) => g.id));
