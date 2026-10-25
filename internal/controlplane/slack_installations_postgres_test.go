@@ -58,7 +58,6 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler = handler
 	keys, err := auth.NewKeys(cfg.AuthKey)
 	if err != nil {
 		t.Fatal(err)
