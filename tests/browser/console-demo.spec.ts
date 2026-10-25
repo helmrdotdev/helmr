@@ -21,18 +21,18 @@ test("console demo shows its waiting work on the Overview and retained history i
   await login(page);
   await selectDemoEnvironment(page);
   await page.goto("/");
-  await expect(page.getByRole("link", { name: "000000000501", exact: true })).toHaveAttribute("href", "/deployments/00000000-0000-7000-8000-000000000501");
-  await expect(page.getByText(/Promoted 3 days ago/)).toBeVisible();
-  // The seed holds one Session for approval and has one recent failure in an
-  // open Session; closed history and the older failure wait on no one.
-  const items = page.getByRole("list", { name: "Waiting items" }).getByRole("listitem");
-  await expect(items).toHaveCount(2);
-  await expect(items.nth(0)).toHaveAttribute("aria-label", "Held: Waiting for approval before changing the demo billing plan");
-  await expect(items.nth(0).getByRole("link", { name: "Review", exact: true })).toHaveAttribute("href", "/sessions/00000000-0000-7000-8000-000000000702");
-  await expect(items.nth(0).getByRole("link", { name: "demo-triage", exact: true })).toBeVisible();
-  await expect(items.nth(1)).toHaveAttribute("aria-label", "Failed: Turn #1 failed: tool_error");
-  await expect(items.nth(1).getByRole("link", { name: "Inspect", exact: true })).toHaveAttribute("href", "/sessions/00000000-0000-7000-8000-000000000703#turn-00000000-0000-7000-8000-000000000713");
-  await expect(page.getByRole("group", { name: "Filter by kind" }).getByRole("button")).toHaveText(["All 2", "Questions 0", "Held 1", "Failed 1"]);
+  const current = page.getByRole("region", { name: "Deployments", exact: true }).getByRole("listitem").filter({ hasText: "Current" });
+  await expect(current.getByRole("link").first()).toHaveAttribute("href", "/deployments/00000000-0000-7000-8000-000000000501");
+  await expect(current.getByText(/promoted 3 days ago/)).toBeVisible();
+  // The seed holds one Session for approval; it needs attention and is the one
+  // Session with work in progress.
+  const attention = page.getByRole("region", { name: /^Needs attention/ });
+  const held = attention.getByRole("listitem").filter({ hasText: "A session is held" });
+  await expect(held).toContainText("demo-triage · Waiting for approval before changing the demo billing plan");
+  await expect(held.getByRole("link", { name: "Open", exact: true })).toHaveAttribute("href", "/sessions/00000000-0000-7000-8000-000000000702");
+  const running = page.getByRole("region", { name: "Running now", exact: true });
+  await expect(running.getByRole("link", { name: "000000000702", exact: true })).toHaveAttribute("href", "/sessions/00000000-0000-7000-8000-000000000702");
+  await expect(page.getByRole("region", { name: "Agents", exact: true }).getByRole("link", { name: "demo-triage", exact: true })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: /^Overview/ })).toHaveAccessibleName("Overview, 2 waiting");
   await expect(page.getByRole("region", { name: /^Set up/ })).toHaveCount(0);
 

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// The Overview as the Environment's queue of work waiting on a person, against a
-// synthetic API fixture.
+// The Overview for the people who build and run an Environment's agents,
+// against a synthetic API fixture.
 
 const projectID = "acme-app";
 const environmentID = "preview";
@@ -10,186 +10,212 @@ const now = Date.now();
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
 const id = (suffix: string) => `00000000-0000-7000-8000-${suffix.padStart(12, "0")}`;
 const deploymentID = id("501");
-const sessions = { held: id("a01"), failed: id("a02"), asked: id("a03"), later: id("a04") };
-const turns = { failed: id("b02"), asked: id("b03"), later: id("b04") };
-const asks = { oldest: id("c03"), later: id("c04") };
-const connection = id("d01");
+const previousID = id("500");
+const sessions = { running: id("a01"), held: id("a02"), queued: id("a03"), failed: id("a04"), asked: id("a05") };
+const turns = { failed: id("b04"), asked: id("b05") };
+const hours = (counts: number[]) => [...Array(24 - counts.length).fill(0), ...counts];
 
 type Item = Record<string, unknown> & { kind: string; id: string };
-const hold: Item = { kind: "hold", id: id("e01"), at: ago(300), agent: "deployer", session_id: sessions.held, reason: "Approve the production release" };
-const failed: Item = { kind: "failed_turn", id: turns.failed, at: ago(240), agent: "reviewer", session_id: sessions.failed, turn_id: turns.failed, turn_sequence: 4, error_code: "agent_error" };
-const lost: Item = { kind: "slack_reauthorization", id: connection, at: ago(180), agent: "support", workspace_name: "Acme" };
-const oldest: Item = { kind: "question", id: asks.oldest, at: ago(120), agent: "support", session_id: sessions.asked, turn_id: turns.asked, prompt: "Ship the release today?" };
-const later: Item = { kind: "question", id: asks.later, at: ago(60), agent: "support", session_id: sessions.later, turn_id: turns.later, prompt: "Which plan should the customer get?" };
+const question: Item = { kind: "question", id: id("c05"), at: ago(180), agent: "support", session_id: sessions.asked, turn_id: turns.asked, prompt: "Ship the release today?" };
+const hold: Item = { kind: "hold", id: id("e02"), at: ago(240), agent: "deployer", session_id: sessions.held, reason: "Approve the production release" };
+const lost: Item = { kind: "slack_reauthorization", id: id("d01"), at: ago(90), agent: "support", workspace_name: "Acme" };
 
 type State = {
+  permissions: string[];
   items: Item[];
-  slack: boolean;
+  failures: Record<string, unknown>[];
+  waiting: boolean;
   current: boolean;
   agents: boolean;
+  preparation: string;
+  newer: number;
   writes: string[];
 };
 
-function counts(state: State) {
-  const of = (kind: string) => state.items.filter((item) => item.kind === kind).length;
-  return { question: of("question"), hold: of("hold"), failed_turn: of("failed_turn"), ...(state.slack ? { slack_reauthorization: of("slack_reauthorization") } : {}) };
-}
+const overview = (state: State) => ({
+  turns: { total: 132, failed: state.failures.length ? 11 : 2 },
+  previous: { total: 120, failed: 2 },
+  agents: [
+    { agent: "support", active: 1, turns: 71, failed: 1, last_turn_at: ago(4), hourly: hours([3, 4, 5, 6]), hourly_failed: hours([0, 1, 0, 0]) },
+    { agent: "deployer", active: 2, turns: 38, failed: 0, last_turn_at: ago(12), hourly: hours([1, 2]), hourly_failed: hours([0, 0]) },
+  ],
+  active: { count: 3, running: 1, queued: 1, held: 1, sessions: [
+    { id: sessions.held, agent: "deployer", state: "held", since: ago(240), origin: "trigger" },
+    { id: sessions.running, agent: "support", state: "running", since: ago(2), origin: "slack", slack_channel_id: "C123" },
+    { id: sessions.queued, agent: "deployer", state: "queued", since: ago(1), origin: "api_key" },
+  ] },
+  failures: state.failures,
+});
+
+const computer = (suffix: string, residency: string, minutes: number, extra: Record<string, unknown> = {}) => ({
+  id: id(suffix), template: "base", deployment_id: deploymentID, status: "available", execution_control: null, execution_wait: null, residency,
+  last_activity_at: ago(minutes), created_at: ago(900), updated_at: ago(minutes), ...extra,
+});
 
 async function fixture(page: Page, overrides: Partial<State> = {}): Promise<State> {
   const state: State = {
-    items: [hold, failed, lost, oldest, later],
-    slack: true,
+    permissions: ["sessions.read", "computers.read", "deployments.read"],
+    items: [],
+    failures: [],
+    waiting: false,
     current: true,
     agents: true,
+    preparation: "ready",
+    newer: 0,
     writes: [],
     ...overrides,
   };
   const environment = { environment: environmentID, project: projectID, name: "Preview", color_hex: "#06B6D4", is_default: true, created_at: ago(0), updated_at: ago(0) };
   const project = { project: projectID, name: "Acme App", default_region_id: "local", is_default: true, environments: [environment], created_at: ago(0), updated_at: ago(0) };
+  const deployment = (did: string, version: string, minutes: number) => ({ id: did, version, bundle_digest: `sha256:${"b".repeat(64)}`, created_at: ago(minutes) });
   await page.route("**/api/**", async (route) => {
-    const url = new URL(route.request().url());
-    const path = url.pathname;
+    const path = new URL(route.request().url()).pathname;
     const method = route.request().method();
     if (method !== "GET") state.writes.push(`${method} ${path}`);
-    const ask = path.match(/\/sessions\/([^/]+)\/turns\/([^/]+)\/asks\/([^/]+)$/);
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: state.slack ? "owner" : "member", permissions: ["sessions.read"], admin: false, organization_required: false, project_required: false };
+    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: "member", permissions: state.permissions, admin: false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === base) json = environment;
-    else if (path === `${base}/attention`) json = { items: state.items, counts: counts(state) };
+    else if (path === `${base}/attention`) {
+      const of = (kind: string) => state.items.filter((item) => item.kind === kind).length;
+      json = { items: state.items, counts: { question: of("question"), hold: of("hold"), failed_turn: 0, slack_reauthorization: of("slack_reauthorization") } };
+    } else if (path === `${base}/overview`) {
+      if (!state.permissions.includes("sessions.read")) { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }); return; }
+      json = overview(state);
+    } else if (path === `${base}/computers`) json = { computers: [
+      computer("f01", "parked", 120),
+      computer("f02", "running", 2),
+      computer("f03", state.waiting ? "cold" : "parked", 30, state.waiting ? { execution_wait: { reason: "environment_limit" } } : {}),
+      computer("f04", "unavailable", 800, { status: "deleted" }),
+    ] };
     else if (path === `${base}/deployments/current`) {
       if (!state.current) { await route.fulfill({ status: 404, json: { error: { code: "no_current_deployment", message: "none" } } }); return; }
-      json = { id: deploymentID, version: "v1", bundle_digest: `sha256:${"b".repeat(64)}`, created_at: ago(600) };
-    }
-    else if (path === `${base}/deployments/${deploymentID}/events`) json = { events: [
-      { id: "1", kind: "deployment.registered", message: "Deployment registered", at: ago(600), attributes: {} },
-      { id: "2", kind: "deployment.promoted", message: "Deployment promoted", at: ago(125), attributes: {} },
-    ] };
+      json = deployment(deploymentID, "v2", 200);
+    } else if (path === `${base}/deployments`) {
+      // The list carries no preparation state; newer registrations push the
+      // current one out of the newest five.
+      const newer = Array.from({ length: state.newer }, (_, i) => deployment(id(`6${i}0`), `v${3 + i}`, 10 + i));
+      json = { deployments: state.current ? [...newer, deployment(deploymentID, "v2", 200), deployment(previousID, "v1", 3000)].slice(0, 5) : [] };
+    } else if (path === `${base}/deployments/${deploymentID}`) json = { ...deployment(deploymentID, "v2", 200), preparation_state: state.preparation };
+    else if (path === `${base}/deployments/${deploymentID}/events`) json = { events: [{ id: "1", kind: "deployment.promoted", message: "Deployment promoted", at: ago(125), attributes: {} }] };
     else if (path === `${base}/agents`) json = { deployment_id: deploymentID, agents: state.agents ? [{ agent: "support", template: "support" }] : [] };
     else if (path === `${base}/secrets`) json = { secrets: [] };
-    else if (ask && method === "GET") json = { id: ask[3], session_id: ask[1], turn_id: ask[2], status: "pending", created_at: ago(120), question: { type: "text", prompt: [{ type: "text", text: "Ship the release today?" }] } };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
     await route.fulfill({ json });
   });
   return state;
 }
 
-const queue = (page: Page) => page.getByRole("list", { name: "Waiting items" });
-// The queue's items as each names itself: kind and summary.
-const itemNames = (page: Page) => queue(page).getByRole("listitem").evaluateAll((items) => items.map((item) => item.getAttribute("aria-label")));
-const overviewTab = (page: Page) => page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: /^Overview/ });
-const filter = (page: Page) => page.getByRole("group", { name: "Filter by kind" });
+const open = (page: Page) => page.goto(`/?project=${projectID}&environment=${environmentID}`);
+const attention = (page: Page) => page.getByRole("region", { name: /^Needs attention/ });
+const panel = (page: Page, name: string) => page.getByRole("region", { name, exact: true });
+const rows = (page: Page, name: string) => panel(page, name).getByRole("listitem");
 
-test("the Overview queues every kind oldest first with its context, links and action", async ({ page }) => {
-  await fixture(page);
-  await page.goto(`/?project=${projectID}&environment=${environmentID}`);
+test("on a normal day the Overview shows the environment's health without Needs attention", async ({ page }) => {
+  const state = await fixture(page, { items: [{ ...question, at: ago(20) }] });
+  await open(page);
   await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "000000000501", exact: true })).toHaveAttribute("href", `/deployments/${deploymentID}`);
-  await expect(page.getByText(/Promoted 2 hours ago/)).toBeVisible();
-  await expect(overviewTab(page)).toHaveAccessibleName("Overview, 5 waiting");
-  // The current section is the bar's bordered box, not an underline, with its
-  // count badge inside the 26px box clear of every edge.
-  const tab = await overviewTab(page).evaluate((link) => {
-    const box = link.getBoundingClientRect();
-    const badge = link.querySelector("span")!.getBoundingClientRect();
-    const style = getComputedStyle(link);
-    return {
-      height: box.height,
-      border: style.borderTopColor,
-      underline: getComputedStyle(link, "::after").content,
-      clear: Math.min(badge.top - box.top, box.bottom - badge.bottom, box.right - badge.right) - parseFloat(style.borderTopWidth),
-    };
-  });
-  expect(tab.height).toBe(26);
-  expect(tab.border).not.toBe("rgba(0, 0, 0, 0)");
-  expect(tab.underline).toBe("none");
-  expect(tab.clear).toBeGreaterThan(2);
+  await expect(panel(page, "Agents")).toBeVisible();
+  await expect(attention(page)).toHaveCount(0);
 
-  const items = queue(page).getByRole("listitem");
-  await expect(items).toHaveCount(5);
-  await expect.poll(() => itemNames(page)).toEqual([
-    "Held: Approve the production release",
-    "Failed: Turn #4 failed: agent_error",
-    "Connections: Slack connection lost authorization in Acme",
-    "Questions: Ship the release today?",
-    "Questions: Which plan should the customer get?",
-  ]);
-  const actions: [number, string, string][] = [
-    [0, "Review", `/sessions/${sessions.held}`],
-    [1, "Inspect", `/sessions/${sessions.failed}#turn-${turns.failed}`],
-    [2, "Reauthorize", "/agents/support/slack"],
-    [3, "Answer", `/sessions/${sessions.asked}/turns/${turns.asked}/asks/${asks.oldest}`],
-    [4, "Answer", `/sessions/${sessions.later}/turns/${turns.later}/asks/${asks.later}`],
-  ];
-  for (const [index, name, href] of actions) {
-    await expect(items.nth(index).getByRole("link", { name, exact: true })).toHaveAttribute("href", href);
-  }
-  await expect(items.nth(0).getByRole("link", { name: "deployer", exact: true })).toHaveAttribute("href", "/agents/deployer");
-  await expect(items.nth(0).getByRole("link", { name: "000000000a01", exact: true })).toHaveAttribute("href", `/sessions/${sessions.held}`);
-  await expect(items.nth(2).getByRole("link", { name: "support", exact: true })).toHaveAttribute("href", "/agents/support");
-  await expect(items.nth(0).getByText("5 hours ago")).toBeVisible();
-  // The Overview no longer repeats the Sessions list.
-  await expect(page.getByRole("heading", { name: "Recent Sessions" })).toHaveCount(0);
-});
+  await expect(page.getByText("1 queued · 1 held")).toBeVisible();
+  await expect(page.getByText("1.5% failed · 1.7% the day before")).toBeVisible();
+  await expect(page.getByText("2 sleeping · none waiting")).toBeVisible();
+  await expect(page.getByText(/^Oldest 20 minutes ago$/)).toBeVisible();
 
-test("the kind filter shows counts for each kind and narrows the queue", async ({ page }) => {
-  await fixture(page);
-  await page.goto(`/?project=${projectID}&environment=${environmentID}`);
-  const buttons = filter(page).getByRole("button");
-  await expect(buttons).toHaveText(["All 5", "Questions 2", "Held 1", "Failed 1", "Connections 1"]);
-  await expect(buttons.first()).toHaveAttribute("aria-pressed", "true");
-  await filter(page).getByRole("button", { name: /^Questions/ }).click();
-  await expect.poll(() => itemNames(page)).toEqual(["Questions: Ship the release today?", "Questions: Which plan should the customer get?"]);
-  await filter(page).getByRole("button", { name: /^Failed/ }).click();
-  await expect.poll(() => itemNames(page)).toEqual(["Failed: Turn #4 failed: agent_error"]);
-  await filter(page).getByRole("button", { name: /^All/ }).click();
-  await expect(queue(page).getByRole("listitem")).toHaveCount(5);
-});
+  await expect(rows(page, "Agents")).toHaveCount(2);
+  await expect(rows(page, "Agents").first()).toContainText("1 active");
+  await expect(rows(page, "Agents").first()).toContainText("71 turns");
+  // Titled lists carry their own labels: no column header under a title.
+  await expect(page.getByRole("main").getByRole("columnheader")).toHaveCount(0);
+  await expect(rows(page, "Agents").first().getByRole("link", { name: "support", exact: true })).toHaveAttribute("href", "/agents/support");
 
-test("people who do not manage Slack have no Connections kind", async ({ page }) => {
-  await fixture(page, { slack: false, items: [hold, oldest] });
-  await page.goto(`/?project=${projectID}&environment=${environmentID}`);
-  await expect(filter(page).getByRole("button")).toHaveText(["All 2", "Questions 1", "Held 1", "Failed 0"]);
-  await expect(overviewTab(page)).toHaveAccessibleName("Overview, 2 waiting");
-});
+  const running = rows(page, "Running now");
+  await expect(running).toHaveCount(3);
+  await expect(running.nth(0)).toContainText("Trigger");
+  await expect(running.nth(0)).toContainText("Held");
+  await expect(running.nth(1)).toContainText("Slack channel");
+  await expect(running.nth(2)).toContainText("API key");
+  await expect(running.nth(1).getByRole("link", { name: "000000000a01", exact: true })).toHaveAttribute("href", `/sessions/${sessions.running}`);
 
-test("Questions are answered from their own page; the Overview never sends an answer", async ({ page }) => {
-  const state = await fixture(page);
-  await page.goto(`/?project=${projectID}&environment=${environmentID}`);
-  const questions = queue(page).getByRole("listitem", { name: /^Questions:/ });
-  await expect(questions).toHaveCount(2);
-  await expect(questions.nth(0).getByRole("link", { name: "Answer", exact: true })).toHaveAttribute("href", `/sessions/${sessions.asked}/turns/${turns.asked}/asks/${asks.oldest}`);
-  await expect(questions.nth(1).getByRole("link", { name: "Answer", exact: true })).toHaveAttribute("href", `/sessions/${sessions.later}/turns/${turns.later}/asks/${asks.later}`);
-  await expect(page.locator("main form")).toHaveCount(0);
-  await expect(page.locator("main textarea, main input[type=radio], main input[type=checkbox]")).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Waiting on you" }).getByText("Oldest first", { exact: true })).toBeVisible();
-  await questions.nth(0).getByRole("link", { name: "Answer", exact: true }).click();
-  await expect(page).toHaveURL(`/sessions/${sessions.asked}/turns/${turns.asked}/asks/${asks.oldest}`);
+  // One list: the current deployment is marked with when it was promoted, and
+  // templates show only when they need a look.
+  const deployments = rows(page, "Deployments");
+  await expect(deployments).toHaveCount(2);
+  await expect(deployments.first()).toContainText("Current");
+  await expect(deployments.first()).toContainText("promoted 2 hours ago");
+  await expect(deployments.first().getByRole("link", { name: "v2", exact: true })).toHaveAttribute("href", `/deployments/${deploymentID}`);
+  await expect(deployments.first()).not.toContainText("Templates");
+  await expect(panel(page, "Current deployment")).toHaveCount(0);
+
+  // Deleted computers are left out; awake ones come before sleeping ones.
+  const machines = rows(page, "Computers");
+  await expect(machines).toHaveCount(3);
+  await expect(machines.nth(0)).toContainText("Awake");
   expect(state.writes).toEqual([]);
 });
 
-test("with nothing waiting the Overview says so and links to Sessions", async ({ page }) => {
-  await fixture(page, { items: [] });
-  await page.goto(`/?project=${projectID}&environment=${environmentID}`);
-  await expect(page.getByText("Nothing is waiting on you.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "View sessions", exact: true })).toHaveAttribute("href", "/sessions");
-  await expect(overviewTab(page)).toHaveAccessibleName("Overview");
-  await expect(page.getByRole("region", { name: /^Set up/ })).toHaveCount(0);
+test("Needs attention appears on top with one row per cause, most urgent first", async ({ page }) => {
+  await fixture(page, {
+    waiting: true,
+    items: [hold, lost, question],
+    failures: [{ agent: "support", error_code: "tool_error", count: 9, last_hour: 4, first_at: ago(50), last_at: ago(1), last_session_id: sessions.failed, last_turn_id: turns.failed, last_turn_sequence: 12 }],
+  });
+  await open(page);
+  const region = attention(page);
+  await expect(region).toBeVisible();
+  const items = region.getByRole("listitem");
+  await expect(items).toHaveCount(5);
+  const expected: [string, string, string][] = [
+    ["support is failing · 4 turns in the last hour", "Inspect", `/sessions/${sessions.failed}#turn-${turns.failed}`],
+    ["1 computer is waiting for capacity", "View", "/computers"],
+    ["A session is held", "Open", `/sessions/${sessions.held}`],
+    ["Slack connection needs reauthorization", "Reauthorize", "/agents/support/slack"],
+    ["1 question unanswered for over 2 hours", "Answer", `/sessions/${sessions.asked}/turns/${turns.asked}/asks/${question.id}`],
+  ];
+  for (const [index, [title, action, href]] of expected.entries()) {
+    await expect(items.nth(index)).toContainText(title);
+    await expect(items.nth(index).getByRole("link", { name: action, exact: true })).toHaveAttribute("href", href);
+  }
+  // It sits above the numbers; the rest of the page keeps its place.
+  const [top, tiles] = await Promise.all([region.boundingBox(), page.getByText("Turns · 24h").first().boundingBox()]);
+  expect(top!.y).toBeLessThan(tiles!.y);
+  await expect(rows(page, "Computers").first()).toContainText("Waiting for capacity");
+});
+
+test("without session access the Overview still shows computers and deployments", async ({ page }) => {
+  await fixture(page, { permissions: ["computers.read", "deployments.read"] });
+  await open(page);
+  await expect(panel(page, "Computers")).toBeVisible();
+  await expect(page.getByText("No access to sessions").first()).toBeVisible();
+  // Each section keeps its place and says why it is empty.
+  await expect(panel(page, "Agents")).toContainText("You do not have access to sessions in this environment.");
+  await expect(panel(page, "Deployments")).toBeVisible();
 });
 
 test("before the first Deployment the Overview shows setup for this tab's scope", async ({ page }) => {
-  await fixture(page, { items: [], current: false });
-  await page.goto(`/?project=${projectID}&environment=${environmentID}`);
+  await fixture(page, { current: false, permissions: ["sessions.read", "deployments.read", "deployments.publish", "deployments.promote"] });
+  await open(page);
   const setup = page.getByRole("region", { name: "Set up" });
   await expect(setup.getByLabel("Setup prompt")).toContainText(`Project: ${projectID}\nEnvironment: ${environmentID}`);
-  await expect(page.getByText("No current deployment")).toBeVisible();
-  await expect(page.getByText("Nothing is waiting on you.")).toHaveCount(0);
+  await expect(panel(page, "Agents")).toHaveCount(0);
 });
 
-test("a current Deployment without agents still shows setup, with anything waiting below it", async ({ page }) => {
-  await fixture(page, { agents: false });
-  await page.goto(`/?project=${projectID}&environment=${environmentID}`);
+test("a current Deployment without agents still shows setup, with Needs attention above it", async ({ page }) => {
+  await fixture(page, { agents: false, items: [hold], permissions: ["sessions.read", "deployments.read", "deployments.publish", "deployments.promote"] });
+  await open(page);
   await expect(page.getByRole("region", { name: "Set up" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Waiting on you" })).toBeVisible();
+  await expect(attention(page)).toBeVisible();
+});
+
+test("the current deployment stays listed when newer ones push it out, with its templates when they need a look", async ({ page }) => {
+  await fixture(page, { newer: 6, preparation: "preparing" });
+  await open(page);
+  const deployments = rows(page, "Deployments");
+  await expect(deployments).toHaveCount(5);
+  await expect(deployments.first()).toContainText("Current");
+  await expect(deployments.first()).toContainText("v2");
+  await expect(deployments.first()).toContainText("Templates preparing");
+  await expect(deployments.nth(1)).toContainText("v3");
 });

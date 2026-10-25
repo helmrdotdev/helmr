@@ -2279,6 +2279,7 @@ index CREATE INDEX trigger_occurrences_activation ON public.trigger_occurrences 
 index CREATE INDEX trigger_occurrences_turn ON public.trigger_occurrences USING btree (environment_id, session_id, turn_id)
 index CREATE INDEX turn_asks_pending ON public.turn_asks USING btree (environment_id, session_id, turn_id) WHERE (status = 'pending'::text)
 index CREATE INDEX turn_messages_pending ON public.turn_messages USING btree (environment_id, session_id, turn_id, seq) WHERE (status = ANY (ARRAY['admitted'::text, 'started'::text]))
+index CREATE INDEX turns_created ON public.turns USING btree (environment_id, created_at)
 index CREATE INDEX turns_deadlines ON public.turns USING btree (deadline_at, environment_id, session_id) WHERE ((status = 'running'::text) AND (deadline_at IS NOT NULL))
 index CREATE INDEX turns_failed ON public.turns USING btree (environment_id, terminal_at) WHERE (status = 'failed'::text)
 index CREATE INDEX turns_queue ON public.turns USING btree (environment_id, session_id, seq) WHERE (status = 'queued'::text)
