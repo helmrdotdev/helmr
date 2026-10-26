@@ -16,6 +16,7 @@ export const GET: APIRoute = async ({ site }) => {
   const routes = [
     { path: "/", changefreq: "weekly", priority: "1.0", lastmod: gitLastmod("src/pages/index.astro") },
     { path: "/docs", changefreq: "weekly", priority: "0.9", lastmod: gitLastmod("src/pages/docs/index.astro") },
+    { path: "/security", changefreq: "monthly", priority: "0.8", lastmod: gitLastmod("src/pages/security.astro") },
     ...docs.map((doc) => ({
       path: getDocUrl(doc),
       changefreq: "weekly",

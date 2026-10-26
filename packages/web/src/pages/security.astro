@@ -1,0 +1,317 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import { breadcrumbJsonLd } from "../lib/seo";
+
+// What each boundary covers, in the order a security review reads them.
+const glance = [
+  { href: "#isolation", title: "Isolated computers", body: "Each agent works in a microVM defined in code." },
+  { href: "#credentials", title: "Keys outside the agent", body: "Protected secrets reach only the origins you allow." },
+  { href: "#access", title: "Scoped access", body: "Roles for the organization, an environment or one agent." },
+  { href: "#audit", title: "Decisions on record", body: "Who acted, what Helmr checked, and what it refused." },
+  { href: "#deployment", title: "Your network", body: "Run in your AWS account, privately if you need to." },
+  { href: "#open-source", title: "Open source", body: "Apache 2.0. Read every boundary in the source." },
+] as const;
+
+const authority = [
+  { label: "Members and groups", body: "Each member’s access shows every permission and the assignment it comes from." },
+  { label: "API keys", body: "Belong to one environment and get nothing until a role is assigned." },
+  { label: "Organization owner", body: "Ownership alone grants no ordinary access, including audit access." },
+  { label: "Answers to agents", body: "Answering an agent’s question requires authority, and Helmr records who answered." },
+] as const;
+
+const recorded = [
+  "Sign-ins and administrative changes",
+  "Session, turn and command transitions",
+  "Secrets made available to a computer",
+  "Refused requests and the reason",
+  "Reading execution content or audit events",
+] as const;
+
+const neverRecorded = ["Prompts and messages", "Command arguments and output", "File contents", "Tokens and secret values"] as const;
+
+const limits = [
+  { label: "Agent tool internals", body: "Activity inside a native agent harness that does not pass through Helmr is not in the audit log." },
+  { label: "Untrusted code side by side", body: "Agents in one environment trust each other; Helmr does not isolate them from one another." },
+  { label: "Log export", body: "The audit API is for investigation, not a loss-free collector or archive." },
+  { label: "External side effects", body: "Retries reconcile delivery; they do not make external actions happen exactly once." },
+  { label: "Erasure", body: "Expired records are hidden immediately; secure physical erasure is not promised." },
+] as const;
+---
+
+<BaseLayout
+  title="Security | Helmr"
+  description="What Helmr isolates, who can act, what it records, and where its guarantees stop."
+  path="/security"
+  jsonLd={breadcrumbJsonLd([{ name: "Home", path: "/" }, { name: "Security", path: "/security" }])}
+>
+  <Fragment slot="header-links">
+    <a href="/docs" data-astro-prefetch="viewport">Docs</a>
+    <a href="/security" aria-current="page">Security</a>
+    <a href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">GitHub</a>
+  </Fragment>
+
+  <article class="security">
+    <header class="intro">
+      <h1 class="headline">How Helmr keeps agent work in bounds.</h1>
+      <p class="lede">
+        Agents work with real repositories, credentials and internal systems. This page explains what
+        Helmr isolates, who can act, what it records, and where its guarantees stop.
+      </p>
+      <ul class="glance">
+        {glance.map((item, i) => (
+          <li>
+            <a href={item.href}>
+              <span class="num">{String(i + 1).padStart(2, "0")}</span>
+              <strong>{item.title}</strong>
+              <span>{item.body}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </header>
+
+    <section id="isolation" aria-labelledby="isolation-title">
+      <p class="num">01 · Isolation</p>
+      <h2 id="isolation-title">Where agent work runs</h2>
+      <p>
+        Agents and their commands run inside a Linux microVM on a worker. The computer is defined in
+        code (image, tools, resources, secret bindings and a prepare step), so what runs is reviewable
+        and the same for every session.
+      </p>
+      <p>
+        Builds treat package install scripts as untrusted input. They run isolated, receive only the
+        build secrets you select, and get no host Docker socket or unrestricted host filesystem.
+      </p>
+      <dl class="table">
+        <div><dt>Between environments</dt><dd>Separate authority, secret bindings and audit scope.</dd></div>
+        <div><dt>Inside one environment</dt><dd>Agent code is mutually trusted. Sessions that share a computer share its files and processes.</dd></div>
+      </dl>
+      <a class="more" href="/docs/concepts/security">Security concepts &rarr;</a>
+    </section>
+
+    <section id="credentials" aria-labelledby="credentials-title">
+      <p class="num">02 · Credentials</p>
+      <h2 id="credentials-title">Credentials</h2>
+      <p>
+        Bind a secret as <code>protected</code> and the VM holds only a placeholder. Helmr substitutes
+        the real value at the network boundary for HTTPS origins you allow, and fails the request once
+        the secret is revoked. Reading a secret returns its metadata, never the value.
+      </p>
+      <p>
+        Raw environment variables and files expose values to processes in the computer; use them only
+        where a tool cannot work through a protected binding.
+      </p>
+      <a class="more" href="/docs/concepts/secrets">Secrets &rarr;</a>
+    </section>
+
+    <section id="access" aria-labelledby="access-title">
+      <p class="num">03 · Access</p>
+      <h2 id="access-title">Who can act</h2>
+      <p>
+        Roles are sets of permissions granted to members, groups and API keys at organization,
+        environment or single-agent scope. Standard roles cover common jobs; custom roles hold exactly
+        the permissions you choose.
+      </p>
+      <dl class="table">
+        {authority.map((row) => <div><dt>{row.label}</dt><dd>{row.body}</dd></div>)}
+      </dl>
+      <a class="more" href="/docs/reference/api/permissions">Permissions &rarr;</a>
+    </section>
+
+    <section id="audit" aria-labelledby="audit-title">
+      <p class="num">04 · Audit</p>
+      <h2 id="audit-title">What is recorded</h2>
+      <p>
+        Helmr records the operations it enforces, with the identity that acted, how it signed in and
+        every authority check it evaluated. Refused requests are recorded too.
+      </p>
+      <div class="pair">
+        <div class="box">
+          <p class="box-title">Recorded</p>
+          <ul class="yes">{recorded.map((item) => <li>{item}</li>)}</ul>
+        </div>
+        <div class="box">
+          <p class="box-title">Never recorded</p>
+          <ul class="no">{neverRecorded.map((item) => <li>{item}</li>)}</ul>
+        </div>
+      </div>
+      <h3>Who can read it</h3>
+      <p>
+        Reading audit events needs its own permission, granted with the Auditor role for the
+        organization or an environment. Every search is itself recorded.
+      </p>
+      <h3>How long it is kept</h3>
+      <p>
+        Retention is a finite period the operator sets; there is no unlimited mode. The serving process
+        can only add and read audit records; removing expired ones is a separate maintenance command.
+      </p>
+      <a class="more" href="/docs/reference/api/audit-events">Audit events &rarr;</a>
+    </section>
+
+    <section id="deployment" aria-labelledby="deployment-title">
+      <p class="num">05 · Deployment</p>
+      <h2 id="deployment-title">Where Helmr runs</h2>
+      <p>
+        Run the control plane and workers in your own AWS account. The private reference keeps the
+        Console, CLI and API on an internal load balancer, sends platform traffic through a proxy you
+        maintain, and connects to Slack outbound, with no public endpoint.
+      </p>
+      <a class="more" href="/docs/self-hosting/private">Private deployment &rarr;</a>
+    </section>
+
+    <section id="limits" aria-labelledby="limits-title">
+      <p class="num">06 · Limits</p>
+      <h2 id="limits-title">What Helmr does not cover</h2>
+      <p>Knowing where a guarantee stops matters as much as the guarantee.</p>
+      <dl class="table limits">
+        {limits.map((row) => <div><dt>{row.label}</dt><dd>{row.body}</dd></div>)}
+      </dl>
+    </section>
+
+    <section id="open-source" aria-labelledby="oss-title">
+      <p class="num">07 · Open source</p>
+      <h2 id="oss-title">Read the source</h2>
+      <p>
+        Helmr is Apache 2.0. Every boundary on this page is in the source, so you can verify it before
+        you trust it with your repositories.
+      </p>
+      <a class="more" href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">helmrdotdev/helmr on GitHub &rarr;</a>
+    </section>
+  </article>
+</BaseLayout>
+
+<style>
+  .security {
+    max-width: 46rem;
+    margin: 0 auto;
+    padding: 5rem 1.5rem 6rem;
+    color: var(--text);
+  }
+
+  .intro h1 {
+    font-size: clamp(2.125rem, 3.6vw, 2.75rem);
+    line-height: 1.08;
+    letter-spacing: -0.035em;
+  }
+
+  .lede {
+    margin-top: 1.25rem;
+    font-size: 1.1875rem;
+    line-height: 1.45;
+    color: var(--text-muted);
+  }
+
+  .glance {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .glance a {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    height: 100%;
+    padding: 0.9rem 1rem;
+    border: 1px solid transparent;
+    border-image: var(--hand-card) 8 fill / 8px stretch;
+    color: var(--text);
+    text-decoration: none;
+  }
+
+  .glance a:hover strong { color: var(--accent); }
+  .glance strong { font-weight: 500; font-size: 0.95rem; }
+  .glance span:last-child { font-size: 0.8125rem; line-height: 1.5; color: var(--text-muted); }
+
+  .num {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-subtle);
+  }
+
+  section {
+    padding: 3rem 0;
+    background: var(--hand-rule-faint) top / 100% 4px no-repeat;
+  }
+
+  section:first-of-type { margin-top: 3.5rem; }
+
+  h2 {
+    margin: 0.4rem 0 0.9rem;
+    font-weight: 400;
+    font-size: 1.375rem;
+    line-height: 1.25;
+    letter-spacing: -0.015em;
+  }
+
+  h3 {
+    margin: 1.5rem 0 0.4rem;
+    font-weight: 500;
+    font-size: 1rem;
+  }
+
+  section > p:not(.num) {
+    margin: 0 0 0.75rem;
+    font-size: 0.9375rem;
+    line-height: 1.65;
+    color: var(--text-muted);
+  }
+
+  section code { font-family: var(--font-mono); font-size: 0.8em; }
+
+  .table {
+    margin: 1.25rem 0 0;
+    border: 1px solid transparent;
+    border-image: var(--hand-card) 8 fill / 8px stretch;
+  }
+
+  .table > div {
+    display: grid;
+    grid-template-columns: 12rem minmax(0, 1fr);
+    gap: 1rem;
+    padding: 0.6rem 1rem;
+    font-size: 0.875rem;
+    line-height: 1.55;
+  }
+
+  .table > div + div { background: var(--hand-rule-faint) top / 100% 4px no-repeat; }
+  .table dt { font-weight: 500; }
+  .table dd { margin: 0; color: var(--text-muted); }
+  .limits { background: var(--wash-yellow); background-clip: padding-box; }
+
+  .pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+  }
+
+  .box {
+    padding: 0.9rem 1rem;
+    border: 1px solid transparent;
+    border-image: var(--hand-card) 8 fill / 8px stretch;
+  }
+
+  .box-title { margin: 0 0 0.5rem; font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text); }
+  .box ul { margin: 0; padding-left: 1.25rem; font-size: 0.875rem; line-height: 1.7; color: var(--text-muted); }
+  .yes li::marker { content: "✓  "; color: var(--ok); }
+  .no li::marker { content: "–  "; color: var(--text-subtle); }
+
+  .more {
+    display: inline-block;
+    margin-top: 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--accent);
+  }
+
+  @media (max-width: 640px) {
+    .glance, .pair { grid-template-columns: 1fr; }
+    .table > div { grid-template-columns: 1fr; gap: 0.15rem; }
+  }
+</style>

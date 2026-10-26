@@ -183,6 +183,34 @@ const scaleControls = [
   { title: "Limits per environment", body: "Cap resident computers, CPU, memory, storage and admission rate, so one workload cannot take the fleet." },
 ] as const;
 
+// The audit figure: everyone who can act, flowing into one record.
+const auditSources = [
+  { name: "People", note: "Console, CLI, Slack", character: "hiker" },
+  { name: "Agents", note: "sessions and commands", character: "robot" },
+  { name: "API keys", note: "CI and scripts", glyph: "key" },
+  { name: "Helmr itself", note: "retention, recovery", glyph: "mark" },
+] as const;
+
+const auditRecord = [
+  { allowed: true, what: "Role granted to Ops team", why: "Aiko · allowed by Access Administrator" },
+  { allowed: true, what: "Command started on a computer", why: "agent demo-reporter · its own session" },
+  { allowed: false, what: "Read session content", why: "Sato · refused, no role gives it here" },
+  { allowed: true, what: "Deployment promoted", why: "key ci-deploy · Deployer in Production" },
+] as const;
+
+// The private network figure: what stays inside, and the only ways out.
+const insideNetwork = [
+  { name: "Console, CLI, API", note: "internal load balancer" },
+  { name: "Control plane", note: "sessions and audit" },
+  { name: "Workers", note: "agents in microVMs" },
+] as const;
+
+// Where Helmr's own traffic goes, only through the proxy.
+const outbound = [
+  { name: "GitHub", logo: "/logos/github.svg", note: "sign-in and repositories" },
+  { name: "Slack", logo: "/logos/slack.svg", note: "outbound connection" },
+] as const;
+
 // The docs page each section points to.
 const sectionDocs = [
   { id: "agents", docs: { href: "/docs/concepts/agents#running-a-harness-inside-an-agent", label: "Running a harness" } },
@@ -190,8 +218,10 @@ const sectionDocs = [
   { id: "work", docs: { href: "/docs/concepts/agents", label: "Agents" } },
   { id: "team", docs: { href: "/docs/concepts/slack", label: "Slack" } },
   { id: "durable", docs: { href: "/docs/concepts/durability", label: "Durability" } },
-  { id: "security", docs: { href: "/docs/concepts/secrets", label: "Secrets" } },
+  { id: "secrets", docs: { href: "/docs/concepts/secrets", label: "Secrets" } },
   { id: "scale", docs: { href: "/docs/self-hosting/capacity", label: "Capacity scaling" } },
+  { id: "network", docs: { href: "/docs/self-hosting/private", label: "Private deployment" } },
+  { id: "built-in", docs: { href: "/security", label: "How it works" } },
   { id: "open-source", docs: { href: "/docs/self-hosting/overview", label: "Self-hosting" } },
 ] as const;
 
@@ -206,6 +236,7 @@ const nav = [
   { label: "Quickstart", href: "/docs/quickstart" },
   { label: "SDK reference", href: "/docs/reference/sdk/overview" },
   { label: "Self-hosting", href: "/docs/self-hosting/overview" },
+  { label: "Security", href: "/security" },
   { label: "GitHub", href: "https://github.com/helmrdotdev/helmr", external: true },
 ] as const;
 ---
@@ -448,7 +479,7 @@ const nav = [
             swaps in the real value at the network boundary, only for origins you allow, and fails
             the request once the secret is revoked.
           </p>
-          <a class="side-link" href={docsFor("security").href}><span>Docs</span>{docsFor("security").label} &rarr;</a>
+          <a class="side-link" href={docsFor("secrets").href}><span>Docs</span>{docsFor("secrets").label} &rarr;</a>
           <div class="wire">
             <div class="card wire-card">
               <div class="card-head"><span>inside the microVM</span><span class="muted">GH_TOKEN</span></div>
@@ -513,34 +544,95 @@ const nav = [
           </ul>
         </section>
 
+        <section id="network" class="block" aria-labelledby="network-title">
+          <h2 id="network-title">Run it on your own network.</h2>
+          <p>
+            Helmr runs in your AWS account with no public endpoint. Your team reaches the Console, CLI
+            and API over your company network, Slack connects outbound, and Helmr&rsquo;s own traffic
+            leaves only through a proxy you control. Agents stay off your internal network.
+          </p>
+          <a class="side-link" href={docsFor("network").href}><span>Docs</span>{docsFor("network").label} &rarr;</a>
+          <figure class="net" aria-label="Helmr inside a company network: your team reaches it from inside, and its own traffic leaves through a proxy">
+            <div class="net-team">
+              <span class="card net-chip">Your team</span>
+              <span class="net-in" aria-hidden="true">company network</span>
+            </div>
+            <div class="net-inside">
+              <img class="peek peek-net" src={character("hut")} alt="" width="80" height="80" loading="lazy" decoding="async" />
+              <p class="net-label">your AWS account <span class="muted">· no public endpoint</span></p>
+              <ul class="net-nodes">
+                {insideNetwork.map((item) => (
+                  <li class="card net-node"><span>{item.name}</span><span class="muted">{item.note}</span></li>
+                ))}
+              </ul>
+            </div>
+            <div class="net-gate" aria-hidden="true"><span>egress proxy · Helmr&rsquo;s own traffic</span></div>
+            <ul class="net-out">
+              {outbound.map((item) => (
+                <li class="card net-dest">
+                  <img src={item.logo} alt="" width="18" height="18" loading="lazy" decoding="async" />
+                  <span><span class="net-dest-name">{item.name}</span><span class="muted">{item.note}</span></span>
+                </li>
+              ))}
+            </ul>
+          </figure>
+        </section>
+
+        <section id="built-in" class="block" aria-labelledby="built-in-title">
+          <h2 id="built-in-title">Enterprise-grade security, built in.</h2>
+          <p>
+            Control who and which agent can do what, down to a single agent. Every decision Helmr
+            enforces is on record: who acted, what was checked, and what was refused, without your
+            prompts or output ever entering the log.
+          </p>
+          <a class="side-link" href={docsFor("built-in").href}><span>Security</span>{docsFor("built-in").label} &rarr;</a>
+          <figure class="flow" aria-label="People, agents, API keys and Helmr itself flowing into one audit record">
+            <ul class="flow-sources">
+              {auditSources.map((source) => (
+                <li>
+                  {"character" in source ? (
+                    <img src={character(source.character)} alt="" width="36" height="36" loading="lazy" decoding="async" />
+                  ) : source.glyph === "key" ? (
+                    <svg class="flow-glyph" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="20" r="6" /><path d="M15.5 15.5 26 5m-4 4 3 3m-6 0 2 2" /></svg>
+                  ) : (
+                    <span class="flow-glyph flow-mark"><BrandMark /></span>
+                  )}
+                  <span>{source.name}<small>{source.note}</small></span>
+                </li>
+              ))}
+            </ul>
+            <svg class="flow-lines" viewBox="0 0 120 240" preserveAspectRatio="none" fill="none" aria-hidden="true">
+              <path d="M2 30 C 60 30, 60 120, 114 120" />
+              <path d="M2 90 C 60 90, 70 120, 114 120" />
+              <path d="M2 150 C 60 150, 70 120, 114 120" />
+              <path d="M2 210 C 60 210, 60 120, 114 120" />
+              <path class="flow-head" d="M106 115 L114 120 L106 125" />
+            </svg>
+            <div class="card flow-record">
+              <img class="peek peek-owl" src={character("owl")} alt="" width="72" height="72" loading="lazy" decoding="async" />
+              <div class="card-head"><span>one record</span><span class="muted">who · what · why</span></div>
+              <ul>
+                {auditRecord.map((entry) => (
+                  <li>
+                    <span class:list={["flow-mark-result", entry.allowed ? "ok" : "refused"]} aria-label={entry.allowed ? "Allowed" : "Refused"}>{entry.allowed ? "✓" : "✕"}</span>
+                    <span>{entry.what}<small>{entry.why}</small></span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </figure>
+        </section>
+
         <section id="open-source" class="block" aria-labelledby="oss-title">
           <h2 id="oss-title">Open source. Infrastructure you control.</h2>
           <p>
             Early, open, Apache&nbsp;2.0. Read the source before you trust it with your repositories,
-            then choose where it runs.
+            then run it where your work already lives.
           </p>
           <a class="side-link" href={docsFor("open-source").href}><span>Docs</span>{docsFor("open-source").label} &rarr;</a>
-          <div class="homes">
-            <div class="home-slot">
-              <img class="peek" src={character("cloud")} alt="" width="88" height="88" loading="lazy" decoding="async" />
-              <div class="card home">
-                <p class="home-title">Helmr Cloud <span class="soon">planned</span></p>
-                <p>Managed hosting is planned and is not currently available.</p>
-                <a href="/docs">Read the docs &rarr;</a>
-              </div>
-            </div>
-            <div class="home-slot">
-              <img class="peek peek-right" src={character("hut")} alt="" width="80" height="80" loading="lazy" decoding="async" />
-              <div class="card home home-dark">
-                <p class="home-title">Your AWS account</p>
-                <p>Run the control plane and workers yourself. Inspect the source and own the deployment boundary.</p>
-                <a href="/docs/self-hosting/overview">Self-hosting guide &rarr;</a>
-              </div>
-            </div>
-          </div>
           <div class="actions">
             <a class="button button-dark" href="/docs/quickstart">Start building</a>
-            <a class="button" href="/docs">Read the docs</a>
+            <a class="button" href="https://github.com/helmrdotdev/helmr" target="_blank" rel="noopener">View on GitHub</a>
           </div>
         </section>
       </main>
@@ -866,11 +958,9 @@ const nav = [
   }
 
   .note a,
-  .home a,
   .card-head a { color: var(--link); }
 
   .note a:hover,
-  .home a:hover,
   .card-head a:hover { text-decoration: underline; }
 
   /* ---- buttons ---- */
@@ -1373,6 +1463,211 @@ const nav = [
   }
 
   /* secrets */
+  /* private network: inside the network, the proxy, and where traffic may go */
+  .net { margin: 2.5rem 0 0; }
+
+  /* your team enters from the company network, above the figure */
+  .net-team {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    column-gap: 0.75rem;
+    padding: 0 1rem;
+  }
+
+  .net-chip {
+    justify-self: start;
+    margin-top: 0;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8125rem;
+    color: var(--ink-1);
+  }
+
+  .net-in {
+    grid-column: 1;
+    position: relative;
+    height: 2.75rem;
+    padding: 0.7rem 0 0 1.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--ink-2);
+  }
+
+  .net-in::before {
+    content: "";
+    position: absolute;
+    top: 0.2rem;
+    bottom: 0.6rem;
+    left: 0.75rem;
+    width: 1px;
+    background-image: linear-gradient(180deg, var(--ink-2) 3px, transparent 3px);
+    background-size: 1px 7px;
+  }
+
+  .net-in::after {
+    content: "";
+    position: absolute;
+    bottom: 0.2rem;
+    left: calc(0.75rem - 4px);
+    border: 4px solid transparent;
+    border-top: 6px solid var(--ink-2);
+  }
+
+  .net-inside {
+    position: relative;
+    padding: 0.9rem 1rem 1rem;
+    border: 1px solid transparent;
+    border-image: var(--hand-saved) 16 / 12px round;
+  }
+
+  .net-label {
+    margin: 0 0 0.75rem;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--ink-1);
+  }
+
+  .net-nodes,
+  .net-out {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .net-out { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  .net-node,
+  .net-dest {
+    display: flex;
+    margin-top: 0;
+    padding: 0.7rem 0.8rem;
+    font-size: 0.8125rem;
+    color: var(--ink-1);
+  }
+
+  .net-node { flex-direction: column; gap: 0.2rem; }
+  .net-dest { align-items: center; gap: 0.7rem; }
+  .net-dest > span { display: flex; flex-direction: column; gap: 0.1rem; }
+  .net-dest img { width: 1.25rem; height: 1.25rem; flex: none; }
+
+  .net-node .muted,
+  .net-dest .muted { font-family: var(--font-mono); font-size: 0.65rem; }
+
+  /* the proxy: one dashed rule across the figure, like the secrets boundary */
+  .net-gate {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 3rem;
+  }
+
+  .net-gate::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    background-image: linear-gradient(90deg, var(--ink-2) 3px, transparent 3px);
+    background-size: 7px 1px;
+  }
+
+  .net-gate span {
+    position: relative;
+    padding-right: 0.6rem;
+    background: var(--paper);
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    color: var(--ink-2);
+  }
+
+  .net-dest-name { font-weight: 500; }
+
+  /* sits on the frame's top edge, clear of the label beneath it */
+  .peek-net { top: -4.85rem; right: 1.5rem; width: 5rem; }
+
+  @media (max-width: 640px) {
+    .net-nodes, .net-out { grid-template-columns: minmax(0, 1fr); }
+    .net-team { grid-template-columns: minmax(0, 1fr); }
+  }
+
+
+  @media (max-width: 640px) {
+    .net { grid-template-columns: minmax(0, 1fr); row-gap: 1rem; }
+    .net-inside ul { grid-template-columns: minmax(0, 1fr); }
+    .net-gate { min-height: 2rem; }
+    .net-out { padding-left: 0; }
+  }
+
+  /* built-in security: every source flows into one record */
+  .flow {
+    display: grid;
+    grid-template-columns: 11.5rem 6rem minmax(0, 1fr);
+    align-items: center;
+    margin: 4.5rem 0 0;
+  }
+
+  .flow-sources {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .flow-sources li {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    font-size: 0.875rem;
+    color: var(--ink-1);
+  }
+
+  .flow-sources img,
+  .flow-glyph { width: 2.25rem; height: 2.25rem; flex: none; color: var(--ink-1); }
+  .flow-mark { display: inline-flex; align-items: center; justify-content: center; }
+  .flow-mark :global(.brand-mark) { width: 1.6rem; height: auto; }
+
+  .flow small,
+  .flow-record small {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    color: var(--ink-3);
+  }
+
+  .flow-lines { width: 100%; height: 15rem; }
+  .flow-lines path { stroke: var(--ink-2); stroke-width: 1.3; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
+  .flow-lines .flow-head { stroke-dasharray: none; }
+
+  .flow-record { position: relative; margin-top: 0; }
+  .flow-record ul { margin: 0; padding: 0.25rem 0; list-style: none; }
+
+  .flow-record li {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr);
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.8125rem;
+    color: var(--ink-1);
+  }
+
+  .flow-record li + li { background: var(--hand-rule-faint) top / 100% 4px no-repeat; }
+  .flow-mark-result.ok { color: #15803d; }
+  .flow-mark-result.refused { color: #b42318; }
+  .peek-owl { top: -4.4rem; right: 1.25rem; width: 4.5rem; }
+
+  @media (max-width: 640px) {
+    .flow { grid-template-columns: minmax(0, 1fr); row-gap: 1.25rem; }
+    .flow-sources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.9rem; }
+    .flow-lines { display: none; }
+    .flow-record { margin-top: 3rem; }
+  }
+
   .wire { margin-top: 2rem; }
   .wire .card { margin-top: 0; }
 
@@ -1557,69 +1852,11 @@ const nav = [
     color: var(--ink-2);
   }
 
-  /* homes */
-  .homes {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
-    margin-top: 5rem;
-  }
-
-  /* each option has a character peeking over its top edge, behind the card */
-  .home-slot {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .home-slot .home { position: relative; z-index: 1; flex: 1; }
-
+  /* a character peeking over a figure's top edge, behind it */
   .peek {
     position: absolute;
-    top: -3.5rem;
-    left: 1.25rem;
-    width: 5.5rem;
     height: auto;
   }
-
-  .peek-right { left: auto; right: 1.5rem; width: 5rem; top: -4.4rem; }
-
-  .home {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-    margin-top: 0;
-    padding: 1.25rem;
-  }
-
-  .home p {
-    font-size: 0.875rem;
-    line-height: 1.55;
-    color: var(--ink-2);
-  }
-
-  .home a { margin-top: auto; padding-top: 0.5rem; font-size: 0.8125rem; }
-
-  .home .home-title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 1rem;
-    color: var(--ink-1);
-  }
-
-  .soon {
-    padding: 0.05rem 0.35rem;
-    background: #f3e7c6;
-    font-family: var(--font-mono);
-    font-size: 0.625rem;
-    color: #7a5a12;
-  }
-
-  .home-dark { border-image: var(--hand-dark) 8 fill / 8px stretch; }
-  .home-dark p { color: rgba(255, 255, 255, 0.7); }
-  .home-dark .home-title { color: #fff; }
-  .home-dark a { color: #b9c8ff; }
 
 
   /* ---- footer ---- */
@@ -1716,8 +1953,7 @@ const nav = [
     .carry-arrow span { bottom: auto; top: 50%; left: 0.6rem; transform: translateY(-50%); }
     .hub { grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
     .dial { max-width: 22rem; margin: 0 auto; }
-    .wire-out, .homes, .controls { grid-template-columns: minmax(0, 1fr); }
-    .homes { row-gap: 4.5rem; }
+    .wire-out, .controls { grid-template-columns: minmax(0, 1fr); }
 
 
     .foot { grid-template-columns: minmax(0, 1fr); padding: 0 1rem; }
@@ -1739,7 +1975,7 @@ const nav = [
   /* high-contrast mode: drop the drawn outlines for plain system-colored lines */
   @media (forced-colors: active) {
     .button, .button:hover, .button-dark:hover, .install, .install:hover, .install:focus-visible,
-    .rail-cta, .rail-cta:hover, .card, .home-dark, .machine, .machine.is-saved {
+    .rail-cta, .rail-cta:hover, .card, .net-inside, .machine, .machine.is-saved {
       border-image-source: none !important;
       border-color: CanvasText;
     }
