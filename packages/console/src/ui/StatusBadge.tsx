@@ -35,6 +35,8 @@ const TONES = {
   session_work: { running: "active", queued: "waiting", held: "waiting" },
   computer_wait: { waiting: "waiting" },
   deployment_templates: { preparing: "waiting", failed: "revoked" },
+  audit_outcome: { accepted: "active", succeeded: "succeeded", denied: "revoked", failed: "revoked", cancelled: "expired", unknown: "expired" },
+  audit_decision: { allowed: "succeeded", denied: "revoked", not_evaluated: "expired" },
 } as const satisfies Record<string, Record<string, Tone>>;
 
 // Labels that read better than the status name.

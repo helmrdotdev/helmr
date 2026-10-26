@@ -86,7 +86,9 @@ type SearchDetails struct {
 	To                     time.Time   `json:"to"`
 	ResultCount            int         `json:"result_count"`
 	EnvironmentIDs         []uuid.UUID `json:"environment_ids,omitzero"`
-	Action                 string      `json:"action,omitempty"`
+	Actions                []string    `json:"actions,omitempty"`
+	OperationID            uuid.UUID   `json:"operation_id,omitzero"`
+	EventID                uuid.UUID   `json:"event_id,omitzero"`
 	ActorID                uuid.UUID   `json:"actor_id,omitzero"`
 	TargetID               uuid.UUID   `json:"target_id,omitzero"`
 	Outcome                string      `json:"outcome,omitempty"`

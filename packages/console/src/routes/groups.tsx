@@ -18,6 +18,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
+import { useAuditItem } from "../features/audit/auditLink";
 
 const COLUMNS = ["Group", "Members", "Assignments", "Where", { label: "Actions", srOnly: true }] as const;
 const failure = (error: unknown) => loadError(error, "Could not load groups.");
@@ -28,6 +29,7 @@ const grantPlaces = (grants: readonly RoleGrant[]) => [...new Set(grants.map(gra
 
 export function Groups() {
   const me = useMe(); const cache = useQueryClient(); const navigate = useNavigate();
+  const auditItem = useAuditItem();
   const allowed = () => hasPermission(me.data, "groups.read");
   const can = (permission: string) => hasPermission(me.data, permission);
   const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: allowed() }));
@@ -70,7 +72,7 @@ export function Groups() {
                   <td class="font-mono text-chrome!">{memberCount(group.member_ids)}</td>
                   <td class="font-mono text-chrome!">{assignments(group.id).length}</td>
                   <td><Show when={places(group.id)} fallback={<EmptyCell />}>{text => <span class="font-mono text-chrome">{text()}</span>}</Show></td>
-                  <RowActions label={`Actions for ${group.name}`} items={groupMenu({ all: false, membersLoaded: !!members.data, can, grant: () => setGranting({ id: group.id, name: group.name }), add: () => setAdding(group), rename: () => setRenaming(group), remove: () => setDeleting(group) })} />
+                  <RowActions label={`Actions for ${group.name}`} items={groupMenu({ all: false, membersLoaded: !!members.data, can, grant: () => setGranting({ id: group.id, name: group.name }), add: () => setAdding(group), rename: () => setRenaming(group), remove: () => setDeleting(group) }).concat(auditItem({ target: group.id, target_kind: "permission_group" }))} />
                 </tr>
               )}
             </For>

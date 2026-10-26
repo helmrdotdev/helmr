@@ -49,10 +49,17 @@ an administrator route to bypass a denied tenant read.
 Required `from` and `to` parameters are RFC3339 timestamps: inclusive start and
 exclusive end, at most 31 days apart. `limit` defaults to 100 and accepts 1–500.
 Optional exact filters are `environment_id`, `actor_kind`, `actor_id`, `action`,
-`target_kind`, `target_id`, `target_user_id`, `slack_team_id`, `slack_user_id`, and
-`outcome`. Slack link identities use the user/workspace/Slack-user triple rather
-than an invented target UUID. An installation query can specify `organization_id`;
+`target_kind`, `target_id`, `target_user_id`, `slack_team_id`, `slack_user_id`,
+`operation_id`, `event_id`, and `outcome`. `action` can be repeated up to 100 times
+to match any of the listed actions; each must be a recordable action. `operation_id`
+selects every event one request or job recorded, and `event_id` selects one event;
+both still apply only within `from` and `to`. Slack link identities use the
+user/workspace/Slack-user triple rather than an invented target UUID. An installation query can specify `organization_id`;
 omitting it selects installation facts. Tenant scope comes from authentication.
+
+A login session can read the recordable actions, with each action's target kind,
+outcomes and category, from `GET /api/audit-events/actions`. The list contains no
+audit data.
 
 The response contains `events` and, when another bounded page exists, `next_before`
 with `recorded_at` and `id`. Send these as `before_recorded_at` and `before_id`,

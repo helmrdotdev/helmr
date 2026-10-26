@@ -230,6 +230,9 @@ Panel.
   - **RowActions** — the trailing cell with one `ActionMenu`; empty when no action
     applies. Never inline button rows.
   - **RowError** — an action's error as its own row under the row it belongs to.
+  - **Expanding row** — when a row's record is too large for columns (an audit
+    event), a leading chevron toggle opens one row at a time; its details are a
+    full-width row directly beneath it, and the open row is in the URL.
   - **LoadMore** — the `footer`: "Load more" (busy "Loading…") and the shown count.
     `noun` is the singular and plural, lower case (`{ one: "turn", other: "turns" }`):
     the count reads "Showing 1 turn" or "Showing 3 turns", the button is named

@@ -68,3 +68,16 @@ type AuditAuthentication struct {
 	CredentialID      *uuid.UUID `json:"credential_id"`
 	CredentialVersion *int64     `json:"credential_version"`
 }
+
+// AuditAction is one action the audit trail can record, with the category it
+// is listed under when people filter for it.
+type AuditAction struct {
+	Action     string   `json:"action"`
+	TargetKind string   `json:"target_kind"`
+	Outcomes   []string `json:"outcomes"`
+	Category   string   `json:"category"`
+}
+
+type AuditActionsResponse struct {
+	Actions []AuditAction `json:"actions"`
+}

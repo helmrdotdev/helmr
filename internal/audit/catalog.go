@@ -1,6 +1,9 @@
 package audit
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // Definition is the capture contract for one product operation. Adding an action
 // requires an explicit target and outcomes here, plus an owner and capture test.
@@ -145,6 +148,29 @@ func Catalog() []Definition {
 		out = append(out, d)
 	}
 	return out
+}
+
+// Categories group actions for people looking for them. Every action belongs to
+// exactly one, by the resource its name starts with.
+var categoryOf = map[string]string{
+	"access": "access", "member": "access", "invitation": "access", "role": "access", "role_grant": "access",
+	"permission_group": "access", "installation_admin": "access", "organization": "access",
+	"identity": "sign_in",
+	"agent":    "agents", "session": "agents", "turn": "agents", "input": "agents", "message": "agents",
+	"trigger": "agents", "mcp": "agents", "runtime": "agents",
+	"slack_app": "slack", "slack_installation": "slack", "slack_connection": "slack", "slack_user": "slack",
+	"computer": "computers", "command": "computers", "template": "computers",
+	"secret": "secrets", "api_key": "secrets",
+	"deployment": "deployments", "project": "deployments", "environment": "deployments",
+	"region": "infrastructure", "worker_group": "infrastructure", "worker_pool": "infrastructure",
+	"worker_host": "infrastructure", "worker_scale_in": "infrastructure",
+	"audit": "audit",
+}
+
+// Category is the group an action belongs to.
+func Category(action string) string {
+	resource, _, _ := strings.Cut(action, ".")
+	return categoryOf[resource]
 }
 
 func Lookup(action string) (Definition, bool) {

@@ -438,6 +438,7 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 func (s *Server) mountManagementRoutes(r chi.Router) {
 	r.Use(limitAPIRequestBody)
 	r.With(s.requireSession).Get("/audit-events", s.listAuditEvents)
+	r.With(s.requireSession).Get("/audit-events/actions", s.listAuditActions)
 	s.mountAuthRoutes(r)
 	s.mountSlackRoutes(r)
 	s.mountSessionRoutes(r)

@@ -33,6 +33,7 @@ import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 import { EnvironmentTarget } from "../ui/EnvChip";
+import { useAuditItem } from "../features/audit/auditLink";
 
 const COLUMNS = ["Name", "Key", "Created by", "Roles", "Last used", "Expires", { label: "Actions", srOnly: true }] as const;
 // "All" mixes active, expired and revoked keys, so it adds their status.
@@ -73,6 +74,7 @@ function validateLabel(value: string): string | null {
 }
 
 function ApiKeyRow(props: { metadata: boolean; creator: string; keyItem: ApiKeySummary; canUpdate: boolean; canRotate: boolean; canRevoke: boolean; canAssign: boolean; status: boolean; onAccess: (keyItem: ApiKeySummary) => void; onRevoke: (keyItem: ApiKeySummary) => void; onRotate: (keyItem: ApiKeySummary) => void; onEdit: (keyItem: ApiKeySummary) => void }) {
+  const auditItem = useAuditItem();
   const lifecycleActions = () => [
     ...(props.keyItem.status === "active" && props.canUpdate ? [{label:"Edit",onSelect:()=>props.onEdit(props.keyItem)}] : []),
     ...(props.keyItem.status === "active" && props.canRotate ? [{label:"Rotate token",onSelect:()=>props.onRotate(props.keyItem)}] : []),
@@ -86,7 +88,7 @@ function ApiKeyRow(props: { metadata: boolean; creator: string; keyItem: ApiKeyS
     <td><Show when={props.keyItem.role_names.length} fallback={<span class="inline-flex items-center gap-1.5 text-console-warning"><Icon name="warning" />No access</span>}>{props.keyItem.role_names.join(", ")}</Show></td>
     <Show when={props.metadata}><td><RelativeTime value={props.keyItem.last_used_at} fallback="—" /></td>
     <td><RelativeTime value={props.keyItem.expires_at} fallback="Never" /></td></Show>
-    <RowActions label={`Actions for ${props.keyItem.name}`} items={[...(props.canAssign ? [{label:"Manage access",onSelect:()=>props.onAccess(props.keyItem)}] : []),...lifecycleActions()]} />
+    <RowActions label={`Actions for ${props.keyItem.name}`} items={[...(props.canAssign ? [{label:"Manage access",onSelect:()=>props.onAccess(props.keyItem)}] : []),...lifecycleActions(), ...auditItem({ actor: props.keyItem.id })]} />
   </tr>;
 }
 

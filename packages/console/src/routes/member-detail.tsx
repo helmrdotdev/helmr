@@ -19,6 +19,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { EmptyState, NotFoundState, QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { TabPanel, Tabs } from "../ui/Tabs";
+import { useAuditItem } from "../features/audit/auditLink";
 
 type Tab = "effective" | "assignments" | "groups";
 const EFFECTIVE_COLUMNS = ["Environment", "Agent", "Permissions", "Granted through"] as const;
@@ -61,6 +62,7 @@ function EffectiveAccessTable(props: { access: MemberPermissions; names: (id: st
 }
 
 export function MemberDetail() {
+  const auditItem = useAuditItem();
   const params = useParams(); const me = useMe(); const cache = useQueryClient();
   const id = () => params["member"] ?? "";
   const canManage = () => hasPermission(me.data, "members.read");
@@ -99,7 +101,7 @@ export function MemberDetail() {
         grant: hasPermission(me.data, "assignments.create") ? () => setGranting(true) : undefined,
         changeOwnership: canManage() && me.data?.is_owner ? () => setChangingOwnership(true) : undefined,
         remove: !member()?.is_owner && hasPermission(me.data, "members.remove") ? () => setRemoving(true) : undefined,
-      }) : undefined}
+      }).concat(auditItem({ actor: member()!.user_id })) : undefined}
       menuLabel="Member actions"
     />
     <Show when={canManage() || canReadAccess()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read assignments permission to see other members’ access." /></Show>}>

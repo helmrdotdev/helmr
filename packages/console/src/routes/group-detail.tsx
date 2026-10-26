@@ -21,12 +21,14 @@ import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
 import { ALL_MEMBERS_NOTE, DeleteGroupDialog, GroupNameDialog, groupMenu } from "./groups";
+import { useAuditItem } from "../features/audit/auditLink";
 
 type Tab = "access" | "members";
 const memberName = (m: OrganizationMember) => m.display_name || m.email || m.membership_id;
 
 export function GroupDetail() {
   const params = useParams(); const me = useMe(); const cache = useQueryClient(); const navigate = useNavigate();
+  const auditItem = useAuditItem();
   const allowed = () => hasPermission(me.data, "groups.read");
   const id = () => params["group"] ?? "";
   const isAll = () => id() === ALL_MEMBERS;
@@ -59,7 +61,7 @@ export function GroupDetail() {
       breadcrumb={[{ href: "/settings/groups", label: "Groups" }]}
       badge={<Show when={isAll()}><ManagedMark title={ALL_MEMBERS_NOTE} /></Show>}
       subtitle={isAll() ? "Everyone in the organization, including people who join later. Only agent use on selected agents can be granted here." : undefined}
-      menu={allowed() && !missing() && (isAll() || group()) ? groupMenu({ all: isAll(), membersLoaded: !!members.data, can: permission => hasPermission(me.data, permission), grant: () => setGranting(true), add: () => setAdding(true), rename: () => setRenaming(true), remove: () => setDeleting(true) }) : undefined}
+      menu={allowed() && !missing() && (isAll() || group()) ? groupMenu({ all: isAll(), membersLoaded: !!members.data, can: permission => hasPermission(me.data, permission), grant: () => setGranting(true), add: () => setAdding(true), rename: () => setRenaming(true), remove: () => setDeleting(true) }).concat(isAll() ? [] : auditItem({ target: id(), target_kind: "permission_group" })) : undefined}
       menuLabel="Group actions"
     />
     <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read groups permission to view groups." /></Show>}>

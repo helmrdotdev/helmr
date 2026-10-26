@@ -35,6 +35,7 @@ import { PageSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
+import { useAuditItem } from "../features/audit/auditLink";
 
 
 export function SessionDetail() {
@@ -103,8 +104,9 @@ function SessionDetailContent() {
   });
   const [receipt, setReceipt] = createSignal<string>();
   const copyLink = useCopyLink();
+  const auditItem = useAuditItem();
   const controls = createSessionControls({ address, onChanged: refresh, onReceipt: setReceipt });
-  const menu = () => session.data ? controls.items({ live: live(), open: session.data.status === "open", can, copyLink: copyLink.item() }) : [];
+  const menu = () => session.data ? [...controls.items({ live: live(), open: session.data.status === "open", can, copyLink: copyLink.item() }), ...auditItem({ target: session.data.id, target_kind: "session" })] : [];
   return (
     <Page>
       <PageHeader

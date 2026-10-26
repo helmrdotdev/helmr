@@ -16,6 +16,7 @@ import { PageHeader } from "../ui/PageHeader";
 import { QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
+import { useAuditItem } from "../features/audit/auditLink";
 
 const COLUMNS = ["Role", "Level", "Permissions", "Assignments", { label: "Actions", srOnly: true }] as const;
 export const MANAGED_ROLE_NOTE = "Managed by Helmr. Duplicate it to make a version you can edit.";
@@ -24,6 +25,7 @@ const LISTED_PERMISSIONS = 3;
 
 export function Roles() {
   const me = useMe(); const cache = useQueryClient(); const navigate = useNavigate();
+  const auditItem = useAuditItem();
   const allowed = () => hasPermission(me.data, "roles.read");
   const query = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() }));
   const [filter, setFilter] = createSignal("");
@@ -50,7 +52,7 @@ export function Roles() {
                   <td>{role.assignment_levels.map(level => level === "organization" ? "Organization" : "Environment").join(" / ")}</td>
                   <td>{role.permissions.length > LISTED_PERMISSIONS ? `${role.permissions.length} permissions` : permissionNames(role.permissions, catalog())}</td>
                   <td class="font-mono text-chrome!">{role.grant_count}</td>
-                  <RowActions label={`Actions for ${role.name}`} items={roleMenu(role, { can: permission => hasPermission(me.data, permission), grant: () => setGranting(role), remove: () => setDeleting(role) })} />
+                  <RowActions label={`Actions for ${role.name}`} items={roleMenu(role, { can: permission => hasPermission(me.data, permission), grant: () => setGranting(role), remove: () => setDeleting(role) }).concat(auditItem({ target: role.id, target_kind: "role" }))} />
                 </tr>
               )}
             </For>
