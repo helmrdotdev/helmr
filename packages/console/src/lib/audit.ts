@@ -134,10 +134,3 @@ export function searchAuditEvents(filter: AuditFilter, before?: AuditBefore): Pr
 export function searchAdminAuditEvents(filter: AuditFilter, before?: AuditBefore): Promise<AdminAuditPage> {
   return request<AdminAuditPage>(`/admin/api/v1/audit-events?${auditQuery(filter, before)}`);
 }
-export function auditActorLabel(event: AuditEvent | AdminAuditEvent): string {
-  return event.actor_identity?.display_name || event.actor_user_id || event.actor_api_key_id || event.actor_session_id ||
-    ("actor_kind" in event ? (event.actor_kind === "platform_service" ? "Platform service" : "Unidentified") : event.actor_component || event.actor_worker_host_id || "Unidentified");
-}
-export function auditSourceLabel(event: AuditEvent | AdminAuditEvent): string {
-  return "source_ip" in event ? event.source_ip || "Unavailable" : event.restricted.includes("transport") ? "Restricted" : "Unavailable";
-}

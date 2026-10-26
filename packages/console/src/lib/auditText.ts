@@ -265,13 +265,16 @@ const VERIFIED: Record<string, string> = { verified: "Verified on this request",
 export function signInFields(event: AuditEvent): AuditField[] {
   const a = event.authentication;
   const restricted = "restricted" in event ? event.restricted : [];
-  if (a.origin === "internal" && !restricted.includes("authentication") && !restricted.includes("transport")) return [{ label: "Credential", value: "None; Helmr acted on its own", muted: true }];
+  if (a.origin === "internal" && !restricted.includes("authentication")) return [
+    { label: "Credential", value: "None; Helmr acted on its own", muted: true },
+    ...(restricted.includes("transport") ? [{ label: "From", value: "Restricted", muted: true }] : []),
+  ];
   return [
     ...(restricted.includes("authentication") ? [{ label: "Credential details", value: "Restricted", muted: true }] : []),
     ...(restricted.includes("transport") ? [{ label: "From", value: "Restricted", muted: true }] : []),
     ...(a.credential_kind ? [{ label: "Credential", value: CREDENTIALS[a.credential_kind] ?? sentence(a.credential_kind), sub: a.credential_version ? `version ${a.credential_version}` : undefined }] : []),
     ...(a.provider ? [{ label: "Provider", value: a.provider }] : []),
-    { label: "Result", value: VERIFIED[a.result] ?? sentence(a.result), tone: a.result === "verified" ? "passed" as const : "failed" as const },
+    { label: "Result", value: VERIFIED[a.result] ?? sentence(a.result), ...(a.result === "verified" ? { tone: "passed" as const } : a.result === "failed" ? { tone: "failed" as const } : {}) },
     ...("source_ip" in event && event.source_ip ? [{ label: "From", value: event.source_ip, code: true, sub: event.channel ? `over ${event.channel.toUpperCase() === "HTTP" ? "HTTP" : event.channel}` : undefined }] : []),
   ];
 }

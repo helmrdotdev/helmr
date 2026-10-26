@@ -83,3 +83,18 @@ test("signInFields reads the credential, result and origin", () => {
   ]);
   expect(signInFields(event({ authentication: { result: "not_attempted", origin: "internal", provider: null, credential_kind: null, credential_id: null, credential_version: null } }))[0]!.value).toBe("None; Helmr acted on its own");
 });
+
+
+test("public internal events retain their no-credential explanation with restricted transport", () => {
+  const { actor_worker_host_id, actor_component, runtime_generation, process_epoch, source_ip, cause_event_id, ...metadata } = event({});
+  const projected: import("./audit").AuditEvent = {
+    ...metadata, actor_kind: "platform_service", restricted: ["transport"],
+    authentication: { result: "not_attempted", origin: "internal", provider: null, credential_kind: null, credential_id: null, credential_version: null },
+    authorization: { decision: "not_evaluated", checks: [], installation_authority: false }, causality: {}, details: {},
+  };
+  expect(actorOf(projected)).toEqual({ kind: "platform_service", name: "Platform service" });
+  expect(signInFields(projected)).toEqual([
+    { label: "Credential", value: "None; Helmr acted on its own", muted: true },
+    { label: "From", value: "Restricted", muted: true },
+  ]);
+});

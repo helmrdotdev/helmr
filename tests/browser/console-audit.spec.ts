@@ -27,7 +27,7 @@ const denied = {
   ] },
 };
 const granted = {
-  ...base, restricted: ["transport", "causality"], id: "00000000-0000-7000-8000-00000000e002", environment_id: null, occurred_at: ago(9), recorded_at: ago(9), operation_id: "00000000-0000-7000-8000-00000000f002",
+  ...base, restricted: ["transport", "correlation"], id: "00000000-0000-7000-8000-00000000e002", environment_id: null, occurred_at: ago(9), recorded_at: ago(9), operation_id: "00000000-0000-7000-8000-00000000f002",
   actor_user_id: "00000000-0000-7000-8000-00000000000c", actor_identity: { display_name: "Aiko Mori", email: "aiko@acme.dev", source: "console" },
   action: "role.updated", outcome: "succeeded", target_kind: "role", target_id: roleID,
   authorization: { installation_authority: false, decision: "allowed", checks: [{ type: "permission", permission: "roles.update", result: "passed", subject_user_id: "00000000-0000-7000-8000-00000000000c", scope: { org_id: "org" }, evidence: { subject: "member", role_id: "role-admin", role_revision: 3, assignment_id: "00000000-0000-7000-8000-0000000041aa", assignment_revision: 2 } }] },
@@ -200,4 +200,19 @@ test("organization details mark restricted evidence without presenting it as abs
   await page.getByRole("combobox", { name: "Who" }).click();
   await expect(page.getByRole("option", { name: "Platform service", exact: true })).toBeVisible();
   await expect(page.getByRole("option", { name: "Worker host", exact: true })).toHaveCount(0);
+});
+
+
+test("Admin can select an organization's full audit records", async ({ page }) => {
+  const { searches } = await fixture(page, { installation: true });
+  await page.goto("/admin/audit-events");
+  const organization = "00000000-0000-7000-8000-000000000201";
+  const input = page.getByRole("textbox", { name: "Organization ID" });
+  await input.fill(organization);
+  await input.press("Tab");
+  await expect.poll(() => searches.at(-1)?.get("organization_id")).toBe(organization);
+  await expect(page).toHaveURL(new RegExp(`organization_id=${organization}`));
+  await input.fill("");
+  await input.press("Tab");
+  await expect.poll(() => searches.at(-1)?.get("organization_id")).toBeNull();
 });
