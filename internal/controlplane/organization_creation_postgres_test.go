@@ -22,7 +22,7 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 		{name: "organization owner", adminOnly: true, role: "owner", want: http.StatusForbidden},
 		{name: "organization access administrator", adminOnly: true, role: "admin", want: http.StatusForbidden},
 		{name: "ordinary member", adminOnly: true, role: "member", want: http.StatusForbidden},
-		{name: "installation admin", adminOnly: true, admin: true, want: http.StatusCreated},
+		{name: "platform admin", adminOnly: true, admin: true, want: http.StatusCreated},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
@@ -50,7 +50,7 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 				if account.AccessRequired != blocked || account.OrganizationRequired == blocked || account.SetupTokenRequired {
 					t.Fatalf("onboarding: %+v", account)
 				}
-				// Installation authority does not grant access to another organization's members.
+				// Platform authority does not grant access to another organization's members.
 				if w := fixture.request(t, http.MethodGet, "/api/members", token, ""); w.Code != http.StatusForbidden {
 					t.Fatalf("unaffiliated member access: %d %s", w.Code, w.Body.String())
 				}

@@ -53,7 +53,7 @@ func TestAuditCLIUsesSelectedCredentialsAndBoundedNavigation(t *testing.T) {
 	if len(routes) != 2 || routes[1] != "/v1/audit-events" {
 		t.Fatal("tenant refusal escalated credentials", routes)
 	}
-	if _, _, err = runPermissionCLI(append([]string{"installation", "audit"}, flags...)...); err != nil {
+	if _, _, err = runPermissionCLI(append([]string{"platform", "audit"}, flags...)...); err != nil {
 		t.Fatal(err)
 	}
 	if routes[2] != "/admin/api/v1/audit-events" {
@@ -73,7 +73,7 @@ func TestAuditCLIUsesSelectedCredentialsAndBoundedNavigation(t *testing.T) {
 
 func TestAuditCLIPreservesPublicAndAdminEvidence(t *testing.T) {
 	id, host := uuid.NewV7().String(), uuid.NewV7().String()
-	public := `{"id":"` + id + `","recorded_at":"2026-10-01T12:00:00Z","action":"session.content_read","outcome":"succeeded","actor_kind":"platform_service","restricted":["actor_identity","authorization"],"authorization":{"decision":"allowed","checks":[{"type":"session_origin","session_id":"` + id + `","initiator_kind":"user","initiator_id":"` + id + `","result":"passed"}],"installation_authority":false},"details":{"sequence":4}}`
+	public := `{"id":"` + id + `","recorded_at":"2026-10-01T12:00:00Z","action":"session.content_read","outcome":"succeeded","actor_kind":"platform_service","restricted":["actor_identity","authorization"],"authorization":{"decision":"allowed","checks":[{"type":"session_origin","session_id":"` + id + `","initiator_kind":"user","initiator_id":"` + id + `","result":"passed"}],"platform_authority":false},"details":{"sequence":4}}`
 	admin := `{"id":"` + id + `","recorded_at":"2026-10-01T12:00:00Z","action":"session.content_read","outcome":"succeeded","actor_worker_host_id":"` + host + `","source_ip":"10.20.30.40","runtime_generation":17,"authorization":{"decision":"allowed","checks":[{"type":"host_assignment","worker_host_id":"` + host + `","result":"passed"}]},"details":{"sequence":4,"generation":17}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		event := public
@@ -96,7 +96,7 @@ func TestAuditCLIPreservesPublicAndAdminEvidence(t *testing.T) {
 		prefix       []string
 		event, label string
 	}{
-		{[]string{"audit"}, public, "Platform service"}, {[]string{"installation", "audit"}, admin, host},
+		{[]string{"audit"}, public, "Platform service"}, {[]string{"platform", "audit"}, admin, host},
 	} {
 		args := append(tc.prefix, "list", "--from", "2026-10-01T00:00:00Z", "--to", "2026-10-02T00:00:00Z")
 		out, _, err := runPermissionCLI(append(args, "--json")...)

@@ -176,7 +176,7 @@ func TestAuditDeviceIssuanceLinksVerifiedAuthorization(t *testing.T) {
 
 func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 	for _, method := range []string{"provider", "magic_link", "device"} {
-		for _, failure := range []string{"none", "installation", "organization"} {
+		for _, failure := range []string{"none", "platform", "organization"} {
 			t.Run(method+"/"+failure, func(t *testing.T) {
 				f := newIdentityFixture(t)
 				external := ExternalIdentity{Provider: "github", Subject: "custody", DisplayName: "Audited user", Email: "custody@example.test", EmailVerified: true}
@@ -230,7 +230,7 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 					}
 					issue = func() (string, error) { return ExchangeDeviceCode(t.Context(), f.pool, f.cfg, started.DeviceCode) }
 				}
-				if failure == "installation" {
+				if failure == "platform" {
 					f.exec(t, `ALTER TABLE audit_events ADD CONSTRAINT reject_copy CHECK(action<>'identity.sign_in' OR org_id IS NOT NULL) NOT VALID`)
 				}
 				if failure == "organization" {

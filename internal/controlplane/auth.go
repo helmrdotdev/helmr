@@ -84,8 +84,8 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !principalFromContext(r.Context()).Admin {
-			evidence, _ := audit.InstallationOperator(principalFromContext(r.Context()))
-			if !s.refuseOperation(w, r, "installation_authority_required", &audit.Refusal{Authorization: evidence.Authorization, Cause: errors.New("administrator access is required")}) {
+			evidence, _ := audit.PlatformOperator(principalFromContext(r.Context()))
+			if !s.refuseOperation(w, r, "platform_authority_required", &audit.Refusal{Authorization: evidence.Authorization, Cause: errors.New("administrator access is required")}) {
 				return
 			}
 			writeError(w, forbidden(errors.New("administrator access is required")))

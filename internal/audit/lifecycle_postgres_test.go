@@ -56,7 +56,7 @@ func TestAuditRetentionUsesCaptureTimeAndSurvivesRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	filter := auditquery.SearchFilter{From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), Actions: []string{"worker_group.created"}, Limit: 100}
-	result, err := auditquery.SearchInstallation(t.Context(), d.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, filter)
+	result, err := auditquery.SearchAdmin(t.Context(), d.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, filter)
 	if err != nil || len(result.Events) != 2 {
 		t.Fatal("expired late commit disclosed", len(result.Events), err)
 	}
@@ -64,7 +64,7 @@ func TestAuditRetentionUsesCaptureTimeAndSurvivesRestore(t *testing.T) {
 	if err = audit.RecordRestore(t.Context(), d.Pool, auditpolicy.Policy{RetentionSeconds: 86400}, audit.RestoreDetails{BackupReference: "fixture-backup", UnknownFrom: time.Now().Add(-time.Hour), UnknownTo: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	result, err = auditquery.SearchInstallation(t.Context(), d.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, filter)
+	result, err = auditquery.SearchAdmin(t.Context(), d.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, filter)
 	if err != nil || len(result.Events) != 2 {
 		t.Fatal("restore revived expiry", len(result.Events), err)
 	}
@@ -103,7 +103,7 @@ func TestAuditDeletedOrganizationCustodyAndCompositeTargets(t *testing.T) {
 	if _, err = auditquery.Search(t.Context(), d.Pool, policy, principal, filter); !errors.Is(err, auditquery.ErrSearchDenied) {
 		t.Fatal("deleted membership kept custody", err)
 	}
-	adminResult, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, principal, filter)
+	adminResult, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, principal, filter)
 	if err != nil || len(adminResult.Events) != 1 || adminResult.Events[0].ID != ids[0] {
 		t.Fatal("deleted history lost", adminResult, err)
 	}

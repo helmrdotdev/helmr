@@ -176,7 +176,7 @@ export function AdminWorkerGroups() {
       <QueryState
         query={groups}
         pending={<TableSkeleton label="Loading worker groups" columns={COLUMNS} minWidth="min-w-220" />}
-        error={(error) => loadError(error, "Could not load worker groups.", { forbidden: "Only users with Helmr管理者 access can view worker groups." })}
+        error={(error) => loadError(error, "Could not load worker groups.", { forbidden: "Only users with Helmr administrator access can view worker groups." })}
         empty={{
           when: (data) => data.worker_groups.length === 0,
           title: "No worker groups configured.",

@@ -93,7 +93,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
   });
 
   return (
-    <Show when={!slackNotConfigured(state.error)} fallback={<Panel title="Slack connection"><SlackNotSetUp failure={slackFailure(state.error, "")} consequence="Agents in this installation cannot be connected to Slack." /></Panel>}>
+    <Show when={!slackNotConfigured(state.error)} fallback={<Panel title="Slack connection"><SlackNotSetUp failure={slackFailure(state.error, "")} consequence="Agents cannot be connected to Slack until it is set up." /></Panel>}>
     <QueryState query={state} pending={<PageSkeleton label="Loading Slack connection" sections={["Slack connection"]} />} error={(failure) => slackFailure(failure, "The connection could not be loaded.").message}>
       {(data) => (
         <DetailLayout rail={

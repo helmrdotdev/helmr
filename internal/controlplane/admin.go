@@ -48,7 +48,7 @@ func (s *Server) adminCreateRegion(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, fmt.Errorf("invalid region request JSON: %w", err))
 		return
 	}
-	actor, err := audit.InstallationOperator(principalFromContext(r.Context()))
+	actor, err := audit.PlatformOperator(principalFromContext(r.Context()))
 	if err != nil {
 		s.writeOperationError(w, r, err)
 		return
@@ -75,7 +75,7 @@ func (s *Server) adminUpdateRegion(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, fmt.Errorf("invalid region request JSON: %w", err))
 		return
 	}
-	actor, err := audit.InstallationOperator(principalFromContext(r.Context()))
+	actor, err := audit.PlatformOperator(principalFromContext(r.Context()))
 	if err != nil {
 		s.writeOperationError(w, r, err)
 		return
@@ -123,7 +123,7 @@ func (s *Server) adminGetWorkerGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) {
-	actor, actorErr := audit.InstallationOperator(principalFromContext(r.Context()))
+	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
 	if actorErr != nil {
 		s.writeOperationError(w, r, actorErr)
 		return
@@ -156,7 +156,7 @@ func (s *Server) adminUpdateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		s.writeOperationError(w, r, fmt.Errorf("invalid worker group request JSON: %w", err))
 		return
 	}
-	actor, err := audit.InstallationOperator(principalFromContext(r.Context()))
+	actor, err := audit.PlatformOperator(principalFromContext(r.Context()))
 	if err != nil {
 		s.writeOperationError(w, r, err)
 		return
@@ -196,7 +196,7 @@ func (s *Server) adminDisableWorkerGroup(w http.ResponseWriter, r *http.Request)
 type groupTransition func(context.Context, db.TxBeginner, auditpolicy.Policy, audit.Evidence, uuid.UUID, int64) (workergroup.GroupStatus, error)
 
 func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Request, transition groupTransition) {
-	actor, actorErr := audit.InstallationOperator(principalFromContext(r.Context()))
+	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
 	if actorErr != nil {
 		s.writeOperationError(w, r, actorErr)
 		return
@@ -219,7 +219,7 @@ func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *Server) adminRotateWorkerGroupToken(w http.ResponseWriter, r *http.Request) {
-	actor, actorErr := audit.InstallationOperator(principalFromContext(r.Context()))
+	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
 	if actorErr != nil {
 		s.writeOperationError(w, r, actorErr)
 		return
@@ -255,7 +255,7 @@ func (s *Server) adminListWorkerPools(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
-	actor, actorErr := audit.InstallationOperator(principalFromContext(r.Context()))
+	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
 	if actorErr != nil {
 		s.writeOperationError(w, r, actorErr)
 		return
@@ -278,7 +278,7 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminSwitchWorkerPoolPrimary(w http.ResponseWriter, r *http.Request) {
-	actor, actorErr := audit.InstallationOperator(principalFromContext(r.Context()))
+	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
 	if actorErr != nil {
 		s.writeOperationError(w, r, actorErr)
 		return
@@ -317,7 +317,7 @@ func (s *Server) adminDisableWorkerPool(w http.ResponseWriter, r *http.Request) 
 type poolTransition func(context.Context, db.TxBeginner, auditpolicy.Policy, audit.Evidence, uuid.UUID, uuid.UUID, int64) (db.WorkerGroup, db.WorkerPool, error)
 
 func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Request, transition poolTransition) {
-	actor, actorErr := audit.InstallationOperator(principalFromContext(r.Context()))
+	actor, actorErr := audit.PlatformOperator(principalFromContext(r.Context()))
 	if actorErr != nil {
 		s.writeOperationError(w, r, actorErr)
 		return

@@ -243,7 +243,7 @@ export function App() {
       <Route path="/projects/new" component={() => <RequireAuth requirement="organization"><ProjectNew /></RequireAuth>} />
 
       <Route path="/admin" component={() => <Navigate href="/admin/worker-groups" />} />
-      <Route path="/admin/audit-events" component={wrapAdmin(() => <Page><AuditEvents installation /></Page>)} />
+      <Route path="/admin/audit-events" component={wrapAdmin(() => <Page><AuditEvents adminView /></Page>)} />
       <Route path="/admin/regions" component={wrapAdmin(AdminRegions)} />
       <Route path="/admin/worker-groups" component={wrapAdmin(AdminWorkerGroups)} />
 

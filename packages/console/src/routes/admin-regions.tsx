@@ -81,7 +81,7 @@ export function AdminRegions() {
       <QueryState
         query={regions}
         pending={<TableSkeleton label="Loading regions" columns={COLUMNS} />}
-        error={(error) => loadError(error, "Could not load regions.", { forbidden: "Only users with Helmr管理者 access can view regions." })}
+        error={(error) => loadError(error, "Could not load regions.", { forbidden: "Only users with Helmr administrator access can view regions." })}
         empty={{
           when: (data) => data.regions.length === 0,
           title: "No regions configured.",

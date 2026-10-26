@@ -31,7 +31,7 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().StringP("api-url", "a", "", "Helmr origin. API-key commands default to HELMR_API_URL or https://api.helmr.dev; commands using your saved login use its origin.")
 	root.AddCommand(
 		auditCommand(),
-		installationCommand(),
+		platformCommand(),
 		initCommand(),
 		loginCommand(),
 		logoutCommand(),

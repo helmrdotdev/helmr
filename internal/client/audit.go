@@ -41,7 +41,7 @@ func (c *Client) ListAuditEvents(ctx context.Context, options AuditSearchOptions
 	}
 	return c.auditEvents(ctx, path, options)
 }
-func (c *Client) ListInstallationAuditEvents(ctx context.Context, options AuditSearchOptions) (api.AdminAuditEventsResponse, error) {
+func (c *Client) ListAdminAuditEvents(ctx context.Context, options AuditSearchOptions) (api.AdminAuditEventsResponse, error) {
 	var result api.AdminAuditEventsResponse
 	req, err := c.newRequest(ctx, http.MethodGet, "/admin/api/v1/audit-events?"+options.values().Encode(), nil)
 	if err != nil {

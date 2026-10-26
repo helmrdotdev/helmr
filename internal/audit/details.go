@@ -142,7 +142,7 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 		valid = ok && d.Method != "" && len(d.Method) <= 64 && len(d.Provider) <= 128 && len(d.Subject) <= 512
 	case "audit.searched":
 		d, ok := details.(SearchDetails)
-		valid = ok && !d.From.IsZero() && d.To.After(d.From) && d.ResultCount >= 0 && d.ResultCount <= 500 && (d.ReadModel == "" || d.ReadModel == "organization" || d.ReadModel == "installation")
+		valid = ok && !d.From.IsZero() && d.To.After(d.From) && d.ResultCount >= 0 && d.ResultCount <= 500 && (d.ReadModel == "" || d.ReadModel == "organization" || d.ReadModel == "platform")
 	case "audit.retention_observed":
 		d, ok := details.(RetentionObservedDetails)
 		valid = ok && (auditpolicy.Policy{RetentionSeconds: d.RetentionSeconds}).Validate() == nil

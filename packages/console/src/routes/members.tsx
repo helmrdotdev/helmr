@@ -44,7 +44,7 @@ const NON_OWNER_ROLE_OPTIONS: SelectOption<OwnershipChoice>[] = [
 const OWNER_ROLE_OPTIONS: SelectOption<OwnershipChoice>[] = [OWNER_ROLE_OPTION, ...NON_OWNER_ROLE_OPTIONS];
 
 const EMAIL_FAILED_MESSAGE = "Invitation emails could not be sent. Nobody was invited.";
-const NO_EMAIL_DELIVERY = "Email delivery is not set up for this Helmr installation, so members can't be invited.";
+const NO_EMAIL_DELIVERY = "Email delivery is not set up in Helmr, so members can't be invited.";
 
 const MEMBERS_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage organization members.",

@@ -25,7 +25,7 @@ cannot reconstruct every change to effective access. Investigating Role, group a
 membership changes requires Organization audit access. Ownership, platform administration, directory access and
 execution-content permissions do not implicitly grant tenant audit access.
 Environment API keys require an explicit grant and cannot read organization or
-installation events. Audit metadata can disclose scoped account identity and
+platform events. Audit metadata can disclose scoped account identity and
 resource existence without granting access to execution content.
 
 | Caller | Endpoint |
@@ -34,20 +34,20 @@ resource existence without granting access to execution content.
 | Environment API key | `GET /v1/audit-events` |
 | Helmr administrator login | `GET /admin/api/v1/audit-events` |
 
-A Helmr administrator (shown as **Helmr管理者** in the Console) manages one running Helmr service across its organizations.
+A Helmr administrator manages one running Helmr service across its organizations.
 This is a platform-wide user attribute, separate from organization ownership or
 Roles; self-hosted operators can hold it too. Its grant is recorded as
 `platform_admin.granted`, with the grant basis in details.
 
-The Console provides **Settings → Audit events** and a separate installation audit
+The Console provides **Settings → Audit events** and a separate platform audit
 view for administrators. The CLI reads one page:
 
 ```sh
 helmr audit list --from 2026-10-01T00:00:00Z --to 2026-10-02T00:00:00Z --json
-helmr installation audit list --from 2026-10-01T00:00:00Z --to 2026-10-02T00:00:00Z --organization-id ORIGINAL_ORGANIZATION_UUID --json
+helmr platform audit list --from 2026-10-01T00:00:00Z --to 2026-10-02T00:00:00Z --organization-id ORIGINAL_ORGANIZATION_UUID --json
 ```
 
-The installation command requires a login session. The ordinary command honors the
+The platform command requires a login session. The ordinary command honors the
 selected session or explicitly configured Environment key; it never silently uses
 an administrator route to bypass a denied tenant read.
 
@@ -59,8 +59,9 @@ Optional exact filters are `environment_id`, `actor_kind`, `actor_id`, `action`,
 to match any of the listed actions; each must be a recordable action. `operation_id`
 selects every event one request or job recorded, and `event_id` selects one event;
 both still apply only within `from` and `to`. Slack link identities use the
-user/workspace/Slack-user triple rather than an invented target UUID. An installation query can specify `organization_id`;
-omitting it selects installation facts. Tenant scope comes from authentication.
+user/workspace/Slack-user triple rather than an invented target UUID. A platform query can specify `organization_id`;
+omitting it selects only platform facts that belong to no organization. Tenant
+scope comes from authentication.
 
 A login session can read the recordable actions, with each action's target kind,
 outcomes and category, from `GET /api/audit-events/actions`. This list contains
@@ -86,7 +87,7 @@ After organization deletion, its original IDs and unexpired audit facts remain.
 Former tenant credentials have no post-closure read route. A Helmr administrator can investigate by the original organization UUID. A replacement
 organization with the same name cannot inherit that history. Access to live tenant
 history is recorded in that tenant; requests for absent/deleted organizations are
-recorded as unresolved installation facts. After all facts expire there is no
+recorded as unresolved platform facts. After all facts expire there is no
 persistent audit inventory proving the former organization's existence.
 
 ## Identity and authority fields
@@ -94,7 +95,7 @@ persistent audit inventory proving the former organization's existence.
 The ordinary endpoints return a customer view, including for a caller who is also
 a Helmr administrator. The separately authorized Admin endpoint returns
 captured evidence. Both refer to the same event IDs; projection never rewrites the
-stored actor or evidence. Cloud and self-hosted installations use this same access
+stored actor or evidence. Cloud and self-hosted instances use this same access
 boundary. Organization Owners and Auditors are not Helmr administrators.
 
 Customer events have `actor_kind`: `user`, `api_key`, `session`,
@@ -109,8 +110,8 @@ credential/provider information permitted in that view. `authorization` separate
 records `decision` (`allowed`, `denied`, or `not_evaluated`) and typed `checks`.
 A verified credential can accompany a denied permission. Internal execution can
 have no authorization check. The customer view sets
-`authorization.installation_authority` when captured successful checks establish
-that the human used installation authority. Current administrator status and a
+`authorization.platform_authority` when captured successful checks establish
+that the human used platform authority. Current administrator status and a
 failed administrator check do not establish that fact.
 
 Permission checks preserve the subject, permission, visible scope, and granting
@@ -152,7 +153,7 @@ facts in the same transaction as the mutation. Default Environments created with
 a Project are included. Reusing an existing Deployment does not create another
 publication fact. Session creation has one `session.created` fact; each admitted
 Turn has `turn.admitted`. Successful login records `identity.sign_in` once in each
-applicable installation/organization custody scope.
+applicable platform/organization custody scope.
 
 `session.close_requested`, `session.cancel_requested`,
 `session.interrupt_requested`, `session.resume_requested`, and
@@ -219,7 +220,7 @@ successful invocation across two intervals as a failure, including a task that
 could not start. Set `audit_maintenance_alarm_actions` to existing alert destinations.
 See [AWS task failure observations](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-lifecycle-events.html)
 when investigating launch and runtime failures. These definitions still require
-operator-reviewed application and qualification in the target installation.
+operator-reviewed application and qualification in the target Helmr instance.
 
 The scheduler interval and resource limits are explicit deployment choices; the
 application does not run its own purge daemon. Monitor job exit status, last

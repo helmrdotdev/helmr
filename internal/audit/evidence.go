@@ -95,7 +95,7 @@ type UserAttributeCheck struct {
 func (UserAttributeCheck) auditCheck()      {}
 func (c UserAttributeCheck) result() string { return c.Result }
 func (c UserAttributeCheck) validate() error {
-	if c.Type != "user_attribute" || c.UserID == uuid.Nil() || c.Attribute != "admin" || !c.Expected || c.Scope != (CheckScope{Kind: "installation"}) || !slices.Contains([]string{"request_authentication", "transaction"}, c.ObservationSource) || c.Result != checkResult(c.Observed) {
+	if c.Type != "user_attribute" || c.UserID == uuid.Nil() || c.Attribute != "admin" || !c.Expected || c.Scope != (CheckScope{Kind: "platform"}) || !slices.Contains([]string{"request_authentication", "transaction"}, c.ObservationSource) || c.Result != checkResult(c.Observed) {
 		return errors.New("invalid user attribute check")
 	}
 	return nil
@@ -232,14 +232,14 @@ func CapacityAuthority() Evidence {
 	e.Authentication = Authentication{Origin: "request", Result: "verified", CredentialKind: "capacity_token"}
 	return e
 }
-func InstallationOperator(p auth.Principal) (Evidence, error) {
+func PlatformOperator(p auth.Principal) (Evidence, error) {
 	e := FromPrincipal(p)
 	if p.Kind != auth.PrincipalKindSession {
-		return e, errors.New("installation authority requires a login session")
+		return e, errors.New("platform authority requires a login session")
 	}
-	e.Authorization = Authorization{Decision: "denied", Checks: []Check{UserAttributeCheck{Type: "user_attribute", UserID: p.UserID, Attribute: "admin", Expected: true, Observed: p.Admin, ObservationSource: "request_authentication", Scope: CheckScope{Kind: "installation"}, Result: checkResult(p.Admin)}}}
+	e.Authorization = Authorization{Decision: "denied", Checks: []Check{UserAttributeCheck{Type: "user_attribute", UserID: p.UserID, Attribute: "admin", Expected: true, Observed: p.Admin, ObservationSource: "request_authentication", Scope: CheckScope{Kind: "platform"}, Result: checkResult(p.Admin)}}}
 	if !p.Admin {
-		return e, errors.New("installation authority is required")
+		return e, errors.New("platform authority is required")
 	}
 	e.Authorization.Decision = "allowed"
 	return e, nil

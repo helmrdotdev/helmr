@@ -20,8 +20,8 @@ type OrganizationInput struct {
 	Slug        string
 	Name        string
 	OwnerUserID uuid.UUID
-	// InitialSetup admits only the installation's first organization and makes
-	// its owner an administrator. Self-hosted installations create their
+	// InitialSetup admits only the platform's first organization and makes
+	// its owner an administrator. Self-hosted instances create their
 	// organization this way.
 	InitialSetup bool
 }

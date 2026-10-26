@@ -90,7 +90,7 @@ test("public internal events retain their no-credential explanation with restric
   const projected: import("./audit").AuditEvent = {
     ...metadata, actor_kind: "platform_service", restricted: ["transport"],
     authentication: { result: "not_attempted", origin: "internal", provider: null, credential_kind: null, credential_id: null, credential_version: null },
-    authorization: { decision: "not_evaluated", checks: [], installation_authority: false }, causality: {}, details: {},
+    authorization: { decision: "not_evaluated", checks: [], platform_authority: false }, causality: {}, details: {},
   };
   expect(actorOf(projected)).toEqual({ kind: "platform_service", name: "Platform service" });
   expect(signInFields(projected)).toEqual([
@@ -109,9 +109,9 @@ test("operation labels distinguish requests, settlements and hold direction", ()
   expect(actionLabel("input.cancelled")).toBe("Cancelled question");
   expect(actionLabel("worker_group.activated")).toBe("Activated worker group");
   expect(actionLabel("worker_host.drain_started")).toBe("Started draining worker host");
-  expect(actionLabel("platform_admin.granted")).toBe("Granted Helmr管理者 access");
+  expect(actionLabel("platform_admin.granted")).toBe("Granted Helmr administrator access");
   const fields = checkFields({ type: "user_attribute", expected: true, observed: true, result: "passed" }, names(), links);
-  expect(fields.find((f) => f.label === "Observed")?.value).toBe("Helmr管理者");
+  expect(fields.find((f) => f.label === "Observed")?.value).toBe("Helmr administrator");
   const denied = checkFields({ type: "user_attribute", expected: true, observed: false, result: "failed" }, names(), links);
-  expect(denied.find((f) => f.label === "Observed")?.value).toBe("Not Helmr管理者");
+  expect(denied.find((f) => f.label === "Observed")?.value).toBe("Not a Helmr administrator");
 });

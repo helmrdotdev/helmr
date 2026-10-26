@@ -6,7 +6,7 @@ import (
 )
 
 // AuditEventMetadata is the public organization evidence envelope. It contains
-// no installation actor identifiers, machine fences or raw transport addresses.
+// no platform actor identifiers, machine fences or raw transport addresses.
 type AuditEventMetadata struct {
 	ID               uuid.UUID                `json:"id"`
 	OrgID            *uuid.UUID               `json:"org_id"`
@@ -83,9 +83,9 @@ type AuditCausality struct {
 }
 
 type AuditAuthorization struct {
-	Decision              string       `json:"decision"`
-	Checks                []AuditCheck `json:"checks"`
-	InstallationAuthority bool         `json:"installation_authority"`
+	Decision          string       `json:"decision"`
+	Checks            []AuditCheck `json:"checks"`
+	PlatformAuthority bool         `json:"platform_authority"`
 }
 
 // AuditCheck and AuditDetails are closed server-output unions. Receive-only

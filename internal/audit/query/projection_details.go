@@ -42,7 +42,7 @@ func projectDetails(event *api.AuditEvent, scope readScope, details audit.Detail
 		return api.AuditMessageRejectedDetails(d), nil
 	case audit.AuthenticationDetails:
 		public := api.AuditAuthenticationDetails(d)
-		if event.Authorization.InstallationAuthority && public.AuthorizingCredentialID != uuid.Nil() {
+		if event.Authorization.PlatformAuthority && public.AuthorizingCredentialID != uuid.Nil() {
 			public.AuthorizingCredentialID = uuid.Nil()
 			restrict(event, api.AuditRestrictedDetails)
 		}
@@ -124,7 +124,7 @@ func projectSearchDetails(event *api.AuditEvent, scope readScope, d audit.Search
 	}
 	// Admin selection may contain platform events/operands. Its recorded count is
 	// not the size of the tenant-visible selection, even for the same organization.
-	if d.ReadModel != "organization" || event.Authorization.InstallationAuthority || slices.Contains(event.Restricted, api.AuditRestrictedAuthorization) {
+	if d.ReadModel != "organization" || event.Authorization.PlatformAuthority || slices.Contains(event.Restricted, api.AuditRestrictedAuthorization) {
 		restrict(event, api.AuditRestrictedDetails)
 		return public
 	}

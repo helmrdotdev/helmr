@@ -30,7 +30,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	}
 	initialSetup := s.selfHostedMode()
 	if !initialSetup && s.organizationCreationAdminOnly && !principal.Admin {
-		s.writeOperationError(w, r, forbidden(errors.New("organization creation requires an installation administrator")))
+		s.writeOperationError(w, r, forbidden(errors.New("organization creation requires a platform administrator")))
 		return
 	}
 	if initialSetup && !s.initialSetupTokenMatches(request.SetupToken) {

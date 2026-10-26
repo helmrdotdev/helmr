@@ -28,7 +28,7 @@ export function SlackFailureNotice(props: { failure: Failure }) {
 export function SlackNotSetUp(props: { failure: Failure; consequence: string }) {
   return (
     <div>
-      <p class="m-0 text-body">Slack is not set up for this Helmr installation. {props.consequence}</p>
+      <p class="m-0 text-body">Slack is not set up in Helmr. {props.consequence}</p>
       <p class="m-0 text-body text-console-muted">The operator enables it on the control plane; nothing on this page can change that.</p>
       <Details details={props.failure.details} />
     </div>

@@ -96,7 +96,7 @@ func projectRecord(r Record, scope readScope) (api.AuditEvent, error) {
 		event.Authentication.CredentialVersion = nil
 		restrict(&event, api.AuditRestrictedAuthentication)
 	}
-	if event.Authorization.InstallationAuthority && (event.Authentication.CredentialID != nil || event.Authentication.CredentialVersion != nil) {
+	if event.Authorization.PlatformAuthority && (event.Authentication.CredentialID != nil || event.Authentication.CredentialVersion != nil) {
 		event.Authentication.CredentialID = nil
 		event.Authentication.CredentialVersion = nil
 		restrict(&event, api.AuditRestrictedAuthentication)
@@ -171,7 +171,7 @@ func projectAuthorization(event *api.AuditEvent, z audit.Authorization, scope re
 			return errors.New("audit check has no organization projection")
 		}
 	}
-	event.Authorization.InstallationAuthority = z.Decision == "allowed" && passedAdmin && !failedAdmin
+	event.Authorization.PlatformAuthority = z.Decision == "allowed" && passedAdmin && !failedAdmin
 	return nil
 }
 

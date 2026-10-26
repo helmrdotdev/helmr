@@ -31,7 +31,7 @@ var auditRoutes = map[string]auditRoute{
 	"GET /admin/api/v1/worker-groups/{groupID}/pools":               {"", "metadata, navigation or health read"},
 	"GET /agent-setup/{harness}.md":                                 {"", "metadata, navigation or health read"},
 	"GET /api/audit-events":                                         {"audit.searched", ""},
-	"GET /admin/api/v1/audit-events/actions":                        {"", "static catalog of installation actions; no audit data"},
+	"GET /admin/api/v1/audit-events/actions":                        {"", "static catalog of platform actions; no audit data"},
 	"GET /api/audit-events/actions":                                 {"", "static catalog of recordable actions; no audit data"},
 	"GET /api/auth/device/status":                                   {"", "metadata, navigation or health read"},
 	"GET /api/groups":                                               {"", "metadata, navigation or health read"},

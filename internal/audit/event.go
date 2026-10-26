@@ -131,8 +131,8 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 		}
 		e.OrgID = org
 	}
-	if d.Scope == InstallationScope && e.OrgID != uuid.Nil() {
-		return errors.New("platform audit requires installation custody")
+	if d.Scope == PlatformScope && e.OrgID != uuid.Nil() {
+		return errors.New("platform audit requires platform custody")
 	}
 	if d.Scope == OrganizationScope && e.OrgID == uuid.Nil() && e.Outcome != "denied" && e.Outcome != "failed" && e.Outcome != "unknown" {
 		return errors.New("organization audit requires organization custody")

@@ -10,7 +10,7 @@ import (
 )
 
 // Authentication failures carry a fixed reason, never provider/error payloads or
-// candidate email addresses. Until a binding is verified they are installation facts.
+// candidate email addresses. Until a binding is verified they are platform facts.
 func recordAuthenticationFailure(ctx context.Context, database db.TxBeginner, cfg Config, event audit.Event, result *error) {
 	err := *result
 	if err == nil || errors.Is(err, ErrAuthorizationPending) || errors.Is(err, audit.ErrCapture) || db.CommitOutcomeUnknown(err) {
