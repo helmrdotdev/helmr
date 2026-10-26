@@ -146,6 +146,50 @@ socket/API observations; host packet-level, private-service, mandatory-deny and
 cross-host qualification remain separate. Source typechecks and compiler analysis
 do not execute the case or qualify a Worker/guest release.
 
+The separate `cases/execution-policies/lifecycle.run.ts` driver reuses these same
+Agents for exact host-observed restore. Prepare/deploy `cases/execution-policies`,
+then run on the dedicated host with normal API credentials, a new evidence
+directory, `HELMR_EXECUTION_POLICY_PUBLIC_PROBES=1`,
+`HELMR_RUNTIME_HOST_TOOL` naming the installed `dev/runtime/host.py`, and exact
+`HELMR_WORKER_RESOURCE_ID`/`HELMR_ENVIRONMENT_ID`. It requires noninteractive sudo
+for the existing read-only observer and Worker journal, two resident VM slots,
+and ordinary Computer Hibernate/Wake permissions. Set
+`HELMR_EXPECT_PREPARED=warm`, `cold`, or `zero` using the prepared-startup
+prerequisites below; the driver never changes Capacity policy or caches. Warm
+also requires `HELMR_EXPECTED_PREPARATION_BUILD_ID` for the finite Template with
+the coordinator Program and `HELMR_EXPECTED_BLOCKED_PREPARATION_BUILD_ID` for the
+blocked Template with the ordinary-probe Program. Each must match the published
+image and 1-vCPU/1-GiB shape. Actual adoption is checked against the exact Worker
+journal phase, in addition to a fresh ready-leaf observation.
+
+```sh
+HELMR_EXECUTION_POLICY_LIFECYCLE=hibernate \
+  bun run /private/case-project/cases/execution-policies/lifecycle.run.ts
+```
+
+Select `hibernate` for ordinary driver-owned Hibernate/Wake, or `drain` for
+operator-controlled logical Host replacement on the same retained physical host.
+For `drain`, wait for `ready-for-drain.json`, invoke native
+`worker drain --wait-timeout 10m` using the profile's Worker environment, and
+require successful drain plus `capture-observed.json`. The driver allows 15
+minutes for drain capture, including time to observe the marker and start drain;
+Hibernate capture retains its 10-minute deadline. Only then stop/start
+`helmr-worker.service` and require native readiness. Atomically write
+`worker-restarted.json` in the evidence directory, copying exactly `computerIds`
+and `sourceHostId` from `capture-observed.json`. The driver independently requires
+a fresh active logical Host on the same resource before waking either Computer;
+it never stops services. A drain timeout does not authorize killing Worker.
+On failure restore the Worker through the normal runbook before completing
+recorded Session/Computer cleanup; marker files cannot resume an interrupted case.
+
+Both modes retain startup/seed observations, exact captured membership and disk
+save, source fencing, consumed checkpoint, reconciled controls and destination
+lease/Instance evidence. They repeat finite and blocked network probes and the
+coordinator's retained narrowed-descriptor, alias/discovery, empty-scope and
+receipt-denial checks after restore. Run each preparation/lifecycle combination
+as a fresh case. This does not qualify physical cross-host replacement, CP-outage
+recovery, concurrent sibling seed deletion, or packet-level/private-service denies.
+
 ## Deployment pins and Program replacement
 
 `cases/runtime/program-replacement.run.ts` retains one Computer across two normal
