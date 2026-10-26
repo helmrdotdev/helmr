@@ -73,8 +73,8 @@ func main() {
 			}
 			fmt.Println("Environment configuration is valid; dependencies and runtime files were not checked.")
 			return
-		case "audit-maintenance":
-			if err := runAuditMaintenance(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+		case "audit":
+			if err := runAuditCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
 				log.Error("audit maintenance failed", "error", err)
 				os.Exit(1)
 			}

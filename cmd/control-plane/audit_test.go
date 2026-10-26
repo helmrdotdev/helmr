@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestAuditMaintenanceCommandsRequireDedicatedAuthority(t *testing.T) {
+func TestAuditCommandsRequireDedicatedAuthority(t *testing.T) {
 	d := dbtest.Open(t)
 	ctx := t.Context()
 	if err := schema.Up(ctx, d.DSN); err != nil {
@@ -48,7 +48,7 @@ func TestAuditMaintenanceCommandsRequireDedicatedAuthority(t *testing.T) {
 	t.Setenv("AUDIT_PURGE_MAX_BATCHES", "2")
 	var output bytes.Buffer
 	t.Setenv("DATABASE_AUDIT_MAINTENANCE_URL", d.DSN)
-	if err := runAuditMaintenance(ctx, &output, []string{"purge"}); err == nil {
+	if err := runAuditCommand(ctx, &output, []string{"purge"}); err == nil {
 		t.Fatal("migration owner accepted as maintenance")
 	}
 	parsed, err := url.Parse(d.DSN)
@@ -57,7 +57,7 @@ func TestAuditMaintenanceCommandsRequireDedicatedAuthority(t *testing.T) {
 	}
 	parsed.User = url.User(runtimeRole)
 	t.Setenv("DATABASE_AUDIT_MAINTENANCE_URL", parsed.String())
-	if err := runAuditMaintenance(ctx, &output, []string{"purge"}); err == nil {
+	if err := runAuditCommand(ctx, &output, []string{"purge"}); err == nil {
 		t.Fatal("append-only runtime accepted as maintenance")
 	}
 	id := uuid.NewV7()
@@ -69,14 +69,14 @@ func TestAuditMaintenanceCommandsRequireDedicatedAuthority(t *testing.T) {
 	dbtest.MustExec(t, ctx, d.Pool, `UPDATE audit_events SET recorded_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()-interval '1 hour' WHERE id=$1`, id)
 	parsed.User = url.User(maintenanceRole)
 	t.Setenv("DATABASE_AUDIT_MAINTENANCE_URL", parsed.String())
-	if err := runAuditMaintenance(ctx, &output, []string{"purge"}); err != nil {
+	if err := runAuditCommand(ctx, &output, []string{"purge"}); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(output.Bytes(), []byte(`"deleted":1`)) {
 		t.Fatalf("purge result: %s", output.String())
 	}
 	output.Reset()
-	if err := runAuditMaintenance(ctx, &output, []string{"record-restore", "--backup-reference", "test-backup", "--unknown-from", time.Now().Add(-2 * time.Hour).Format(time.RFC3339), "--unknown-to", time.Now().Add(-time.Hour).Format(time.RFC3339)}); err != nil {
+	if err := runAuditCommand(ctx, &output, []string{"record-restore", "--backup-reference", "test-backup", "--unknown-from", time.Now().Add(-2 * time.Hour).Format(time.RFC3339), "--unknown-to", time.Now().Add(-time.Hour).Format(time.RFC3339)}); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -85,12 +85,12 @@ func TestAuditMaintenanceCommandsRequireDedicatedAuthority(t *testing.T) {
 	}
 }
 
-func TestAuditMaintenanceRejectsInsufficientBatchDeadline(t *testing.T) {
+func TestAuditCommandRejectsInsufficientBatchDeadline(t *testing.T) {
 	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
 	t.Setenv("AUDIT_MAINTENANCE_TIMEOUT_SECONDS", "300")
 	t.Setenv("AUDIT_PURGE_MAX_BATCHES", "60")
 	var output bytes.Buffer
-	err := runAuditMaintenance(t.Context(), &output, []string{"purge"})
+	err := runAuditCommand(t.Context(), &output, []string{"purge"})
 	if err == nil || !strings.Contains(err.Error(), "five-second purge batch deadlines") {
 		t.Fatalf("invalid work budget accepted: %v", err)
 	}

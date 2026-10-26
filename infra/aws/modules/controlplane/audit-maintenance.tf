@@ -48,7 +48,7 @@ resource "aws_ecs_task_definition" "audit_maintenance" {
     image      = var.controlplane_image
     essential  = true
     entryPoint = var.controlplane_entrypoint
-    command    = ["audit-maintenance", "purge"]
+    command    = ["audit", "purge"]
     environment = [
       { name = "AUDIT_RETENTION_SECONDS", value = tostring(var.audit_retention_seconds) },
       { name = "AUDIT_MAINTENANCE_TIMEOUT_SECONDS", value = tostring(var.audit_maintenance_timeout_seconds) },
