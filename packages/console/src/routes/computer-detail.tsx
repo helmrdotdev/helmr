@@ -25,6 +25,7 @@ import { PageSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
+import { useAuditItem } from "../features/audit/auditLink";
 
 const computerErrorMessage = (error: unknown) =>
   loadError(error, "Could not load this computer.", { forbidden: "You do not have permission to view this computer." });
@@ -106,6 +107,7 @@ export function ComputerDetail() {
 
   const notFound = () => !computer.data && isNotFound(computer.error);
   const copyLink = useCopyLink();
+  const auditItem = useAuditItem();
   const controls = createComputerControls({ computer: () => computer.data, scope: resourceScope, onChanged: () => computer.refetch() });
   const environment = () => scopeState.selectedEnvironment()?.name;
   return (
@@ -113,7 +115,7 @@ export function ComputerDetail() {
       <PageHeader
         title={notFound() ? "Computer not found" : "Computer"}
         breadcrumb={[{ href: "/computers", label: "Computers" }]}
-        menu={notFound() ? undefined : [...controls.items(), copyLink.item()]}
+        menu={notFound() ? undefined : [...controls.items(), copyLink.item(), ...auditItem({ target: params["computer_id"], target_kind: "computer" })]}
         menuLabel="Computer actions"
         badge={<Show when={computer.data}>{(current) => <ComputerStatus computer={current()} />}</Show>}
         subtitle={<Show when={computer.data}>{(current) => <IDText value={current().id} mode="full" />}</Show>}

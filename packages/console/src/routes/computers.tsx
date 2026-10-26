@@ -17,6 +17,7 @@ import { type LinkTabItem } from "../ui/Tabs";
 import { QueryState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
+import { useAuditItem } from "../features/audit/auditLink";
 
 const COMPUTER_COLUMNS = ["Computer", "Status", "Key", "Template", "Last activity", "Created", { label: "Actions", srOnly: true }] as const;
 const TEMPLATE_COLUMNS = ["Template", "Resources"] as const;
@@ -74,6 +75,7 @@ export function ComputerList() {
   }));
   const items = createMemo(() => computers.data?.pages.flatMap((page) => page.computers) ?? []);
   const copyLink = useCopyLink();
+  const auditItem = useAuditItem();
   const controls = createComputerControls({ computer: () => undefined, scope: () => ({ projectID: projectID(), environmentID: environmentID() }), onChanged: () => computers.refetch() });
 
   return (
@@ -96,7 +98,7 @@ export function ComputerList() {
           minWidth="min-w-190"
           footer={<LoadMore count={items().length} noun={{ one: "computer", other: "computers" }} hasMore={computers.hasNextPage} loading={computers.isFetchingNextPage} failed={computers.isFetchNextPageError} onLoadMore={() => void computers.fetchNextPage()} />}
         >
-          <For each={items()}>{(computer) => <ComputerRow computer={computer} menu={[...controls.items(computer), copyLink.item(computerHref(computer.id))]} />}</For>
+          <For each={items()}>{(computer) => <ComputerRow computer={computer} menu={[...controls.items(computer), copyLink.item(computerHref(computer.id)), ...auditItem({ target: computer.id, target_kind: "computer" })]} />}</For>
         </DataTable>
       )}
     </QueryState>

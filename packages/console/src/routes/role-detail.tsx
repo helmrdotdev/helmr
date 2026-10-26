@@ -16,6 +16,7 @@ import { PageSkeleton, TableSkeleton } from "../ui/Skeleton";
 import { ui } from "../ui/styles";
 import { TabPanel, Tabs } from "../ui/Tabs";
 import { DeleteRoleDialog, MANAGED_ROLE_NOTE, roleMenu } from "./roles";
+import { useAuditItem } from "../features/audit/auditLink";
 
 type Level = "environment" | "organization";
 type Tab = "permissions" | "assignments";
@@ -35,6 +36,7 @@ function permissionGroups(catalog: readonly PermissionDefinition[], level: Level
 
 export function RoleDetail() {
   const params = useParams(); const [search] = useSearchParams(); const me = useMe();
+  const auditItem = useAuditItem();
   const navigate = useNavigate(); const cache = useQueryClient();
   const allowed = () => hasPermission(me.data, "roles.read") || (creating() && hasPermission(me.data, "roles.create"));
   const id = () => params["role"] ?? "";
@@ -60,7 +62,7 @@ export function RoleDetail() {
       breadcrumb={[{ href: "/settings/roles", label: "Roles" }]}
       badge={<Show when={readonly()}><ManagedMark title={MANAGED_ROLE_NOTE} /></Show>}
       subtitle={readonly() ? role()?.description || undefined : undefined}
-      menu={allowed() && role() ? roleMenu(role()!, { can: permission => hasPermission(me.data, permission), grant: () => setGranting(true), remove: () => setDeleting(true) }) : undefined}
+      menu={allowed() && role() ? roleMenu(role()!, { can: permission => hasPermission(me.data, permission), grant: () => setGranting(true), remove: () => setDeleting(true) }).concat(auditItem({ target: role()!.id, target_kind: "role" })) : undefined}
       menuLabel="Role actions"
     />
     <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read roles permission to view roles." /></Show>}>

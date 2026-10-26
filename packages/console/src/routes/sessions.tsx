@@ -28,6 +28,7 @@ import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
+import { useAuditItem } from "../features/audit/auditLink";
 
 type SessionFilter = SessionStatus | "all";
 
@@ -120,13 +121,14 @@ export function SessionList(props: { agent?: string }) {
   // One control set for the list; a row's menu points it at that row.
   const me = useMe();
   const copyLink = useCopyLink();
+  const auditItem = useAuditItem();
   const [target, setTarget] = createSignal<SessionAddress>({ sessionID: "", projectID: "", environmentID: "" });
   const [receipt, setReceipt] = createSignal<string>();
   const controls = createSessionControls({ address: target, onChanged: () => sessions.refetch(), onReceipt: setReceipt });
   const menu = (session: Session): ActionMenuItem[] => {
     const can = (permission: string) => session.permissions?.includes(permission) ?? hasPermission(me.data, permission, { ...scope(), agent: session.agent });
     const point = (item: ActionMenuItem): ActionMenuItem => item.onSelect ? { ...item, onSelect: () => { setTarget({ sessionID: session.id, projectID: projectID(), environmentID: environmentID() }); item.onSelect!(); } } : item;
-    return controls.items({ live: session.status === "open" || session.status === "closing", open: session.status === "open", can, copyLink: copyLink.item(sessionConsolePath(session.id)) }).map(point);
+    return [...controls.items({ live: session.status === "open" || session.status === "closing", open: session.status === "open", can, copyLink: copyLink.item(sessionConsolePath(session.id)) }).map(point), ...auditItem({ target: session.id, target_kind: "session" })];
   };
 
   return (

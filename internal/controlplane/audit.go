@@ -63,9 +63,21 @@ func (s *Server) searchAuditEvents(w http.ResponseWriter, r *http.Request, insta
 	}
 	writeJSON(w, http.StatusOK, response)
 }
+
+// listAuditActions returns the actions the audit trail can record, so filters
+// offer every one under its category. It is static metadata, not audit data.
+func (s *Server) listAuditActions(w http.ResponseWriter, _ *http.Request) {
+	response := api.AuditActionsResponse{Actions: []api.AuditAction{}}
+	for _, d := range audit.Catalog() {
+		response.Actions = append(response.Actions, api.AuditAction{Action: d.Action, TargetKind: d.TargetKind, Outcomes: d.Outcomes, Category: audit.Category(d.Action)})
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func parseAuditFilter(r *http.Request) (auditquery.SearchFilter, error) {
 	q := r.URL.Query()
-	f := auditquery.SearchFilter{Action: q.Get("action"), ActorKind: q.Get("actor_kind"), TargetKind: q.Get("target_kind"), Outcome: q.Get("outcome"), SlackTeamID: q.Get("slack_team_id"), SlackUserID: q.Get("slack_user_id")}
+	f := auditquery.SearchFilter{ActorKind: q.Get("actor_kind"), TargetKind: q.Get("target_kind"), Outcome: q.Get("outcome"), SlackTeamID: q.Get("slack_team_id"), SlackUserID: q.Get("slack_user_id")}
+	f.Actions = q["action"]
 	var err error
 	if f.From, err = time.Parse(time.RFC3339Nano, q.Get("from")); err != nil {
 		return f, auditquery.ErrSearchInput
@@ -81,7 +93,7 @@ func parseAuditFilter(r *http.Request) (auditquery.SearchFilter, error) {
 	for _, field := range []struct {
 		name  string
 		value *uuid.UUID
-	}{{"organization_id", &f.OrgID}, {"environment_id", &f.EnvironmentID}, {"actor_id", &f.ActorID}, {"target_id", &f.TargetID}, {"target_user_id", &f.TargetUserID}} {
+	}{{"organization_id", &f.OrgID}, {"environment_id", &f.EnvironmentID}, {"actor_id", &f.ActorID}, {"target_id", &f.TargetID}, {"target_user_id", &f.TargetUserID}, {"operation_id", &f.OperationID}, {"event_id", &f.EventID}} {
 		if q.Has(field.name) {
 			*field.value, err = ids.Parse(q.Get(field.name))
 			if err != nil {

@@ -43,7 +43,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	f := auditquery.SearchFilter{From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), Action: "secret.created", Limit: 1}
+	f := auditquery.SearchFilter{From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), Actions: []string{"secret.created"}, Limit: 1}
 	p := auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: user, MemberID: member, SessionID: uuid.NewV7(), Admin: true}
 	if _, err := auditquery.Search(t.Context(), d.Pool, policy, p, f); !errors.Is(err, auditquery.ErrSearchDenied) {
 		t.Fatalf("admin flag granted tenant read: %v", err)
@@ -138,5 +138,74 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	result, err = auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f)
 	if err == nil || len(result.Events) != 0 {
 		t.Fatalf("released rows without access receipt: %+v %v", result, err)
+	}
+}
+
+func TestSearchFiltersByActionsOperationAndEvent(t *testing.T) {
+	d := dbtest.Open(t)
+	if err := schema.Up(t.Context(), d.DSN); err != nil {
+		t.Fatal(err)
+	}
+	org, user, member := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO organizations(id,slug,name) VALUES($1,'filters','Filters')`, org)
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name,primary_email,admin) VALUES($1,'Auditor','auditor@example.test',true)`, user)
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, member, org, user)
+	policy := auditpolicy.Policy{RetentionSeconds: 3600}
+	operation := uuid.NewV7()
+	ids := map[string]uuid.UUID{}
+	for _, e := range []struct {
+		action    string
+		operation uuid.UUID
+	}{{"secret.created", operation}, {"secret.revoked", operation}, {"secret.rotated", uuid.Nil()}} {
+		id := uuid.NewV7()
+		ids[e.action] = id
+		kind := "secret"
+		err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
+			return audit.Append(t.Context(), tx, policy, audit.Event{ID: id, OperationID: e.operation, Evidence: audit.Internal(audit.ControlPlane), OrgID: org, Action: e.action, TargetKind: kind, TargetID: uuid.NewV7()})
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: user, MemberID: member, SessionID: uuid.NewV7(), Admin: true}
+	search := func(f auditquery.SearchFilter) []uuid.UUID {
+		t.Helper()
+		f.OrgID, f.From, f.To, f.Limit = org, time.Now().Add(-time.Hour), time.Now().Add(time.Minute), 100
+		result, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := []uuid.UUID{}
+		for _, event := range result.Events {
+			if event.Action != "audit.searched" {
+				found = append(found, event.ID)
+			}
+		}
+		return found
+	}
+	if got := search(auditquery.SearchFilter{Actions: []string{"secret.created", "secret.rotated"}}); len(got) != 2 || got[0] != ids["secret.rotated"] || got[1] != ids["secret.created"] {
+		t.Fatalf("any of several actions: %v", got)
+	}
+	if got := search(auditquery.SearchFilter{OperationID: operation}); len(got) != 2 {
+		t.Fatalf("one operation's events: %v", got)
+	}
+	if got := search(auditquery.SearchFilter{EventID: ids["secret.revoked"]}); len(got) != 1 || got[0] != ids["secret.revoked"] {
+		t.Fatalf("one event: %v", got)
+	}
+	bad := auditquery.SearchFilter{OrgID: org, From: time.Now().Add(-time.Hour), To: time.Now(), Limit: 10, Actions: []string{"secret.created", "not.an_action"}}
+	if _, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, bad); !errors.Is(err, auditquery.ErrSearchInput) {
+		t.Fatal("unknown action accepted", err)
+	}
+	bad.Actions = make([]string, 101)
+	for i := range bad.Actions {
+		bad.Actions[i] = "secret.created"
+	}
+	if _, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, bad); !errors.Is(err, auditquery.ErrSearchInput) {
+		t.Fatal("unbounded action list accepted", err)
+	}
+	// The search records what it looked for.
+	var recorded string
+	if err := d.Pool.QueryRow(t.Context(), `SELECT details->>'event_id' FROM audit_events WHERE action='audit.searched' AND details ? 'event_id' ORDER BY recorded_at DESC LIMIT 1`).Scan(&recorded); err != nil || recorded != ids["secret.revoked"].String() {
+		t.Fatalf("search detail %q %v", recorded, err)
 	}
 }

@@ -32,6 +32,7 @@ import { TableSkeleton } from "../ui/Skeleton";
 import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, toneClass, ui } from "../ui/styles";
+import { useAuditItem } from "../features/audit/auditLink";
 
 export type OwnershipChoice = "owner" | "member";
 const OWNER_ROLE_OPTION: SelectOption<OwnershipChoice> = { value: "owner", label: "Owner" };
@@ -232,6 +233,7 @@ function MemberRow(props: {
   const id = () => memberResourceID(props.member);
   const isOwner = () => props.member.is_owner;
   const active = () => props.member.status === "active" && props.canManage && id() !== "";
+  const auditItem = useAuditItem();
   // Your own row: only an owner has a role to step down from.
   return (
     <>
@@ -247,7 +249,7 @@ function MemberRow(props: {
             grant: props.canGrant ? () => props.onGrant(props.member) : undefined,
             changeOwnership: props.currentUserIsOwner ? () => props.onChangeRole(props.member) : undefined,
             remove: !isOwner() && props.canRemove ? () => props.onRemove(props.member) : undefined,
-          }) : []}
+          }).concat(auditItem({ actor: props.member.user_id })) : auditItem({ actor: props.member.user_id })}
         />
       </tr>
     </>

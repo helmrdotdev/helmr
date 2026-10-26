@@ -74,6 +74,7 @@ GET /admin/api/v1/worker-groups/{groupID}
 GET /admin/api/v1/worker-groups/{groupID}/pools
 GET /agent-setup/{harness}.md
 GET /api/audit-events
+GET /api/audit-events/actions
 GET /api/auth/device/status
 GET /api/groups
 GET /api/groups/{id}

@@ -55,7 +55,7 @@ func TestAuditRetentionUsesCaptureTimeAndSurvivesRestore(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	filter := auditquery.SearchFilter{From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), Action: "secret.created", Limit: 100}
+	filter := auditquery.SearchFilter{From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), Actions: []string{"secret.created"}, Limit: 100}
 	result, err := auditquery.SearchInstallation(t.Context(), d.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, filter)
 	if err != nil || len(result.Events) != 2 {
 		t.Fatal("expired late commit disclosed", len(result.Events), err)

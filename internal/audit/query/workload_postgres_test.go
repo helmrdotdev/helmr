@@ -77,7 +77,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 	filter := SearchFilter{OrgID: org, From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), Limit: 100}
 	principal := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, Admin: true, SessionID: uuid.NewV7()}
 	for _, action := range []string{"command.completed", "command.failed"} {
-		filter.Action = action
+		filter.Actions = []string{action}
 		started := time.Now()
 		result, err := SearchInstallation(t.Context(), d.Pool, policy, principal, filter)
 		if err != nil {
@@ -91,18 +91,18 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 		}
 		t.Logf("search action=%s rows=%d elapsed_ms=%.3f", action, len(result.Events), float64(time.Since(started).Microseconds())/1000)
 		var plan json.RawMessage
-		if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "", nil, action, "", nil, "", nil, "", "", 101).Scan(&plan); err != nil {
+		if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "", nil, []string{action}, "", nil, "", nil, "", "", 101, nil, nil).Scan(&plan); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("query_plan action=%s %s", action, plan)
 	}
-	filter.Action, filter.ActorKind, filter.ActorID = "", "user", user
+	filter.Actions, filter.ActorKind, filter.ActorID = nil, "user", user
 	actorRows, err := SearchInstallation(t.Context(), d.Pool, policy, principal, filter)
 	if err != nil || len(actorRows.Events) != 2 {
 		t.Fatal("actor search", len(actorRows.Events), err)
 	}
 	var actorPlan json.RawMessage
-	if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "user", user, "", "", nil, "", nil, "", "", 101).Scan(&actorPlan); err != nil {
+	if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "user", user, []string{}, "", nil, "", nil, "", "", 101, nil, nil).Scan(&actorPlan); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("actor_query_plan %s", actorPlan)
@@ -114,7 +114,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 	// summary counts must equal the rows actually removed across competing jobs.
 	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE audit_events SET recorded_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()-interval '1 hour' WHERE action='command.completed'`)
 	filter.From = time.Now().Add(-3 * time.Hour)
-	filter.Action = "command.completed"
+	filter.Actions = []string{"command.completed"}
 	counts := make(chan int64, 2)
 	purgeErrors := make(chan error, 2)
 	start = time.Now()
