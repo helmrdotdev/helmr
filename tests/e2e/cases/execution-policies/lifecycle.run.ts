@@ -12,13 +12,16 @@ import { fixtureInput } from "../../support/runtime-mcp"
 assert(process.env.HELMR_EXECUTION_POLICY_PUBLIC_PROBES === "1", "Set HELMR_EXECUTION_POLICY_PUBLIC_PROBES=1 for the public HTTPS/HTTP/DNS/TLS prerequisites")
 const mode = process.env.HELMR_EXECUTION_POLICY_LIFECYCLE
 assert(mode === "hibernate" || mode === "drain", "Select HELMR_EXECUTION_POLICY_LIFECYCLE=hibernate or drain")
+const subject = process.env.HELMR_EXECUTION_POLICY_SUBJECT
+assert(subject === "finite" || subject === "blocked", "Select HELMR_EXECUTION_POLICY_SUBJECT=finite or blocked")
 const preparation = process.env.HELMR_EXPECT_PREPARED
 assert(preparation === "warm" || preparation === "cold" || preparation === "zero", "Select HELMR_EXPECT_PREPARED=warm, cold or zero")
 const resource = process.env.HELMR_WORKER_RESOURCE_ID, environment = process.env.HELMR_ENVIRONMENT_ID
 assert(resource && environment && process.env.HELMR_RUNTIME_HOST_TOOL, "Exact Worker resource, Environment and installed host tool are required")
 const finiteBuild = process.env.HELMR_EXPECTED_PREPARATION_BUILD_ID
 const blockedBuild = process.env.HELMR_EXPECTED_BLOCKED_PREPARATION_BUILD_ID
-assert(preparation !== "warm" || (finiteBuild && blockedBuild), "Warm requires exact finite and blocked preparation build IDs")
+const build = subject === "finite" ? finiteBuild : blockedBuild
+assert(preparation !== "warm" || build, "Warm requires the exact preparation build ID for the selected subject")
 
 const network = z.object({
   expected: z.enum(["ordinary", "finite", "blocked"]), destinationIPv4: z.ipv4(), preparation: z.string().nullable(),
@@ -40,7 +43,7 @@ const blockedReport = restricted.extend({ expected: z.literal("blocked"), prepar
 
 // Drain/restart remains operator-owned. Fresh, exclusive marker files identify
 // this attempt; they cannot resume an interrupted test or authorize a service kill.
-await verify(`execution-policies-${mode}`, async ({ marker, objects, computer, startAgent }) => {
+await verify(`execution-policies-${subject}-${mode}`, async ({ marker, objects, computer, startAgent }) => {
   const directory = process.env.HELMR_EVIDENCE_DIR!
   const record = (name: string, value: unknown) => writeFile(join(directory, name),
     JSON.stringify(value, null, 2) + "\n", { mode: 0o600, flag: "wx" })
@@ -79,7 +82,7 @@ await verify(`execution-policies-${mode}`, async ({ marker, objects, computer, s
     assert(typeof path.computer.initial_root_id === "string" && /^[0-9a-f]{64}$/.test(path.computer.initial_root_digest), "Startup omitted immutable seed identity")
     assertEqual(lease.worker_host_id, worker.id, "Startup selected another Host")
     assertEqual(lease.worker_epoch, worker.current_epoch, "Startup changed Worker incarnation")
-    if (preparation === "warm") assertEqual(path.computer.image_build_id, build, "Computer adopted another preparation build")
+    if (preparation === "warm") assertEqual(lease.boot_seed_build_id, build, "Computer adopted another preparation build")
     const { stdout } = await promisify(execFile)("sudo", ["-n", "journalctl", "-u", "helmr-worker",
       "--since", `@${Math.floor(requestedAt / 1000)}`, "--no-pager", "-o", "cat"], { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 })
     const phases = stdout.split("\n").filter(line => line.includes(computerId) && line.includes(lease.computer_instance_id) && line.includes("duration_ms"))
@@ -91,76 +94,62 @@ await verify(`execution-policies-${mode}`, async ({ marker, objects, computer, s
     return sample
   }
 
-  const finiteWorker = await ready(finiteBuild), finiteAt = Date.now()
-  const finite = await computer("execution-policy-finite", "lifecycle-finite")
-  const input = { marker, expected: "finite", destinationIPv4: baseline.destinationIPv4 }
-  const coordinator = await startAgent("execution-policy-coordinator", {
-    computer: finite, input, idempotencyKey: `${marker}:finite`,
+  const worker = await ready(build), requestedAt = Date.now()
+  const subjectComputer = await computer(`execution-policy-${subject}`, `lifecycle-${subject}`)
+  const input = { marker, expected: subject, destinationIPv4: baseline.destinationIPv4 }
+  const started = await startAgent(subject === "finite" ? "execution-policy-coordinator" : "execution-policy-ordinary-probe", {
+    computer: subjectComputer, input, idempotencyKey: `${marker}:${subject}`,
   })
   async function coordinatorResult(turn: ClientTurn) {
-    const output = await waitOutput(coordinator.session, turn,
+    const output = await waitOutput(started.session, turn,
       value => value !== null && typeof value === "object" && !Array.isArray(value) && "phase" in value && value.phase === "child-admitted", 240_000)
     const child = admission.parse(output)
     objects.session_ids.push(child.sessionId)
     objects.turn_ids.push(child.turnId)
     const result = report.parse(await completedResult(turn, 300_000))
     assertEqual(result.child, child, "Observed child receipt changed")
-    assertEqual(result.childResult.computerId, finite.id, "Managed child did not use actual finite Computer")
+    assertEqual(result.childResult.computerId, subjectComputer.id, "Managed child did not use actual finite Computer")
     assertEqual(result.childResult.marker, marker, "Managed child input changed")
     return result
   }
-  const first = await coordinatorResult(coordinator.turn)
-  const finiteStartup = await startup(finite.id, finiteWorker, finiteAt, finiteBuild)
-  const blockedWorker = await ready(blockedBuild), blockedAt = Date.now()
-  assertEqual(blockedWorker.id, finiteWorker.id, "Fixture moved between dedicated Hosts before lifecycle action")
-  const blocked = await computer("execution-policy-blocked", "lifecycle-blocked")
-  const blockedInput = { marker, expected: "blocked", destinationIPv4: baseline.destinationIPv4 }
-  const blockedSession = await startAgent("execution-policy-ordinary-probe", {
-    computer: blocked, input: blockedInput, idempotencyKey: `${marker}:blocked`,
-  })
-  const firstBlocked = blockedReport.parse(await completedResult(blockedSession.turn, 180_000))
-  const blockedStartup = await startup(blocked.id, blockedWorker, blockedAt, blockedBuild)
-  const targets = [
-    { computer: finite, session: coordinator.session, source: finiteStartup.lease, members: [coordinator.session.id, first.child.sessionId] },
-    { computer: blocked, session: blockedSession.session, source: blockedStartup.lease, members: [blockedSession.session.id] },
-  ]
-  await record("before.json", { baseline, first, firstBlocked, finiteStartup, blockedStartup })
+  const first = subject === "finite" ? await coordinatorResult(started.turn)
+    : blockedReport.parse(await completedResult(started.turn, 180_000))
+  const subjectStartup = await startup(subjectComputer.id, worker, requestedAt, build)
+  const target = { computer: subjectComputer, session: started.session, source: subjectStartup.lease,
+    members: [started.session.id, ...(subject === "finite" ? [report.parse(first).child.sessionId] : [])] }
+  await record("before.json", { subject, baseline, first, subjectStartup })
   if (mode === "hibernate") {
-    for (const target of targets) await target.computer.hibernate({ idempotencyKey: `${marker}:hibernate:${target.computer.id}` })
+    await target.computer.hibernate({ idempotencyKey: `${marker}:hibernate:${target.computer.id}` })
   } else {
-    await record("ready-for-drain.json", { computerIds: targets.map(target => target.computer.id), sourceHostId: finiteWorker.id })
+    await record("ready-for-drain.json", { computerIds: [target.computer.id], sourceHostId: worker.id })
   }
 
-  const captures = []
-  for (const target of targets) {
-    const signal = deadline((mode === "drain" ? 15 : 10) * 60_000)
-    let path: any, checkpoint: any
-    for (;;) {
-      path = await hostObservation("computer-path", { computer_id: target.computer.id })
-      checkpoint = path.checkpoints.find((item: any) => item.source_lease_epoch === target.source.epoch && item.status === "ready")
-      const old = path.leases.find((lease: any) => lease.epoch === target.source.epoch)
-      if (checkpoint && old?.status === "lost" && old.fenced_at !== null) break
-      await delay(500, undefined, { signal })
-    }
-    assertEqual(checkpoint.target_lease_epoch, null, "Checkpoint restored before operator restart gate")
-    assert(checkpoint.disk_save_id, "Checkpoint omitted private disk save")
-    assertEqual(checkpoint.members.map((member: any) => member.session_id).sort(), [...target.members].sort(), "Checkpoint changed Session membership")
-    const parked = await observePersistence("wait-parked", target.session.id)
-    assertEqual(parked.checkpoint_id, checkpoint.id, "Session observer selected another checkpoint")
-    captures.push({ target, path, checkpoint, parked })
-    await record(`${target.computer.id}-captured.json`, { path, parked })
+  const captureSignal = deadline((mode === "drain" ? 15 : 10) * 60_000)
+  let captured: any, checkpoint: any
+  for (;;) {
+    captured = await hostObservation("computer-path", { computer_id: target.computer.id })
+    checkpoint = captured.checkpoints.find((item: any) => item.source_lease_epoch === target.source.epoch && item.status === "ready")
+    const old = captured.leases.find((lease: any) => lease.epoch === target.source.epoch)
+    if (checkpoint && old?.status === "lost" && old.fenced_at !== null) break
+    await delay(500, undefined, { signal: captureSignal })
   }
+  assertEqual(checkpoint.target_lease_epoch, null, "Checkpoint restored before operator restart gate")
+  assert(checkpoint.disk_save_id, "Checkpoint omitted private disk save")
+  assertEqual(checkpoint.members.map((member: any) => member.session_id).sort(), [...target.members].sort(), "Checkpoint changed Session membership")
+  const parked = await observePersistence("wait-parked", target.session.id)
+  assertEqual(parked.checkpoint_id, checkpoint.id, "Session observer selected another checkpoint")
+  await record(`${target.computer.id}-captured.json`, { path: captured, parked })
   let replacement: any
   if (mode === "drain") {
-    await record("capture-observed.json", { computerIds: targets.map(target => target.computer.id), sourceHostId: finiteWorker.id })
+    await record("capture-observed.json", { computerIds: [target.computer.id], sourceHostId: worker.id })
     const signal = deadline(10 * 60_000)
     for (;;) {
       try {
         const acknowledgment = JSON.parse(await readFile(join(directory, "worker-restarted.json"), "utf8"))
-        assertEqual(acknowledgment.computerIds, targets.map(target => target.computer.id), "Restart acknowledgment belongs to another attempt")
-        assertEqual(acknowledgment.sourceHostId, finiteWorker.id, "Restart acknowledgment identifies another source Host")
+        assertEqual(acknowledgment.computerIds, [target.computer.id], "Restart acknowledgment belongs to another attempt")
+        assertEqual(acknowledgment.sourceHostId, worker.id, "Restart acknowledgment identifies another source Host")
         const rows = await hostObservation("worker-state", { resource_ids: [resource] })
-        if (rows.length === 1 && rows[0].status === "active" && rows[0].id !== finiteWorker.id && rows[0].observed_epoch * 1000 > Date.now() - 60_000) {
+        if (rows.length === 1 && rows[0].status === "active" && rows[0].id !== worker.id && rows[0].observed_epoch * 1000 > Date.now() - 60_000) {
           replacement = rows[0]
           await record("replacement-observed.json", replacement)
           break
@@ -172,45 +161,40 @@ await verify(`execution-policies-${mode}`, async ({ marker, objects, computer, s
     }
   }
 
-  const restoredPaths = []
-  for (const capture of captures) {
-    const { target, checkpoint, parked } = capture
-    const turns = (await target.session.turns.list()).items.map(turn => turn.id)
-    await target.computer.wake({ idempotencyKey: `${marker}:wake:${target.computer.id}` })
-    const restored = await observePersistence("verify-restored", target.session.id)
-    assertRestored(parked, restored, target.session.id)
-    assertEqual((await target.session.turns.list()).items.map(turn => turn.id), turns, "Wake fabricated a Turn")
-    const path = await hostObservation("computer-path", { computer_id: target.computer.id })
-    const original = target.computer.id === finite.id ? finiteStartup.path.computer : blockedStartup.path.computer
-    for (const key of ["id", "image_build_id", "initial_root_id", "initial_root_digest"]) {
-      assertEqual(path.computer[key], original[key], `Restore changed Computer ${key}`)
-    }
-    const consumed = path.checkpoints.find((item: any) => item.id === checkpoint.id)
-    const destination = path.leases.find((lease: any) => lease.epoch === restored.target_lease_epoch)
-    assertEqual(consumed?.status, "consumed", "Exact checkpoint was not consumed")
-    assertEqual(consumed?.target_lease_epoch, destination?.epoch, "Checkpoint target lease changed")
-    assertEqual(consumed?.controls_reconciled_at !== null, true, "Checkpoint omitted current controls")
-    assert(destination && destination.status === "active" && destination.fenced_at === null, "Restored lease is not current")
-    assertEqual(destination.restored_from_save_id, checkpoint.disk_save_id, "Restore selected another private disk save")
-    assert.notEqual(destination.computer_instance_id, target.source.computer_instance_id, "Restore reused source Instance")
-    if (mode === "drain") {
-      assert.notEqual(destination.worker_host_id, target.source.worker_host_id, "Drain did not replace logical Host")
-      assertEqual(destination.worker_host_id, replacement.id, "Restore selected another physical resource")
-      assertEqual(destination.worker_epoch, replacement.current_epoch, "Restore selected another Worker incarnation")
-    }
-    else assertEqual(destination.worker_host_id, target.source.worker_host_id, "Same-host restore moved Hosts")
-    restoredPaths.push({ path, restored })
-    await record(`${target.computer.id}-restored.json`, { path, restored })
+  const turns = (await target.session.turns.list()).items.map(turn => turn.id)
+  await target.computer.wake({ idempotencyKey: `${marker}:wake:${target.computer.id}` })
+  const restored = await observePersistence("verify-restored", target.session.id)
+  assertRestored(parked, restored, target.session.id)
+  assertEqual((await target.session.turns.list()).items.map(turn => turn.id), turns, "Wake fabricated a Turn")
+  const path = await hostObservation("computer-path", { computer_id: target.computer.id })
+  for (const key of ["id", "image_build_id", "initial_root_id", "initial_root_digest"]) {
+    assertEqual(path.computer[key], subjectStartup.path.computer[key], `Restore changed Computer ${key}`)
   }
-  const second = await coordinator.session.enqueue(fixtureInput(input), { idempotencyKey: `${marker}:finite-restored` })
+  const consumed = path.checkpoints.find((item: any) => item.id === checkpoint.id)
+  const destination = path.leases.find((lease: any) => lease.epoch === restored.target_lease_epoch)
+  assertEqual(consumed?.status, "consumed", "Exact checkpoint was not consumed")
+  assertEqual(consumed?.target_lease_epoch, destination?.epoch, "Checkpoint target lease changed")
+  assertEqual(consumed?.controls_reconciled_at !== null, true, "Checkpoint omitted current controls")
+  assert(destination && destination.status === "active" && destination.fenced_at === null, "Restored lease is not current")
+  assertEqual(destination.restored_from_save_id, checkpoint.disk_save_id, "Restore selected another private disk save")
+  assert.notEqual(destination.computer_instance_id, target.source.computer_instance_id, "Restore reused source Instance")
+  if (mode === "drain") {
+    assert.notEqual(destination.worker_host_id, target.source.worker_host_id, "Drain did not replace logical Host")
+    assertEqual(destination.worker_host_id, replacement.id, "Restore selected another physical resource")
+    assertEqual(destination.worker_epoch, replacement.current_epoch, "Restore selected another Worker incarnation")
+  }
+  else assertEqual(destination.worker_host_id, target.source.worker_host_id, "Same-host restore moved Hosts")
+  await record(`${target.computer.id}-restored.json`, { path, restored })
+  const second = await started.session.enqueue(fixtureInput(input), { idempotencyKey: `${marker}:${subject}-restored` })
   objects.turn_ids.push(second.id)
-  const continued = await coordinatorResult(second)
-  assertEqual(continued.nonce, first.nonce, "Coordinator setup was reconstructed")
-  assertEqual([first.count, continued.count], [1, 2], "Coordinator lost retained setup state")
-  assertEqual(continued.child, first.child, "Retained narrowed descriptor retry replaced admitted work")
-  const blockedTurn = await blockedSession.session.enqueue(fixtureInput(blockedInput), { idempotencyKey: `${marker}:blocked-restored` })
-  objects.turn_ids.push(blockedTurn.id)
-  const continuedBlocked = blockedReport.parse(await completedResult(blockedTurn, 180_000))
-  return { mode, preparation, baseline, first, firstBlocked, finiteStartup, blockedStartup,
-    restoredPaths, continued, continuedBlocked, physicalCrossHost: false }
+  const continued = subject === "finite" ? await coordinatorResult(second)
+    : blockedReport.parse(await completedResult(second, 180_000))
+  if (subject === "finite") {
+    const original = report.parse(first), continuation = report.parse(continued)
+    assertEqual(continuation.nonce, original.nonce, "Coordinator setup was reconstructed")
+    assertEqual([original.count, continuation.count], [1, 2], "Coordinator lost retained setup state")
+    assertEqual(continuation.child, original.child, "Retained narrowed descriptor retry replaced admitted work")
+  }
+  return { mode, subject, preparation, baseline, first, subjectStartup,
+    restoredPath: { path, restored }, continued, physicalCrossHost: false }
 })

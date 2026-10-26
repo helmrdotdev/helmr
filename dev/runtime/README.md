@@ -56,7 +56,9 @@ passwords are generated once on install and retained across starts. Secrets neve
 belong in source control or the evidence bundle.
 
 The sample includes explicit development execution and diagnostic budgets. Adjust
-them for the selected host. Diagnostic admission and export settings reach both
+them for the selected host. Its single execution slot has four vCPUs and 8 GiB
+of Worker memory, including guest and Computer cache overhead. Reserve additional
+host memory for Control Plane, Dispatcher and backing services. Diagnostic admission and export settings reach both
 Control Plane and Dispatcher; Worker log buffers remain Worker inputs. Native
 service configuration checks run before dependencies or migrations start.
 

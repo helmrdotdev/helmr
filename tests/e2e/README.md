@@ -133,10 +133,12 @@ numeric TLS without SNI, before their denial counts as policy evidence. Each
 probe has a five-second bound. An unavailable public prerequisite fails the case;
 it is not evidence of an enforcement failure or successful containment.
 
-The case needs capacity for two resident Computers after its baseline is deleted,
-Computer Hibernate/Wake and cleanup permissions, and caller-side authority to
-create an owned child on the caller Computer. Its target Agent deliberately has a
-different default Template. The child shares the caller's Computer by design;
+The case needs one resident VM slot, Computer Hibernate/Wake and cleanup
+permissions, and caller-side authority to create an owned child on the caller
+Computer. The driver runs its Computers serially. Its target Agent deliberately has a
+different default Template. After all finite continuation assertions, it cancels
+the coordinator and known child Sessions and deletes the finite Computer before
+creating the blocked Computer. The child shares the caller's Computer by design;
 these assertions do not claim hostile-process isolation on that Computer.
 
 The driver records published pins, prepared-file markers, managed admission IDs,
@@ -151,19 +153,25 @@ Agents for exact host-observed restore. Prepare/deploy `cases/execution-policies
 then run on the dedicated host with normal API credentials, a new evidence
 directory, `HELMR_EXECUTION_POLICY_PUBLIC_PROBES=1`,
 `HELMR_RUNTIME_HOST_TOOL` naming the installed `dev/runtime/host.py`, and exact
-`HELMR_WORKER_RESOURCE_ID`/`HELMR_ENVIRONMENT_ID`. It requires noninteractive sudo
-for the existing read-only observer and Worker journal, two resident VM slots,
-and ordinary Computer Hibernate/Wake permissions. Set
+`HELMR_WORKER_RESOURCE_ID`/`HELMR_ENVIRONMENT_ID`. Select exactly one subject per
+invocation with `HELMR_EXECUTION_POLICY_SUBJECT=finite` or `blocked`. It requires
+noninteractive sudo for the existing read-only observer and Worker journal, one
+resident VM slot, and ordinary Computer Hibernate/Wake permissions. Set
 `HELMR_EXPECT_PREPARED=warm`, `cold`, or `zero` using the prepared-startup
 prerequisites below; the driver never changes Capacity policy or caches. Warm
-also requires `HELMR_EXPECTED_PREPARATION_BUILD_ID` for the finite Template with
-the coordinator Program and `HELMR_EXPECTED_BLOCKED_PREPARATION_BUILD_ID` for the
-blocked Template with the ordinary-probe Program. Each must match the published
-image and 1-vCPU/1-GiB shape. Actual adoption is checked against the exact Worker
-journal phase, in addition to a fresh ready-leaf observation.
+also requires `HELMR_EXPECTED_PREPARATION_BUILD_ID` for a finite invocation's
+Template with the coordinator Program, or
+`HELMR_EXPECTED_BLOCKED_PREPARATION_BUILD_ID` for a blocked invocation's Template
+with the ordinary-probe Program. These are `boot_seed_builds.id` values from the
+selected ready leaf; they must match the published image/Program and 1-vCPU/1-GiB
+shape. The active lease's `boot_seed_build_id` must equal that expected build ID.
+The Computer's `image_build_id` identifies a separate image build and remains an
+immutable restore assertion. Actual adoption is also checked against the exact
+Worker journal phase, in addition to a fresh ready-leaf observation.
 
 ```sh
 HELMR_EXECUTION_POLICY_LIFECYCLE=hibernate \
+HELMR_EXECUTION_POLICY_SUBJECT=finite \
   bun run /private/case-project/cases/execution-policies/lifecycle.run.ts
 ```
 
@@ -177,17 +185,25 @@ Hibernate capture retains its 10-minute deadline. Only then stop/start
 `helmr-worker.service` and require native readiness. Atomically write
 `worker-restarted.json` in the evidence directory, copying exactly `computerIds`
 and `sourceHostId` from `capture-observed.json`. The driver independently requires
-a fresh active logical Host on the same resource before waking either Computer;
-it never stops services. A drain timeout does not authorize killing Worker.
+a fresh active logical Host on the same resource before waking the selected
+Computer; it never stops services. A drain timeout does not authorize killing Worker.
 On failure restore the Worker through the normal runbook before completing
 recorded Session/Computer cleanup; marker files cannot resume an interrupted case.
 
 Both modes retain startup/seed observations, exact captured membership and disk
 save, source fencing, consumed checkpoint, reconciled controls and destination
-lease/Instance evidence. They repeat finite and blocked network probes and the
-coordinator's retained narrowed-descriptor, alias/discovery, empty-scope and
-receipt-denial checks after restore. Run each preparation/lifecycle combination
-as a fresh case. This does not qualify physical cross-host replacement, CP-outage
+lease/Instance evidence for the selected subject. A finite invocation repeats the
+finite network probes and coordinator's retained narrowed-descriptor,
+alias/discovery, empty-scope and receipt-denial checks after restore. A blocked
+invocation repeats all blocked network probes after restore. Each invocation
+positively establishes public endpoints on its baseline Computer, then cancels
+and deletes that baseline before creating its one subject Computer.
+
+Run both `finite` and `blocked` as separate fresh invocations, each with a new
+evidence directory, for every `warm`/`cold`/`zero` × `hibernate`/`drain` combination
+(twelve invocations). Complete each case's cleanup before starting the next; drain
+markers identify only that invocation's selected Computer. This does not qualify
+physical cross-host replacement, CP-outage
 recovery, concurrent sibling seed deletion, or packet-level/private-service denies.
 
 ## Deployment pins and Program replacement

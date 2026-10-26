@@ -88,6 +88,11 @@ await verify("execution-policies", async ({ client, marker, objects, computer, s
   assertEqual([first.count, restored.count], [1, 2], "Session setup state did not survive restore")
   assertEqual(restored.child, first.child, "Restored descriptor retry replaced already admitted child work")
 
+  for (const id of new Set([first.child.sessionId, restored.child.sessionId, started.session.id])) {
+    await client.sessions.ref(id).cancel({ idempotencyKey: `${marker}:finite-finished:${id}` })
+  }
+  await deleteComputer(finite, `${marker}:finite-delete`)
+
   const blocked = await computer("execution-policy-blocked", "blocked")
   const reused = await startAgent("execution-policy-ordinary-probe", {
     computer: blocked, input: { marker, expected: "blocked", destinationIPv4: baseline.destinationIPv4 }, idempotencyKey: `${marker}:blocked-reuse`,

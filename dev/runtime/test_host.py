@@ -21,6 +21,7 @@ def config():
         'worker_host_receipt': '/opt/worker-host-bundle.json',
         'worker_runtime_receipt': '/opt/worker-runtime-bundle.json',
         'control_plane': {
+            'AUDIT_RETENTION_SECONDS': '86400',
             'ENVIRONMENT_MAX_RESIDENT_COMPUTERS': '10',
             'ENVIRONMENT_MAX_CPU_MILLIS': '16000',
             'ENVIRONMENT_MAX_MEMORY_BYTES': '68719476736',
