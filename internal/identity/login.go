@@ -205,10 +205,7 @@ func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedIn
 	}); err != nil {
 		return "", fmt.Errorf("create login session: %w", err)
 	}
-	if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: user.actor, Action: "identity.sign_in", TargetKind: "login_session", TargetID: sessionID, Details: user.authentication}); err != nil {
-		return "", err
-	}
-	if err := appendSessionLifecycle(ctx, tx, cfg, user.actor, orgID, "identity.session_issued", sessionID, user.authentication); err != nil {
+	if err := appendSessionLifecycle(ctx, tx, cfg, user.actor, orgID, "identity.sign_in", sessionID, user.authentication); err != nil {
 		return "", err
 	}
 	return raw, nil

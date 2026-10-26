@@ -32,7 +32,7 @@ func TestAuditStartAtomicReceiptAndCredential(t *testing.T) {
 	var count, operations int
 	var valid bool
 	err = f.pool.QueryRow(t.Context(), `SELECT count(*),count(DISTINCT operation_id),bool_and(actor_user_id IS NOT NULL AND actor_user_id=$2 AND credential_id=$3 AND environment_id=$4 AND authorization_evidence->'checks' @> '[{"type":"permission","result":"passed"}]'::jsonb AND actor_identity->>'source'='account') FROM audit_events WHERE session_id=$1`, receipt.SessionID, caller.ID, caller.CredentialID, f.env).Scan(&count, &operations, &valid)
-	if err != nil || count != 4 || operations != 1 || !valid {
+	if err != nil || count != 3 || operations != 1 || !valid {
 		t.Fatalf("capture/replay: count=%d operations=%d valid=%v err=%v", count, operations, valid, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_session_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$`)
@@ -95,7 +95,7 @@ func TestAuditControlRollsBackAndDeduplicates(t *testing.T) {
 		}
 	}
 	var count int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND action='session.control_requested' AND details->>'kind'='close'`, receipt.SessionID).Scan(&count); err != nil || count != 1 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND action='session.close_requested' AND NOT(details ? 'kind')`, receipt.SessionID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("control receipt audit: %d %v", count, err)
 	}
 }
@@ -340,5 +340,43 @@ func TestAuditMCPStaleGenerationRetainsObservedCheck(t *testing.T) {
 	err = f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(actor_worker_host_id=$1 AND actor_session_id IS NULL AND org_id IS NULL AND authentication_result='verified' AND authorization_evidence->>'decision'='denied' AND authorization_evidence->'checks'->0->>'type'='runtime_binding' AND authorization_evidence->'checks'->0->>'reason'='generation_changed' AND (authorization_evidence->'checks'->0->>'generation')::bigint=$2 AND (authorization_evidence->'checks'->0->>'observed_generation')::bigint=$2+1) FROM audit_events WHERE action='mcp.refused'`, f.host().HostID, e.AuthorityGeneration).Scan(&valid)
 	if err != nil || !valid {
 		t.Fatal("lost runtime refusal or changed executor", valid, err)
+	}
+}
+
+func TestAuditControlRequestActionsAndTargets(t *testing.T) {
+	for _, kind := range []string{"close", "cancel", "interrupt", "resume", "turn_interrupt"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFixture(t)
+			policy := auditpolicy.Policy{RetentionSeconds: 3600}
+			req := controlRequest(f, kind, "audit-request")
+			targetKind, targetID, action := "session", f.session, "session."+kind+"_requested"
+			if kind == "turn_interrupt" {
+				turn := f.enqueue(t, "interrupt")
+				if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
+					t.Fatal(err)
+				}
+				req.TurnID = turn.TurnID
+				targetKind, targetID, action = "turn", turn.TurnID, "turn.interrupt_requested"
+			}
+			if kind == "resume" {
+				hold, err := session.ControlSession(t.Context(), policy, f.pool, f.caller(), controlRequest(f, "interrupt", "prepare"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.HoldID = hold.HoldID
+			}
+			var receipt session.SessionControlReceipt
+			for range 2 {
+				var err error
+				receipt, err = session.ControlSession(t.Context(), policy, f.pool, f.caller(), req)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			var valid bool
+			if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(outcome='accepted' AND target_kind=$2 AND target_id=$3 AND details->>'request_id'=$4 AND NOT(details ? 'kind')) FROM audit_events WHERE session_id=$1 AND action=$5`, f.session, targetKind, targetID, receipt.ID.String(), action).Scan(&valid); err != nil || !valid {
+				t.Fatal("control acceptance identity/replay", valid, err)
+			}
+		})
 	}
 }

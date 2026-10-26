@@ -12,25 +12,25 @@ const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
 
 const base = {
   org_id: "org", project_id: null, retention_seconds: 7_776_000, expires_at: new Date(now + 90 * 86_400_000).toISOString(),
-  actor_api_key_id: null, actor_session_id: null, actor_worker_host_id: null, actor_component: null, runtime_generation: null, process_epoch: null,
-  deployment_id: null, session_id: null, turn_id: null, computer_id: null, cause_event_id: null, schema_version: 1, target_user_id: null,
-  slack_team_id: null, slack_user_id: null, target_resolution: "resolved", source_ip: "203.0.113.24", channel: "http", causality: null, details: null,
+  actor_api_key_id: null, actor_session_id: null, actor_kind: "user", restricted: ["transport"],
+  deployment_id: null, session_id: null, turn_id: null, computer_id: null, schema_version: 1, target_user_id: null,
+  slack_team_id: null, slack_user_id: null, target_resolution: "resolved",  channel: "http", causality: {}, details: {},
   authentication: { result: "verified", origin: "request", provider: null, credential_kind: "login_session", credential_id: null, credential_version: 3 },
 };
 const denied = {
   ...base, id: "00000000-0000-7000-8000-00000000e001", environment_id: environmentUUID, occurred_at: ago(2), recorded_at: ago(2), operation_id: "00000000-0000-7000-8000-00000000f001",
   actor_user_id: userID, actor_identity: { display_name: "Sato Kenji", email: "sato@acme.dev", source: "console" },
   action: "session.content_read", outcome: "denied", target_kind: "session", target_id: sessionID, session_id: sessionID,
-  authorization: { decision: "denied", checks: [
+  authorization: { installation_authority: false, decision: "denied", checks: [
     { type: "permission", permission: "sessions.read", result: "failed", reason: "no_matching_grant", subject_user_id: userID, scope: { org_id: "org", environment_id: environmentUUID, agent_id: "demo-triage" } },
     { type: "membership_attribute", member_id: "m-sato", attribute: "is_owner", expected: true, observed: false, result: "failed" },
   ] },
 };
 const granted = {
-  ...base, cause_event_id: "00000000-0000-7000-8000-00000000e001", id: "00000000-0000-7000-8000-00000000e002", environment_id: null, occurred_at: ago(9), recorded_at: ago(9), operation_id: "00000000-0000-7000-8000-00000000f002",
+  ...base, restricted: ["transport", "causality"], id: "00000000-0000-7000-8000-00000000e002", environment_id: null, occurred_at: ago(9), recorded_at: ago(9), operation_id: "00000000-0000-7000-8000-00000000f002",
   actor_user_id: "00000000-0000-7000-8000-00000000000c", actor_identity: { display_name: "Aiko Mori", email: "aiko@acme.dev", source: "console" },
   action: "role.updated", outcome: "succeeded", target_kind: "role", target_id: roleID,
-  authorization: { decision: "allowed", checks: [{ type: "permission", permission: "roles.update", result: "passed", subject_user_id: "00000000-0000-7000-8000-00000000000c", scope: { org_id: "org" }, evidence: { subject: "member", role_id: "role-admin", role_revision: 3, assignment_id: "00000000-0000-7000-8000-0000000041aa", assignment_revision: 2 } }] },
+  authorization: { installation_authority: false, decision: "allowed", checks: [{ type: "permission", permission: "roles.update", result: "passed", subject_user_id: "00000000-0000-7000-8000-00000000000c", scope: { org_id: "org" }, evidence: { subject: "member", role_id: "role-admin", role_revision: 3, assignment_id: "00000000-0000-7000-8000-0000000041aa", assignment_revision: 2 } }] },
 };
 const actions = [
   { action: "session.content_read", target_kind: "session", outcomes: ["succeeded", "denied"], category: "agents" },
@@ -39,7 +39,7 @@ const actions = [
   { action: "identity.sign_in", target_kind: "user", outcomes: ["succeeded", "failed"], category: "sign_in" },
 ];
 
-async function fixture(page: Page, options: { permissions?: string[]; paged?: boolean } = {}) {
+async function fixture(page: Page, options: { permissions?: string[]; paged?: boolean; installation?: boolean } = {}) {
   const searches: URLSearchParams[] = [];
   const environment = { environment: "production", project: projectID, name: "Production", color_hex: "#008000", is_default: true };
   const project = { project: projectID, name: "Demo", default_region_id: "local", is_default: true, environments: [environment] };
@@ -48,12 +48,12 @@ async function fixture(page: Page, options: { permissions?: string[]; paged?: bo
     const url = new URL(route.request().url());
     const path = url.pathname;
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", membership_id: "m-local", display_name: "Local", org_id: "org", is_owner: false, permissions, admin: false, organization_required: false, project_required: false };
+    if (path === "/api/me") json = { user_id: "local", membership_id: "m-local", display_name: "Local", org_id: "org", is_owner: false, permissions, admin: options.installation ?? false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === `/api/projects/${projectID}/access-targets`) json = { project_id: "p", targets: [{ environment_id: environmentUUID, environment: "production", name: "Production", agents: [] }] };
-    else if (path === "/api/audit-events/actions") json = { actions };
-    else if (path === "/api/audit-events") {
+    else if (path.endsWith("/audit-events/actions")) json = { actions };
+    else if (path.endsWith("/audit-events")) {
       if (!permissions.includes("audit_events.read")) { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }); return; }
       searches.push(url.searchParams);
       const target = url.searchParams.get("target_id");
@@ -61,7 +61,7 @@ async function fixture(page: Page, options: { permissions?: string[]; paged?: bo
       const wanted = url.searchParams.getAll("action");
       const operation = url.searchParams.get("operation_id");
       const id = url.searchParams.get("event_id");
-      const events = [denied, granted].filter((e) => (!target || e.target_id === target) && (!outcome || e.outcome === outcome) && (!wanted.length || wanted.includes(e.action)) && (!operation || e.operation_id === operation) && (!id || e.id === id));
+      const events = [denied, granted].map((event) => options.installation ? { ...event, actor_worker_host_id: null, actor_component: null, runtime_generation: null, process_epoch: null, source_ip: "203.0.113.24", cause_event_id: event.id === granted.id ? denied.id : null } : event).filter((e) => (!target || e.target_id === target) && (!outcome || e.outcome === outcome) && (!wanted.length || wanted.includes(e.action)) && (!operation || e.operation_id === operation) && (!id || e.id === id));
       if (options.paged) json = url.searchParams.has("before_id") ? { events: events.slice(1) } : { events: events.slice(0, 1), next_before: { recorded_at: events[0]!.recorded_at, id: events[0]!.id } };
       else json = { events };
     } else if (path === "/api/roles") json = { roles: [{ id: roleID, name: "Release manager", description: "", builtin_key: null, permissions: [], assignment_levels: ["environment"], api_key_assignable: true, grant_count: 0, group_count: 0, updated_at: ago(0), revision: 1 }, { id: "role-admin", name: "Access Administrator", description: "", builtin_key: "access_administrator", permissions: [], assignment_levels: ["organization"], api_key_assignable: false, grant_count: 1, group_count: 0, updated_at: ago(0), revision: 1 }], catalog: [] };
@@ -167,9 +167,9 @@ test("selecting an event loaded with Load more keeps the list and does not searc
   expect(searches.filter((s) => !s.has("operation_id")).length).toBe(before);
 });
 
-test("opening the cause shows it whatever the list was filtered on, and rows stay selectable", async ({ page }) => {
-  const { searches } = await fixture(page);
-  await open(page, "outcome=succeeded");
+test("opening the cause in Admin shows it whatever the list was filtered on, and rows stay selectable", async ({ page }) => {
+  const { searches } = await fixture(page, { installation: true });
+  await page.goto("/admin/audit-events?outcome=succeeded");
   await page.getByRole("button", { name: /^Show details: Updated role/ }).click();
   await page.getByRole("button", { name: "Open the cause" }).click();
   await expect(page.getByText("One linked event")).toBeVisible();
@@ -182,4 +182,22 @@ test("opening the cause shows it whatever the list was filtered on, and rows sta
   await expect(page.getByRole("button", { name: /details: / })).toHaveCount(2);
   await page.getByRole("button", { name: /^Show details: Updated role/ }).click();
   await expect(page.getByRole("button", { name: /^Show details: / })).toHaveCount(1);
+});
+
+
+test("organization details mark restricted evidence without presenting it as absent", async ({ page }) => {
+  await fixture(page);
+  await open(page);
+  await page.getByRole("button", { name: /^Show details: Updated role/ }).click();
+  const details = page.locator(`#audit-row-${granted.id}`);
+  await expect(details).toContainText("Some installation details are restricted");
+  await expect(details).toContainText("Restricted");
+  await expect(details.getByRole("button", { name: "Open the cause" })).toHaveCount(0);
+  await expect(details).not.toContainText("No cause recorded");
+  await details.getByRole("tab", { name: "JSON" }).click();
+  await expect(details).not.toContainText("203.0.113.24");
+  await expect(details).not.toContainText("actor_worker_host_id");
+  await page.getByRole("combobox", { name: "Who" }).click();
+  await expect(page.getByRole("option", { name: "Platform service", exact: true })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Worker host", exact: true })).toHaveCount(0);
 });

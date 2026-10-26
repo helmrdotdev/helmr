@@ -280,7 +280,7 @@ func CompleteComputerRestore(ctx context.Context, auditPolicy auditpolicy.Policy
 		if err := computer.ReconcileCheckpointControls(ctx, auditPolicy, tx, env, checkpoint); err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: audit.AssignedWorker(host.HostID, host.HostClaimVersion, "computer", r.Computer, int64(p.GetEnvelope().GetWriterGeneration())), EnvironmentID: env, ComputerID: r.Computer, TargetKind: "computer", TargetID: r.Computer, Action: "computer.restore_completed", Details: audit.LifecycleDetails{RequestID: checkpoint, Generation: int64(p.GetEnvelope().GetWriterGeneration())}})
+		return audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: audit.AssignedWorker(host.HostID, host.HostClaimVersion, "computer", r.Computer, int64(p.GetEnvelope().GetWriterGeneration())), EnvironmentID: env, ComputerID: r.Computer, TargetKind: "computer", TargetID: r.Computer, Action: "computer.restore_completed", Details: audit.CheckpointDetails{CheckpointID: checkpoint, Generation: int64(p.GetEnvelope().GetWriterGeneration())}})
 	}))
 }
 

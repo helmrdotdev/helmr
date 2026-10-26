@@ -27,7 +27,7 @@ func TestAuditRetentionUsesCaptureTimeAndSurvivesRestore(t *testing.T) {
 	principal := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, Admin: true, SessionID: uuid.NewV7()}
 	old, newer := uuid.NewV7(), uuid.NewV7()
 	appendFact := func(tx pgx.Tx, id uuid.UUID, seconds int64) error {
-		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: seconds}, audit.Event{ID: id, Evidence: audit.Internal(audit.ControlPlane), OccurredAt: time.Now().Add(-24 * time.Hour), Action: "secret.created", TargetKind: "secret", TargetID: uuid.NewV7()})
+		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: seconds}, audit.Event{ID: id, Evidence: audit.Internal(audit.ControlPlane), OccurredAt: time.Now().Add(-24 * time.Hour), Action: "worker_group.created", TargetKind: "worker_group", TargetID: uuid.NewV7()})
 	}
 	if err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error { return appendFact(tx, old, 3600) }); err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ func TestAuditRetentionUsesCaptureTimeAndSurvivesRestore(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	filter := auditquery.SearchFilter{From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), Actions: []string{"secret.created"}, Limit: 100}
+	filter := auditquery.SearchFilter{From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), Actions: []string{"worker_group.created"}, Limit: 100}
 	result, err := auditquery.SearchInstallation(t.Context(), d.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, filter)
 	if err != nil || len(result.Events) != 2 {
 		t.Fatal("expired late commit disclosed", len(result.Events), err)
@@ -103,9 +103,9 @@ func TestAuditDeletedOrganizationCustodyAndCompositeTargets(t *testing.T) {
 	if _, err = auditquery.Search(t.Context(), d.Pool, policy, principal, filter); !errors.Is(err, auditquery.ErrSearchDenied) {
 		t.Fatal("deleted membership kept custody", err)
 	}
-	result, err = auditquery.SearchInstallation(t.Context(), d.Pool, policy, principal, filter)
-	if err != nil || len(result.Events) != 1 || result.Events[0].ID != ids[0] {
-		t.Fatal("deleted history lost", result, err)
+	adminResult, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, principal, filter)
+	if err != nil || len(adminResult.Events) != 1 || adminResult.Events[0].ID != ids[0] {
+		t.Fatal("deleted history lost", adminResult, err)
 	}
 	var retained bool
 	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(org_id IS NULL AND target_resolution='unresolved') FROM audit_events WHERE action='audit.searched' AND target_id=$1`, org).Scan(&retained); err != nil || !retained {

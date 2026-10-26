@@ -6,8 +6,8 @@ import (
 	"uuid"
 )
 
-// AuditEvent is security metadata. It never contains execution input or output.
-type AuditEvent struct {
+// AdminAuditEvent is the full captured evidence, available only through Admin.
+type AdminAuditEvent struct {
 	RuntimeGeneration *int64              `json:"runtime_generation"`
 	ProcessEpoch      *int64              `json:"process_epoch"`
 	ID                uuid.UUID           `json:"id"`
@@ -55,9 +55,9 @@ type AuditBefore struct {
 	RecordedAt time.Time `json:"recorded_at"`
 	ID         uuid.UUID `json:"id"`
 }
-type AuditEventsResponse struct {
-	Events     []AuditEvent `json:"events"`
-	NextBefore *AuditBefore `json:"next_before,omitempty"`
+type AdminAuditEventsResponse struct {
+	Events     []AdminAuditEvent `json:"events"`
+	NextBefore *AuditBefore      `json:"next_before,omitempty"`
 }
 
 type AuditAuthentication struct {

@@ -1,4 +1,4 @@
-import type { AuditCheck, AuditEvent } from "./audit";
+import type { AdminAuditCheck as AuditCheck, AnyAuditEvent as AuditEvent } from "./audit";
 import { formatID as shortID } from "../ui/id";
 
 // Labels for the action categories the server assigns.
@@ -38,21 +38,20 @@ const VERBS: Record<string, string> = {
   member_added: "Added a member to", member_removed: "Removed a member from", ownership_changed: "Changed ownership of",
   retention_changed: "Changed retention of", authority_changed: "Changed the authority of", content_read: "Read the content of",
   output_read: "Read the output of", control_requested: "Requested a control on", control_settled: "Settled a control on",
-  cancel_requested: "Requested cancelling", checkpoint_published: "Saved a checkpoint of", restore_completed: "Restored",
+  cancel_requested: "Requested cancelling", close_requested: "Requested closing", interrupt_requested: "Requested interrupting", resume_requested: "Requested resuming", refresh_requested: "Requested refreshing", checkpoint_published: "Saved a checkpoint of", restore_completed: "Restored",
   exposed: "Made available", standard_created: "Created a standard", sign_in: "Signed in",
 };
 
 // Actions whose generic wording reads badly.
 const OVERRIDES: Record<string, string> = {
   "identity.sign_in": "Signed in",
-  "identity.session_issued": "Started a sign-in session",
   "identity.session_revoked": "Ended a sign-in session",
   "identity.magic_link_requested": "Asked for a sign-in link",
   "identity.device_started": "Started signing in a device",
   "identity.device_authorized": "Approved a device sign-in",
   "identity.device_denied": "Denied a device sign-in",
   "audit.searched": "Searched audit events",
-  "audit.retention_configured": "Configured audit retention",
+  "audit.retention_observed": "Observed audit retention",
   "audit.purge_completed": "Removed expired audit events",
   "audit.restore_recorded": "Recorded an audit restore",
   "secret.exposed": "Made a secret available to a computer",
@@ -72,7 +71,7 @@ export function actionLabel(action: string): string {
   return word ? `${word} ${noun}` : `${noun} ${verb.replaceAll("_", " ")}`.replace(/^./, (c) => c.toUpperCase());
 }
 
-export type ActorKind = "member" | "api_key" | "session" | "worker_host" | "helmr" | "unidentified";
+export type ActorKind = "member" | "api_key" | "session" | "worker_host" | "helmr" | "platform_service" | "unidentified";
 
 // Who acted: a person, an API key, an agent's session, a worker host or Helmr
 // itself, with the label recorded at the time.
@@ -81,8 +80,9 @@ export function actorOf(event: AuditEvent): { kind: ActorKind; name: string; det
   if (event.actor_user_id) return { kind: "member", name: label || `Member ${shortID(event.actor_user_id)}`, detail: event.actor_identity?.email, id: event.actor_user_id };
   if (event.actor_api_key_id) return { kind: "api_key", name: label || `API key ${shortID(event.actor_api_key_id)}`, detail: "API key", id: event.actor_api_key_id };
   if (event.actor_session_id) return { kind: "session", name: label || `Session ${shortID(event.actor_session_id)}`, detail: "Agent session", id: event.actor_session_id };
-  if (event.actor_worker_host_id) return { kind: "worker_host", name: `Worker host ${shortID(event.actor_worker_host_id)}`, id: event.actor_worker_host_id };
-  if (event.actor_component) return { kind: "helmr", name: "Helmr", detail: event.actor_component.replaceAll("_", " ") };
+  if ("actor_kind" in event && event.actor_kind === "platform_service") return { kind: "platform_service", name: "Platform service" };
+  if ("actor_worker_host_id" in event && event.actor_worker_host_id) return { kind: "worker_host", name: `Worker host ${shortID(event.actor_worker_host_id)}`, id: event.actor_worker_host_id };
+  if ("actor_component" in event && event.actor_component) return { kind: "helmr", name: "Helmr", detail: event.actor_component.replaceAll("_", " ") };
   return { kind: "unidentified", name: "Unidentified" };
 }
 
@@ -264,11 +264,14 @@ const VERIFIED: Record<string, string> = { verified: "Verified on this request",
 // How the actor signed in, as labelled values.
 export function signInFields(event: AuditEvent): AuditField[] {
   const a = event.authentication;
-  if (a.origin === "internal") return [{ label: "Credential", value: "None; Helmr acted on its own", muted: true }];
+  const restricted = "restricted" in event ? event.restricted : [];
+  if (a.origin === "internal" && !restricted.includes("authentication") && !restricted.includes("transport")) return [{ label: "Credential", value: "None; Helmr acted on its own", muted: true }];
   return [
+    ...(restricted.includes("authentication") ? [{ label: "Credential details", value: "Restricted", muted: true }] : []),
+    ...(restricted.includes("transport") ? [{ label: "From", value: "Restricted", muted: true }] : []),
     ...(a.credential_kind ? [{ label: "Credential", value: CREDENTIALS[a.credential_kind] ?? sentence(a.credential_kind), sub: a.credential_version ? `version ${a.credential_version}` : undefined }] : []),
     ...(a.provider ? [{ label: "Provider", value: a.provider }] : []),
     { label: "Result", value: VERIFIED[a.result] ?? sentence(a.result), tone: a.result === "verified" ? "passed" as const : "failed" as const },
-    ...(event.source_ip ? [{ label: "From", value: event.source_ip, code: true, sub: event.channel ? `over ${event.channel.toUpperCase() === "HTTP" ? "HTTP" : event.channel}` : undefined }] : []),
+    ...("source_ip" in event && event.source_ip ? [{ label: "From", value: event.source_ip, code: true, sub: event.channel ? `over ${event.channel.toUpperCase() === "HTTP" ? "HTTP" : event.channel}` : undefined }] : []),
   ];
 }

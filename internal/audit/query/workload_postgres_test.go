@@ -91,7 +91,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 		}
 		t.Logf("search action=%s rows=%d elapsed_ms=%.3f", action, len(result.Events), float64(time.Since(started).Microseconds())/1000)
 		var plan json.RawMessage
-		if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "", nil, []string{action}, "", nil, "", nil, "", "", 101, nil, nil).Scan(&plan); err != nil {
+		if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "", nil, []string{action}, "", nil, "", nil, "", "", 101, nil, nil, true, audit.PlatformActions()).Scan(&plan); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("query_plan action=%s %s", action, plan)
@@ -102,7 +102,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 		t.Fatal("actor search", len(actorRows.Events), err)
 	}
 	var actorPlan json.RawMessage
-	if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "user", user, []string{}, "", nil, "", nil, "", "", 101, nil, nil).Scan(&actorPlan); err != nil {
+	if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "user", user, []string{}, "", nil, "", nil, "", "", 101, nil, nil, true, audit.PlatformActions()).Scan(&actorPlan); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("actor_query_plan %s", actorPlan)

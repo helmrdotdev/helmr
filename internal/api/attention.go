@@ -46,3 +46,8 @@ type Attention struct {
 	Items  []AttentionItem `json:"items"`
 	Counts AttentionCounts `json:"counts"`
 }
+
+// AttentionCountsResponse omits kinds the caller cannot read and contains no content.
+type AttentionCountsResponse struct {
+	Counts AttentionCounts `json:"counts"`
+}

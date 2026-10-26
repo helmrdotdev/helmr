@@ -3,7 +3,7 @@ import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, For, Match, on, Show, Switch, type JSX } from "solid-js";
 import { AuditEventDetails } from "../features/audit/AuditEventDetails";
 import { canReadAudit } from "../features/audit/auditLink";
-import { listAuditActions, searchAuditEvents, type AuditBefore, type AuditEvent, type AuditFilter } from "../lib/audit";
+import { listAuditActions, searchAuditEvents, searchAdminAuditEvents, type AuditBefore, type AnyAuditEvent as AuditEvent, type AuditFilter } from "../lib/audit";
 import { actorOf, CATEGORY_LABELS, eventSummary, type ActorKind, type AuditNames } from "../lib/auditText";
 import { hasPermission } from "../lib/auth";
 import { errorMessage } from "../lib/error";
@@ -80,7 +80,7 @@ export function AuditEvents(props: { installation?: boolean }) {
   const allowed = createMemo(() => (props.installation ? !!me.data?.admin : canReadAudit(me.data)));
   const can = (permission: string) => hasPermission(me.data, permission);
 
-  const actions = createQuery(() => ({ queryKey: ["audit", "actions"], queryFn: listAuditActions, enabled: allowed(), staleTime: Infinity, retry: false }));
+  const actions = createQuery(() => ({ queryKey: ["audit", "actions", props.installation ?? false], queryFn: () => listAuditActions(props.installation), enabled: allowed(), staleTime: Infinity, retry: false }));
   const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: allowed() && can("members.read"), retry: false }));
   const roles = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() && can("roles.read"), retry: false }));
   const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: allowed() && can("groups.read"), retry: false }));
@@ -123,7 +123,7 @@ export function AuditEvents(props: { installation?: boolean }) {
   const ready = () => allowed() && (!params.category || inCategory().length > 0);
   const events = createInfiniteQuery(() => ({
     queryKey: ["audit", "events", props.installation ?? false, filter()],
-    queryFn: ({ pageParam }) => searchAuditEvents(filter(), pageParam, props.installation),
+    queryFn: async ({ pageParam }): Promise<{ events: AuditEvent[]; next_before?: AuditBefore }> => props.installation ? searchAdminAuditEvents(filter(), pageParam) : searchAuditEvents(filter(), pageParam),
     initialPageParam: undefined as AuditBefore | undefined,
     getNextPageParam: (page) => page.next_before,
     enabled: ready(),
@@ -159,7 +159,8 @@ export function AuditEvents(props: { installation?: boolean }) {
     { value: "kind:user", label: "Any member" },
     { value: "kind:api_key", label: "Any API key" },
     { value: "kind:session", label: "Any agent session" },
-    { value: "kind:component", label: "Helmr" },
+    ...(props.installation ? [{ value: "kind:component", label: "Helmr" }, { value: "kind:worker_host", label: "Worker host" }] : [{ value: "kind:platform_service", label: "Platform service" }]),
+    { value: "kind:unidentified", label: "Unidentified" },
     ...(members.data?.members ?? []).filter((m) => m.status === "active").map((m) => ({ value: m.user_id, label: m.display_name || m.email || m.user_id })),
   ].concat(params.actor && !(members.data?.members ?? []).some((m) => m.user_id === params.actor) ? [{ value: params.actor, label: names().get(params.actor) ?? "Selected actor" }] : []));
   const whoValue = () => (params.actor ? params.actor : params.actor_kind ? `kind:${params.actor_kind}` : "");
@@ -229,7 +230,7 @@ export function AuditEvents(props: { installation?: boolean }) {
                               memberHref={memberLink}
                               rolesWith={rolesWith}
                               onSelectOperation={() => { refocus = true; setParams({ ...CLEAR_PREDICATES, operation: event.operation_id, at: event.recorded_at, focus: undefined }); }}
-                              onSelectCause={() => { refocus = true; setParams({ ...CLEAR_PREDICATES, event: event.cause_event_id ?? undefined, focus: event.cause_event_id ?? undefined, at: event.recorded_at, operation: undefined }); }}
+                              onSelectCause={() => { refocus = true; setParams({ ...CLEAR_PREDICATES, event: ("cause_event_id" in event ? event.cause_event_id ?? undefined : undefined), focus: ("cause_event_id" in event ? event.cause_event_id ?? undefined : undefined), at: event.recorded_at, operation: undefined }); }}
                               link={link(event)}
                             />
                           </td>

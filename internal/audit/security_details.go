@@ -58,7 +58,6 @@ type ComputerControlDetails struct {
 func (ComputerControlDetails) auditDetails() {}
 
 type SessionControlDetails struct {
-	Kind      string    `json:"kind"`
 	RequestID uuid.UUID `json:"request_id"`
 	HoldID    uuid.UUID `json:"hold_id,omitzero"`
 }
@@ -76,6 +75,7 @@ type AuthenticationDetails struct {
 func (AuthenticationDetails) auditDetails() {}
 
 type SearchDetails struct {
+	ReadModel              string      `json:"read_model,omitempty"`
 	ActorKind              string      `json:"actor_kind,omitempty"`
 	TargetKind             string      `json:"target_kind,omitempty"`
 	TargetUserID           uuid.UUID   `json:"target_user_id,omitzero"`
@@ -147,3 +147,24 @@ type RegionDetails struct {
 }
 
 func (RegionDetails) auditDetails() {}
+
+// TemplateRefreshDetails identifies the build selected for this accepted request.
+type TemplateRefreshDetails struct {
+	ImageBuildID uuid.UUID `json:"image_build_id"`
+}
+
+func (TemplateRefreshDetails) auditDetails() {}
+
+type AuthorityChangedDetails struct {
+	HoldID     uuid.UUID `json:"hold_id"`
+	Generation int64     `json:"generation,omitempty"`
+}
+
+func (AuthorityChangedDetails) auditDetails() {}
+
+type CheckpointDetails struct {
+	CheckpointID uuid.UUID `json:"checkpoint_id"`
+	Generation   int64     `json:"generation,omitempty"`
+}
+
+func (CheckpointDetails) auditDetails() {}

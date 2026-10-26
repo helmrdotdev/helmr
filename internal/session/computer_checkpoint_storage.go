@@ -135,7 +135,7 @@ func (p *CheckpointPublisher) CompleteCheckpoint(ctx context.Context, ref Checkp
 		if err := computer.MarkCheckpointReady(ctx, p.auditPolicy, tx, ref.EnvironmentID, manifest.CheckpointID); err != nil {
 			return err
 		}
-		return audit.Append(ctx, tx, p.auditPolicy, audit.Event{Evidence: audit.AssignedWorker(ref.Host.HostID, ref.Host.HostClaimVersion, "computer", manifest.ComputerID, manifest.LeaseEpoch), EnvironmentID: ref.EnvironmentID, ComputerID: manifest.ComputerID, TargetKind: "computer", TargetID: manifest.ComputerID, Action: "computer.checkpoint_published", Details: audit.LifecycleDetails{RequestID: manifest.CheckpointID, Generation: manifest.LeaseEpoch}})
+		return audit.Append(ctx, tx, p.auditPolicy, audit.Event{Evidence: audit.AssignedWorker(ref.Host.HostID, ref.Host.HostClaimVersion, "computer", manifest.ComputerID, manifest.LeaseEpoch), EnvironmentID: ref.EnvironmentID, ComputerID: manifest.ComputerID, TargetKind: "computer", TargetID: manifest.ComputerID, Action: "computer.checkpoint_published", Details: audit.CheckpointDetails{CheckpointID: manifest.CheckpointID, Generation: manifest.LeaseEpoch}})
 	}))
 }
 

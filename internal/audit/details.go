@@ -19,17 +19,8 @@ type OwnershipChangedDetails struct {
 
 func (OwnershipChangedDetails) auditDetails() {}
 
-type RoleChangedDetails struct {
-	OldRole string `json:"old_role"`
-	NewRole string `json:"new_role"`
-}
-
 type RoleGrantedDetails struct {
 	NewRole string `json:"new_role"`
-}
-
-type RoleRemovedDetails struct {
-	OldRole string `json:"old_role"`
 }
 
 type InvitationCreatedDetails struct {
@@ -72,9 +63,7 @@ type RetentionChangedDetails struct {
 	NewRetentionSeconds *int64 `json:"new_retention_seconds"`
 }
 
-func (RoleChangedDetails) auditDetails()       {}
 func (RoleGrantedDetails) auditDetails()       {}
-func (RoleRemovedDetails) auditDetails()       {}
 func (InvitationCreatedDetails) auditDetails() {}
 func (APIKeyIssuedDetails) auditDetails()      {}
 func (PermissionsDetails) auditDetails()       {}
@@ -141,13 +130,13 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	}
 	valid := false
 	switch action {
-	case "identity.sign_in", "identity.session_issued", "identity.session_revoked", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested":
+	case "identity.sign_in", "identity.session_revoked", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested":
 		d, ok := details.(AuthenticationDetails)
 		valid = ok && d.Method != "" && len(d.Method) <= 64 && len(d.Provider) <= 128 && len(d.Subject) <= 512
 	case "audit.searched":
 		d, ok := details.(SearchDetails)
-		valid = ok && !d.From.IsZero() && d.To.After(d.From) && d.ResultCount >= 0 && d.ResultCount <= 500
-	case "audit.retention_configured":
+		valid = ok && !d.From.IsZero() && d.To.After(d.From) && d.ResultCount >= 0 && d.ResultCount <= 500 && (d.ReadModel == "" || d.ReadModel == "organization" || d.ReadModel == "installation")
+	case "audit.retention_observed":
 		d, ok := details.(RetentionObservedDetails)
 		valid = ok && (auditpolicy.Policy{RetentionSeconds: d.RetentionSeconds}).Validate() == nil
 	case "audit.purge_completed":
@@ -171,10 +160,19 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "computer.control_requested", "computer.control_settled":
 		d, ok := details.(ComputerControlDetails)
 		valid = ok && d.RequestID != (ComputerControlDetails{}).RequestID && (d.Kind == "wake" || d.Kind == "hibernate")
-	case "session.control_requested":
+	case "session.close_requested", "session.cancel_requested", "session.interrupt_requested", "session.resume_requested", "turn.interrupt_requested":
 		d, ok := details.(SessionControlDetails)
-		valid = ok && d.RequestID != (SessionControlDetails{}).RequestID && (d.Kind == "close" || d.Kind == "cancel" || d.Kind == "interrupt" || d.Kind == "turn_interrupt" || d.Kind == "resume")
-	case "trigger.content_read", "computer.restore_completed", "computer.checkpoint_published", "session.delivery_check_requested", "session.delivery_abandoned", "input.requested", "message.delivered", "message.rejected", "turn.interrupted", "computer.created", "command.cancel_requested", "message.admitted", "worker_group.updated", "template.refreshed", "session.created", "session.admitted", "session.closed", "session.cancelled", "session.resumed", "session.interrupted", "session.authority_changed", "session.content_read", "turn.admitted", "turn.completed", "turn.cancelled", "input.answered", "input.rejected", "command.admitted", "command.completed", "command.cancelled", "command.output_read":
+		valid = ok && d.RequestID != (SessionControlDetails{}).RequestID
+	case "template.refresh_requested":
+		d, ok := details.(TemplateRefreshDetails)
+		valid = ok && d.ImageBuildID != (TemplateRefreshDetails{}).ImageBuildID
+	case "session.authority_changed":
+		d, ok := details.(AuthorityChangedDetails)
+		valid = ok && d.HoldID != (AuthorityChangedDetails{}).HoldID && d.Generation >= 0
+	case "computer.restore_completed", "computer.checkpoint_published":
+		d, ok := details.(CheckpointDetails)
+		valid = ok && d.CheckpointID != (CheckpointDetails{}).CheckpointID && d.Generation >= 0
+	case "trigger.content_read", "session.delivery_check_requested", "session.delivery_abandoned", "input.requested", "message.delivered", "message.rejected", "turn.interrupted", "computer.created", "command.cancel_requested", "message.admitted", "worker_group.updated", "session.created", "session.closed", "session.cancelled", "session.content_read", "turn.admitted", "turn.completed", "turn.cancelled", "input.answered", "input.rejected", "command.admitted", "command.completed", "command.cancelled", "command.output_read":
 		d, ok := details.(LifecycleDetails)
 		valid = ok && d.Sequence >= 0 && d.Generation >= 0
 
@@ -192,9 +190,6 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role.standard_created", "role_grant.created", "role_grant.updated", "role_grant.deleted":
 		d, ok := details.(AccessChangeDetails)
 		valid = ok && (d.Before != nil || d.After != nil)
-	case "member.role_changed":
-		d, ok := details.(RoleChangedDetails)
-		valid = ok && d.OldRole != "" && d.NewRole != ""
 	case "member.granted", "member.removed", "invitation.accepted":
 		d, ok := details.(MembershipDetails)
 		valid = ok && d.MembershipID != ""
@@ -222,7 +217,7 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "project.retention_changed":
 		d, ok := details.(RetentionChangedDetails)
 		valid = ok && validRetention(d.OldRetentionSeconds) && validRetention(d.NewRetentionSeconds)
-	default:
+	case "organization.created", "api_key.rotated", "api_key.revoked", "secret.created", "secret.rotated", "secret.revoked", "project.created", "project.updated", "environment.created", "environment.updated", "deployment.published", "deployment.promoted", "slack_app.credentials_configured", "slack_installation.authorization_lost", "slack_user.linked", "slack_user.unlinked", "worker_group.created", "worker_group.token_rotated", "worker_group.active", "worker_group.paused", "worker_group.draining", "worker_group.disabled", "worker_pool.created", "worker_pool.primary_selected", "worker_pool.resource_policy_updated", "worker_pool.draining", "worker_pool.disabled", "worker_host.draining", "worker_host.lost", "worker_host.provider_absence_confirmed", "worker_scale_in.completed", "runtime.operation_refused", "turn.failed", "command.failed", "mcp.refused", "computer.deleted":
 		// Actions without additional facts persist an object, never JSON null.
 		if details == nil {
 			return []byte("{}"), nil

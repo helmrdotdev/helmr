@@ -28,7 +28,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	every := int64(1101)
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Refresh = &definition.ComputerRefresh{EveryMs: every}
-	first, err := register(t.Context(), f.pool, f.request)
+	first, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 	f.request.bundle.bundle.Program.Artifact.Digest = artifacttest.Digest("second program")
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Refresh = nil
 	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.Triggers = map[string]definition.CronTrigger{}
-	second, err := register(t.Context(), f.pool, f.request)
+	second, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestPromoteCreatesHalfOpenIntervalsAndRecomputesRefresh(t *testing.T) {
 func TestTriggerCutoverOwnsExactBoundary(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.Triggers = map[string]definition.CronTrigger{"minute": {Cron: "* * * * *", Timezone: "UTC", Input: []byte(`[]`)}}
-	r, err := register(t.Context(), f.pool, f.request)
+	r, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestTriggerCutoverOwnsExactBoundary(t *testing.T) {
 
 func TestPromoteRollsBackInvalidTrigger(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
-	r, err := register(t.Context(), f.pool, f.request)
+	r, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestPromoteRollsBackInvalidTrigger(t *testing.T) {
 
 func TestDeploymentReadsUseNewDefinitionsAndScope(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
-	r, err := register(t.Context(), f.pool, f.request)
+	r, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestPromotePreservesTextInputAndNULTrigger(t *testing.T) {
 		trigger.Input = []byte(`[{"type":"text","text":"a\u0000b"}]`)
 		m.Triggers[key] = trigger
 	}
-	r, err := register(t.Context(), f.pool, f.request)
+	r, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,14 +204,14 @@ func TestTriggerActivationsFollowPromotionsAndShareOccurrenceIdentity(t *testing
 	f := newDeploymentFinalizePostgresFixture(t)
 	minute := map[string]definition.CronTrigger{"minute": {Cron: "* * * * *", Timezone: "UTC", Input: []byte(`[]`)}}
 	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.Triggers = minute
-	first, err := register(t.Context(), f.pool, f.request)
+	first, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.request.idempotencyKey = "second"
 	f.request.bundle.root.Digest = artifacttest.Digest("second bundle")
 	f.request.bundle.bundle.Program.Artifact.Digest = artifacttest.Digest("second program")
-	second, err := register(t.Context(), f.pool, f.request)
+	second, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestTriggerActivationsFollowPromotionsAndShareOccurrenceIdentity(t *testing
 
 func TestPromotionAuditGrantActorAndRollback(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
-	record, err := register(t.Context(), f.pool, f.request)
+	record, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +293,7 @@ func TestPromotionAuditGrantActorAndRollback(t *testing.T) {
 
 func TestPromoteRejectsStructuredContractForConnectedFront(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
-	first, err := register(t.Context(), f.pool, f.request)
+	first, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestPromoteRejectsStructuredContractForConnectedFront(t *testing.T) {
 	f.request.bundle.root.Digest = artifacttest.Digest("structured-bundle")
 	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.InputKind = "json"
 	f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.InputSchema = &definition.InputSchemaDiscovery{Status: "unavailable", Reason: "missing_converter"}
-	next, err := register(t.Context(), f.pool, f.request)
+	next, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}

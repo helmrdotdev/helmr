@@ -13,7 +13,7 @@ import (
 
 func TestPromotionPreparesBeforeChangingCurrent(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
-	prior, err := register(t.Context(), f.pool, f.request)
+	prior, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestPromotionPreparesBeforeChangingCurrent(t *testing.T) {
 	f.request.bundle.bundle.Program.Artifact.Digest = artifacttest.Digest("prepared program")
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Prepare = true
 	f.request.bundle.bundle.Preparations = artifacttest.PreparationOutputs(t, f.request.bundle.bundle.Program)
-	candidate, err := register(t.Context(), f.pool, f.request)
+	candidate, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}

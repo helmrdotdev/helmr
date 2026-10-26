@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AuditEvent } from "./audit";
+import type { AdminAuditEvent as AuditEvent } from "./audit";
 import { actionLabel, actorOf, checkFields, eventSummary, scopeText, signInFields, targetLabel } from "./auditText";
 
 const event = (overrides: Partial<AuditEvent>): AuditEvent => ({

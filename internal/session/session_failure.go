@@ -29,7 +29,7 @@ func recordSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, t
 	if err != nil {
 		return err
 	}
-	if err := auditActorFact(ctx, tx, auditPolicy, actor, audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, Action: "session.authority_changed", TargetKind: "session", TargetID: e.SessionID, Details: audit.LifecycleDetails{Generation: e.ProcessEpoch, RequestID: hold}}); err != nil {
+	if err := auditActorFact(ctx, tx, auditPolicy, actor, audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, Action: "session.authority_changed", TargetKind: "session", TargetID: e.SessionID, Details: audit.AuthorityChangedDetails{Generation: e.ProcessEpoch, HoldID: hold}}); err != nil {
 		return err
 	}
 	return eventData(ctx, tx, e.EnvironmentID, e.SessionID, uuid.Nil(), "session.process_failed", data)

@@ -88,3 +88,40 @@ func attentionItem(kind string, item session.AttentionItem) api.AttentionItem {
 	sessionID := item.SessionID.String()
 	return api.AttentionItem{Kind: kind, ID: item.ID.String(), At: item.At.UTC(), Agent: item.Agent, SessionID: &sessionID, TurnID: agentOptionalID(item.TurnID)}
 }
+
+func (s *Server) countAttentionHTTP(w http.ResponseWriter, r *http.Request) {
+	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
+	if err != nil {
+		s.writeAgentHTTPError(w, r, err)
+		return
+	}
+	waiting, err := session.CountAttention(r.Context(), s.tx, caller, env)
+	if err != nil && !errors.Is(err, session.ErrDenied) {
+		s.writeAgentHTTPError(w, r, err)
+		return
+	}
+	runsAllowed := err == nil
+	response := api.AttentionCountsResponse{}
+	if runsAllowed {
+		response.Counts.Question = &waiting.QuestionCount
+		response.Counts.Hold = &waiting.HoldCount
+		response.Counts.FailedTurn = &waiting.FailedTurnCount
+	}
+	principal := principalFromContext(r.Context())
+	if s.slackConfig != nil && principal.Kind == auth.PrincipalKindSession {
+		count, err := slack.CountReauthorizationRequired(r.Context(), s.tx, principal.OrgID, principal.UserID, env)
+		switch {
+		case slack.IsInstallationDenied(err):
+		case err != nil:
+			s.writeSlackError(w, r, err)
+			return
+		default:
+			response.Counts.SlackReauthorization = &count
+		}
+	}
+	if !runsAllowed && response.Counts.SlackReauthorization == nil {
+		s.writeAgentHTTPError(w, r, session.ErrDenied)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}

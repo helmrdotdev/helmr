@@ -94,7 +94,7 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 	if err != nil {
 		return err
 	}
-	if err := e.Evidence.validate(); err != nil {
+	if err := e.Evidence.Validate(); err != nil {
 		return err
 	}
 	if (e.Authentication.Result == "absent" || e.Authentication.Result == "failed") && e.Outcome != "denied" && e.Outcome != "failed" {
@@ -130,6 +130,12 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 			return errors.New("audit scope mismatch")
 		}
 		e.OrgID = org
+	}
+	if d.Scope == InstallationScope && e.OrgID != uuid.Nil() {
+		return errors.New("platform audit requires installation custody")
+	}
+	if d.Scope == OrganizationScope && e.OrgID == uuid.Nil() && e.Outcome != "denied" && e.Outcome != "failed" && e.Outcome != "unknown" {
+		return errors.New("organization audit requires organization custody")
 	}
 	identityJSON, err := boundedJSON(identity, 4096)
 	if err != nil {

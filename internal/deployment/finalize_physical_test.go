@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"os"
 	"os/exec"
@@ -65,7 +66,7 @@ func TestFinalizeAdmitsPhysicalProgramBeforeRegisteringDefinitions(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = finalize.Finalize(t.Context(), f.pool, request, func(string) error { return nil }); err == nil {
+	if _, err = finalize.Finalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, request, func(string) error { return nil }); err == nil {
 		t.Fatal("unbound producer metadata registered")
 	}
 	var count int
@@ -77,7 +78,7 @@ func TestFinalizeAdmitsPhysicalProgramBeforeRegisteringDefinitions(t *testing.T)
 		t.Fatal(err)
 	}
 	verified := 0
-	result, err := finalize.Finalize(t.Context(), f.pool, request, func(string) error { verified++; return nil })
+	result, err := finalize.Finalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, request, func(string) error { verified++; return nil })
 	if err != nil || verified != 2 {
 		t.Fatalf("finalize: %v verified=%d", err, verified)
 	}

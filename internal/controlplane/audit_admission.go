@@ -43,12 +43,26 @@ func newAuditAdmission() *auditAdmission {
 	return &auditAdmission{global: rate.NewLimiter(400, 800), containment: rate.NewLimiter(10, 20), active: make(chan struct{}, 16), containmentActive: make(chan struct{}, 4), principals: make(map[string]auditPrincipalBucket), containmentPrincipals: make(map[string]auditPrincipalBucket), worker: rate.NewLimiter(20, 40), workerActive: make(chan struct{}, 8)}
 }
 func (s *Server) containmentRequest(r *http.Request) bool {
-	route, _, ok := s.requestAuditRoute(r)
+	_, operation, ok := s.requestAuditRoute(r)
 	if !ok {
 		return false
 	}
-	switch route.action {
-	case "api_key.revoked", "secret.revoked", "identity.session_revoked", "command.cancelled", "session.cancelled", "session.interrupted", "worker_group.disabled", "worker_group.paused", "worker_pool.disabled":
+	switch operation {
+	case "DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}",
+		"POST /admin/api/v1/worker-groups/{groupID}/disable",
+		"POST /admin/api/v1/worker-groups/{groupID}/pause",
+		"POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/disable",
+		"POST /api/auth/logout",
+		"POST /api/projects/{project}/environments/{environment}/commands/{commandID}/cancel",
+		"POST /api/projects/{project}/environments/{environment}/secrets/{secret}/revoke",
+		"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/cancel",
+		"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/interrupt",
+		"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/interrupt",
+		"POST /v1/commands/{commandID}/cancel",
+		"POST /v1/secrets/{secret}/revoke",
+		"POST /v1/sessions/{sessionID}/cancel",
+		"POST /v1/sessions/{sessionID}/interrupt",
+		"POST /v1/sessions/{sessionID}/turns/{turnID}/interrupt":
 		return true
 	}
 	return false

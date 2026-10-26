@@ -36,11 +36,26 @@ func (s *Server) searchAuditEvents(w http.ResponseWriter, r *http.Request, insta
 		return
 	}
 	principal := principalFromContext(r.Context())
-	var result auditquery.SearchResult
+	var response any
 	if installation {
+		var result auditquery.InstallationSearchResult
 		result, err = auditquery.SearchInstallation(r.Context(), s.tx, s.auditPolicy, principal, f)
+		page := api.AdminAuditEventsResponse{Events: make([]api.AdminAuditEvent, 0, len(result.Events))}
+		for _, record := range result.Events {
+			page.Events = append(page.Events, adminAuditHTTPRecord(record))
+		}
+		if result.NextBefore != nil {
+			page.NextBefore = &api.AuditBefore{RecordedAt: result.NextBefore.RecordedAt, ID: result.NextBefore.ID}
+		}
+		response = page
 	} else {
+		var result auditquery.SearchResult
 		result, err = auditquery.Search(r.Context(), s.tx, s.auditPolicy, principal, f)
+		page := api.AuditEventsResponse{Events: result.Events}
+		if result.NextBefore != nil {
+			page.NextBefore = &api.AuditBefore{RecordedAt: result.NextBefore.RecordedAt, ID: result.NextBefore.ID}
+		}
+		response = page
 	}
 	if errors.Is(err, auditquery.ErrSearchDenied) {
 		s.writeOperationError(w, r, forbidden(err))
@@ -54,21 +69,25 @@ func (s *Server) searchAuditEvents(w http.ResponseWriter, r *http.Request, insta
 		s.writeOperationError(w, r, unavailable(errors.New("audit search is unavailable")))
 		return
 	}
-	response := api.AuditEventsResponse{Events: make([]api.AuditEvent, 0, len(result.Events))}
-	for _, record := range result.Events {
-		response.Events = append(response.Events, auditHTTPRecord(record))
-	}
-	if result.NextBefore != nil {
-		response.NextBefore = &api.AuditBefore{RecordedAt: result.NextBefore.RecordedAt, ID: result.NextBefore.ID}
-	}
 	writeJSON(w, http.StatusOK, response)
 }
 
 // listAuditActions returns the actions the audit trail can record, so filters
 // offer every one under its category. It is static metadata, not audit data.
 func (s *Server) listAuditActions(w http.ResponseWriter, _ *http.Request) {
+	s.auditActions(w, false)
+}
+
+func (s *Server) adminListAuditActions(w http.ResponseWriter, _ *http.Request) {
+	s.auditActions(w, true)
+}
+
+func (s *Server) auditActions(w http.ResponseWriter, installation bool) {
 	response := api.AuditActionsResponse{Actions: []api.AuditAction{}}
 	for _, d := range audit.Catalog() {
+		if !installation && d.Audience != audit.OrganizationAudience {
+			continue
+		}
 		response.Actions = append(response.Actions, api.AuditAction{Action: d.Action, TargetKind: d.TargetKind, Outcomes: d.Outcomes, Category: audit.Category(d.Action)})
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -116,8 +135,8 @@ func parseAuditFilter(r *http.Request) (auditquery.SearchFilter, error) {
 	return f, nil
 }
 
-func auditHTTPRecord(r auditquery.Record) api.AuditEvent {
-	record := api.AuditEvent{
+func adminAuditHTTPRecord(r auditquery.Record) api.AdminAuditEvent {
+	record := api.AdminAuditEvent{
 		ID:               r.ID,
 		OrgID:            r.OrgID,
 		ProjectID:        r.ProjectID,

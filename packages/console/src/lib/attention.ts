@@ -24,9 +24,9 @@ export type AttentionItem = {
 // Every waiting item of each kind. `slack_reauthorization` is present only for
 // people who manage Slack connections.
 export type AttentionCounts = {
-  question: number;
-  hold: number;
-  failed_turn: number;
+  question?: number;
+  hold?: number;
+  failed_turn?: number;
   slack_reauthorization?: number;
 };
 
@@ -42,15 +42,28 @@ export function getAttention(scope: ScopeIDs): Promise<Attention> {
 
 // The number of waiting items across the kinds this person sees.
 export function attentionTotal(counts: AttentionCounts): number {
-  return counts.question + counts.hold + counts.failed_turn + (counts.slack_reauthorization ?? 0);
+  return (counts.question ?? 0) + (counts.hold ?? 0) + (counts.failed_turn ?? 0) + (counts.slack_reauthorization ?? 0);
 }
 
-// The tab's waiting work. The Overview and the header badge share this query.
+// Content is fetched only by surfaces that display the waiting items.
 export function useAttention() {
   const scope = useScopeIDs();
   return createQuery(() => ({
     queryKey: ["attention", scope().projectID, scope().environmentID],
     queryFn: () => getAttention(scope()),
+    enabled: !!scope().projectID && !!scope().environmentID,
+    retry: false,
+    refetchInterval: 10_000,
+  }));
+}
+
+export function useAttentionCounts() {
+  const scope = useScopeIDs();
+  return createQuery(() => ({
+    queryKey: ["attention-counts", scope().projectID, scope().environmentID],
+    queryFn: () => request<{ counts: AttentionCounts }>(
+      `/api/projects/${encodeURIComponent(scope().projectID)}/environments/${encodeURIComponent(scope().environmentID)}/attention/counts`,
+    ),
     enabled: !!scope().projectID && !!scope().environmentID,
     retry: false,
     refetchInterval: 10_000,

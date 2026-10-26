@@ -16,7 +16,7 @@ func TestTemplateRefreshCoalescesAndPinsReceiptAcrossPromotion(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Prepare = true
 	f.request.bundle.bundle.Preparations = artifacttest.PreparationOutputs(t, f.request.bundle.bundle.Program)
-	first, err := register(t.Context(), f.pool, f.request)
+	first, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,11 +47,15 @@ func TestTemplateRefreshCoalescesAndPinsReceiptAcrossPromotion(t *testing.T) {
 			t.Fatalf("requests did not coalesce: %+v", builds)
 		}
 	}
+	var accepted int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='template.refresh_requested' AND outcome='accepted' AND environment_id=$1 AND details->>'image_build_id'=$2 AND NOT(details ? 'request_id')`, env, builds[0].ImageBuildID.String()).Scan(&accepted); err != nil || accepted != 2 {
+		t.Fatalf("fresh requests/replay capture: %d %v", accepted, err)
+	}
 	original := builds[0]
 	req := f.request
 	req.idempotencyKey = "second"
 	req.bundle.root.Digest = artifacttest.Digest("second bundle")
-	second, err := register(t.Context(), f.pool, req)
+	second, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +81,9 @@ func TestTemplateRefreshCoalescesAndPinsReceiptAcrossPromotion(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds WHERE environment_id=$1`, env).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("build count %d: %v", count, err)
 	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='template.refresh_requested' AND environment_id=$1`, env).Scan(&accepted); err != nil || accepted != 3 {
+		t.Fatalf("replay added a request fact: %d %v", accepted, err)
+	}
 	wrong := uuid.NewV7()
 	if _, err := ReadTemplateBuild(t.Context(), f.pool, f.principal(), f.scope(), "repo", &first.ID, wrong); err == nil {
 		t.Fatal("foreign build accepted")
@@ -86,7 +93,7 @@ func TestTemplateRefreshCoalescesAndPinsReceiptAcrossPromotion(t *testing.T) {
 func TestTemplateRefreshSerializesWithPromotion(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	// The candidate has a seed-only Template, so promotion needs no preparation.
-	candidate, err := register(t.Context(), f.pool, f.request)
+	candidate, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +101,7 @@ func TestTemplateRefreshSerializesWithPromotion(t *testing.T) {
 	f.request.bundle.root.Digest = artifacttest.Digest("prepared current")
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Prepare = true
 	f.request.bundle.bundle.Preparations = artifacttest.PreparationOutputs(t, f.request.bundle.bundle.Program)
-	current, err := register(t.Context(), f.pool, f.request)
+	current, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}

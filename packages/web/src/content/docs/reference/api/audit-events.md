@@ -25,8 +25,8 @@ cannot reconstruct every change to effective access. Investigating Role, group a
 membership changes requires Organization audit access. Ownership, installation administration, directory access and
 execution-content permissions do not implicitly grant tenant audit access.
 Environment API keys require an explicit grant and cannot read organization or
-installation events. Audit metadata can disclose scoped account identity, source
-IP and resource existence without granting access to their execution content.
+installation events. Audit metadata can disclose scoped account identity and
+resource existence without granting access to execution content.
 
 | Caller | Endpoint |
 | --- | --- |
@@ -58,8 +58,10 @@ user/workspace/Slack-user triple rather than an invented target UUID. An install
 omitting it selects installation facts. Tenant scope comes from authentication.
 
 A login session can read the recordable actions, with each action's target kind,
-outcomes and category, from `GET /api/audit-events/actions`. The list contains no
-audit data.
+outcomes and category, from `GET /api/audit-events/actions`. This list contains
+organization actions only, including when the caller is an installation admin.
+Installation admins use `GET /admin/api/v1/audit-events/actions` for the full catalog.
+Both lists are metadata and contain no audit data.
 
 The response contains `events` and, when another bounded page exists, `next_before`
 with `recorded_at` and `id`. Send these as `before_recorded_at` and `before_id`,
@@ -85,30 +87,87 @@ persistent audit inventory proving the former organization's existence.
 
 ## Identity and authority fields
 
-An event references at most one actor: `actor_user_id`, `actor_api_key_id`,
-`actor_session_id`, `actor_worker_host_id`, or `actor_component`. No actor is
-established for failed or absent authentication. `actor_kind` is a search filter
-with values `user`, `api_key`, `session`, `worker_host`, `component`, or `unidentified`;
-it is derived from these references. Account labels are capture-time snapshots.
+The ordinary endpoints return a customer view, including for a caller who is also
+an installation administrator. The separately authorized Admin endpoint returns
+captured evidence. Both refer to the same event IDs; projection never rewrites the
+stored actor or evidence. Cloud and self-hosted installations use this same role
+boundary. Organization Owners and Auditors are not installation administrators.
 
-`authentication` records `origin` (`request` or `internal`), `result`, and actual
-credential/provider information. `authorization` separately records `decision`
-(`allowed`, `denied`, or `not_evaluated`) and typed `checks`. A verified credential
-can accompany a denied permission. Internal execution can have no authorization
-check. Installation administration records the same user ID with the observed
-`admin` attribute; it does not create a separate administrator actor or Role.
+Customer events have `actor_kind`: `user`, `api_key`, `session`,
+`platform_service`, or `unidentified`. They retain at most one of `actor_user_id`,
+`actor_api_key_id`, and `actor_session_id`. Host and internal-component actors appear
+as `platform_service`, without a platform identifier. A Session remains the actor
+when it performed an operation using a Worker credential. Account labels are
+capture-time snapshots; human operators retain their user ID, name and email.
 
-Permission checks identify the checked subject, permission and scope. A passed
-check includes its granting assignment and Role revisions; a failed check gives
-the observed reason without inventing a grant. Runtime checks identify the
-Session binding or Host assignment. Credential refresh failures retain the
-admission authentication and describe the later mismatch. These are observations
-of the owner's checks, not an executable policy document.
+`authentication` records `origin` (`request` or `internal`), `result`, and the
+credential/provider information permitted in that view. `authorization` separately
+records `decision` (`allowed`, `denied`, or `not_evaluated`) and typed `checks`.
+A verified credential can accompany a denied permission. Internal execution can
+have no authorization check. The customer view sets
+`authorization.installation_authority` when captured successful checks establish
+that the human used installation authority. Current administrator status and a
+failed administrator check do not establish that fact.
+
+Permission checks preserve the subject, permission, visible scope, and granting
+assignment and Role revisions, or the failure reason. Customer responses withhold
+machine credentials, Host/Pool/Group identifiers, runtime generations/process
+epochs, internal authorization checks and unqualified peer IP addresses. They also
+withhold causality links without evidence that the reader can see their scope.
+`restricted` names the sections containing withheld evidence; it does not mean
+that authentication or authorization was not evaluated. Per-event retention and
+expiry remain visible. The Admin view retains raw captured evidence, including
+`actor_worker_host_id`, `actor_component`, source IP and runtime checks.
+
+Customer `details` and authorization checks use closed, action-specific types.
+An eligible record that cannot be safely projected makes the whole page unavailable;
+no partial page or raw JSON fallback is returned. Retained facts with unsupported
+action names or prior payload shapes remain unchanged and available to Admin
+readers until expiry. Platform-only operations, such
+as Worker supply management and audit maintenance, are excluded before pagination.
+Customer search rejects raw `worker_host`/`component` actor filters and platform
+resource/action filters. `actor_id` selects only visible user, API-key or Session
+identities, even without `actor_kind`; it cannot accompany `platform_service` or
+`unidentified`. Admin actor filters retain the raw vocabulary.
+
+Admin access to live tenant history remains a tenant-visible human access fact.
+Its customer details keep the selected time range and visible scope, while
+withholding internal filters and result counts. Search receipts retain which read
+model performed the selection; historical receipts without that provenance also
+withhold filters/counts that could reveal hidden platform activity.
 
 `causality` identifies an initiator or source independently. A Session's creator
 is not the actor of its later runtime operations. Permission mutations describe
 the changed resource in target/details; their authorization records which
 existing authority allowed the mutation.
+
+## Recorded operations and attention reads
+
+Project and Environment creation/update and newly published Deployments record
+facts in the same transaction as the mutation. Default Environments created with
+a Project are included. Reusing an existing Deployment does not create another
+publication fact. Session creation has one `session.created` fact; each admitted
+Turn has `turn.admitted`. Successful login records `identity.sign_in` once in each
+applicable installation/organization custody scope.
+
+`session.close_requested`, `session.cancel_requested`,
+`session.interrupt_requested`, `session.resume_requested`, and
+`turn.interrupt_requested` record accepted control requests. Terminal events
+record their actual effects separately. `template.refresh_requested` likewise
+records acceptance, including a new request that joins an existing build.
+`audit.retention_observed` records a process's observed retention policy.
+Checkpoint, hold and image-build references use `checkpoint_id`, `hold_id` and
+`image_build_id`; `request_id` is reserved for actual requests.
+
+`GET /api/projects/{projectID}/environments/{envID}/attention/counts` returns
+complete authorized counts without execution content. Question/hold/failed-Turn
+counts are omitted when Session reads are unauthorized; Slack reauthorization
+counts require their own permission. No authorized category returns forbidden.
+This metadata read does not create audit facts. The Console badge polls counts
+every ten seconds; Overview requests the full attention response while displayed.
+A full attention response records content disclosure for the distinct union of
+Sessions represented by questions, holds and failed Turns. A capture failure
+withholds that content. Counts and content are separate snapshots.
 
 ## Retention and deployment prerequisites
 

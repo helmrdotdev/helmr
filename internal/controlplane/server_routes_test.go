@@ -67,6 +67,7 @@ DELETE /api/roles/{id}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
 DELETE /v1/computers/{computerID}
 GET /admin/api/v1/audit-events
+GET /admin/api/v1/audit-events/actions
 GET /admin/api/v1/regions
 GET /admin/api/v1/regions/{regionID}
 GET /admin/api/v1/worker-groups
@@ -95,6 +96,7 @@ GET /api/projects/{project}/environments/{environment}/agents/{agent}
 GET /api/projects/{project}/environments/{environment}/agents/{agent}/status
 GET /api/projects/{project}/environments/{environment}/api-keys
 GET /api/projects/{project}/environments/{environment}/attention
+GET /api/projects/{project}/environments/{environment}/attention/counts
 GET /api/projects/{project}/environments/{environment}/commands/{commandID}
 GET /api/projects/{project}/environments/{environment}/commands/{commandID}/logs
 GET /api/projects/{project}/environments/{environment}/computers

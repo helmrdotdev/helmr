@@ -3,6 +3,7 @@ package deployment
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"sync"
 	"testing"
@@ -67,7 +68,7 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 			if i == 2 {
 				req.idempotencyKey = "different-key"
 			}
-			records[i], errs[i] = register(t.Context(), f.pool, req)
+			records[i], errs[i] = register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, req)
 		}()
 	}
 	wg.Wait()
@@ -87,7 +88,7 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 	}
 	req := f.request
 	req.bundle.root.Digest = artifacttest.Digest("different bundle")
-	if _, err := register(t.Context(), f.pool, req); !errors.Is(err, ErrFinalizationConflict) {
+	if _, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, req); !errors.Is(err, ErrFinalizationConflict) {
 		t.Fatalf("conflicting key: %v", err)
 	}
 }
@@ -96,7 +97,7 @@ func TestRegisterPostgresRollsBackDefinitionsObjectsAndReceipt(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	// A well-formed but foreign Secret fails inside the registration transaction.
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "MISSING_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
-	if _, err := register(t.Context(), f.pool, f.request); err == nil {
+	if _, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request); err == nil {
 		t.Fatal("foreign Secret accepted")
 	}
 	for _, table := range []string{"deployments", "deployment_events", "idempotency_receipts", "image_specs", "template_definitions", "agents", "agent_definitions", "deployment_objects", "cas_objects", "cas_blobs"} {
@@ -106,7 +107,7 @@ func TestRegisterPostgresRollsBackDefinitionsObjectsAndReceipt(t *testing.T) {
 		}
 	}
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{}
-	if _, err := register(t.Context(), f.pool, f.request); err != nil {
+	if _, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -121,7 +122,7 @@ func TestRegisterPostgresRechecksScope(t *testing.T) {
 			case "project":
 				f.request.projectID = pgvalue.UUID(uuid.NewV7())
 			}
-			if _, err := register(t.Context(), f.pool, f.request); !errors.Is(err, ErrNotFound) {
+			if _, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("scope check: %v", err)
 			}
 			var count int
@@ -138,7 +139,7 @@ func TestRegisterPostgresOwnedDescriptorConflictRollsBack(t *testing.T) {
 	if _, err := db.New(f.pool).UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: pgvalue.UUID(f.request.orgID), Digest: object.Digest, SizeBytes: object.SizeBytes + 1, MediaType: object.MediaType}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := register(t.Context(), f.pool, f.request); err == nil {
+	if _, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request); err == nil {
 		t.Fatal("conflicting object descriptor accepted")
 	}
 	var count int
@@ -150,7 +151,7 @@ func TestRegisterPostgresOwnedDescriptorConflictRollsBack(t *testing.T) {
 // Existing verified content is reused only inside its owning Environment.
 func TestFinalizeReusesRegisteredBundleWithoutReadingObjects(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
-	first, err := register(t.Context(), f.pool, f.request)
+	first, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func TestFinalizeReusesRegisteredBundleWithoutReadingObjects(t *testing.T) {
 		store.objects[object.Digest] = object
 	}
 	finalizer := NewFinalizer(store, store, bundle.Admission{}, discardLogger())
-	result, err := finalizer.Finalize(t.Context(), f.pool, f.request, func(string) error { t.Fatal("replay should not verify"); return nil })
+	result, err := finalizer.Finalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request, func(string) error { t.Fatal("replay should not verify"); return nil })
 	if err != nil || result.ID != first.ID {
 		t.Fatalf("replay: %+v %v", result, err)
 	}
@@ -173,12 +174,12 @@ func TestFinalizeReusesRegisteredBundleWithoutReadingObjects(t *testing.T) {
 	if available, err := finalizer.available(t.Context(), f.pool, other); err != nil || available {
 		t.Fatalf("cross-Environment verification shortcut: %v %v", available, err)
 	}
-	if _, err := finalizer.Finalize(t.Context(), f.pool, other, func(string) error { return nil }); err == nil || store.reads != 1 {
+	if _, err := finalizer.Finalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, other, func(string) error { return nil }); err == nil || store.reads != 1 {
 		t.Fatalf("cross-Environment did not read/verify bytes: reads=%d err=%v", store.reads, err)
 	}
 	object := f.request.bundle.objects[0]
 	delete(store.objects, object.Digest)
-	if _, err := finalizer.Finalize(t.Context(), f.pool, f.request, func(string) error { return nil }); err == nil {
+	if _, err := finalizer.Finalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request, func(string) error { return nil }); err == nil {
 		t.Fatal("missing replay object accepted")
 	}
 }
@@ -214,7 +215,7 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 		secret := insertRegistrationSecret(t, f.pool, env, "API_TOKEN")
 		request := f.request
 		request.environmentID = pgvalue.UUID(env)
-		record, err := register(t.Context(), f.pool, request)
+		record, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -227,14 +228,14 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 		for _, key := range []string{request.idempotencyKey, "same-bundle-new-key"} {
 			replay := request
 			replay.idempotencyKey = key
-			got, err := register(t.Context(), f.pool, replay)
+			got, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, replay)
 			if err != nil || got.ID != record.ID {
 				t.Fatalf("revocation changed registered bundle replay: %+v %v", got, err)
 			}
 		}
 		request.idempotencyKey = "new-bundle"
 		request.bundle.root.Digest = artifacttest.Digest("new bundle")
-		if _, err := register(t.Context(), f.pool, request); !errors.Is(err, computer.ErrSecretUnavailable) {
+		if _, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, request); !errors.Is(err, computer.ErrSecretUnavailable) {
 			t.Fatalf("new Deployment accepted revoked Secret: %v", err)
 		}
 		var deployments, retained int
@@ -277,7 +278,10 @@ func TestRegisterRechecksSecretAfterConcurrentRevocation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := register(ctx, f.pool, f.request); done <- err }()
+	go func() {
+		_, err := register(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
+		done <- err
+	}()
 	for {
 		var waiting bool
 		if err = f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT name,id FROM secrets%')`).Scan(&waiting); err != nil {
@@ -306,5 +310,32 @@ func TestRegisterRechecksSecretAfterConcurrentRevocation(t *testing.T) {
 	var count int
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM deployments`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("racing registration left state: %d %v", count, err)
+	}
+}
+
+func TestDeploymentPublicationAuditAtomicity(t *testing.T) {
+	f := newDeploymentFinalizePostgresFixture(t)
+	if _, err := register(t.Context(), auditpolicy.Policy{}, f.pool, f.request); err == nil {
+		t.Fatal("publication escaped audit failure")
+	}
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM deployments WHERE environment_id=$1`, f.request.environmentID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("partial publication: %d %v", count, err)
+	}
+	policy := auditpolicy.Policy{RetentionSeconds: 3600}
+	first, err := register(t.Context(), policy, f.pool, f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{f.request.idempotencyKey, "fresh-key"} {
+		request := f.request
+		request.idempotencyKey = key
+		got, err := register(t.Context(), policy, f.pool, request)
+		if err != nil || got.ID != first.ID {
+			t.Fatalf("replay: %+v %v", got, err)
+		}
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='deployment.published' AND target_id=$1 AND actor_api_key_id=$2 AND authorization_evidence->>'decision'='allowed'`, first.ID, f.request.principal.APIKeyID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("publication receipts: %d %v", count, err)
 	}
 }

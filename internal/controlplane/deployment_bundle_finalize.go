@@ -62,7 +62,7 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		ctx context.Context,
 		progress func(objectDigest string) error,
 	) (api.DeploymentResponse, error) {
-		record, err := s.deploymentFinalizer.Finalize(ctx, s.tx, finalization, progress)
+		record, err := s.deploymentFinalizer.Finalize(ctx, s.auditPolicy, s.tx, finalization, progress)
 		if err != nil {
 			return api.DeploymentResponse{}, err
 		}

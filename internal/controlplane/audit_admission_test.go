@@ -160,3 +160,51 @@ func TestAuditAdmissionPrincipalCannotOccupyAllSlots(t *testing.T) {
 		})
 	}
 }
+
+func TestAuditControlContainmentPreservedAcrossRequestNames(t *testing.T) {
+	for _, control := range []struct {
+		path     string
+		reserved bool
+	}{
+		{"/v1/sessions/{sessionID}/cancel", true},
+		{"/v1/sessions/{sessionID}/interrupt", true},
+		{"/v1/sessions/{sessionID}/turns/{turnID}/interrupt", true},
+		{"/v1/commands/{commandID}/cancel", true},
+		{"/v1/sessions/{sessionID}/resume", false},
+		{"/v1/sessions/{sessionID}/close", false},
+	} {
+		for _, boundary := range []string{"global", "principal"} {
+			t.Run(boundary+control.path, func(t *testing.T) {
+				guard := newAuditAdmission()
+				s := &Server{auditAdmission: guard, log: slog.New(slog.NewTextHandler(io.Discard, nil)), auditRouter: chi.NewRouter()}
+				s.auditRouter.Post(control.path, func(http.ResponseWriter, *http.Request) {})
+				principal := auth.Principal{Kind: auth.PrincipalKindSession, UserID: uuid.NewV7(), OrgID: uuid.NewV7(), SessionID: uuid.NewV7()}
+				if boundary == "global" {
+					for range cap(guard.active) {
+						guard.active <- struct{}{}
+					}
+				} else {
+					limiter := rate.NewLimiter(0, 1)
+					limiter.Allow()
+					key := string(principal.Kind) + ":" + principal.UserID.String() + ":" + principal.APIKeyID.String() + ":" + principal.OrgID.String()
+					guard.principals[key] = auditPrincipalBucket{limiter: limiter, seen: time.Now()}
+				}
+				h := s.limitSecurityAdmission(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if boundary == "principal" && !s.admitPrincipal(w, r, principal) {
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				}))
+				rr := httptest.NewRecorder()
+				h.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, control.path, nil))
+				want := http.StatusTooManyRequests
+				if control.reserved {
+					want = http.StatusNoContent
+				}
+				if rr.Code != want {
+					t.Fatalf("status=%d want=%d", rr.Code, want)
+				}
+			})
+		}
+	}
+}

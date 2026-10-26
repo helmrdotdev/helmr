@@ -324,7 +324,11 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, req.EnvironmentID, result.ID, req.SessionID, req.Kind, caller.Kind, caller.ID, req.IdempotencyKey, digest[:], nullableID(result.HoldID), nullableID(req.TurnID)); err != nil {
 			return err
 		}
-		if err = auditOperation(ctx, tx, auditPolicy, caller, controlPermission(req.Kind), audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: req.TurnID, Action: "session.control_requested", Outcome: "accepted", TargetKind: "session", TargetID: req.SessionID, Details: audit.SessionControlDetails{Kind: req.Kind, RequestID: result.ID, HoldID: result.HoldID}}); err != nil {
+		action, targetKind, targetID := "session."+req.Kind+"_requested", "session", req.SessionID
+		if req.Kind == "turn_interrupt" {
+			action, targetKind, targetID = "turn.interrupt_requested", "turn", req.TurnID
+		}
+		if err = auditOperation(ctx, tx, auditPolicy, caller, controlPermission(req.Kind), audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: req.TurnID, Action: action, Outcome: "accepted", TargetKind: targetKind, TargetID: targetID, Details: audit.SessionControlDetails{RequestID: result.ID, HoldID: result.HoldID}}); err != nil {
 			return err
 		}
 		data, err := json.Marshal(struct {

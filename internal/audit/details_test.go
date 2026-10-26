@@ -52,17 +52,17 @@ func TestDetailsRejectInvalidActionFacts(t *testing.T) {
 	negative := int64(-1)
 	zero := time.Time{}
 	unencodable := time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
-	var typedNil *RoleChangedDetails
+	var typedNil *APIKeyChangedDetails
 	cases := []struct {
 		name, action string
 		details      Details
 	}{
-		{"missing details", "member.role_changed", nil},
-		{"typed nil", "member.role_changed", typedNil},
-		{"wrong shape", "member.role_changed", RoleGrantedDetails{NewRole: "member"}},
-		{"missing before", "member.role_changed", RoleChangedDetails{NewRole: "member"}},
+		{"missing details", "api_key.updated", nil},
+		{"typed nil", "api_key.updated", typedNil},
+		{"wrong shape", "api_key.updated", RoleGrantedDetails{NewRole: "member"}},
+		{"missing before", "api_key.updated", APIKeyChangedDetails{After: APIKeyPolicy{Name: "member"}}},
 		{"missing grant", "member.granted", RoleGrantedDetails{}},
-		{"missing revoked role", "member.removed", RoleRemovedDetails{}},
+		{"missing revoked role", "member.removed", MembershipDetails{}},
 		{"missing invitation expiry", "invitation.created", InvitationCreatedDetails{}},
 		{"zero invitation expiry", "invitation.created", InvitationCreatedDetails{ExpiresAt: &zero}},
 		{"missing key name", "api_key.issued", APIKeyIssuedDetails{}},
