@@ -32,7 +32,7 @@ sha512-N7aXtCvC5g6T1Y4V29lJjceu/zTkVkIZF0jdBvagr0TRFHuKeImffalGWEfqZKrvjH+IQbzJW
 Prepare its locked dependency closure outside the checkout using the native
 package manager with scripts disabled and isolated fixture-only npm config/cache.
 Reuse that exact closure offline in both environments. The runner requires
-`HELMR_NETWORK_CLIENT_SDK_ROOT` to identify the installed package directory; its
+`NETWORK_CLIENT_SDK_ROOT` to identify the installed package directory; its
 `index.mjs`, package metadata and dependencies must be present.
 
 The endpoint records actual `node --version`, `npm --version` and `git --version`
@@ -60,7 +60,7 @@ nix develop --command env CGO_ENABLED=0 go test -c \
   -o /private/attempt/network-clients.test ./internal/firecracker
 HELMR_TEST_NAMESPACE=1 \
 HELMR_NETWORK_CLIENT_SCRIPT="$PWD/tests/e2e/support/network-clients.mjs" \
-HELMR_NETWORK_CLIENT_SDK_ROOT=/private/fixtures/sdk/node_modules/@anthropic-ai/sdk \
+NETWORK_CLIENT_SDK_ROOT=/private/fixtures/sdk/node_modules/@anthropic-ai/sdk \
 /private/attempt/network-clients.test \
   -test.run '^TestNetworkRealClientsNamespace$' -test.v -test.timeout 90s
 ```
@@ -134,8 +134,8 @@ fixture routing/DNS or executing a workload.
      command: ["node", "/workspace/network-clients/network-clients.mjs"],
      env: {
        PATH: fixtureToolPath,
-       HELMR_NETWORK_CLIENT_CONFIG: "/workspace/network-clients/config.json",
-       HELMR_NETWORK_CLIENT_SDK_ROOT: "/opt/network-client-sdk/node_modules/@anthropic-ai/sdk",
+       NETWORK_CLIENT_CONFIG: "/workspace/network-clients/config.json",
+       NETWORK_CLIENT_SDK_ROOT: "/opt/network-client-sdk/node_modules/@anthropic-ai/sdk",
        NODE_EXTRA_CA_CERTS: "/workspace/network-clients/ca.pem",
      },
      timeout: "2m",

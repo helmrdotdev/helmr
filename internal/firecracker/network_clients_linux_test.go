@@ -349,7 +349,7 @@ func TestNetworkRealClientsNamespace(t *testing.T) {
 	if os.Getenv("HELMR_TEST_NAMESPACE") != "1" {
 		t.Skip("requires disposable privileged Linux network namespace fixture")
 	}
-	script, sdkRoot := os.Getenv("HELMR_NETWORK_CLIENT_SCRIPT"), os.Getenv("HELMR_NETWORK_CLIENT_SDK_ROOT")
+	script, sdkRoot := os.Getenv("HELMR_NETWORK_CLIENT_SCRIPT"), os.Getenv("NETWORK_CLIENT_SDK_ROOT")
 	if script == "" || sdkRoot == "" {
 		t.Fatal("fixture prerequisite: provide network-clients.mjs and installed pinned Anthropic SDK root")
 	}
@@ -496,7 +496,7 @@ func TestNetworkRealClientsNamespace(t *testing.T) {
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		client := exec.CommandContext(t.Context(), "ip", "netns", "exec", guest, "node", script)
-		client.Env = append(networkClientEnv(directory), "HELMR_NETWORK_CLIENT_CONFIG="+fixture.configFile, "HELMR_NETWORK_CLIENT_SDK_ROOT="+sdkRoot, "NODE_EXTRA_CA_CERTS="+filepath.Join(directory, "ca.pem"))
+		client.Env = append(networkClientEnv(directory), "NETWORK_CLIENT_CONFIG="+fixture.configFile, "NETWORK_CLIENT_SDK_ROOT="+sdkRoot, "NODE_EXTRA_CA_CERTS="+filepath.Join(directory, "ca.pem"))
 		output, err := client.CombinedOutput()
 		if err != nil {
 			t.Fatalf("native client matrix: %v: %s", err, output)

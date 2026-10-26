@@ -11,9 +11,9 @@ import tls from "node:tls"
 import { createRequire } from "node:module"
 import { pathToFileURL } from "node:url"
 
-const configFile = process.env.HELMR_NETWORK_CLIENT_CONFIG
-if (!configFile || !process.env.HELMR_NETWORK_CLIENT_SDK_ROOT) {
-  throw new Error("Fixture prerequisite: HELMR_NETWORK_CLIENT_CONFIG and HELMR_NETWORK_CLIENT_SDK_ROOT must identify prepared local TLS fixture artifacts; no public endpoint defaults are used")
+const configFile = process.env.NETWORK_CLIENT_CONFIG
+if (!configFile || !process.env.NETWORK_CLIENT_SDK_ROOT) {
+  throw new Error("Fixture prerequisite: NETWORK_CLIENT_CONFIG and NETWORK_CLIENT_SDK_ROOT must identify prepared local TLS fixture artifacts; no public endpoint defaults are used")
 }
 const config = JSON.parse(await readFile(configFile, "utf8"))
 const caFile = path.resolve(path.dirname(configFile), config.caFile)
@@ -66,7 +66,7 @@ try {
   await writeFile(childEnv.NPM_CONFIG_GLOBALCONFIG, "")
   const registry = new URL(config.origins.registry)
   await writeFile(childEnv.NPM_CONFIG_USERCONFIG, `registry=${registry.href}\n//${registry.host}/:_authToken=${syntheticToken}\ncafile=${caFile}\nstrict-ssl=true\naudit=false\nfund=false\nupdate-notifier=false\n`, { mode: 0o600 })
-  const sdkRoot = path.resolve(process.env.HELMR_NETWORK_CLIENT_SDK_ROOT)
+  const sdkRoot = path.resolve(process.env.NETWORK_CLIENT_SDK_ROOT)
   const sdkPackageBytes = await readFile(path.join(sdkRoot, "package.json"))
   const sdkPackage = JSON.parse(sdkPackageBytes)
   const versions = { node: process.version, npm: await command("npm", ["--version"]), git: await command("git", ["--version"]), anthropic: sdkPackage.version }

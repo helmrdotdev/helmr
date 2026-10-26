@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import type { CommandRef } from "@helmr/sdk"
-import { assert, assertEqual, deadline, verify } from "../../support/context"
+import { assert, assertEqual, deadline, errorCode, verify } from "../../support/context"
 import { hostObservation } from "../../support/host-observation"
 
 const endpointDirectory = process.env.HELMR_NETWORK_CLIENT_ENDPOINT_DIR
@@ -25,6 +25,32 @@ await verify("network-clients", async ({ computer, marker }) => {
   const record = (name: string, value: unknown) => writeFile(join(evidence, name),
     JSON.stringify(value, null, 2) + "\n", { mode: 0o600, flag: "wx" })
   const target = await computer("network-client-qualification")
+  async function admitStage(request: Parameters<typeof target.exec>[0]) {
+    // Computer creation admits asynchronous image preparation; exec creates demand.
+    const signal = deadline(300_000)
+    for (;;) {
+      signal.throwIfAborted()
+      try {
+        return await target.exec(request, { signal })
+      } catch (error) {
+        if (errorCode(error) !== "computer_busy") throw error
+      }
+      await delay(500, undefined, { signal })
+    }
+  }
+  async function hibernateWhenIdle(request: Parameters<typeof target.hibernate>[0]) {
+    // A terminal Command outcome can precede physical process reconciliation.
+    const signal = deadline(120_000)
+    for (;;) {
+      signal.throwIfAborted()
+      try {
+        return await target.hibernate(request, { signal })
+      } catch (error) {
+        if (errorCode(error) !== "computer_busy") throw error
+      }
+      await delay(500, undefined, { signal })
+    }
+  }
   async function command(label: string, ref: CommandRef) {
     const signal = deadline(5 * 60_000)
     const outcome = await ref.wait({ signal })
@@ -41,7 +67,7 @@ await verify("network-clients", async ({ computer, marker }) => {
   const files = { "network-clients.mjs": runner, "config.json": configBytes, "ca.pem": ca }
   const stdin = Buffer.from(JSON.stringify(Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, bytes.toString("base64")]))))
   assert(stdin.length <= 1024 * 1024, "Staged fixture exceeds the native Computer stdin limit")
-  const packaged = JSON.parse(await command("stage", await target.exec({
+  const packaged = JSON.parse(await command("stage", await admitStage({
     command: ["node", "--input-type=module", "-e", `
       import { mkdir, readFile, writeFile } from "node:fs/promises";
       let input = ""; for await (const chunk of process.stdin) input += chunk;
@@ -51,14 +77,14 @@ await verify("network-clients", async ({ computer, marker }) => {
         await writeFile("${guestDirectory}/" + name, Buffer.from(files[name], "base64"), { mode: 0o600, flag: "wx" });
       console.log(await readFile("/opt/network-client-tools/artifacts.json", "utf8"));
     `], env: { PATH: toolPath }, stdin, timeout: "2m", idempotencyKey: `${marker}:stage`,
-  }, { signal: deadline(5 * 60_000) })))
+  })))
   assertEqual(packaged.versions, versions, "Image tool manifest differs from the pinned matrix")
 
   async function probe(label: string) {
     const stdout = await command(label, await target.exec({
       command: ["node", `${guestDirectory}/network-clients.mjs`],
-      env: { PATH: toolPath, HELMR_NETWORK_CLIENT_CONFIG: `${guestDirectory}/config.json`,
-        HELMR_NETWORK_CLIENT_SDK_ROOT: "/opt/network-client-tools/sdk/node_modules/@anthropic-ai/sdk",
+      env: { PATH: toolPath, NETWORK_CLIENT_CONFIG: `${guestDirectory}/config.json`,
+        NETWORK_CLIENT_SDK_ROOT: "/opt/network-client-tools/sdk/node_modules/@anthropic-ai/sdk",
         NODE_EXTRA_CA_CERTS: `${guestDirectory}/ca.pem` },
       timeout: "2m", idempotencyKey: `${marker}:${label}`,
     }, { signal: deadline(5 * 60_000) }))
@@ -84,7 +110,7 @@ await verify("network-clients", async ({ computer, marker }) => {
   assertEqual(leases.length, 1, "Expected one active source lease")
   const lease = leases[0]
   await record("source.json", source)
-  await target.hibernate({ idempotencyKey: `${marker}:hibernate` })
+  await hibernateWhenIdle({ idempotencyKey: `${marker}:hibernate` })
   const captured = await waitPath(path => path.checkpoints.some((checkpoint: any) => checkpoint.source_lease_epoch === lease.epoch && checkpoint.status === "ready")
     && path.leases.some((old: any) => old.epoch === lease.epoch && old.status === "lost" && old.fenced_at !== null))
   const checkpoint = captured.checkpoints.find((item: any) => item.source_lease_epoch === lease.epoch && item.status === "ready")
