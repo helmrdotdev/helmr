@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { promisify } from "node:util"
 import { z } from "zod"
-import { assert, assertEqual, completedResult, deadline, deleteComputer, verify, waitOutput, type ClientTurn } from "../../support/context"
+import { assert, assertEqual, completedResult, deadline, deleteComputer, errorCode, verify, waitOutput, type ClientTurn } from "../../support/context"
 import { hostObservation } from "../../support/host-observation"
 import { assertRestored, observePersistence } from "../../support/persistence"
 import { fixtureInput } from "../../support/runtime-mcp"
@@ -177,7 +177,12 @@ await verify(`execution-policies-${subject}-${mode}`, async ({ marker, objects, 
   }
 
   const turns = (await target.session.turns.list()).items.map(turn => turn.id)
-  await target.computer.wake({ idempotencyKey: `${marker}:wake:${target.computer.id}` })
+  for (const signal = deadline(120_000);;) {
+    signal.throwIfAborted()
+    try { await target.computer.wake({ idempotencyKey: `${marker}:wake:${target.computer.id}` }, { signal }); break }
+    catch (error) { signal.throwIfAborted(); if (errorCode(error) !== "execution_capacity_unavailable") throw error }
+    await delay(500, undefined, { signal })
+  }
   const restored = await observePersistence("verify-restored", target.session.id)
   assertRestored(parked, restored, target.session.id)
   assertEqual((await target.session.turns.list()).items.map(turn => turn.id), turns, "Wake fabricated a Turn")
