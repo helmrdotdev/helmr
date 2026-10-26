@@ -6,7 +6,7 @@
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     nixpkgs-clickhouse.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     nixpkgs-bun.url = "github:NixOS/nixpkgs/aff8a0b28396750446e5537a96461bc4facdb287";
-    nixpkgs-go.url = "github:NixOS/nixpkgs/aff8a0b28396750446e5537a96461bc4facdb287";
+    nixpkgs-go.url = "github:NixOS/nixpkgs/d3b13ad75cc492690728f9307e443dec9ef9a20e";
   };
 
   outputs =

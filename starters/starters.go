@@ -153,6 +153,7 @@ type sourcePackage struct {
 	PackageManager  string            `json:"packageManager"`
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies"`
+	Overrides       map[string]string `json:"overrides"`
 }
 
 type devEngines struct {
@@ -171,6 +172,7 @@ type generatedPackage struct {
 	Scripts         map[string]string `json:"scripts"`
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies,omitempty"`
+	Overrides       map[string]string `json:"overrides,omitempty"`
 }
 
 // PackageJSON renders the project's package.json with the released SDK
@@ -203,6 +205,16 @@ func (s Starter) PackageJSON(sdkVersion, nodeVersion string) (string, error) {
 			version = sdkVersion
 		}
 		out.Dependencies[name] = version
+	}
+	for name, version := range source.Overrides {
+		// The local proto package is only for repository verification.
+		if name == "@helmr/proto" {
+			continue
+		}
+		if out.Overrides == nil {
+			out.Overrides = make(map[string]string)
+		}
+		out.Overrides[name] = version
 	}
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)

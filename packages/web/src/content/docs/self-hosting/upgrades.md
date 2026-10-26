@@ -19,6 +19,23 @@ instructions describe the required gates; a local Terraform test does not qualif
 a release pair or prove a real AWS update. Require installation and maintenance
 evidence for the exact released artifacts before using them for production.
 
+A release that changes the managed Node.js version requires rebuilding and
+redeploying existing Deployments before they can start fresh work on the new
+release. Runtime metadata is checked against the release's exact Node version;
+upgrading the CLI or Worker does not rewrite a Deployment's pinned Runtime.
+Existing Computers and saved checkpoints retain their original Runtime bytes,
+including any vulnerabilities in those bytes. Preserve compatible restoration
+capacity until that work has finished or a separately qualified migration has
+replaced it. A dependency update alone does not qualify cross-version restore
+or an in-place Runtime replacement. Include the pinned Runtime in rollback
+qualification as well: an older release cannot admit a newer Runtime merely
+because both use the same Node major version.
+
+The standalone CLI evaluates project configuration with Node from the caller's
+`PATH` and checks its major version, not its security patch level. Update that
+host installation separately. The Nix CLI package supplies the Product-pinned
+Node release.
+
 ## Prepare artifacts, recovery and authentication
 
 Record the exact source and target `helmr_version`, digest-pinned

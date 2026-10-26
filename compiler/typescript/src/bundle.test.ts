@@ -15,7 +15,7 @@ async function fixture(files: Record<string, unknown>) {
  return {root,output,close:()=>rm(temporary,{recursive:true,force:true})}
 }
 const config = {dirs:["agents"],ignorePatterns:[],external:[],assets:[]}
-const run = (f: {root:string;output:string}, overrides = {}) => bundleProgram({...f,nodeVersion:"24.21.0",config:{...config,...overrides}})
+const run = (f: {root:string;output:string}, overrides = {}) => bundleProgram({...f,nodeVersion:"24.22.1",config:{...config,...overrides}})
 
 test("selective payload preserves root imports and explicit assets, excluding author source and dev dependencies",async()=>{
  const f=await fixture({"package.json":{name:"fixture",type:"module",imports:{"#project/*":"./*"},scripts:{prepare:"exit 1"},devDependencies:{unused:"1"}},"prompts/a.md":"prompt","node_modules/unused/index.js":"unused"})
@@ -168,7 +168,7 @@ test("independent Template payload excludes Agent-only edits but includes readab
   let sequence=0
   const build = async()=>{
     const output=resolve(f.output,`build-${sequence++}`)
-    await bundleProgram({root:f.root,output,nodeVersion:"24.21.0",config:{...config,assets:["assets/**"]},template})
+    await bundleProgram({root:f.root,output,nodeVersion:"24.22.1",config:{...config,assets:["assets/**"]},template})
     return snapshot(output)
   }
   try {
@@ -189,7 +189,7 @@ test("independent Template payload excludes Agent-only edits but includes readab
 test("nested Template wrapper exports only the selected Template and keeps its enclosing source readable", async () => {
   const f=await fixture({"agents/main.ts":"export const agent={kind:'agent',body:'included',template:{kind:'template',id:'base'}}"})
   try {
-    await bundleProgram({...f,nodeVersion:"24.21.0",config,template:{sourcePath:"agents/main.ts",exportName:"agent",throughAgent:true}})
+    await bundleProgram({...f,nodeVersion:"24.22.1",config,template:{sourcePath:"agents/main.ts",exportName:"agent",throughAgent:true}})
     const child=spawnSync("node",["--input-type=module","-e",`const m=await import(${JSON.stringify(resolve(f.output,"payload/helmr/app/entry-0.mjs"))}); console.log(JSON.stringify(m))`],{encoding:"utf8"})
     expect(child.status,child.stderr).toBe(0)
     expect(JSON.parse(child.stdout)).toEqual({preparation:{kind:"template",id:"base"}})

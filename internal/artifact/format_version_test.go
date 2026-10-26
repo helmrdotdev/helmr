@@ -10,7 +10,7 @@ import (
 
 func TestZeroFormatVersionRequiresExplicitCanonicalField(t *testing.T) {
 	metadata := RuntimeMetadata{ModulePolicyDigest: testDigest("preload"), Architecture: definition.ArchitectureX8664,
-		FormatVersion: RuntimeMetadataFormatVersion, NodeVersion: "24.21.0",
+		FormatVersion: RuntimeMetadataFormatVersion, NodeVersion: "24.22.1",
 		ProgramNodeFlags: testNodeProgramFlags(), RuntimeContract: definition.RuntimeContract}
 	cases := []struct {
 		name  string

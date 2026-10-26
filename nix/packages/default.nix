@@ -93,30 +93,30 @@ let
       pkgsGo.buildGo127Module;
   staticcheck = buildGo127Module {
     pname = "staticcheck";
-    version = "2026.2.1";
+    version = "2026.2.2";
 
     src = pkgs.fetchFromGitHub {
       owner = "dominikh";
       repo = "go-tools";
-      rev = "2026.2.1";
-      hash = "sha256-wellofnfLW4lQy68UQyFJfvrKCfrZ/EllLODX1g9taY=";
+      rev = "2026.2.2";
+      hash = "sha256-nmcXIQf9Mws4CMQDKQ1NUYHLYkm+ggSnh5sDiuvdnK4=";
     };
 
-    vendorHash = "sha256-3no4wPqFG0RfSsWB0z8EYxeoZ30t+Zf7ZayzFCLEm2A=";
+    vendorHash = "sha256-YC+DQZ3xjLGzhUXq/KBYhi1PGE63hBFaFor+XUZE1Ng=";
     subPackages = [ "cmd/staticcheck" ];
   };
   unparam = buildGo127Module {
     pname = "unparam";
-    version = "2026-08-23";
+    version = "2026-10-11";
 
     src = pkgs.fetchFromGitHub {
       owner = "mvdan";
       repo = "unparam";
-      rev = "2fa3d841b0c8";
-      hash = "sha256-NXsiP+rjxGPrVDk9Xl62NRGQBVlD/4nSjznhAxrsrU4=";
+      rev = "7a2c2c0b7aa6c1dfb67b52d5f6c7d873caf30215";
+      hash = "sha256-r2N188QaqAsOT9CcC8IFpWySZ8eiO3fjNxoSsfyL9vE=";
     };
 
-    vendorHash = "sha256-ClZv8xMyxFuGNnLy135R/MIgWp3MWpZU3bq4FJAfK8U=";
+    vendorHash = "sha256-txYjynxJzaXd6vUgc0rh4kj7+bq1BArqm+dz9b4oKFI=";
   };
   revision = self.shortRev or self.dirtyShortRev or "dirty";
   releaseVersion = builtins.getEnv "HELMR_PLATFORM_VERSION";

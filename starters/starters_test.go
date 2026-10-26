@@ -51,7 +51,7 @@ func TestNamesakesAreValidUniqueAgentNames(t *testing.T) {
 
 func TestPackageJSONUsesTheReleasedSDK(t *testing.T) {
 	starter, _ := Lookup("claude-code")
-	pkg, err := starter.PackageJSON("1.2.3", "24.21.0")
+	pkg, err := starter.PackageJSON("1.2.3", "24.22.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +63,29 @@ func TestPackageJSONUsesTheReleasedSDK(t *testing.T) {
 	if err := json.Unmarshal([]byte(pkg), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Dependencies["@helmr/sdk"] != "1.2.3" || parsed.Dependencies["@anthropic-ai/claude-agent-sdk"] == "" || parsed.Overrides != nil || parsed.DevEngines.Runtime.Version != "24.21.0" {
+	if parsed.Dependencies["@helmr/sdk"] != "1.2.3" || parsed.Dependencies["@anthropic-ai/claude-agent-sdk"] == "" || parsed.DevEngines.Runtime.Version != "24.22.1" {
 		t.Fatalf("package.json = %s", pkg)
+	}
+	if parsed.Overrides != nil {
+		t.Fatalf("package.json retained local overrides: %s", pkg)
 	}
 	if strings.Contains(pkg, "file:") {
 		t.Fatalf("package.json references local files: %s", pkg)
+	}
+}
+
+func TestPackageJSONPreservesDependencySecurityOverrides(t *testing.T) {
+	starter, _ := Lookup("pi")
+	pkg, err := starter.PackageJSON("1.2.3", "24.22.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct{ Overrides map[string]string }
+	if err := json.Unmarshal([]byte(pkg), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Overrides) != 1 || parsed.Overrides["undici"] != "8.12.2" {
+		t.Fatalf("package.json lost security overrides or retained local overrides: %s", pkg)
 	}
 }
 

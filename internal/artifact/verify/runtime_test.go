@@ -89,7 +89,7 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 			invalid := artifact.RuntimeMetadata{
 				ModulePolicyDigest: artifacttest.Digest("preload"),
 				Architecture:       definition.ArchitectureX8664, FormatVersion: artifact.RuntimeMetadataFormatVersion,
-				NodeVersion:      "24.21.0",
+				NodeVersion:      "24.22.1",
 				ProgramNodeFlags: []string{"--no-experimental-strip-types", "--enable-source-maps"},
 				RuntimeContract:  definition.RuntimeContract,
 			}
@@ -196,7 +196,7 @@ func newRuntimeTopology(t *testing.T) (artifact.RuntimeDescriptor, *artifacttest
 		ModulePolicyDigest: artifacttest.Digest("preload"),
 		Architecture:       definition.ArchitectureX8664,
 		FormatVersion:      artifact.RuntimeMetadataFormatVersion,
-		NodeVersion:        "24.21.0",
+		NodeVersion:        "24.22.1",
 		ProgramNodeFlags:   artifacttest.NodeProgramFlags(),
 		RuntimeContract:    definition.RuntimeContract,
 	}

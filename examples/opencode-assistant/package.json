@@ -21,8 +21,8 @@
   },
   "overrides": {
     "@helmr/proto": "file:../../dist/npm/proto/package",
-    "@modelcontextprotocol/client": "2.2.0",
-    "@modelcontextprotocol/core": "2.2.0",
+    "@modelcontextprotocol/client": "2.3.0",
+    "@modelcontextprotocol/core": "2.3.0",
     "@ai-sdk/provider-utils": "4.0.33"
   }
 }

@@ -18,7 +18,7 @@ for starter in "${repo_root}"/starters/*/package.json; do
     const path = process.argv[1] + "/package.json"
     const pkg = await Bun.file(path).json()
     pkg.dependencies["@helmr/sdk"] = "file:" + process.env.SDK
-    pkg.overrides = { "@helmr/proto": "file:" + process.env.PROTO }
+    pkg.overrides = { ...pkg.overrides, "@helmr/proto": "file:" + process.env.PROTO }
     await Bun.write(path, JSON.stringify(pkg, null, 2))
   ' "${project}"
   (cd "${project}" && bun install --ignore-scripts >/dev/null && bun run typecheck)

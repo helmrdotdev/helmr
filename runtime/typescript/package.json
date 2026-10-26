@@ -12,7 +12,7 @@
     "@bufbuild/protobuf": "^2.12.0",
     "@helmr/sdk": "workspace:*",
     "@helmr/proto": "workspace:*",
-    "undici": "7.29.1"
+    "undici": "7.30.1"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",

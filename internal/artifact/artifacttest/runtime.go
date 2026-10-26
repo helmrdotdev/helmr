@@ -21,6 +21,6 @@ func RuntimeDescriptor() artifact.RuntimeDescriptor {
 
 // NodeProgramFlags are the Node program flags of the supported Node version.
 func NodeProgramFlags() []string {
-	flags, _ := artifact.NodeProgramFlags("24.21.0")
+	flags, _ := artifact.NodeProgramFlags("24.22.1")
 	return flags
 }

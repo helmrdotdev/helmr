@@ -17,6 +17,7 @@
     "@earendil-works/pi-ai": "1.3.0"
   },
   "overrides": {
-    "@helmr/proto": "file:../../dist/npm/proto/package"
+    "@helmr/proto": "file:../../dist/npm/proto/package",
+    "undici": "8.12.2"
   }
 }

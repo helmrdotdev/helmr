@@ -20,6 +20,9 @@
     "typescript": "7.0.2"
   },
   "overrides": {
-    "@helmr/proto": "file:../../dist/npm/proto/package"
+    "@helmr/proto": "file:../../dist/npm/proto/package",
+    "@modelcontextprotocol/client": "2.3.0",
+    "@modelcontextprotocol/core": "2.3.0",
+    "@ai-sdk/provider-utils": "4.0.33"
   }
 }
