@@ -66,11 +66,5 @@ func ConfigurePrivileges(ctx context.Context, migrationURL, runtimeRole, mainten
 			}
 		}
 	}
-	if _, err := tx.Exec(ctx, "REVOKE ALL ON TABLE public.allocation_usage FROM PUBLIC, "+runtime+", "+maintenance); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, "GRANT SELECT ON TABLE public.allocation_usage TO "+runtime); err != nil {
-		return err
-	}
 	return tx.Commit(ctx)
 }

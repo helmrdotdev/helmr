@@ -145,7 +145,7 @@ func requireAllocationCapacity(ctx context.Context, tx pgx.Tx, env uuid.UUID, su
 	if err != nil {
 		return err
 	}
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(reserved_cpu_millis),0),COALESCE(sum(reserved_memory_bytes),0),COALESCE(sum(reserved_scratch_bytes),0),count(*),count(*) FILTER (WHERE starting) FROM allocation_usage WHERE worker_host_id=$1 AND kind NOT IN ('seed','retained')`, supply.host).Scan(&host.cpu, &host.memory, &host.scratch, &host.slots, &host.starts); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(sum(reserved_cpu_millis),0),COALESCE(sum(reserved_memory_bytes),0),COALESCE(sum(reserved_scratch_bytes),0),count(*),count(*) FILTER (WHERE starting) FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE worker_host_id=$1 AND kind NOT IN ('seed','retained')`, supply.host).Scan(&host.cpu, &host.memory, &host.scratch, &host.slots, &host.starts); err != nil {
 		return err
 	}
 	fits := func(used, added, limit int64) bool { return added > 0 && added <= limit && used <= limit-added }

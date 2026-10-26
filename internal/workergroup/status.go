@@ -103,7 +103,7 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.
 			}
 			var retained bool
 			if err := tx.QueryRow(ctx, `SELECT
- EXISTS(SELECT 1 FROM allocation_usage JOIN worker_hosts h ON h.id=allocation_usage.worker_host_id WHERE h.worker_group_id=$1)
+ EXISTS(SELECT 1 FROM (`+db.AllocationUsageSQL+`) allocation_usage JOIN worker_hosts h ON h.id=allocation_usage.worker_host_id WHERE h.worker_group_id=$1)
  OR EXISTS(SELECT 1 FROM checkpoints c
  JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.source_lease_epoch)
  JOIN worker_hosts h ON h.id=l.worker_host_id

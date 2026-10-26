@@ -4,6 +4,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
@@ -67,16 +68,16 @@ func TestSchemaImageBuildAssignmentAndDiagnosticOwnership(t *testing.T) {
 	rejectSchemaRow(t, tx, "23503", diagnostic, f.Environment, build, 2)
 	dbtest.MustExec(t, t.Context(), tx, diagnostic, f.Environment, build, 1)
 	var starting bool
-	if err := tx.QueryRow(t.Context(), `SELECT starting FROM allocation_usage WHERE environment_id=$1 AND owner_id=$2 AND kind='preparation' AND epoch=1`, f.Environment, build).Scan(&starting); err != nil || !starting {
+	if err := tx.QueryRow(t.Context(), `SELECT starting FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE environment_id=$1 AND owner_id=$2 AND kind='preparation' AND epoch=1`, f.Environment, build).Scan(&starting); err != nil || !starting {
 		t.Fatalf("assigned build is not starting: %v %v", starting, err)
 	}
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE image_builds SET status='failed',error_code='timeout' WHERE environment_id=$1 AND id=$2`, f.Environment, build)
 	var count int
-	if err := tx.QueryRow(t.Context(), `SELECT count(*) FROM allocation_usage WHERE environment_id=$1 AND owner_id=$2`, f.Environment, build).Scan(&count); err != nil || count != 1 {
+	if err := tx.QueryRow(t.Context(), `SELECT count(*) FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE environment_id=$1 AND owner_id=$2`, f.Environment, build).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("logical failure released physical occupancy: %d %v", count, err)
 	}
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE image_builds SET fenced_at=clock_timestamp(),fence_evidence='executor stopped' WHERE environment_id=$1 AND id=$2`, f.Environment, build)
-	if err := tx.QueryRow(t.Context(), `SELECT count(*) FROM allocation_usage WHERE environment_id=$1 AND owner_id=$2`, f.Environment, build).Scan(&count); err != nil || count != 0 {
+	if err := tx.QueryRow(t.Context(), `SELECT count(*) FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE environment_id=$1 AND owner_id=$2`, f.Environment, build).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("fenced build retained occupancy: %d %v", count, err)
 	}
 }

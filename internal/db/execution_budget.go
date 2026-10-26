@@ -67,7 +67,7 @@ func ReadExecutionBudgetForComputer(ctx context.Context, q DBTX, env, self uuid.
 	var b ExecutionBudget
 	err := q.QueryRow(ctx, `WITH usage AS (
  SELECT reserved_cpu_millis cpu,reserved_memory_bytes memory,CASE WHEN kind='computer' THEN 1 ELSE 0 END residents
- FROM allocation_usage a WHERE a.environment_id=$1 AND a.kind NOT IN ('seed','retained')
+ FROM (`+AllocationUsageSQL+`) a WHERE a.environment_id=$1 AND a.kind NOT IN ('seed','retained')
  UNION ALL
  SELECT claim_cpu-credit_cpu,claim_memory-credit_memory,1 FROM (`+PendingExecutionClaimsSQL+`) c WHERE c.environment_id=$1 AND c.computer_id<>$2
  ) SELECT e.max_cpu_millis-COALESCE((SELECT sum(cpu) FROM usage),0)::bigint,

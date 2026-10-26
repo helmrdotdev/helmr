@@ -91,11 +91,6 @@ func dumpCatalog(t *testing.T, ctx context.Context, pool *pgxpool.Pool) string {
 		}
 		return fmt.Sprint(v)
 	}
-	query(`SELECT c.relname, COALESCE(array_to_string(c.reloptions, ','), ''), pg_get_viewdef(c.oid, true)
-FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-WHERE n.nspname='public' AND c.relkind='v'`, func(v []any) string {
-		return fmt.Sprintf("view %s options (%s) %s", text(v[0]), text(v[1]), text(v[2]))
-	})
 	query(`SELECT t.typname, string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder)
 FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid JOIN pg_namespace n ON n.oid = t.typnamespace
 WHERE n.nspname = 'public' GROUP BY t.typname`, func(v []any) string {

@@ -13,7 +13,20 @@ import (
 
 const listAllocationPlanningChargedPools = `-- name: ListAllocationPlanningChargedPools :many
 SELECT DISTINCT h.worker_pool_id FROM worker_hosts h
-WHERE h.worker_group_id=$1 AND EXISTS(SELECT 1 FROM allocation_usage WHERE worker_host_id=h.id AND kind NOT IN ('seed','retained'))
+WHERE h.worker_group_id=$1 AND EXISTS(SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ UNION ALL
+ SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=h.id AND kind NOT IN ('seed','retained'))
 `
 
 // Physical reservations retain their pools independently of the queued demand budget.
@@ -91,7 +104,20 @@ SELECT d.environment_id, d.owner_id, d.kind, d.cpu_millis, d.memory_bytes, d.req
 FROM demand d JOIN environments e ON e.id=d.environment_id
 JOIN projects project_scope ON project_scope.id=e.project_id AND project_scope.default_region_id=$1
 CROSS JOIN LATERAL (
- SELECT COALESCE(sum(reserved_cpu_millis),0) cpu,COALESCE(sum(reserved_memory_bytes),0) memory,count(*) FILTER (WHERE kind='computer') residents FROM allocation_usage WHERE environment_id=e.id AND kind NOT IN ('seed','retained')
+ SELECT COALESCE(sum(reserved_cpu_millis),0) cpu,COALESCE(sum(reserved_memory_bytes),0) memory,count(*) FILTER (WHERE kind='computer') residents FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ UNION ALL
+ SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE environment_id=e.id AND kind NOT IN ('seed','retained')
 ) usage
 WHERE (EXISTS (
   SELECT 1 FROM worker_groups target_group

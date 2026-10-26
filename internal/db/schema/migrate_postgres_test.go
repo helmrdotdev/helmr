@@ -292,12 +292,12 @@ func assertDatabaseConstraintBoundaries(
 		t.Fatalf("application-owned PostgreSQL functions = %d, want 0", functionCount)
 	}
 
-	var views []string
-	if err := pool.QueryRow(ctx, `SELECT array_agg(c.relname || ':' || c.relkind::text ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m')`).Scan(&views); err != nil {
+	var viewCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m')`).Scan(&viewCount); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(views, ",") != "allocation_usage:v" {
-		t.Fatalf("application-owned PostgreSQL views = %v, want only allocation_usage", views)
+	if viewCount != 0 {
+		t.Fatalf("application-owned PostgreSQL views = %d, want 0", viewCount)
 	}
 	var ruleCount int
 	if err := pool.QueryRow(ctx, `

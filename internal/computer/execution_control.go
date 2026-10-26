@@ -151,7 +151,7 @@ func RequireRetainedHostCapacity(ctx context.Context, tx pgx.Tx, env, id uuid.UU
  AND COALESCE(sum(a.reserved_scratch_bytes),0)+l.reserved_scratch_bytes<=h.epoch_guest_ephemeral_disk_bytes
  AND count(a.allocation_id)+1<=h.max_vm_slots
  FROM computer_leases l JOIN worker_hosts h ON h.id=l.worker_host_id
- LEFT JOIN allocation_usage a ON a.worker_host_id=h.id AND a.kind NOT IN ('seed','retained')
+ LEFT JOIN (`+db.AllocationUsageSQL+`) a ON a.worker_host_id=h.id AND a.kind NOT IN ('seed','retained')
  WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3
  GROUP BY l.environment_id,l.computer_id,l.epoch,h.id`, env, id, epoch).Scan(&fits)
 	if err != nil {

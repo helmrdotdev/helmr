@@ -41,7 +41,7 @@ func startBudgetFixture(t *testing.T) (fixture, *dispatch.Allocator, uuid.UUID, 
 func assertStartBudget(t *testing.T, f fixture, starts int64) {
 	t.Helper()
 	var starting int64
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FILTER (WHERE starting) FROM allocation_usage WHERE worker_host_id=$1`, f.worker).Scan(&starting); err != nil || starting != starts {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FILTER (WHERE starting) FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE worker_host_id=$1`, f.worker).Scan(&starting); err != nil || starting != starts {
 		t.Fatalf("physical starts=%d, want %d: %v", starting, starts, err)
 	}
 	bins, err := db.New(f.pool).ListWorkerCapacityBins(t.Context(), db.ListWorkerCapacityBinsParams{WorkerGroupID: pgvalue.UUID(f.group), ObservationFreshnessSeconds: 30, RowLimit: 10})

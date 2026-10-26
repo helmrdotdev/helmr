@@ -550,7 +550,20 @@ WITH live_workers AS (
    COALESCE(sum(reserved_scratch_bytes) FILTER (WHERE kind IN ('seed','retained')),0)::bigint seed_scratch,
    count(*) FILTER (WHERE kind IN ('seed','retained'))::bigint seed_slots,
    count(*) FILTER (WHERE kind IN ('seed','retained') AND starting)::bigint seed_starts
- FROM live_workers h LEFT JOIN allocation_usage ON allocation_usage.worker_host_id=h.worker_host_id
+ FROM live_workers h LEFT JOIN (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ initialized_at IS NULL starting
+ FROM computer_leases WHERE fenced_at IS NULL
+ UNION ALL
+ SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
+ UNION ALL
+ SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
+ worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
+ started_at IS NULL
+ FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage ON allocation_usage.worker_host_id=h.worker_host_id
  GROUP BY h.worker_host_id
 )
 SELECT live_workers.worker_group_id,

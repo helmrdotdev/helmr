@@ -50,18 +50,6 @@ func TestAuditDatabaseRolesAndAtomicMaintenance(t *testing.T) {
 		return p
 	}
 	runtime, maintenance := connect(runtimeRole), connect(maintenanceRole)
-	if _, err := runtime.Exec(t.Context(), "SELECT * FROM allocation_usage"); err != nil {
-		t.Fatalf("runtime cannot read physical occupancy: %v", err)
-	}
-	if _, err := maintenance.Exec(t.Context(), "SELECT * FROM allocation_usage"); err == nil {
-		t.Fatal("audit maintenance can read physical occupancy")
-	}
-	// The view uses the caller's underlying-table privileges, not its owner's.
-	dbtest.MustExec(t, t.Context(), d.Pool, "REVOKE SELECT ON computer_leases FROM "+pgx.Identifier{runtimeRole}.Sanitize())
-	if _, err := runtime.Exec(t.Context(), "SELECT * FROM allocation_usage"); err == nil {
-		t.Fatal("occupancy view bypassed the caller's table privileges")
-	}
-	dbtest.MustExec(t, t.Context(), d.Pool, "GRANT SELECT ON computer_leases TO "+pgx.Identifier{runtimeRole}.Sanitize())
 	if err := audit.ValidatePrivileges(t.Context(), runtime, false); err != nil {
 		t.Fatal(err)
 	}
