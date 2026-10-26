@@ -29,7 +29,7 @@ func (s *Server) listAuditEvents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminListAuditEvents(w http.ResponseWriter, r *http.Request) {
 	s.searchAuditEvents(w, r, true)
 }
-func (s *Server) searchAuditEvents(w http.ResponseWriter, r *http.Request, installation bool) {
+func (s *Server) searchAuditEvents(w http.ResponseWriter, r *http.Request, adminView bool) {
 	f, err := parseAuditFilter(r)
 	if err != nil {
 		s.writeOperationError(w, r, badRequest(err))
@@ -37,9 +37,9 @@ func (s *Server) searchAuditEvents(w http.ResponseWriter, r *http.Request, insta
 	}
 	principal := principalFromContext(r.Context())
 	var response any
-	if installation {
-		var result auditquery.InstallationSearchResult
-		result, err = auditquery.SearchInstallation(r.Context(), s.tx, s.auditPolicy, principal, f)
+	if adminView {
+		var result auditquery.AdminSearchResult
+		result, err = auditquery.SearchAdmin(r.Context(), s.tx, s.auditPolicy, principal, f)
 		page := api.AdminAuditEventsResponse{Events: make([]api.AdminAuditEvent, 0, len(result.Events))}
 		for _, record := range result.Events {
 			page.Events = append(page.Events, adminAuditHTTPRecord(record))
@@ -82,10 +82,10 @@ func (s *Server) adminListAuditActions(w http.ResponseWriter, _ *http.Request) {
 	s.auditActions(w, true)
 }
 
-func (s *Server) auditActions(w http.ResponseWriter, installation bool) {
+func (s *Server) auditActions(w http.ResponseWriter, adminView bool) {
 	response := api.AuditActionsResponse{Actions: []api.AuditAction{}}
 	for _, d := range audit.Catalog() {
-		if !installation && d.Audience != audit.OrganizationAudience {
+		if !adminView && d.Audience != audit.OrganizationAudience {
 			continue
 		}
 		response.Actions = append(response.Actions, api.AuditAction{Action: d.Action, TargetKind: d.TargetKind, Outcomes: d.Outcomes, Category: audit.Category(d.Action)})

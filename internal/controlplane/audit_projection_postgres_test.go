@@ -30,7 +30,7 @@ func TestAuditHTTPPublicAndAdminProjection(t *testing.T) {
 		t.Helper()
 		id := uuid.NewV7()
 		custody := org
-		if definition, _ := audit.Lookup(action); definition.Scope == audit.InstallationScope {
+		if definition, _ := audit.Lookup(action); definition.Scope == audit.PlatformScope {
 			custody = uuid.Nil()
 		}
 		err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
@@ -44,7 +44,7 @@ func TestAuditHTTPPublicAndAdminProjection(t *testing.T) {
 	first := appendFact("secret.created", "secret", audit.AssignedWorker(host, 3, "computer", target, 7))
 	second := appendFact("secret.created", "secret", audit.Internal(audit.ControlPlane))
 	platform := appendFact("worker_group.created", "worker_group", audit.Internal(audit.ControlPlane))
-	// Simulate retained data captured before installation custody was enforced.
+	// Simulate retained data captured before platform custody was enforced.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE audit_events SET org_id=$2 WHERE id=$1`, platform, org)
 	q := url.Values{"from": {time.Now().Add(-time.Hour).Format(time.RFC3339Nano)}, "to": {time.Now().Format(time.RFC3339Nano)}, "actor_kind": {"platform_service"}, "limit": {"1"}}
 	get := func(path, token string, query url.Values, status int) string {

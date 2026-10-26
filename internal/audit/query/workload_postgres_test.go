@@ -79,7 +79,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 	for _, action := range []string{"command.completed", "command.failed"} {
 		filter.Actions = []string{action}
 		started := time.Now()
-		result, err := SearchInstallation(t.Context(), d.Pool, policy, principal, filter)
+		result, err := SearchAdmin(t.Context(), d.Pool, policy, principal, filter)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -97,7 +97,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 		t.Logf("query_plan action=%s %s", action, plan)
 	}
 	filter.Actions, filter.ActorKind, filter.ActorID = nil, "user", user
-	actorRows, err := SearchInstallation(t.Context(), d.Pool, policy, principal, filter)
+	actorRows, err := SearchAdmin(t.Context(), d.Pool, policy, principal, filter)
 	if err != nil || len(actorRows.Events) != 2 {
 		t.Fatal("actor search", len(actorRows.Events), err)
 	}
@@ -131,7 +131,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 		}()
 	}
 	for range 4 {
-		r, err := SearchInstallation(t.Context(), d.Pool, policy, principal, filter)
+		r, err := SearchAdmin(t.Context(), d.Pool, policy, principal, filter)
 		if err != nil || len(r.Events) != 0 {
 			t.Fatal("expired concurrent disclosure", len(r.Events), err)
 		}

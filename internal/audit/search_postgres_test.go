@@ -54,7 +54,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 		t.Fatal("search denial lost permission check", denied)
 	}
 	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE users SET admin=false WHERE id=$1`, user)
-	_, denied = auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f)
+	_, denied = auditquery.SearchAdmin(t.Context(), d.Pool, policy, p, f)
 	var adminRefusal *audit.Refusal
 	if !errors.As(denied, &adminRefusal) || adminRefusal.Authorization.Decision != "denied" || len(adminRefusal.Authorization.Checks) != 2 {
 		t.Fatal("search denial lost admin observations", denied)
@@ -114,7 +114,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE audit_events SET recorded_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()-interval '1 hour' WHERE id=$1`, eventIDs[0])
 	f.OrgID = org
 	f.Limit = 100
-	if adminResult, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f); err != nil || len(adminResult.Events) != 2 {
+	if adminResult, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, p, f); err != nil || len(adminResult.Events) != 2 {
 		t.Fatalf("expired admin result: %+v %v", adminResult, err)
 	}
 	foreignOrg := uuid.NewV7()
@@ -126,16 +126,16 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	foreignFilter.TargetUserID = user
 	foreignFilter.SlackTeamID = "T123"
 	foreignFilter.SlackUserID = "U123"
-	if _, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, foreignFilter); err != nil {
+	if _, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, p, foreignFilter); err != nil {
 		t.Fatal(err)
 	}
 	var valid bool
-	if err := d.Pool.QueryRow(t.Context(), `SELECT bool_and(authorization_evidence->'checks' @> '[{"type":"user_attribute","attribute":"admin"}]'::jsonb AND details->>'actor_kind'='user' AND details->>'target_kind'='slack_user_link' AND details->>'target_user_id'=$2 AND details->>'slack_team_id'='T123' AND details->>'slack_user_id'='U123') FROM audit_events WHERE org_id=$1 AND action='audit.searched'`, foreignOrg, user.String()).Scan(&valid); err != nil || !valid {
+	if err := d.Pool.QueryRow(t.Context(), `SELECT bool_and(authorization_evidence->'checks' @> '[{"type":"user_attribute","attribute":"admin","scope":{"kind":"platform"}}]'::jsonb AND details->>'read_model'='platform' AND details->>'actor_kind'='user' AND details->>'target_kind'='slack_user_link' AND details->>'target_user_id'=$2 AND details->>'slack_team_id'='T123' AND details->>'slack_user_id'='U123') FROM audit_events WHERE org_id=$1 AND action='audit.searched'`, foreignOrg, user.String()).Scan(&valid); err != nil || !valid {
 		t.Fatalf("foreign membership or lost filters: %v %v", valid, err)
 	}
 	dbtest.MustExec(t, t.Context(), d.Pool, `CREATE FUNCTION reject_audit_search() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='audit.searched' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END $$`)
 	dbtest.MustExec(t, t.Context(), d.Pool, `CREATE TRIGGER reject_audit_search BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_audit_search()`)
-	adminResult, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f)
+	adminResult, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, p, f)
 	if err == nil || len(adminResult.Events) != 0 {
 		t.Fatalf("released rows without access receipt: %+v %v", adminResult, err)
 	}
@@ -171,7 +171,7 @@ func TestSearchFiltersByActionsOperationAndEvent(t *testing.T) {
 	search := func(f auditquery.SearchFilter) []uuid.UUID {
 		t.Helper()
 		f.OrgID, f.From, f.To, f.Limit = org, time.Now().Add(-time.Hour), time.Now().Add(time.Minute), 100
-		result, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f)
+		result, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, p, f)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -193,14 +193,14 @@ func TestSearchFiltersByActionsOperationAndEvent(t *testing.T) {
 		t.Fatalf("one event: %v", got)
 	}
 	bad := auditquery.SearchFilter{OrgID: org, From: time.Now().Add(-time.Hour), To: time.Now(), Limit: 10, Actions: []string{"secret.created", "not.an_action"}}
-	if _, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, bad); !errors.Is(err, auditquery.ErrSearchInput) {
+	if _, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, p, bad); !errors.Is(err, auditquery.ErrSearchInput) {
 		t.Fatal("unknown action accepted", err)
 	}
 	bad.Actions = make([]string, 101)
 	for i := range bad.Actions {
 		bad.Actions[i] = "secret.created"
 	}
-	if _, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, bad); !errors.Is(err, auditquery.ErrSearchInput) {
+	if _, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, p, bad); !errors.Is(err, auditquery.ErrSearchInput) {
 		t.Fatal("unbounded action list accepted", err)
 	}
 	// The search records what it looked for.

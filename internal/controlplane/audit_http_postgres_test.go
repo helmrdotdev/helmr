@@ -59,7 +59,7 @@ func TestAuditHTTPAuthenticationPermissionAndAdminRefusals(t *testing.T) {
 		t.Fatal(r.Code, r.Body.String())
 	}
 	var admin bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='audit.searched' AND actor_user_id IS NOT NULL AND authorization_evidence->>'decision'='denied' AND authorization_evidence->'checks' @> '[{"type":"user_attribute","attribute":"admin","observed":false,"scope":{"kind":"installation"},"result":"failed"}]'::jsonb AND details->>'reason'='installation_authority_required')`).Scan(&admin); err != nil || !admin {
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='audit.searched' AND actor_user_id IS NOT NULL AND authorization_evidence->>'decision'='denied' AND authorization_evidence->'checks' @> '[{"type":"user_attribute","attribute":"admin","observed":false,"scope":{"kind":"platform"},"result":"failed"}]'::jsonb AND details->>'reason'='platform_authority_required')`).Scan(&admin); err != nil || !admin {
 		t.Fatal(admin, err)
 	}
 	if r := f.request(t, http.MethodPost, "/admin/api/v1/worker-groups", owner, `{}`); r.Code != http.StatusForbidden {

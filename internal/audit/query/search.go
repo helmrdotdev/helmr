@@ -51,7 +51,7 @@ type SearchFilter struct {
 // maxSearchActions bounds the actions one search may list.
 const maxSearchActions = 100
 
-func (f SearchFilter) validate(installation bool) error {
+func (f SearchFilter) validate(adminView bool) error {
 	if f.From.IsZero() || f.To.IsZero() || !f.To.After(f.From) || f.To.Sub(f.From) > 31*24*time.Hour || f.Limit < 1 || f.Limit > 500 {
 		return ErrSearchInput
 	}
@@ -67,16 +67,16 @@ func (f SearchFilter) validate(installation bool) error {
 		}
 	}
 	kinds := []string{"user", "api_key", "session", "platform_service", "unidentified"}
-	if installation {
+	if adminView {
 		kinds = []string{"user", "api_key", "session", "worker_host", "component", "unidentified"}
 	}
-	if !installation && f.ActorID != uuid.Nil() && (f.ActorKind == "platform_service" || f.ActorKind == "unidentified") {
+	if !adminView && f.ActorID != uuid.Nil() && (f.ActorKind == "platform_service" || f.ActorKind == "unidentified") {
 		return ErrSearchInput
 	}
-	if !installation && f.TargetKind != "" && !publicTargetKind(f.TargetKind) {
+	if !adminView && f.TargetKind != "" && !publicTargetKind(f.TargetKind) {
 		return ErrSearchInput
 	}
-	if !installation {
+	if !adminView {
 		for _, action := range f.Actions {
 			d, _ := audit.Lookup(action)
 			if d.Audience != audit.OrganizationAudience {
@@ -97,21 +97,21 @@ func (f SearchFilter) validate(installation bool) error {
 }
 
 // Search authorizes, buffers a bounded selection and commits its access fact
-// before returning any rows. Installation custody is a separate entry point.
+// before returning any rows. Admin reads use a separate entry point.
 func Search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter) (SearchResult, error) {
 	result, err := search(ctx, database, policy, prior, f, false)
 	return SearchResult{Events: result.PublicEvents, NextBefore: result.NextBefore}, err
 }
-func SearchInstallation(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter) (InstallationSearchResult, error) {
+func SearchAdmin(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter) (AdminSearchResult, error) {
 	result, err := search(ctx, database, policy, prior, f, true)
-	return InstallationSearchResult{Events: result.Events, NextBefore: result.NextBefore}, err
+	return AdminSearchResult{Events: result.Events, NextBefore: result.NextBefore}, err
 }
-func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter, installation bool) (searchResult, error) {
+func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter, adminView bool) (searchResult, error) {
 	result := searchResult{Events: []Record{}, PublicEvents: []api.AuditEvent{}}
 	if f.Limit == 0 {
 		f.Limit = 100
 	}
-	if err := f.validate(installation); err != nil {
+	if err := f.validate(adminView); err != nil {
 		return result, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -126,12 +126,12 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 		environments := []uuid.UUID{}
 		accessOrg, accessEnv := uuid.Nil(), uuid.Nil()
 		unresolved := false
-		if installation {
+		if adminView {
 			if prior.Kind != auth.PrincipalKindSession {
 				return ErrSearchDenied
 			}
 			var err error
-			actor, err = audit.InstallationOperator(prior)
+			actor, err = audit.PlatformOperator(prior)
 			if err != nil {
 				return &audit.Refusal{Authorization: actor.Authorization, Cause: ErrSearchDenied}
 			}
@@ -139,7 +139,7 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND admin)`, prior.UserID).Scan(&active); err != nil {
 				return err
 			}
-			check := audit.UserAttributeCheck{Type: "user_attribute", UserID: prior.UserID, Attribute: "admin", Expected: true, Observed: active, ObservationSource: "transaction", Scope: audit.CheckScope{Kind: "installation"}, Result: "passed"}
+			check := audit.UserAttributeCheck{Type: "user_attribute", UserID: prior.UserID, Attribute: "admin", Expected: true, Observed: active, ObservationSource: "transaction", Scope: audit.CheckScope{Kind: "platform"}, Result: "passed"}
 			if !active {
 				check.Result = "failed"
 				actor.Authorization.Decision = "denied"
@@ -247,7 +247,7 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 			beforeTime = f.Before.RecordedAt
 			beforeID = f.Before.ID
 		}
-		rows, err := tx.Query(ctx, searchSQL, optionalUUID(org), orgWide, environments, optionalUUID(f.EnvironmentID), f.From, f.To, beforeTime, beforeID, f.ActorKind, optionalUUID(f.ActorID), f.Actions, f.TargetKind, optionalUUID(f.TargetID), f.Outcome, optionalUUID(f.TargetUserID), f.SlackTeamID, f.SlackUserID, f.Limit+1, optionalUUID(f.OperationID), optionalUUID(f.EventID), installation, audit.PlatformActions())
+		rows, err := tx.Query(ctx, searchSQL, optionalUUID(org), orgWide, environments, optionalUUID(f.EnvironmentID), f.From, f.To, beforeTime, beforeID, f.ActorKind, optionalUUID(f.ActorID), f.Actions, f.TargetKind, optionalUUID(f.TargetID), f.Outcome, optionalUUID(f.TargetUserID), f.SlackTeamID, f.SlackUserID, f.Limit+1, optionalUUID(f.OperationID), optionalUUID(f.EventID), adminView, audit.PlatformActions())
 		if err != nil {
 			return err
 		}
@@ -270,7 +270,7 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 				rows.Close()
 				return err
 			}
-			if installation {
+			if adminView {
 				result.Events = append(result.Events, event)
 			} else {
 				public, err := projectRecord(event, scope)
@@ -289,8 +289,8 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 			return err
 		}
 		readModel := "organization"
-		if installation {
-			readModel = "installation"
+		if adminView {
+			readModel = "platform"
 		}
 		detail := audit.SearchDetails{ReadModel: readModel, From: f.From, To: f.To, ResultCount: count, EnvironmentIDs: environments, Actions: f.Actions, OperationID: f.OperationID, EventID: f.EventID, ActorID: f.ActorID, TargetID: f.TargetID, Outcome: f.Outcome, ActorKind: f.ActorKind, TargetKind: f.TargetKind, TargetUserID: f.TargetUserID, SlackTeamID: f.SlackTeamID, SlackUserID: f.SlackUserID, RequestedEnvironmentID: f.EnvironmentID}
 		event := audit.Event{Evidence: actor, OrgID: accessOrg, EnvironmentID: accessEnv, Action: "audit.searched", TargetKind: "audit", Details: detail, Unresolved: unresolved}

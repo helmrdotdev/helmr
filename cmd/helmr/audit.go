@@ -14,12 +14,12 @@ import (
 )
 
 func auditCommand() *cobra.Command { return auditNamespace(false) }
-func installationCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "installation", Short: "Manage the installation using an administrator login"}
+func platformCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "platform", Short: "Manage the platform using an administrator login"}
 	cmd.AddCommand(auditNamespace(true))
 	return cmd
 }
-func auditNamespace(installation bool) *cobra.Command {
+func auditNamespace(adminView bool) *cobra.Command {
 	cmd := &cobra.Command{Use: "audit", Short: "Inspect retained security metadata"}
 	list := &cobra.Command{Use: "list", Short: "Search one bounded page of audit events", Args: cobra.NoArgs}
 	var from, to, beforeTime, beforeID string
@@ -42,8 +42,8 @@ func auditNamespace(installation bool) *cobra.Command {
 	flags.StringVar(&options.SlackUserID, "slack-user-id", "", "Filter by linked Slack user")
 	flags.StringVar(&options.Outcome, "outcome", "", "Filter by outcome")
 	flags.BoolVar(&jsonOutput, "json", false, "Print the response and next_before as JSON")
-	if installation {
-		flags.StringVar(&options.OrganizationID, "organization-id", "", "Original organization UUID; omit for installation events")
+	if adminView {
+		flags.StringVar(&options.OrganizationID, "organization-id", "", "Original organization UUID; omit to list only platform events that belong to no organization")
 	}
 	list.RunE = func(cmd *cobra.Command, _ []string) error {
 		var err error
@@ -71,7 +71,7 @@ func auditNamespace(installation bool) *cobra.Command {
 			options.Before = &key
 		}
 		var c *client.Client
-		if installation {
+		if adminView {
 			c, err = sessionControlPlaneClient(cmd)
 		} else {
 			c, err = controlPlaneClient(cmd)
@@ -81,8 +81,8 @@ func auditNamespace(installation bool) *cobra.Command {
 		}
 		var rows []auditTableRow
 		var nextBefore *api.AuditBefore
-		if installation {
-			result, err := c.ListInstallationAuditEvents(cmd.Context(), options)
+		if adminView {
+			result, err := c.ListAdminAuditEvents(cmd.Context(), options)
 			if err != nil {
 				return err
 			}

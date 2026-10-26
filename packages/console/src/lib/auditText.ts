@@ -17,7 +17,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
 // Words for the resource an action names, as it reads in a sentence.
 const NOUNS: Record<string, string> = {
   access: "access", member: "member", invitation: "invitation", role: "role", role_grant: "role assignment",
-  permission_group: "group", platform_admin: "Helmr管理者", organization: "organization",
+  permission_group: "group", platform_admin: "Helmr administrator", organization: "organization",
   identity: "sign-in", agent: "agent", session: "session", turn: "turn", input: "question", message: "message",
   trigger: "trigger", mcp: "tool connection", runtime: "runtime operation", slack_app: "Slack app",
   slack_installation: "Slack workspace", slack_connection: "Slack connection", slack_user: "Slack user link",
@@ -45,7 +45,7 @@ const VERBS: Record<string, string> = {
 
 // Actions whose generic wording reads badly.
 const OVERRIDES: Record<string, string> = {
-  "platform_admin.granted": "Granted Helmr管理者 access",
+  "platform_admin.granted": "Granted Helmr administrator access",
   "session.hold_created": "Placed a hold on a session",
   "session.hold_released": "Released a hold on a session",
   "identity.sign_in": "Signed in",
@@ -148,7 +148,7 @@ const REASONS: Record<string, string> = {
 const CHECK_TITLES: Record<string, string> = {
   permission: "Permission",
   membership_attribute: "Organization owner",
-  user_attribute: "Helmr管理者",
+  user_attribute: "Helmr administrator",
   runtime_binding: "Current runtime",
   session_origin: "Started by",
   slack_thread: "Slack thread",
@@ -213,8 +213,8 @@ export function checkFields(check: AuditCheck, names: AuditNames, links: { sessi
     case "user_attribute":
       return [
         ...person("User", check.user_id, names, "user"),
-        { label: "Expected", value: check.expected ? "Helmr管理者" : "Not Helmr管理者" },
-        { label: "Observed", value: check.observed ? "Helmr管理者" : "Not Helmr管理者", sub: check.observation_source ? `checked ${check.observation_source === "transaction" ? "when the change was saved" : "when the request arrived"}` : undefined },
+        { label: "Expected", value: check.expected ? "Helmr administrator" : "Not a Helmr administrator" },
+        { label: "Observed", value: check.observed ? "Helmr administrator" : "Not a Helmr administrator", sub: check.observation_source ? `checked ${check.observation_source === "transaction" ? "when the change was saved" : "when the request arrived"}` : undefined },
         result(check),
       ];
     case "runtime_binding":

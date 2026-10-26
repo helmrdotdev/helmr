@@ -96,7 +96,7 @@ export type AuditDetails =
   | { from: string; to: string; result_count?: number; environment_ids?: string[]; requested_environment_id?: string; actions?: string[]; operation_id?: string; event_id?: string; actor_kind?: string; actor_id?: string; target_kind?: string; target_id?: string; target_user_id?: string; slack_team_id?: string; slack_user_id?: string; outcome?: string };
 export type AuditEvent = AuditMetadata & {
   actor_kind: AuditActorKind; restricted: AuditRestrictedSection[];
-  authorization: { decision: "allowed" | "denied" | "not_evaluated"; checks: AuditCheck[]; installation_authority: boolean };
+  authorization: { decision: "allowed" | "denied" | "not_evaluated"; checks: AuditCheck[]; platform_authority: boolean };
   causality: { initiator_kind?: string; initiator_id?: string; source_id?: string }; details: AuditDetails;
 };
 export type AdminAuditEvent = AuditMetadata & {
@@ -125,8 +125,8 @@ function auditQuery(filter: AuditFilter, before?: AuditBefore): URLSearchParams 
   return query;
 }
 export type AnyAuditEvent = AuditEvent | AdminAuditEvent;
-export function listAuditActions(installation = false): Promise<{ actions: AuditAction[] }> {
-  return request(`${installation ? "/admin/api/v1" : "/api"}/audit-events/actions`);
+export function listAuditActions(adminView = false): Promise<{ actions: AuditAction[] }> {
+  return request(`${adminView ? "/admin/api/v1" : "/api"}/audit-events/actions`);
 }
 export function searchAuditEvents(filter: AuditFilter, before?: AuditBefore): Promise<AuditPage> {
   return request<AuditPage>(`/api/audit-events?${auditQuery(filter, before)}`);

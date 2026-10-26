@@ -16,7 +16,7 @@ type FailureDetails struct {
 
 func (FailureDetails) auditDetails() {}
 func validReason(reason string) bool {
-	return slices.Contains([]string{"authentication_invalid", "permission_denied", "installation_authority_required", "invalid_request", "state_conflict", "stale_authority", "operation_failed", "worker_lost", "cancelled", "expired", "delivery_failed", "not_found", "capture_failed"}, reason)
+	return slices.Contains([]string{"authentication_invalid", "permission_denied", "platform_authority_required", "invalid_request", "state_conflict", "stale_authority", "operation_failed", "worker_lost", "cancelled", "expired", "delivery_failed", "not_found", "capture_failed"}, reason)
 }
 
 type LifecycleDetails struct {
@@ -145,7 +145,7 @@ func marshalEventDetails(action, outcome string, details Details) ([]byte, error
 	return marshalDetails(action, details)
 }
 
-// RegionDetails identifies the installation's string-keyed Region without
+// RegionDetails identifies the platform's string-keyed Region without
 // pretending that it has a UUID identity.
 type RegionDetails struct {
 	RegionID string `json:"region_id"`

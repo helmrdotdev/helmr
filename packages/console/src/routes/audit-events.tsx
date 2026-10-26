@@ -73,15 +73,15 @@ function timeWindow(params: Params): { from: string; to: string } {
 // time, outcome, kind of action, who acted, what was acted on and where. A row
 // opens beneath itself to show the event's recorded fields. Filters live in the URL, so a link
 // reproduces the same view.
-export function AuditEvents(props: { installation?: boolean }) {
+export function AuditEvents(props: { adminView?: boolean }) {
   const me = useMe();
-  const scope = props.installation ? undefined : useScope();
+  const scope = props.adminView ? undefined : useScope();
   const projectID = () => scope?.selectedProjectID() ?? "";
   const [params, setParams] = useSearchParams<Params>();
-  const allowed = createMemo(() => (props.installation ? !!me.data?.admin : canReadAudit(me.data)));
+  const allowed = createMemo(() => (props.adminView ? !!me.data?.admin : canReadAudit(me.data)));
   const can = (permission: string) => hasPermission(me.data, permission);
 
-  const actions = createQuery(() => ({ queryKey: ["audit", "actions", props.installation ?? false], queryFn: () => listAuditActions(props.installation), enabled: allowed(), staleTime: Infinity, retry: false }));
+  const actions = createQuery(() => ({ queryKey: ["audit", "actions", props.adminView ?? false], queryFn: () => listAuditActions(props.adminView), enabled: allowed(), staleTime: Infinity, retry: false }));
   const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: allowed() && can("members.read"), retry: false }));
   const roles = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() && can("roles.read"), retry: false }));
   const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: allowed() && can("groups.read"), retry: false }));
@@ -110,7 +110,7 @@ export function AuditEvents(props: { installation?: boolean }) {
     return {
       ...timeWindow(params),
       actions: inCategory(),
-      organization_id: props.installation ? params.organization_id ?? "" : "",
+      organization_id: props.adminView ? params.organization_id ?? "" : "",
       outcome: params.outcome ?? "",
       actor_id: params.actor ?? "",
       actor_kind: params.actor_kind ?? "",
@@ -124,8 +124,8 @@ export function AuditEvents(props: { installation?: boolean }) {
   // A category needs its actions before the search can name them.
   const ready = () => allowed() && (!params.category || inCategory().length > 0);
   const events = createInfiniteQuery(() => ({
-    queryKey: ["audit", "events", props.installation ?? false, filter()],
-    queryFn: async ({ pageParam }): Promise<{ events: AuditEvent[]; next_before?: AuditBefore }> => props.installation ? searchAdminAuditEvents(filter(), pageParam) : searchAuditEvents(filter(), pageParam),
+    queryKey: ["audit", "events", props.adminView ?? false, filter()],
+    queryFn: async ({ pageParam }): Promise<{ events: AuditEvent[]; next_before?: AuditBefore }> => props.adminView ? searchAdminAuditEvents(filter(), pageParam) : searchAuditEvents(filter(), pageParam),
     initialPageParam: undefined as AuditBefore | undefined,
     getNextPageParam: (page) => page.next_before,
     enabled: ready(),
@@ -161,7 +161,7 @@ export function AuditEvents(props: { installation?: boolean }) {
     { value: "kind:user", label: "Any member" },
     { value: "kind:api_key", label: "Any API key" },
     { value: "kind:session", label: "Any agent session" },
-    ...(props.installation ? [{ value: "kind:component", label: "Helmr" }, { value: "kind:worker_host", label: "Worker host" }] : [{ value: "kind:platform_service", label: "Platform service" }]),
+    ...(props.adminView ? [{ value: "kind:component", label: "Helmr" }, { value: "kind:worker_host", label: "Worker host" }] : [{ value: "kind:platform_service", label: "Platform service" }]),
     { value: "kind:unidentified", label: "Unidentified" },
     ...(members.data?.members ?? []).filter((m) => m.status === "active").map((m) => ({ value: m.user_id, label: m.display_name || m.email || m.user_id })),
   ].concat(params.actor && !(members.data?.members ?? []).some((m) => m.user_id === params.actor) ? [{ value: params.actor, label: names().get(params.actor) ?? "Selected actor" }] : []));
@@ -174,16 +174,16 @@ export function AuditEvents(props: { installation?: boolean }) {
 
   return (
     <div class="min-w-0">
-        <PageHeader title={props.installation ? "Installation audit" : "Audit events"} subtitle="Who did what, what Helmr allowed or refused, and why. Searches are recorded; conversation content and command output never are." />
+        <PageHeader title={props.adminView ? "Admin audit events" : "Audit events"} subtitle="Who did what, what Helmr allowed or refused, and why. Searches are recorded; conversation content and command output never are." />
         <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read audit events permission for an organization or environment." /></Show>}>
-          <Show when={props.installation}><Field label="Organization ID" hint="Leave blank for installation events. Enter an organization UUID to inspect its full records."><TextInput value={params.organization_id ?? ""} onChange={(event) => setParams({ organization_id: event.currentTarget.value.trim() || undefined, event: undefined, focus: undefined, operation: undefined, at: undefined })} /></Field></Show>
+          <Show when={props.adminView}><Field label="Organization ID" hint="Leave blank for platform records that do not belong to an organization. Enter an organization UUID to inspect its full records."><TextInput value={params.organization_id ?? ""} onChange={(event) => setParams({ organization_id: event.currentTarget.value.trim() || undefined, event: undefined, focus: undefined, operation: undefined, at: undefined })} /></Field></Show>
           <div class={ui.toolbar}>
             <div class={ui.toolbarSide}>
               <Select<Range> ariaLabel="Time range" value={(params.range as Range) ?? "24h"} options={RANGES.map(({ value, label }) => ({ value, label }))} onChange={(value) => setParams({ range: value === "24h" ? undefined : value, event: undefined, at: undefined })} />
               <Segmented label="Outcome" value={params.outcome ?? ""} options={OUTCOMES} onChange={(value) => setParams({ outcome: value || undefined, event: undefined, at: undefined })} />
               <Select<string> ariaLabel="Action" value={params.category ?? ""} options={categories()} onChange={(value) => setParams({ category: value || undefined, event: undefined, at: undefined })} />
               <Select<string> ariaLabel="Who" value={whoValue()} options={who()} onChange={(value) => setParams(value.startsWith("kind:") ? { actor_kind: value.slice(5), actor: undefined, event: undefined, at: undefined } : { actor: value || undefined, actor_kind: undefined, event: undefined, at: undefined })} />
-              <Show when={!props.installation && environments().length > 1}>
+              <Show when={!props.adminView && environments().length > 1}>
                 <Select<string> ariaLabel="Environment" value={params.environment_id ?? ""} options={environments()} onChange={(value) => setParams({ environment_id: value || undefined, event: undefined, at: undefined })} />
               </Show>
             </div>
@@ -222,7 +222,7 @@ export function AuditEvents(props: { installation?: boolean }) {
                         </td>
                         <td class="max-w-0 w-full truncate text-body text-console-text">{summary()}</td>
                         <td><StatusBadge resource="audit_outcome" status={event.outcome as "succeeded" | "denied"} /></td>
-                        <td class="whitespace-nowrap text-chrome text-console-muted">{event.environment_id ? names().get(event.environment_id) ?? "Environment" : event.org_id ? "Organization" : "Installation"}</td>
+                        <td class="whitespace-nowrap text-chrome text-console-muted">{event.environment_id ? names().get(event.environment_id) ?? "Environment" : event.org_id ? "Organization" : "Platform"}</td>
                       </tr>
                       <Show when={current()}>
                         <tr id={`audit-row-${event.id}`} class="hover:bg-transparent">

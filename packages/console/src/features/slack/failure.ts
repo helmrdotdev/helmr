@@ -4,7 +4,7 @@ import { describeFailure, type Failure } from "../../lib/error";
 // What Slack request failures mean to the person on the page. The server's own
 // text is never the message; it stays in the technical details.
 export const SLACK_MESSAGES: Readonly<Record<string, string>> = {
-  service_unavailable: "Slack is not set up for this Helmr installation.",
+  service_unavailable: "Slack is not set up in Helmr.",
   forbidden: "You need Manage agents permission to manage this agent’s connection. Your access may have changed; reload the page.",
   conflict: "The Slack connection changed since this page loaded. Reload to see its current state.",
   bad_request: "Slack did not accept this request. Check the values and try again.",

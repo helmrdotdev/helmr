@@ -90,14 +90,14 @@ for search, retention, maintenance and recovery prerequisites.
 
 - `Actor` sets one of `UserID`, `APIKeyID`, `SessionID`, `WorkerHostID`, or a
   closed stable `Component`. An unidentified failed/absent credential sets none.
-  A user remains the same actor when using installation administration.
+  A user remains the same actor when using platform administration.
 - `Authentication` records request versus internal provenance, its result, and
   the actual credential kind, identifier and version where available. A runtime
   Session is reported through an authenticated Worker Host; a Session generation
   is an execution fence, not an authentication credential.
 - `Authorization` records the owner's decision and typed checks. Permission
   checks name the subject, required permission and scope, with the exact granting
-  assignment/Role revisions only when passed. Installation checks snapshot the
+  assignment/Role revisions only when passed. Platform checks snapshot the
   `users.admin` value actually consumed, including its observation source.
   Runtime/Host checks describe the binding the owner verified. Principal refresh
   failures preserve the observed missing predicate or compared credential versions.

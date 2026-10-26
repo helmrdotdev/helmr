@@ -58,10 +58,10 @@ test("console demo shows its waiting work on the Overview and retained history i
   await expect(page.getByRole("tabpanel", { name: "Templates" })).toContainText("demo-computer");
 });
 
-test("an Agent's Slack tab explains that this installation has no Slack integration", async ({ page }) => {
+test("an Agent's Slack tab explains that Slack is not set up", async ({ page }) => {
   await login(page);
   await page.goto(`/agents/demo-agent/slack?project=${PROJECT_ID}&environment=${DEMO_ENVIRONMENT_ID}`);
-  await expect(page.getByText("Slack is not set up for this Helmr installation.")).toBeVisible();
+  await expect(page.getByText("Slack is not set up in Helmr.")).toBeVisible();
   await expect(page.getByText(/The operator enables it on the control plane/)).toBeVisible();
   await expect(page.getByText("service is unavailable")).toBeHidden();
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);

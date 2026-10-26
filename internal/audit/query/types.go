@@ -61,7 +61,7 @@ type Before struct {
 	RecordedAt time.Time `json:"recorded_at"`
 	ID         uuid.UUID `json:"id"`
 }
-type InstallationSearchResult struct {
+type AdminSearchResult struct {
 	Events     []Record `json:"events"`
 	NextBefore *Before  `json:"next_before,omitempty"`
 }

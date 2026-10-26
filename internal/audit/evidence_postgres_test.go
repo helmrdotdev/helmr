@@ -23,7 +23,7 @@ func TestEvidencePreservesIdentityAndEvaluatedAdminSnapshot(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name,admin) VALUES($1,'Account name',true)`, user)
 	p := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: credential, Admin: true}
 	normal := audit.FromPrincipal(p)
-	admin, err := audit.InstallationOperator(p)
+	admin, err := audit.PlatformOperator(p)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestEvidencePreservesIdentityAndEvaluatedAdminSnapshot(t *testing.T) {
 		}
 	}
 	var valid bool
-	err = d.Pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(actor_user_id=$1 AND credential_id=$2 AND actor_api_key_id IS NULL AND actor_component IS NULL AND actor_identity->>'display_name'='Account name') AND count(*) FILTER(WHERE authorization_evidence->>'decision'='not_evaluated')=1 AND count(*) FILTER(WHERE authorization_evidence->'checks' @> '[{"type":"user_attribute","attribute":"admin","expected":true,"observed":true,"observation_source":"request_authentication","scope":{"kind":"installation"}}]'::jsonb)=1 FROM audit_events`, user, credential).Scan(&valid)
+	err = d.Pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(actor_user_id=$1 AND credential_id=$2 AND actor_api_key_id IS NULL AND actor_component IS NULL AND actor_identity->>'display_name'='Account name') AND count(*) FILTER(WHERE authorization_evidence->>'decision'='not_evaluated')=1 AND count(*) FILTER(WHERE authorization_evidence->'checks' @> '[{"type":"user_attribute","attribute":"admin","expected":true,"observed":true,"observation_source":"request_authentication","scope":{"kind":"platform"}}]'::jsonb)=1 FROM audit_events`, user, credential).Scan(&valid)
 	if err != nil || !valid {
 		t.Fatal(valid, err)
 	}

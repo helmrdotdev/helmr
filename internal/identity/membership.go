@@ -17,7 +17,7 @@ import (
 )
 
 // CreateOrganization commits the organization and owner membership together
-// with the initial administrator grant when setting up an installation.
+// with the initial administrator grant during initial Helmr setup.
 func CreateOrganization(ctx context.Context, database db.TxBeginner, input org.OrganizationInput) (db.Organization, error) {
 	if input.Actor.Authorization.Decision == "" {
 		input.Actor.Authorization = audit.NotEvaluated()

@@ -96,11 +96,11 @@ func TestAuditTypedProjectionWithholdsWorkerEvidence(t *testing.T) {
 
 func TestAuditTypedProjectionRetainsHumanOperatorAndRestrictsSearch(t *testing.T) {
 	user, credential, host := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	actor, err := audit.InstallationOperator(auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: credential, Admin: true})
+	actor, err := audit.PlatformOperator(auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: credential, Admin: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	details := audit.SearchDetails{ReadModel: "installation", From: time.Now().Add(-time.Hour), To: time.Now(), ResultCount: 31, ActorID: host, ActorKind: "worker_host", TargetID: host, TargetKind: "worker_host"}
+	details := audit.SearchDetails{ReadModel: "platform", From: time.Now().Add(-time.Hour), To: time.Now(), ResultCount: 31, ActorID: host, ActorKind: "worker_host", TargetID: host, TargetKind: "worker_host"}
 	r, scope := projectionRecord(t, actor, "audit.searched", details)
 	r.ActorIdentity = &IdentitySnapshot{Source: "account", DisplayName: "Historical operator", Email: "operator@example.test"}
 	public, err := projectRecord(r, scope)
@@ -108,7 +108,7 @@ func TestAuditTypedProjectionRetainsHumanOperatorAndRestrictsSearch(t *testing.T
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(public)
-	if public.ActorKind != api.AuditActorUser || public.ActorUserID == nil || *public.ActorUserID != user || public.ActorIdentity.Email != "operator@example.test" || !public.Authorization.InstallationAuthority {
+	if public.ActorKind != api.AuditActorUser || public.ActorUserID == nil || *public.ActorUserID != user || public.ActorIdentity.Email != "operator@example.test" || !public.Authorization.PlatformAuthority {
 		t.Fatalf("lost operator accountability: %s", encoded)
 	}
 	for _, hidden := range []string{credential.String(), host.String(), "result_count", "worker_host"} {
@@ -116,16 +116,16 @@ func TestAuditTypedProjectionRetainsHumanOperatorAndRestrictsSearch(t *testing.T
 			t.Fatalf("operator evidence leak: %s", encoded)
 		}
 	}
-	stale := audit.UserAttributeCheck{Type: "user_attribute", UserID: user, Attribute: "admin", Expected: true, Observed: false, ObservationSource: "transaction", Scope: audit.CheckScope{Kind: "installation"}, Result: "failed"}
+	stale := audit.UserAttributeCheck{Type: "user_attribute", UserID: user, Attribute: "admin", Expected: true, Observed: false, ObservationSource: "transaction", Scope: audit.CheckScope{Kind: "platform"}, Result: "failed"}
 	actor.Authorization.Decision = "denied"
 	actor.Authorization.Checks = append(actor.Authorization.Checks, stale)
-	r, scope = projectionRecord(t, actor, "audit.searched", audit.FailureDetails{Reason: "installation_authority_required", Operation: "GET /admin/api/v1/audit-events"})
+	r, scope = projectionRecord(t, actor, "audit.searched", audit.FailureDetails{Reason: "platform_authority_required", Operation: "GET /admin/api/v1/audit-events"})
 	r.Outcome = "denied"
 	public, err = projectRecord(r, scope)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if public.Authorization.InstallationAuthority || public.Authorization.Decision != "denied" {
+	if public.Authorization.PlatformAuthority || public.Authorization.Decision != "denied" {
 		t.Fatal("stale admin observation labeled an operator")
 	}
 }

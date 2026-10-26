@@ -54,12 +54,12 @@ func (s *Server) refuseOperation(w http.ResponseWriter, r *http.Request, reason 
 		actor = audit.FromPrincipal(p)
 		org = p.OrgID
 	}
-	if definition.Scope == audit.InstallationScope {
+	if definition.Scope == audit.PlatformScope {
 		org = uuid.Nil()
 	}
 	if host := workerFromContext(r.Context()); host.HostID != uuid.Nil() {
 		// The authenticated Host does not prove the tenant/runtime IDs in the
-		// rejected body. Keep custody at installation scope.
+		// rejected body. Keep custody at platform scope.
 		actor = audit.Worker(host.HostID, host.HostClaimVersion)
 		org = uuid.Nil()
 		if !s.admitSecurityKey(w, r, "worker_host:"+host.HostID.String(), true) {

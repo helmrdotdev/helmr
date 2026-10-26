@@ -16,13 +16,13 @@ type Definition struct {
 }
 
 // Scope describes successful custody. Organization actions may also record an
-// installation-scoped refusal when no organization has been established.
+// platform-scoped refusal when no organization has been established.
 type Scope string
 
 const (
 	OrganizationScope Scope = "organization"
-	InstallationScope Scope = "installation"
-	EitherScope       Scope = "organization_or_installation"
+	PlatformScope     Scope = "platform"
+	EitherScope       Scope = "organization_or_platform"
 )
 
 type Audience string
@@ -42,9 +42,9 @@ var definitions = []Definition{
 	{"trigger.content_read", "trigger", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"session.delivery_check_requested", "session", []string{"accepted", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"session.delivery_abandoned", "session", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
-	{"region.created", "region", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"region.updated", "region", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_group.updated", "worker_group", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
+	{"region.created", "region", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"region.updated", "region", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_group.updated", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"template.refresh_requested", "template", []string{"accepted", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"organization.created", "organization", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"member.granted", "member", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
@@ -54,7 +54,7 @@ var definitions = []Definition{
 	{"invitation.accepted", "invitation", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"invitation.revoked", "invitation", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"invitation.expired", "invitation", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
-	{"platform_admin.granted", "user", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
+	{"platform_admin.granted", "user", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"api_key.issued", "api_key", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"api_key.updated", "api_key", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"api_key.rotated", "api_key", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
@@ -90,32 +90,32 @@ var definitions = []Definition{
 	{"slack_installation.authorization_lost", "slack_installation", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"slack_user.linked", "slack_user_link", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"slack_user.unlinked", "slack_user_link", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
-	{"worker_group.created", "worker_group", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_group.token_rotated", "worker_group", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_group.activated", "worker_group", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_group.paused", "worker_group", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_group.drain_started", "worker_group", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_group.disabled", "worker_group", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_pool.created", "worker_pool", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_pool.primary_selected", "worker_pool", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_pool.resource_policy_updated", "worker_pool", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_pool.drain_started", "worker_pool", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_pool.disabled", "worker_pool", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_host.drain_started", "worker_host", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_host.marked_lost", "worker_host", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_host.provider_absence_confirmed", "worker_host", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"worker_scale_in.completed", "worker_scale_in_operation", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
+	{"worker_group.created", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_group.token_rotated", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_group.activated", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_group.paused", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_group.drain_started", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_group.disabled", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_pool.created", "worker_pool", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_pool.primary_selected", "worker_pool", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_pool.resource_policy_updated", "worker_pool", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_pool.drain_started", "worker_pool", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_pool.disabled", "worker_pool", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_host.drain_started", "worker_host", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_host.marked_lost", "worker_host", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_host.provider_absence_confirmed", "worker_host", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"worker_scale_in.completed", "worker_scale_in_operation", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"identity.sign_in", "login_session", []string{"succeeded", "denied", "failed"}, EitherScope, OrganizationAudience},
 	{"identity.session_revoked", "login_session", []string{"succeeded", "denied", "failed"}, EitherScope, OrganizationAudience},
-	{"identity.device_started", "device_code", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
+	{"identity.device_started", "device_code", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"identity.device_denied", "device_code", []string{"succeeded", "denied", "failed"}, EitherScope, OrganizationAudience},
 	{"identity.device_authorized", "device_code", []string{"succeeded", "denied", "failed"}, EitherScope, OrganizationAudience},
-	{"identity.magic_link_requested", "login_session", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
+	{"identity.magic_link_requested", "login_session", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"audit.searched", "audit", []string{"succeeded", "denied", "failed"}, EitherScope, OrganizationAudience},
-	{"audit.retention_observed", "audit", []string{"succeeded"}, InstallationScope, PlatformAudience},
-	{"audit.purge_completed", "audit", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"audit.restore_recorded", "audit", []string{"succeeded", "denied", "failed"}, InstallationScope, PlatformAudience},
-	{"runtime.operation_refused", "runtime_operation", []string{"denied", "failed"}, InstallationScope, PlatformAudience},
+	{"audit.retention_observed", "audit", []string{"succeeded"}, PlatformScope, PlatformAudience},
+	{"audit.purge_completed", "audit", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"audit.restore_recorded", "audit", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
+	{"runtime.operation_refused", "runtime_operation", []string{"denied", "failed"}, PlatformScope, PlatformAudience},
 	{"session.created", "session", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"session.closed", "session", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"session.cancelled", "session", []string{"cancelled", "denied", "failed"}, OrganizationScope, OrganizationAudience},
@@ -155,7 +155,7 @@ var definitions = []Definition{
 var catalog = func() map[string]Definition {
 	result := make(map[string]Definition, len(definitions))
 	for _, d := range definitions {
-		if !slices.Contains([]Scope{OrganizationScope, InstallationScope, EitherScope}, d.Scope) || !slices.Contains([]Audience{OrganizationAudience, PlatformAudience}, d.Audience) || (d.Audience == PlatformAudience) != (d.Scope == InstallationScope) {
+		if !slices.Contains([]Scope{OrganizationScope, PlatformScope, EitherScope}, d.Scope) || !slices.Contains([]Audience{OrganizationAudience, PlatformAudience}, d.Audience) || (d.Audience == PlatformAudience) != (d.Scope == PlatformScope) {
 			panic("unclassified audit action")
 		}
 		if _, ok := detailDecoder(d.Action); !ok {

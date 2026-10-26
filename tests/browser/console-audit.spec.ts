@@ -21,7 +21,7 @@ const denied = {
   ...base, id: "00000000-0000-7000-8000-00000000e001", environment_id: environmentUUID, occurred_at: ago(2), recorded_at: ago(2), operation_id: "00000000-0000-7000-8000-00000000f001",
   actor_user_id: userID, actor_identity: { display_name: "Sato Kenji", email: "sato@acme.dev", source: "console" },
   action: "session.content_read", outcome: "denied", target_kind: "session", target_id: sessionID, session_id: sessionID,
-  authorization: { installation_authority: false, decision: "denied", checks: [
+  authorization: { platform_authority: false, decision: "denied", checks: [
     { type: "permission", permission: "sessions.read", result: "failed", reason: "no_matching_grant", subject_user_id: userID, scope: { org_id: "org", environment_id: environmentUUID, agent_id: "demo-triage" } },
     { type: "membership_attribute", member_id: "m-sato", attribute: "is_owner", expected: true, observed: false, result: "failed" },
   ] },
@@ -30,7 +30,7 @@ const granted = {
   ...base, restricted: ["transport", "correlation"], id: "00000000-0000-7000-8000-00000000e002", environment_id: null, occurred_at: ago(9), recorded_at: ago(9), operation_id: "00000000-0000-7000-8000-00000000f002",
   actor_user_id: "00000000-0000-7000-8000-00000000000c", actor_identity: { display_name: "Aiko Mori", email: "aiko@acme.dev", source: "console" },
   action: "role.updated", outcome: "succeeded", target_kind: "role", target_id: roleID,
-  authorization: { installation_authority: false, decision: "allowed", checks: [{ type: "permission", permission: "roles.update", result: "passed", subject_user_id: "00000000-0000-7000-8000-00000000000c", scope: { org_id: "org" }, evidence: { subject: "member", role_id: "role-admin", role_revision: 3, assignment_id: "00000000-0000-7000-8000-0000000041aa", assignment_revision: 2 } }] },
+  authorization: { platform_authority: false, decision: "allowed", checks: [{ type: "permission", permission: "roles.update", result: "passed", subject_user_id: "00000000-0000-7000-8000-00000000000c", scope: { org_id: "org" }, evidence: { subject: "member", role_id: "role-admin", role_revision: 3, assignment_id: "00000000-0000-7000-8000-0000000041aa", assignment_revision: 2 } }] },
 };
 const actions = [
   { action: "session.content_read", target_kind: "session", outcomes: ["succeeded", "denied"], category: "agents" },
@@ -39,7 +39,7 @@ const actions = [
   { action: "identity.sign_in", target_kind: "user", outcomes: ["succeeded", "failed"], category: "sign_in" },
 ];
 
-async function fixture(page: Page, options: { permissions?: string[]; paged?: boolean; installation?: boolean } = {}) {
+async function fixture(page: Page, options: { permissions?: string[]; paged?: boolean; adminView?: boolean } = {}) {
   const searches: URLSearchParams[] = [];
   const environment = { environment: "production", project: projectID, name: "Production", color_hex: "#008000", is_default: true };
   const project = { project: projectID, name: "Demo", default_region_id: "local", is_default: true, environments: [environment] };
@@ -48,7 +48,7 @@ async function fixture(page: Page, options: { permissions?: string[]; paged?: bo
     const url = new URL(route.request().url());
     const path = url.pathname;
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", membership_id: "m-local", display_name: "Local", org_id: "org", is_owner: false, permissions, admin: options.installation ?? false, organization_required: false, project_required: false };
+    if (path === "/api/me") json = { user_id: "local", membership_id: "m-local", display_name: "Local", org_id: "org", is_owner: false, permissions, admin: options.adminView ?? false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === `/api/projects/${projectID}/access-targets`) json = { project_id: "p", targets: [{ environment_id: environmentUUID, environment: "production", name: "Production", agents: [] }] };
@@ -61,7 +61,7 @@ async function fixture(page: Page, options: { permissions?: string[]; paged?: bo
       const wanted = url.searchParams.getAll("action");
       const operation = url.searchParams.get("operation_id");
       const id = url.searchParams.get("event_id");
-      const events = [denied, granted].map((event) => options.installation ? { ...event, actor_worker_host_id: null, actor_component: null, runtime_generation: null, process_epoch: null, source_ip: "203.0.113.24", cause_event_id: event.id === granted.id ? denied.id : null } : event).filter((e) => (!target || e.target_id === target) && (!outcome || e.outcome === outcome) && (!wanted.length || wanted.includes(e.action)) && (!operation || e.operation_id === operation) && (!id || e.id === id));
+      const events = [denied, granted].map((event) => options.adminView ? { ...event, actor_worker_host_id: null, actor_component: null, runtime_generation: null, process_epoch: null, source_ip: "203.0.113.24", cause_event_id: event.id === granted.id ? denied.id : null } : event).filter((e) => (!target || e.target_id === target) && (!outcome || e.outcome === outcome) && (!wanted.length || wanted.includes(e.action)) && (!operation || e.operation_id === operation) && (!id || e.id === id));
       if (options.paged) json = url.searchParams.has("before_id") ? { events: events.slice(1) } : { events: events.slice(0, 1), next_before: { recorded_at: events[0]!.recorded_at, id: events[0]!.id } };
       else json = { events };
     } else if (path === "/api/roles") json = { roles: [{ id: roleID, name: "Release manager", description: "", builtin_key: null, permissions: [], assignment_levels: ["environment"], api_key_assignable: true, grant_count: 0, group_count: 0, updated_at: ago(0), revision: 1 }, { id: "role-admin", name: "Access Administrator", description: "", builtin_key: "access_administrator", permissions: [], assignment_levels: ["organization"], api_key_assignable: false, grant_count: 1, group_count: 0, updated_at: ago(0), revision: 1 }], catalog: [] };
@@ -168,7 +168,7 @@ test("selecting an event loaded with Load more keeps the list and does not searc
 });
 
 test("opening the cause in Admin shows it whatever the list was filtered on, and rows stay selectable", async ({ page }) => {
-  const { searches } = await fixture(page, { installation: true });
+  const { searches } = await fixture(page, { adminView: true });
   await page.goto("/admin/audit-events?outcome=succeeded");
   await page.getByRole("button", { name: /^Show details: Updated role/ }).click();
   await page.getByRole("button", { name: "Open the cause" }).click();
@@ -204,8 +204,10 @@ test("organization details mark restricted evidence without presenting it as abs
 
 
 test("Admin can select an organization's full audit records", async ({ page }) => {
-  const { searches } = await fixture(page, { installation: true });
+  const { searches } = await fixture(page, { adminView: true });
   await page.goto("/admin/audit-events");
+  await expect(page.getByRole("heading", { name: "Admin audit events" })).toBeVisible();
+  await expect(page.getByText("Leave blank for platform records that do not belong to an organization. Enter an organization UUID to inspect its full records.")).toBeVisible();
   const organization = "00000000-0000-7000-8000-000000000201";
   const input = page.getByRole("textbox", { name: "Organization ID" });
   await input.fill(organization);
@@ -218,12 +220,12 @@ test("Admin can select an organization's full audit records", async ({ page }) =
 });
 
 test("Admin sees the Helmr administrator grant and its basis", async ({ page }) => {
-  await fixture(page, { installation: true });
+  await fixture(page, { adminView: true });
   const adminGrant = {
     ...granted, org_id: null, action: "platform_admin.granted", target_kind: "user", target_id: userID,
     actor_worker_host_id: null, actor_component: null, runtime_generation: null, process_epoch: null,
     source_ip: null, cause_event_id: null, restricted: [], details: { basis: "initial_setup" },
-    authorization: { decision: "allowed", checks: [{ type: "user_attribute", attribute: "admin", expected: true, observed: true, user_id: userID, scope: { kind: "installation" }, observation_source: "transaction", result: "passed" }] },
+    authorization: { decision: "allowed", checks: [{ type: "user_attribute", attribute: "admin", expected: true, observed: true, user_id: userID, scope: { kind: "platform" }, observation_source: "transaction", result: "passed" }] },
   };
   await page.route("**/admin/api/v1/audit-events**", async (route) => {
     if (new URL(route.request().url()).pathname.endsWith("/actions")) {
@@ -231,13 +233,43 @@ test("Admin sees the Helmr administrator grant and its basis", async ({ page }) 
     } else await route.fulfill({ json: { events: [adminGrant] } });
   });
   await page.goto("/admin/audit-events");
-  await page.getByRole("button", { name: /^Show details: Granted Helmr管理者 access/ }).click();
+  await page.getByRole("button", { name: /^Show details: Granted Helmr administrator access/ }).click();
   const details = page.locator(`#audit-row-${granted.id}`);
   await expect(details).toContainText("initial_setup");
   await details.getByRole("tab", { name: /^Authorization/ }).click();
-  await expect(details).toContainText("Helmr管理者");
+  await expect(details).toContainText("Helmr administrator");
   await expect(details).not.toContainText("Installation administrator");
   await details.getByRole("tab", { name: "JSON" }).click();
   await expect(details).toContainText("platform_admin.granted");
   await expect(details).not.toContainText("new_role");
 });
+
+
+for (const [readModel, label] of [["platform", "Administrator"], ["organization", "Organization"]] as const) {
+  test(`Admin explains the ${readModel} audit view while JSON preserves the recorded value`, async ({ page }) => {
+    await fixture(page, { adminView: true });
+    const organization = readModel === "organization" ? "00000000-0000-7000-8000-000000000201" : null;
+    const event = {
+      ...granted, action: "audit.searched", target_kind: "audit", target_id: null,
+      org_id: organization, restricted: [],
+      details: { read_model: readModel, from: "2026-10-01T00:00:00Z", to: "2026-10-02T00:00:00Z", result_count: 1 },
+    };
+    await page.route("**/admin/api/v1/audit-events**", async (route) => {
+      const actions = [{ action: "audit.searched", target_kind: "audit", outcomes: ["succeeded"], category: "audit" }];
+      await route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/actions") ? { actions } : { events: [event] } });
+    });
+    await page.goto(`/admin/audit-events${organization ? `?organization_id=${organization}` : ""}`);
+    if (!organization) await expect(page.getByRole("cell", { name: "Platform", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: /^Show details: Searched audit events/ }).click();
+    const details = page.locator(`#audit-row-${granted.id}`);
+    await expect(details).toContainText("Audit view");
+    await expect(details).toContainText(label);
+    await expect(details).toContainText(organization ? "None; organization-wide" : "None; platform-wide");
+    await expect(details).not.toContainText("Read model");
+    await details.getByRole("tab", { name: "JSON" }).click();
+    await details.getByRole("button", { name: "Raw", exact: true }).click();
+    await expect(details).toContainText('"read_model"');
+    await expect(details).toContainText(`"${readModel}"`);
+    await expect(details).not.toContainText("Audit view");
+  });
+}

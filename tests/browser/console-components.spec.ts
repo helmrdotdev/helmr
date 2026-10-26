@@ -765,7 +765,7 @@ test("without email delivery, inviting members is unavailable and says why", asy
   await fixture(page, true);
   await page.route("**/api/me", route => route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"], admin: false, organization_required: false, project_required: false, email_delivery: false } }));
   await page.goto(`/settings/members?${scope}`);
-  await expect(page.getByText("Email delivery is not set up for this Helmr installation, so members can't be invited.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Email delivery is not set up in Helmr, so members can't be invited.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Invite members", exact: true })).toBeDisabled();
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
 });
