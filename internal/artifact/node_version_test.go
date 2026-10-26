@@ -10,8 +10,10 @@ func TestNodeVersionAuthority(t *testing.T) {
 	if _, err := NodeLanguageFlags(version.Node()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NodeLanguageFlags("24.19.0"); err == nil {
-		t.Fatal("accepted wrong Node language version")
+	for _, previous := range []string{"24.19.0", "24.21.0"} {
+		if _, err := NodeLanguageFlags(previous); err == nil {
+			t.Fatalf("accepted unsupported Node language version %s", previous)
+		}
 	}
 	result := testProgramCompilerResult(t)
 	result.NodeVersion = version.Node()

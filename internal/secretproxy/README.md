@@ -74,7 +74,7 @@ ClientHello bytes are at most 16MiB. These are allocation ownership bounds, not
 hard process-wide RSS, CPU, or kernel socket-memory isolation.
 
 Do not estimate HTTP/2 memory using only its body window: active stream header
-allowances alone are N*4*64KiB=64MiB. In pinned Go1.27.1, early stream resets may
+allowances alone are N*4*64KiB=64MiB. In pinned Go1.27.3, early stream resets may
 also queue up to 4*streams+1 handlers per connection before the library closes an
 abusive connection, so active-plus-pending header allowances can reach 336MiB,
 before map/string/allocation overhead. Guest body connection windows add up to

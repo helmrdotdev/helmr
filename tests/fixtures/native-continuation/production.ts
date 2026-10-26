@@ -15,7 +15,7 @@ import { checkSessionDiscovery, type DiscoveryState } from "./session-discovery"
 import { checkSecretBindings, type SecretBindingState } from "./secret-bindings"
 import { conversation } from "../../../examples/issue-fixer/agents/issue-fixer/conversation"
 
-const baseImage = image("native-computer").from("node:24.21.0-bookworm-slim")
+const baseImage = image("native-computer").from("node:24.22.1-bookworm-slim")
 // Match the Claude starter's native process-inspection dependency.
 const claudeStarterImage = (process.env.HELMR_CLAUDE_STARTER_PROOF === "1" || process.env.HELMR_PROTECTED_STARTER_PROOF === "1")
   ? baseImage

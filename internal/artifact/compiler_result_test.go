@@ -34,7 +34,7 @@ func TestProgramCompilerResultRoundTrip(t *testing.T) {
 
 func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 	t.Helper()
-	return ProgramCompilerResult{APIVersion: "helmr.compiler.v0", Bundler: testBundlerIdentity(), NodeVersion: "24.21.0", Config: ProgramPathDigest{Path: "helmr/config.json", Digest: testDigest("config")}, PayloadDigest: testDigest("input"), Modules: []string{"helmr/app/entry-0.mjs"}}
+	return ProgramCompilerResult{APIVersion: "helmr.compiler.v0", Bundler: testBundlerIdentity(), NodeVersion: "24.22.1", Config: ProgramPathDigest{Path: "helmr/config.json", Digest: testDigest("config")}, PayloadDigest: testDigest("input"), Modules: []string{"helmr/app/entry-0.mjs"}}
 }
 
 func TestCompilerAuthorityMismatchTuples(t *testing.T) {
@@ -47,7 +47,7 @@ func TestCompilerAuthorityMismatchTuples(t *testing.T) {
 	} {
 		v := testProgramCompilerResult(t)
 		mutate(&v)
-		if err := ValidateProgramCompilerAuthority(v, testCompilerInputs(), "24.21.0"); err == nil {
+		if err := ValidateProgramCompilerAuthority(v, testCompilerInputs(), "24.22.1"); err == nil {
 			t.Fatal("accepted mismatched authority")
 		}
 	}

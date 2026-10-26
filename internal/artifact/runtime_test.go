@@ -55,7 +55,7 @@ func TestRuntimeMetadataRoundTrip(t *testing.T) {
 		ModulePolicyDigest: testDigest("preload"),
 		Architecture:       definition.ArchitectureX8664,
 		FormatVersion:      RuntimeMetadataFormatVersion,
-		NodeVersion:        "24.21.0",
+		NodeVersion:        "24.22.1",
 		ProgramNodeFlags:   testNodeProgramFlags(),
 		RuntimeContract:    definition.RuntimeContract,
 	}
@@ -199,4 +199,4 @@ func testRuntimeDescriptor() RuntimeDescriptor {
 	}
 }
 
-func testNodeProgramFlags() []string { flags, _ := NodeProgramFlags("24.21.0"); return flags }
+func testNodeProgramFlags() []string { flags, _ := NodeProgramFlags("24.22.1"); return flags }

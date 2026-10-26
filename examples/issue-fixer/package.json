@@ -6,7 +6,7 @@
   "devEngines": {
     "runtime": {
       "name": "node",
-      "version": "24.21.0",
+      "version": "24.22.1",
       "onFail": "error"
     }
   },
@@ -23,17 +23,24 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.149",
     "@anthropic-ai/sdk": "0.98.0",
-    "@cursor/sdk": "1.0.13",
+    "@cursor/sdk": "1.0.40",
     "@helmr/sdk": "file:../../dist/npm/sdk/package",
-    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "@openai/codex": "0.133.0",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",
     "typescript": "7.0.2"
   },
   "overrides": {
-    "@helmr/proto": "file:../../dist/npm/proto/package"
+    "@helmr/proto": "file:../../dist/npm/proto/package",
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "fast-uri": "3.1.9",
+    "qs": "6.16.1",
+    "body-parser": "2.4.0",
+    "@hono/node-server": "1.19.15",
+    "hono": "4.13.14",
+    "proxy-addr": "2.0.8"
   }
 }
