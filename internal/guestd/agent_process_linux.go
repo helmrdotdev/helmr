@@ -240,7 +240,7 @@ func (process *agentProcess) verifyRunning() error {
 	if len(body) > 64*1024 {
 		return errors.New("session process list exceeds its bound")
 	}
-	for _, field := range bytes.Fields(body) {
+	for field := range bytes.FieldsSeq(body) {
 		pid, err := strconv.Atoi(string(field))
 		if err != nil {
 			return err

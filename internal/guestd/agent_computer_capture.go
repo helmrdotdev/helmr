@@ -3,6 +3,7 @@ package guestd
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"time"
 
@@ -187,11 +188,11 @@ func lockAgentCaptureMembers(members []*agentRelay) func() {
 		relay.session.mu.Lock()
 	}
 	return func() {
-		for i := len(members) - 1; i >= 0; i-- {
-			members[i].session.mu.Unlock()
+		for _, member := range slices.Backward(members) {
+			member.session.mu.Unlock()
 		}
-		for i := len(members) - 1; i >= 0; i-- {
-			members[i].mu.Unlock()
+		for _, member := range slices.Backward(members) {
+			member.mu.Unlock()
 		}
 	}
 }

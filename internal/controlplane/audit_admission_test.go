@@ -43,7 +43,7 @@ func TestAuditAdmissionBoundsAndContainmentReserve(t *testing.T) {
 	if rr.Code != 204 {
 		t.Fatalf("key revocation reserve unavailable: %d", rr.Code)
 	}
-	for i := 0; i < auditPrincipalCapacity; i++ {
+	for range auditPrincipalCapacity {
 		guard.principals[uuid.NewV7().String()] = auditPrincipalBucket{limiter: rate.NewLimiter(1, 1), seen: time.Now()}
 	}
 	principal := auth.Principal{Kind: auth.PrincipalKindSession, UserID: uuid.NewV7(), OrgID: uuid.NewV7(), SessionID: uuid.NewV7()}
@@ -73,12 +73,10 @@ func TestAuditAdmissionEstablishedStreamsReleaseOperationSlots(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 32 {
+		wg.Go(func() {
 			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/v1/events", nil))
-		}()
+		})
 		select {
 		case <-ready:
 		case <-time.After(3 * time.Second):
@@ -132,8 +130,7 @@ func TestAuditAdmissionPrincipalCannotOccupyAllSlots(t *testing.T) {
 				return rr.Code
 			}
 			for range auditPrincipalConcurrency {
-				wg.Add(1)
-				go func() { defer wg.Done(); request("first", true) }()
+				wg.Go(func() { request("first", true) })
 			}
 			defer func() { close(release); wg.Wait() }()
 			for range auditPrincipalConcurrency {

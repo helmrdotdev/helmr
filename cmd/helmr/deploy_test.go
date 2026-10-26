@@ -215,7 +215,7 @@ func TestDeployJSONEmitsPromotedDeploymentResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	var result cliDeployLine
-	for _, raw := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+	for raw := range strings.SplitSeq(strings.TrimSpace(out.String()), "\n") {
 		var line cliDeployLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
 			t.Fatal(err)
@@ -277,7 +277,7 @@ func TestDeploySkipPromotionDoesNotPromote(t *testing.T) {
 		t.Fatalf("requests = %v", requests)
 	}
 	var result cliDeployLine
-	for _, raw := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+	for raw := range strings.SplitSeq(strings.TrimSpace(out.String()), "\n") {
 		var line cliDeployLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
 			t.Fatal(err)

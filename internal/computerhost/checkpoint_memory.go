@@ -102,7 +102,7 @@ func (c *CheckpointEncryptor) encryptMemory(ctx context.Context, input io.Reader
 	raw := make([]byte, memoryChunkSize)
 	zero := make([]byte, memoryChunkSize)
 	offset := int64(memoryHeaderSize)
-	for i := int64(0); i < count; i++ {
+	for i := range count {
 		if err = ctx.Err(); err != nil {
 			return "", err
 		}
@@ -221,7 +221,7 @@ func openCheckpointMemory(ctx context.Context, ranges blockformat.RangeSource, c
 		return nil, invalidMemory(fmt.Errorf("authenticate memory index: %w", err))
 	}
 	offset := int64(memoryHeaderSize)
-	for i := int64(0); i < count; i++ {
+	for i := range count {
 		entry := s.index[i*memoryIndexEntrySize : (i+1)*memoryIndexEntrySize]
 		length := int64(binary.BigEndian.Uint32(entry[8:]))
 		kind := entry[12]

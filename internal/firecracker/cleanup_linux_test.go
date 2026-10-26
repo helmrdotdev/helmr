@@ -114,8 +114,7 @@ func TestCleanupInventoryAndStopFailureRetainCustody(t *testing.T) {
 				}
 				return
 			}
-			var unproven *vm.CleanupUnprovenError
-			if !errors.As(err, &unproven) {
+			if _, ok := errors.AsType[*vm.CleanupUnprovenError](err); !ok {
 				t.Fatalf("unproved cleanup accepted: %v", err)
 			}
 			if failure != "remaining" && !errors.Is(err, failed) {

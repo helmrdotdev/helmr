@@ -317,9 +317,8 @@ func TestWorkerAgentComputerTargetRoundTripAndLateMemoryLoss(t *testing.T) {
 	}
 	// Deferred RAM authentication can fail after the target became active.
 	// The same physical owner must settle the consumed image and its processes.
-	stopped := workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{
-		EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), AllocationID: instance.String(), LeaseEpoch: 2,
-	}, InvalidCheckpointID: request.CheckpointID}
+	stopped := workerapi.AgentComputerStoppedRequest{
+		EnvironmentID: f.Environment.String(), ComputerID: f.Computer.String(), AllocationID: instance.String(), LeaseEpoch: 2, InvalidCheckpointID: request.CheckpointID}
 	for range 2 {
 		if err := client.ObserveAgentComputerStopped(t.Context(), stopped); err != nil {
 			t.Fatal(err)

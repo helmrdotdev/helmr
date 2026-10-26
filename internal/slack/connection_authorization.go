@@ -6,6 +6,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"net/http"
 	"net/url"
+	"slices"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -66,13 +67,7 @@ func (s *CredentialStore) AuthorizeConnection(ctx context.Context, actor audit.E
 		return uuid.Nil(), ErrOAuthAuthorization
 	}
 	for _, required := range slackroute.RequiredScopes() {
-		found := false
-		for _, scope := range result.grant.scopes {
-			if scope == required {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(result.grant.scopes, required)
 		if !found {
 			return uuid.Nil(), ErrOAuthAuthorization
 		}

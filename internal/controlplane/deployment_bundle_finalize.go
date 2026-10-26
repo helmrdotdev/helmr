@@ -187,8 +187,7 @@ func writeDeploymentFinalizeEvent(w io.Writer, event string, payload any) error 
 // publicDeploymentFinalizeError describes a finalization failure in the
 // stream with a closed code and message.
 func publicDeploymentFinalizeError(err error) api.DeploymentBundleFinalizeError {
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
+	if _, ok := errors.AsType[idempotency.ExpiredError](err); ok {
 		return api.DeploymentBundleFinalizeError{Code: "operation_expired", Message: "operation receipt has expired"}
 	}
 	if errors.Is(err, deployment.ErrFinalizationConflict) {
@@ -199,8 +198,7 @@ func publicDeploymentFinalizeError(err error) api.DeploymentBundleFinalizeError 
 	if errors.Is(err, computer.ErrSecretUnavailable) {
 		return api.DeploymentBundleFinalizeError{Code: "secret_unavailable", Message: "A declared Secret is missing or revoked in this Environment"}
 	}
-	var invalidObject deployment.InvalidObjectError
-	if errors.As(err, &invalidObject) {
+	if _, ok := errors.AsType[deployment.InvalidObjectError](err); ok {
 		return api.DeploymentBundleFinalizeError{
 			Code: "invalid_deployment_object", Message: "deployment object failed verification",
 		}

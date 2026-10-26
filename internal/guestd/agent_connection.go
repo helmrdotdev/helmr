@@ -140,8 +140,7 @@ func (r *computerOperationRegistry) openAgentSession(ctx context.Context, reques
 	defer cancelAdmission()
 	program, err := r.agentPrograms.materialize(admissionCtx, request.GetStart().GetProgram(), input)
 	if err != nil {
-		var cleanup programCleanupError
-		if errors.As(err, &cleanup) {
+		if _, ok := errors.AsType[programCleanupError](err); ok {
 			entry.processesMu.Lock()
 			entry.recoveryRequired = true
 			entry.processesMu.Unlock()

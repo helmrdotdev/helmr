@@ -118,7 +118,7 @@ func TestRetiredAbsentHostDrainsStopAndEmptyDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := &retiredRelayClient{terminalRelayClient: terminalRelayClient{observed: true}}
+	client := &retiredRelayClient{observed: true}
 	err = computerhost.ServeExecutingAgentSession(ctx, connection, attached, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error { return errors.New("unexpected event") })
 	if err != nil {
 		t.Fatal(err)

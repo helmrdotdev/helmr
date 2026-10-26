@@ -42,7 +42,7 @@ func BenchmarkWriterEnvelope(b *testing.B) {
 						now := time.Now().UTC().Truncate(time.Microsecond)
 						logs := diagnosticRows(telemetry.DiagnosticSource{EnvironmentID: org, Kind: "session", ID: subject, ProducerEpoch: 1}, count, size, now)
 						rng := rand.NewChaCha8([32]byte{1})
-						for i := 0; i < count; i++ {
+						for i := range count {
 							if random {
 								_, _ = rng.Read(logs[i].Record.Data)
 							}

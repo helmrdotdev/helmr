@@ -339,8 +339,7 @@ func TestReadSquashFSTreeRejectsUnusedDecodedMetadata(t *testing.T) {
 		[]uint32{0, 0},
 		uint64(artifact.MaxProgramLogicalBytes),
 	)
-	var contentError *artifactContentError
-	if !errors.As(err, &contentError) {
+	if _, ok := errors.AsType[*artifactContentError](err); !ok {
 		t.Fatalf("error = %T, want artifactContentError: %v", err, err)
 	}
 }
@@ -489,8 +488,7 @@ func TestReadSquashFSTreeRejectsGraphAndDirectoryViolations(t *testing.T) {
 				[]uint32{0, 0},
 				uint64(artifact.MaxProgramLogicalBytes),
 			)
-			var contentError *artifactContentError
-			if !errors.As(err, &contentError) {
+			if _, ok := errors.AsType[*artifactContentError](err); !ok {
 				t.Fatalf("error = %T, want artifactContentError: %v", err, err)
 			}
 		})

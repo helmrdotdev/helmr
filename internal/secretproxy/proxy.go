@@ -287,7 +287,7 @@ func forbiddenHeader(name string) bool {
 
 func connectionNominates(header http.Header, name string) bool {
 	for _, value := range header.Values("Connection") {
-		for _, key := range strings.Split(value, ",") {
+		for key := range strings.SplitSeq(value, ",") {
 			if strings.EqualFold(strings.TrimSpace(key), name) {
 				return true
 			}
@@ -298,7 +298,7 @@ func connectionNominates(header http.Header, name string) bool {
 
 func stripHopHeaders(header http.Header) {
 	for _, value := range header.Values("Connection") {
-		for _, key := range strings.Split(value, ",") {
+		for key := range strings.SplitSeq(value, ",") {
 			header.Del(strings.TrimSpace(key))
 		}
 	}

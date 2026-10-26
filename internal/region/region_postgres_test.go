@@ -248,12 +248,10 @@ func TestEnsureConcurrentPostgres(t *testing.T) {
 	errs := make(chan error, callers)
 	var wg sync.WaitGroup
 	for i := range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			errs <- Ensure(ctx, q, Details{ID: "shared", DisplayName: fmt.Sprintf("Caller %d", i)})
-		}()
+		})
 	}
 	createErr := make(chan error, 1)
 	go func() {

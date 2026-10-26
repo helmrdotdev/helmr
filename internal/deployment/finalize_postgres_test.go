@@ -61,15 +61,13 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 	errs := make([]error, 3)
 	var wg sync.WaitGroup
 	for i := range records {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			req := f.request
 			if i == 2 {
 				req.idempotencyKey = "different-key"
 			}
 			records[i], errs[i] = register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, req)
-		}()
+		})
 	}
 	wg.Wait()
 	for i, err := range errs {

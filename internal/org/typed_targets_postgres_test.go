@@ -19,7 +19,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	ctx := t.Context()
 	m := f.owner
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('typed','Typed')`)
-	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "typed", Name: "Typed"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "typed", Name: "Typed", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,12 +200,12 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	input.ExpectedRevision = strconv.FormatInt(repaired.Revision, 10)
 	start := make(chan struct{})
 	results := make(chan error, 2)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		go func() { <-start; _, err := org.UpdateRoleGrant(ctx, f.pool, m, repaired.ID, input); results <- err }()
 	}
 	close(start)
 	success, stale := 0, 0
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		err := <-results
 		if err == nil {
 			success++
@@ -277,7 +277,7 @@ func TestCatalogAgentTargetsAndInspectionVisibility(t *testing.T) {
 	ctx := t.Context()
 	m := f.owner
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('catalog','Catalog')`)
-	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "catalog", Name: "Catalog"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "catalog", Name: "Catalog", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
 	if err != nil {
 		t.Fatal(err)
 	}

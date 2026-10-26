@@ -166,7 +166,7 @@ func TestRestartCleanup(t *testing.T) {
 func pinOtherEntries(t *testing.T, c *Cache) func() {
 	t.Helper()
 	var readers []io.Closer
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		d := seed(t, c, []byte(fmt.Sprintf("pinned-%d", i)))
 		r, _, ok := c.open("test", d.Digest)
 		if !ok {
@@ -188,7 +188,7 @@ func pinOtherEntries(t *testing.T, c *Cache) func() {
 func TestLargeSeedDoesNotEvictWorkingSet(t *testing.T) {
 	c := newCache(t, 16384)
 	d := seed(t, c, []byte("retained"))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		seed(t, c, []byte(fmt.Sprintf("working-%d", i)))
 	}
 	large := bytes.Repeat([]byte("x"), 4097)

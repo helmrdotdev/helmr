@@ -14,8 +14,7 @@ import (
 
 func TestOrgErrorMapsHTTPContract(t *testing.T) {
 	_, input := org.NormalizeEmail("")
-	var inputError org.InputError
-	if !errors.As(input, &inputError) {
+	if _, ok := errors.AsType[org.InputError](input); !ok {
 		t.Fatalf("invalid email error = %v, want org.InputError", input)
 	}
 	for _, test := range []struct {

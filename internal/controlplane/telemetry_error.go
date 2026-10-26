@@ -14,13 +14,11 @@ var (
 )
 
 func writeTelemetryError(w http.ResponseWriter, err error) {
-	var apiErr apiError
-	if errors.As(err, &apiErr) {
+	if _, ok := errors.AsType[apiError](err); ok {
 		writeError(w, err)
 		return
 	}
-	var lagging telemetry.LaggingError
-	if errors.As(err, &lagging) {
+	if _, ok := errors.AsType[telemetry.LaggingError](err); ok {
 		writeError(w, unavailable(errTelemetryLagging))
 		return
 	}

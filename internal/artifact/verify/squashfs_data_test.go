@@ -161,8 +161,7 @@ func TestSquashFSDataReaderRejectsIncorrectExtendedSparseCount(t *testing.T) {
 		squashFSSuperblockFacts{InodeTableStart: artifact.SquashFSSuperblockSize},
 		squashFSTestTree("file", artifact.SquashFSExtendedRegularForm, regular),
 	)
-	var contentError *artifactContentError
-	if !errors.As(err, &contentError) {
+	if _, ok := errors.AsType[*artifactContentError](err); !ok {
 		t.Fatalf("error = %T, want artifactContentError: %v", err, err)
 	}
 }
@@ -182,8 +181,7 @@ func TestSquashFSDataReaderRejectsNonExactPathsAndFragments(t *testing.T) {
 	)
 	for _, path := range []string{"./dir/file", "dir/../dir/file", "missing", "dir/file"} {
 		_, err := reader.Open(context.Background(), path)
-		var infrastructureError *artifactInfrastructureError
-		if !errors.As(err, &infrastructureError) {
+		if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 			t.Fatalf("Open(%q) error = %T, want artifactInfrastructureError", path, err)
 		}
 	}
@@ -264,8 +262,7 @@ func TestSquashFSDataReaderRejectsInvalidBlockContent(t *testing.T) {
 				squashFSSuperblockFacts{InodeTableStart: uint64(len(image))},
 				squashFSTestTree("file", artifact.SquashFSBasicRegularForm, regular),
 			)
-			var contentError *artifactContentError
-			if !errors.As(err, &contentError) {
+			if _, ok := errors.AsType[*artifactContentError](err); !ok {
 				t.Fatalf("error = %T, want artifactContentError: %v", err, err)
 			}
 		})
@@ -310,8 +307,7 @@ func TestSquashFSDataReaderDoesNotReadOverlappingPayloads(t *testing.T) {
 		t.Fatalf("backing reads = %d, want 0", reads)
 	}
 	_, err = reader.Open(context.Background(), "first")
-	var infrastructureError *artifactInfrastructureError
-	if !errors.As(err, &infrastructureError) {
+	if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 		t.Fatalf("Open error = %T, want artifactInfrastructureError", err)
 	}
 }
@@ -392,8 +388,7 @@ func TestSquashFSDataReaderPreservesInfrastructureErrors(t *testing.T) {
 			},
 			squashFSTestTree("file", artifact.SquashFSBasicRegularForm, regular),
 		)
-		var infrastructureError *artifactInfrastructureError
-		if !errors.As(err, &infrastructureError) {
+		if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 			t.Fatalf("error = %T, want artifactInfrastructureError", err)
 		}
 	})
@@ -409,8 +404,7 @@ func TestSquashFSDataReaderPreservesInfrastructureErrors(t *testing.T) {
 			},
 			squashFSTestTree("file", artifact.SquashFSBasicRegularForm, regular),
 		)
-		var infrastructureError *artifactInfrastructureError
-		if !errors.As(err, &infrastructureError) {
+		if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 			t.Fatalf("error = %T, want artifactInfrastructureError: %v", err, err)
 		}
 	})
@@ -430,8 +424,7 @@ func TestSquashFSDataReaderPreservesInfrastructureErrors(t *testing.T) {
 		}
 		cancel()
 		_, err = opened.Read(make([]byte, 1))
-		var infrastructureError *artifactInfrastructureError
-		if !errors.As(err, &infrastructureError) {
+		if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 			t.Fatalf("error = %T, want artifactInfrastructureError", err)
 		}
 	})
@@ -454,8 +447,7 @@ func TestSquashFSDataReaderCloseStopsReading(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = opened.Read(make([]byte, 1))
-	var infrastructureError *artifactInfrastructureError
-	if !errors.As(err, &infrastructureError) {
+	if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 		t.Fatalf("error = %T, want artifactInfrastructureError", err)
 	}
 }

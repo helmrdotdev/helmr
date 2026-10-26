@@ -39,7 +39,7 @@ func setupImageRuntimeNetworkFiles(imageRoot string) error {
 
 func normalizeRuntimeResolver(raw []byte) []byte {
 	var output bytes.Buffer
-	for _, line := range bytes.Split(raw, []byte("\n")) {
+	for line := range bytes.SplitSeq(raw, []byte("\n")) {
 		trimmed := strings.TrimSpace(string(line))
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue

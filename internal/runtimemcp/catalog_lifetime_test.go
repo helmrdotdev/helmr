@@ -40,7 +40,7 @@ func TestStaticCatalogDoesNotRetainNotificationRequests(t *testing.T) {
 		t.Fatalf("HTTP %d: %s", response.StatusCode, body)
 	}
 	acknowledged, completed := false, false
-	for _, line := range strings.Split(string(body), "\n") {
+	for line := range strings.SplitSeq(string(body), "\n") {
 		data, ok := strings.CutPrefix(line, "data: ")
 		if !ok {
 			continue

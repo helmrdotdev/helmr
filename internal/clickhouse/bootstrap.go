@@ -276,8 +276,7 @@ func verifyReaderConstraints(ctx context.Context, cfg BootstrapConfig) error {
 // Database errors may echo SQL literals or connection details. Preserve only
 // an operation label and numeric server error code at this credential boundary.
 func bootstrapError(operation string, err error) error {
-	var exception *ch.Exception
-	if errors.As(err, &exception) {
+	if exception, ok := errors.AsType[*ch.Exception](err); ok {
 		return fmt.Errorf("ClickHouse bootstrap: %s (server code %d)", operation, exception.Code)
 	}
 	if errors.Is(err, context.Canceled) {

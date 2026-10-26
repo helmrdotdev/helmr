@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
+	"slices"
 )
 
 type directNode struct {
@@ -47,7 +47,7 @@ func (w Writer) Capture(ctx context.Context, base Locator, capacity int64, chang
 	if len(blocks) == 0 {
 		return base, nil
 	}
-	sort.Slice(blocks, func(i, j int) bool { return blocks[i] < blocks[j] })
+	slices.Sort(blocks)
 	values := make(map[uint64]*blockLocation, len(blocks))
 	var records [][]byte
 	var pending []uint64

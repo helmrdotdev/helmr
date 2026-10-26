@@ -41,9 +41,7 @@ func TestH2ExplicitlyUnprocessedRetryUsesOneAuthorization(t *testing.T) {
 				client.Close()
 				return nil, err
 			}
-			peers.Add(1)
-			go func() {
-				defer peers.Done()
+			peers.Go(func() {
 				defer server.Close()
 				server.SetDeadline(time.Now().Add(5 * time.Second))
 				conn := tls.Server(server, &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h2"}})
@@ -102,7 +100,7 @@ func TestH2ExplicitlyUnprocessedRetryUsesOneAuthorization(t *testing.T) {
 					}
 					return
 				}
-			}()
+			})
 			return client, nil
 		}
 	})

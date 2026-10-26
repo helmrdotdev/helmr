@@ -17,7 +17,7 @@ type renderedStage struct {
 func renderedStages(t *testing.T, raw []byte) []renderedStage {
 	t.Helper()
 	var stages []renderedStage
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		if strings.HasPrefix(line, "#") {
 			continue
 		}

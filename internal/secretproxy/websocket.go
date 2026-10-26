@@ -5,6 +5,7 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 )
@@ -42,9 +43,7 @@ func forwardWebSocket(w http.ResponseWriter, r *http.Request, transport *http.Tr
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusSwitchingProtocols {
 		stripHopHeaders(response.Header)
-		for name, values := range response.Header {
-			w.Header()[name] = values
-		}
+		maps.Copy(w.Header(), response.Header)
 		for name := range response.Trailer {
 			w.Header().Add("Trailer", name)
 		}

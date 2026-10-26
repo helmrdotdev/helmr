@@ -76,7 +76,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	if _, err = auditquery.Search(t.Context(), d.Pool, policy, p, f); !errors.Is(err, auditquery.ErrSearchDenied) {
 		t.Fatalf("explicit unauthorized environment: %v", err)
 	}
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		extra := uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $1,org_id,project_id,$2,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$3`, extra, fmt.Sprintf("extra-%d", i), env)
 		dbtest.GrantMember(t, d.Pool, org, user, &extra, "audit_events.read")

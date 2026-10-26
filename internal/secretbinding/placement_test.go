@@ -39,9 +39,9 @@ func TestSecretOriginAggregateContract(t *testing.T) {
 	for _, variant := range []string{"distinct", "repeated", "ports", "dedup"} {
 		t.Run(variant, func(t *testing.T) {
 			placements := []Placement{}
-			for i := 0; i < 16; i++ {
+			for i := range 16 {
 				p := Placement{Name: "token", Kind: "env", Target: fmt.Sprintf("TOKEN_%d", i), Mode: "protected"}
-				for j := 0; j < 16; j++ {
+				for j := range 16 {
 					host := fmt.Sprintf("https://h%d.example.com", i*16+j)
 					switch variant {
 					case "repeated":

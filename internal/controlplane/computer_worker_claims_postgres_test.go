@@ -6,6 +6,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -81,9 +82,7 @@ func newWorkerClaimsRace(t *testing.T, f sessiontest.Fixture, server *Server, ha
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, r)
 		race.statuses[r.URL.Path] = append(race.statuses[r.URL.Path], response.Code)
-		for key, values := range response.Header() {
-			w.Header()[key] = values
-		}
+		maps.Copy(w.Header(), response.Header())
 		w.WriteHeader(response.Code)
 		_, _ = w.Write(response.Body.Bytes())
 	}))

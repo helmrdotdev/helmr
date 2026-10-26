@@ -89,7 +89,7 @@ func Helper(arena string) error {
 	claimErr := <-c.configured
 	if claimErr == nil {
 		claimErr = errors.New("driver readiness unproven")
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			if err := c.alive(); err == nil {
 				claimErr = boundQueue(c.device)
 				if claimErr == nil {

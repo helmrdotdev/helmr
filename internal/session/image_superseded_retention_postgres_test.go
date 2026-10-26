@@ -204,7 +204,7 @@ func TestSupersededImageKeepsAttachedSuccessorBehindNewerRefresh(t *testing.T) {
 func TestSupersededImageDiscoverySkipsBusySecretBeforeBatchBound(t *testing.T) {
 	f := newPreparationFixture(t)
 	var blocked uuid.UUID
-	for n := 0; n < 101; n++ {
+	for n := range 101 {
 		p, image, waiter := publishRetentionImage(t, f)
 		stopRetentionBuild(t, p)
 		if n == 0 {

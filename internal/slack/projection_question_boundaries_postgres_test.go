@@ -16,7 +16,7 @@ import (
 
 func TestSlackQuestionPromptBoundariesRemainVisibleAndAdvance(t *testing.T) {
 	var parts []map[string]string
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		parts = append(parts, map[string]string{"type": "text", "text": fmt.Sprintf("part-%02d-%s", i, strings.Repeat("x", 64))})
 	}
 	full, _ := json.Marshal(map[string]any{"prompt": parts, "type": "choice", "options": []map[string]string{{"id": "a", "label": "Complete choice label", "description": "Complete choice description", "value": "PRIVATE_VALUE"}}})

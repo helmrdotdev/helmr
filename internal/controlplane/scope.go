@@ -41,8 +41,7 @@ func (s *Server) requestEnvironmentScope(ctx context.Context, principal auth.Pri
 		return scope, scopeProjectID, scopeEnvironmentID, nil
 	}
 	scope, err := org.ResolveEnvironmentScope(ctx, s.db, principal.OrgID, projectID, environmentID)
-	var input org.InputError
-	if errors.As(err, &input) {
+	if input, ok := errors.AsType[org.InputError](err); ok {
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, invalidEnvironmentScopeReference(input.Error())
 	}
 	if err != nil {

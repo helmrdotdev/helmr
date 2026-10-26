@@ -117,7 +117,7 @@ func TestWorkerCheckpointPublicationThroughHTTP(t *testing.T) {
 	if _, err := foreign.ReadAgentCheckpoint(t.Context(), id); err == nil {
 		t.Fatal("foreign host read image")
 	}
-	if err := client.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{EnvironmentID: id.EnvironmentID, ComputerID: id.OwnerID, AllocationID: id.AllocationID, LeaseEpoch: id.Epoch}}); err != nil {
+	if err := client.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{EnvironmentID: id.EnvironmentID, ComputerID: id.OwnerID, AllocationID: id.AllocationID, LeaseEpoch: id.Epoch}); err != nil {
 		t.Fatal(err)
 	}
 	// Seed only the target allocation for this transport test. Source fencing,

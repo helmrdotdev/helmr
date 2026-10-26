@@ -152,8 +152,7 @@ func TestPrepareRejectsInvalidIdempotencyKeysBeforeReadingObjects(t *testing.T) 
 	finalizer := NewFinalizer(nil, nil, bundle.Admission{}, discardLogger())
 	for _, key := range []string{"", " ", "a\x00b", "a\nb", string([]byte{0xff}), strings.Repeat("x", 513)} {
 		_, err := finalizer.Prepare(t.Context(), principal, scope, "unused", key)
-		var invalid InputError
-		if !errors.As(err, &invalid) {
+		if _, ok := errors.AsType[InputError](err); !ok {
 			t.Fatalf("key %q: %v", key, err)
 		}
 	}

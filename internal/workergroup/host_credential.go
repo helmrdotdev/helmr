@@ -58,11 +58,9 @@ func signHostCredential(signingKey []byte, payload hostCredentialClaims) (string
 		WorkerGroupID: payload.WorkerGroupID, WorkerHostID: payload.WorkerHostID,
 		HostSecretID: payload.HostSecretID, WorkerEpoch: payload.WorkerEpoch,
 		ClaimVersion: payload.ClaimVersion, GroupClaimVersion: payload.GroupClaimVersion,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer: HostCredentialIssuer, Subject: payload.WorkerHostID,
-			Audience: jwt.ClaimStrings{HostCredentialAudience},
-			IssuedAt: jwt.NewNumericDate(payload.IssuedAt), ExpiresAt: jwt.NewNumericDate(payload.ExpiresAt),
-		},
+		Issuer: HostCredentialIssuer, Subject: payload.WorkerHostID,
+		Audience: jwt.ClaimStrings{HostCredentialAudience},
+		IssuedAt: jwt.NewNumericDate(payload.IssuedAt), ExpiresAt: jwt.NewNumericDate(payload.ExpiresAt),
 	}
 	unsigned := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	unsigned.Header["typ"] = "JWT"

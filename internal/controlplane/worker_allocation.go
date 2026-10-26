@@ -35,8 +35,7 @@ func allocationWireShape(in computer.AllocationShape) workerapi.AllocationShape 
 	return workerapi.AllocationShape{CPUMillis: in.CPUMillis, MemoryBytes: in.MemoryBytes, ScratchBytes: in.ScratchBytes, VMPlatformID: in.VMPlatformID, VCPUCount: in.VCPUCount, CPUConfigDigest: in.CPUConfigDigest}
 }
 func (server *Server) writeAllocationError(w http.ResponseWriter, r *http.Request, err error) {
-	var transport apiError
-	if errors.As(err, &transport) {
+	if _, ok := errors.AsType[apiError](err); ok {
 		writeError(w, err)
 		return
 	}

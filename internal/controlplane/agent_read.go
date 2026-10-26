@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -228,8 +229,7 @@ func (s *Server) listAgentEventsHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	result, err := session.ListEvents(r.Context(), s.auditPolicy, s.tx, caller, session.TurnListRequest{EnvironmentID: env, SessionID: sessionID, After: after, Limit: limit})
-	var expired *session.CursorExpired
-	if errors.As(err, &expired) {
+	if expired, ok := errors.AsType[*session.CursorExpired](err); ok {
 		writeJSON(w, http.StatusGone, api.HTTPErrorResponse{Error: api.HTTPError{Code: "cursor_expired", Message: expired.Error(), Details: map[string]json.RawMessage{"retained_after": json.RawMessage(strconv.FormatInt(expired.RetainedAfter, 10))}}})
 		return
 	}
@@ -278,10 +278,8 @@ func parseSessionListCursor(r *http.Request, env uuid.UUID) (uuid.UUID, string, 
 		if len(entries) != 1 && name != "status" {
 			return uuid.Nil(), "", session.ErrInvalidInput
 		}
-		for _, value := range entries {
-			if value == "" {
-				return uuid.Nil(), "", session.ErrInvalidInput
-			}
+		if slices.Contains(entries, "") {
+			return uuid.Nil(), "", session.ErrInvalidInput
 		}
 		if name != "cursor" && name != "limit" {
 			filters[name] = append([]string(nil), entries...)

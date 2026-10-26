@@ -144,18 +144,18 @@ WHERE n.nspname = 'public' AND c.relname <> 'schema_migrations'
 
 func catalogDiff(want, got string) string {
 	wanted := map[string]bool{}
-	for _, line := range strings.Split(want, "\n") {
+	for line := range strings.SplitSeq(want, "\n") {
 		wanted[line] = true
 	}
 	present := map[string]bool{}
 	var diff []string
-	for _, line := range strings.Split(got, "\n") {
+	for line := range strings.SplitSeq(got, "\n") {
 		present[line] = true
 		if !wanted[line] {
 			diff = append(diff, "+ "+line)
 		}
 	}
-	for _, line := range strings.Split(want, "\n") {
+	for line := range strings.SplitSeq(want, "\n") {
 		if !present[line] {
 			diff = append(diff, "- "+line)
 		}

@@ -2,6 +2,7 @@ package artifact
 
 import (
 	"encoding/json"
+	"maps"
 	"reflect"
 	"testing"
 
@@ -43,9 +44,7 @@ func TestProgramManifestRejectsProducerAuthority(t *testing.T) {
 	for name, value := range producerFields {
 		t.Run(name, func(t *testing.T) {
 			candidate := make(map[string]any, len(document)+1)
-			for key, value := range document {
-				candidate[key] = value
-			}
+			maps.Copy(candidate, document)
 			candidate[name] = value
 			encoded, err := json.Marshal(candidate)
 			if err != nil {

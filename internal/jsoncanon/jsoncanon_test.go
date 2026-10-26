@@ -29,8 +29,7 @@ func TestTransformPreservesTrailingSyntaxError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Transform returned nil error")
 	}
-	var syntaxError *json.SyntaxError
-	if !errors.As(err, &syntaxError) {
+	if _, ok := errors.AsType[*json.SyntaxError](err); !ok {
 		t.Fatalf("error = %v, want json.SyntaxError cause", err)
 	}
 	if !strings.Contains(err.Error(), "trailing data") {

@@ -24,7 +24,7 @@ func TestCaptureAgainstByteOracle(t *testing.T) {
 				}
 				rng := rand.New(rand.NewSource(77))
 				expected := map[uint64]byte{}
-				for cut := 0; cut < 4; cut++ {
+				for cut := range 4 {
 					changes := map[uint64][]byte{}
 					for range 96 {
 						block := uint64(rng.Intn(512)) * 8192

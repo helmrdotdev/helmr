@@ -80,8 +80,8 @@ func (owner *agentSessionTurns) observe(ctx context.Context, message *agentv1.Gu
 	if strings.HasPrefix(id, "message:") {
 		return true, owner.observeMessage(ctx, result)
 	}
-	if strings.HasPrefix(id, "turn-ack:") {
-		turn := strings.TrimPrefix(id, "turn-ack:")
+	if after, ok := strings.CutPrefix(id, "turn-ack:"); ok {
+		turn := after
 		if result.GetError() != nil {
 			return true, owner.fail(ctx, message, "Turn retirement failed")
 		}
@@ -192,8 +192,7 @@ func serveExecutingAgentSession(ctx context.Context, connection *AgentSessionCon
 		}
 		return observe(ctx, message)
 	}, activated)
-	var failure SessionControlFailedError
-	if errors.As(err, &failure) {
+	if _, ok := errors.AsType[SessionControlFailedError](err); ok {
 		return err
 	}
 	if cause := context.Cause(ctx); cause != nil {

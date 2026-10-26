@@ -74,7 +74,7 @@ func waitCgroupEmpty(path string) error {
 func parseCgroupPopulated(raw []byte) (bool, error) {
 	found := false
 	populated := false
-	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte{'\n'}) {
+	for line := range bytes.SplitSeq(bytes.TrimSpace(raw), []byte{'\n'}) {
 		fields := bytes.Fields(line)
 		if len(fields) != 2 || !bytes.Equal(fields[0], []byte("populated")) {
 			continue

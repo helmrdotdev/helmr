@@ -91,20 +91,16 @@ func IsReadinessErrorRetryable(err error) bool {
 		return false
 	}
 
-	var exception *ch.Exception
-	if errors.As(err, &exception) {
+	if _, ok := errors.AsType[*ch.Exception](err); ok {
 		return false
 	}
-	var unknownAuthority x509.UnknownAuthorityError
-	if errors.As(err, &unknownAuthority) {
+	if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
 		return false
 	}
-	var hostname x509.HostnameError
-	if errors.As(err, &hostname) {
+	if _, ok := errors.AsType[x509.HostnameError](err); ok {
 		return false
 	}
-	var invalidCertificate x509.CertificateInvalidError
-	if errors.As(err, &invalidCertificate) {
+	if _, ok := errors.AsType[x509.CertificateInvalidError](err); ok {
 		return false
 	}
 

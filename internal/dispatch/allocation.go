@@ -183,7 +183,7 @@ func ReadImageBuildAllocation(ctx context.Context, q db.DBTX, env, preparation u
 }
 
 func ReadLeaseAllocation(ctx context.Context, q db.DBTX, env, computerID uuid.UUID, epoch int64) (computer.ComputerAllocation, error) {
-	r := computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, Epoch: epoch}}
+	r := computer.ComputerAllocation{EnvironmentID: env, OwnerID: computerID, Epoch: epoch}
 	err := q.QueryRow(ctx, `SELECT l.allocation_id,l.worker_host_id,l.worker_epoch,l.reserved_cpu_millis,l.reserved_memory_bytes,l.reserved_scratch_bytes,
  l.vm_platform_id,l.vm_vcpu_count,l.cpu_config_digest,l.status,l.delivered_at,l.expires_at,l.fenced_at,COALESCE(l.restored_from_save_id::text,'sha256:'||encode(c.initial_root_digest,'hex')),l.restored_from_save_id,l.disk_only_recovery,l.initialized_at,l.channel_credential_digest
  FROM computer_leases l JOIN computers c ON (c.environment_id,c.id)=(l.environment_id,l.computer_id) WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.epoch=$3`, env, computerID, epoch).Scan(&r.InstanceID, &r.HostID, &r.HostEpoch,
@@ -365,7 +365,7 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err := requireAllocationCapacity(ctx, tx, env, supply, shape, computerID, uuid.Nil()); err != nil {
 			return err
 		}
-		result = computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: base}
+		result = computer.ComputerAllocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring", BaseVersion: base}
 		if err := a.insertComputerAllocation(ctx, tx, &result); err != nil {
 			return err
 		}
@@ -496,7 +496,7 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 		if err := requireAllocationCapacity(ctx, tx, env, supply, shape, computerID, uuid.Nil()); err != nil {
 			return err
 		}
-		result = computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: save.String(), RestoredFrom: &save}
+		result = computer.ComputerAllocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring", BaseVersion: save.String(), RestoredFrom: &save}
 		if err := a.insertComputerAllocation(ctx, tx, &result); err != nil {
 			return err
 		}

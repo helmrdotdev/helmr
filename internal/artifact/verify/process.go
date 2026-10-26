@@ -45,10 +45,7 @@ type boundedVerifierStderr struct {
 func (writer *boundedVerifierStderr) Write(value []byte) (int, error) {
 	remaining := verifierStderrMaxBytes - writer.buffer.Len()
 	if remaining > 0 {
-		copied := len(value)
-		if copied > remaining {
-			copied = remaining
-		}
+		copied := min(len(value), remaining)
 		_, _ = writer.buffer.Write(value[:copied])
 	}
 	if len(value) > remaining {

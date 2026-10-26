@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/jackc/pgx/v5"
+	"strings"
 	"time"
 	"uuid"
 )
@@ -193,15 +194,15 @@ func projectActivityPost(ctx context.Context, tx pgx.Tx, o projectionOwner, post
 	if err := json.Unmarshal(raw, &fallback); err != nil {
 		return err
 	}
-	text := ""
+	var text strings.Builder
 	for _, block := range fallback.Blocks {
 		if block.Type == "rich_text" {
 			for i, element := range block.Elements {
 				if i > 0 {
-					text += "\n"
+					text.WriteString("\n")
 				}
 				for _, part := range element.Elements {
-					text += quoteLiteral(part.Text)
+					text.WriteString(quoteLiteral(part.Text))
 				}
 			}
 		}
@@ -220,16 +221,16 @@ func projectActivityPost(ctx context.Context, tx pgx.Tx, o projectionOwner, post
 	revision := hex.EncodeToString(hash[:12])
 	for _, s := range states {
 		blocks = append(blocks, map[string]any{"type": "task_card", "task_id": s.ID.String(), "block_id": fmt.Sprintf("child:%s:%s:%s", post, revision, s.ID), "title": s.Title, "status": s.Status, "details": richBlock{Type: "rich_text", Elements: []richElement{{Type: "rich_text_section", Elements: []textElement{{Type: "text", Text: s.Details}}}}}})
-		text += "\n" + s.Title + ": " + s.Details
+		text.WriteString("\n" + s.Title + ": " + s.Details)
 	}
 	if omitted > 0 {
 		label := fmt.Sprintf("%d more child tasks in Console", omitted)
 		o.session = o.front
 		blocks = append(blocks, map[string]any{"type": "context", "block_id": "helmr_child_overflow", "elements": []any{map[string]string{"type": "mrkdwn", "text": "<" + o.consoleLink() + "|" + label + ">"}}})
-		text += "\n" + label
+		text.WriteString("\n" + label)
 	}
 	body["blocks"], _ = json.Marshal(blocks)
-	body["text"], _ = json.Marshal(text)
+	body["text"], _ = json.Marshal(text.String())
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err

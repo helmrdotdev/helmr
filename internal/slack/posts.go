@@ -381,8 +381,7 @@ func ReconcilePost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.P
 	}
 	if err = client.VerifyConversation(ctx, claim.InstallationID, claim.CredentialRevision, claim.TeamID, claim.ChannelID, claim.PeerID); err != nil {
 		result := DeliveryResult{Disposition: Rejected, Code: "channel_unavailable"}
-		var failure *channelVerificationFailure
-		if errors.As(err, &failure) {
+		if failure, ok := errors.AsType[*channelVerificationFailure](err); ok {
 			result = failure.result
 		}
 		return false, FinishPost(ctx, pool, policy, *claim, result)

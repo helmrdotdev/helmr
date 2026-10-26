@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"google.golang.org/protobuf/proto"
 )
 
 type agentRuntimeTestClient struct {
@@ -85,7 +84,7 @@ func TestAgentServiceForwardsOriginalIdentityAndReceipt(t *testing.T) {
 func TestAgentServiceUncertainOperationClosesOnlyAttachment(t *testing.T) {
 	grant := sessionTransportGrant()
 	machine := sessionTransportMachine(t, func(stream net.Conn, attach *agentv1.SessionAttach) {
-		event := &agentv1.GuestSessionMessage{Identity: grant.Identity, AttachmentSequence: attach.AttachmentSequence, EventSequence: 1, OperationAuthorityGeneration: 3, OperationLeaseEpoch: 2, Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: "uncertain", Method: agentv1.Operation_METHOD_ENQUEUE, TurnId: proto.String("turn"), PayloadJson: []byte(`{}`)}}}}}
+		event := &agentv1.GuestSessionMessage{Identity: grant.Identity, AttachmentSequence: attach.AttachmentSequence, EventSequence: 1, OperationAuthorityGeneration: 3, OperationLeaseEpoch: 2, Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: "uncertain", Method: agentv1.Operation_METHOD_ENQUEUE, TurnId: new("turn"), PayloadJson: []byte(`{}`)}}}}}
 		if err := frameio.WriteProtoFrame(stream, event); err != nil {
 			t.Error(err)
 			return
@@ -121,7 +120,7 @@ func TestAgentServiceSettlesInvalidAuthoredEnvelope(t *testing.T) {
 			}
 			observed := make(chan *agentv1.OperationResult, 1)
 			machine := sessionTransportMachine(t, func(stream net.Conn, attach *agentv1.SessionAttach) {
-				event := &agentv1.GuestSessionMessage{Identity: grant.Identity, AttachmentSequence: attach.AttachmentSequence, EventSequence: 1, OperationAuthorityGeneration: 3, OperationLeaseEpoch: 2, Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: id, Method: agentv1.Operation_METHOD_ENQUEUE, TurnId: proto.String("turn"), PayloadJson: payload}}}}}
+				event := &agentv1.GuestSessionMessage{Identity: grant.Identity, AttachmentSequence: attach.AttachmentSequence, EventSequence: 1, OperationAuthorityGeneration: 3, OperationLeaseEpoch: 2, Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: id, Method: agentv1.Operation_METHOD_ENQUEUE, TurnId: new("turn"), PayloadJson: payload}}}}}
 				if err := frameio.WriteProtoFrame(stream, event); err != nil {
 					t.Error(err)
 					return

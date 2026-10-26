@@ -176,7 +176,7 @@ func TestWaitForHealthRetriesStalledReadWithAttemptDeadline(t *testing.T) {
 	}
 
 	var logs []string
-	logf := func(format string, args ...interface{}) {
+	logf := func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
 	}
 	connector := &Connector{cfg: (Config{HealthTimeout: time.Second, HealthAttemptTimeout: 20 * time.Millisecond}).WithDefaults()}
@@ -270,7 +270,7 @@ func TestWaitForHealthLogsTerminalStatusWithoutStaleError(t *testing.T) {
 	}
 
 	var logs []string
-	logf := func(format string, args ...interface{}) {
+	logf := func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
 	}
 	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}

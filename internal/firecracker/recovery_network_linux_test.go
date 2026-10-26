@@ -114,7 +114,7 @@ exec "$HELMR_TEST_REAL_IP" "$@"
 				if err := netlink.LinkDel(original); err != nil {
 					t.Fatal(err)
 				}
-				link := &netlink.Veth{LinkAttrs: netlink.LinkAttrs{Name: binding.manifest.RootVethName, MTU: GuestMTUV0}, PeerName: "p" + owner.ID[:8]}
+				link := &netlink.Veth{Name: binding.manifest.RootVethName, MTU: GuestMTUV0, PeerName: "p" + owner.ID[:8]}
 				if err := netlink.LinkAdd(link); err != nil {
 					t.Fatal(err)
 				}

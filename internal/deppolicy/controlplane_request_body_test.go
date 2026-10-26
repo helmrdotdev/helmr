@@ -194,7 +194,7 @@ func newRequestBodyChecker(t *testing.T, root string) *requestBodyChecker {
 	t.Helper()
 	output := goList(t, root, "linux", "-export", "-deps", "-f", "{{if .Export}}{{.ImportPath}}={{.Export}}{{end}}", "./internal/controlplane")
 	exports := map[string]string{}
-	for _, line := range strings.Fields(output) {
+	for line := range strings.FieldsSeq(output) {
 		path, export, ok := strings.Cut(line, "=")
 		if ok {
 			exports[path] = export

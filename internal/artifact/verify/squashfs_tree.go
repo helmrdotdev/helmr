@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -265,8 +266,8 @@ func (reader *squashFSTreeReader) read() (squashFSTreeFacts, error) {
 				hasEdge:         true,
 			})
 		}
-		for position := len(children) - 1; position >= 0; position-- {
-			stack = append(stack, children[position])
+		for _, c := range slices.Backward(children) {
+			stack = append(stack, c)
 		}
 	}
 	if uint64(len(reader.inodes)) != uint64(reader.superblock.InodeCount) {

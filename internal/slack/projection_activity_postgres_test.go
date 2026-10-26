@@ -420,7 +420,7 @@ func TestOwnedActivitySessionCallerUsesAdmissionOrdering(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for _, step := range strings.Split(order, "-") {
+			for step := range strings.SplitSeq(order, "-") {
 				switch step {
 				case "output":
 					write("Front explanation.")

@@ -264,8 +264,7 @@ func ServeControlledAgentSession(ctx context.Context, connection *AgentSessionCo
 	if err == nil {
 		return nil
 	}
-	var failed SessionControlFailedError
-	if errors.As(err, &failed) {
+	if _, ok := errors.AsType[SessionControlFailedError](err); ok {
 		return err
 	}
 	if cause != nil {

@@ -59,8 +59,7 @@ func watchAllocationUpdates(ctx context.Context, client *workerclient.Client, al
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		var rejected workerclient.HostAuthorityRejectedError
-		if errors.As(err, &rejected) {
+		if _, ok := errors.AsType[workerclient.HostAuthorityRejectedError](err); ok {
 			return err
 		}
 		timer := time.NewTimer(time.Second)

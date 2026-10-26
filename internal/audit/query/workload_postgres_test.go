@@ -3,7 +3,7 @@ package auditquery
 import (
 	"context"
 	"encoding/json"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -35,9 +35,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 	samples := make(chan []time.Duration, writers)
 	start := time.Now()
 	for range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			latencies := make([]time.Duration, 0, perWriter)
 			for range perWriter {
 				before := time.Now()
@@ -51,7 +49,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 				latencies = append(latencies, time.Since(before))
 			}
 			samples <- latencies
-		}()
+		})
 	}
 	wg.Wait()
 	close(errors)
@@ -64,7 +62,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 	for sample := range samples {
 		times = append(times, sample...)
 	}
-	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
+	slices.Sort(times)
 	var rows, tableBytes, indexBytes int64
 	if err := d.Pool.QueryRow(t.Context(), `SELECT count(*),pg_table_size('audit_events'),pg_indexes_size('audit_events') FROM audit_events`).Scan(&rows, &tableBytes, &indexBytes); err != nil {
 		t.Fatal(err)
@@ -119,16 +117,14 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 	purgeErrors := make(chan error, 2)
 	start = time.Now()
 	for range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			r, err := audit.Purge(t.Context(), d.Pool, policy, 8)
 			if err != nil {
 				purgeErrors <- err
 				return
 			}
 			counts <- r.Deleted
-		}()
+		})
 	}
 	for range 4 {
 		r, err := SearchAdmin(t.Context(), d.Pool, policy, principal, filter)

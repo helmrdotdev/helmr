@@ -242,7 +242,7 @@ func ReconcileRejectedFeedback(ctx context.Context, pool db.TxBeginner, client *
 	if client == nil || !config.valid() || limit < 1 || limit > 64 {
 		return 0, errGestureInvalid
 	}
-	for n := 0; n < limit; n++ {
+	for n := range limit {
 		intent, found, err := takeRejectedFeedback(ctx, pool, config)
 		if err != nil || !found {
 			return n, err

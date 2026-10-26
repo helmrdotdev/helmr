@@ -26,7 +26,7 @@ func TestGrantSchemaRejectsInvalidSubjectAndTenant(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO organizations(id,name,slug) VALUES($1,'Foreign','constraint-foreign')`, foreignOrg)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO permission_groups(id,org_id,name) VALUES($1,$2,'Foreign group')`, foreignGroup, foreignOrg)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO regions(id,display_name) VALUES('constraints','Constraints')`)
-	input := org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "constraints", Name: "Constraints"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}}
+	input := org.ProjectInput{Slug: "constraints", Name: "Constraints", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}}
 	_, environments, err := org.CreateProject(t.Context(), f.pool, f.owner, input)
 	if err != nil {
 		t.Fatal(err)

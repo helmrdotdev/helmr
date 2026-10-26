@@ -66,8 +66,7 @@ func TestPoolRetirementPostgresConcurrentLastRestorePath(t *testing.T) {
 			successes++
 			continue
 		}
-		var conflict workergroup.ConflictError
-		if !errors.As(err, &conflict) {
+		if _, ok := errors.AsType[workergroup.ConflictError](err); !ok {
 			t.Fatal(err)
 		}
 	}

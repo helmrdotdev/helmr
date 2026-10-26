@@ -309,10 +309,10 @@ func (c *Connector) prepareMachine(ctx context.Context, mode launchMode, instanc
 			Enabled: true,
 		},
 		JailerCfg: &firecracker.JailerConfig{
-			UID:            firecracker.Int(c.cfg.JailerUID),
-			GID:            firecracker.Int(c.cfg.JailerGID),
+			UID:            new(c.cfg.JailerUID),
+			GID:            new(c.cfg.JailerGID),
 			ID:             instanceID,
-			NumaNode:       firecracker.Int(c.cfg.JailerNumaNode),
+			NumaNode:       new(c.cfg.JailerNumaNode),
 			ExecFile:       launchCfg.FirecrackerPath,
 			JailerBinary:   c.cfg.JailerPath,
 			ChrootBaseDir:  c.cfg.JailerChrootBaseDir,
@@ -613,9 +613,9 @@ func ext4FreeBytes(path string) (uint64, error) {
 
 func runtimeMachineConfiguration(descriptor VMRuntimeDescriptor, cfg Config) models.MachineConfiguration {
 	return models.MachineConfiguration{
-		VcpuCount:       firecracker.Int64(cfg.VCPUCount),
-		MemSizeMib:      firecracker.Int64(cfg.MemoryMiB),
-		Smt:             firecracker.Bool(descriptor.Machine.SMT),
+		VcpuCount:       new(cfg.VCPUCount),
+		MemSizeMib:      new(cfg.MemoryMiB),
+		Smt:             new(descriptor.Machine.SMT),
 		TrackDirtyPages: descriptor.Machine.TrackDirtyPages,
 	}
 }

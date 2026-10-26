@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -173,8 +174,8 @@ func stageProgramSecrets(
 	cleanup := func() { _ = os.RemoveAll(secretRoot) }
 	var targetCleanups []func()
 	cleanupAll := func() {
-		for index := len(targetCleanups) - 1; index >= 0; index-- {
-			targetCleanups[index]()
+		for _, targetCleanup := range slices.Backward(targetCleanups) {
+			targetCleanup()
 		}
 		cleanup()
 	}

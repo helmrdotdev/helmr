@@ -80,16 +80,14 @@ func (s *Server) refuseOperation(w http.ResponseWriter, r *http.Request, reason 
 		}
 	}
 	for _, cause := range causes {
-		var evaluated *audit.Refusal
-		if errors.As(cause, &evaluated) {
+		if evaluated, ok := errors.AsType[*audit.Refusal](cause); ok {
 			actor.Authorization = evaluated.Authorization
 		}
 		var unavailable *access.PrincipalUnavailable
 		if errors.As(cause, &unavailable) && org != uuid.Nil() && (unavailable.UserID != uuid.Nil() && unavailable.UserID == p.UserID || unavailable.APIKeyID != uuid.Nil() && unavailable.APIKeyID == p.APIKeyID) {
 			actor.Authorization = audit.Authorization{Decision: "denied", Checks: []audit.Check{audit.PrincipalCurrencyCheck{Type: "principal_currency", SubjectUserID: unavailable.UserID, SubjectAPIKeyID: unavailable.APIKeyID, Scope: audit.CheckScope{Kind: "organization", OrgID: org}, ObservationSource: "transaction", Result: "failed", Reason: unavailable.Reason, PresentedVersion: unavailable.PresentedVersion, ObservedVersion: unavailable.ObservedVersion}}}
 		}
-		var refusal *auth.PermissionRefusal
-		if errors.As(cause, &refusal) {
+		if refusal, ok := errors.AsType[*auth.PermissionRefusal](cause); ok {
 			// A failed check can concern a Session's origin principal. That principal
 			// is the subject of the check, not necessarily the authenticated executor.
 			actor.Authorization = audit.PermissionAuthorization(refusal.Checks, false)
@@ -121,8 +119,7 @@ func (s *Server) writeOperationError(w http.ResponseWriter, r *http.Request, err
 		writeError(w, unavailable(audit.ErrCapture))
 		return
 	}
-	var apiErr apiError
-	if errors.As(err, &apiErr) {
+	if apiErr, ok := errors.AsType[apiError](err); ok {
 		reason := ""
 		switch apiErr.kind {
 		case errForbidden:

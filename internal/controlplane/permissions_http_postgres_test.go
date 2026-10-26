@@ -163,7 +163,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 	// One of two same-revision edits wins.
 	var wg sync.WaitGroup
 	codes := make(chan int, 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

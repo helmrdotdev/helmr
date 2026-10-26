@@ -570,7 +570,7 @@ func TestCheckpointMemoryStreamingJobsFitReservation(t *testing.T) {
 	// Count all allocations across three complete demand jobs and one stream,
 	// even buffers already released. This is stricter than their live overlap;
 	// fixture storage and authenticated metadata are funded separately.
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		buffer := make([]byte, vm.MemoryReadBytes)
 		if _, err := s.ReadAt(t.Context(), buffer, int64(i*vm.MemoryReadBytes)); err != nil {
 			t.Fatal(err)

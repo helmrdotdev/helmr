@@ -155,8 +155,7 @@ func TestConcurrentImmutableObjectStaging(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for range 8 {
-		wg.Add(1)
-		go func() { defer wg.Done(); errs <- sink.store.StoreObject(t.Context(), digest, raw) }()
+		wg.Go(func() { errs <- sink.store.StoreObject(t.Context(), digest, raw) })
 	}
 	wg.Wait()
 	close(errs)
@@ -185,13 +184,13 @@ func TestCaptureDenseHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := uint64(0); i < 256; i++ {
+	for i := range uint64(256) {
 		root, err = w.Capture(t.Context(), root, capacity, map[uint64][]byte{i: bytes.Repeat([]byte{1}, 4096), i*256 + 256: bytes.Repeat([]byte{2}, 4096)})
 		if err != nil {
 			t.Fatalf("update %d: %v", i, err)
 		}
 	}
-	for i := uint64(0); i < 256; i++ {
+	for i := range uint64(256) {
 		readWritten(t, w, root, i, 1)
 	}
 }

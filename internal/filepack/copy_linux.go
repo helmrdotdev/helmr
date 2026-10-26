@@ -68,10 +68,7 @@ func copySparseFile(input *os.File, output *os.File, logicalSize int64) error {
 func copySparseRange(input *os.File, output *os.File, buffer []byte, start int64, end int64) error {
 	for offset := start; offset < end; {
 		remaining := end - offset
-		n := int64(len(buffer))
-		if remaining < n {
-			n = remaining
-		}
+		n := min(remaining, int64(len(buffer)))
 		chunk := buffer[:n]
 		if err := readFullAt(input, chunk, offset); err != nil {
 			return err

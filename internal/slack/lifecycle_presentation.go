@@ -121,15 +121,16 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 				return "", nil, err
 			}
 			members := append(append([]string{}, scope.Sessions...), scope.Commands...)
-			detail := fmt.Sprintf("Affected scope: %d Sessions, %d active Commands.\n", len(scope.Sessions), len(scope.Commands))
+			var detail strings.Builder
+			detail.WriteString(fmt.Sprintf("Affected scope: %d Sessions, %d active Commands.\n", len(scope.Sessions), len(scope.Commands)))
 			for i, id := range members {
 				if i == 12 {
-					detail += "Additional members are listed in Console.\n"
+					detail.WriteString("Additional members are listed in Console.\n")
 					break
 				}
-				detail += id + "\n"
+				detail.WriteString(id + "\n")
 			}
-			blocks = append(blocks, map[string]any{"type": "section", "text": plainText(strings.TrimSpace(detail))})
+			blocks = append(blocks, map[string]any{"type": "section", "text": plainText(strings.TrimSpace(detail.String()))})
 			if action == "sleep" {
 				err = add("hibernate", "Hibernate Computer", scope.Digest, *computerID)
 			} else {

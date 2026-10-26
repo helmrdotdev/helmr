@@ -28,7 +28,7 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, bi
 
 func (c *Connector) installRoutedPolicyFor(ctx context.Context, mode launchMode, binding *installedNetworkBinding, allocationID string, replace bool) error {
 	m := binding.manifest
-	guestIP := strings.Split(GuestNetworkCIDRV0, "/")[0]
+	guestIP, _, _ := strings.Cut(GuestNetworkCIDRV0, "/")
 	hostIPv4, err := hostIPv4Prefixes(netip.MustParsePrefix(GuestNetworkCIDRV0).Masked())
 	if err != nil {
 		return err

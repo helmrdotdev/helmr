@@ -202,8 +202,7 @@ func waitForDeviceToken(cmd *cobra.Command, controlPlane *client.Client, deviceC
 }
 
 func deviceTokenError(err error) string {
-	var httpErr *httpclient.Error
-	if errors.As(err, &httpErr) {
+	if httpErr, ok := errors.AsType[*httpclient.Error](err); ok {
 		return httpErr.Message
 	}
 	return ""

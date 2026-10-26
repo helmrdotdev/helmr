@@ -88,7 +88,7 @@ func TestAgentNativeComputerContinuation(t *testing.T) {
 			t.Fatal(err)
 		}
 		found := false
-		for _, pid := range strings.Fields(string(members)) {
+		for pid := range strings.FieldsSeq(string(members)) {
 			status, err := os.ReadFile(filepath.Join("/proc", pid, "status"))
 			if err != nil {
 				t.Fatal(err)
@@ -482,7 +482,7 @@ func assertNativeFrozen(t *testing.T, group *linuxProcessCgroup, pid int) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range strings.Fields(string(processes)) {
+	for value := range strings.FieldsSeq(string(processes)) {
 		if value == strconv.Itoa(pid) {
 			return
 		}

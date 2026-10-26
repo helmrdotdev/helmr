@@ -92,8 +92,7 @@ func TestAgentProcessBlockedPipeSupportsCancellationWithoutHoldingAuthority(t *t
 	_ = writer.Close()
 	select {
 	case err := <-result:
-		var loss *agentPipeWriteError
-		if !errors.As(err, &loss) {
+		if _, ok := errors.AsType[*agentPipeWriteError](err); !ok {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
@@ -177,7 +176,7 @@ func testAgentProcessRetainedRuntime(t *testing.T, checkpoint, withPeer, stopCap
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range strings.Fields(string(libs)) {
+	for field := range strings.FieldsSeq(string(libs)) {
 		if filepath.IsAbs(field) {
 			copyFile(field, filepath.Join(root, field))
 		}
@@ -268,7 +267,7 @@ export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"comput
 		t.Fatal(err)
 	}
 	managedPID := ""
-	for _, line := range strings.Split(string(fdinfo), "\n") {
+	for line := range strings.SplitSeq(string(fdinfo), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 2 && fields[0] == "Pid:" {
 			managedPID = fields[1]
@@ -282,7 +281,7 @@ export const agent={kind:"agent",id:"agent",template:{kind:"template",id:"comput
 		t.Fatal(err)
 	}
 	privileges := map[string]string{}
-	for _, line := range strings.Split(string(status), "\n") {
+	for line := range strings.SplitSeq(string(status), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) > 1 {
 			privileges[fields[0]] = strings.Join(fields[1:], " ")

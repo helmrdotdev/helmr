@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -118,9 +119,7 @@ func TestSlackNativeStopAuthenticatesAndRejectsMalformedEventsBeforeSQL(t *testi
 	}
 	for _, field := range []string{"user", "channel", "thread_ts", "event_ts"} {
 		copy := map[string]any{}
-		for k, v := range valid {
-			copy[k] = v
-		}
+		maps.Copy(copy, valid)
 		copy[field] = ""
 		if response := serveSignedEvent(h, eventBody(t, "invalid", copy)); response.Code != http.StatusBadRequest {
 			t.Fatalf("%s reached database: %d", field, response.Code)

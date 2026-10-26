@@ -53,7 +53,7 @@ func collectStatements(t *testing.T) []statement {
 	t.Helper()
 	root := repositoryRoot(t)
 	exports := map[string]string{}
-	for _, line := range strings.Fields(goList(t, root, "-export", "-deps", "-f", "{{if .Export}}{{.ImportPath}}={{.Export}}{{end}}", "./internal/...", "./cmd/...")) {
+	for line := range strings.FieldsSeq(goList(t, root, "-export", "-deps", "-f", "{{if .Export}}{{.ImportPath}}={{.Export}}{{end}}", "./internal/...", "./cmd/...")) {
 		path, export, ok := strings.Cut(line, "=")
 		if ok {
 			exports[path] = export
@@ -69,8 +69,8 @@ func collectStatements(t *testing.T) []statement {
 	})
 	var statements []statement
 	seen := map[token.Position]bool{}
-	listing := strings.Split(strings.TrimSpace(goList(t, root, "-f", "{{.ImportPath}}\t{{.Dir}}\t{{join .GoFiles \",\"}}", "./internal/...", "./cmd/...")), "\n")
-	for _, line := range listing {
+	listing := strings.SplitSeq(strings.TrimSpace(goList(t, root, "-f", "{{.ImportPath}}\t{{.Dir}}\t{{join .GoFiles \",\"}}", "./internal/...", "./cmd/...")), "\n")
+	for line := range listing {
 		parts := strings.Split(line, "\t")
 		if len(parts) != 3 || parts[2] == "" {
 			continue
@@ -80,7 +80,7 @@ func collectStatements(t *testing.T) []statement {
 			continue
 		}
 		var files []*ast.File
-		for _, name := range strings.Split(parts[2], ",") {
+		for name := range strings.SplitSeq(parts[2], ",") {
 			file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
 			if err != nil {
 				t.Fatal(err)
@@ -291,7 +291,7 @@ func writtenTables(sql string) []string {
 // splitStatements separates a simple-protocol batch into its statements.
 func splitStatements(sql string) []string {
 	var out []string
-	for _, piece := range strings.Split(sql, ";") {
+	for piece := range strings.SplitSeq(sql, ";") {
 		if strings.TrimSpace(piece) != "" {
 			out = append(out, piece)
 		}
