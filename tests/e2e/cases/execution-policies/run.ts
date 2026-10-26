@@ -2,6 +2,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { z } from "zod"
 import { assert, assertEqual, completedResult, deadline, deleteComputer, verify, waitOutput, type ClientTurn } from "../../support/context"
 import { fixtureInput } from "../../support/runtime-mcp"
+import { capacityAwareStartAgent } from "../../support/capacity-admission"
 
 assert(process.env.HELMR_EXECUTION_POLICY_PUBLIC_PROBES === "1", "Set HELMR_EXECUTION_POLICY_PUBLIC_PROBES=1 to opt in to checkip.amazonaws.com, example.com and 1.1.1.1 probes")
 const networkResult = z.object({
@@ -18,7 +19,8 @@ const coordinatorResult = z.object({
   deniedDirectAliasDiscovery: z.literal(true), deniedCurrentReceipt: z.literal(true), emptyScope: z.literal(true),
 })
 
-await verify("execution-policies", async ({ client, marker, objects, computer, startAgent }) => {
+await verify("execution-policies", async ({ client, marker, objects, computer, startAgent: startOnce }) => {
+  const startAgent = capacityAwareStartAgent(startOnce)
   const normal = await computer("execution-policy-ordinary", "ordinary")
   const ordinary = await startAgent("execution-policy-ordinary-probe", {
     computer: normal, input: { marker, expected: "ordinary" }, idempotencyKey: `${marker}:ordinary`,

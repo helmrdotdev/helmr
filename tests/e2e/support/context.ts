@@ -21,6 +21,11 @@ export function errorCode(error: unknown): string | undefined {
     : undefined
 }
 export type ClientTurn = ReturnType<SessionRef["turns"]["ref"]>
+export type StartAgent = (
+  definition: string,
+  request: Omit<SessionCreateRequest, "agent" | "input"> & { input: JsonValue },
+  options?: { signal?: AbortSignal },
+) => Promise<import("@helmr/sdk").SessionCreateReceipt<import("@helmr/sdk").TurnRef>>
 export const terminalTurnStatuses = ["completed", "failed", "interrupted", "cancelled"] as const
 export async function waitTurn(
   turn: ClientTurn,
@@ -125,7 +130,7 @@ export async function verify(
     >
     cleanup: (action: () => Promise<unknown>) => void
     computer: (definition: string, suffix?: string) => Promise<ComputerRef>
-    startAgent: (definition: string, request: Omit<SessionCreateRequest, "agent" | "input"> & { input: JsonValue }) => Promise<import("@helmr/sdk").SessionCreateReceipt<import("@helmr/sdk").TurnRef>>
+    startAgent: StartAgent
   }) => Promise<unknown>,
 ) {
   const url = process.env.HELMR_API_URL,
@@ -192,8 +197,10 @@ export async function verify(
       marker,
       objects,
       cleanup: (action) => cleanup.push(action),
-      startAgent: async (definition, request) => {
-        const admission = await client.sessions.create({ agent: definition, ...request, input: fixtureInput(request.input) }, { signal: deadline(30_000) })
+      startAgent: async (definition, request, options) => {
+        const requestSignal = deadline(30_000)
+        const signal = options?.signal ? AbortSignal.any([requestSignal, options.signal]) : requestSignal
+        const admission = await client.sessions.create({ agent: definition, ...request, input: fixtureInput(request.input) }, { signal })
         objects.session_ids.push(admission.session.id)
         objects.turn_ids.push(admission.turn.id)
         return admission

@@ -8,6 +8,7 @@ import { assert, assertEqual, completedResult, deadline, deleteComputer, verify,
 import { hostObservation } from "../../support/host-observation"
 import { assertRestored, observePersistence } from "../../support/persistence"
 import { fixtureInput } from "../../support/runtime-mcp"
+import { capacityAwareStartAgent } from "../../support/capacity-admission"
 
 assert(process.env.HELMR_EXECUTION_POLICY_PUBLIC_PROBES === "1", "Set HELMR_EXECUTION_POLICY_PUBLIC_PROBES=1 for the public HTTPS/HTTP/DNS/TLS prerequisites")
 const mode = process.env.HELMR_EXECUTION_POLICY_LIFECYCLE
@@ -43,7 +44,8 @@ const blockedReport = restricted.extend({ expected: z.literal("blocked"), prepar
 
 // Drain/restart remains operator-owned. Fresh, exclusive marker files identify
 // this attempt; they cannot resume an interrupted test or authorize a service kill.
-await verify(`execution-policies-${subject}-${mode}`, async ({ marker, objects, computer, startAgent }) => {
+await verify(`execution-policies-${subject}-${mode}`, async ({ marker, objects, computer, startAgent: startOnce }) => {
+  const startAgent = capacityAwareStartAgent(startOnce)
   const directory = process.env.HELMR_EVIDENCE_DIR!
   const record = (name: string, value: unknown) => writeFile(join(directory, name),
     JSON.stringify(value, null, 2) + "\n", { mode: 0o600, flag: "wx" })
