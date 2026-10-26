@@ -213,7 +213,7 @@ func memoryTransportChild(t *testing.T) {
 			results <- work()
 		}()
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		job(func() error {
 			buffer := make([]byte, vm.MemoryReadBytes)
 			defer clear(buffer)
@@ -243,7 +243,7 @@ func memoryTransportChild(t *testing.T) {
 		return nil
 	})
 	close(start)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		if err := <-results; err != nil {
 			t.Error(err)
 		}

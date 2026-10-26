@@ -130,8 +130,7 @@ func TestPromoteRollsBackInvalidTrigger(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), r.ID, nil)
-	var input InputError
-	if !errors.As(err, &input) {
+	if _, ok := errors.AsType[InputError](err); !ok {
 		t.Fatalf("invalid trigger should be actionable input: %v", err)
 	}
 	var current *uuid.UUID

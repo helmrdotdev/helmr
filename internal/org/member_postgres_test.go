@@ -423,8 +423,7 @@ func TestCreateInvitationsPostgresDeliversOneBatchAndRefusesAddressesOnTheirOwn(
 		}
 		switch {
 		case expected.email == "not-an-address":
-			var input org.InputError
-			if !errors.As(result.Err, &input) {
+			if _, ok := errors.AsType[org.InputError](result.Err); !ok {
 				t.Fatalf("invalid address result = %+v", result)
 			}
 		case expected.err != nil:

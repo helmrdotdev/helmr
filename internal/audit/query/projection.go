@@ -58,15 +58,14 @@ func projectRecord(r Record, scope readScope) (api.AuditEvent, error) {
 	if err := captured.Validate(); err != nil {
 		return api.AuditEvent{}, err
 	}
-	event := api.AuditEvent{AuditEventMetadata: api.AuditEventMetadata{
+	event := api.AuditEvent{
 		ID: r.ID, OrgID: r.OrgID, ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID, SchemaVersion: r.SchemaVersion,
 		OccurredAt: r.OccurredAt, RecordedAt: r.RecordedAt, RetentionSeconds: r.RetentionSeconds, ExpiresAt: r.ExpiresAt,
 		ActorUserID: r.ActorUserID, ActorAPIKeyID: r.ActorAPIKeyID, ActorSessionID: r.ActorSessionID,
 		Authentication: api.AuditAuthentication{Result: r.AuthenticationResult, Origin: r.AuthenticationOrigin, Provider: r.IdentityProvider, CredentialKind: r.CredentialKind, CredentialID: r.CredentialID, CredentialVersion: r.CredentialVersion},
 		Action:         r.Action, Outcome: r.Outcome, TargetKind: r.TargetKind, TargetID: r.TargetID, TargetUserID: r.TargetUserID, SlackTeamID: r.SlackTeamID, SlackUserID: r.SlackUserID, TargetResolution: r.TargetResolution,
 		OperationID: r.OperationID, SessionID: r.SessionID, TurnID: r.TurnID, ComputerID: r.ComputerID, DeploymentID: r.DeploymentID, Channel: r.Channel,
-		Restricted: []api.AuditRestrictedSection{},
-	}}
+		Restricted: []api.AuditRestrictedSection{}}
 	switch {
 	case r.ActorUserID != nil:
 		event.ActorKind = api.AuditActorUser

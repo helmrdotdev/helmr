@@ -90,8 +90,7 @@ func TestReadSquashFSFactsRejectsStructuralBounds(t *testing.T) {
 			if err == nil {
 				t.Fatal("invalid structural bounds were accepted")
 			}
-			var contentError *artifactContentError
-			if !errors.As(err, &contentError) {
+			if _, ok := errors.AsType[*artifactContentError](err); !ok {
 				t.Fatalf("error = %T, want artifactContentError", err)
 			}
 		})
@@ -180,8 +179,7 @@ func TestReadSquashFSFactsRejectsShortReads(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "superblock") {
 			t.Fatalf("error = %v", err)
 		}
-		var infrastructureError *artifactInfrastructureError
-		if !errors.As(err, &infrastructureError) {
+		if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 			t.Fatalf("error = %T, want artifactInfrastructureError", err)
 		}
 	})
@@ -192,8 +190,7 @@ func TestReadSquashFSFactsRejectsShortReads(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "padding") {
 			t.Fatalf("error = %v", err)
 		}
-		var infrastructureError *artifactInfrastructureError
-		if !errors.As(err, &infrastructureError) {
+		if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 			t.Fatalf("error = %T, want artifactInfrastructureError", err)
 		}
 	})
@@ -211,8 +208,7 @@ func TestReadSquashFSFactsRejectsShortReads(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), io.ErrUnexpectedEOF.Error()) {
 			t.Fatalf("error = %v", err)
 		}
-		var infrastructureError *artifactInfrastructureError
-		if !errors.As(err, &infrastructureError) {
+		if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 			t.Fatalf("error = %T, want artifactInfrastructureError", err)
 		}
 	})
@@ -238,16 +234,14 @@ func TestReadSquashFSFactsAcceptsFullReadsWithEOF(t *testing.T) {
 
 func TestReadSquashFSFactsClassifiesNilReaderAsInfrastructure(t *testing.T) {
 	_, err := readSquashFSFacts(nil, artifact.SquashFSPhysicalAlign)
-	var infrastructureError *artifactInfrastructureError
-	if !errors.As(err, &infrastructureError) {
+	if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 		t.Fatalf("error = %T, want artifactInfrastructureError", err)
 	}
 }
 
 func TestReadSquashFSFactsClassifiesNegativePhysicalSizeAsInfrastructure(t *testing.T) {
 	_, err := readSquashFSFacts(bytes.NewReader(nil), -1)
-	var infrastructureError *artifactInfrastructureError
-	if !errors.As(err, &infrastructureError) {
+	if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 		t.Fatalf("error = %T, want artifactInfrastructureError", err)
 	}
 }

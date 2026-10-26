@@ -257,8 +257,7 @@ func (owner *AgentComputerOwner) runSession(member *ownedAgentSession) {
 				if err == nil {
 					return
 				}
-				var failed SessionControlFailedError
-				if errors.As(err, &failed) {
+				if failed, ok := errors.AsType[SessionControlFailedError](err); ok {
 					// Close may already have cancelled the lifetime while a failed guest
 					// control's receipt was in flight. Joining must still report that failure.
 					owner.failureMu.Lock()

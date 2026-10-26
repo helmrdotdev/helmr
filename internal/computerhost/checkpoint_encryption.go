@@ -162,7 +162,7 @@ func (c *CheckpointEncryptor) Decrypt(ctx context.Context, ciphertext io.Reader,
 	if err != nil {
 		return err
 	}
-	for chunk := uint64(0); chunk < maxRecords; chunk++ {
+	for chunk := range maxRecords {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

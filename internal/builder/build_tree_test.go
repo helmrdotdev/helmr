@@ -101,7 +101,7 @@ func TestBuildTreeLinkHopBoundary(t *testing.T) {
 	for _, count := range []int{40, 41} {
 		tree := artifacttest.NewMemory()
 		tree.AddFile("file", []byte("content"), 0644)
-		for i := 0; i < count; i++ {
+		for i := range count {
 			target := "file"
 			if i+1 < count {
 				target = fmt.Sprintf("link-%02d", i+1)

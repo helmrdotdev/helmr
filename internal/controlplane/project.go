@@ -172,7 +172,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	project, environments, err := org.CreateProject(r.Context(), s.tx, s.managingMember(principal), org.ProjectInput{
 		ExecutionLimits: s.environmentExecutionLimits,
-		ProjectDetails:  org.ProjectDetails{Slug: request.Project, Name: request.Name},
+		Slug:            request.Project, Name: request.Name,
 		DefaultRegionID: request.DefaultRegionID,
 	})
 	if err != nil {

@@ -100,8 +100,7 @@ func TestSquashFSMetadataCacheRejectsInteriorBlockOffset(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = cache.block(1)
-	var contentError *artifactContentError
-	if !errors.As(err, &contentError) {
+	if _, ok := errors.AsType[*artifactContentError](err); !ok {
 		t.Fatalf("error = %T, want artifactContentError: %v", err, err)
 	}
 }
@@ -124,8 +123,7 @@ func TestSquashFSMetadataCacheRequiresCompleteRegion(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = cache.validateComplete()
-	var contentError *artifactContentError
-	if !errors.As(err, &contentError) {
+	if _, ok := errors.AsType[*artifactContentError](err); !ok {
 		t.Fatalf("error = %T, want artifactContentError: %v", err, err)
 	}
 }
@@ -424,8 +422,7 @@ func TestSquashFSInodeDecoderRejectsInvalidFacts(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = decoder.read(test.reference)
-			var contentError *artifactContentError
-			if !errors.As(err, &contentError) {
+			if _, ok := errors.AsType[*artifactContentError](err); !ok {
 				t.Fatalf("error = %T, want artifactContentError: %v", err, err)
 			}
 		})

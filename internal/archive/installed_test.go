@@ -94,7 +94,7 @@ func TestInstalledPAXNamesLinksOrderingAndDeterminism(t *testing.T) {
 
 func TestInstalledStreamBudgetsIncludePAXAndFinalPadding(t *testing.T) {
 	root := t.TempDir()
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		writeTestFile(t, filepath.Join(root, fmt.Sprintf("%02d", i)+strings.Repeat("x", 122)), "")
 	}
 	temp := t.TempDir()

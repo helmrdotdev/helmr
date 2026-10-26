@@ -163,7 +163,7 @@ func guestDispatch(t *testing.T, session *agentSession, id string, sequence int6
 }
 func guestOperation(t *testing.T, session *agentSession, id string, method agentv1.Operation_Method, payload string) (*agentv1.GuestSessionMessage, *agentv1.GuestCommand) {
 	t.Helper()
-	event := &agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: id, TurnId: proto.String("turn"), Method: method, PayloadJson: []byte(payload)}}}
+	event := &agentv1.ProgramEvent{Identity: session.grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: id, TurnId: new("turn"), Method: method, PayloadJson: []byte(payload)}}}
 	envelope, reply, err := session.receive(event)
 	if err != nil {
 		t.Fatal(err)
@@ -509,7 +509,7 @@ func TestAgentSessionRejectsPostSettlementMutationAndLateRetiredReceipt(t *testi
 	session.turns["turn"].settled = true
 	envelope, reply := guestOperation(t, session, "second-final", agentv1.Operation_METHOD_FINALIZE, `{"result":2}`)
 	requireGuestRejected(t, envelope, reply)
-	session.pending["old-final"] = &agentPendingOperation{operation: &agentv1.Operation{TurnId: proto.String("turn"), Method: agentv1.Operation_METHOD_FINALIZE}}
+	session.pending["old-final"] = &agentPendingOperation{operation: &agentv1.Operation{TurnId: new("turn"), Method: agentv1.Operation_METHOD_FINALIZE}}
 	delete(session.turns, "turn")
 	guestReceipt(t, session, "old-final", `{"status":"completed","result":1}`)
 	if len(session.pending) != 0 {
@@ -566,7 +566,7 @@ func TestAgentSessionRequiresToolEnvelopeForSessionOperations(t *testing.T) {
 
 func TestAgentSessionStopUndeliveredTurnKeepsWarmProcess(t *testing.T) {
 	session, process := agentSessionFixture(t)
-	control := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "stop-undelivered", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run", StopSequence: 1, StopTurnId: proto.String("undelivered"), StopDeadlineUnixNano: time.Now().Add(time.Minute).UnixNano()}}}
+	control := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "stop-undelivered", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run", StopSequence: 1, StopTurnId: new("undelivered"), StopDeadlineUnixNano: time.Now().Add(time.Minute).UnixNano()}}}
 	if err := session.send(control); err != nil {
 		t.Fatal(err)
 	}
@@ -588,7 +588,7 @@ func TestAgentSessionStopUndeliveredTurnKeepsWarmProcess(t *testing.T) {
 func TestAgentSessionStopUnknownTurnCannotIgnoreActiveExecution(t *testing.T) {
 	session, _ := agentSessionFixture(t)
 	guestDispatch(t, session, "active", 1)
-	err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "wrong-stop", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run", StopSequence: 1, StopTurnId: proto.String("unknown"), StopDeadlineUnixNano: time.Now().Add(time.Minute).UnixNano()}}})
+	err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "wrong-stop", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "run", StopSequence: 1, StopTurnId: new("unknown"), StopDeadlineUnixNano: time.Now().Add(time.Minute).UnixNano()}}})
 	if err == nil || session.turns["active"].closed || session.activeTurn != "active" {
 		t.Fatal("unknown stop was accepted or changed active execution")
 	}
@@ -597,7 +597,7 @@ func TestAgentSessionStopUnknownTurnCannotIgnoreActiveExecution(t *testing.T) {
 func TestAgentSessionBoundedStopClosesOwnedTurnAndKeepsProcess(t *testing.T) {
 	session, process := agentSessionFixture(t)
 	guestDispatch(t, session, "blocked", 1)
-	command := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "pressure-stop", ControlSequence: 2, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold", StopSequence: 1, StopTurnId: proto.String("blocked"), StopDeadlineUnixNano: time.Now().Add(time.Second).UnixNano()}}}
+	command := &agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "pressure-stop", ControlSequence: 2, Command: &agentv1.GuestCommand_Control{Control: &agentv1.SessionControl{Desired: "hold", StopSequence: 1, StopTurnId: new("blocked"), StopDeadlineUnixNano: time.Now().Add(time.Second).UnixNano()}}}
 	if err := session.send(command); err != nil {
 		t.Fatal(err)
 	}
@@ -616,7 +616,7 @@ func TestAgentSessionBoundedStopClosesOwnedTurnAndKeepsProcess(t *testing.T) {
 	}
 }
 func TestAgentSessionStopRequiresSequence(t *testing.T) {
-	for _, control := range []*agentv1.SessionControl{{Desired: "hold", StopDeadlineUnixNano: time.Now().Add(time.Second).UnixNano(), StopTurnId: proto.String("blocked")}} {
+	for _, control := range []*agentv1.SessionControl{{Desired: "hold", StopDeadlineUnixNano: time.Now().Add(time.Second).UnixNano(), StopTurnId: new("blocked")}} {
 		session, _ := agentSessionFixture(t)
 		if err := session.send(&agentv1.GuestCommand{Identity: session.grant.Identity, DeliveryId: "invalid-stop", ControlSequence: 1, Command: &agentv1.GuestCommand_Control{Control: control}}); err == nil {
 			t.Fatal("invalid pressure stop admitted")

@@ -31,7 +31,7 @@ func TestCaptureBudgetBoundsDenseSparseAndExistingReferences(t *testing.T) {
 				}
 				// Separate historical segments populate references that new metadata must
 				// carry even when only a subset of their data changes in the next cut.
-				for i := 0; i < fanout; i++ {
+				for i := range fanout {
 					root, err = writer.Capture(t.Context(), root, capacity, map[uint64][]byte{uint64(i): bytes.Repeat([]byte{byte(i%250 + 1)}, 4096)})
 					if err != nil {
 						t.Fatal(err)

@@ -27,7 +27,7 @@ var (
 )
 
 func TestRuntimeCandidateDoesNotExposeWorkloadInterfaces(t *testing.T) {
-	typeOfCandidate := reflect.TypeOf((*Connector)(nil))
+	typeOfCandidate := reflect.TypeFor[*Connector]()
 	for _, method := range []string{"Connect", "Restore", "Materialize", "Cleanup"} {
 		if _, ok := typeOfCandidate.MethodByName(method); ok {
 			t.Fatalf("unqualified runtime candidate exposes %s", method)

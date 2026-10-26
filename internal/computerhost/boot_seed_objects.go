@@ -129,7 +129,7 @@ func (p *PreparedMachines) openBootSeedFrom(ctx context.Context, directory strin
 		group.Go(func() (err error) {
 			defer func() { stageErrors[i+1] = err }()
 			*item.path, err = downloadCheckpointObject(readCtx, objects, p.CheckpointCipher, directory, m.Purpose(),
-				computercheckpoint.RuntimeObject{Role: item.role, Object: computercheckpoint.Object{Digest: item.object.Digest, SizeBytes: item.object.SizeBytes, MediaType: item.object.MediaType}}, item.limit)
+				computercheckpoint.RuntimeObject{Role: item.role, Digest: item.object.Digest, SizeBytes: item.object.SizeBytes, MediaType: item.object.MediaType}, item.limit)
 			return err
 		})
 	}
@@ -150,8 +150,7 @@ func bootSeedArtifactFailure(err error) bool {
 	if errors.Is(err, vm.ErrInvalidCheckpointContent) || errors.Is(err, errInvalidCheckpoint) || errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) {
 		return true
 	}
-	var api smithy.APIError
-	if errors.As(err, &api) {
+	if api, ok := errors.AsType[smithy.APIError](err); ok {
 		switch api.ErrorCode() {
 		case "NotFound", "NoSuchKey", "AccessDenied", "Forbidden":
 			return true

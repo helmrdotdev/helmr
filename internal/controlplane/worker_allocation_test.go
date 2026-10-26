@@ -66,7 +66,7 @@ func TestWorkerAllocationListingAndPhysicalStop(t *testing.T) {
 	if err != nil || len(last.Allocations) != 0 {
 		t.Fatalf("cursor: %+v %v", last, err)
 	}
-	if err := client.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{EnvironmentID: record.EnvironmentID, ComputerID: record.OwnerID, AllocationID: record.AllocationID, LeaseEpoch: record.Epoch}}); err != nil {
+	if err := client.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{EnvironmentID: record.EnvironmentID, ComputerID: record.OwnerID, AllocationID: record.AllocationID, LeaseEpoch: record.Epoch}); err != nil {
 		t.Fatal(err)
 	}
 	page, err = client.ListAllocations(t.Context(), nil)
@@ -122,7 +122,7 @@ func TestDeletedComputerRequestsPhysicalStopWithoutReleasingCustody(t *testing.T
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='releasing' AND fenced_at IS NULL AND reserved_cpu_millis>0 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer).Scan(&retained); err != nil || !retained {
 		t.Fatalf("delete released physical custody: %v %v", retained, err)
 	}
-	if err := worker.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{AgentComputerLeaseRequest: workerapi.AgentComputerLeaseRequest{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, AllocationID: identity.AllocationID, LeaseEpoch: identity.Epoch}}); err != nil {
+	if err := worker.ObserveAgentComputerStopped(t.Context(), workerapi.AgentComputerStoppedRequest{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, AllocationID: identity.AllocationID, LeaseEpoch: identity.Epoch}); err != nil {
 		t.Fatal(err)
 	}
 	page, err := worker.ListAllocations(t.Context(), nil)

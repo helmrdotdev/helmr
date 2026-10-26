@@ -52,7 +52,7 @@ func TestPreparedProgramFinalization(t *testing.T) {
 		t.Fatal(err)
 	}
 	var previousDescriptor, previousObject []byte
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		work := t.TempDir()
 		result, err := BuildPreparedProgram(t.Context(), PreparedProgramInput{
 			PreparedDirectory: prepared, WorkDirectory: work, ProgramObjectPath: filepath.Join(work, "program.squashfs"),

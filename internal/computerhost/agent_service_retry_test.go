@@ -79,7 +79,7 @@ func TestAgentServicePendingFinalizeKeepsAttachmentAndCallbacks(t *testing.T) {
 			t.Fatal(err)
 		}
 		var original workerapi.AgentOperationRequest
-		client := retryOperationClient{agentRuntimeTestClient: agentRuntimeTestClient{operation: func(_ context.Context, request workerapi.AgentOperationRequest) (workerapi.AgentOperationResponse, error) {
+		client := retryOperationClient{operation: func(_ context.Context, request workerapi.AgentOperationRequest) (workerapi.AgentOperationResponse, error) {
 			if attempts.Add(1) == 1 {
 				original = request
 				close(first)
@@ -92,7 +92,7 @@ func TestAgentServicePendingFinalizeKeepsAttachmentAndCallbacks(t *testing.T) {
 			default:
 				return workerapi.AgentOperationResponse{}, &httpclient.Error{StatusCode: 503, Code: workerapi.TurnReceiptsPending}
 			}
-		}}, renew: func(context.Context) (workerapi.AgentAuthorityResponse, error) {
+		}, renew: func(context.Context) (workerapi.AgentAuthorityResponse, error) {
 			close(renewed)
 			return workerapi.AgentAuthorityResponse{AuthorityGeneration: 3, ExpiresAt: time.Now().Add(time.Hour)}, nil
 		}}

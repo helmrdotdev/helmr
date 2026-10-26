@@ -46,9 +46,8 @@ func (connection *AgentSessionConnection) forwardOperation(ctx context.Context, 
 			if err == nil {
 				break
 			}
-			var response *httpclient.Error
 			status := 0
-			if errors.As(err, &response) {
+			if response, ok := errors.AsType[*httpclient.Error](err); ok {
 				status = response.StatusCode
 			}
 			slog.Info("Session operation awaiting retry", "session_id", request.Session.SessionID, "turn_id", request.TurnID,
@@ -115,9 +114,7 @@ func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, 
 	logsDone := make(chan struct{})
 	var logsDoneOnce sync.Once
 	stopped := false
-	jobs.Add(1)
-	go func() {
-		defer jobs.Done()
+	jobs.Go(func() {
 		err := connection.MaintainAuthority(ctx, func(ctx context.Context, current *agentv1.SessionGrant) (*agentv1.SessionGrant, error) {
 			result, err := client.RenewAgentAuthority(ctx, connection.runtimeSession(environmentID, current.GetComputerLeaseEpoch()))
 			if err != nil {
@@ -131,7 +128,7 @@ func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, 
 		if err != nil {
 			cancel(err)
 		}
-	}()
+	})
 	// A restored guest retains its outbox while frozen. Keep authority fresh,
 	// but do not consume events or send operation results before activation.
 	if activated != nil {
@@ -161,9 +158,7 @@ func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, 
 			if busy {
 				return errors.New("session sent another log before durable acceptance")
 			}
-			jobs.Add(1)
-			go func() {
-				defer jobs.Done()
+			jobs.Go(func() {
 				for {
 					err := observe(ctx, event)
 					if errors.Is(err, errDiagnosticRejected) {
@@ -203,7 +198,7 @@ func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, 
 					case <-timer.C:
 					}
 				}
-			}()
+			})
 			continue
 		}
 		if operation := event.GetEvent().GetOperation(); operation != nil {
@@ -227,9 +222,7 @@ func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, 
 			case <-ctx.Done():
 				return context.Cause(ctx)
 			}
-			jobs.Add(1)
-			go func() {
-				defer jobs.Done()
+			jobs.Go(func() {
 				defer func() { <-capacity }()
 				err := connection.forwardOperation(ctx, environmentID, client, event)
 				mu.Lock()
@@ -238,7 +231,7 @@ func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, 
 				if err != nil {
 					cancel(err)
 				}
-			}()
+			})
 			continue
 		}
 		if event.GetEvent().GetCancelOperation() != nil {
@@ -260,9 +253,7 @@ func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, 
 			// Stop is durable and acknowledged before tail delivery. Reuse the
 			// current grant's finite lifetime; a log outage cannot extend it.
 			deadline := time.Unix(0, connection.CurrentGrant().GetExpiresAtUnixNano())
-			jobs.Add(1)
-			go func() {
-				defer jobs.Done()
+			jobs.Go(func() {
 				timer := time.NewTimer(max(0, time.Until(deadline)))
 				defer timer.Stop()
 				select {
@@ -272,7 +263,7 @@ func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, 
 				case <-timer.C:
 				}
 				cancel(context.Canceled)
-			}()
+			})
 		}
 	}
 }

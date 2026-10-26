@@ -134,7 +134,7 @@ func TestExpiredServingEvidenceRollsBackHostFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	clock := &advancingFenceClock{now: time.Now()}
-	fencer, err := newStaleHostFencer(expiringFenceTransactions{pgxStaleHostFenceTransactions: pgxStaleHostFenceTransactions{beginner: fixture.Pool}, clock: clock}, nil, func(context.Context) error { return nil }, WithStaleHostFenceClock(clock))
+	fencer, err := newStaleHostFencer(expiringFenceTransactions{beginner: fixture.Pool, clock: clock}, nil, func(context.Context) error { return nil }, WithStaleHostFenceClock(clock))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -181,7 +181,7 @@ func PermissionAuthorization(checks []auth.PermissionEvaluation, allowed bool) A
 func PermissionEvidence(p auth.Principal, decisions []auth.PermissionDecision) []Check {
 	checks := make([]Check, 0, len(decisions))
 	for _, d := range decisions {
-		checks = append(checks, PermissionCheck{Type: "permission", PermissionEvaluation: auth.PermissionEvaluation{SubjectUserID: p.UserID, SubjectAPIKeyID: p.APIKeyID, Permission: d.Permission, Scope: d.Scope, Result: "passed", Evidence: &d}})
+		checks = append(checks, PermissionCheck{Type: "permission", SubjectUserID: p.UserID, SubjectAPIKeyID: p.APIKeyID, Permission: d.Permission, Scope: d.Scope, Result: "passed", Evidence: &d})
 	}
 	return checks
 }

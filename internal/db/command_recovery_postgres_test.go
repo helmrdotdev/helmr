@@ -43,7 +43,7 @@ func TestSecretRevocationDiscoveryAdvancesPastStoppedCommands(t *testing.T) {
 	secretID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($1,$2,'TOKEN','revoked',clock_timestamp())`, secretID, f.Environment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
-	for n := 0; n < 3; n++ {
+	for n := range 3 {
 		id := insertRecoveryCommand(t, f, f.Computer, false)
 		if n == 0 {
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET status='pending',computer_lease_epoch=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)

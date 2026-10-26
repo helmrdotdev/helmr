@@ -203,8 +203,7 @@ func register(ctx context.Context, policy auditpolicy.Policy, txb db.TxBeginner,
 			}
 			return idempotency.Completion{Target: idempotency.Target{DeploymentID: record.ID}, Receipt: receipt}, nil
 		})
-		var conflict idempotency.ConflictError
-		if errors.As(err, &conflict) {
+		if _, ok := errors.AsType[idempotency.ConflictError](err); ok {
 			return errors.Join(ErrFinalizationConflict, err)
 		}
 		return err
@@ -375,12 +374,10 @@ func (f *Finalizer) verifyObject(ctx context.Context, manifest bundle.Manifest, 
 		return fmt.Errorf("read deployment object %s: %w", object.Digest, errors.Join(recorded.err, closeErr))
 	}
 	if err != nil {
-		var sourceErr objectSourceError
-		if errors.As(err, &sourceErr) {
+		if _, ok := errors.AsType[objectSourceError](err); ok {
 			return fmt.Errorf("read deployment object %s: %w", object.Digest, err)
 		}
-		var invalidErr InvalidObjectError
-		if errors.As(err, &invalidErr) {
+		if _, ok := errors.AsType[InvalidObjectError](err); ok {
 			return err
 		}
 		return InvalidObjectError{Err: fmt.Errorf("verify deployment object %s: %w", object.Digest, err)}

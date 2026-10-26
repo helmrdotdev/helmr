@@ -84,7 +84,7 @@ func TestServersDoNotReachHostRuntime(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin"} {
 		for _, pkg := range []string{"./cmd/control-plane", "./cmd/dispatcher"} {
 			output := goList(t, repositoryRoot(t), goos, "-deps", pkg)
-			for _, dependency := range strings.Fields(string(output)) {
+			for dependency := range strings.FieldsSeq(string(output)) {
 				for _, forbidden := range []string{"firecracker", "computerhost", "guestd"} {
 					prefix := internalImportPrefix + forbidden
 					if dependency == prefix || strings.HasPrefix(dependency, prefix+"/") {
@@ -122,7 +122,7 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 			if err != nil {
 				t.Fatalf("go list %s for %s: %v\n%s", pkg, goos, err, output)
 			}
-			for _, dependency := range strings.Fields(string(output)) {
+			for dependency := range strings.FieldsSeq(string(output)) {
 				if dependency == internalImportPrefix+"db" || dependency == internalImportPrefix+"pglock" || dependency == internalImportPrefix+"pgvalue" || strings.HasPrefix(dependency, "github.com/jackc/pgx/") {
 					t.Fatalf("%s must not depend on %s for %s", pkg, dependency, goos)
 				}
@@ -143,7 +143,7 @@ func TestWorkerDoesNotLinkHostCredentialSigning(t *testing.T) {
 		if err != nil {
 			t.Fatalf("go list ./cmd/worker for %s: %v\n%s", goos, err, output)
 		}
-		for _, dependency := range strings.Fields(string(output)) {
+		for dependency := range strings.FieldsSeq(string(output)) {
 			if strings.HasPrefix(dependency, "github.com/golang-jwt/") || dependency == internalImportPrefix+"workergroup" {
 				t.Fatalf("./cmd/worker must not depend on %s for %s", dependency, goos)
 			}
@@ -167,7 +167,7 @@ func TestWorkerSupplyDoesNotReachWireContracts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("go list ./internal/workergroup for %s: %v\n%s", goos, err, output)
 		}
-		for _, dependency := range strings.Fields(string(output)) {
+		for dependency := range strings.FieldsSeq(string(output)) {
 			if slices.Contains(forbidden, dependency) {
 				t.Fatalf("./internal/workergroup must not depend on %s for %s", dependency, goos)
 			}
@@ -198,7 +198,7 @@ func TestContractPackagesDoNotReachArtifactResources(t *testing.T) {
 			if err != nil {
 				t.Fatalf("go list %s for %s: %v\n%s", pkg, goos, err, output)
 			}
-			for _, dependency := range strings.Fields(string(output)) {
+			for dependency := range strings.FieldsSeq(string(output)) {
 				if slices.Contains(forbidden, dependency) {
 					t.Fatalf("%s must not depend on %s for %s", pkg, dependency, goos)
 				}

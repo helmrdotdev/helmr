@@ -55,7 +55,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	f.worker = workergroup.HostPrincipal{HostID: f.fixture.Worker, GroupID: f.fixture.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	f.server = &Server{db: f.q, tx: f.fixture.Pool, secretProxy: f.store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1", f.fixture.Worker)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		name := string(rune('a' + i))
 		record, err := f.store.Create(t.Context(), dbtest.SecretManager(t, f.fixture.Pool, f.fixture.Environment), f.fixture.Environment, "token-"+name, []byte("old-"+name), "create-"+name)
 		if err != nil {
@@ -232,10 +232,8 @@ func TestProtectedPreparationReusesPersistedRoot(t *testing.T) {
 	var wg sync.WaitGroup
 	failures := make(chan string, 8)
 	preparations := make(chan workerapi.SecretProxyPreparation, 8)
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 8 {
+		wg.Go(func() {
 			r := f.invoke(t.Context(), false)
 			if r.Code != 200 {
 				failures <- r.Body.String()
@@ -247,7 +245,7 @@ func TestProtectedPreparationReusesPersistedRoot(t *testing.T) {
 					preparations <- prep
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(failures)

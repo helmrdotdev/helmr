@@ -205,8 +205,7 @@ func TestTransmissionFailsClosedAfterCertifiedRemoteLoss(t *testing.T) {
 				io.Writer
 			}{bytes.NewReader(request(0, 0, 0, 4096, nil)), &reply}
 			err = p.ServeNBDTransmission(t.Context(), stream)
-			var fatal *DeviceFailure
-			if !errors.As(err, &fatal) {
+			if _, ok := errors.AsType[*DeviceFailure](err); !ok {
 				t.Fatalf("remote loss did not terminate export: %v", err)
 			}
 			if reply.Len() != 0 {

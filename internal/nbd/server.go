@@ -73,7 +73,7 @@ func negotiate(ctx context.Context, rw io.ReadWriter, d BlockDevice, size int64)
 		return errors.New("unsupported client flags")
 	}
 	// Bound both individual payloads and total negotiation work.
-	for attempt := 0; attempt < 16; attempt++ {
+	for range 16 {
 		var hdr [16]byte
 		if _, err := io.ReadFull(rw, hdr[:]); err != nil {
 			return err

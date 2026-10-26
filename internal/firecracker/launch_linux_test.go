@@ -100,7 +100,7 @@ func TestGuestNetworkArgsSurviveSDKSetupAndMatchRestore(t *testing.T) {
 				t.Fatal(err)
 			}
 			tokens := make(map[string]int)
-			for _, token := range strings.Fields(sdkMachine.Cfg.KernelArgs) {
+			for token := range strings.FieldsSeq(sdkMachine.Cfg.KernelArgs) {
 				key, _, _ := strings.Cut(token, "=")
 				switch key {
 				case "ip", "nfsaddrs", "initcall_debug", "ignore_loglevel", "async.dyndbg":

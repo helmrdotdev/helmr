@@ -26,9 +26,7 @@ func TestTemplateRefreshCoalescesAndPinsReceiptAcrossPromotion(t *testing.T) {
 	errs := make([]error, 3)
 	var wg sync.WaitGroup
 	for i := range builds {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			key := "same"
 			if i == 2 {
 				key = "different"
@@ -36,7 +34,7 @@ func TestTemplateRefreshCoalescesAndPinsReceiptAcrossPromotion(t *testing.T) {
 			builds[i], errs[i] = RefreshTemplate(t.Context(), auditpolicy.Policy{
 				RetentionSeconds: 3600,
 			}, f.pool, f.principal(), f.scope(), "repo", key)
-		}()
+		})
 	}
 	wg.Wait()
 	for i, err := range errs {
@@ -147,8 +145,7 @@ func TestTemplateRefreshSerializesWithPromotion(t *testing.T) {
 			t.Fatalf("racing receipt: %+v %v", replay, err)
 		}
 	} else {
-		var inputError InputError
-		if !errors.As(refreshErr, &inputError) {
+		if _, ok := errors.AsType[InputError](refreshErr); !ok {
 			t.Fatalf("unexpected promotion race error: %v", refreshErr)
 		}
 	}

@@ -77,8 +77,7 @@ func permissionRun(run func(*cobra.Command, []string) error) func(*cobra.Command
 func permissionJSONError(err error) error {
 	code := "invalid_input"
 	details := any(nil)
-	var remote *httpclient.Error
-	if errors.As(err, &remote) {
+	if remote, ok := errors.AsType[*httpclient.Error](err); ok {
 		code = remote.Code
 		if code == "" {
 			code = "request_failed"
@@ -87,8 +86,7 @@ func permissionJSONError(err error) error {
 			details = remote.Details
 		}
 	}
-	var impact *permissionImpactError
-	if errors.As(err, &impact) {
+	if impact, ok := errors.AsType[*permissionImpactError](err); ok {
 		code = "confirmation_required"
 		details = map[string]any{"grants": impact.grants}
 	}

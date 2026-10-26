@@ -121,8 +121,7 @@ func (o *ComputerAllocationOwner) captureIdle(ctx context.Context, delivery work
 	}
 	receipt, err := CaptureAgentComputer(ctx, hold, capture)
 	if err != nil {
-		var rejected *agentComputerUnsealedError
-		if errors.As(err, &rejected) {
+		if rejected, ok := errors.AsType[*agentComputerUnsealedError](err); ok {
 			slog.Info("Computer capture qualification rejected", "computer_id", o.identity.OwnerID, "reason", rejected.Error())
 			if err = o.retryCheckpointDurability(ctx, func(ctx context.Context) error {
 				return o.client.CancelAgentComputerCapture(ctx, workerapi.AgentComputerUnsealedRequest{EnvironmentID: o.identity.EnvironmentID, CheckpointID: id, Rejected: true})

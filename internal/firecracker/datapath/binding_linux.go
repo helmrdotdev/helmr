@@ -450,13 +450,11 @@ func bytesZero(value []byte) bool {
 
 func attachClassifier(link netlink.Link, program *ebpf.Program) (*netlink.BpfFilter, error) {
 	filter := &netlink.BpfFilter{
-		FilterAttrs: netlink.FilterAttrs{
-			LinkIndex: link.Attrs().Index,
-			Handle:    netlink.MakeHandle(0, 1),
-			Parent:    netlink.HANDLE_MIN_INGRESS,
-			Priority:  helmrFilterPriority,
-			Protocol:  unix.ETH_P_ALL,
-		},
+		LinkIndex:    link.Attrs().Index,
+		Handle:       netlink.MakeHandle(0, 1),
+		Parent:       netlink.HANDLE_MIN_INGRESS,
+		Priority:     helmrFilterPriority,
+		Protocol:     unix.ETH_P_ALL,
 		Fd:           program.FD(),
 		Name:         "helmr_ingress",
 		DirectAction: true,
@@ -542,11 +540,10 @@ func verifyClassifier(link netlink.Link, programID int, programTag string) error
 }
 
 func newClsact(link netlink.Link) *netlink.Clsact {
-	return &netlink.Clsact{QdiscAttrs: netlink.QdiscAttrs{
+	return &netlink.Clsact{
 		LinkIndex: link.Attrs().Index,
 		Handle:    netlink.MakeHandle(0xffff, 0),
-		Parent:    netlink.HANDLE_CLSACT,
-	}}
+		Parent:    netlink.HANDLE_CLSACT}
 }
 
 func exactClsact(link netlink.Link) (*netlink.Clsact, bool, error) {
@@ -579,7 +576,7 @@ func exactClsact(link netlink.Link) (*netlink.Clsact, bool, error) {
 func (manager *Manager) allocateMark() (uint32, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-	for attempt := 0; attempt < 32; attempt++ {
+	for range 32 {
 		var raw [4]byte
 		if _, err := rand.Read(raw[:]); err != nil {
 			return 0, fmt.Errorf("generate binding mark: %w", err)

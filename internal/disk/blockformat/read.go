@@ -120,7 +120,7 @@ func readBlocks(ctx context.Context, source RangeSource, scope string, key []byt
 		return nil, err
 	}
 	out := make([]byte, int(count)*BlockSize)
-	for i := uint32(0); i < count; i++ {
+	for i := range count {
 		if err := ctx.Err(); err != nil {
 			clear(out)
 			return nil, err

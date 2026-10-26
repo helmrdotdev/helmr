@@ -155,8 +155,8 @@ func (fs *Filesystem) applyLayer(r io.Reader, _ string) error {
 			return errors.New("image root must be a directory")
 		}
 		base := path.Base(name)
-		if strings.HasPrefix(base, ".wh.") {
-			target := path.Join(path.Dir(name), strings.TrimPrefix(base, ".wh."))
+		if after, ok := strings.CutPrefix(base, ".wh."); ok {
+			target := path.Join(path.Dir(name), after)
 			opaque := base == ".wh..wh..opq"
 			if opaque {
 				target = path.Dir(name)

@@ -26,7 +26,7 @@ const (
 
 var dialVsock = vsock.DialContext
 
-func (c *Connector) waitForHealth(ctx context.Context, vsockPath string, machineExit *machineExit, logf func(string, ...interface{})) error {
+func (c *Connector) waitForHealth(ctx context.Context, vsockPath string, machineExit *machineExit, logf func(string, ...any)) error {
 	healthCtx, cancel := context.WithTimeout(ctx, c.cfg.HealthTimeout)
 	defer cancel()
 	stats := newHealthProbeStats()
@@ -298,14 +298,14 @@ func (s *healthProbeStats) failureError(message string, err error) error {
 	return fmt.Errorf("%s (%s): %w", message, s.summary(), err)
 }
 
-func (s *healthProbeStats) log(logf func(string, ...interface{}), status string) {
+func (s *healthProbeStats) log(logf func(string, ...any), status string) {
 	if s == nil || logf == nil {
 		return
 	}
 	logf("guest health probe %s %s", status, s.summary())
 }
 
-func (s *healthProbeStats) logFailedAttempt(logf func(string, ...interface{}), duration time.Duration) {
+func (s *healthProbeStats) logFailedAttempt(logf func(string, ...any), duration time.Duration) {
 	if s == nil || logf == nil {
 		return
 	}

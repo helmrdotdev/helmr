@@ -231,7 +231,7 @@ func TestHistoryRetentionCurrentProjectPolicy(t *testing.T) {
 	}
 	memberID := dbtest.GrantMember(t, f.pool, orgID, f.user, nil, "projects.update_retention")
 	manager := org.ManagingMember{OrgID: orgID, UserID: f.user, MemberID: memberID, Actor: audit.VerifiedLogin(f.user, "fixture"), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
-	for _, seconds := range []*int64{nil, ptrInt64(3 * 86400), nil, ptrInt64(86400)} {
+	for _, seconds := range []*int64{nil, new(int64(3 * 86400)), nil, new(int64(86400))} {
 		if err := org.UpdateProjectHistoryRetention(t.Context(), f.pool, manager, projectID, seconds); err != nil {
 			t.Fatal(err)
 		}
@@ -259,8 +259,6 @@ func TestHistoryRetentionCurrentProjectPolicy(t *testing.T) {
 		t.Fatalf("expired content restored: %v", err)
 	}
 }
-
-func ptrInt64(value int64) *int64 { return &value }
 
 func TestHistoryRetentionWaitsForProtectivePolicyUpdate(t *testing.T) {
 	for _, value := range []string{"NULL", "2592000"} {

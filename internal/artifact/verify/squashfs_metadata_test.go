@@ -197,8 +197,7 @@ func TestSquashFSMetadataDecoderRejectsInvalidContent(t *testing.T) {
 			if err == nil {
 				t.Fatal("invalid content was accepted")
 			}
-			var contentError *artifactContentError
-			if !errors.As(err, &contentError) {
+			if _, ok := errors.AsType[*artifactContentError](err); !ok {
 				t.Fatalf("error = %T, want artifactContentError: %v", err, err)
 			}
 		})
@@ -224,8 +223,7 @@ func TestSquashFSMetadataDecoderClassifiesBackingFailureAsInfrastructure(t *test
 		0,
 		1,
 	)
-	var infrastructureError *artifactInfrastructureError
-	if !errors.As(err, &infrastructureError) {
+	if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 		t.Fatalf("error = %T, want artifactInfrastructureError: %v", err, err)
 	}
 }
@@ -244,8 +242,7 @@ func TestSquashFSMetadataDecoderHonorsContext(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context cancellation", err)
 	}
-	var infrastructureError *artifactInfrastructureError
-	if !errors.As(err, &infrastructureError) {
+	if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 		t.Fatalf("error = %T, want artifactInfrastructureError", err)
 	}
 }
@@ -313,8 +310,7 @@ func TestReadSquashFSIDTableRejectsInvalidSpans(t *testing.T) {
 			if err == nil {
 				t.Fatal("invalid ID table was accepted")
 			}
-			var contentError *artifactContentError
-			if !errors.As(err, &contentError) {
+			if _, ok := errors.AsType[*artifactContentError](err); !ok {
 				t.Fatalf("error = %T, want artifactContentError: %v", err, err)
 			}
 		})
@@ -379,8 +375,7 @@ func TestSquashFSMetadataDecoderClassifiesReadAfterCloseAsInfrastructure(t *test
 		0,
 		3,
 	)
-	var infrastructureError *artifactInfrastructureError
-	if !errors.As(err, &infrastructureError) {
+	if _, ok := errors.AsType[*artifactInfrastructureError](err); !ok {
 		t.Fatalf("error = %T, want artifactInfrastructureError: %v", err, err)
 	}
 }

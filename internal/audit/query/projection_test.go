@@ -178,7 +178,7 @@ func TestAuditTypedProjectionRejectsUnknownOrMalformedEvidence(t *testing.T) {
 func TestAuditProjectionScopesAndDetailSemantics(t *testing.T) {
 	user, credential, foreign := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	actor := audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: credential})
-	actor.Authorization = audit.Authorization{Decision: "denied", Checks: []audit.Check{audit.PermissionCheck{Type: "permission", PermissionEvaluation: auth.PermissionEvaluation{SubjectUserID: user, Permission: auth.PermissionSessionsRead, Scope: auth.Scope{OrgID: foreign}, Result: "failed", Reason: "organization_mismatch"}}}}
+	actor.Authorization = audit.Authorization{Decision: "denied", Checks: []audit.Check{audit.PermissionCheck{Type: "permission", SubjectUserID: user, Permission: auth.PermissionSessionsRead, Scope: auth.Scope{OrgID: foreign}, Result: "failed", Reason: "organization_mismatch"}}}
 	r, scope := projectionRecord(t, actor, "session.content_read", audit.FailureDetails{Reason: "permission_denied"})
 	r.Outcome = "denied"
 	public, err := projectRecord(r, scope)

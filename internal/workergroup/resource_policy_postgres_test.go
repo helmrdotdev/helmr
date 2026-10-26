@@ -14,7 +14,7 @@ import (
 func TestResourcePolicyPostgresRevisionAndScope(t *testing.T) {
 	f := newSupplyFixture(t)
 	pool := f.activePool(t, "policy")
-	update := ResourcePolicyUpdate{ExpectedRevision: 1, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: 4096, MaxTasks: 1, IOBytesPerSecond: 1024}}}
+	update := ResourcePolicyUpdate{ExpectedRevision: 1, Optional: OptionalResources{DiskBytes: 4096, MaxTasks: 1, IOBytesPerSecond: 1024}}
 	result, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, update)
 	if err != nil || result.Revision != 2 || result.ResourcePolicy != update.ResourcePolicy {
 		t.Fatalf("update: %+v %v", result, err)
@@ -50,7 +50,7 @@ func TestResourcePolicyPostgresConcurrentAndBounds(t *testing.T) {
 	for i := range errs {
 		wg.Go(func() {
 			<-start
-			_, errs[i] = UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 1, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: int64(i + 1)}}})
+			_, errs[i] = UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 1, Optional: OptionalResources{DiskBytes: int64(i + 1)}})
 		})
 	}
 	close(start)
@@ -60,8 +60,7 @@ func TestResourcePolicyPostgresConcurrentAndBounds(t *testing.T) {
 		if err == nil {
 			success++
 		} else {
-			var stale PolicyRevisionConflict
-			if !errors.As(err, &stale) {
+			if _, ok := errors.AsType[PolicyRevisionConflict](err); !ok {
 				t.Fatal(err)
 			}
 		}
@@ -76,11 +75,11 @@ func TestResourcePolicyPostgresConcurrentAndBounds(t *testing.T) {
 		}
 	}
 	pending := f.pendingPool(t, "pending")
-	if _, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pending.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 1, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: 1}}}); err == nil {
+	if _, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pending.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 1, Optional: OptionalResources{DiskBytes: 1}}); err == nil {
 		t.Fatal("unsealed policy accepted")
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_pools SET status='draining' WHERE id=$1`, pool.ID)
-	if _, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 2, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: 4096}}}); err != nil {
+	if _, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 2, Optional: OptionalResources{DiskBytes: 4096}}); err != nil {
 		t.Fatal(err)
 	}
 }

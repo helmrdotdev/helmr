@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"mime"
 	"net/http"
 	"strings"
@@ -165,8 +166,6 @@ func planDeploymentBundleUploads(
 
 func cloneStringMap(source map[string]string) map[string]string {
 	cloned := make(map[string]string, len(source))
-	for key, value := range source {
-		cloned[key] = value
-	}
+	maps.Copy(cloned, source)
 	return cloned
 }

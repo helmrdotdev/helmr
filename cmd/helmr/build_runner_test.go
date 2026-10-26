@@ -101,7 +101,7 @@ func TestDockerSelectionFrozenForEveryBuildStage(t *testing.T) {
 			}
 			for _, stage := range []string{"installed-tree", "analysis", "computer", "bundle"} {
 				var matched bool
-				for _, line := range strings.Split(calls, "\n") {
+				for line := range strings.SplitSeq(calls, "\n") {
 					if strings.Contains(line, "--target "+stage+" ") {
 						matched = true
 						if !strings.Contains(line, settings.want+" buildx build --builder "+r.name+" ") || !strings.Contains(line, "rewrite-timestamp=true") || !strings.Contains(line, "SOURCE_DATE_EPOCH=0") {

@@ -62,7 +62,7 @@ func TestPreparedRootJoinsCanceledSourceBeforeReleasingCharge(t *testing.T) {
 	policy.Optional.DiskBytes = 3 * disk
 	policy.Optional.MaxTasks = 1
 	p.ApplyResourcePolicy(policy)
-	backend := &leafTestBackend{allocationOwnerTestBackend: allocationOwnerTestBackend{t: t}}
+	backend := &leafTestBackend{t: t}
 	p.Backend, err = vm.NewStartLimiter(backend, 1)
 	if err != nil {
 		t.Fatal(err)

@@ -63,12 +63,11 @@ func (s *Server) capacityPutResourcePolicy(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(codedError{code: "invalid_resource_policy", message: "every policy field is required"}))
 		return
 	}
-	update := workergroup.ResourcePolicyUpdate{ExpectedRevision: *body.ExpectedRevision, ResourcePolicy: workergroup.ResourcePolicy{
-		Optional: workergroup.OptionalResources{CPUMillis: *body.Optional.CPUMillis, MemoryBytes: *body.Optional.MemoryBytes, DiskBytes: *body.Optional.DiskBytes, VMSlots: *body.Optional.VMSlots, MaxTasks: *body.Optional.MaxTasks, IOBytesPerSecond: *body.Optional.IOBytesPerSecond}, LocalHeadroomSlots: *body.LocalHeadroomSlots}}
+	update := workergroup.ResourcePolicyUpdate{ExpectedRevision: *body.ExpectedRevision,
+		Optional: workergroup.OptionalResources{CPUMillis: *body.Optional.CPUMillis, MemoryBytes: *body.Optional.MemoryBytes, DiskBytes: *body.Optional.DiskBytes, VMSlots: *body.Optional.VMSlots, MaxTasks: *body.Optional.MaxTasks, IOBytesPerSecond: *body.Optional.IOBytesPerSecond}, LocalHeadroomSlots: *body.LocalHeadroomSlots}
 	policy, err := workergroup.UpdateResourcePolicy(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), group, pool, update)
 	if err != nil {
-		var input workergroup.InputError
-		if errors.As(err, &input) {
+		if _, ok := errors.AsType[workergroup.InputError](err); ok {
 			writeError(w, badRequest(codedError{code: "invalid_resource_policy", message: err.Error()}))
 			return
 		}

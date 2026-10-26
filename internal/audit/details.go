@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"slices"
 	"time"
 )
 
@@ -246,12 +247,7 @@ func validPermissions(permissions []string) bool {
 	if len(permissions) == 0 {
 		return false
 	}
-	for _, permission := range permissions {
-		if permission == "" {
-			return false
-		}
-	}
-	return true
+	return !slices.Contains(permissions, "")
 }
 
 // Keep persisted timestamps independent of the database client's local time zone.

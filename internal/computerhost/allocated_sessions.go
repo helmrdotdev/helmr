@@ -103,13 +103,12 @@ func (p *PreparedMachines) serveAllocatedSessions(ctx context.Context, machine v
 								return
 							}
 						}
-						var failed SessionControlFailedError
 						var hostRejected interface{ WorkerAuthorityRejected() bool }
 						if errors.As(err, &hostRejected) && hostRejected.WorkerAuthorityRejected() {
 							cancel(err)
 							return
 						}
-						if errors.As(err, &failed) {
+						if failed, ok := errors.AsType[SessionControlFailedError](err); ok {
 							// Control service records the failure before returning it.
 							// Reattachment reconciles a lost failure receipt or the
 							// resulting shutdown; peer transports keep their lifetimes.

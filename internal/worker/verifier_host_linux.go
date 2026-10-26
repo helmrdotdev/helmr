@@ -90,7 +90,7 @@ func checkVerifierHost(procCgroup, cgroupRoot string, pid int, enable bool) (str
 
 func unifiedCgroupPath(raw []byte) (string, error) {
 	var current string
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		if line == "" {
 			continue
 		}
@@ -112,7 +112,7 @@ func readControllerSet(path string) (map[string]bool, error) {
 		return nil, err
 	}
 	controllers := make(map[string]bool)
-	for _, field := range strings.Fields(string(raw)) {
+	for field := range strings.FieldsSeq(string(raw)) {
 		controllers[strings.TrimPrefix(field, "+")] = true
 	}
 	return controllers, nil
@@ -120,7 +120,7 @@ func readControllerSet(path string) (map[string]bool, error) {
 
 func lineSet(raw []byte) map[string]bool {
 	lines := make(map[string]bool)
-	for _, line := range strings.Fields(string(raw)) {
+	for line := range strings.FieldsSeq(string(raw)) {
 		lines[line] = true
 	}
 	return lines

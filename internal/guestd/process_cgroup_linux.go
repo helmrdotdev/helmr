@@ -236,7 +236,7 @@ func (c *linuxProcessCgroup) state() (frozen bool, populated bool, err error) {
 func parseProgramCgroupState(body []byte) (frozen bool, populated bool, err error) {
 	foundFrozen := false
 	foundPopulated := false
-	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(body)), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 || (fields[0] != "frozen" && fields[0] != "populated") {
 			continue

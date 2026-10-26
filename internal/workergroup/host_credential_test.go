@@ -158,7 +158,7 @@ func signHostCredentialClaims(t *testing.T, secret []byte, now time.Time, edit f
 		WorkerGroupID: c.WorkerGroupID, WorkerHostID: c.WorkerHostID, HostSecretID: c.HostSecretID,
 		WorkerEpoch: c.WorkerEpoch, ClaimVersion: c.ClaimVersion,
 		GroupClaimVersion: c.GroupClaimVersion,
-		RegisteredClaims:  jwt.RegisteredClaims{Issuer: HostCredentialIssuer, Subject: c.WorkerHostID, Audience: jwt.ClaimStrings{HostCredentialAudience}, IssuedAt: jwt.NewNumericDate(c.IssuedAt), ExpiresAt: jwt.NewNumericDate(c.ExpiresAt)},
+		Issuer:            HostCredentialIssuer, Subject: c.WorkerHostID, Audience: jwt.ClaimStrings{HostCredentialAudience}, IssuedAt: jwt.NewNumericDate(c.IssuedAt), ExpiresAt: jwt.NewNumericDate(c.ExpiresAt),
 	}
 	edit(&claims)
 	credential := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

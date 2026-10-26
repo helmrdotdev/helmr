@@ -80,10 +80,8 @@ func TestH2ConcurrentStreamsAndCancellation(t *testing.T) {
 	// producing invalid over-limit HEADERS rather than valid concurrent traffic.
 	const concurrentStreams = 4
 	var wg sync.WaitGroup
-	for i := 0; i < concurrentStreams; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range concurrentStreams {
+		wg.Go(func() {
 			req, _ := http.NewRequest("GET", "https://api.github.com/", nil)
 			req.Header.Set("Authorization", "Bearer "+testMarker)
 			r, e := f.client.Do(req)
@@ -96,7 +94,7 @@ func TestH2ConcurrentStreamsAndCancellation(t *testing.T) {
 			if r.StatusCode != 200 || r.ProtoMajor != 2 {
 				t.Errorf("status/protocol %d/%d", r.StatusCode, r.ProtoMajor)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if f.resolutions.Load() != concurrentStreams {
@@ -314,7 +312,7 @@ func TestUnrelatedTLSSupportsMoreThan64Streams(t *testing.T) {
 			c.Close()
 		}
 	}()
-	for i := 0; i < 80; i++ {
+	for i := range 80 {
 		raw, err := net.DialTimeout("tcp4", f.url.Host, 2*time.Second)
 		if err != nil {
 			t.Fatal(err)
@@ -426,10 +424,7 @@ type fragmentedWrites struct{ net.Conn }
 func (c *fragmentedWrites) Write(b []byte) (int, error) {
 	total := 0
 	for len(b) > 0 {
-		size := len(b)
-		if size > 7 {
-			size = 7
-		}
+		size := min(len(b), 7)
 		n, e := c.Conn.Write(b[:size])
 		total += n
 		b = b[n:]

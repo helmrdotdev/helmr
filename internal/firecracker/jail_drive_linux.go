@@ -46,22 +46,22 @@ func runtimeDrivesWithComputer(
 	readOnlyDrivePaths map[string]string,
 ) []models.Drive {
 	drives := []models.Drive{{
-		DriveID:      firecracker.String(rootfsDriveID),
-		PathOnHost:   firecracker.String(rootfsPath),
-		IsRootDevice: firecracker.Bool(true),
-		IsReadOnly:   firecracker.Bool(true),
+		DriveID:      new(rootfsDriveID),
+		PathOnHost:   new(rootfsPath),
+		IsRootDevice: new(true),
+		IsReadOnly:   new(true),
 	}, {
-		DriveID:      firecracker.String(scratchDriveID),
-		PathOnHost:   firecracker.String(scratchDiskPath),
-		IsRootDevice: firecracker.Bool(false),
-		IsReadOnly:   firecracker.Bool(false),
+		DriveID:      new(scratchDriveID),
+		PathOnHost:   new(scratchDiskPath),
+		IsRootDevice: new(false),
+		IsReadOnly:   new(false),
 	}}
 	if strings.TrimSpace(computerDiskPath) != "" {
 		drives = append(drives, models.Drive{
-			DriveID:      firecracker.String(computerDriveID),
-			PathOnHost:   firecracker.String(computerDiskPath),
-			IsRootDevice: firecracker.Bool(false),
-			IsReadOnly:   firecracker.Bool(false),
+			DriveID:      new(computerDriveID),
+			PathOnHost:   new(computerDiskPath),
+			IsRootDevice: new(false),
+			IsReadOnly:   new(false),
 		})
 	}
 	byID := make(map[string]vm.ReadOnlyDrive, len(readOnlyDrives))
@@ -75,17 +75,17 @@ func runtimeDrivesWithComputer(
 				pathOnHost = stagedPath
 			}
 			drives = append(drives, models.Drive{
-				DriveID:      firecracker.String(id),
-				PathOnHost:   firecracker.String(pathOnHost),
-				IsRootDevice: firecracker.Bool(false),
-				IsReadOnly:   firecracker.Bool(true),
+				DriveID:      new(id),
+				PathOnHost:   new(pathOnHost),
+				IsRootDevice: new(false),
+				IsReadOnly:   new(true),
 			})
 		}
 	}
 	for i := range drives {
-		drives[i].IoEngine = firecracker.String(blockIOEngine)
+		drives[i].IoEngine = new(blockIOEngine)
 		if !*drives[i].IsReadOnly {
-			drives[i].CacheType = firecracker.String(writableBlockCache)
+			drives[i].CacheType = new(writableBlockCache)
 		}
 	}
 	return drives
@@ -280,7 +280,7 @@ func (strategy sealedDriveChrootStrategy) linkFiles(
 			); err != nil {
 				return fmt.Errorf("link sealed drive %q into jail: %w", id, err)
 			}
-			drive.PathOnHost = firecracker.String(name)
+			drive.PathOnHost = new(name)
 			sdkMachine.Cfg.Drives = append(sdkMachine.Cfg.Drives, drive)
 		}
 		return nil
@@ -302,7 +302,7 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, computerD
 				}
 				for i := range sdkMachine.Cfg.Drives {
 					if firecracker.StringValue(sdkMachine.Cfg.Drives[i].PathOnHost) == rootfsPath {
-						sdkMachine.Cfg.Drives[i].PathOnHost = firecracker.String(filepath.Base(rootfsPath))
+						sdkMachine.Cfg.Drives[i].PathOnHost = new(filepath.Base(rootfsPath))
 					}
 				}
 				if err := linkWritableDiskIntoJail(scratchDiskPath, root, scratchDiskName, *sdkMachine.Cfg.JailerCfg.UID, *sdkMachine.Cfg.JailerCfg.GID, false); err != nil {
@@ -310,7 +310,7 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, computerD
 				}
 				for i := range sdkMachine.Cfg.Drives {
 					if firecracker.StringValue(sdkMachine.Cfg.Drives[i].PathOnHost) == scratchDiskPath {
-						sdkMachine.Cfg.Drives[i].PathOnHost = firecracker.String(scratchDiskName)
+						sdkMachine.Cfg.Drives[i].PathOnHost = new(scratchDiskName)
 					}
 				}
 				if computerDiskPath != "" {
@@ -319,7 +319,7 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, computerD
 					}
 					for i := range sdkMachine.Cfg.Drives {
 						if firecracker.StringValue(sdkMachine.Cfg.Drives[i].PathOnHost) == computerDiskPath {
-							sdkMachine.Cfg.Drives[i].PathOnHost = firecracker.String("computer.ext4")
+							sdkMachine.Cfg.Drives[i].PathOnHost = new("computer.ext4")
 						}
 					}
 				}

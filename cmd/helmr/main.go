@@ -12,8 +12,7 @@ import (
 func main() {
 	if err := executeCommand(newRootCommand(), os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		var exitErr exitCodeError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[exitCodeError](err); ok {
 			os.Exit(exitErr.code)
 		}
 		os.Exit(1)

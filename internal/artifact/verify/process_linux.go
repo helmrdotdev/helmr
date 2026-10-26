@@ -518,7 +518,7 @@ func waitVerifierCgroupEmpty(ctx context.Context, path string) error {
 func parseVerifierCgroupPopulated(raw []byte) (bool, error) {
 	found := false
 	populated := false
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(raw)), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 2 || fields[0] != "populated" {
 			continue

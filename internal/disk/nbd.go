@@ -65,8 +65,7 @@ func (d versionDevice) WriteAt(ctx context.Context, b []byte, off int64) (int, e
 				_, err = d.LocalVersion.WriteAt(ctx, b[:n], off)
 			}
 		}
-		var pressure *StagingPressure
-		if errors.As(err, &pressure) {
+		if pressure, ok := errors.AsType[*StagingPressure](err); ok {
 			d.request.Unlock()
 			select {
 			case <-ctx.Done():
@@ -113,8 +112,7 @@ func (d versionDevice) Trim(ctx context.Context, off int64, n int) error {
 				err = d.LocalVersion.Trim(ctx, off, length)
 			}
 		}
-		var pressure *StagingPressure
-		if errors.As(err, &pressure) {
+		if pressure, ok := errors.AsType[*StagingPressure](err); ok {
 			d.request.Unlock()
 			select {
 			case <-ctx.Done():

@@ -427,11 +427,9 @@ func TestCheckpointRuntimeRechecksLeaseAfterCASWriteWait(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()+interval '5 seconds' WHERE environment_id=$1 AND computer_id=$2`, f.f.env, f.f.computer)
 	done := make(chan error, 1)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		done <- f.checkpoints.CompleteCheckpoint(ctx, f.ref, f.manifest)
-	}()
+	})
 	defer func() { cancel(); holder.Rollback(context.Background()); wg.Wait() }()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()

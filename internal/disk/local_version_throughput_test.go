@@ -259,7 +259,7 @@ func TestLocalPublicationBoundsParallelUploadsAndReconcilesBatchAcknowledgement(
 	}
 	defer p.Close()
 	// Distinct flushed segments in one dependency level.
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		if _, err := p.WriteAt(t.Context(), bytes.Repeat([]byte{byte(i + 2)}, 4096), int64(i*4096)); err != nil {
 			t.Fatal(err)
 		}
@@ -307,7 +307,7 @@ func TestLocalPublicationBoundsParallelUploadsAndReconcilesBatchAcknowledgement(
 	if err := c.Adopt(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		data := make([]byte, 4096)
 		if _, err := p.ReadAt(t.Context(), data, int64(i*4096)); err != nil || !bytes.Equal(data, bytes.Repeat([]byte{byte(i + 2)}, 4096)) {
 			t.Fatalf("retry changed captured bytes: %v", err)

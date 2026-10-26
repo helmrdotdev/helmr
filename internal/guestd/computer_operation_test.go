@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -112,9 +113,9 @@ func TestComputerMaterializeReturnsFailureResponse(t *testing.T) {
 }
 
 func testComputerMountPhaseError(phases []*computerv0.ComputerMountPhase) string {
-	for i := len(phases) - 1; i >= 0; i-- {
-		if phases[i] != nil && strings.TrimSpace(phases[i].GetError()) != "" {
-			return strings.TrimSpace(phases[i].GetError())
+	for _, phase := range slices.Backward(phases) {
+		if phase != nil && strings.TrimSpace(phase.GetError()) != "" {
+			return strings.TrimSpace(phase.GetError())
 		}
 	}
 	return ""

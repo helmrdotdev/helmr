@@ -193,7 +193,7 @@ func TestPageRangeReads(t *testing.T) {
 		})
 	}
 	// Metadata decoding must independently reject short bodies before slicing.
-	for n := 0; n < len(raw); n++ {
+	for n := range raw {
 		if got, err := OpenMetadata("scope", key, ref, raw[:n]); err == nil || got != nil {
 			t.Fatal("short metadata accepted")
 		}

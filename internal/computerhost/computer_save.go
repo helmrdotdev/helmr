@@ -20,8 +20,7 @@ import (
 type computerSaveCapture = disk.RetainedVersion
 
 func saveAdmissionRetryable(err error) bool {
-	var response *httpclient.Error
-	if errors.As(err, &response) {
+	if response, ok := errors.AsType[*httpclient.Error](err); ok {
 		return response.StatusCode == http.StatusRequestTimeout ||
 			response.StatusCode == http.StatusTooEarly || response.StatusCode == http.StatusTooManyRequests ||
 			response.StatusCode >= http.StatusInternalServerError

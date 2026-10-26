@@ -75,8 +75,7 @@ func (c *Client) preparationRequest(ctx context.Context, path string, input any,
 		}
 		var transportErr *url.Error
 		transient := readFailed || errors.Is(err, httpclient.ErrSensitiveTransport) || errors.As(err, &transportErr)
-		var rejected *httpclient.Error
-		if errors.As(err, &rejected) {
+		if rejected, ok := errors.AsType[*httpclient.Error](err); ok {
 			transient = rejected.StatusCode == http.StatusServiceUnavailable
 		}
 		if !transient || failures == 2 {

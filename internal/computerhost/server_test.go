@@ -145,8 +145,7 @@ func TestServerRejectsMismatchedBasicExecClaim(t *testing.T) {
 			ExpiresAt:        time.Now().Add(time.Minute),
 		}, &serverTestClient{},
 	)
-	var protocolError *computerBasicExecProtocolError
-	if !errors.As(err, &protocolError) {
+	if _, ok := errors.AsType[*computerBasicExecProtocolError](err); !ok {
 		t.Fatalf("error = %v, want protocol error", err)
 	}
 }

@@ -82,7 +82,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err = requireAllocationCapacity(ctx, tx, env, supply, shape, computerID, uuid.Nil()); err != nil {
 			return err
 		}
-		result = computer.ComputerAllocation{Allocation: computer.Allocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring"}, BaseVersion: base, RestoredFrom: save, DiskOnlyRecovery: true}
+		result = computer.ComputerAllocation{EnvironmentID: env, OwnerID: computerID, InstanceID: uuid.NewV7(), Epoch: epoch, HostID: host, HostEpoch: supply.epoch, Shape: shape, Status: "acquiring", BaseVersion: base, RestoredFrom: save, DiskOnlyRecovery: true}
 		if err = a.insertComputerAllocation(ctx, tx, &result); err != nil {
 			return err
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -94,13 +95,7 @@ func (c *AllocationConsumer) discoverPage(ctx context.Context) error {
 		if c.entries[identity] != nil || len(c.pending) >= c.limit {
 			continue
 		}
-		duplicate := false
-		for _, hint := range c.pending {
-			if hint == identity {
-				duplicate = true
-				break
-			}
-		}
+		duplicate := slices.Contains(c.pending, identity)
 		if !duplicate {
 			c.pending = append(c.pending, identity)
 			select {

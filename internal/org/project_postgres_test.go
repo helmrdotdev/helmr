@@ -8,7 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"math/big"
 	"os"
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -108,7 +108,7 @@ func TestCreateProjectSelectsFirstRegionWhenDefaultIsOmitted(t *testing.T) {
 	}
 	project, environments, err := CreateProject(t.Context(), fixture.pool, fixture.manager, ProjectInput{
 		ExecutionLimits: testExecutionLimits(),
-		ProjectDetails:  ProjectDetails{Slug: "project", Name: "Project"},
+		Slug:            "project", Name: "Project",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestCreateProjectRequiresARegionWhenDefaultIsOmitted(t *testing.T) {
 	}
 	_, _, err := CreateProject(t.Context(), database.Pool, projectManager(t, database.Pool, orgID), ProjectInput{
 		ExecutionLimits: testExecutionLimits(),
-		ProjectDetails:  ProjectDetails{Slug: "project", Name: "Project"},
+		Slug:            "project", Name: "Project",
 	})
 	if !errors.Is(err, ErrNoRegion) {
 		t.Fatalf("error = %v, want %v", err, ErrNoRegion)
@@ -145,7 +145,7 @@ func TestCreateProjectRejectsUnknownDefaultRegion(t *testing.T) {
 	fixture := newProjectFixture(t, 0, 0)
 	_, _, err := CreateProject(t.Context(), fixture.pool, fixture.manager, ProjectInput{
 		ExecutionLimits: testExecutionLimits(),
-		ProjectDetails:  ProjectDetails{Slug: "project"},
+		Slug:            "project",
 		DefaultRegionID: "missing-region",
 	})
 	if !errors.Is(err, ErrDefaultRegionNotFound) {
@@ -166,7 +166,7 @@ func TestCreateProjectsPostgresSerializesFirstDefaultSelection(t *testing.T) {
 			<-start
 			_, _, err := CreateProject(context.Background(), fixture.pool, fixture.manager, ProjectInput{
 				ExecutionLimits: testExecutionLimits(),
-				ProjectDetails:  ProjectDetails{Slug: slug, Name: slug},
+				Slug:            slug, Name: slug,
 			})
 			results <- err
 		}()
@@ -194,7 +194,7 @@ func TestCreateProjectsPostgresSerializesFirstDefaultSelection(t *testing.T) {
 
 func TestUpdateProjectAndEnvironmentPreserveIdentifiers(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	project, environments, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{ExecutionLimits: testExecutionLimits(), ProjectDetails: ProjectDetails{Slug: "project"}})
+	project, environments, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{ExecutionLimits: testExecutionLimits(), Slug: "project"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestListProjectsPostgresCandidateScale(t *testing.T) {
 				elapsed = append(elapsed, duration)
 				statements = append(statements, count)
 			}
-			sort.Slice(elapsed, func(i, j int) bool { return elapsed[i] < elapsed[j] })
+			slices.Sort(elapsed)
 			t.Logf(
 				"project list candidate: projects=%d page_limit=50 statements=%v elapsed_min=%s elapsed_median=%s elapsed_max=%s",
 				projectCount, statements, elapsed[0], elapsed[len(elapsed)/2], elapsed[len(elapsed)-1],
@@ -275,7 +275,7 @@ func TestListProjectsPostgresCandidateScale(t *testing.T) {
 					detailElapsed = append(detailElapsed, time.Since(started))
 					detailStatements = append(detailStatements, fixture.store.statements.Load())
 				}
-				sort.Slice(detailElapsed, func(i, j int) bool { return detailElapsed[i] < detailElapsed[j] })
+				slices.Sort(detailElapsed)
 				t.Logf(
 					"project detail candidate: organization_projects=1000 statements=%v elapsed_min=%s elapsed_median=%s elapsed_max=%s",
 					detailStatements, detailElapsed[0], detailElapsed[len(detailElapsed)/2], detailElapsed[len(detailElapsed)-1],
@@ -481,7 +481,7 @@ func testExecutionLimits() ExecutionLimits {
 
 func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	input := ProjectInput{ProjectDetails: ProjectDetails{Slug: "configured", Name: "Configured"}}
+	input := ProjectInput{Slug: "configured", Name: "Configured"}
 	if _, _, err := CreateProject(t.Context(), f.pool, f.manager, input); err == nil {
 		t.Fatal("missing operating limits accepted")
 	}
@@ -507,7 +507,7 @@ func TestProjectCreationRequiresLimitsWithoutPartialEnvironment(t *testing.T) {
 
 func TestEnvironmentCreationRequiresExecutionLimits(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	project, envs, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{ProjectDetails: ProjectDetails{Slug: "limits", Name: "Limits"}, ExecutionLimits: testExecutionLimits()})
+	project, envs, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{Slug: "limits", Name: "Limits", ExecutionLimits: testExecutionLimits()})
 	if err != nil || len(envs) != 2 {
 		t.Fatalf("create project: %d %v", len(envs), err)
 	}
@@ -524,7 +524,7 @@ func TestEnvironmentCreationRequiresExecutionLimits(t *testing.T) {
 
 func TestHistoryRetentionPolicyDefaultsAndAtomic(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	project, envs, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{ProjectDetails: ProjectDetails{Slug: "history", Name: "History"}, ExecutionLimits: testExecutionLimits()})
+	project, envs, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{Slug: "history", Name: "History", ExecutionLimits: testExecutionLimits()})
 	if err != nil || len(envs) != 2 || !project.HistoryRetentionSeconds.Valid || project.HistoryRetentionSeconds.Int64 != 2592000 {
 		t.Fatalf("default: %+v %v", project, err)
 	}
@@ -590,7 +590,7 @@ func TestCreateProjectWaitsBeforeLockingMemberAndRechecksRemoval(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := CreateProject(ctx, f.pool, f.manager, ProjectInput{ExecutionLimits: testExecutionLimits(), ProjectDetails: ProjectDetails{Slug: "revoked", Name: "Revoked"}})
+		_, _, err := CreateProject(ctx, f.pool, f.manager, ProjectInput{ExecutionLimits: testExecutionLimits(), Slug: "revoked", Name: "Revoked"})
 		done <- err
 	}()
 	for {
@@ -631,7 +631,7 @@ func TestCreateProjectWaitsBeforeLockingMemberAndRechecksRemoval(t *testing.T) {
 
 func TestProjectEnvironmentAuditAtomicity(t *testing.T) {
 	f := newProjectFixture(t, 0, 0)
-	input := ProjectInput{ProjectDetails: ProjectDetails{Slug: "audit", Name: "Audit"}, ExecutionLimits: testExecutionLimits()}
+	input := ProjectInput{Slug: "audit", Name: "Audit", ExecutionLimits: testExecutionLimits()}
 	broken := f.manager
 	broken.AuditPolicy = auditpolicy.Policy{}
 	if _, _, err := CreateProject(t.Context(), f.pool, broken, input); err == nil {

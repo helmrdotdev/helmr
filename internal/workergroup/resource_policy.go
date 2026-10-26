@@ -65,7 +65,7 @@ func (p ResourcePolicy) Validate() error {
 
 func poolResourcePolicy(p db.WorkerPool) PoolResourcePolicy {
 	return PoolResourcePolicy{WorkerGroupID: pgvalue.UUIDString(p.WorkerGroupID), WorkerPoolID: pgvalue.UUIDString(p.ID), Revision: p.ResourcePolicyRevision,
-		ResourcePolicy: ResourcePolicy{Optional: OptionalResources{CPUMillis: p.OptionalCpuMillis, MemoryBytes: p.OptionalMemoryBytes, DiskBytes: p.OptionalDiskBytes, VMSlots: p.OptionalVmSlots, MaxTasks: p.OptionalMaxTasks, IOBytesPerSecond: p.OptionalIoBytesPerSecond}, LocalHeadroomSlots: p.LocalHeadroomSlots}}
+		Optional: OptionalResources{CPUMillis: p.OptionalCpuMillis, MemoryBytes: p.OptionalMemoryBytes, DiskBytes: p.OptionalDiskBytes, VMSlots: p.OptionalVmSlots, MaxTasks: p.OptionalMaxTasks, IOBytesPerSecond: p.OptionalIoBytesPerSecond}, LocalHeadroomSlots: p.LocalHeadroomSlots}
 }
 
 func GetResourcePolicy(ctx context.Context, q db.Querier, groupID, poolID uuid.UUID) (PoolResourcePolicy, error) {

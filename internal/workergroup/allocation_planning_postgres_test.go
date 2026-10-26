@@ -57,7 +57,7 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost',expires_at=clock_timestamp()-interval '1 hour' WHERE computer_id=$1`, f.Computer)
 	assertCharge()
 	// A resident Computer and its Commands never occupy the bounded queued page.
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		rows, err = q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 1})
 		if err != nil || len(rows) != 1 || pgvalue.MustUUIDValue(rows[0].OwnerID) != preparation {
 			t.Fatalf("repeated queued page=%+v %v", rows, err)

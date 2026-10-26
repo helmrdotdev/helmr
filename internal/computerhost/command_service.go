@@ -104,9 +104,7 @@ func (m commandService) Serve(ctx context.Context, instance vm.Machine, mount co
 						activeCommands[id] = struct{}{}
 						cancellations[id] = true
 					}
-					commands.Add(1)
-					go func() {
-						defer commands.Done()
+					commands.Go(func() {
 						result := commandResult{id: id}
 						result.err = m.cancelComputerCommand(commandCtx, instance, mount, *request)
 						results := cancellationResults
@@ -129,7 +127,7 @@ func (m commandService) Serve(ctx context.Context, instance vm.Machine, mount co
 						case results <- result:
 						case <-commandCtx.Done():
 						}
-					}()
+					})
 				}
 				poll.Reset(pollEvery)
 				continue
@@ -146,9 +144,7 @@ func (m commandService) Serve(ctx context.Context, instance vm.Machine, mount co
 			}
 			if _, active := activeCommands[commandID]; !active {
 				activeCommands[commandID] = struct{}{}
-				commands.Add(1)
-				go func() {
-					defer commands.Done()
+				commands.Go(func() {
 					result := commandResult{id: commandID}
 					if claimed.Release != nil {
 						result.err = m.releaseComputerCommand(commandCtx, instance, mount, *claimed.Release, client)
@@ -166,7 +162,7 @@ func (m commandService) Serve(ctx context.Context, instance vm.Machine, mount co
 					case commandResults <- result:
 					case <-commandCtx.Done():
 					}
-				}()
+				})
 			} else if claimed.Command != nil {
 				clear(claimed.Command.Stdin)
 				for _, secret := range claimed.Command.Secrets {

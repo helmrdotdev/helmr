@@ -330,7 +330,7 @@ func readVerifierIdentityFile(path string) ([]byte, error) {
 func parseVerifierPasswd(raw []byte) (uint32, uint32, error) {
 	var uid, gid uint32
 	found := false
-	for _, line := range bytes.Split(raw, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(raw, []byte{'\n'}) {
 		fields := bytes.Split(line, []byte{':'})
 		if len(fields) == 0 || string(fields[0]) != verifierIdentity {
 			continue
@@ -357,7 +357,7 @@ func parseVerifierPasswd(raw []byte) (uint32, uint32, error) {
 func parseVerifierGroup(raw []byte) (uint32, error) {
 	var gid uint32
 	found := false
-	for _, line := range bytes.Split(raw, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(raw, []byte{'\n'}) {
 		fields := bytes.Split(line, []byte{':'})
 		if len(fields) == 0 || string(fields[0]) != verifierIdentity {
 			continue
@@ -393,7 +393,7 @@ func validateVerifierDescriptors(job verifierJob, forbiddenOwner *uint32) error 
 	if count == 0 {
 		return fmt.Errorf("artifact verifier job = %q", job)
 	}
-	for index := 0; index < count; index++ {
+	for index := range count {
 		if err := validateVerifierArtifactDescriptor(
 			verifierArtifactBaseFD+index,
 			forbiddenOwner,
@@ -552,7 +552,7 @@ func verifierAllThreadsPrctl(option int, argument2 uintptr) error {
 
 func dropVerifierBoundingCapabilities() (uintptr, error) {
 	const capabilitySearchLimit = 1024
-	for capability := uintptr(0); capability < capabilitySearchLimit; capability++ {
+	for capability := range uintptr(capabilitySearchLimit) {
 		err := verifierAllThreadsPrctl(
 			unix.PR_CAPBSET_DROP,
 			capability,

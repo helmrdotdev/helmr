@@ -44,8 +44,7 @@ func AdmitMCP(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner
 	actor := audit.Unauthenticated("absent", "")
 	if caller.Host != nil {
 		actor = audit.Worker(caller.Host.HostID, caller.Host.HostClaimVersion)
-		var refusal *audit.Refusal
-		if errors.As(err, &refusal) {
+		if refusal, ok := errors.AsType[*audit.Refusal](err); ok {
 			actor.Authorization = refusal.Authorization
 		}
 	}

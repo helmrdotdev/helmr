@@ -165,7 +165,7 @@ func TestEvaluateAddsNoHelmrEnvironmentAndInheritsTheCallers(t *testing.T) {
 		t.Fatal(err)
 	}
 	inherited := false
-	for _, name := range strings.Split(string(raw), "\n") {
+	for name := range strings.SplitSeq(string(raw), "\n") {
 		inherited = inherited || name == "CALLER_VISIBLE"
 		// Node itself may add nothing here; anything new would be Helmr's doing.
 		if !before[name] && name != "" {

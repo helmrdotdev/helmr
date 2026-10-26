@@ -218,9 +218,8 @@ func TestCurrentBinsBoundsWorkerAggregationInput(t *testing.T) {
 	for index := range rows {
 		rows[index].WorkerGroupID = pgvalue.UUID(plannerTestGroupID)
 	}
-	store := &countingPlannerStore{plannerStore: plannerStore{
-		bins: rows,
-	}}
+	store := &countingPlannerStore{
+		bins: rows}
 	bins, complete, err := currentBins(context.Background(), store, plannerTestGroupID)
 	if err != nil {
 		t.Fatal(err)
@@ -731,7 +730,7 @@ func TestDiscoverItemsBoundsUnifiedDemand(t *testing.T) {
 		for i := range rows {
 			rows[i] = plannerFreshComputer(byte(i))
 		}
-		store := &countingPlannerStore{plannerStore: plannerStore{demand: rows}}
+		store := &countingPlannerStore{demand: rows}
 		items, _, complete, err := discoverItems(context.Background(), store, plannerTestGroup(plannerTestUUID(2)))
 		if err != nil || len(items) != int(maximumPlanningCandidates) || complete != (size == int(maximumPlanningCandidates)) || store.demandRowLimit != maximumPlanningCandidates+1 {
 			t.Fatalf("size=%d items=%d complete=%v err=%v", size, len(items), complete, err)

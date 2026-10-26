@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -449,8 +450,8 @@ func appendComputerMountFailurePhase(phases []*computerv0.ComputerMountPhase, na
 	if err == nil {
 		return phases
 	}
-	for i := len(phases) - 1; i >= 0; i-- {
-		if phases[i] != nil && strings.TrimSpace(phases[i].GetError()) != "" {
+	for _, phase := range slices.Backward(phases) {
+		if phase != nil && strings.TrimSpace(phase.GetError()) != "" {
 			return phases
 		}
 	}

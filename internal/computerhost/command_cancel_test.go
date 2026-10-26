@@ -67,9 +67,7 @@ type cancellationMachine struct {
 
 func (s *cancellationMachine) OpenStream(ctx context.Context) (vm.Stream, error) {
 	host, guest := net.Pipe()
-	s.handlers.Add(1)
-	go func() {
-		defer s.handlers.Done()
+	s.handlers.Go(func() {
 		defer guest.Close()
 		stop := context.AfterFunc(ctx, func() { guest.Close() })
 		defer stop()
@@ -118,7 +116,7 @@ func (s *cancellationMachine) OpenStream(ctx context.Context) (vm.Stream, error)
 			_ = frameio.WriteProtoFrame(guest, terminal)
 
 		}
-	}()
+	})
 	return testVMStream(host), nil
 }
 

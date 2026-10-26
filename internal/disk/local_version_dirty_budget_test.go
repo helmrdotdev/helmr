@@ -50,7 +50,7 @@ func TestLocalVersionDirtyBudgetObjectCounts(t *testing.T) {
 					device := versionDevice{local}
 					expected := make([]byte, size)
 					writeTimes := make([]time.Duration, 0, size/blockformat.BlockSize)
-					for block := 0; block < size/blockformat.BlockSize; block++ {
+					for block := range size / blockformat.BlockSize {
 						offset := block * blockformat.BlockSize
 						if pattern == "overwrites" {
 							offset %= 4 << 20

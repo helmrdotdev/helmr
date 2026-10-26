@@ -76,7 +76,7 @@ func TestSessionInitHelper(t *testing.T) {
 			panic(fmt.Sprintf("native wait: %v", err))
 		}
 		dir := os.Getenv("HELMR_SESSION_INIT_DIR")
-		for i := 0; i < 40; i++ {
+		for range 40 {
 			parent := exec.Command(os.Args[0], "-test.run=^TestSessionInitHelper$")
 			parent.Env = append(os.Environ(), "HELMR_SESSION_INIT_TEST=parent")
 			output, err := parent.Output()

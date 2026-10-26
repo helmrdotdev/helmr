@@ -47,7 +47,7 @@ type replyEvent struct {
 	Version   int64     `json:"desired_version,omitempty"`
 	Digest    string    `json:"digest,omitempty"`
 	Stopped   []string  `json:"stopped_session_ids,omitempty"`
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // Raw protocol authority remains private. The observer emits selected identities

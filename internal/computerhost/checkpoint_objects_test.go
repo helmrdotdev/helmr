@@ -345,7 +345,7 @@ func TestCheckpointDownloadVerifiesStreamBeforeClassifyingEncryptedContents(t *t
 				reader = checkpointCloseHookStore{Reader: store, hook: func() error { return syscall.EIO }}
 			}
 			directory := t.TempDir()
-			path, err := downloadCheckpointObject(t.Context(), reader, cipher, directory, "checkpoint", computercheckpoint.RuntimeObject{Role: "memory", Object: computercheckpoint.Object{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}, 5)
+			path, err := downloadCheckpointObject(t.Context(), reader, cipher, directory, "checkpoint", computercheckpoint.RuntimeObject{Role: "memory", Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}, 5)
 			if path != "" || !errors.Is(err, want) {
 				t.Fatalf("path %q, error %v, want %v", path, err, want)
 			}

@@ -4,6 +4,7 @@ package disk
 
 import (
 	"bytes"
+	"maps"
 	"testing"
 	"uuid"
 )
@@ -13,9 +14,7 @@ func TestPreparedDiskAdoptsOnlyOnceBeforeAnyWrite(t *testing.T) {
 	imageKeys := cfg.Keys
 	ephemeral := uuid.NewV7().String()
 	cfg.Keys = map[string][]byte{ephemeral: bytes.Repeat([]byte{8}, 32)}
-	for id, key := range imageKeys {
-		cfg.Keys[id] = key
-	}
+	maps.Copy(cfg.Keys, imageKeys)
 	cfg.ActiveKey = ephemeral
 	p, err := CreateLocalVersion(t.Context(), cfg)
 	if err != nil {
@@ -25,9 +24,7 @@ func TestPreparedDiskAdoptsOnlyOnceBeforeAnyWrite(t *testing.T) {
 	oldKey := p.disk.writer.Keys[ephemeral]
 	actual := uuid.NewV7().String()
 	keys := map[string][]byte{actual: bytes.Repeat([]byte{9}, 32)}
-	for id, key := range imageKeys {
-		keys[id] = key
-	}
+	maps.Copy(keys, imageKeys)
 	if err := p.AdoptPrepared(t.Context(), cfg.Base, actual, keys, cfg.BaseSource); err != nil {
 		t.Fatal(err)
 	}

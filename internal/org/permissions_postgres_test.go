@@ -24,7 +24,7 @@ func TestScopedRoleGrantsAndSharedEdits(t *testing.T) {
 	ctx := t.Context()
 	m := f.owner
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('permissions','Permissions')`)
-	project, environments, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "permission-project", Name: "Permissions"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, environments, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "permission-project", Name: "Permissions", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,14 +110,14 @@ func TestRoleEditRacesAgentGrant(t *testing.T) {
 	f := newMemberFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('race','Race')`)
-	project, environments, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "race", Name: "Race"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, environments, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{Slug: "race", Name: "Race", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	projectID, env := pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(environments[0].ID)
 	agent := uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(id,environment_id,key) VALUES($1,$2,'race')`, agent, env)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		role, err := org.SavePermissionRole(ctx, f.pool, f.owner, uuid.Nil(), org.RoleInput{Name: uuid.NewV7().String(), Permissions: []string{"agents.use"}})
 		if err != nil {
 			t.Fatal(err)
@@ -136,7 +136,7 @@ func TestRoleEditRacesAgentGrant(t *testing.T) {
 		}()
 		close(start)
 		successes := 0
-		for j := 0; j < 2; j++ {
+		for range 2 {
 			err := <-results
 			if err == nil {
 				successes++
@@ -202,7 +202,7 @@ func TestRoleRenameAndGroupRemovalWithManyGrants(t *testing.T) {
 	}
 	// Distinct groups carry valid Organization grants without an artificial grant
 	// count cap. Their aggregate snapshots exceed a single event's detail bound.
-	for i := 0; i < 60; i++ {
+	for i := range 60 {
 		gid := uuid.NewV7()
 		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO permission_groups(id,org_id,name) VALUES($1,$2,$3)`, gid, f.owner.OrgID, fmt.Sprintf("Assignment group %d", i))
 		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grants(id,org_id,group_id,role_id) VALUES($1,$2,$3,$4)`, uuid.NewV7(), f.owner.OrgID, gid, role.ID)
@@ -212,7 +212,7 @@ func TestRoleRenameAndGroupRemovalWithManyGrants(t *testing.T) {
 		t.Fatalf("many-grant rename: %+v %v", renamed, err)
 	}
 	// Group removal already records each grant; the parent must not repeat all IDs.
-	for i := 0; i < 450; i++ {
+	for i := range 450 {
 		rid := uuid.NewV7()
 		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO roles(id,org_id,name,permissions) VALUES($1,$2,$3,ARRAY['members.read'])`, rid, f.owner.OrgID, fmt.Sprintf("Group role %d", i))
 		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grants(id,org_id,group_id,role_id) VALUES($1,$2,$3,$4)`, uuid.NewV7(), f.owner.OrgID, group.ID, rid)
@@ -230,7 +230,7 @@ func TestGrantAuditAtMaximumSelectedAgentSize(t *testing.T) {
 	f := newMemberFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('max-agent','Maximum')`)
-	project, envs, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "max-agent", Name: "Maximum"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	project, envs, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{Slug: "max-agent", Name: "Maximum", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
 	if err != nil {
 		t.Fatal(err)
 	}

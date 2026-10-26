@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -205,10 +206,8 @@ func (c *WebClient) verifyChannelMember(ctx context.Context, token, channel, act
 		if json.Unmarshal(body, &result) != nil || result.OK == nil || !*result.OK || len(result.Metadata.Warnings) > 0 {
 			return channelReadUnavailable()
 		}
-		for _, member := range result.Members {
-			if member == actor {
-				return nil
-			}
+		if slices.Contains(result.Members, actor) {
+			return nil
 		}
 		if result.Metadata.Cursor == "" {
 			return ErrChannelVerification
@@ -227,8 +226,7 @@ func (c *WebClient) VerifyInputConversation(ctx context.Context, installation uu
 	if err == nil {
 		return true, nil
 	}
-	var failure *channelVerificationFailure
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[*channelVerificationFailure](err); ok {
 		if failure.result.Disposition == Rejected {
 			return false, nil
 		}

@@ -109,8 +109,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, r *http.Re
 		server.writeOperationError(w, r, err)
 		return
 	}
-	var notInterruptible session.TurnNotInterruptibleError
-	if errors.As(err, &notInterruptible) {
+	if notInterruptible, ok := errors.AsType[session.TurnNotInterruptibleError](err); ok {
 		writeJSON(w, http.StatusOK, agentOperationFailure(id, notInterruptible.ErrorCode(), notInterruptible.Error()))
 		return
 	}

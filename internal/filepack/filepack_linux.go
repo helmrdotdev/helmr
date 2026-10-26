@@ -148,10 +148,7 @@ func scanAndWriteFilepackRange(ctx context.Context, source *os.File, target io.W
 			return err
 		}
 		remaining := end - offset
-		n := int64(len(buffer))
-		if remaining < n {
-			n = remaining
-		}
+		n := min(remaining, int64(len(buffer)))
 		read := buffer[:n]
 		if err := readFullAt(source, read, offset); err != nil {
 			return err

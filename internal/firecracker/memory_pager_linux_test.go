@@ -287,7 +287,7 @@ func TestMemoryPagerHydrationRetriesWithoutStoppingGuest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := &interruptedPagerSource{pagerTestSource: pagerTestSource{data: bytes.Repeat([]byte{49}, len(memory))}}
+	source := &interruptedPagerSource{data: bytes.Repeat([]byte{49}, len(memory))}
 	stopped := atomic.Bool{}
 	pager := newMemoryPager(t.Context(), owned, []memoryRegion{{Base: uint64(uintptr(unsafe.Pointer(&memory[0]))), Size: uint64(len(memory)), PageSize: 4096}}, source, func() { stopped.Store(true) })
 	defer pager.Close()
@@ -535,7 +535,7 @@ func TestMemoryStreamingDoesNotReserveDemandWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &gatedStreamSource{pagerTestSource: pagerTestSource{data: bytes.Repeat([]byte{17}, len(memory))}, started: make(chan struct{}), release: make(chan struct{})}
+	s := &gatedStreamSource{data: bytes.Repeat([]byte{17}, len(memory)), started: make(chan struct{}), release: make(chan struct{})}
 	p := newMemoryPager(t.Context(), owned, []memoryRegion{{Base: uint64(uintptr(unsafe.Pointer(&memory[0]))), Size: uint64(len(memory)), PageSize: 4096}}, s, func() {})
 	defer p.Close()
 	p.StartHydration()
@@ -596,7 +596,7 @@ func TestMemoryStreamingHydrationRetainsPartialProgress(t *testing.T) {
 			if integrity {
 				failure = vm.ErrInvalidCheckpointContent
 			}
-			s := &partialStreamSource{pagerTestSource: pagerTestSource{data: bytes.Repeat([]byte{54}, len(memory))}, failure: failure}
+			s := &partialStreamSource{data: bytes.Repeat([]byte{54}, len(memory)), failure: failure}
 			stopped := atomic.Bool{}
 			p := newMemoryPager(t.Context(), owned, []memoryRegion{{Base: uint64(uintptr(unsafe.Pointer(&memory[0]))), Size: uint64(len(memory)), PageSize: 4096}}, s, func() { stopped.Store(true) })
 			defer p.Close()

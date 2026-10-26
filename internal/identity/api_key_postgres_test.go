@@ -385,7 +385,7 @@ func TestAPIKeyRotateRacesRevoke(t *testing.T) {
 	env := uuid.MustParse(f.scope.EnvironmentID)
 	memberID := dbtest.GrantMember(t, f.pool, f.owner.OrgID, adminID, &env, "api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke")
 	admin := auth.Principal{OrgID: f.owner.OrgID, UserID: adminID, MemberID: memberID, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Grants: f.owner.Grants}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		key := f.issue(t, fmt.Sprintf("race-%d", i), auth.PermissionAgentsUse)
 		id := pgvalue.MustUUIDValue(key.Record.ID)
 		start := make(chan struct{})

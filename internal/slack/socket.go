@@ -94,8 +94,7 @@ func (e socketFailure) Error() string { return e.reason }
 func (s *SocketSupervisor) runClaim(ctx context.Context, claim socketClaim) {
 	err := s.runConnection(ctx, claim)
 	status, reason, retry := "reconnecting", "connection_failed", time.Duration(1000+rand.IntN(4000))*time.Millisecond
-	var failure socketFailure
-	if errors.As(err, &failure) {
+	if failure, ok := errors.AsType[socketFailure](err); ok {
 		reason = failure.reason
 		if failure.actionRequired {
 			status = "action_required"

@@ -172,12 +172,10 @@ func publicJSONDecodeError(err error) error {
 // diagnostic inside err and that diagnostic, or a nil diagnostic when err has
 // none.
 func jsonDecodeDiagnostic(err error) (string, error) {
-	var typeErr *json.UnmarshalTypeError
-	if errors.As(err, &typeErr) {
+	if typeErr, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 		return jsonTypeErrorMessage(typeErr), typeErr
 	}
-	var syntaxErr *json.SyntaxError
-	if errors.As(err, &syntaxErr) {
+	if syntaxErr, ok := errors.AsType[*json.SyntaxError](err); ok {
 		if syntaxErr.Error() == jsonUnexpectedEndMessage {
 			return jsonTruncatedMessage, syntaxErr
 		}
@@ -188,8 +186,7 @@ func jsonDecodeDiagnostic(err error) (string, error) {
 			return "unknown field " + name, current
 		}
 	}
-	var timeErr *time.ParseError
-	if errors.As(err, &timeErr) {
+	if timeErr, ok := errors.AsType[*time.ParseError](err); ok {
 		return "timestamp must be an RFC 3339 string", timeErr
 	}
 	if errors.Is(err, io.ErrUnexpectedEOF) {

@@ -31,7 +31,7 @@ func (c *Connector) createRoutedAttachment(ctx context.Context, binding *install
 		return fmt.Errorf("open routed network namespace: %w", err)
 	}
 	binding.namespace = namespace
-	veth := &netlink.Veth{LinkAttrs: netlink.LinkAttrs{Name: m.RootVethName, MTU: GuestMTUV0}, PeerName: m.NamespaceVethName, PeerMTU: GuestMTUV0}
+	veth := &netlink.Veth{Name: m.RootVethName, MTU: GuestMTUV0, PeerName: m.NamespaceVethName, PeerMTU: GuestMTUV0}
 	if err := netlink.LinkAdd(veth); err != nil {
 		return fmt.Errorf("create routed veth pair: %w", err)
 	}
@@ -59,8 +59,8 @@ func (c *Connector) createRoutedAttachment(ctx context.Context, binding *install
 	binding.namespaceIfindex = nsVeth.Attrs().Index
 	gatewayMAC, _ := net.ParseMAC(GuestGatewayMACV0)
 	tap := &netlink.Tuntap{
-		LinkAttrs: netlink.LinkAttrs{Name: m.TapName, MTU: GuestMTUV0, HardwareAddr: gatewayMAC},
-		Mode:      netlink.TUNTAP_MODE_TAP, Flags: netlink.TUNTAP_DEFAULTS | netlink.TUNTAP_VNET_HDR,
+		Name: m.TapName, MTU: GuestMTUV0, HardwareAddr: gatewayMAC,
+		Mode: netlink.TUNTAP_MODE_TAP, Flags: netlink.TUNTAP_DEFAULTS | netlink.TUNTAP_VNET_HDR,
 		Owner: uint32(c.cfg.JailerUID), Group: uint32(c.cfg.JailerGID),
 	}
 	if err := withNetworkNamespace(namespace, func() error { return netlink.LinkAdd(tap) }); err != nil {

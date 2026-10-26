@@ -85,9 +85,7 @@ func TestSlackStartWaitsForFirstChannelBindingBeforeEnvironment(t *testing.T) {
 
 	done := make(chan error, 1)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		channel := "C2"
 		_, err := Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, admission, nil, startPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
 			return json.RawMessage(`{"text":"Started agent.","mrkdwn":false}`), nil
@@ -96,7 +94,7 @@ func TestSlackStartWaitsForFirstChannelBindingBeforeEnvironment(t *testing.T) {
 			Input: json.RawMessage(`[{"type":"text","text":"work"}]`),
 		})
 		done <- err
-	}()
+	})
 	defer func() { cancel(); promotion.Rollback(context.Background()); wg.Wait(); admission.Release() }()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()

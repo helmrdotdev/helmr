@@ -209,7 +209,7 @@ func TestCaptureRejectsDestinationSymlinkParent(t *testing.T) {
 func TestCaptureDiscoveryBoundsIncludeIgnoredChildren(t *testing.T) {
 	source := t.TempDir()
 	writeTestFile(t, filepath.Join(source, ".helmrignore"), "ignored*\n")
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		writeTestFile(t, filepath.Join(source, fmt.Sprintf("ignored-%04d", i)), "")
 	}
 	root, err := os.OpenRoot(source)
@@ -514,7 +514,7 @@ func TestCaptureLinkHopBound(t *testing.T) {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			source := t.TempDir()
 			writeTestFile(t, filepath.Join(source, "file"), "content")
-			for i := 0; i < count; i++ {
+			for i := range count {
 				target := "file"
 				if i+1 < count {
 					target = fmt.Sprintf("link-%02d", i+1)
@@ -565,7 +565,7 @@ func TestCaptureDanglingLinkHopBound(t *testing.T) {
 	for _, count := range []int{40, 41} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			source, temp := t.TempDir(), t.TempDir()
-			for i := 0; i < count; i++ {
+			for i := range count {
 				target := "missing"
 				if i+1 < count {
 					target = fmt.Sprintf("link-%02d", i+1)
@@ -579,7 +579,7 @@ func TestCaptureDanglingLinkHopBound(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for i := 0; i < count; i++ {
+				for i := range count {
 					want := "missing"
 					if i+1 < count {
 						want = fmt.Sprintf("link-%02d", i+1)
