@@ -59,6 +59,7 @@ func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {
 	abandonUpload(t, f, p)
 	// Even another organization's observed membership protects the global key.
 	otherOrg := pgvalue.UUID(uuid.NewV7())
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO organizations(id,name,slug) VALUES($1,'Other','other')`, otherOrg)
 	// One physical digest cannot acquire a conflicting size in another organization.
 	_, err = q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: otherOrg, Digest: p.Digest, SizeBytes: p.SizeBytes + 1, MediaType: p.MediaType})
 	requireFK(t, err)
@@ -92,6 +93,8 @@ func TestCasRetirementAdoptionRaces(t *testing.T) {
 			f := sessiontest.New(t)
 			p := registeredUpload(t, f)
 			abandonUpload(t, f, p)
+			otherOrg := pgvalue.UUID(uuid.NewV7())
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO organizations(id,name,slug) VALUES($1,'Other','other')`, otherOrg)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			first, err := f.Pool.Begin(ctx)
@@ -100,7 +103,7 @@ func TestCasRetirementAdoptionRaces(t *testing.T) {
 			}
 			defer first.Rollback(context.Background())
 			adopt := func(q *db.Queries) error {
-				_, err := q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(uuid.NewV7()), Digest: p.Digest, SizeBytes: p.SizeBytes, MediaType: p.MediaType})
+				_, err := q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: otherOrg, Digest: p.Digest, SizeBytes: p.SizeBytes, MediaType: p.MediaType})
 				return err
 			}
 			retire := func(q *db.Queries) error { _, err := q.RetireAbandonedCasBlob(ctx, p.Digest); return err }
@@ -193,7 +196,12 @@ func (s *reclaimProbe) ReclaimVersions(ctx context.Context, digest string) error
 	}
 	// A storage callback is after retirement commit, including on another DB
 	// connection. Attempting adoption must fail before any destructive action.
-	_, err := db.New(s.pool).UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(uuid.NewV7()), Digest: digest, SizeBytes: 1024, MediaType: "application/octet-stream"})
+	// Use an existing organization so this probes availability, not ownership.
+	var org uuid.UUID
+	if err := s.pool.QueryRow(ctx, `SELECT id FROM organizations LIMIT 1`).Scan(&org); err != nil {
+		return err
+	}
+	_, err := db.New(s.pool).UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(org), Digest: digest, SizeBytes: 1024, MediaType: "application/octet-stream"})
 	requireFK(s.t, err)
 	if s.failDelete {
 		return errors.New("remote delete failed")

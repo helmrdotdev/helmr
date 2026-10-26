@@ -55,7 +55,7 @@ func RefreshImageSpec(ctx context.Context, database db.TxBeginner, env, spec uui
 			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds p
  JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.image_spec_id)
  WHERE p.environment_id=$1 AND p.image_spec_id=$2
- AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.successor_of=p.id)
+ AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.predecessor_build_id=p.id)
  AND `+imageBuildSuccessorEligibilitySQL+`)`, env, spec).Scan(&successorPending); err != nil {
 				return err
 			}

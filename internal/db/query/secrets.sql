@@ -71,7 +71,6 @@ RETURNING secrets.*;
 UPDATE secrets
 SET status = 'revoked',
     current_version_id = NULL,
-    revocation_generation = revocation_generation + 1,
     revoked_at = now(),
     updated_at = now()
 WHERE environment_id = sqlc.arg(environment_id)

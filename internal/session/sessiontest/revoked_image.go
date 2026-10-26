@@ -58,7 +58,7 @@ func (f Fixture) PinRevokedImage(t *testing.T, computer uuid.UUID) {
  UPDATE computers SET initial_root_id=$7,initial_root_digest=decode(substring($9::text from 8),'hex'),image_id=$3 WHERE environment_id=$2 AND id=$11;
  INSERT INTO secrets(environment_id,id,name,status,revoked_at) VALUES($2,$12,'image-secret','revoked',clock_timestamp());
  INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($13,$12,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'));
- INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) VALUES(uuidv7(),$2,$3,$12,$13,0);
+ INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id) VALUES(uuidv7(),$2,$3,$12,$13);
  `, pgx.QueryExecModeSimpleProtocol, key, f.Environment, preparation, fmt.Sprintf("sha256:%x", locator.Pack.Digest), locator.Pack.Size, locator.Pack.Rank, rootID, string(encoded), identity, spec, computer, secretID, versionID)
 	var revoked bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, f.Environment, computer).Scan(&revoked); err != nil || !revoked {

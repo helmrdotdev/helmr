@@ -65,7 +65,7 @@ func retireBootSeeds(ctx context.Context, database db.TxDB) error {
 			if err := tx.QueryRow(callCtx, `SELECT org_id FROM environments WHERE id=$1`, c.env).Scan(&org); err != nil {
 				return err
 			}
-			rows, err := tx.Query(callCtx, `WITH removed AS (DELETE FROM boot_seed_objects WHERE environment_id=$1 AND build_id=$2 RETURNING digest) SELECT DISTINCT digest FROM removed ORDER BY digest`, c.env, c.id)
+			rows, err := tx.Query(callCtx, `WITH removed AS (DELETE FROM boot_seed_objects WHERE environment_id=$1 AND boot_seed_build_id=$2 RETURNING digest) SELECT DISTINCT digest FROM removed ORDER BY digest`, c.env, c.id)
 			if err != nil {
 				return err
 			}

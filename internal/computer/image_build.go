@@ -82,7 +82,7 @@ func AttachImageBuild(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) (
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM image_builds p
  JOIN image_specs spec ON (spec.environment_id,spec.id)=(p.environment_id,p.image_spec_id)
  WHERE p.environment_id=$1 AND p.image_spec_id=$2
- AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.successor_of=p.id)
+ AND NOT EXISTS(SELECT 1 FROM image_builds successor WHERE successor.environment_id=p.environment_id AND successor.predecessor_build_id=p.id)
  AND `+imageBuildSuccessorEligibilitySQL+`)`, env, spec).Scan(&successorPending); err != nil {
 			return result, err
 		}
@@ -308,12 +308,11 @@ func RecordImageBuildExposure(ctx context.Context, auditPolicy auditpolicy.Polic
 		} else {
 			for _, id := range ids {
 				var exposureID uuid.UUID
-				var generation int64
-				if err = tx.QueryRow(ctx, `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3 RETURNING id,revocation_generation`, ref.EnvironmentID, ref.ImageBuildID, id, versions[id]).Scan(&exposureID, &generation); err != nil {
+				if err = tx.QueryRow(ctx, `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id) VALUES(uuidv7(),$1,$2,$3,$4) RETURNING id`, ref.EnvironmentID, ref.ImageBuildID, id, versions[id]).Scan(&exposureID); err != nil {
 					return err
 				}
 				actor := audit.AssignedWorker(host.HostID, host.HostClaimVersion, "image_build", ref.ImageBuildID, ref.Epoch)
-				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: ref.EnvironmentID, Action: "secret.exposed", TargetKind: "secret", TargetID: id, Details: audit.SecretExposureDetails{ExposureID: exposureID, VersionID: versions[id], RevocationGeneration: generation, ImageBuildID: ref.ImageBuildID}}); err != nil {
+				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: ref.EnvironmentID, Action: "secret.exposed", TargetKind: "secret", TargetID: id, Details: audit.SecretExposureDetails{ExposureID: exposureID, VersionID: versions[id], RevocationGeneration: 0, ImageBuildID: ref.ImageBuildID}}); err != nil {
 					return err
 				}
 

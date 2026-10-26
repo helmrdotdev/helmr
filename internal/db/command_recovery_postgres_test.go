@@ -41,7 +41,7 @@ func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
 func TestSecretRevocationDiscoveryAdvancesPastStoppedCommands(t *testing.T) {
 	f := sessiontest.New(t)
 	secretID := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at,revocation_generation) VALUES($1,$2,'TOKEN','revoked',clock_timestamp(),2)`, secretID, f.Environment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($1,$2,'TOKEN','revoked',clock_timestamp())`, secretID, f.Environment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
 	for n := 0; n < 3; n++ {
 		id := insertRecoveryCommand(t, f, f.Computer, false)

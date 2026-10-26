@@ -148,6 +148,7 @@ CREATE TABLE invitations (
     accepted_by_member_id uuid,
     revoked_at timestamptz,
     revoked_by_member_id uuid,
+    UNIQUE (org_id, id),
     FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
     FOREIGN KEY (org_id, invited_by_member_id)
         REFERENCES org_members(org_id, id)
@@ -181,7 +182,11 @@ CREATE TABLE magic_links (
     consumed_by_user_id uuid,
     revoked_at timestamptz,
     FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
-    FOREIGN KEY (invitation_id) REFERENCES invitations(id) ON DELETE CASCADE,
+    CONSTRAINT magic_links_purpose_context_check CHECK (
+        (purpose='login' AND org_id IS NULL AND invitation_id IS NULL)
+        OR (purpose='invite_accept' AND org_id IS NOT NULL AND invitation_id IS NOT NULL)
+    ),
+    FOREIGN KEY (org_id, invitation_id) REFERENCES invitations(org_id, id) ON DELETE CASCADE,
     FOREIGN KEY (consumed_by_user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
@@ -237,6 +242,11 @@ CREATE TABLE device_codes (
     created_at timestamptz NOT NULL DEFAULT now(),
     decided_at timestamptz,
     consumed_at timestamptz,
+    CONSTRAINT device_codes_state_check CHECK (
+        (status='pending' AND org_id IS NULL AND decided_by_member_id IS NULL AND decided_at IS NULL AND consumed_at IS NULL)
+        OR (status IN ('approved','denied') AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NULL)
+        OR (status='consumed' AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NOT NULL)
+    ),
     FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
     FOREIGN KEY (org_id, decided_by_member_id)
         REFERENCES org_members(org_id, id)
@@ -251,7 +261,6 @@ CREATE TABLE secrets (
     name text NOT NULL CHECK (btrim(name) <> ''),
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
     current_version_id uuid,
-    revocation_generation bigint NOT NULL DEFAULT 0 CHECK (revocation_generation >= 0),
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     revoked_at timestamptz,
@@ -297,7 +306,7 @@ CREATE TABLE cas_upload_reclaims (
 );
 
 CREATE TABLE cas_objects (
-    org_id uuid NOT NULL,
+    org_id uuid NOT NULL REFERENCES organizations(id),
     digest text NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
     size_bytes bigint NOT NULL CHECK (size_bytes >= 0),
     media_type text NOT NULL,
@@ -367,10 +376,10 @@ CREATE TABLE worker_pools (
     optional_cpu_millis bigint NOT NULL DEFAULT 0 CHECK (optional_cpu_millis >= 0 AND optional_cpu_millis <= 9007199254740991),
     optional_memory_bytes bigint NOT NULL DEFAULT 0 CHECK (optional_memory_bytes >= 0 AND optional_memory_bytes <= 9007199254740991),
     optional_disk_bytes bigint NOT NULL DEFAULT 0 CHECK (optional_disk_bytes >= 0 AND optional_disk_bytes <= 9007199254740991),
-    optional_vm_slots integer NOT NULL DEFAULT 0 CHECK (optional_vm_slots >= 0 AND optional_vm_slots <= 9007199254740991),
-    optional_max_tasks integer NOT NULL DEFAULT 0 CHECK (optional_max_tasks >= 0 AND optional_max_tasks <= 9007199254740991),
+    optional_vm_slots integer NOT NULL DEFAULT 0 CHECK (optional_vm_slots >= 0),
+    optional_max_tasks integer NOT NULL DEFAULT 0 CHECK (optional_max_tasks >= 0),
     optional_io_bytes_per_second bigint NOT NULL DEFAULT 0 CHECK (optional_io_bytes_per_second >= 0 AND optional_io_bytes_per_second <= 9007199254740991),
-    local_headroom_slots integer NOT NULL DEFAULT 0 CHECK (local_headroom_slots >= 0 AND local_headroom_slots <= 9007199254740991),
+    local_headroom_slots integer NOT NULL DEFAULT 0 CHECK (local_headroom_slots >= 0),
     vm_platform_id text,
     capacity_cpu_millis bigint CHECK (capacity_cpu_millis IS NULL OR capacity_cpu_millis > 0),
     capacity_memory_bytes bigint CHECK (capacity_memory_bytes IS NULL OR capacity_memory_bytes > 0),
@@ -705,12 +714,12 @@ CREATE TABLE image_builds (
     id uuid NOT NULL,
     environment_id uuid NOT NULL,
     image_spec_id uuid NOT NULL,
-    successor_of uuid,
+    predecessor_build_id uuid,
     idempotency_key text NOT NULL CHECK (octet_length(idempotency_key) BETWEEN 1 AND 512),
     status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
     deadline_at timestamptz NOT NULL,
     error_code text,
-    executor_epoch bigint NOT NULL DEFAULT 0 CHECK (executor_epoch>=0),
+    executor_epoch bigint NOT NULL DEFAULT 0 CHECK (executor_epoch IN (0,1)),
     worker_host_id uuid REFERENCES worker_hosts(id),
     worker_epoch bigint CHECK (worker_epoch>0),
     allocation_id uuid UNIQUE,
@@ -768,9 +777,9 @@ CREATE TABLE image_builds (
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, image_spec_id, id),
     UNIQUE (environment_id, image_spec_id, idempotency_key),
-    UNIQUE (environment_id, successor_of),
-    FOREIGN KEY (environment_id, image_spec_id, successor_of) REFERENCES image_builds(environment_id, image_spec_id, id),
-    CHECK (successor_of IS NULL OR successor_of<>id),
+    UNIQUE (environment_id, predecessor_build_id),
+    FOREIGN KEY (environment_id, image_spec_id, predecessor_build_id) REFERENCES image_builds(environment_id, image_spec_id, id),
+    CHECK (predecessor_build_id IS NULL OR predecessor_build_id<>id),
     FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id),
     CHECK ((status='failed')=(error_code IS NOT NULL)),
     CHECK ((fenced_at IS NULL)=(fence_evidence IS NULL)),
@@ -972,14 +981,14 @@ CREATE INDEX boot_seed_builds_image ON boot_seed_builds(environment_id,image_id)
 
 CREATE TABLE boot_seed_objects (
     environment_id uuid NOT NULL,
-    build_id uuid NOT NULL,
+    boot_seed_build_id uuid NOT NULL,
     role text NOT NULL CHECK (role IN ('vm_state','memory','scratch_disk')),
     digest text NOT NULL,
     size_bytes bigint NOT NULL CHECK (size_bytes>0),
     media_type text NOT NULL,
     availability_required boolean GENERATED ALWAYS AS (true) STORED,
-    PRIMARY KEY (environment_id,build_id,role),
-    FOREIGN KEY (environment_id,build_id) REFERENCES boot_seed_builds(environment_id,id),
+    PRIMARY KEY (environment_id,boot_seed_build_id,role),
+    FOREIGN KEY (environment_id,boot_seed_build_id) REFERENCES boot_seed_builds(environment_id,id),
     FOREIGN KEY (digest,size_bytes,availability_required) REFERENCES cas_blobs(digest,size_bytes,not_retired)
 );
 
@@ -1251,7 +1260,6 @@ CREATE TABLE idempotency_receipts (
     scope_secret_id uuid,
     scope_computer_id uuid,
     scope_command_id uuid,
-    scope_caller_kind text,
     scope_computer_key text,
     deployment_id uuid,
     secret_id uuid,
@@ -1274,12 +1282,12 @@ CREATE TABLE idempotency_receipts (
     FOREIGN KEY (environment_id, scope_computer_id, command_id) REFERENCES commands(environment_id, computer_id, id),
     CHECK (receipt_pruned_at IS NULL OR (receipt IS NULL AND receipt_pruned_at>=accepted_at+interval '720 hours')),
     CHECK ((
-        (operation IN ('deployment.finalize','template.refresh') AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
-        OR (operation='secret.create' AND scope_secret_name IS NOT NULL AND octet_length(scope_secret_name)>0 AND num_nonnulls(scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
-        OR (operation IN ('secret.rotate', 'secret.revoke') AND scope_secret_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
-        OR (operation='computer.create' AND scope_caller_kind='external' AND scope_computer_key IS NOT NULL AND octet_length(scope_computer_key)>0 AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id)=0)
-        OR (operation IN ('computer.delete', 'computer.exec') AND scope_computer_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_command_id, scope_caller_kind, scope_computer_key)=0)
-        OR (operation='command.cancel' AND scope_command_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_caller_kind, scope_computer_key)=0)
+        (operation IN ('deployment.finalize','template.refresh') AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_computer_key)=0)
+        OR (operation='secret.create' AND scope_secret_name IS NOT NULL AND octet_length(scope_secret_name)>0 AND num_nonnulls(scope_secret_id, scope_computer_id, scope_command_id, scope_computer_key)=0)
+        OR (operation IN ('secret.rotate', 'secret.revoke') AND scope_secret_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_computer_id, scope_command_id, scope_computer_key)=0)
+        OR (operation='computer.create' AND scope_computer_key IS NOT NULL AND octet_length(scope_computer_key)>0 AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id)=0)
+        OR (operation IN ('computer.delete', 'computer.exec') AND scope_computer_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_command_id, scope_computer_key)=0)
+        OR (operation='command.cancel' AND scope_command_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_computer_key)=0)
         ) IS TRUE),
     CONSTRAINT idempotency_receipts_complete CHECK ((
         num_nonnulls(deployment_id, secret_id, computer_id, command_id)=1
@@ -1366,7 +1374,7 @@ CREATE UNIQUE INDEX slack_installations_active ON slack_installations(app_id, te
 -- Observed socket health is not proof of installation authorization.
 CREATE TABLE slack_socket_connections (
     app_registration_id uuid PRIMARY KEY REFERENCES slack_app_registrations(id) ON DELETE CASCADE,
-    installation_id uuid NOT NULL REFERENCES slack_installations(id),
+    installation_id uuid NOT NULL,
     claim_id uuid,
     replica_id uuid,
     expires_at timestamptz,
@@ -1376,15 +1384,17 @@ CREATE TABLE slack_socket_connections (
     retry_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     last_connected_at timestamptz,
     last_received_at timestamptz,
+    FOREIGN KEY (installation_id, app_registration_id) REFERENCES slack_installations(id, app_registration_id),
     CHECK ((claim_id IS NULL)=(replica_id IS NULL)),
     CHECK ((claim_id IS NULL)=(expires_at IS NULL))
 );
 
 CREATE TABLE slack_connections (
     id uuid NOT NULL UNIQUE,
+    org_id uuid NOT NULL,
     environment_id uuid NOT NULL,
     agent_id uuid NOT NULL,
-    slack_app_registration_id uuid NOT NULL UNIQUE REFERENCES slack_app_registrations(id),
+    slack_app_registration_id uuid NOT NULL UNIQUE,
     slack_installation_id uuid,
     created_by_user_id uuid NOT NULL REFERENCES users(id),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -1393,6 +1403,8 @@ CREATE TABLE slack_connections (
     UNIQUE (id, environment_id, slack_installation_id),
     UNIQUE (environment_id, agent_id, id),
     FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id),
+    FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id),
+    FOREIGN KEY (slack_app_registration_id, org_id) REFERENCES slack_app_registrations(id, org_id),
     FOREIGN KEY (slack_installation_id, slack_app_registration_id) REFERENCES slack_installations(id, app_registration_id)
 );
 
@@ -1596,7 +1608,6 @@ CREATE TABLE secret_exposures (
     command_id uuid,
     secret_id uuid NOT NULL,
     version_id uuid NOT NULL,
-    revocation_generation bigint NOT NULL CHECK (revocation_generation>=0),
     exposed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK (num_nonnulls(image_build_id, session_id, command_id)=1),
     CHECK ((session_id IS NULL)=(process_epoch IS NULL)),
@@ -1866,6 +1877,9 @@ CREATE TABLE checkpoints (
     CHECK ((status IN ('cancelled', 'lost') OR controls_reconciled_at IS NOT NULL) = (capture_request IS NULL))
 );
 
+ALTER TABLE computer_controls ADD FOREIGN KEY (environment_id, computer_id, checkpoint_id)
+    REFERENCES checkpoints(environment_id, computer_id, id);
+
 CREATE UNIQUE INDEX checkpoints_one_pending ON checkpoints(environment_id, computer_id) WHERE status IN ('capturing', 'sealed', 'ready', 'restoring', 'aborting');
 
 CREATE TABLE checkpoint_processes (
@@ -1931,10 +1945,12 @@ CREATE TABLE turn_asks (
     answer_digest bytea CHECK (octet_length(answer_digest)=32),
     answer bytea,
     answered_by_user_id uuid REFERENCES users(id),
-    answered_by_api_key_id uuid REFERENCES api_keys(id),
+    answered_by_api_key_id uuid,
     payload_expired_at timestamptz,
     PRIMARY KEY (environment_id, session_id, turn_id, id),
     UNIQUE (environment_id, session_id, created_event_seq),
+    UNIQUE (environment_id, session_id, id),
+    FOREIGN KEY (environment_id, answered_by_api_key_id) REFERENCES api_keys(environment_id, id),
     FOREIGN KEY (environment_id, session_id, turn_id, process_epoch) REFERENCES turns(environment_id, session_id, id, process_epoch),
     FOREIGN KEY (environment_id, session_id, created_event_seq) REFERENCES session_events(environment_id, session_id, seq),
     CHECK ((status='answered')=(answered_at IS NOT NULL)),
@@ -1997,11 +2013,11 @@ CREATE TABLE diagnostic_chunks (
     session_id uuid,
     process_epoch bigint,
     image_build_id uuid,
-    preparation_epoch bigint,
+    image_build_epoch bigint CHECK (image_build_epoch>0),
     command_id uuid,
     source_kind text GENERATED ALWAYS AS (CASE WHEN session_id IS NOT NULL THEN 'session' WHEN image_build_id IS NOT NULL THEN 'image_build' ELSE 'computer_command' END) STORED NOT NULL,
     source_id uuid GENERATED ALWAYS AS (COALESCE(session_id, image_build_id, command_id)) STORED NOT NULL,
-    producer_epoch bigint GENERATED ALWAYS AS (COALESCE(process_epoch, preparation_epoch, 1)) STORED NOT NULL,
+    producer_epoch bigint GENERATED ALWAYS AS (COALESCE(process_epoch, image_build_epoch, 1)) STORED NOT NULL,
     stream text NOT NULL CHECK (stream IN ('stdout', 'stderr')),
     sequence bigint NOT NULL,
     through_sequence bigint NOT NULL,
@@ -2018,9 +2034,9 @@ CREATE TABLE diagnostic_chunks (
     ingest_size_bytes bigint GENERATED ALWAYS AS (octet_length(data)::bigint) STORED NOT NULL,
     CHECK (num_nonnulls(session_id, image_build_id, command_id)=1),
     CHECK ((session_id IS NULL)=(process_epoch IS NULL)),
-    CHECK ((image_build_id IS NULL)=(preparation_epoch IS NULL)),
+    CHECK ((image_build_id IS NULL)=(image_build_epoch IS NULL)),
     FOREIGN KEY (environment_id, session_id, process_epoch) REFERENCES session_processes(environment_id, session_id, epoch),
-    FOREIGN KEY (environment_id, image_build_id, preparation_epoch) REFERENCES image_builds(environment_id, id, executor_epoch),
+    FOREIGN KEY (environment_id, image_build_id, image_build_epoch) REFERENCES image_builds(environment_id, id, executor_epoch),
     FOREIGN KEY (environment_id, command_id) REFERENCES commands(environment_id, id),
     CHECK (sequence>0 AND through_sequence>=sequence AND byte_offset>=0 AND through_byte_offset>=byte_offset AND observed_at_unix_nano>0
         AND dropped_bytes>=0
@@ -2047,7 +2063,6 @@ CREATE TABLE deployment_events (
     deployment_id uuid NOT NULL,
     kind text NOT NULL CHECK (length(kind)>0),
     message text NOT NULL DEFAULT '',
-    payload jsonb NOT NULL DEFAULT '{}',
     accepted_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
 );
@@ -2153,7 +2168,7 @@ CREATE TABLE slack_requests (
     FOREIGN KEY (environment_id, session_id, thread_source_id) REFERENCES slack_thread_sources(environment_id, session_id, id),
     FOREIGN KEY (thread_id, thread_source_id) REFERENCES slack_thread_sources(thread_id, id),
     FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id),
-    FOREIGN KEY (environment_id, ask_id) REFERENCES turn_asks(environment_id, id),
+    FOREIGN KEY (environment_id, session_id, ask_id) REFERENCES turn_asks(environment_id, session_id, id),
     FOREIGN KEY (environment_id, session_id, control_id) REFERENCES session_controls(environment_id, session_id, id),
     FOREIGN KEY (environment_id, session_id, turn_id, message_id) REFERENCES turn_messages(environment_id, session_id, turn_id, id),
     CHECK ((environment_id IS NULL)=(session_id IS NULL)),
@@ -2221,9 +2236,8 @@ CREATE TABLE slack_posts (
     reconciliation_pages integer NOT NULL DEFAULT 0 CHECK (reconciliation_pages>=0),
     reconciliation_paused_at timestamptz,
     delivery_disposed_at timestamptz,
-    delivery_disposed_by uuid REFERENCES users(id),
+    delivery_disposed_by_user_id uuid REFERENCES users(id),
     claimed_until timestamptz,
-    claim_epoch bigint NOT NULL DEFAULT 0 CHECK (claim_epoch>=0),
     message_ts text CHECK (message_ts<>''),
     posted_at timestamptz,
     confirmed_at timestamptz,
@@ -2231,8 +2245,9 @@ CREATE TABLE slack_posts (
     error text,
     FOREIGN KEY (thread_id, environment_id, thread_source_id) REFERENCES slack_thread_sources(thread_id, environment_id, id),
     FOREIGN KEY (source_thread_id, environment_id) REFERENCES slack_threads(id, environment_id),
-    CHECK ((delivery_disposed_at IS NULL)=(delivery_disposed_by IS NULL)),
+    CHECK ((delivery_disposed_at IS NULL)=(delivery_disposed_by_user_id IS NULL)),
     CHECK (delivery_disposed_at IS NULL OR closed_at IS NOT NULL),
+    UNIQUE (id, thread_id, environment_id),
     UNIQUE (thread_source_id, post_key, continuation_ordinal),
     UNIQUE (thread_source_id, seq),
     FOREIGN KEY (environment_id, session_id, thread_source_id) REFERENCES slack_thread_sources(environment_id, session_id, id),
@@ -2271,13 +2286,14 @@ CREATE UNIQUE INDEX slack_posts_one_opening ON slack_posts(environment_id, turn_
 -- A child's first work-message owner is immutable. Omitted child rows remain
 -- represented by their group count; later groups do not promote them.
 CREATE TABLE slack_work_items (
-    thread_id uuid NOT NULL REFERENCES slack_threads(id),
+    thread_id uuid NOT NULL,
     environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
     turn_id uuid NOT NULL,
-    post_id uuid NOT NULL REFERENCES slack_posts(id),
+    post_id uuid NOT NULL,
     omitted boolean NOT NULL DEFAULT false,
     PRIMARY KEY (thread_id,turn_id),
+    FOREIGN KEY (post_id,thread_id,environment_id) REFERENCES slack_posts(id,thread_id,environment_id),
     FOREIGN KEY (environment_id,session_id,turn_id) REFERENCES turns(environment_id,session_id,id)
 );
 CREATE INDEX slack_work_items_post ON slack_work_items(post_id);
@@ -2422,10 +2438,10 @@ CREATE TABLE slack_channels (
 -- Per-channel routine pacing and provider method Retry-After are independent.
 CREATE TABLE slack_delivery_limits (
     installation_id uuid NOT NULL REFERENCES slack_installations(id),
-    channel_id text NOT NULL,
+    slack_channel_id text NOT NULL,
     next_post_at timestamptz NOT NULL DEFAULT '-infinity',
     next_status_at timestamptz NOT NULL DEFAULT '-infinity',
-    PRIMARY KEY (installation_id, channel_id)
+    PRIMARY KEY (installation_id, slack_channel_id)
 );
 CREATE TABLE slack_method_limits (
     installation_id uuid NOT NULL REFERENCES slack_installations(id),
@@ -2477,7 +2493,7 @@ CREATE TABLE role_grants (
   environment_id uuid,
   all_agents boolean NOT NULL DEFAULT false,
   revision bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
-  created_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (num_nonnulls(member_id,group_id,api_key_id) + all_members::int = 1),
   CHECK (NOT all_agents OR environment_id IS NOT NULL),

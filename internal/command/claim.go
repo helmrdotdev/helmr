@@ -291,11 +291,10 @@ func CheckStart(ctx context.Context, txb db.TxBeginner, host workergroup.HostPri
 type runtimeBinding struct {
 	id                                      uuid.UUID
 	kind, target, mode, placeholder, status string
-	generation                              int64
 }
 
 func lockBindings(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]runtimeBinding, error) {
-	rows, err := tx.Query(ctx, `SELECT b.secret_id,b.placement_kind,b.placement_target,b.mode,COALESCE(b.placeholder,''),s.status,s.revocation_generation
+	rows, err := tx.Query(ctx, `SELECT b.secret_id,b.placement_kind,b.placement_target,b.mode,COALESCE(b.placeholder,''),s.status
  FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
  WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY s.id,b.placement_kind,b.placement_target FOR SHARE OF s`, env, computer)
 	if err != nil {
@@ -303,7 +302,7 @@ func lockBindings(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]ru
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (runtimeBinding, error) {
 		var b runtimeBinding
-		err := row.Scan(&b.id, &b.kind, &b.target, &b.mode, &b.placeholder, &b.status, &b.generation)
+		err := row.Scan(&b.id, &b.kind, &b.target, &b.mode, &b.placeholder, &b.status)
 		return b, err
 	})
 }
@@ -319,7 +318,7 @@ func recordExposure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 	}
 	actor := audit.AssignedWorker(worker.HostID, worker.HostClaimVersion, "computer", lease.ComputerID, lease.Epoch)
 	for _, exposure := range exposures {
-		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: env, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, RevocationGeneration: exposure.RevocationGeneration, CommandID: id}}); err != nil {
+		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: env, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, RevocationGeneration: 0, CommandID: id}}); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -327,11 +326,10 @@ func recordExposure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 	protected := map[string]string{}
 	for _, b := range bindings {
 		var version uuid.UUID
-		var generation int64
-		if err := tx.QueryRow(ctx, `SELECT version_id,revocation_generation FROM secret_exposures WHERE environment_id=$1 AND command_id=$2 AND secret_id=$3`, env, id, b.id).Scan(&version, &generation); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT version_id FROM secret_exposures WHERE environment_id=$1 AND command_id=$2 AND secret_id=$3`, env, id, b.id).Scan(&version); err != nil {
 			return nil, nil, err
 		}
-		if generation != b.generation || b.status != "active" {
+		if b.status != "active" {
 			return nil, nil, secret.ErrDeliveryRevoked
 		}
 		v, err := db.New(tx).GetSecretVersion(ctx, db.GetSecretVersionParams{EnvironmentID: c.EnvironmentID, SecretID: pgvalue.UUID(b.id), VersionID: pgvalue.UUID(version)})

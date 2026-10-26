@@ -213,7 +213,7 @@ func TestPreparationSuccessorRequiresOnlyRotationStaleness(t *testing.T) {
 				t.Fatalf("replacement for %s: %v", reason, err)
 			}
 			var count int
-			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds WHERE environment_id=$1 AND successor_of=$2`, p.f.env, p.ref.ImageBuildID).Scan(&count); err != nil || count != 0 {
+			if err := p.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds WHERE environment_id=$1 AND predecessor_build_id=$2`, p.f.env, p.ref.ImageBuildID).Scan(&count); err != nil || count != 0 {
 				t.Fatalf("unexpected successor %d: %v", count, err)
 			}
 		})

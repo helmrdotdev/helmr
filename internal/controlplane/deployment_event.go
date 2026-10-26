@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -41,7 +42,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := make([]api.DeploymentEvent, 0, len(events))
 	for _, event := range events {
-		rows = append(rows, api.DeploymentEvent{ID: telemetry.Cursor(event.ID), Kind: event.Kind, Message: event.Message, At: event.AcceptedAt, Attributes: event.Payload})
+		rows = append(rows, api.DeploymentEvent{ID: telemetry.Cursor(event.ID), Kind: event.Kind, Message: event.Message, At: event.AcceptedAt, Attributes: json.RawMessage("{}")})
 	}
 	var nextCursor *string
 	if hasNext {

@@ -45,7 +45,7 @@ INSERT INTO agents(id,environment_id,key) VALUES
 INSERT INTO roles(id,org_id,name,description,permissions) VALUES
  ('00000000-0000-7000-8000-000000002201','00000000-0000-7000-8000-000000000201','Production promoter','Activate previously registered production deployments without uploading code or reading run logs.',ARRAY['deployments.promote']);
 -- These example assignments are local fixtures, never product defaults.
-INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,all_agents,created_by)
+INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,all_agents,created_by_user_id)
 SELECT uuidv7(),'00000000-0000-7000-8000-000000000201',g.group_id::uuid,r.id,g.environment_id::uuid,g.all_agents,'00000000-0000-7000-8000-000000000101'
 FROM (VALUES
  ('00000000-0000-7000-8000-000000002001','agent_user','00000000-0000-7000-8000-000000000401',false),
@@ -58,15 +58,15 @@ JOIN roles r ON r.org_id='00000000-0000-7000-8000-000000000201' AND r.builtin_ke
 INSERT INTO role_grant_agents(grant_id,environment_id,agent_id)
 SELECT g.id,g.environment_id,a.id FROM role_grants g JOIN agents a ON a.environment_id=g.environment_id
 WHERE g.group_id='00000000-0000-7000-8000-000000002001' AND a.key IN ('invoice-checker','internal-faq');
-INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,created_by) VALUES
+INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,created_by_user_id) VALUES
  ('00000000-0000-7000-8000-000000002301','00000000-0000-7000-8000-000000000201','00000000-0000-7000-8000-000000002003','00000000-0000-7000-8000-000000002201','00000000-0000-7000-8000-000000000401','00000000-0000-7000-8000-000000000101');
-INSERT INTO role_grants(id,org_id,member_id,role_id,created_by)
+INSERT INTO role_grants(id,org_id,member_id,role_id,created_by_user_id)
 SELECT uuidv7(),org_id,'00000000-0000-7000-8000-000000001101',id,'00000000-0000-7000-8000-000000000101' FROM roles
 WHERE org_id='00000000-0000-7000-8000-000000000201' AND builtin_key IN ('access_administrator','organization_structure_administrator');
-INSERT INTO role_grants(id,org_id,member_id,role_id,environment_id,all_agents,created_by)
+INSERT INTO role_grants(id,org_id,member_id,role_id,environment_id,all_agents,created_by_user_id)
 SELECT uuidv7(),r.org_id,'00000000-0000-7000-8000-000000001101',r.id,e.id,true,'00000000-0000-7000-8000-000000000101' FROM roles r JOIN environments e ON e.org_id=r.org_id
 WHERE r.org_id='00000000-0000-7000-8000-000000000201' AND r.builtin_key='environment_resource_administrator';
-INSERT INTO role_grants(id,org_id,member_id,role_id,environment_id,all_agents,created_by)
+INSERT INTO role_grants(id,org_id,member_id,role_id,environment_id,all_agents,created_by_user_id)
 SELECT uuidv7(),org_id,'00000000-0000-7000-8000-000000001111',id,'00000000-0000-7000-8000-000000000401',false,'00000000-0000-7000-8000-000000000101' FROM roles
 WHERE org_id='00000000-0000-7000-8000-000000000201' AND builtin_key='agent_user';
 INSERT INTO role_grant_agents(grant_id,environment_id,agent_id)
@@ -78,7 +78,7 @@ INSERT INTO agents(id,environment_id,key) VALUES
  ('00000000-0000-7000-8000-000000002104','00000000-0000-7000-8000-000000000402','internal-faq');
 INSERT INTO roles(id,org_id,name,description,permissions) VALUES
  ('00000000-0000-7000-8000-000000002202','00000000-0000-7000-8000-000000000201','Agent and secrets operator','Use selected Agents and manage secrets in the assigned environment.',ARRAY['agents.use','secrets.read','secrets.create','secrets.rotate','secrets.revoke']);
-INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,all_agents,created_by) VALUES
+INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,all_agents,created_by_user_id) VALUES
  ('00000000-0000-7000-8000-000000002302','00000000-0000-7000-8000-000000000201','00000000-0000-7000-8000-000000002003','00000000-0000-7000-8000-000000002202','00000000-0000-7000-8000-000000000401',false,'00000000-0000-7000-8000-000000000101'),
  ('00000000-0000-7000-8000-000000002303','00000000-0000-7000-8000-000000000201','00000000-0000-7000-8000-000000002003','00000000-0000-7000-8000-000000002202','00000000-0000-7000-8000-000000000402',false,'00000000-0000-7000-8000-000000000101');
 INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) VALUES

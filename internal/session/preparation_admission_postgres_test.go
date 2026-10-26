@@ -170,7 +170,7 @@ func TestPreparationFreshDemandDoesNotPreemptRotationSuccessor(t *testing.T) {
 	}
 	var successor, predecessor, retained uuid.UUID
 	var count int
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.image_build_id,p.successor_of,(SELECT count(*) FROM image_builds WHERE environment_id=$1) FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.image_build_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&successor, &predecessor, &count); err != nil || predecessor != original.ID || count != 2 {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT c.image_build_id,p.predecessor_build_id,(SELECT count(*) FROM image_builds WHERE environment_id=$1) FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.image_build_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, fresh).Scan(&successor, &predecessor, &count); err != nil || predecessor != original.ID || count != 2 {
 		t.Fatalf("fresh demand did not join the single successor: %v %v %d %v", successor, predecessor, count, err)
 	}
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT image_build_id FROM computers WHERE environment_id=$1 AND id=$2`, p.f.env, originalComputer).Scan(&retained); err != nil || retained != original.ID {

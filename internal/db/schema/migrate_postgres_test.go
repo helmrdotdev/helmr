@@ -457,7 +457,7 @@ func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var columns int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='diagnostic_chunks' AND column_name=ANY($1::text[])`, []string{"session_id", "process_epoch", "image_build_id", "preparation_epoch", "command_id", "source_kind", "source_id", "producer_epoch", "stream"}).Scan(&columns); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='diagnostic_chunks' AND column_name=ANY($1::text[])`, []string{"session_id", "process_epoch", "image_build_id", "image_build_epoch", "command_id", "source_kind", "source_id", "producer_epoch", "stream"}).Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
 	if columns != 9 {

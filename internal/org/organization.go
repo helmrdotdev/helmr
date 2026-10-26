@@ -81,7 +81,7 @@ func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput)
 			return db.Organization{}, err
 		}
 		grantID := uuid.NewV7()
-		if _, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,created_by) VALUES($1,$2,$3,$4,$5)`, grantID, orgID, role, owner.ID, input.OwnerUserID); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,created_by_user_id) VALUES($1,$2,$3,$4,$5)`, grantID, orgID, role, owner.ID, input.OwnerUserID); err != nil {
 			return db.Organization{}, err
 		}
 		if err := accessAudit(ctx, tx, ManagingMember{Actor: input.Actor, OrgID: orgID, AuditPolicy: input.AuditPolicy}, "role_grant.created", "role_grant", grantID, nil, &audit.AccessSnapshot{SubjectKind: "member", MemberID: pgvalue.MustUUIDValue(owner.ID).String(), RoleID: role.String(), TargetKind: "organization"}); err != nil {

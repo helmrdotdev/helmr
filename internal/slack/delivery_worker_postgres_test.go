@@ -322,7 +322,7 @@ func TestSlackDeliveryWorkerStatusSuccessDoesNotEraseWaitingContentAge(t *testin
 	// the older status assertion succeeds, without changing publication age.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET refresh_at=clock_timestamp()-interval '1 hour' WHERE id=$1;
  UPDATE slack_posts SET created_at=(SELECT refresh_at+interval '15 seconds' FROM slack_threads WHERE id=$1) WHERE id=$2;
- INSERT INTO slack_delivery_limits(installation_id,channel_id,next_post_at) VALUES($3,'C1',clock_timestamp()+interval '1 hour')`, pgx.QueryExecModeSimpleProtocol, f.thread, post, f.installation)
+ INSERT INTO slack_delivery_limits(installation_id,slack_channel_id,next_post_at) VALUES($3,'C1',clock_timestamp()+interval '1 hour')`, pgx.QueryExecModeSimpleProtocol, f.thread, post, f.installation)
 	var methods []string
 	client := deliveryTestClient(func(r *http.Request) string {
 		methods = append(methods, r.URL.Path)

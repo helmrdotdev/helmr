@@ -20,7 +20,7 @@ const retirableSupersededImage = `i.root_id IS NOT NULL
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=i.environment_id AND c.image_id=i.id
    AND (c.deleted_at IS NULL OR c.initial_root_id IS NOT NULL))
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=i.environment_id
-   AND (c.image_build_id=p.id OR c.image_build_id=p.successor_of)
+   AND (c.image_build_id=p.id OR c.image_build_id=p.predecessor_build_id)
    AND c.initial_root_digest IS NULL AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL
    AND c.preparation_deadline_at>clock_timestamp()
    AND (c.preparation_max_age_ms IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=c.preparation_max_age_ms))

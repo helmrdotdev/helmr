@@ -53,7 +53,7 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environ
 		if err != nil {
 			return err
 		}
-		return slackroute.CreateConnection(ctx, tx, setup.ID, environment, agent, setup.RegistrationID, user)
+		return slackroute.CreateConnection(ctx, tx, setup.ID, org, environment, agent, setup.RegistrationID, user)
 	})
 	if err != nil {
 		return ConnectionSetup{}, err

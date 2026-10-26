@@ -54,7 +54,7 @@ func TestSlackStartSourceRetainsPositivelyBoundSuppressedOpening(t *testing.T) {
 	if source, err := read(); err != nil || source == nil || source.ThreadTS != "123.789" {
 		t.Fatal("positive root discarded", source, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET delivery_disposed_at=clock_timestamp(),delivery_disposed_by=$2,closed_at=clock_timestamp() WHERE session_id=$1`, root.SessionID, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET delivery_disposed_at=clock_timestamp(),delivery_disposed_by_user_id=$2,closed_at=clock_timestamp() WHERE session_id=$1`, root.SessionID, f.User)
 	if _, err = read(); !errors.Is(err, ErrSourceConversationUnavailable) {
 		t.Fatal("explicit abandonment revived", err)
 	}

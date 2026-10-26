@@ -196,7 +196,6 @@ type IdempotencyReceipt struct {
 	ScopeSecretID      pgtype.UUID        `json:"scope_secret_id"`
 	ScopeComputerID    pgtype.UUID        `json:"scope_computer_id"`
 	ScopeCommandID     pgtype.UUID        `json:"scope_command_id"`
-	ScopeCallerKind    pgtype.Text        `json:"scope_caller_kind"`
 	ScopeComputerKey   pgtype.Text        `json:"scope_computer_key"`
 	DeploymentID       pgtype.UUID        `json:"deployment_id"`
 	SecretID           pgtype.UUID        `json:"secret_id"`
@@ -290,15 +289,14 @@ type Region struct {
 }
 
 type Secret struct {
-	ID                   pgtype.UUID        `json:"id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	Name                 string             `json:"name"`
-	Status               string             `json:"status"`
-	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
-	RevocationGeneration int64              `json:"revocation_generation"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	RevokedAt            pgtype.Timestamptz `json:"revoked_at"`
+	ID               pgtype.UUID        `json:"id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	Name             string             `json:"name"`
+	Status           string             `json:"status"`
+	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type SecretVersion struct {
