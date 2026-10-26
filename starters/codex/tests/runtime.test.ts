@@ -8,10 +8,12 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { CodexStdio, spawnCodex } from "../agents/codex-stdio"
 import { CodexSession, nativeHome } from "../agents/codex-bridge"
 import { SessionRuntime, type SessionDriver } from "../../../runtime/typescript/src/agent-session"
 import type { InitContext, Turn } from "../../../sdk/typescript/src/agent"
+import { runInLinuxProcessScope } from "./process-scope"
 
 const quote = (value: string) => "'" + value.replaceAll("'", "'\"'\"'") + "'"
 function lifetimeCommand(marker: string, body: string): string {
@@ -43,8 +45,25 @@ const text = (value: string) => [{ type: "text" as const, text: value }]
 
 // Only the model transport and Helmr's external driver are substituted. The
 // generated bridge, native executable and Helmr SessionRuntime are real.
-test("Codex starter uses actual Helmr Turns for continuation, steering and cancellation", { timeout: 120_000 }, async () => {
-  const root = await mkdtemp(join(homedir(), ".helmr-codex-starter-"))
+test("Codex starter uses actual Helmr Turns for continuation, steering and cancellation", { timeout: process.platform === "linux" && !process.env.HELMR_CODEX_TEST_ROOT ? 150_000 : 120_000 }, async t => {
+  const inheritedRoot = process.env.HELMR_CODEX_TEST_ROOT
+  const root = inheritedRoot ?? await mkdtemp(join(homedir(), ".helmr-codex-starter-"))
+  if (process.platform === "linux" && !inheritedRoot) {
+    try {
+      // This starts a new runner, not another worker of the outer node:test.
+      const env: NodeJS.ProcessEnv = { ...process.env, HELMR_CODEX_TEST_ROOT: root }
+      delete env.NODE_TEST_CONTEXT
+      await runInLinuxProcessScope([
+        process.execPath, "--test", "--test-name-pattern=^Codex starter uses actual Helmr Turns", fileURLToPath(import.meta.url),
+      ], env, t.signal)
+      assert.equal(await readFile(join(root, "runtime-passed"), "utf8"), "passed", "the inner runtime test executed all assertions")
+    } finally {
+      // Native owner exit does not join all descendants (for example, Git
+      // helpers). Delete fixture state only after its PID namespace is gone.
+      await rm(root, { recursive: true, force: true })
+    }
+    return
+  }
   const cwd = join(root, "workspace"), stateDirectory = join(root, "state")
   await mkdir(cwd)
   const requests: any[] = [], held: any[] = [], actions: any[] = [], output: unknown[] = [], questions: unknown[] = [], holds: string[] = []
@@ -394,5 +413,54 @@ test("Codex starter uses actual Helmr Turns for continuation, steering and cance
     assert.equal(calls().length, callsBeforeMissing)
     assert.equal(existsSync(join(home, "conversation.json")), false)
     console.log(JSON.stringify({ case: "codex-starter-real-runtime", retained: true, steering: true, cancellation: true, questions: true, approvals: true, ownerFailureHoldsSession: true, foregroundAndBackgroundStopped: true, reconstruction: true, queuedInputsRetired: 100, missingHistoryRejected: true, modelCalls: calls().length }))
-  } finally { await bridge.close(); launches.unsubscribe(observe); server.closeAllConnections(); server.close(); await rm(root, { recursive: true, force: true }) }
+    if (inheritedRoot) await writeFile(join(root, "runtime-passed"), "passed")
+  } finally {
+    await bridge.close(); launches.unsubscribe(observe); server.closeAllConnections(); server.close()
+    if (!inheritedRoot) await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("Linux fixture scope joins detached descendants on success, failure and cancellation", { skip: process.platform !== "linux", timeout: 30_000 }, async t => {
+  for (const outcome of [0, 7, "cancel"] as const) {
+    const root = await mkdtemp(join(homedir(), ".helmr-codex-scope-"))
+    const lock = join(root, "writer.lock")
+    const ready = join(root, "ready")
+    const controller = new AbortController()
+    let run: Promise<void> | undefined
+    try {
+      // A native helper can outlive its launcher and even create a new session.
+      // Hold a file lock to observe its lifetime without relying on PID reuse,
+      // a sleep, or a process count from outside its PID namespace.
+      const script = `
+        const { spawn } = require("node:child_process");
+        const writer = spawn("flock", ["--exclusive", ${JSON.stringify(lock)}, process.execPath, "-e",
+          "process.stdout.write('ready'); setInterval(() => {}, 1000)"],
+          { detached: true, stdio: ["ignore", "pipe", "inherit"] });
+        writer.on("error", error => { console.error(error); process.exit(1); });
+        writer.stdout.once("data", () => {
+          require("node:fs").writeFileSync(${JSON.stringify(ready)}, "ready");
+          ${outcome === "cancel" ? "" : `process.exit(${outcome});`}
+        });
+      `
+      run = runInLinuxProcessScope([process.execPath, "-e", script], process.env, AbortSignal.any([t.signal, controller.signal]))
+      if (outcome === 0) await run
+      else if (outcome === 7) await assert.rejects(run, /code=7/)
+      else {
+        await Promise.race([
+          until(() => existsSync(ready), "detached writer ready"),
+          run.then(() => { throw new Error("fixture ended before cancellation") }),
+        ])
+        controller.abort(new Error("fixture cancelled"))
+        await assert.rejects(run, /fixture cancelled/)
+      }
+      assert.ok(existsSync(lock), "descendant acquired the fixture lock")
+      const probe = spawnSync("flock", ["--nonblock", "--exclusive", lock, "/bin/true"])
+      assert.equal(probe.status, 0, "all fixture descendants stopped before state removal")
+    } finally {
+      // A readiness/assertion failure must also join the scope before cleanup.
+      controller.abort(new Error("fixture cleanup"))
+      await run?.catch(() => {})
+      await rm(root, { recursive: true, force: true })
+    }
+  }
 })
