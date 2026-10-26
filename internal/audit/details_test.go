@@ -16,7 +16,7 @@ func TestDetailsPreserveActionFacts(t *testing.T) {
 		want    string
 	}{
 		{"member.granted", MembershipDetails{MembershipID: "member", IsOwner: true}, `{"membership_id":"member","is_owner":true}`},
-		{"installation_admin.granted", RoleGrantedDetails{NewRole: "admin"}, `{"new_role":"admin"}`},
+		{"platform_admin.granted", PlatformAdminGrantedDetails{Basis: "initial_setup"}, `{"basis":"initial_setup"}`},
 		{"invitation.accepted", MembershipDetails{MembershipID: "member"}, `{"membership_id":"member","is_owner":false}`},
 		{"member.removed", MembershipDetails{MembershipID: "member"}, `{"membership_id":"member","is_owner":false}`},
 		{"invitation.revoked", InvitationStateDetails{}, `{}`},
@@ -59,9 +59,9 @@ func TestDetailsRejectInvalidActionFacts(t *testing.T) {
 	}{
 		{"missing details", "api_key.updated", nil},
 		{"typed nil", "api_key.updated", typedNil},
-		{"wrong shape", "api_key.updated", RoleGrantedDetails{NewRole: "member"}},
+		{"wrong shape", "api_key.updated", PlatformAdminGrantedDetails{Basis: "member"}},
 		{"missing before", "api_key.updated", APIKeyChangedDetails{After: APIKeyPolicy{Name: "member"}}},
-		{"missing grant", "member.granted", RoleGrantedDetails{}},
+		{"missing grant", "member.granted", PlatformAdminGrantedDetails{}},
 		{"missing revoked role", "member.removed", MembershipDetails{}},
 		{"missing invitation expiry", "invitation.created", InvitationCreatedDetails{}},
 		{"zero invitation expiry", "invitation.created", InvitationCreatedDetails{ExpiresAt: &zero}},
@@ -70,7 +70,7 @@ func TestDetailsRejectInvalidActionFacts(t *testing.T) {
 		{"missing permissions object", "slack_connection.authorized", nil},
 		{"negative retention duration", "project.retention_changed", RetentionChangedDetails{OldRetentionSeconds: &negative}},
 		{"unexpected retention duration", "project.retention_changed", RetentionChangedDetails{NewRetentionSeconds: &negative}},
-		{"unapproved facts", "secret.rotated", RoleGrantedDetails{NewRole: "owner"}},
+		{"unapproved facts", "secret.rotated", PlatformAdminGrantedDetails{Basis: "owner"}},
 		{"invalid timestamp encoding", "api_key.issued", APIKeyIssuedDetails{Name: "automation", ExpiresAt: &unencodable}},
 	}
 	for _, tc := range cases {
@@ -109,5 +109,30 @@ func TestDetailsNormalizeExpiryToUTC(t *testing.T) {
 	}
 	if _, offset := expires.Zone(); offset != 9*60*60 {
 		t.Fatal("serialization mutated source timestamp")
+	}
+}
+
+func TestDetailsKeepBoundedFailureDiscriminators(t *testing.T) {
+	for _, tc := range []struct {
+		action, outcome, body string
+		valid                 bool
+	}{
+		{"mcp.refused", "denied", `{"reason":"stale_authority","tool":"list_agents"}`, true},
+		{"mcp.refused", "failed", `{"reason":"operation_failed","tool":"send_turn"}`, true},
+		{"mcp.refused", "failed", `{"reason":"operation_failed","tool":"untrusted request content"}`, false},
+		{"role.created", "failed", `{"reason":"operation_failed","tool":"list_agents"}`, false},
+		{"platform_admin.granted", "succeeded", `{"basis":"configured_admin_email"}`, true},
+		{"platform_admin.granted", "succeeded", `{"basis":"arbitrary"}`, false},
+		{"identity.session_revoked", "succeeded", `{"reason":"membership_removed"}`, true},
+		{"identity.session_revoked", "succeeded", `{"method":"membership_removed"}`, false},
+		{"message.rejected", "succeeded", `{"reason":"callback_failed"}`, true},
+		{"message.rejected", "succeeded", `{"reason":"raw runtime error"}`, false},
+	} {
+		t.Run(tc.action+"/"+tc.body, func(t *testing.T) {
+			_, err := DecodeDetails(tc.action, tc.outcome, []byte(tc.body))
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v err=%v", tc.valid, err)
+			}
+		})
 	}
 }

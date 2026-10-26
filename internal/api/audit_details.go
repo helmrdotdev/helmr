@@ -72,6 +72,7 @@ type AuditAccessSnapshot struct {
 
 	MemberName      string   `json:"member_name,omitempty"`
 	GroupName       string   `json:"group_name,omitempty"`
+	BuiltinKey      *string  `json:"builtin_key,omitempty"`
 	RoleName        string   `json:"role_name,omitempty"`
 	ProjectName     string   `json:"project_name,omitempty"`
 	EnvironmentName string   `json:"environment_name,omitempty"`
@@ -141,7 +142,6 @@ func (AuditComputerRetentionDetails) auditDetails() {}
 
 type AuditComputerControlDetails struct {
 	Reason    string    `json:"reason,omitempty"`
-	Kind      string    `json:"kind"`
 	RequestID uuid.UUID `json:"request_id"`
 }
 
@@ -175,6 +175,7 @@ type AuditEmptyDetails struct{}
 func (AuditEmptyDetails) auditDetails() {}
 
 type AuditFailureDetails struct {
+	Tool      string `json:"tool,omitempty"`
 	Operation string `json:"operation,omitempty"`
 	Reason    string `json:"reason"`
 }
@@ -189,11 +190,12 @@ type AuditLifecycleDetails struct {
 
 func (AuditLifecycleDetails) auditDetails() {}
 
-type AuditAuthorityChangedDetails struct {
+type AuditSessionHoldDetails struct {
+	Reason string    `json:"reason"`
 	HoldID uuid.UUID `json:"hold_id"`
 }
 
-func (AuditAuthorityChangedDetails) auditDetails() {}
+func (AuditSessionHoldDetails) auditDetails() {}
 
 type AuditCheckpointDetails struct {
 	CheckpointID uuid.UUID `json:"checkpoint_id"`
@@ -221,3 +223,15 @@ type AuditSearchDetails struct {
 }
 
 func (AuditSearchDetails) auditDetails() {}
+
+type AuditSessionRevokedDetails struct {
+	Reason string `json:"reason"`
+}
+
+func (AuditSessionRevokedDetails) auditDetails() {}
+
+type AuditMessageRejectedDetails struct {
+	Reason string `json:"reason"`
+}
+
+func (AuditMessageRejectedDetails) auditDetails() {}

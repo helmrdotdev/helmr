@@ -145,7 +145,7 @@ func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external
 		return signedInUser{}, fmt.Errorf("record auth identity: %w", err)
 	}
 	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, external.EmailVerified) {
-		if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
+		if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "platform_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.PlatformAdminGrantedDetails{Basis: "configured_admin_email"}}); err != nil {
 			return signedInUser{}, err
 		}
 	}
@@ -211,7 +211,7 @@ func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedIn
 	return raw, nil
 }
 
-func appendSessionLifecycle(ctx context.Context, tx pgx.Tx, cfg Config, actor audit.Evidence, orgID pgtype.UUID, action string, id uuid.UUID, details audit.AuthenticationDetails) error {
+func appendSessionLifecycle(ctx context.Context, tx pgx.Tx, cfg Config, actor audit.Evidence, orgID pgtype.UUID, action string, id uuid.UUID, details audit.Details) error {
 	event := audit.Event{Evidence: actor, Action: action, TargetKind: "login_session", TargetID: id, Details: details}
 	if err := audit.Append(ctx, tx, cfg.auditPolicy, event); err != nil {
 		return err
@@ -302,6 +302,6 @@ func RevokeLoginSession(ctx context.Context, database db.TxBeginner, cfg Config,
 		}
 		actor := audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: id})
 		actor.Authorization = audit.NotEvaluated()
-		return appendSessionLifecycle(ctx, tx, cfg, actor, orgID, "identity.session_revoked", id, audit.AuthenticationDetails{Method: "logout"})
+		return appendSessionLifecycle(ctx, tx, cfg, actor, orgID, "identity.session_revoked", id, audit.SessionRevokedDetails{Reason: "logout"})
 	})
 }

@@ -110,7 +110,11 @@ func DenyDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, app
 func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string, approve bool) (result DeviceCodeState, resultErr error) {
 	actor := audit.FromPrincipal(approver)
 	actor.Authorization = audit.NotEvaluated()
-	defer recordAuthenticationFailure(ctx, database, cfg, audit.Event{Evidence: actor, OrgID: approver.OrgID, Action: "identity.device_authorized", TargetKind: "device_code"}, &resultErr)
+	action := "identity.device_authorized"
+	if !approve {
+		action = "identity.device_denied"
+	}
+	defer recordAuthenticationFailure(ctx, database, cfg, audit.Event{Evidence: actor, OrgID: approver.OrgID, Action: action, TargetKind: "device_code"}, &resultErr)
 	hash, err := userCodeHash(cfg, userCode)
 	if err != nil {
 		return DeviceCodeState{}, err

@@ -67,7 +67,7 @@ func expireSessionDeadlineTx(ctx context.Context, auditPolicy auditpolicy.Policy
 	if err := rejectTurnMessages(ctx, auditPolicy, tx, env, session, turn, true, "turn_terminated"); err != nil {
 		return err
 	}
-	if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, Action: "session.authority_changed", TargetKind: "session", TargetID: session, Details: audit.AuthorityChangedDetails{HoldID: hold}}); err != nil {
+	if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, Action: "session.hold_created", TargetKind: "session", TargetID: session, Details: audit.SessionHoldDetails{HoldID: hold, Reason: "deadline_elapsed", Generation: epoch}}); err != nil {
 		return err
 	}
 	if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, TurnID: turn, Action: "turn.interrupted", TargetKind: "turn", TargetID: turn, Details: audit.LifecycleDetails{Generation: epoch}}); err != nil {

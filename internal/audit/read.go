@@ -14,7 +14,7 @@ func DecodeDetails(action, outcome string, data []byte) (Details, error) {
 	if !ok {
 		return nil, errors.New("unclassified audit details")
 	}
-	if action != "computer.control_settled" && (outcome == "denied" || outcome == "failed" || outcome == "unknown") {
+	if action != "computer.wake_settled" && action != "computer.hibernate_settled" && (outcome == "denied" || outcome == "failed" || outcome == "unknown") {
 		decoder = decodeDetail[FailureDetails]
 	}
 	details, err := decoder(data)
@@ -29,7 +29,11 @@ func DecodeDetails(action, outcome string, data []byte) (Details, error) {
 
 func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 	switch action {
-	case "identity.sign_in", "identity.session_revoked", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested":
+	case "identity.session_revoked":
+		return decodeDetail[SessionRevokedDetails], true
+	case "message.rejected":
+		return decodeDetail[MessageRejectedDetails], true
+	case "identity.sign_in", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested":
 		return decodeDetail[AuthenticationDetails], true
 	case "audit.searched":
 		return decodeDetail[SearchDetails], true
@@ -47,17 +51,17 @@ func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 		return decodeDetail[RegionDetails], true
 	case "computer.retention_changed":
 		return decodeDetail[ComputerRetentionDetails], true
-	case "computer.control_requested", "computer.control_settled":
+	case "computer.wake_requested", "computer.hibernate_requested", "computer.wake_settled", "computer.hibernate_settled":
 		return decodeDetail[ComputerControlDetails], true
 	case "session.close_requested", "session.cancel_requested", "session.interrupt_requested", "session.resume_requested", "turn.interrupt_requested":
 		return decodeDetail[SessionControlDetails], true
 	case "template.refresh_requested":
 		return decodeDetail[TemplateRefreshDetails], true
-	case "session.authority_changed":
-		return decodeDetail[AuthorityChangedDetails], true
+	case "session.hold_created", "session.hold_released":
+		return decodeDetail[SessionHoldDetails], true
 	case "computer.restore_completed", "computer.checkpoint_published":
 		return decodeDetail[CheckpointDetails], true
-	case "trigger.content_read", "session.delivery_check_requested", "session.delivery_abandoned", "input.requested", "message.delivered", "message.rejected", "turn.interrupted", "computer.created", "command.cancel_requested", "message.admitted", "worker_group.updated", "session.created", "session.closed", "session.cancelled", "session.content_read", "turn.admitted", "turn.completed", "turn.cancelled", "input.answered", "input.rejected", "command.admitted", "command.completed", "command.cancelled", "command.output_read":
+	case "trigger.content_read", "session.delivery_check_requested", "session.delivery_abandoned", "input.requested", "message.delivered", "turn.interrupted", "computer.created", "command.cancel_requested", "message.admitted", "worker_group.updated", "session.created", "session.closed", "session.cancelled", "session.content_read", "turn.admitted", "turn.completed", "turn.cancelled", "input.answered", "input.cancelled", "command.admitted", "command.completed", "command.cancelled", "command.output_read":
 		return decodeDetail[LifecycleDetails], true
 	case "slack_connection.disconnected":
 		return decodeDisconnectDetails, true
@@ -65,12 +69,12 @@ func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 		return decodeDetail[AgentChangeDetails], true
 	case "member.ownership_changed":
 		return decodeDetail[OwnershipChangedDetails], true
-	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role.standard_created", "role_grant.created", "role_grant.updated", "role_grant.deleted":
+	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role_grant.created", "role_grant.updated", "role_grant.deleted":
 		return decodeDetail[AccessChangeDetails], true
 	case "member.granted", "member.removed", "invitation.accepted":
 		return decodeDetail[MembershipDetails], true
-	case "installation_admin.granted":
-		return decodeDetail[RoleGrantedDetails], true
+	case "platform_admin.granted":
+		return decodeDetail[PlatformAdminGrantedDetails], true
 	case "invitation.revoked", "invitation.expired":
 		return decodeDetail[InvitationStateDetails], true
 	case "invitation.created":
@@ -83,7 +87,7 @@ func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 		return decodeDetail[PermissionsDetails], true
 	case "project.retention_changed":
 		return decodeDetail[RetentionChangedDetails], true
-	case "organization.created", "api_key.rotated", "api_key.revoked", "secret.created", "secret.rotated", "secret.revoked", "project.created", "project.updated", "environment.created", "environment.updated", "deployment.published", "deployment.promoted", "slack_app.credentials_configured", "slack_installation.authorization_lost", "slack_user.linked", "slack_user.unlinked", "worker_group.created", "worker_group.token_rotated", "worker_group.active", "worker_group.paused", "worker_group.draining", "worker_group.disabled", "worker_pool.created", "worker_pool.primary_selected", "worker_pool.resource_policy_updated", "worker_pool.draining", "worker_pool.disabled", "worker_host.draining", "worker_host.lost", "worker_host.provider_absence_confirmed", "worker_scale_in.completed", "runtime.operation_refused", "turn.failed", "command.failed", "mcp.refused", "computer.deleted":
+	case "organization.created", "api_key.rotated", "api_key.revoked", "secret.created", "secret.rotated", "secret.revoked", "project.created", "project.updated", "environment.created", "environment.updated", "deployment.published", "deployment.promoted", "slack_app.credentials_configured", "slack_installation.authorization_lost", "slack_user.linked", "slack_user.unlinked", "worker_group.created", "worker_group.token_rotated", "worker_group.activated", "worker_group.paused", "worker_group.drain_started", "worker_group.disabled", "worker_pool.created", "worker_pool.primary_selected", "worker_pool.resource_policy_updated", "worker_pool.drain_started", "worker_pool.disabled", "worker_host.drain_started", "worker_host.marked_lost", "worker_host.provider_absence_confirmed", "worker_scale_in.completed", "runtime.operation_refused", "turn.failed", "command.failed", "mcp.refused", "computer.deleted":
 		return decodeEmptyDetails, true
 	}
 	return nil, false

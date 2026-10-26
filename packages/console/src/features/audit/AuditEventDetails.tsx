@@ -104,7 +104,7 @@ export function AuditEventDetails(props: {
   return (
     <div class="flex flex-col gap-2.5 whitespace-normal border-b border-console-border bg-console-accent-soft/40 py-2.5 pr-6 pl-10 max-sm:pl-3">
       <clipboard.LiveRegion />
-      <Show when={hasRestrictions()}><p class="m-0 text-chrome text-console-muted">Some installation details are restricted in this view. An installation administrator can correlate the full record by event ID.</p></Show>
+      <Show when={hasRestrictions()}><p class="m-0 text-chrome text-console-muted">Some platform details are restricted in this view. Users with Helmr管理者 access can correlate the full record by event ID.</p></Show>
       <div class="flex items-center gap-3 border-b border-console-border">
         <Tabs<Tab> id={tabsID()} label="Event details" class="mb-0! min-w-0 flex-1 border-b-0!" selected={tab()} onSelect={setTab} items={[
           { value: "event", label: "Event" },
@@ -180,7 +180,7 @@ export function AuditEventDetails(props: {
         <Fields footer={missing() && missing()!.roles.length ? <span>Roles that include <span class="font-mono">{missing()!.permission}</span> today: <For each={missing()!.roles}>{(role, i) => <>{i() > 0 ? ", " : ""}<A href={roleHref(role.id)} class={cx(ui.monoLink, "font-sans")}>{role.name}</A></>}</For></span> : undefined}>
           <Group title="Decision">
             <Row label="Result"><StatusBadge resource="audit_decision" status={e().authorization.decision} /><Show when={e().authorization.decision === "not_evaluated"}><span class="ml-2 text-console-muted">No authority check applies to this event</span></Show></Row>
-            <Show when={installationAuthority()}><Row label="Authority">Installation administrator</Row></Show>
+            <Show when={installationAuthority()}><Row label="Authority">Helmr管理者</Row></Show>
             <Row label="Checks">{restricted("authorization") ? <span class="text-console-muted">{checks().length} visible; additional checks restricted</span> : checks().length === 0 ? <span class="text-console-muted">None recorded</span> : `${checks().length} recorded${failed() ? `, ${failed()} failed` : ", all passed"}`}</Row>
           </Group>
           <For each={checks()}>{(check, i) => (

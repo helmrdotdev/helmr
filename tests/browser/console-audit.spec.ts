@@ -190,7 +190,7 @@ test("organization details mark restricted evidence without presenting it as abs
   await open(page);
   await page.getByRole("button", { name: /^Show details: Updated role/ }).click();
   const details = page.locator(`#audit-row-${granted.id}`);
-  await expect(details).toContainText("Some installation details are restricted");
+  await expect(details).toContainText("Some platform details are restricted");
   await expect(details).toContainText("Restricted");
   await expect(details.getByRole("button", { name: "Open the cause" })).toHaveCount(0);
   await expect(details).not.toContainText("No cause recorded");
@@ -215,4 +215,29 @@ test("Admin can select an organization's full audit records", async ({ page }) =
   await input.fill("");
   await input.press("Tab");
   await expect.poll(() => searches.at(-1)?.get("organization_id")).toBeNull();
+});
+
+test("Admin sees the Helmr administrator grant and its basis", async ({ page }) => {
+  await fixture(page, { installation: true });
+  const adminGrant = {
+    ...granted, org_id: null, action: "platform_admin.granted", target_kind: "user", target_id: userID,
+    actor_worker_host_id: null, actor_component: null, runtime_generation: null, process_epoch: null,
+    source_ip: null, cause_event_id: null, restricted: [], details: { basis: "initial_setup" },
+    authorization: { decision: "allowed", checks: [{ type: "user_attribute", attribute: "admin", expected: true, observed: true, user_id: userID, scope: { kind: "installation" }, observation_source: "transaction", result: "passed" }] },
+  };
+  await page.route("**/admin/api/v1/audit-events**", async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith("/actions")) {
+      await route.fulfill({ json: { actions: [{ action: "platform_admin.granted", target_kind: "user", outcomes: ["succeeded"], category: "access" }] } });
+    } else await route.fulfill({ json: { events: [adminGrant] } });
+  });
+  await page.goto("/admin/audit-events");
+  await page.getByRole("button", { name: /^Show details: Granted Helmr管理者 access/ }).click();
+  const details = page.locator(`#audit-row-${granted.id}`);
+  await expect(details).toContainText("initial_setup");
+  await details.getByRole("tab", { name: /^Authorization/ }).click();
+  await expect(details).toContainText("Helmr管理者");
+  await expect(details).not.toContainText("Installation administrator");
+  await details.getByRole("tab", { name: "JSON" }).click();
+  await expect(details).toContainText("platform_admin.granted");
+  await expect(details).not.toContainText("new_role");
 });

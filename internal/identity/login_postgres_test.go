@@ -281,7 +281,7 @@ func TestVerifiedLoginAuditAndInitialAdministratorGrant(t *testing.T) {
 	if _, err := SignIn(t.Context(), f.pool, f.cfg, external); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='installation_admin.granted' AND actor_component IS NOT NULL AND actor_component='control_plane' AND target_id=$1 AND org_id IS NULL`, principal.UserID).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='platform_admin.granted' AND details='{"basis":"configured_admin_email"}'::jsonb AND actor_component IS NOT NULL AND actor_component='control_plane' AND target_id=$1 AND org_id IS NULL`, principal.UserID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("initial grant count=%d err=%v", count, err)
 	}
 }

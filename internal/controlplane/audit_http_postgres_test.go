@@ -161,3 +161,27 @@ func TestAuditHTTPControlRefusalActionsAndTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestAuditHTTPComputerRefusalsIdentifyOperation(t *testing.T) {
+	f := sessiontest.New(t)
+	p := dbtest.SecretManager(t, f.Pool, f.Environment)
+	dbtest.SetAPIKeyRole(t, f.Pool, p.APIKeyID, "agents.read")
+	token := auth.APIKeyPrefix + uuid.NewV7().String()
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET token_hash=$2 WHERE id=$1`, p.APIKeyID, auth.HashAPIKey(token))
+	handler := newPostgresServer(t, f.Pool)
+	for _, kind := range []string{"wake", "hibernate"} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/computers/"+f.Computer.String()+"/"+kind, strings.NewReader(`{"idempotency_key":"refused"}`))
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatal(kind, response.Code, response.Body.String())
+		}
+		var valid bool
+		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(outcome='denied' AND target_kind='computer' AND details->>'reason'='permission_denied')
+ FROM audit_events WHERE action=$1 AND actor_api_key_id=$2`, "computer."+kind+"_requested", p.APIKeyID).Scan(&valid); err != nil || !valid {
+			t.Fatalf("%s refusal: %v %v", kind, valid, err)
+		}
+	}
+}

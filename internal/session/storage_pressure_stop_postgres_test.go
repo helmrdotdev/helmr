@@ -143,6 +143,11 @@ func TestPressureStopDeadlineSurvivesRecurrenceAndExpiresUnderPressure(t *testin
  FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) WHERE p.session_id=$1`, f.session).Scan(&failed, &computerLive); err != nil || !failed || !computerLive {
 		t.Fatalf("failed=%v Computer live=%v err=%v", failed, computerLive, err)
 	}
+	var deadlineCaptured bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 FROM audit_events WHERE action='session.hold_created' AND session_id=$1 AND details->>'reason'='stop_deadline_elapsed'`, f.session).Scan(&deadlineCaptured); err != nil || !deadlineCaptured {
+		t.Fatalf("stop deadline cause: %v %v", deadlineCaptured, err)
+	}
+
 }
 func TestPressureStopExplicitControlsAndActualFailureKeepDeadline(t *testing.T) {
 	for _, kind := range []string{"interrupt", "cancel", "close", "failure", "lease_loss", "integrity"} {

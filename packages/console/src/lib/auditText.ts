@@ -17,7 +17,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
 // Words for the resource an action names, as it reads in a sentence.
 const NOUNS: Record<string, string> = {
   access: "access", member: "member", invitation: "invitation", role: "role", role_grant: "role assignment",
-  permission_group: "group", installation_admin: "installation administrator", organization: "organization",
+  permission_group: "group", platform_admin: "Helmr管理者", organization: "organization",
   identity: "sign-in", agent: "agent", session: "session", turn: "turn", input: "question", message: "message",
   trigger: "trigger", mcp: "tool connection", runtime: "runtime operation", slack_app: "Slack app",
   slack_installation: "Slack workspace", slack_connection: "Slack connection", slack_user: "Slack user link",
@@ -36,14 +36,18 @@ const VERBS: Record<string, string> = {
   answered: "Answered", requested: "Requested", delivered: "Delivered", recovered: "Recovered", refreshed: "Refreshed",
   connected: "Connected", disconnected: "Disconnected", linked: "Linked", unlinked: "Unlinked", searched: "Searched",
   member_added: "Added a member to", member_removed: "Removed a member from", ownership_changed: "Changed ownership of",
-  retention_changed: "Changed retention of", authority_changed: "Changed the authority of", content_read: "Read the content of",
-  output_read: "Read the output of", control_requested: "Requested a control on", control_settled: "Settled a control on",
+  retention_changed: "Changed retention of", content_read: "Read the content of",
+  output_read: "Read the output of", wake_requested: "Requested waking", hibernate_requested: "Requested hibernating", wake_settled: "Settled a wake request for", hibernate_settled: "Settled a hibernate request for",
+  activated: "Activated", paused: "Paused", drain_started: "Started draining", disabled: "Disabled", marked_lost: "Marked as lost",
   cancel_requested: "Requested cancelling", close_requested: "Requested closing", interrupt_requested: "Requested interrupting", resume_requested: "Requested resuming", refresh_requested: "Requested refreshing", checkpoint_published: "Saved a checkpoint of", restore_completed: "Restored",
-  exposed: "Made available", standard_created: "Created a standard", sign_in: "Signed in",
+  exposed: "Made available", sign_in: "Signed in",
 };
 
 // Actions whose generic wording reads badly.
 const OVERRIDES: Record<string, string> = {
+  "platform_admin.granted": "Granted Helmr管理者 access",
+  "session.hold_created": "Placed a hold on a session",
+  "session.hold_released": "Released a hold on a session",
   "identity.sign_in": "Signed in",
   "identity.session_revoked": "Ended a sign-in session",
   "identity.magic_link_requested": "Asked for a sign-in link",
@@ -93,7 +97,7 @@ export type AuditNames = { get: (id: string) => string | undefined };
 function detailName(event: AuditEvent): string | undefined {
   const details = event.details as Record<string, unknown> | null;
   if (!details || typeof details !== "object") return undefined;
-  for (const key of ["name", "display_name", "new_role"]) if (typeof details[key] === "string" && details[key]) return details[key] as string;
+  for (const key of ["name", "display_name"]) if (typeof details[key] === "string" && details[key]) return details[key] as string;
   const after = details["after"] as Record<string, unknown> | undefined;
   if (after && typeof after["name"] === "string") return after["name"];
   return undefined;
@@ -144,7 +148,7 @@ const REASONS: Record<string, string> = {
 const CHECK_TITLES: Record<string, string> = {
   permission: "Permission",
   membership_attribute: "Organization owner",
-  user_attribute: "Installation administrator",
+  user_attribute: "Helmr管理者",
   runtime_binding: "Current runtime",
   session_origin: "Started by",
   slack_thread: "Slack thread",
@@ -209,8 +213,8 @@ export function checkFields(check: AuditCheck, names: AuditNames, links: { sessi
     case "user_attribute":
       return [
         ...person("User", check.user_id, names, "user"),
-        { label: "Expected", value: check.expected ? "An installation administrator" : "Not an administrator" },
-        { label: "Observed", value: check.observed ? "An installation administrator" : "Not an administrator", sub: check.observation_source ? `checked ${check.observation_source === "transaction" ? "when the change was saved" : "when the request arrived"}` : undefined },
+        { label: "Expected", value: check.expected ? "Helmr管理者" : "Not Helmr管理者" },
+        { label: "Observed", value: check.observed ? "Helmr管理者" : "Not Helmr管理者", sub: check.observation_source ? `checked ${check.observation_source === "transaction" ? "when the change was saved" : "when the request arrived"}` : undefined },
         result(check),
       ];
     case "runtime_binding":

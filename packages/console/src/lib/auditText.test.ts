@@ -98,3 +98,20 @@ test("public internal events retain their no-credential explanation with restric
     { label: "From", value: "Restricted", muted: true },
   ]);
 });
+
+test("operation labels distinguish requests, settlements and hold direction", () => {
+  expect(actionLabel("computer.wake_requested")).toBe("Requested waking computer");
+  expect(actionLabel("computer.hibernate_requested")).toBe("Requested hibernating computer");
+  expect(actionLabel("computer.wake_settled")).toBe("Settled a wake request for computer");
+  expect(actionLabel("computer.hibernate_settled")).toBe("Settled a hibernate request for computer");
+  expect(actionLabel("session.hold_created")).toBe("Placed a hold on a session");
+  expect(actionLabel("session.hold_released")).toBe("Released a hold on a session");
+  expect(actionLabel("input.cancelled")).toBe("Cancelled question");
+  expect(actionLabel("worker_group.activated")).toBe("Activated worker group");
+  expect(actionLabel("worker_host.drain_started")).toBe("Started draining worker host");
+  expect(actionLabel("platform_admin.granted")).toBe("Granted Helmr管理者 access");
+  const fields = checkFields({ type: "user_attribute", expected: true, observed: true, result: "passed" }, names(), links);
+  expect(fields.find((f) => f.label === "Observed")?.value).toBe("Helmr管理者");
+  const denied = checkFields({ type: "user_attribute", expected: true, observed: false, result: "failed" }, names(), links);
+  expect(denied.find((f) => f.label === "Observed")?.value).toBe("Not Helmr管理者");
+});

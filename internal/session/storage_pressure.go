@@ -109,7 +109,11 @@ func reconcileStoragePressureTx(ctx context.Context, auditPolicy auditpolicy.Pol
 			state = "resolved"
 		}
 		if state != "" {
-			if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: id, Action: "session.authority_changed", TargetKind: "session", TargetID: id, Details: audit.AuthorityChangedDetails{HoldID: *hold}}); err != nil {
+			action := "session.hold_created"
+			if state == "resolved" {
+				action = "session.hold_released"
+			}
+			if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: id, Action: action, TargetKind: "session", TargetID: id, Details: audit.SessionHoldDetails{HoldID: *hold, Reason: "storage_pressure"}}); err != nil {
 				return err
 			}
 			if err = advanceControlAuthority(ctx, tx, env, []uuid.UUID{id}); err != nil {

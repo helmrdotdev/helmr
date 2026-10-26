@@ -169,6 +169,6 @@ func reconcileProcessStopDeadline(ctx context.Context, auditPolicy auditpolicy.P
 		if err != nil {
 			return err
 		}
-		return observeSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), Execution{EnvironmentID: env, SessionID: session, ProcessEpoch: epoch}, "Session cooperative stop deadline elapsed; reconstruction required")
+		return observeSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), Execution{EnvironmentID: env, SessionID: session, ProcessEpoch: epoch}, "Session cooperative stop deadline elapsed; reconstruction required", "stop_deadline_elapsed")
 	})
 }

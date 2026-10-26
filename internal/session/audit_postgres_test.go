@@ -130,8 +130,12 @@ func TestAuditDeadlineSettlementRollsBackAndDoesNotRecreate(t *testing.T) {
 	if err := fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND actor_component='control_plane' AND action IN ('turn.interrupted','session.authority_changed')`, f.session).Scan(&count); err != nil || count != 2 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND actor_component='control_plane' AND action IN ('turn.interrupted','session.hold_created')`, f.session).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("deadline facts: %d %v", count, err)
+	}
+	var holdValid bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'reason'='deadline_elapsed' AND (details->>'generation')::bigint=$2) FROM audit_events WHERE action='session.hold_created' AND session_id=$1`, f.session, f.execution().ProcessEpoch).Scan(&holdValid); err != nil || !holdValid {
+		t.Fatalf("deadline hold details: %v %v", holdValid, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM audit_events WHERE session_id=$1`, f.session)
 	if err := fail(); err != nil {
@@ -172,7 +176,7 @@ func TestAuditWorkerStopAttributionAndRollback(t *testing.T) {
 	}
 	var count int
 	var valid bool
-	err = f.pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_worker_host_id IS NOT NULL AND credential_id=$2 AND credential_version=$3) FROM audit_events WHERE session_id=$1 AND action IN ('turn.interrupted','session.authority_changed')`, f.session, f.host().HostID, f.host().HostClaimVersion).Scan(&count, &valid)
+	err = f.pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_worker_host_id IS NOT NULL AND credential_id=$2 AND credential_version=$3) FROM audit_events WHERE session_id=$1 AND action IN ('turn.interrupted','session.hold_created')`, f.session, f.host().HostID, f.host().HostClaimVersion).Scan(&count, &valid)
 	if err != nil || count != 2 || !valid {
 		t.Fatalf("worker facts: %d %v %v", count, valid, err)
 	}
@@ -186,7 +190,7 @@ func TestAuditComputerControlSettlementRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_controls SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, accepted.ID)
-	dbtest.MustExec(t, t.Context(), f.pool, `ALTER TABLE audit_events ADD CONSTRAINT reject_control_settlement CHECK(action<>'computer.control_settled') NOT VALID`)
+	dbtest.MustExec(t, t.Context(), f.pool, `ALTER TABLE audit_events ADD CONSTRAINT reject_control_settlement CHECK(action<>'computer.hibernate_settled') NOT VALID`)
 	if err := computer.ReconcileExecutionControls(t.Context(), policy, f.pool); !errors.Is(err, audit.ErrCapture) {
 		t.Fatalf("capture failure: %v", err)
 	}
@@ -201,14 +205,14 @@ func TestAuditComputerControlSettlementRollback(t *testing.T) {
 		}
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE computer_id=$1 AND action='computer.control_settled' AND outcome='failed' AND details->>'request_id'=$2`, f.computer, accepted.ID.String()).Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE computer_id=$1 AND action='computer.hibernate_settled' AND outcome='failed' AND NOT(details ? 'kind') AND details->>'reason'='operation_failed' AND details->>'request_id'=$2`, f.computer, accepted.ID.String()).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("settlement facts: %d %v", count, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM audit_events WHERE action='computer.control_settled'`)
+	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM audit_events WHERE action='computer.hibernate_settled'`)
 	if err := computer.ReconcileExecutionControls(t.Context(), policy, f.pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='computer.control_settled'`).Scan(&count); err != nil || count != 0 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='computer.hibernate_settled'`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("settlement recreated: %d %v", count, err)
 	}
 }
@@ -247,7 +251,7 @@ func TestAuditComputerControlRejectsRotatedCredentialAfterOwnerWait(t *testing.T
 				t.Fatalf("rotated credential admitted: %v", err)
 			}
 			var n int
-			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='computer.control_requested' AND computer_id=$1`, f.computer).Scan(&n); err != nil {
+			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='computer.hibernate_requested' AND computer_id=$1`, f.computer).Scan(&n); err != nil {
 				t.Fatal(err)
 			}
 			want := 0
@@ -337,9 +341,15 @@ func TestAuditMCPStaleGenerationRetainsObservedCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	var valid bool
-	err = f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(actor_worker_host_id=$1 AND actor_session_id IS NULL AND org_id IS NULL AND authentication_result='verified' AND authorization_evidence->>'decision'='denied' AND authorization_evidence->'checks'->0->>'type'='runtime_binding' AND authorization_evidence->'checks'->0->>'reason'='generation_changed' AND (authorization_evidence->'checks'->0->>'generation')::bigint=$2 AND (authorization_evidence->'checks'->0->>'observed_generation')::bigint=$2+1) FROM audit_events WHERE action='mcp.refused'`, f.host().HostID, e.AuthorityGeneration).Scan(&valid)
+	err = f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'tool'='list_agents' AND actor_worker_host_id=$1 AND actor_session_id IS NULL AND org_id IS NULL AND authentication_result='verified' AND authorization_evidence->>'decision'='denied' AND authorization_evidence->'checks'->0->>'type'='runtime_binding' AND authorization_evidence->'checks'->0->>'reason'='generation_changed' AND (authorization_evidence->'checks'->0->>'generation')::bigint=$2 AND (authorization_evidence->'checks'->0->>'observed_generation')::bigint=$2+1) FROM audit_events WHERE action='mcp.refused'`, f.host().HostID, e.AuthorityGeneration).Scan(&valid)
 	if err != nil || !valid {
 		t.Fatal("lost runtime refusal or changed executor", valid, err)
+	}
+	if err := session.AdmitMCP(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, "untrusted tool payload"); !errors.Is(err, session.ErrDenied) {
+		t.Fatal(err)
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND count(*) FILTER(WHERE details ? 'tool')=1 AND bool_and(details::text NOT LIKE '%untrusted%') FROM audit_events WHERE action='mcp.refused'`).Scan(&valid); err != nil || !valid {
+		t.Fatalf("untrusted tool was captured: %v %v", valid, err)
 	}
 }
 
@@ -376,6 +386,35 @@ func TestAuditControlRequestActionsAndTargets(t *testing.T) {
 			var valid bool
 			if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(outcome='accepted' AND target_kind=$2 AND target_id=$3 AND details->>'request_id'=$4 AND NOT(details ? 'kind')) FROM audit_events WHERE session_id=$1 AND action=$5`, f.session, targetKind, targetID, receipt.ID.String(), action).Scan(&valid); err != nil || !valid {
 				t.Fatal("control acceptance identity/replay", valid, err)
+			}
+		})
+	}
+}
+
+func TestAuditComputerRequestsIdentifyOperationAndReplay(t *testing.T) {
+	for _, kind := range []string{"wake", "hibernate"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newFixture(t)
+			policy := auditpolicy.Policy{RetentionSeconds: 3600}
+			req := f.executionRequest(kind, "audit-operation")
+			accepted, err := session.ControlComputerExecution(t.Context(), policy, f.pool, f.caller(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := session.ControlComputerExecution(t.Context(), policy, f.pool, f.caller(), req); err != nil {
+				t.Fatal(err)
+			}
+			var valid bool
+			if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(action=$2 AND outcome='accepted' AND details->>'request_id'=$3 AND NOT(details ? 'kind'))
+ FROM audit_events WHERE computer_id=$1 AND action LIKE 'computer.%_requested'`, f.computer, "computer."+kind+"_requested", accepted.ID.String()).Scan(&valid); err != nil || !valid {
+				t.Fatalf("request identity or replay: %v %v", valid, err)
+			}
+			if kind == "wake" {
+				// Already awake settles the request; it is not a new physical wake observation.
+				if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(outcome='succeeded' AND details->>'request_id'=$2 AND NOT(details ? 'kind'))
+ FROM audit_events WHERE computer_id=$1 AND action='computer.wake_settled'`, f.computer, accepted.ID.String()).Scan(&valid); err != nil || !valid {
+					t.Fatalf("immediate wake settlement: %v %v", valid, err)
+				}
 			}
 		})
 	}

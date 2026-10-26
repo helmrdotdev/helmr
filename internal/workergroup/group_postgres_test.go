@@ -106,6 +106,11 @@ func TestGroupTransitionsPostgres(t *testing.T) {
 	if err != nil || activated.Status != db.WorkerGroupStatusActive {
 		t.Fatalf("activated = %+v, %v", activated, err)
 	}
+	var activationCount int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_group.activated' AND target_id=$1`, f.groupID()).Scan(&activationCount); err != nil || activationCount != 1 {
+		t.Fatalf("activation audit: %d %v", activationCount, err)
+	}
+
 	status, err := ReadGroupStatus(t.Context(), f.q, f.groupID())
 	if err != nil || status.ClaimVersion != activated.ClaimVersion || status.Status != db.WorkerGroupStatusActive {
 		t.Fatalf("ReadGroupStatus = %+v, %v", status, err)
@@ -167,6 +172,11 @@ func TestGroupDrainClearsPrimaryPoolPostgres(t *testing.T) {
 	if err != nil || drained.Status != "draining" || drained.ClaimVersion != pool.ClaimVersion+1 {
 		t.Fatalf("drained pool = %+v, %v", drained, err)
 	}
+	var drains bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND count(*) FILTER(WHERE action='worker_group.drain_started' AND target_id=$1)=1 AND count(*) FILTER(WHERE action='worker_pool.drain_started' AND target_id=$2)=1 FROM audit_events WHERE action IN ('worker_group.drain_started','worker_pool.drain_started')`, f.groupID(), pool.ID).Scan(&drains); err != nil || !drains {
+		t.Fatalf("drain audit: %v %v", drains, err)
+	}
+
 }
 
 func TestHostStatusPostgres(t *testing.T) {
@@ -195,4 +205,9 @@ func TestHostStatusPostgres(t *testing.T) {
 	if err != nil || lost.Status != "lost" || lost.ClaimVersion != status.ClaimVersion+1 || !lost.TransitionApplied {
 		t.Fatalf("MarkHostLost = %+v, %v", lost, err)
 	}
+	var lossCount int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='worker_host.marked_lost' AND target_id=$1`, hostID).Scan(&lossCount); err != nil || lossCount != 1 {
+		t.Fatalf("loss declaration audit: %d %v", lossCount, err)
+	}
+
 }

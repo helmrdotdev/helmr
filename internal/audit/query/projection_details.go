@@ -36,6 +36,10 @@ func projectDetails(event *api.AuditEvent, scope readScope, details audit.Detail
 		return api.AuditAgentCleanupDetails(d), nil
 	case audit.AgentChangeDetails:
 		return api.AuditAgentChangeDetails(d), nil
+	case audit.SessionRevokedDetails:
+		return api.AuditSessionRevokedDetails(d), nil
+	case audit.MessageRejectedDetails:
+		return api.AuditMessageRejectedDetails(d), nil
 	case audit.AuthenticationDetails:
 		public := api.AuditAuthenticationDetails(d)
 		if event.Authorization.InstallationAuthority && public.AuthorizingCredentialID != uuid.Nil() {
@@ -44,7 +48,7 @@ func projectDetails(event *api.AuditEvent, scope readScope, details audit.Detail
 		}
 		return public, nil
 	case audit.FailureDetails:
-		public := api.AuditFailureDetails{Reason: d.Reason}
+		public := api.AuditFailureDetails{Reason: d.Reason, Tool: d.Tool}
 		if d.Operation != "" {
 			// HTTP refusal writers store a matched route template, never the URL/body.
 			// Other internal operations are restricted until a public contract names them.
@@ -67,11 +71,11 @@ func projectDetails(event *api.AuditEvent, scope readScope, details audit.Detail
 		return api.AuditSessionControlDetails(d), nil
 	case audit.TemplateRefreshDetails:
 		return api.AuditTemplateRefreshDetails(d), nil
-	case audit.AuthorityChangedDetails:
+	case audit.SessionHoldDetails:
 		if d.Generation != 0 {
 			restrict(event, api.AuditRestrictedDetails)
 		}
-		return api.AuditAuthorityChangedDetails{HoldID: d.HoldID}, nil
+		return api.AuditSessionHoldDetails{HoldID: d.HoldID, Reason: d.Reason}, nil
 	case audit.CheckpointDetails:
 		if d.Generation != 0 {
 			restrict(event, api.AuditRestrictedDetails)

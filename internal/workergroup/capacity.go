@@ -189,7 +189,7 @@ func DrainHost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy
 			return fmt.Errorf("drain worker host %s: %w", hostID.String(), err)
 		}
 		if locked.Host.Status == db.WorkerHostStatusActive {
-			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.draining", TargetKind: "worker_host", TargetID: hostID}); err != nil {
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.drain_started", TargetKind: "worker_host", TargetID: hostID}); err != nil {
 				return err
 			}
 		}

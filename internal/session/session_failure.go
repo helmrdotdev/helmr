@@ -13,7 +13,7 @@ import (
 )
 
 // The caller holds ownership/process locks and records the idempotent failure fact.
-func recordSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Evidence, e Execution, reason string) error {
+func recordSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Evidence, e Execution, reason, auditReason string) error {
 	hold := uuid.NewV7()
 	if _, err := tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason)
  VALUES($1,$2,$3,'local',$4)`, e.EnvironmentID, hold, e.SessionID, reason); err != nil {
@@ -29,7 +29,7 @@ func recordSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, t
 	if err != nil {
 		return err
 	}
-	if err := auditActorFact(ctx, tx, auditPolicy, actor, audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, Action: "session.authority_changed", TargetKind: "session", TargetID: e.SessionID, Details: audit.AuthorityChangedDetails{Generation: e.ProcessEpoch, HoldID: hold}}); err != nil {
+	if err := auditActorFact(ctx, tx, auditPolicy, actor, audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, Action: "session.hold_created", TargetKind: "session", TargetID: e.SessionID, Details: audit.SessionHoldDetails{Reason: auditReason, Generation: e.ProcessEpoch, HoldID: hold}}); err != nil {
 		return err
 	}
 	return eventData(ctx, tx, e.EnvironmentID, e.SessionID, uuid.Nil(), "session.process_failed", data)
@@ -102,11 +102,11 @@ func ObserveSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		if recorded || stopped {
 			return nil
 		}
-		return observeSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, "Session runtime control failed")
+		return observeSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, "Session runtime control failed", "process_failed")
 	}))
 }
 
-func observeSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Evidence, e Execution, reason string) error {
+func observeSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Evidence, e Execution, reason, auditReason string) error {
 	var terminal bool
 	if err := tx.QueryRow(ctx, `SELECT s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) FROM sessions s  WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&terminal); err != nil {
 		return err
@@ -116,7 +116,7 @@ func observeSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		return err
 	}
 	if !terminal && !revocationRecorded {
-		if err = recordSessionFailure(ctx, auditPolicy, tx, actor, e, reason); err != nil {
+		if err = recordSessionFailure(ctx, auditPolicy, tx, actor, e, reason, auditReason); err != nil {
 			return err
 		}
 	}

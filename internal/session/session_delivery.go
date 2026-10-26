@@ -219,7 +219,7 @@ func ObserveSessionStopped(ctx context.Context, auditPolicy auditpolicy.Policy, 
 			return err
 		}
 		if kind != "shutdown" && !revocationRecorded {
-			if err = recordSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, "Session process stopped unexpectedly"); err != nil {
+			if err = recordSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, "Session process stopped unexpectedly", "process_failed"); err != nil {
 				return err
 			}
 		}

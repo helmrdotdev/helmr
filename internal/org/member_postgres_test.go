@@ -166,6 +166,27 @@ func TestInitialOrganizationRollsBackFailedAdministratorGrant(t *testing.T) {
 	if err := database.Pool.QueryRow(t.Context(), `SELECT NOT admin AND NOT EXISTS(SELECT 1 FROM organizations) AND NOT EXISTS(SELECT 1 FROM org_members) FROM users WHERE id=$1`, user).Scan(&intact); err != nil || !intact {
 		t.Fatalf("initial setup did not roll back: %v %v", intact, err)
 	}
+	dbtest.MustExec(t, t.Context(), database.Pool, `DROP TRIGGER reject_initial_admin ON users; DROP FUNCTION reject_initial_admin()`)
+	actor := audit.VerifiedLogin(user, "fixture")
+	created, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: actor, Slug: "initial", OwnerUserID: user, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var valid bool
+	if err := database.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(actor_user_id=$1 AND details='{"basis":"initial_setup"}'::jsonb) FROM audit_events WHERE action='platform_admin.granted'`, user).Scan(&valid); err != nil || !valid {
+		t.Fatalf("initial administrator basis: %v %v", valid, err)
+	}
+	for range 2 {
+		if err := db.RunTx(t.Context(), database.Pool, func(tx pgx.Tx) error {
+			return org.SeedStandardRoles(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, pgvalue.MustUUIDValue(created.ID), actor)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.Pool.QueryRow(t.Context(), `SELECT count(*)=$3 AND bool_and(a.actor_user_id=$1 AND a.action='role.created' AND a.details->'after'->>'builtin_key'=r.builtin_key)
+ FROM roles r JOIN audit_events a ON a.target_id=r.id WHERE r.org_id=$2`, user, created.ID, len(auth.StandardRoles())).Scan(&valid); err != nil || !valid {
+		t.Fatalf("standard role origin, actor or replay: %v %v", valid, err)
+	}
 }
 
 func newMemberFixture(t *testing.T) memberFixture {

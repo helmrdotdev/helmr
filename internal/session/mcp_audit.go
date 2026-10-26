@@ -53,7 +53,11 @@ func AdmitMCP(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner
 	if errors.Is(err, ErrDenied) {
 		reason, outcome = "stale_authority", "denied"
 	}
-	if captureErr := audit.RecordFailure(ctx, pool, policy, audit.Event{Evidence: actor, Action: "mcp.refused", Outcome: outcome, TargetKind: "mcp", Unresolved: true}, reason); captureErr != nil {
+	details := audit.FailureDetails{}
+	if audit.KnownMCPTool(tool) {
+		details.Tool = tool
+	}
+	if captureErr := audit.RecordFailure(ctx, pool, policy, audit.Event{Evidence: actor, Action: "mcp.refused", Outcome: outcome, TargetKind: "mcp", Unresolved: true, Details: details}, reason); captureErr != nil {
 		return captureErr
 	}
 	return err

@@ -86,6 +86,11 @@ func TestPreparationImageRevocationStopsPeersAndPreservesFinalization(t *testing
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE environment_id=$1`, f.env).Scan(&holds); err != nil || holds != 2 {
 		t.Fatalf("idempotent holds %d: %v", holds, err)
 	}
+	var revocations bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(details->>'reason'='secret_revoked') FROM audit_events WHERE action='session.hold_created' AND environment_id=$1`, f.env).Scan(&revocations); err != nil || !revocations {
+		t.Fatalf("revocation hold causes: %v %v", revocations, err)
+	}
+
 	var status string
 	if err = f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE environment_id=$1 AND id=$2`, f.env, running.TurnID).Scan(&status); err != nil || status != "interrupted" {
 		t.Fatalf("running %s: %v", status, err)

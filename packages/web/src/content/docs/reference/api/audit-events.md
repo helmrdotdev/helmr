@@ -22,7 +22,7 @@ Organization assignment includes organization events and its environments; an
 Environment assignment includes that environment's events. Several Environment
 grants form a union. Environment history excludes Organization IAM changes, so it
 cannot reconstruct every change to effective access. Investigating Role, group and
-membership changes requires Organization audit access. Ownership, installation administration, directory access and
+membership changes requires Organization audit access. Ownership, platform administration, directory access and
 execution-content permissions do not implicitly grant tenant audit access.
 Environment API keys require an explicit grant and cannot read organization or
 installation events. Audit metadata can disclose scoped account identity and
@@ -32,7 +32,12 @@ resource existence without granting access to execution content.
 | --- | --- |
 | Human login session | `GET /api/audit-events` |
 | Environment API key | `GET /v1/audit-events` |
-| Installation administrator login | `GET /admin/api/v1/audit-events` |
+| Helmr administrator login | `GET /admin/api/v1/audit-events` |
+
+A Helmr administrator (shown as **Helmr管理者** in the Console) manages one running Helmr service across its organizations.
+This is a platform-wide user attribute, separate from organization ownership or
+Roles; self-hosted operators can hold it too. Its grant is recorded as
+`platform_admin.granted`, with the grant basis in details.
 
 The Console provides **Settings → Audit events** and a separate installation audit
 view for administrators. The CLI reads one page:
@@ -59,8 +64,8 @@ omitting it selects installation facts. Tenant scope comes from authentication.
 
 A login session can read the recordable actions, with each action's target kind,
 outcomes and category, from `GET /api/audit-events/actions`. This list contains
-organization actions only, including when the caller is an installation admin.
-Installation admins use `GET /admin/api/v1/audit-events/actions` for the full catalog.
+organization actions only, including when the caller is a Helmr administrator.
+Helmr administrators use `GET /admin/api/v1/audit-events/actions` for the full catalog.
 Both lists are metadata and contain no audit data.
 
 The response contains `events` and, when another bounded page exists, `next_before`
@@ -78,8 +83,7 @@ investigating. This endpoint is not a loss-free collector, archive or export
 checkpoint. Collection and independent custody require separate capabilities.
 
 After organization deletion, its original IDs and unexpired audit facts remain.
-Former tenant credentials have no post-closure read route. An installation
-administrator can investigate by the original organization UUID. A replacement
+Former tenant credentials have no post-closure read route. A Helmr administrator can investigate by the original organization UUID. A replacement
 organization with the same name cannot inherit that history. Access to live tenant
 history is recorded in that tenant; requests for absent/deleted organizations are
 recorded as unresolved installation facts. After all facts expire there is no
@@ -88,10 +92,10 @@ persistent audit inventory proving the former organization's existence.
 ## Identity and authority fields
 
 The ordinary endpoints return a customer view, including for a caller who is also
-an installation administrator. The separately authorized Admin endpoint returns
+a Helmr administrator. The separately authorized Admin endpoint returns
 captured evidence. Both refer to the same event IDs; projection never rewrites the
-stored actor or evidence. Cloud and self-hosted installations use this same role
-boundary. Organization Owners and Auditors are not installation administrators.
+stored actor or evidence. Cloud and self-hosted installations use this same access
+boundary. Organization Owners and Auditors are not Helmr administrators.
 
 Customer events have `actor_kind`: `user`, `api_key`, `session`,
 `platform_service`, or `unidentified`. They retain at most one of `actor_user_id`,

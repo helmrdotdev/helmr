@@ -27,7 +27,7 @@ func recordComputerSecretRevocationFailure(ctx context.Context, auditPolicy audi
 	if !record {
 		return false, nil
 	}
-	if err := recordSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, "Computer exposed to a revoked Secret"); err != nil {
+	if err := recordSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, "Computer exposed to a revoked Secret", "secret_revoked"); err != nil {
 		return false, err
 	}
 	_, err := tx.Exec(ctx, `UPDATE session_processes SET failure_recorded_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)

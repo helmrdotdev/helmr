@@ -19,8 +19,8 @@ type OwnershipChangedDetails struct {
 
 func (OwnershipChangedDetails) auditDetails() {}
 
-type RoleGrantedDetails struct {
-	NewRole string `json:"new_role"`
+type PlatformAdminGrantedDetails struct {
+	Basis string `json:"basis"`
 }
 
 type InvitationCreatedDetails struct {
@@ -63,11 +63,11 @@ type RetentionChangedDetails struct {
 	NewRetentionSeconds *int64 `json:"new_retention_seconds"`
 }
 
-func (RoleGrantedDetails) auditDetails()       {}
-func (InvitationCreatedDetails) auditDetails() {}
-func (APIKeyIssuedDetails) auditDetails()      {}
-func (PermissionsDetails) auditDetails()       {}
-func (RetentionChangedDetails) auditDetails()  {}
+func (PlatformAdminGrantedDetails) auditDetails() {}
+func (InvitationCreatedDetails) auditDetails()    {}
+func (APIKeyIssuedDetails) auditDetails()         {}
+func (PermissionsDetails) auditDetails()          {}
+func (RetentionChangedDetails) auditDetails()     {}
 
 // AccessChangeDetails contains policy facts, never request metadata or credentials.
 type AccessSnapshot struct {
@@ -80,6 +80,7 @@ type AccessSnapshot struct {
 
 	MemberName      string   `json:"member_name,omitempty"`
 	GroupName       string   `json:"group_name,omitempty"`
+	BuiltinKey      *string  `json:"builtin_key,omitempty"`
 	RoleName        string   `json:"role_name,omitempty"`
 	ProjectName     string   `json:"project_name,omitempty"`
 	EnvironmentName string   `json:"environment_name,omitempty"`
@@ -130,7 +131,13 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	}
 	valid := false
 	switch action {
-	case "identity.sign_in", "identity.session_revoked", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested":
+	case "identity.session_revoked":
+		d, ok := details.(SessionRevokedDetails)
+		valid = ok && (d.Reason == "logout" || d.Reason == "membership_removed" || d.Reason == "invitation_accepted")
+	case "message.rejected":
+		d, ok := details.(MessageRejectedDetails)
+		valid = ok && (d.Reason == "message_rejected" || d.Reason == "callback_failed" || d.Reason == "turn_closed" || d.Reason == "turn_terminated")
+	case "identity.sign_in", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested":
 		d, ok := details.(AuthenticationDetails)
 		valid = ok && d.Method != "" && len(d.Method) <= 64 && len(d.Provider) <= 128 && len(d.Subject) <= 512
 	case "audit.searched":
@@ -150,29 +157,29 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 		valid = ok && d.ExposureID != (SecretExposureDetails{}).ExposureID && d.VersionID != (SecretExposureDetails{}).VersionID && d.RevocationGeneration >= 0
 	case "mcp.admitted":
 		d, ok := details.(MCPDetails)
-		valid = ok && (d.Tool == "list_agents" || d.Tool == "list_computers" || d.Tool == "spawn" || d.Tool == "start" || d.Tool == "inspect_turn" || d.Tool == "inspect_session" || d.Tool == "list_sessions" || d.Tool == "send_turn" || d.Tool == "interrupt_turn" || d.Tool == "interrupt_session" || d.Tool == "resume_session" || d.Tool == "close_session" || d.Tool == "cancel_session" || d.Tool == "enqueue")
+		valid = ok && KnownMCPTool(d.Tool)
 	case "region.created", "region.updated":
 		d, ok := details.(RegionDetails)
 		valid = ok && len(d.RegionID) > 0 && len(d.RegionID) <= 128
 	case "computer.retention_changed":
 		d, ok := details.(ComputerRetentionDetails)
 		valid = ok && (d.Before == nil || *d.Before > 0) && (d.After == nil || *d.After > 0)
-	case "computer.control_requested", "computer.control_settled":
+	case "computer.wake_requested", "computer.hibernate_requested", "computer.wake_settled", "computer.hibernate_settled":
 		d, ok := details.(ComputerControlDetails)
-		valid = ok && d.RequestID != (ComputerControlDetails{}).RequestID && (d.Kind == "wake" || d.Kind == "hibernate")
+		valid = ok && d.RequestID != (ComputerControlDetails{}).RequestID
 	case "session.close_requested", "session.cancel_requested", "session.interrupt_requested", "session.resume_requested", "turn.interrupt_requested":
 		d, ok := details.(SessionControlDetails)
 		valid = ok && d.RequestID != (SessionControlDetails{}).RequestID
 	case "template.refresh_requested":
 		d, ok := details.(TemplateRefreshDetails)
 		valid = ok && d.ImageBuildID != (TemplateRefreshDetails{}).ImageBuildID
-	case "session.authority_changed":
-		d, ok := details.(AuthorityChangedDetails)
-		valid = ok && d.HoldID != (AuthorityChangedDetails{}).HoldID && d.Generation >= 0
+	case "session.hold_created", "session.hold_released":
+		d, ok := details.(SessionHoldDetails)
+		valid = ok && d.HoldID != (SessionHoldDetails{}).HoldID && d.Generation >= 0 && (d.Reason == "storage_pressure" || d.Reason == "process_failed" || d.Reason == "deadline_elapsed" || d.Reason == "stop_deadline_elapsed" || d.Reason == "secret_revoked" || d.Reason == "execution_lost")
 	case "computer.restore_completed", "computer.checkpoint_published":
 		d, ok := details.(CheckpointDetails)
 		valid = ok && d.CheckpointID != (CheckpointDetails{}).CheckpointID && d.Generation >= 0
-	case "trigger.content_read", "session.delivery_check_requested", "session.delivery_abandoned", "input.requested", "message.delivered", "message.rejected", "turn.interrupted", "computer.created", "command.cancel_requested", "message.admitted", "worker_group.updated", "session.created", "session.closed", "session.cancelled", "session.content_read", "turn.admitted", "turn.completed", "turn.cancelled", "input.answered", "input.rejected", "command.admitted", "command.completed", "command.cancelled", "command.output_read":
+	case "trigger.content_read", "session.delivery_check_requested", "session.delivery_abandoned", "input.requested", "message.delivered", "turn.interrupted", "computer.created", "command.cancel_requested", "message.admitted", "worker_group.updated", "session.created", "session.closed", "session.cancelled", "session.content_read", "turn.admitted", "turn.completed", "turn.cancelled", "input.answered", "input.cancelled", "command.admitted", "command.completed", "command.cancelled", "command.output_read":
 		d, ok := details.(LifecycleDetails)
 		valid = ok && d.Sequence >= 0 && d.Generation >= 0
 
@@ -187,15 +194,15 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 		valid = ok && d.Revision > 0
 	case "member.ownership_changed":
 		_, valid = details.(OwnershipChangedDetails)
-	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role.standard_created", "role_grant.created", "role_grant.updated", "role_grant.deleted":
+	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role_grant.created", "role_grant.updated", "role_grant.deleted":
 		d, ok := details.(AccessChangeDetails)
 		valid = ok && (d.Before != nil || d.After != nil)
 	case "member.granted", "member.removed", "invitation.accepted":
 		d, ok := details.(MembershipDetails)
 		valid = ok && d.MembershipID != ""
-	case "installation_admin.granted":
-		d, ok := details.(RoleGrantedDetails)
-		valid = ok && d.NewRole != ""
+	case "platform_admin.granted":
+		d, ok := details.(PlatformAdminGrantedDetails)
+		valid = ok && (d.Basis == "initial_setup" || d.Basis == "configured_admin_email")
 	case "invitation.revoked", "invitation.expired":
 		_, valid = details.(InvitationStateDetails)
 	case "invitation.created":
@@ -217,7 +224,7 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "project.retention_changed":
 		d, ok := details.(RetentionChangedDetails)
 		valid = ok && validRetention(d.OldRetentionSeconds) && validRetention(d.NewRetentionSeconds)
-	case "organization.created", "api_key.rotated", "api_key.revoked", "secret.created", "secret.rotated", "secret.revoked", "project.created", "project.updated", "environment.created", "environment.updated", "deployment.published", "deployment.promoted", "slack_app.credentials_configured", "slack_installation.authorization_lost", "slack_user.linked", "slack_user.unlinked", "worker_group.created", "worker_group.token_rotated", "worker_group.active", "worker_group.paused", "worker_group.draining", "worker_group.disabled", "worker_pool.created", "worker_pool.primary_selected", "worker_pool.resource_policy_updated", "worker_pool.draining", "worker_pool.disabled", "worker_host.draining", "worker_host.lost", "worker_host.provider_absence_confirmed", "worker_scale_in.completed", "runtime.operation_refused", "turn.failed", "command.failed", "mcp.refused", "computer.deleted":
+	case "organization.created", "api_key.rotated", "api_key.revoked", "secret.created", "secret.rotated", "secret.revoked", "project.created", "project.updated", "environment.created", "environment.updated", "deployment.published", "deployment.promoted", "slack_app.credentials_configured", "slack_installation.authorization_lost", "slack_user.linked", "slack_user.unlinked", "worker_group.created", "worker_group.token_rotated", "worker_group.activated", "worker_group.paused", "worker_group.drain_started", "worker_group.disabled", "worker_pool.created", "worker_pool.primary_selected", "worker_pool.resource_policy_updated", "worker_pool.drain_started", "worker_pool.disabled", "worker_host.drain_started", "worker_host.marked_lost", "worker_host.provider_absence_confirmed", "worker_scale_in.completed", "runtime.operation_refused", "turn.failed", "command.failed", "mcp.refused", "computer.deleted":
 		// Actions without additional facts persist an object, never JSON null.
 		if details == nil {
 			return []byte("{}"), nil

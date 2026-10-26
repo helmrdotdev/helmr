@@ -30,9 +30,29 @@ authorized search lives in `audit/query`; HTTP response types belong to `api`.
 A receipt records acceptance or settlement, not an unobserved physical outcome.
 `computer.checkpoint_published` records durable verified checkpoint publication;
 `computer.restore_completed` records activation plus acknowledged retained-process
-controls. `computer.control_settled` records the explicit request receipt.
+controls. `computer.wake_settled` and `computer.hibernate_settled` record the
+explicit request receipt.
 `mcp.admitted` is authenticated transport admission; the dispatched owner checks
 fresh business authority or reconciles its existing receipt.
+
+Action names identify the operation and its stage. Keep target attributes,
+provenance, methods and bounded reasons in details: standard Roles use
+`role.created` with `after.builtin_key`, while Computer wake and hibernate have
+separate request and settlement actions. Neither an already-satisfied request nor
+a hold release proves a new physical transition. `session.hold_created` and
+`session.hold_released` describe the captured storage-pressure, process-failure,
+Secret-revocation, execution-loss and deadline facts; they are not a complete
+ledger of every internal hold change.
+Explicit user controls retain their own request facts.
+
+`platform_admin.granted` records a user attribute, not an organization Role.
+Its `basis` distinguishes `initial_setup` from `configured_admin_email`. The
+administrator manages the whole Helmr service across organizations, including a
+self-hosted service. Grant origin does not change the recorded actor.
+
+Revocation and message rejection details use closed `reason` values, not an
+authentication method or raw error. Known MCP tool names survive refusal in
+`FailureDetails.tool`; arbitrary incoming names and payloads are never copied.
 
 After a known failed transaction, bounded independent failure capture can record
 the observed refusal. `db.CommitOutcomeUnknown` means a commit acknowledgement was

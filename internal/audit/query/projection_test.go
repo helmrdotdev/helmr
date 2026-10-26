@@ -222,13 +222,13 @@ func TestAuditCatalogProjection(t *testing.T) {
 	now, id := time.Now(), uuid.NewV7()
 	samples := []any{
 		struct{}{}, audit.FailureDetails{Reason: "permission_denied"},
-		audit.AuthenticationDetails{Method: "login"},
+		audit.AuthenticationDetails{Method: "login"}, audit.SessionRevokedDetails{Reason: "logout"}, audit.MessageRejectedDetails{Reason: "turn_closed"},
 		audit.SearchDetails{ReadModel: "organization", From: now.Add(-time.Hour), To: now},
 		audit.SecretExposureDetails{ExposureID: id, VersionID: id}, audit.MCPDetails{Tool: "list_agents"},
-		audit.ComputerRetentionDetails{}, audit.ComputerControlDetails{Kind: "wake", RequestID: id},
-		audit.ComputerControlDetails{Kind: "wake", RequestID: id, Reason: "operation_failed"},
+		audit.ComputerRetentionDetails{}, audit.ComputerControlDetails{RequestID: id},
+		audit.ComputerControlDetails{RequestID: id, Reason: "operation_failed"},
 		audit.SessionControlDetails{RequestID: id}, audit.TemplateRefreshDetails{ImageBuildID: id},
-		audit.AuthorityChangedDetails{HoldID: id}, audit.CheckpointDetails{CheckpointID: id}, audit.LifecycleDetails{},
+		audit.SessionHoldDetails{HoldID: id, Reason: "storage_pressure"}, audit.CheckpointDetails{CheckpointID: id}, audit.LifecycleDetails{},
 		audit.AgentCleanupDetails{CauseAgentID: id.String(), Reason: "agent_deleted"}, audit.AgentChangeDetails{Revision: 1},
 		audit.OwnershipChangedDetails{}, audit.AccessChangeDetails{After: &audit.AccessSnapshot{Name: "Audit test"}},
 		audit.MembershipDetails{MembershipID: id.String()}, audit.InvitationStateDetails{}, audit.InvitationCreatedDetails{ExpiresAt: &now},
@@ -275,5 +275,33 @@ func TestAuditCatalogProjection(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAuditProjectionPreservesOperationContext(t *testing.T) {
+	key := "auditor"
+	for _, tc := range []struct {
+		action, outcome     string
+		details             audit.Details
+		expected, forbidden string
+	}{
+		{"role.created", "succeeded", audit.AccessChangeDetails{After: &audit.AccessSnapshot{Name: "Auditor", BuiltinKey: &key}}, `"builtin_key":"auditor"`, ""},
+		{"session.hold_released", "succeeded", audit.SessionHoldDetails{HoldID: uuid.NewV7(), Reason: "storage_pressure", Generation: 4}, `"reason":"storage_pressure"`, `"generation"`},
+		{"identity.session_revoked", "succeeded", audit.SessionRevokedDetails{Reason: "logout"}, `"reason":"logout"`, `"method"`},
+		{"message.rejected", "succeeded", audit.MessageRejectedDetails{Reason: "turn_terminated"}, `"reason":"turn_terminated"`, ""},
+		{"mcp.refused", "denied", audit.FailureDetails{Reason: "stale_authority", Tool: "list_agents"}, `"tool":"list_agents"`, ""},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			r, scope := projectionRecord(t, audit.Internal(audit.ControlPlane), tc.action, tc.details)
+			r.Outcome = tc.outcome
+			projected, err := projectRecord(r, scope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(projected.Details)
+			if err != nil || !bytes.Contains(data, []byte(tc.expected)) || (tc.forbidden != "" && bytes.Contains(data, []byte(tc.forbidden))) {
+				t.Fatalf("projection lost context or disclosed internal fields: %s %v", data, err)
+			}
+		})
 	}
 }

@@ -73,7 +73,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	var revoked bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(credential_id=$1 AND actor_user_id=$2) FROM audit_events WHERE action='identity.session_revoked' AND target_id=$1`, principal.SessionID, principal.UserID).Scan(&revoked); err != nil || !revoked {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(credential_id=$1 AND actor_user_id=$2 AND details='{"reason":"logout"}'::jsonb) FROM audit_events WHERE action='identity.session_revoked' AND target_id=$1`, principal.SessionID, principal.UserID).Scan(&revoked); err != nil || !revoked {
 		t.Fatal(revoked, err)
 	}
 }
@@ -261,5 +261,33 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAuditDeviceDenialFailureKeepsDecision(t *testing.T) {
+	f := newIdentityFixture(t)
+	user := f.user(t, "Approver", "")
+	org := f.organization(t, "decision-audit")
+	member := f.member(t, org, user, "member")
+	approver := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, OrgID: org, MemberID: member, SessionID: uuid.NewV7()}
+	consent := DeviceConsent{UserID: user.String(), OrgID: org.String()}
+	started, err := StartDeviceCode(t.Context(), f.pool, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A real owner transaction failure must remain a denial operation, not approval.
+	f.exec(t, `CREATE FUNCTION reject_device_decision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected decision failure'; END $$;
+ CREATE TRIGGER reject_device_decision BEFORE UPDATE ON device_codes FOR EACH ROW EXECUTE FUNCTION reject_device_decision()`)
+	if _, err := DenyDeviceCode(t.Context(), f.pool, f.cfg, approver, consent, started.UserCode); err == nil {
+		t.Fatal("injected failure ignored")
+	}
+	var valid bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(action='identity.device_denied' AND outcome='failed' AND actor_user_id=$1 AND details='{"reason":"operation_failed"}'::jsonb)
+ FROM audit_events WHERE action IN ('identity.device_authorized','identity.device_denied')`, user).Scan(&valid); err != nil || !valid {
+		t.Fatalf("decision failure mislabelled: %v %v", valid, err)
+	}
+	state, err := DeviceCodeStatus(t.Context(), f.queries, f.cfg, started.UserCode)
+	if err != nil || state.Status != "pending" {
+		t.Fatalf("decision failed to roll back: %+v %v", state, err)
 	}
 }

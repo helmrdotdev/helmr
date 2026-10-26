@@ -128,7 +128,14 @@ func transitionGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.
 			TransitionApplied: row.TransitionApplied,
 		}
 		if row.TransitionApplied {
-			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_group." + string(target), TargetKind: "worker_group", TargetID: groupID}); err != nil {
+			verb := string(target)
+			switch verb {
+			case "active":
+				verb = "activated"
+			case "draining":
+				verb = "drain_started"
+			}
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_group." + verb, TargetKind: "worker_group", TargetID: groupID}); err != nil {
 				return err
 			}
 		}
@@ -200,7 +207,7 @@ func MarkHostLost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Pol
 			status.CurrentEpoch = &row.CurrentEpoch.Int64
 		}
 		if row.TransitionApplied {
-			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.lost", TargetKind: "worker_host", TargetID: pgvalue.MustUUIDValue(row.ID)}); err != nil {
+			if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.marked_lost", TargetKind: "worker_host", TargetID: pgvalue.MustUUIDValue(row.ID)}); err != nil {
 				return err
 			}
 		}

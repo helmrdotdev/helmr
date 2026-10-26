@@ -211,7 +211,7 @@ func auditControlSettlements(ctx context.Context, tx pgx.Tx, policy auditpolicy.
 		if r.status == "failed" {
 			outcome, reason = "failed", "operation_failed"
 		}
-		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), EnvironmentID: r.environment, ComputerID: r.computer, Action: "computer.control_settled", Outcome: outcome, TargetKind: "computer", TargetID: r.computer, Causality: audit.Causality{InitiatorKind: r.callerKind, InitiatorID: r.caller}, Details: audit.ComputerControlDetails{Kind: r.kind, RequestID: r.request, Reason: reason}}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), EnvironmentID: r.environment, ComputerID: r.computer, Action: "computer." + r.kind + "_settled", Outcome: outcome, TargetKind: "computer", TargetID: r.computer, Causality: audit.Causality{InitiatorKind: r.callerKind, InitiatorID: r.caller}, Details: audit.ComputerControlDetails{RequestID: r.request, Reason: reason}}); err != nil {
 			return err
 		}
 	}

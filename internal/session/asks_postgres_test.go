@@ -154,6 +154,9 @@ func TestAskAnswerArbitrationAndCancellation(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_events WHERE kind='ask.cancelled'`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("cancel events %d %v", count, err)
 	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE target_id=$1 AND action='input.cancelled' AND outcome='succeeded'`, pending).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("cancel audit events %d %v", count, err)
+	}
 }
 func TestAskTerminalCancellationAndBudget(t *testing.T) {
 	f, a, id, q := askFixture(t)

@@ -35,7 +35,7 @@ func CreateOrganization(ctx context.Context, database db.TxBeginner, input org.O
 				return fmt.Errorf("grant initial administrator: %w", err)
 			}
 			if changed > 0 {
-				if err := audit.Append(ctx, tx, input.AuditPolicy, audit.Event{Evidence: input.Actor, Action: "installation_admin.granted", TargetKind: "user", TargetID: input.OwnerUserID, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
+				if err := audit.Append(ctx, tx, input.AuditPolicy, audit.Event{Evidence: input.Actor, Action: "platform_admin.granted", TargetKind: "user", TargetID: input.OwnerUserID, Details: audit.PlatformAdminGrantedDetails{Basis: "initial_setup"}}); err != nil {
 					return err
 				}
 			}
@@ -80,7 +80,7 @@ func AcceptInvitation(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy,
 	return revokeSessions(ctx, tx, policy, actor, user, pgtype.UUID{}, "invitation_accepted")
 }
 
-func revokeSessions(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, user uuid.UUID, organization pgtype.UUID, method string) error {
+func revokeSessions(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, user uuid.UUID, organization pgtype.UUID, reason string) error {
 	rows, err := tx.Query(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1 AND ($2::uuid IS NULL OR org_id=$2 OR org_id IS NULL) AND revoked_at IS NULL RETURNING id,org_id`, user, organization)
 	if err != nil {
 		return err
@@ -103,7 +103,7 @@ func revokeSessions(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, a
 		return err
 	}
 	for _, s := range sessions {
-		if err := appendSessionLifecycle(ctx, tx, Config{auditPolicy: policy}, actor, s.org, "identity.session_revoked", s.id, audit.AuthenticationDetails{Method: method}); err != nil {
+		if err := appendSessionLifecycle(ctx, tx, Config{auditPolicy: policy}, actor, s.org, "identity.session_revoked", s.id, audit.SessionRevokedDetails{Reason: reason}); err != nil {
 			return err
 		}
 	}

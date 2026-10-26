@@ -100,7 +100,7 @@ func loseProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx,
 		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 	}
 	if !recorded && !terminal && !revocationRecorded && disposition == ComputerLossRequiresAttention {
-		if err := recordSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, "Computer execution authority lost without an eligible continuation"); err != nil {
+		if err := recordSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, "Computer execution authority lost without an eligible continuation", "execution_lost"); err != nil {
 			return err
 		}
 	}
