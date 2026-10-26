@@ -244,6 +244,17 @@ func startSessionInitTest(t *testing.T, dir string, fail bool) (*exec.Cmd, *os.F
 }
 
 func TestSessionChildIdentityRejectsMissingAndExtraRights(t *testing.T) {
+	// The descriptor count belongs to the process, not this goroutine. Run the
+	// observation without other tests' asynchronous closes or file finalizers.
+	if os.Getenv("HELMR_SESSION_CHILD_RIGHTS_TEST") != "1" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestSessionChildIdentityRejectsMissingAndExtraRights$", "-test.v")
+		cmd.Env = append(os.Environ(), "HELMR_SESSION_CHILD_RIGHTS_TEST=1")
+		output, err := cmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(output), "--- PASS: TestSessionChildIdentityRejectsMissingAndExtraRights ") {
+			t.Fatalf("isolated identity descriptor check: %v\n%s", err, output)
+		}
+		return
+	}
 	for _, count := range []int{0, 1, 3} {
 		t.Run(strconv.Itoa(count), func(t *testing.T) {
 			pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
@@ -294,7 +305,7 @@ func TestSessionChildIdentityRejectsMissingAndExtraRights(t *testing.T) {
 				t.Fatal(err)
 			}
 			if len(before) != len(after) {
-				t.Fatal("received descriptors leaked")
+				t.Fatalf("received descriptors changed: before=%v after=%v", before, after)
 			}
 		})
 	}

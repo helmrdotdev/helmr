@@ -84,6 +84,14 @@ helper-specific setup in [source CI](../.github/workflows/ci.yaml) and
 The CI profile permits the helper and its descendants without disabling the
 runner's global user namespace restriction.
 
+On Linux, the Codex starter fixture owns a disposable PID namespace. Its outer
+test waits for namespace teardown before deleting temporary state, including
+when the fixture fails or is cancelled. This contains fixture-owned descendants
+without changing the native adapter's lifecycle or disabling native features.
+The scope regression checks a detached descendant's file lock rather than relying
+on a cleanup delay. The guestd descriptor-leak test likewise runs in a separate
+process so unrelated asynchronous closes cannot change its descriptor count.
+
 ## Reusing TypeScript build inputs
 
 `nix run .#ci-typescript` builds fresh SDK/proto packages once, packs them into a
