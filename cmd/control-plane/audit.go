@@ -19,12 +19,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func runAuditMaintenance(ctx context.Context, output io.Writer, args []string) error {
+func runAuditCommand(ctx context.Context, output io.Writer, args []string) error {
 	if len(args) == 0 || args[0] != "purge" && args[0] != "record-restore" {
-		return errors.New("audit-maintenance requires purge or record-restore")
+		return errors.New("audit requires purge or record-restore")
 	}
 	operation := args[0]
-	flags := flag.NewFlagSet("audit-maintenance "+operation, flag.ContinueOnError)
+	flags := flag.NewFlagSet("audit "+operation, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var reference, from, to string
 	if operation == "record-restore" {
@@ -36,7 +36,7 @@ func runAuditMaintenance(ctx context.Context, output io.Writer, args []string) e
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("unexpected audit-maintenance argument")
+		return errors.New("unexpected audit argument")
 	}
 	policy, err := auditpolicy.Parse(os.Getenv("AUDIT_RETENTION_SECONDS"))
 	if err != nil {

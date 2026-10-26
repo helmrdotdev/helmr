@@ -516,7 +516,7 @@ run "audit_purge_is_bounded_and_isolated" {
   command = apply
   variables { create_controlplane_service = true }
   assert {
-    condition     = jsondecode(aws_ecs_task_definition.audit_maintenance.container_definitions)[0].command == ["audit-maintenance", "purge"]
+    condition     = jsondecode(aws_ecs_task_definition.audit_maintenance.container_definitions)[0].command == ["audit", "purge"]
     error_message = "Periodic maintenance must only run purge."
   }
   assert {

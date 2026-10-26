@@ -132,7 +132,7 @@ and volume requirements, configure the separate roles, and schedule the followin
 command through the deployment's native scheduler:
 
 ```sh
-control-plane audit-maintenance purge
+control-plane audit purge
 ```
 
 The job requires `AUDIT_RETENTION_SECONDS`, `AUDIT_MAINTENANCE_TIMEOUT_SECONDS`
@@ -177,7 +177,7 @@ privileges/policy, run bounded expiry cleanup, and record the recovery gap befor
 reopening:
 
 ```sh
-control-plane audit-maintenance record-restore \
+control-plane audit record-restore \
   --backup-reference NONSECRET_BACKUP_REFERENCE \
   --unknown-from 2026-10-01T01:00:00Z \
   --unknown-to 2026-10-01T02:00:00Z
