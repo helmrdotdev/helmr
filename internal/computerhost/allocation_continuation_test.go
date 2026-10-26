@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -34,17 +35,22 @@ type allocationContinuationFixture struct {
 	delayed                                         bool
 	installed, activated                            bool
 	p                                               *agentv1.ComputerSessionInstallation
+	events                                          []string
 }
 
 func (f *allocationContinuationFixture) prepareInstallation() (workerapi.AgentComputerInstallationResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prepare++
+	f.events = append(f.events, "prepare")
 	if f.installed {
 		f.t.Fatal("installed request was regenerated")
 	}
-	p := &agentv1.ComputerSessionInstallation{Capture: f.capture, DesiredVersion: 2, SourceAbort: f.source, BaseComputerDiskVersionId: "base", Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: f.target.OwnerID, ComputerInstanceId: f.target.AllocationID, WriterGeneration: uint64(f.target.Epoch), ChannelCredential: "current", OperationId: f.capture.CheckpointId, OperationExpiresAtUnixNano: time.Now().Add(10 * time.Millisecond).UnixNano()}, Grants: []*agentv1.SessionGrant{{Identity: f.capture.Sessions[0], AuthorityGeneration: int64(f.prepare)}}}
-	p.StoppedSessions = []*agentv1.SessionIdentity{p.Grants[0].Identity}
+	p := &agentv1.ComputerSessionInstallation{Capture: f.capture, DesiredVersion: 2, SourceAbort: f.source, BaseComputerDiskVersionId: "base", Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: f.target.OwnerID, ComputerInstanceId: f.target.AllocationID, WriterGeneration: uint64(f.target.Epoch), ChannelCredential: "current", OperationId: f.capture.CheckpointId, OperationExpiresAtUnixNano: time.Now().Add(10 * time.Millisecond).UnixNano()}}
+	for _, identity := range f.capture.Sessions {
+		p.Grants = append(p.Grants, &agentv1.SessionGrant{Identity: identity, AuthorityGeneration: int64(f.prepare)})
+		p.StoppedSessions = append(p.StoppedSessions, identity)
+	}
 	f.p = p
 	raw, err := proto.Marshal(p)
 	return workerapi.AgentComputerInstallationResponse{Installation: raw}, err
@@ -65,6 +71,7 @@ func (f *allocationContinuationFixture) validation() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.validate++
+	f.events = append(f.events, "validate")
 	if f.scenario == "stale-before-install" && f.prepare == 1 {
 		return &httpclient.Error{StatusCode: http.StatusConflict, Code: workerapi.AgentComputerNotReady}
 	}
@@ -80,6 +87,9 @@ func (f *allocationContinuationFixture) AgentComputerSaveAbsence(context.Context
 	return nil
 }
 func (f *allocationContinuationFixture) AcquireAgentAttachment(context.Context, workerapi.RuntimeSession) (workerapi.AgentAttachmentResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, "attachment")
 	return workerapi.AgentAttachmentResponse{Stopped: true}, nil
 }
 func (f *allocationContinuationFixture) CommitAgentComputerSourceAbort(context.Context, workerapi.AgentComputerInstallationRequest) error {
@@ -92,6 +102,7 @@ func (f *allocationContinuationFixture) commitInstallation() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.commit++
+	f.events = append(f.events, "commit")
 	if f.scenario == "commit-lost" && f.commit == 1 {
 		return io.ErrUnexpectedEOF
 	}
@@ -100,14 +111,21 @@ func (f *allocationContinuationFixture) commitInstallation() error {
 func (f *allocationContinuationFixture) ReadAgentComputerControls(context.Context, workerapi.AgentComputerInstallationRequest) (workerapi.AgentComputerControlsResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.events = append(f.events, "read-controls")
 	p := f.p
 	raw, err := proto.Marshal(&agentv1.ComputerSessionControls{CheckpointId: p.Capture.CheckpointId, DesiredVersion: p.DesiredVersion, Envelope: p.Envelope})
 	return workerapi.AgentComputerControlsResponse{Controls: raw}, err
 }
 func (f *allocationContinuationFixture) CompleteAgentComputerSourceAbort(context.Context, workerapi.AgentComputerInstallationRequest) error {
-	return nil
+	return f.completeInstallation()
 }
 func (f *allocationContinuationFixture) CompleteAgentComputerRestore(context.Context, workerapi.AgentComputerInstallationRequest) error {
+	return f.completeInstallation()
+}
+func (f *allocationContinuationFixture) completeInstallation() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, "complete")
 	return nil
 }
 func (f *allocationContinuationFixture) handle(stream net.Conn) {
@@ -154,6 +172,7 @@ func (f *allocationContinuationFixture) handle(stream net.Conn) {
 			receipt = &agentv1.ComputerSessionReceipt{Error: "not sealed", ErrorCode: agentv1.ComputerSessionErrorCode_COMPUTER_SESSION_ERROR_CODE_CAPTURE_ADMISSION_PENDING}
 		}
 	case request.GetInstall() != nil:
+		f.events = append(f.events, "install")
 		if f.scenario == "lost-install" && !f.installed {
 			f.delayed = true
 			return
@@ -171,10 +190,12 @@ func (f *allocationContinuationFixture) handle(stream net.Conn) {
 			receipt.Installed = true
 		}
 	case request.GetControls() != nil:
+		f.events = append(f.events, "controls")
 		raw, _ := (proto.MarshalOptions{Deterministic: true}).Marshal(request.GetControls())
 		sum := sha256.Sum256(raw)
 		receipt.ControlsDigest = sum[:]
 	case request.GetActivate() != nil:
+		f.events = append(f.events, "activate")
 		f.activated = true
 		receipt.ActivationStarted = true
 		receipt.Activated = true
@@ -248,5 +269,44 @@ func TestComputerContinuationRefreshesOnlyUninstalledAuthority(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestComputerContinuationWithoutSessions(t *testing.T) {
+	for _, source := range []bool{false, true} {
+		name := "restore"
+		if source {
+			name = "source"
+		}
+		t.Run(name, func(t *testing.T) {
+			id := workerapi.AllocationIdentity{Kind: "computer", EnvironmentID: uuid.NewV7().String(), OwnerID: uuid.NewV7().String(), AllocationID: uuid.NewV7().String(), Epoch: 2}
+			checkpoint := uuid.NewV7()
+			capture := &agentv1.ComputerSessionCapture{CheckpointId: checkpoint.String(), DesiredVersion: 1}
+			f := &allocationContinuationFixture{t: t, target: id, capture: capture, source: source}
+			machine := &checkpointPipelineMachine{control: &agentControlMachine{handle: f.handle}}
+			o := &ComputerAllocationOwner{identity: id, client: f, machine: machine, checkpoint: &computercheckpoint.Manifest{CheckpointID: checkpoint}, observe: func(context.Context, *agentv1.GuestSessionMessage) error { return nil }}
+			delivery := workerapi.ComputerAllocationDelivery{BaseVersion: "base", ChannelCredential: "current"}
+			var err error
+			if source {
+				err = o.continueCheckpoint(t.Context(), delivery, capture, &sourceContinuation{})
+			} else {
+				err = o.activateRestore(t.Context(), delivery)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			want := []string{"prepare", "validate", "install", "commit", "read-controls", "controls", "activate", "complete"}
+			if source {
+				want = slices.Insert(want, 1, "validate")
+			}
+			if !slices.Equal(f.events, want) {
+				t.Fatalf("continuation protocol = %v, want %v", f.events, want)
+			}
+			if len(f.p.Grants) != 0 || !f.installed || !f.activated || machine.snapshots != 0 {
+				t.Fatalf("grants=%d installed=%v activated=%v snapshots=%d", len(f.p.Grants), f.installed, f.activated, machine.snapshots)
+			}
+		})
 	}
 }
