@@ -105,7 +105,8 @@ await verify("network-clients", async ({ computer, marker }) => {
   assertEqual(before.sdkPackageSHA256, packaged.sdkPackageSHA256, "Computer used another packaged SDK")
   const source = await hostObservation("computer-path", { computer_id: target.id })
   assertEqual(source.computer.id, target.id, "Source observation belongs to another Computer")
-  assert(source.computer.image_build_id && source.computer.initial_root_id && /^[a-f0-9]{64}$/.test(source.computer.initial_root_digest), "Source omitted immutable image/seed identity")
+  // A published image can supply the root without a per-Computer build receipt.
+  assert(typeof source.computer.initial_root_id === "string" && source.computer.initial_root_id.length > 0 && /^[a-f0-9]{64}$/.test(source.computer.initial_root_digest), "Source omitted immutable seed identity")
   const leases = source.leases.filter((lease: any) => lease.status === "active" && lease.fenced_at === null)
   assertEqual(leases.length, 1, "Expected one active source lease")
   const lease = leases[0]
