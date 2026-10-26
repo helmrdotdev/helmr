@@ -1,10 +1,13 @@
 package secret
 
 import (
+	"errors"
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -17,14 +20,14 @@ func TestSecretAuditCommitsOnceAndRollsBackMutationOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := seedSecretEnvironment(t, d.Pool)
-	store, err := New(db.New(d.Pool), d.Pool, make([]byte, 32))
+	store, err := New(db.New(d.Pool), d.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
 	key := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash) SELECT $1,org_id,project_id,id,'fixture','fixture',convert_to('fixture','UTF8') FROM environments WHERE id=$2`, key, env)
 	dbtest.SetAPIKeyRole(t, d.Pool, key, "secrets.create", "secrets.rotate", "secrets.revoke")
-	actor := audit.Actor{Kind: "api_key", CredentialID: key}
+	actor := auth.Principal{Kind: auth.PrincipalKindAPIKey, APIKeyID: key, CredentialVersion: 1}
 	created, err := store.Create(t.Context(), actor, env, "TOKEN", []byte("private-value"), "create")
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +44,7 @@ func TestSecretAuditCommitsOnceAndRollsBackMutationOnFailure(t *testing.T) {
 	}
 	var count int
 	var principal, scope, target bool
-	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_kind='api_key' AND actor_credential_id=$1 AND actor_user_id IS NULL),bool_and(org_id IS NOT NULL AND project_id IS NOT NULL AND environment_id=$2),bool_and(target_kind='secret' AND target_id=$3 AND outcome='succeeded' AND details='{}'::jsonb) FROM audit_events`, key, env, id).Scan(&count, &principal, &scope, &target); err != nil || count != 2 || !principal || !scope || !target {
+	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_api_key_id IS NOT NULL AND credential_id=$1 AND actor_api_key_id=$1),bool_and(org_id IS NOT NULL AND project_id IS NOT NULL AND environment_id=$2),bool_and(target_kind='secret' AND target_id=$3 AND outcome='succeeded' AND details='{}'::jsonb) FROM audit_events`, key, env, id).Scan(&count, &principal, &scope, &target); err != nil || count != 2 || !principal || !scope || !target {
 		t.Fatalf("audit count=%d actor=%v scope=%v target=%v err=%v", count, principal, scope, target, err)
 	}
 	before := currentSecretVersion(t, d.Pool, env, created.ID)
@@ -69,5 +72,33 @@ func TestSecretAuditCommitsOnceAndRollsBackMutationOnFailure(t *testing.T) {
 	}
 	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events`).Scan(&count); err != nil || count != 3 {
 		t.Fatalf("revoke audit count=%d err=%v", count, err)
+	}
+}
+
+func TestSecretMutationPreservesTransactionCredentialFailure(t *testing.T) {
+	d := dbtest.Open(t)
+	if err := schema.Up(t.Context(), d.DSN); err != nil {
+		t.Fatal(err)
+	}
+	env := seedSecretEnvironment(t, d.Pool)
+	p := dbtest.SecretManager(t, d.Pool, env)
+	store, err := New(db.New(d.Pool), d.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE api_keys SET credential_version=credential_version+1 WHERE id=$1`, p.APIKeyID)
+	_, err = store.Create(t.Context(), p, env, "STALE", []byte("value"), "stale")
+	var failure *access.PrincipalUnavailable
+	if !errors.As(err, &failure) || failure.Reason != "credential_version_changed" || failure.PresentedVersion != 1 || failure.ObservedVersion != 2 {
+		t.Fatalf("lost actual version comparison: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1`, p.APIKeyID)
+	_, err = store.Create(t.Context(), p, env, "REVOKED", []byte("value"), "revoked")
+	if !errors.As(err, &failure) || failure.Reason != "current_key_not_found" {
+		t.Fatalf("invented reason for unavailable key: %v", err)
+	}
+	var count int
+	if err := d.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secrets WHERE environment_id=$1`, env).Scan(&count); err != nil || count != 0 {
+		t.Fatal(count, err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -54,10 +55,14 @@ func workerGroupError(err error) error {
 
 // writeWorkerGroupError writes a workergroup owner error, including the region
 // errors it surfaces, logging the failures it does not describe to the client.
-func (s *Server) writeWorkerGroupError(w http.ResponseWriter, err error) {
+func (s *Server) writeWorkerGroupError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, audit.ErrCapture) {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	mapped := workerGroupError(err)
 	if errorStatus(mapped) != http.StatusInternalServerError {
-		writeError(w, mapped)
+		s.writeOperationError(w, r, mapped)
 		return
 	}
 	s.log.Error("worker group request failed", "error", err)

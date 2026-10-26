@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -24,7 +25,7 @@ type controlGesture struct {
 
 // admitControl consumes an already authenticated signed-control gesture. A
 // channel-visible token supplies a target, never the human's current authority.
-func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
+func admitControl(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, id uuid.UUID) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		var installation uuid.UUID
 		var raw []byte
@@ -111,9 +112,9 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 		}
 		var askID *uuid.UUID
 		err = db.RunTx(ctx, tx, func(coreTx pgx.Tx) error {
-			caller := session.Caller{Kind: "user", ID: user, SlackThreadID: target.Thread}
+			caller := session.Caller{CredentialKind: "slack", Kind: "user", ID: user, SlackThreadID: target.Thread}
 			if lifecycleAction(gesture.Control.Action) {
-				receipt, err := applyLifecycleControl(ctx, coreTx, caller, target, gesture.Control, id)
+				receipt, err := applyLifecycleControl(ctx, auditPolicy, coreTx, caller, target, gesture.Control, id)
 				if err != nil {
 					return err
 				}
@@ -144,7 +145,7 @@ func admitControl(ctx context.Context, pool db.TxBeginner, id uuid.UUID) error {
 						return err
 					}
 				}
-				answer, err := session.AnswerAsk(ctx, coreTx, caller, session.AskAnswerRequest{EnvironmentID: target.Environment, SessionID: target.Session, TurnID: target.Turn, AskID: target.Ask, AnswerID: "slack:" + id.String(), Answer: value})
+				answer, err := session.AnswerAsk(ctx, auditPolicy, coreTx, caller, session.AskAnswerRequest{EnvironmentID: target.Environment, SessionID: target.Session, TurnID: target.Turn, AskID: target.Ask, AnswerID: "slack:" + id.String(), Answer: value})
 				if err != nil {
 					return err
 				}

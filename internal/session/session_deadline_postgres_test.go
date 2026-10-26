@@ -3,6 +3,7 @@ package session_test
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"log/slog"
 	"testing"
@@ -46,7 +47,9 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, active.TurnID)
 			for range 2 {
-				if err := session.ExpireSessionDeadline(t.Context(), f.pool, f.env, f.session); err != nil {
+				if err := session.ExpireSessionDeadline(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, f.env, f.session); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -77,10 +80,12 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 			}
 			release := controlRequest(f, "resume", "release-deadline")
 			release.HoldID = hold
-			if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), release); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), release); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.ExpireSessionDeadline(t.Context(), f.pool, f.env, f.session); err != nil {
+			if err := session.ExpireSessionDeadline(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, f.env, f.session); err != nil {
 				t.Fatal(err)
 			}
 			if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
@@ -103,7 +108,9 @@ func TestSessionDeadlineDoesNotChangeCompletedOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, active.TurnID)
-	if err := session.ExpireSessionDeadline(t.Context(), f.pool, f.env, f.session); err != nil {
+	if err := session.ExpireSessionDeadline(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
 	var unchanged bool
@@ -123,7 +130,7 @@ func TestSessionLifecycleWorkerExpiresWithoutGuest(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- session.RunSessionLifecycle(ctx, f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		done <- session.RunSessionLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
 	limit := time.Now().Add(5 * time.Second)
 	for {
@@ -154,7 +161,7 @@ func TestSessionLifecycleClosesAfterRecordedResultSettles(t *testing.T) {
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	active, save := f.finalize(t, "result")
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 		t.Fatal(err)
 	}
 	storage := newSaveStorageFixture(t, f)
@@ -166,7 +173,7 @@ func TestSessionLifecycleClosesAfterRecordedResultSettles(t *testing.T) {
 	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, active.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, s := range []uuid.UUID{f.session, child.session} {
@@ -202,7 +209,9 @@ func TestSessionDeadlineRechecksTimeAfterOwnerLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, active.TurnID)
-	if err := session.ExpireSessionDeadline(t.Context(), f.pool, f.env, f.session); err != nil {
+	if err := session.ExpireSessionDeadline(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
 	var running bool
@@ -218,7 +227,11 @@ func TestSessionDeadlineRechecksTimeAfterOwnerLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- session.ExpireSessionDeadline(t.Context(), f.pool, f.env, f.session) }()
+	go func() {
+		done <- session.ExpireSessionDeadline(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, f.env, f.session)
+	}()
 	waitSessionLifecycleLock(t, f)
 	if _, err = tx.Exec(t.Context(), `UPDATE turns SET deadline_at=clock_timestamp() WHERE id=$1`, active.TurnID); err != nil {
 		t.Fatal(err)
@@ -264,7 +277,7 @@ func TestSessionLifecycleBatchMovesPastBlockedSession(t *testing.T) {
 	}
 	done := make(chan outcome, 1)
 	go func() {
-		p, _, e := session.ReconcileSessionLifecycle(ctx, f.pool, session.SessionLifecyclePosition{})
+		p, _, e := session.ReconcileSessionLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{})
 		done <- outcome{p, e}
 	}()
 	waitSessionLifecycleLock(t, f)
@@ -276,7 +289,7 @@ func TestSessionLifecycleBatchMovesPastBlockedSession(t *testing.T) {
 	if err = tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	next, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, result.position)
+	next, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, result.position)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +300,7 @@ func TestSessionLifecycleBatchMovesPastBlockedSession(t *testing.T) {
 	if next != (session.SessionLifecyclePosition{}) {
 		t.Fatalf("short batch did not wrap: %+v", next)
 	}
-	if _, _, err = session.ReconcileSessionLifecycle(t.Context(), f.pool, next); err != nil {
+	if _, _, err = session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, next); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM turns WHERE status='interrupted'`).Scan(&interrupted); err != nil || interrupted != 2 {
@@ -302,7 +315,7 @@ func TestSessionLifecycleDoesNotLockParkedClosingTree(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, child.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.pool.Begin(t.Context())
@@ -315,7 +328,7 @@ func TestSessionLifecycleDoesNotLockParkedClosingTree(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, _, err = session.ReconcileSessionLifecycle(ctx, f.pool, session.SessionLifecyclePosition{}); err != nil {
+	if _, _, err = session.ReconcileSessionLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatalf("parked tree was relocked: %v", err)
 	}
 }
@@ -344,7 +357,7 @@ func TestSessionLifecycleCandidateTimeoutDoesNotStopBatch(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	if _, _, err = session.ReconcileSessionLifecycle(ctx, f.pool, session.SessionLifecyclePosition{}); err == nil {
+	if _, _, err = session.ReconcileSessionLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err == nil {
 		t.Fatal("blocked candidate did not report timeout")
 	}
 	var advanced bool
@@ -360,11 +373,11 @@ func TestSessionLifecycleDeadlineDrainsClosingTree(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, active.TurnID)
-	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, s := range []uuid.UUID{f.session, child.session} {
@@ -380,7 +393,7 @@ func TestSessionLifecycleClosesLargeOwnedTree(t *testing.T) {
 	active, save := f.finalize(t, "parent")
 	const children = 5000
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT $1,gen_random_uuid(),$2,$3,$4,$5,$5,$5,1,s.origin_user_id,s.origin_api_key_id,s.origin_activation_id FROM generate_series(1,$6) CROSS JOIN sessions s WHERE s.environment_id=$1 AND s.id=$5`, f.env, f.agent, f.deployment, f.computer, f.session, children)
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "large-close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "large-close")); err != nil {
 		t.Fatal(err)
 	}
 	storage := newSaveStorageFixture(t, f)
@@ -393,7 +406,7 @@ func TestSessionLifecycleClosesLargeOwnedTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("closed %d owned Sessions in %s", children+1, time.Since(started))

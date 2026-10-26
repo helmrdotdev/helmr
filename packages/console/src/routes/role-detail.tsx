@@ -7,7 +7,7 @@ import { GrantAccessDialog } from "../features/access/GrantAccessDialog";
 import { hasPermission } from "../lib/auth";
 import { errorMessage, loadError } from "../lib/error";
 import { useMe } from "../lib/me";
-import { getPermissionCatalog, isOrganizationRole, listGrants, listRoles, permissionScope, resourceLabel, roleHref, saveRole, type PermissionDefinition, type PermissionRole } from "../lib/permissions";
+import { getPermissionCatalog, roleAssignmentLevels, listGrants, listRoles, permissionHasScope, resourceLabel, roleHref, saveRole, type PermissionDefinition, type PermissionRole } from "../lib/permissions";
 import { CheckboxGroup, Field, FormActions, Segmented, TextArea, TextInput } from "../ui/Field";
 import { Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
@@ -26,7 +26,7 @@ const resourceRank = (resource: string) => { const i = RESOURCE_ORDER.indexOf(re
 
 // The permission groups a role of this level chooses from.
 function permissionGroups(catalog: readonly PermissionDefinition[], level: Level) {
-  const resources = [...new Set(catalog.filter(c => (c.scope_type === "organization") === (level === "organization")).map(c => c.resource_type))].sort((a, b) => resourceRank(a) - resourceRank(b));
+  const resources = [...new Set(catalog.filter(c => c.assignment_levels.includes(level)).map(c => c.resource_type))].sort((a, b) => resourceRank(a) - resourceRank(b));
   return resources.map(resource => ({
     label: resourceLabel(resource),
     options: catalog.filter(c => c.resource_type === resource).map(c => ({ value: c.id, label: c.name, description: c.description })),
@@ -110,13 +110,13 @@ function RoleForm(props: { role: PermissionRole | undefined; copy: boolean; read
   const [name, setName] = createSignal(initial().name);
   const [description, setDescription] = createSignal(initial().description);
   const [permissions, setPermissions] = createSignal<string[]>(initial().permissions);
-  const [level, setLevel] = createSignal<Level>(props.role && isOrganizationRole(props.role.permissions, props.catalog) ? "organization" : "environment");
+  const [level, setLevel] = createSignal<Level>(props.role && roleAssignmentLevels(props.role.permissions, props.catalog).includes("organization") ? "organization" : "environment");
   const [busy, setBusy] = createSignal(false); const [error, setError] = createSignal<string | null>(null);
   const editing = () => !!props.role && !props.copy;
-  // A saved role keeps its level; a new one starts empty when its level changes.
-  createEffect(() => { if (!editing()) setPermissions(p => p.filter(id => (permissionScope(id, props.catalog) === "organization") === (level() === "organization"))); });
+  // Level filters draft actions; the Role stores only the selected Permissions.
+  createEffect(() => { setPermissions(p => p.filter(id => props.catalog.find(c => c.id === id)?.assignment_levels.includes(level()))); });
   const changed = () => name() !== initial().name || description() !== initial().description || [...permissions()].sort().join() !== [...initial().permissions].sort().join();
-  const agentActions = (ids: readonly string[]) => ids.some(id => permissionScope(id, props.catalog) === "agent");
+  const agentActions = (ids: readonly string[]) => ids.some(id => permissionHasScope(id, "agent", props.catalog));
   const addsSessionReading = () => editing() && permissions().some(p => p === "sessions.read" && !initial().permissions.includes(p));
   const dropsAgents = () => editing() && (props.role?.grant_count ?? 0) > 0 && agentActions(initial().permissions) && !agentActions(permissions());
   const reset = () => { setName(initial().name); setDescription(initial().description); setPermissions(initial().permissions); setError(null); };
@@ -134,7 +134,7 @@ function RoleForm(props: { role: PermissionRole | undefined; copy: boolean; read
         <div class="grid max-w-180 gap-0">
           <Field label="Name"><TextInput value={name()} required maxlength={80} disabled={busy()} onInput={e => setName(e.currentTarget.value)} placeholder="Release operator" /></Field>
           <Field label="Description"><TextArea value={description()} maxlength={1000} rows={2} disabled={busy()} onInput={e => setDescription(e.currentTarget.value)} placeholder="Ships releases and rotates their secrets" /></Field>
-          <Show when={!editing()}>
+          <Show when={!props.readonly}>
             <Field label="Level" hint={level() === "organization" ? "Granted across the organization." : "Granted in one environment at a time."}>
               <Segmented label="Level" value={level()} options={[{ value: "environment" as const, label: "Environment" }, { value: "organization" as const, label: "Organization" }]} onChange={setLevel} disabled={busy()} />
             </Field>

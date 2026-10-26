@@ -2,6 +2,7 @@ package secret
 
 import (
 	"bytes"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -57,7 +58,7 @@ type cipherDatabase struct {
 
 func newCipherStore(t *testing.T, key []byte) *Store {
 	t.Helper()
-	store, err := New(&cipherDatabase{}, nil, key)
+	store, err := New(&cipherDatabase{}, nil, key, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}

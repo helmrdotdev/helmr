@@ -10,13 +10,13 @@ const agentID = "00000000-0000-7000-8000-000000000a01";
 const now = "2026-10-14T00:00:00Z";
 
 const catalog = [
-  { resource_type: "assignments", id: "assignments.create", name: "Manage access", description: "Manage members and access.", scope_type: "organization", api_key_assignable: false },
-  { resource_type: "agents", id: "agents.use", name: "Use agents", description: "Use assigned agents.", scope_type: "agent", api_key_assignable: true },
-  { resource_type: "sessions", id: "sessions.read", name: "View all sessions", description: "Read all sessions.", scope_type: "agent", api_key_assignable: true },
-  { resource_type: "secrets", id: "secrets.rotate", name: "Manage secrets", description: "Manage secrets.", scope_type: "environment", api_key_assignable: true },
+  { resource_type: "assignments", id: "assignments.create", name: "Manage access", description: "Manage members and access.", scope_types: ["organization"], assignment_levels: ["organization"], api_key_assignable: false },
+  { resource_type: "agents", id: "agents.use", name: "Use agents", description: "Use assigned agents.", scope_types: ["agent"], assignment_levels: ["environment"], api_key_assignable: true },
+  { resource_type: "sessions", id: "sessions.read", name: "View all sessions", description: "Read all sessions.", scope_types: ["agent"], assignment_levels: ["environment"], api_key_assignable: true },
+  { resource_type: "secrets", id: "secrets.rotate", name: "Manage secrets", description: "Manage secrets.", scope_types: ["environment"], assignment_levels: ["environment"], api_key_assignable: true },
 ];
 const role = (id: string, name: string, permissions: string[], builtin: string | null, extra: Record<string, unknown> = {}) =>
-  ({ id, name, description: `${name} description`, builtin_key: builtin, permissions, api_key_assignable: !permissions.includes("assignments.create"), grant_count: 0, group_count: 0, updated_at: now, revision: 1, ...extra });
+  ({ id, name, description: `${name} description`, builtin_key: builtin, permissions, assignment_levels: [permissions.includes("assignments.create") ? "organization" : "environment"], api_key_assignable: !permissions.includes("assignments.create"), grant_count: 0, group_count: 0, updated_at: now, revision: 1, ...extra });
 const roles = [
   role("role-user", "Agent user", ["agents.use"], "agent_user", { grant_count: 1 }),
   role("role-viewer", "Session viewer", ["sessions.read"], "session_viewer", { grant_count: 1 }),

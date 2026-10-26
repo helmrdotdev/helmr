@@ -1,6 +1,7 @@
 package command
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -18,7 +19,7 @@ func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
 				dbtest.SetAPIKeyRole(t, f.Pool, key, "computers.execute")
 				request.Creator = Creator{Kind: "api_key", ID: key}
 			}
-			c, err := Create(t.Context(), f.Pool, request)
+			c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -30,7 +31,7 @@ func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
 			case "api_key":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=now() WHERE id=$1`, request.Creator.ID)
 			}
-			claimed, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
+			claimed, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), f.claim())
 			if err != nil || claimed.Start != nil {
 				t.Fatalf("revoked command dispatched: %+v, %v", claimed, err)
 			}
@@ -46,7 +47,7 @@ func TestAdmittedCommandRetainsDispatchReceiptAfterRevocation(t *testing.T) {
 	f := commandFixture(t)
 	first := f.start(t, "admitted")
 	f.SetPermissions(t, "sessions.read")
-	replay, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
+	replay, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), f.claim())
 	if err != nil || replay.Start == nil || replay.Start.Command.ID != first.Command.ID {
 		t.Fatalf("lost dispatch receipt: %+v %v", replay, err)
 	}

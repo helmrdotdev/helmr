@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -23,7 +24,7 @@ import (
 func assertGroupDrainBlocked(t *testing.T, f fixture) {
 	t.Helper()
 	var conflict workergroup.ConflictError
-	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, audit.System("test-fixture"), f.group, 1); !errors.As(err, &conflict) {
+	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1); !errors.As(err, &conflict) {
 		t.Fatalf("drain accepted retained state: %v", err)
 	}
 	var unchanged bool
@@ -48,11 +49,11 @@ func TestGroupDrainRetainsPhysicalCustodyAcrossEpochs(t *testing.T) {
  UPDATE image_builds SET status='failed',error_code='executor_lost' WHERE environment_id=$2 AND id=$3`, pgx.QueryExecModeSimpleProtocol, f.worker, f.env, p.ID)
 	assertGroupDrainBlocked(t, f.fixture)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET fenced_at=clock_timestamp(),fence_evidence='fixture physical closure' WHERE environment_id=$1`, f.env)
-	result, err := workergroup.BeginGroupDrain(t.Context(), f.pool, audit.System("test-fixture"), f.group, 1)
+	result, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1)
 	if err != nil || result.Status != "draining" {
 		t.Fatalf("resolved preparation: %+v %v", result, err)
 	}
-	replay, err := workergroup.BeginGroupDrain(t.Context(), f.pool, audit.System("test-fixture"), f.group, 1)
+	replay, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1)
 	if err != nil || replay.TransitionApplied || replay.ClaimVersion != result.ClaimVersion {
 		t.Fatalf("drain replay: %+v %v", replay, err)
 	}
@@ -65,7 +66,9 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 			f := cp.f
 			setGroupPrimary(t, f)
 			source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
-			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil(), uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, *f.host(), source, uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			if state == "restoring" {
@@ -78,7 +81,7 @@ func TestGroupDrainRetainsEveryPendingCheckpoint(t *testing.T) {
 			assertGroupDrainBlocked(t, f)
 			// Terminal disposition is fixture setup here; this test does not prove its operation.
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='fixture terminal disposition' WHERE environment_id=$1`, f.env)
-			if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, audit.System("test-fixture"), f.group, 1); err != nil {
+			if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -104,7 +107,7 @@ func TestGroupDrainRechecksDependenciesAfterAllocationLock(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := workergroup.BeginGroupDrain(ctx, f.pool, audit.System("test-fixture"), f.group, 1)
+		_, err := workergroup.BeginGroupDrain(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1)
 		done <- err
 	}()
 	for {
@@ -141,12 +144,16 @@ func TestGroupDrainRechecksDependenciesAfterAllocationLock(t *testing.T) {
 func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	cp := readyCheckpointFixture(t)
 	f := cp.f
-	a, err := dispatch.NewAllocator(f.pool, bytes.Repeat([]byte{19}, 32), nil)
+	a, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, bytes.Repeat([]byte{19}, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: cp.manifest.InstanceID}
-	if err = dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), source, uuid.Nil(), uuid.Nil()); err != nil {
+	if err = dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), source, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	group, pool, host, token := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
@@ -160,7 +167,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	if _, err = a.AllocateRestoredLease(t.Context(), f.env, cp.manifest.CheckpointID, 2, host); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("cross-group restore: %v", err)
 	}
-	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, workergroup.ErrCapacityIncompatible) {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); !errors.Is(err, workergroup.ErrCapacityIncompatible) {
 		t.Fatalf("incompatible input admitted: %v", err)
 	}
 	if _, _, err = a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
@@ -174,7 +181,7 @@ func TestAllocationRestoreRejectsSuccessorGroup(t *testing.T) {
 	// must now be discoverable and allocatable; other eligibility cannot hide a
 	// missing Group predicate. Production never rewrites this historical owner.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET worker_host_id=$3 WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer, host)
-	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "restore", Input: []byte(`[{"type":"text","text":"{}"}]`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err = a.Reconcile(t.Context(), dispatch.AllocationPosition{}); err != nil {
@@ -194,7 +201,7 @@ func TestGroupDrainWaitsForComputerPhysicalStop(t *testing.T) {
 	f := newFixture(t)
 	setGroupPrimary(t, f)
 	// Closing logical work is not evidence that its Computer has stopped.
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 hour' WHERE environment_id=$1`, f.env)
@@ -203,10 +210,12 @@ func TestGroupDrainWaitsForComputerPhysicalStop(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, audit.System("test-fixture"), f.group, 1); err != nil {
+	if _, err := workergroup.BeginGroupDrain(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, 1); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -217,7 +226,9 @@ func stopGroupFixtureComputer(t *testing.T, f fixture) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT allocation_id FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.env, f.computer).Scan(&instance); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, Epoch: 1, InstanceID: instance}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 }

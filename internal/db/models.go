@@ -61,6 +61,7 @@ type APIKey struct {
 	CreatedByMemberID pgtype.UUID        `json:"created_by_member_id"`
 	Name              string             `json:"name"`
 	KeyPrefix         string             `json:"key_prefix"`
+	CredentialVersion int64              `json:"credential_version"`
 	TokenHash         []byte             `json:"token_hash"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	LastUsedAt        pgtype.Timestamptz `json:"last_used_at"`

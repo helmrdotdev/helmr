@@ -2,6 +2,7 @@ package workergroup
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"uuid"
@@ -14,16 +15,16 @@ func TestResourcePolicyPostgresRevisionAndScope(t *testing.T) {
 	f := newSupplyFixture(t)
 	pool := f.activePool(t, "policy")
 	update := ResourcePolicyUpdate{ExpectedRevision: 1, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: 4096, MaxTasks: 1, IOBytesPerSecond: 1024}}}
-	result, err := UpdateResourcePolicy(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, update)
+	result, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, update)
 	if err != nil || result.Revision != 2 || result.ResourcePolicy != update.ResourcePolicy {
 		t.Fatalf("update: %+v %v", result, err)
 	}
 	var stale PolicyRevisionConflict
-	if _, err := UpdateResourcePolicy(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, update); !errors.As(err, &stale) || stale.CurrentRevision != 2 {
+	if _, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, update); !errors.As(err, &stale) || stale.CurrentRevision != 2 {
 		t.Fatalf("stale: %v", err)
 	}
 	update.ExpectedRevision = 2
-	same, err := UpdateResourcePolicy(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, update)
+	same, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, update)
 	if err != nil || same != result {
 		t.Fatalf("no-op: %+v %v", same, err)
 	}
@@ -49,7 +50,7 @@ func TestResourcePolicyPostgresConcurrentAndBounds(t *testing.T) {
 	for i := range errs {
 		wg.Go(func() {
 			<-start
-			_, errs[i] = UpdateResourcePolicy(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 1, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: int64(i + 1)}}})
+			_, errs[i] = UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 1, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: int64(i + 1)}}})
 		})
 	}
 	close(start)
@@ -70,16 +71,16 @@ func TestResourcePolicyPostgresConcurrentAndBounds(t *testing.T) {
 	}
 	for _, policy := range []ResourcePolicy{{Optional: OptionalResources{CPUMillis: pool.CapacityCPUMillis.Int64 + 1}}, {Optional: OptionalResources{MemoryBytes: -1}}, {LocalHeadroomSlots: pool.MaxVMSlots.Int32 + 1}, {Optional: OptionalResources{DiskBytes: 1 << 53}}} {
 		var input InputError
-		if _, err := UpdateResourcePolicy(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 2, ResourcePolicy: policy}); !errors.As(err, &input) {
+		if _, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 2, ResourcePolicy: policy}); !errors.As(err, &input) {
 			t.Fatalf("bounds %+v: %v", policy, err)
 		}
 	}
 	pending := f.pendingPool(t, "pending")
-	if _, err := UpdateResourcePolicy(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pending.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 1, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: 1}}}); err == nil {
+	if _, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pending.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 1, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: 1}}}); err == nil {
 		t.Fatal("unsealed policy accepted")
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_pools SET status='draining' WHERE id=$1`, pool.ID)
-	if _, err := UpdateResourcePolicy(t.Context(), f.pool, audit.System("test-fixture"), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 2, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: 4096}}}); err != nil {
+	if _, err := UpdateResourcePolicy(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.groupID(), pool.ID.Bytes, ResourcePolicyUpdate{ExpectedRevision: 2, ResourcePolicy: ResourcePolicy{Optional: OptionalResources{DiskBytes: 4096}}}); err != nil {
 		t.Fatal(err)
 	}
 }

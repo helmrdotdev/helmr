@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"bytes"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/slack"
 )
@@ -25,7 +27,7 @@ type routeSlackStore struct{ db.TxBeginner }
 
 func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	router := chi.NewRouter()
-	store, err := slack.NewCredentialStore(&routeSlackStore{}, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
+	store, err := slack.NewCredentialStore(&routeSlackStore{}, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,6 +37,15 @@ func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 
 	var got []string
 	if err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		classification, ok := auditRoutes[method+" "+route]
+		if !ok || (classification.action == "") == (classification.exclusion == "") {
+			t.Errorf("route needs exactly one audit action or exclusion: %s %s", method, route)
+		}
+		if classification.action != "" {
+			if _, ok := audit.Lookup(classification.action); !ok {
+				t.Errorf("unknown action %s", classification.action)
+			}
+		}
 		got = append(got, method+" "+route)
 		return nil
 	}); err != nil {
@@ -55,12 +66,14 @@ DELETE /api/role-grants/{id}
 DELETE /api/roles/{id}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
 DELETE /v1/computers/{computerID}
+GET /admin/api/v1/audit-events
 GET /admin/api/v1/regions
 GET /admin/api/v1/regions/{regionID}
 GET /admin/api/v1/worker-groups
 GET /admin/api/v1/worker-groups/{groupID}
 GET /admin/api/v1/worker-groups/{groupID}/pools
 GET /agent-setup/{harness}.md
+GET /api/audit-events
 GET /api/auth/device/status
 GET /api/groups
 GET /api/groups/{id}
@@ -135,6 +148,7 @@ GET /healthz
 GET /readyz
 GET /v1/agents
 GET /v1/agents/{agent}
+GET /v1/audit-events
 GET /v1/commands/{commandID}
 GET /v1/commands/{commandID}/logs
 GET /v1/computers
@@ -521,7 +535,7 @@ func TestSocketAndDisabledDoNotMountSlackHTTPReceivers(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			server := &Server{}
 			if mode == slack.TransportSocket {
-				store, err := slack.NewCredentialStore(&routeSlackStore{}, bytes.Repeat([]byte{1}, 32), mode)
+				store, err := slack.NewCredentialStore(&routeSlackStore{}, bytes.Repeat([]byte{1}, 32), mode, auditpolicy.Policy{RetentionSeconds: 3600})
 				if err != nil {
 					t.Fatal(err)
 				}

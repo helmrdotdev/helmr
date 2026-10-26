@@ -1,6 +1,7 @@
 package session_test
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -29,7 +30,9 @@ func TestDeletedComputerStorageWaitsForCheckpointCleanup(t *testing.T) {
  UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='Computer deletion retired continuation' WHERE environment_id=$1;
  UPDATE computer_leases SET status='releasing' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.f.env, f.f.computer)
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.f.pool, *f.f.host(), computer.LeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, InstanceID: f.f.computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.f.pool, *f.f.host(), computer.LeaseIdentity{EnvironmentID: f.f.env, ComputerID: f.f.computer, InstanceID: f.f.computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	blocker, err := f.f.pool.Begin(t.Context())

@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -41,7 +43,7 @@ func readRuntimeBindings(ctx context.Context, tx pgx.Tx, env, computerID uuid.UU
 // RecordSessionStartExposure commits possible exposure before any ciphertext may
 // leave this transaction. A retry retains the logical generation's original pins.
 // Healthy restore never calls this startup operation for an existing process.
-func RecordSessionStartExposure(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64) (SessionStartExposure, error) {
+func RecordSessionStartExposure(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64) (SessionStartExposure, error) {
 	if attachment <= 0 {
 		return SessionStartExposure{}, ErrInvalidInput
 	}
@@ -94,8 +96,18 @@ func RecordSessionStartExposure(ctx context.Context, database db.TxBeginner, hos
 		if result.Start.ComputerID != computerID {
 			return ErrDenied
 		}
-		if err = computer.RecordSessionExposures(ctx, tx, e.EnvironmentID, e.SessionID, e.ProcessEpoch, ids); err != nil {
+		exposures, err := computer.RecordSessionExposures(ctx, tx, e.EnvironmentID, e.SessionID, e.ProcessEpoch, ids)
+		if err != nil {
 			return err
+		}
+		origin, err := loadSessionOrigin(ctx, tx, e.EnvironmentID, e.SessionID)
+		if err != nil {
+			return err
+		}
+		for _, exposure := range exposures {
+			if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: runtimeAuditEvidence(Execution{SessionID: e.SessionID, AuthorityGeneration: result.Start.Authority.Generation, ProcessEpoch: e.ProcessEpoch, WorkerHostID: e.WorkerHostID, AuthenticatedHostVersion: e.AuthenticatedHostVersion}), EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, ComputerID: computerID, Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: origin.kind(), InitiatorID: origin.id()}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, RevocationGeneration: exposure.RevocationGeneration}}); err != nil {
+				return err
+			}
 		}
 		result.Secrets = make([]computer.ExposedSecret, 0, len(bindings))
 		result.ProtectedEnv = map[string]string{}

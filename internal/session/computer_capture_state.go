@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"time"
 	"uuid"
@@ -140,7 +141,7 @@ type UnsealedCaptureEvidence struct {
 	AbsentObservedAt time.Time
 }
 
-func CancelUnsealedComputerCapture(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, evidence UnsealedCaptureEvidence) error {
+func CancelUnsealedComputerCapture(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, env, checkpoint uuid.UUID, evidence UnsealedCaptureEvidence) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
@@ -171,6 +172,6 @@ func CancelUnsealedComputerCapture(ctx context.Context, pool db.TxBeginner, host
 		}
 		// A disk cut must not already have been recorded for an allegedly absent
 		// capture. Roll back everything if that evidence conflicts.
-		return computer.CancelUnsealedCheckpoint(ctx, tx, env, checkpoint, r.Save, reason)
+		return computer.CancelUnsealedCheckpoint(ctx, auditPolicy, tx, env, checkpoint, r.Save, reason)
 	}))
 }

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func closeProcessing(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID) error {
+func closeProcessing(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, e Execution, turn uuid.UUID) error {
 	o, err := lockSession(ctx, tx, e.EnvironmentID, e.SessionID)
 	if err != nil {
 		return err
@@ -27,7 +28,7 @@ func closeProcessing(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID
 	if tag.RowsAffected() != 1 {
 		return ErrNotReady
 	}
-	return rejectTurnMessages(ctx, tx, e.EnvironmentID, e.SessionID, turn, false, "turn_closed")
+	return rejectTurnMessages(ctx, auditPolicy, tx, e.EnvironmentID, e.SessionID, turn, false, "turn_closed")
 }
 
 func recordResult(ctx context.Context, tx pgx.Tx, e Execution, turn uuid.UUID, result json.RawMessage, digest [32]byte, drainEvidence string) error {

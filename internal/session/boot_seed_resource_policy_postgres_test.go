@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -83,7 +84,7 @@ func TestBootSeedPolicyChangeStopsAuthorityAndFencesRetry(t *testing.T) {
 	if err := computer.FailBootSeedBuild(t.Context(), f.pool, *f.host(), delivery.Executor, "boot_seed_build_failed"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 		t.Fatal(err)
 	}
 	var retained bool
@@ -138,7 +139,7 @@ func TestBootSeedRealGrantReclaimsWithoutConsumingEnvironmentQuota(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	admitted, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("real-work"))
+	admitted, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("real-work"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,14 +187,16 @@ func TestBootSeedOrdinaryRecoveryDoesNotDependOnExpiryOrder(t *testing.T) {
 			}
 			host := recoveringComputerHost(t, f.fixture)
 			expire := func() {
-				if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+				if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if expireFirst {
 				expire()
 			}
-			if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
+			if err := dispatch.ObserveRecoveredHost(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, host, []uuid.UUID{}); err != nil {
 				t.Fatal(err)
 			}
 			if !expireFirst {

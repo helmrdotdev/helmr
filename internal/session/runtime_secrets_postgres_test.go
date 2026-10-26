@@ -3,11 +3,11 @@ package session_test
 import (
 	"bytes"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -32,11 +32,11 @@ func runtimeSecretsOnFixture(t *testing.T, f fixture, e session.Execution) (fixt
 	if err := f.pool.QueryRow(t.Context(), `SELECT s.computer_id,l.allocation_id FROM sessions s JOIN computer_leases l ON l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.epoch=$3 WHERE s.environment_id=$1 AND s.id=$2`, f.env, e.SessionID, e.LeaseEpoch).Scan(&f.computer, &instance); err != nil {
 		t.Fatal(err)
 	}
-	store, err := secret.New(db.New(f.pool), f.pool, bytes.Repeat([]byte{17}, 32))
+	store, err := secret.New(db.New(f.pool), f.pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.Create(t.Context(), audit.System("test-fixture"), f.env, "RUNTIME_SECRET", []byte("v1"), "runtime-secret")
+	record, err := store.Create(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, "RUNTIME_SECRET", []byte("v1"), "runtime-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,14 +67,14 @@ func runtimeSecretsOnFixture(t *testing.T, f fixture, e session.Execution) (fixt
 
 func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	f, e, store, secretID, attachment, instance := runtimeSecretsFixture(t)
-	first, err := session.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	first, err := session.RecordSessionStartExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), e, attachment)
 	if err != nil || len(first.Secrets) != 4 || len(first.ProtectedEnv) != 2 {
 		t.Fatalf("first delivery: %+v %v", first, err)
 	}
-	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), f.env, secretID, []byte("v2"), "runtime-rotate"); err != nil {
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, secretID, []byte("v2"), "runtime-rotate"); err != nil {
 		t.Fatal(err)
 	}
-	retry, err := session.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	retry, err := session.RecordSessionStartExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), e, attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := session.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), peerExecution, peerAttachment.Sequence)
+	second, err := session.RecordSessionStartExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), peerExecution, peerAttachment.Sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	if _, err = resolve(markers[1:]); err != nil {
 		t.Fatalf("ending peer revoked live pin: %v", err)
 	}
-	if _, err = store.Revoke(t.Context(), audit.System("test-fixture"), f.env, secretID, "runtime-revoke"); err != nil {
+	if _, err = store.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, secretID, "runtime-revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = resolve(markers[1:]); !errors.Is(err, computer.ErrDenied) {
@@ -158,13 +158,13 @@ func TestRuntimeSecretExposureRejectsStaleStartupWithoutRecording(t *testing.T) 
 			case "hold":
 				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','test')`, f.env, uuid.NewV7(), e.SessionID)
 			case "revoked":
-				if _, err := store.Revoke(t.Context(), audit.System("test-fixture"), f.env, id, "before-delivery"); err != nil {
+				if _, err := store.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, id, "before-delivery"); err != nil {
 					t.Fatal(err)
 				}
 			case "expired":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2`, f.env, f.computer)
 			}
-			if _, err := session.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment); err == nil {
+			if _, err := session.RecordSessionStartExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), e, attachment); err == nil {
 				t.Fatal("invalid startup received secrets")
 			}
 			var count int
@@ -179,7 +179,7 @@ func TestRuntimeSecretPinsSurviveHealthyComputerRestore(t *testing.T) {
 	original := newFixture(t)
 	dbtest.MustExec(t, t.Context(), original.pool, `UPDATE session_processes SET status='starting' WHERE environment_id=$1 AND session_id=$2`, original.env, original.session)
 	f, e, store, id, attachment, sourceInstance := runtimeSecretsOnFixture(t, original, original.execution())
-	first, err := session.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	first, err := session.RecordSessionStartExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), e, attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestRuntimeSecretPinsSurviveHealthyComputerRestore(t *testing.T) {
 	if err = capture.checkpoints.CompleteCheckpoint(t.Context(), capture.ref, capture.manifest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), f.env, id, []byte("v2"), "rotate-suspended"); err != nil {
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, id, []byte("v2"), "rotate-suspended"); err != nil {
 		t.Fatal(err)
 	}
 	host := *f.host()
@@ -213,7 +213,9 @@ func TestRuntimeSecretPinsSurviveHealthyComputerRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f, host, p)
-	if err = session.CompleteComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err = session.CompleteComputerRestore(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, host, f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	selectors := []string{first.ProtectedEnv["TOKEN"]}
@@ -238,11 +240,11 @@ func TestRuntimeSecretPinsSelectAgainOnlyForNewLogicalGeneration(t *testing.T) {
 	original, allocator, e := startingSessionFixture(t)
 	original.session = e.SessionID
 	f, e, store, id, attachment, _ := runtimeSecretsOnFixture(t, original, e)
-	first, err := session.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	first, err := session.RecordSessionStartExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), e, attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), f.env, id, []byte("v2"), "rotate-before-cold"); err != nil {
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, id, []byte("v2"), "rotate-before-cold"); err != nil {
 		t.Fatal(err)
 	}
 	// Physical absence has been confirmed; the queued work remains for explicit reconstruction.
@@ -255,7 +257,7 @@ func TestRuntimeSecretPinsSelectAgainOnlyForNewLogicalGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := session.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, next.Sequence)
+	second, err := session.RecordSessionStartExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), e, next.Sequence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,15 +277,15 @@ func TestRuntimeSecretPinsSelectAgainOnlyForNewLogicalGeneration(t *testing.T) {
 
 func TestRuntimeSecretConcurrentLostAcknowledgementKeepsOnePin(t *testing.T) {
 	f, e, store, id, attachment, _ := runtimeSecretsFixture(t)
-	first, err := session.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+	first, err := session.RecordSessionStartExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), e, attachment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), f.env, id, []byte("v2"), "rotate-lost-ack"); err != nil {
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, id, []byte("v2"), "rotate-lost-ack"); err != nil {
 		t.Fatal(err)
 	}
 	replay := func() error {
-		retry, err := session.RecordSessionStartExposure(t.Context(), f.pool, *f.host(), e, attachment)
+		retry, err := session.RecordSessionStartExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), e, attachment)
 		if err == nil && (retry.ProtectedEnv["TOKEN"] != first.ProtectedEnv["TOKEN"] || retry.Secrets[0].VersionID != first.Secrets[0].VersionID) {
 			err = errors.New("concurrent retry changed pin")
 		}

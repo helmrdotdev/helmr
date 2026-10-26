@@ -31,7 +31,7 @@ func (s *Server) capacityGetResourcePolicy(w http.ResponseWriter, r *http.Reques
 	}
 	policy, err := workergroup.GetResourcePolicy(r.Context(), s.db, group, pool)
 	if err != nil {
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, policy)
@@ -65,14 +65,14 @@ func (s *Server) capacityPutResourcePolicy(w http.ResponseWriter, r *http.Reques
 	}
 	update := workergroup.ResourcePolicyUpdate{ExpectedRevision: *body.ExpectedRevision, ResourcePolicy: workergroup.ResourcePolicy{
 		Optional: workergroup.OptionalResources{CPUMillis: *body.Optional.CPUMillis, MemoryBytes: *body.Optional.MemoryBytes, DiskBytes: *body.Optional.DiskBytes, VMSlots: *body.Optional.VMSlots, MaxTasks: *body.Optional.MaxTasks, IOBytesPerSecond: *body.Optional.IOBytesPerSecond}, LocalHeadroomSlots: *body.LocalHeadroomSlots}}
-	policy, err := workergroup.UpdateResourcePolicy(r.Context(), s.tx, audit.CapacityAuthority(), group, pool, update)
+	policy, err := workergroup.UpdateResourcePolicy(r.Context(), s.tx, s.auditPolicy, audit.CapacityAuthority(), group, pool, update)
 	if err != nil {
 		var input workergroup.InputError
 		if errors.As(err, &input) {
 			writeError(w, badRequest(codedError{code: "invalid_resource_policy", message: err.Error()}))
 			return
 		}
-		s.writeWorkerGroupError(w, err)
+		s.writeWorkerGroupError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, policy)

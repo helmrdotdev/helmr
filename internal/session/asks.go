@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -43,7 +45,9 @@ func scanAsk(row pgx.Row) (AskView, error) {
 
 // RuntimeAsk admits one frozen question and its event together. Creation identity
 // is the ask identity; retries retain that identity after cancellation or expiry.
-func RuntimeAsk(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, id uuid.UUID, raw json.RawMessage) error {
+func RuntimeAsk(ctx context.Context, auditPolicy auditpolicy.Policy,
+
+	pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, id uuid.UUID, raw json.RawMessage) error {
 	question, err := content.Question(raw)
 	if err != nil {
 		return err
@@ -103,11 +107,14 @@ func RuntimeAsk(ctx context.Context, pool db.TxBeginner, host workergroup.HostPr
 		if err := notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
 			return err
 		}
+		if err := auditActorFact(ctx, tx, auditPolicy, runtimeAuditEvidence(e), audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: turn, Action: "input.requested", Outcome: "accepted", TargetKind: "input_request", TargetID: id, Details: audit.LifecycleDetails{Sequence: sequence, Generation: e.ProcessEpoch}}); err != nil {
+			return err
+		}
 		return publication.accept(ctx, tx, e.EnvironmentID, e.SessionID, turn, sequence)
 	}))
 }
 
-func RuntimeObserveAsk(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, id uuid.UUID) (AskView, error) {
+func RuntimeObserveAsk(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, id uuid.UUID) (AskView, error) {
 	var view AskView
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockRuntimeOperationOwner(ctx, tx, host, e); err != nil {
@@ -118,12 +125,18 @@ func RuntimeObserveAsk(ctx context.Context, pool db.TxBeginner, host workergroup
 		}
 		var err error
 		view, err = scanAsk(tx.QueryRow(ctx, `SELECT `+askColumns+` FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4 AND process_epoch=$5`, e.EnvironmentID, e.SessionID, turn, id, e.ProcessEpoch))
-		return err
+		if err != nil {
+			return err
+		}
+		return auditRuntimeEvent(ctx, tx, auditPolicy, e, turn, "session.content_read", "succeeded", audit.LifecycleDetails{})
 	})
+	if err != nil {
+		return AskView{}, hideMissing(err)
+	}
 	return view, hideMissing(err)
 }
 
-func RuntimeWithdrawAsk(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, id uuid.UUID) error {
+func RuntimeWithdrawAsk(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn, id uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if err := lockRuntimeOperationOwner(ctx, tx, host, e); err != nil {
 			return err
@@ -138,11 +151,14 @@ func RuntimeWithdrawAsk(ctx context.Context, pool db.TxBeginner, host workergrou
 		if status != "pending" {
 			return nil
 		}
-		return cancelAsk(ctx, tx, e.EnvironmentID, e.SessionID, turn, id)
+		return cancelAsk(ctx, auditPolicy, tx, runtimeAuditEvidence(e), e.EnvironmentID, e.SessionID, turn, id)
 	}))
 }
-func cancelAsk(ctx context.Context, tx pgx.Tx, env, session, turn, id uuid.UUID) error {
+func cancelAsk(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Evidence, env, session, turn, id uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `UPDATE turn_asks SET status='cancelled',cancelled_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4 AND status='pending'`, env, session, turn, id); err != nil {
+		return err
+	}
+	if err := auditActorFact(ctx, tx, auditPolicy, actor, audit.Event{EnvironmentID: env, SessionID: session, TurnID: turn, Action: "input.rejected", TargetKind: "input_request", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
 		return err
 	}
 	data, _ := json.Marshal(map[string]any{"ask_id": id})
@@ -150,7 +166,7 @@ func cancelAsk(ctx context.Context, tx pgx.Tx, env, session, turn, id uuid.UUID)
 }
 
 // Call under the owning Session/Turn locks when a Turn becomes terminal.
-func cancelTurnAsks(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID) error {
+func cancelTurnAsks(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session, turn uuid.UUID) error {
 	rows, err := tx.Query(ctx, `SELECT id FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND status='pending' ORDER BY created_event_seq FOR UPDATE`, env, session, turn)
 	if err != nil {
 		return err
@@ -170,7 +186,7 @@ func cancelTurnAsks(ctx context.Context, tx pgx.Tx, env, session, turn uuid.UUID
 		return err
 	}
 	for _, id := range ids {
-		if err := cancelAsk(ctx, tx, env, session, turn, id); err != nil {
+		if err := cancelAsk(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), env, session, turn, id); err != nil {
 			return err
 		}
 	}
@@ -189,7 +205,7 @@ type AskAnswerRequest struct {
 	Answer                                  json.RawMessage
 }
 
-func AnswerAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskAnswerRequest) (AskView, error) {
+func AnswerAsk(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req AskAnswerRequest) (AskView, error) {
 	if caller.Kind != "user" && caller.Kind != "api_key" {
 		return AskView{}, ErrDenied
 	}
@@ -266,14 +282,17 @@ func AnswerAsk(ctx context.Context, pool db.TxBeginner, caller Caller, req AskAn
 			data["answered_by_api_key_id"] = key
 		}
 		raw, _ := json.Marshal(data)
+		if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsAnswer, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: req.TurnID, Action: "input.answered", TargetKind: "input_request", TargetID: req.AskID, Details: audit.LifecycleDetails{}}); err != nil {
+			return err
+		}
 		return eventData(ctx, tx, req.EnvironmentID, req.SessionID, req.TurnID, "ask.answered", raw)
 	})
 	return view, hideMissing(err)
 }
 
-func GetAsk(ctx context.Context, pool db.TxBeginner, caller Caller, env, session, turn, id uuid.UUID) (AskView, error) {
+func GetAsk(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, env, session, turn, id uuid.UUID) (AskView, error) {
 	var view AskView
-	err := readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error {
+	err := discloseTransaction(ctx, auditPolicy, pool, caller, env, session, turn, func(tx pgx.Tx) error {
 		if err := authorizeSessionRead(ctx, tx, caller, env, session); err != nil {
 			return err
 		}
@@ -281,6 +300,9 @@ func GetAsk(ctx context.Context, pool db.TxBeginner, caller Caller, env, session
 		view, err = scanAsk(tx.QueryRow(ctx, `SELECT `+askColumns+` FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4`, env, session, turn, id))
 		return err
 	})
+	if err != nil {
+		return AskView{}, hideMissing(err)
+	}
 	return view, err
 }
 
@@ -289,12 +311,12 @@ type AskPage struct {
 	NextSequence int64
 }
 
-func ListAsks(ctx context.Context, pool db.TxBeginner, caller Caller, req TurnListRequest, turn uuid.UUID) (AskPage, error) {
+func ListAsks(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req TurnListRequest, turn uuid.UUID) (AskPage, error) {
 	page := AskPage{Asks: []AskView{}}
 	if req.After < 0 || req.Limit < 1 || req.Limit > 100 {
 		return page, ErrInvalidInput
 	}
-	err := readTransaction(ctx, pool, caller, req.EnvironmentID, func(tx pgx.Tx) error {
+	err := discloseTransaction(ctx, auditPolicy, pool, caller, req.EnvironmentID, req.SessionID, turn, func(tx pgx.Tx) error {
 		if err := authorizeSessionRead(ctx, tx, caller, req.EnvironmentID, req.SessionID); err != nil {
 			return err
 		}
@@ -323,5 +345,8 @@ func ListAsks(ctx context.Context, pool db.TxBeginner, caller Caller, req TurnLi
 		}
 		return nil
 	})
+	if err != nil {
+		return AskPage{}, hideMissing(err)
+	}
 	return page, err
 }

@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -24,7 +25,9 @@ func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+		if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -51,10 +54,12 @@ func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 	}
 	req := controlRequest(f, "resume", "release-process-failure")
 	req.HoldID = hold
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&count); err != nil || count != 0 {
@@ -69,7 +74,9 @@ func TestUnexpectedSessionStopPreservesRecordedResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	var state string
@@ -118,7 +125,9 @@ func TestContinuationCompletesAfterUnexpectedMemberStop(t *testing.T) {
 					return session.CommitComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, false))
 				}
 				complete = func() error {
-					return session.CompleteComputerRestore(t.Context(), f.pool, host, f.env, p, restoreReceipt(p, true, true))
+					return session.CompleteComputerRestore(t.Context(), auditpolicy.Policy{
+						RetentionSeconds: 3600,
+					}, f.pool, host, f.env, p, restoreReceipt(p, true, true))
 				}
 			} else {
 				f = newFixture(t)
@@ -132,7 +141,9 @@ func TestContinuationCompletesAfterUnexpectedMemberStop(t *testing.T) {
 					return session.CommitComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, false))
 				}
 				complete = func() error {
-					return session.CompleteComputerSourceAbort(t.Context(), f.pool, host, f.env, p, abortReceipt(p, true, true))
+					return session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
+						RetentionSeconds: 3600,
+					}, f.pool, host, f.env, p, abortReceipt(p, true, true))
 				}
 			}
 			if err := commit(); err != nil {
@@ -142,7 +153,9 @@ func TestContinuationCompletesAfterUnexpectedMemberStop(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = session.ObserveSessionStopped(t.Context(), f.pool, host, e, a.Sequence); err != nil {
+			if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, host, e, a.Sequence); err != nil {
 				t.Fatal(err)
 			}
 			if _, err = session.RenewRuntimeAuthority(t.Context(), f.pool, host, e); !errors.Is(err, session.ErrNotReady) {
@@ -181,7 +194,9 @@ func TestUnexpectedSessionStopRejectsSupersededAttachment(t *testing.T) {
 	if _, err = session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), old.Sequence); !errors.Is(err, session.ErrDenied) {
+	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), old.Sequence); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("old attachment stopped process: %v", err)
 	}
 	var unchanged bool
@@ -198,7 +213,9 @@ func TestSourcePreparationStopsFailedMemberAndResumesHealthyPeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), peer.execution(), a.Sequence); err != nil {
+	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), peer.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	initial := abortReceipt(p, false, false)
@@ -225,7 +242,9 @@ func TestSourcePreparationStopsFailedMemberAndResumesHealthyPeer(t *testing.T) {
 		}
 	}
 	acknowledgeComputerMembers(t, f, *f.host(), p)
-	if err = session.CompleteComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
+	if err = session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	next := f.enqueue(t, "healthy")

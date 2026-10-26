@@ -13,12 +13,12 @@ import (
 func (s *Server) sendSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsSend)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var request struct {
@@ -32,12 +32,12 @@ func (s *Server) sendSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	req := session.EnqueueRequest{EnvironmentID: environment, SessionID: sessionID, IdempotencyKey: request.IdempotencyKey, Input: request.Data}
 	turn, err := ids.Parse(chi.URLParam(r, "turnID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
-	receipt, err := session.SendTurn(r.Context(), s.tx, caller, req, turn)
+	receipt, err := session.SendTurn(r.Context(), s.auditPolicy, s.tx, caller, req, turn)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": receipt.MessageID.String(), "turn_id": receipt.TurnID.String(), "message_id": receipt.MessageID.String(), "status": "accepted"})

@@ -4,15 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
+
 	"github.com/helmrdotdev/helmr/internal/session"
 )
 
@@ -40,7 +41,7 @@ func TestAsyncCompletionCoveragePrefixIsImmutableAcrossConcurrentResult(t *testi
 	}
 	done := make(chan error, 1)
 	go func() {
-		outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), third.TurnID, json.RawMessage(`3`), "joined")
+		outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), third.TurnID, json.RawMessage(`3`), "joined")
 		if err == nil && outcome == nil {
 			err = errors.New("completion still pending")
 		}
@@ -137,7 +138,9 @@ func TestComputerRecoveryGapHoldsIdleSessionsAndPreservesIndependentHolds(t *tes
 	turn, save := active.finalize(t, "uncovered")
 	active.enqueue(t, "followup")
 	for range 2 {
-		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -158,7 +161,7 @@ func TestComputerRecoveryGapHoldsIdleSessionsAndPreservesIndependentHolds(t *tes
 	}
 	req := controlRequest(f, "resume", "acknowledge-gap")
 	req.HoldID = hold
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT released_at IS NULL FROM session_holds WHERE id=$1`, independent).Scan(&valid); err != nil || !valid {
@@ -175,7 +178,9 @@ func TestAcknowledgedRecoveryGapSurvivesPhysicalFenceAndNewEpochLoss(t *testing.
 	f.finalize(t, "first-epoch-result")
 	queued := f.enqueue(t, "new-epoch-result")
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1 AND epoch=1`, f.computer)
-	if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+	if err := dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, f.env, f.computer, 1); err != nil {
 		t.Fatal(err)
 	}
 	var hold uuid.UUID
@@ -188,12 +193,14 @@ func TestAcknowledgedRecoveryGapSurvivesPhysicalFenceAndNewEpochLoss(t *testing.
 	}
 	req := controlRequest(f, "resume", "acknowledge-before-physical-fence")
 	req.HoldID = hold
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
 	// Descriptive JSON cannot change the identity of an acknowledged loss.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_holds SET recovery_gap=recovery_gap || jsonb_build_object('computerId',$2::uuid::text,'leaseEpoch',0) WHERE id=$1`, hold, uuid.NewV7())
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT
@@ -202,7 +209,9 @@ func TestAcknowledgedRecoveryGapSurvivesPhysicalFenceAndNewEpochLoss(t *testing.
  AND (SELECT count(*)=1 FROM session_events WHERE session_id=$2 AND kind='session.recovery_gap')`, hold, f.session).Scan(&valid); err != nil || !valid {
 		t.Fatalf("physical fence recreated acknowledged gap %v %v", valid, err)
 	}
-	allocator, err := dispatch.NewAllocator(f.pool, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,21 +239,29 @@ func TestAcknowledgedRecoveryGapSurvivesPhysicalFenceAndNewEpochLoss(t *testing.
 		t.Fatal(err)
 	}
 	acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
-	next, err := session.DispatchRuntimeTurn(t.Context(), f.pool, *f.host(), e, attachment.Sequence, nil)
+	next, err := session.DispatchRuntimeTurn(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, attachment.Sequence, nil)
 	if err != nil || next == nil || next.TurnID != queued.TurnID {
 		t.Fatalf("new epoch dispatch %+v %v", next, err)
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), e, next.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, next.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if result, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), e, next.TurnID, json.RawMessage(`2`), "new epoch handler returned"); err != nil || result == nil {
+	if result, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), e, next.TurnID, json.RawMessage(`2`), "new epoch handler returned"); err != nil || result == nil {
 		t.Fatalf("new epoch completion %s %v", result, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1 AND epoch=2`, f.computer)
-	if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 2); err != nil {
+	if err := dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, f.env, f.computer, 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT
@@ -272,14 +289,18 @@ func TestComputerNoGapRecoveryCreatesNewLeaseAndProcessWithoutReplay(t *testing.
 		t.Fatal(err)
 	}
 	queued := f.enqueue(t, "queued")
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var holds int
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
 		t.Fatalf("no-gap hold %d %v", holds, err)
 	}
-	allocator, err := dispatch.NewAllocator(f.pool, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +326,9 @@ func TestComputerNoGapRecoveryCreatesNewLeaseAndProcessWithoutReplay(t *testing.
 		t.Fatal(err)
 	}
 	acknowledgeAdmissionControl(t, f, e, attachment.Sequence)
-	next, err := session.DispatchRuntimeTurn(t.Context(), f.pool, *f.host(), e, attachment.Sequence, nil)
+	next, err := session.DispatchRuntimeTurn(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), e, attachment.Sequence, nil)
 	if err != nil || next == nil || next.TurnID != queued.TurnID {
 		t.Fatalf("recovered dispatch %+v %v", next, err)
 	}
@@ -342,14 +365,16 @@ func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.
 			case "deleted":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE id=$1`, f.computer)
 			case "revoked":
-				if _, err := preparation.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, preparation.secretID, "revoke"); err != nil {
+				if _, err := preparation.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, preparation.secretID, "revoke"); err != nil {
 					t.Fatal(err)
 				}
 			case "missing-image":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET image_id=NULL WHERE id=$1`, f.computer)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1`, f.computer)
-			if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+			if err := dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, f.env, f.computer, 1); err != nil {
 				t.Fatal(err)
 			}
 			want := 1
@@ -365,7 +390,9 @@ func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.
 			}
 			// Expiry is still physically unfenced, and capacity may be absent.
 			check()
-			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			check()
@@ -389,24 +416,30 @@ func TestComputerLossInterruptionCauseOnlyDescribesRunningLostTurn(t *testing.T)
 			if state == "user-interrupted" {
 				req := controlRequest(f, "turn_interrupt", "user-stop")
 				req.TurnID = running.TurnID
-				if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if state == "pressure-stopped" {
-				if err := session.ReportStoragePressure(t.Context(), f.pool, *f.host(), saveIdentity(f), true); err != nil {
+				if err := session.ReportStoragePressure(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, *f.host(), saveIdentity(f), true); err != nil {
 					t.Fatal(err)
 				}
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '301 seconds' WHERE computer_id=$1`, f.computer)
-				if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+				if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1`, f.computer)
-			if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+			if err := dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, f.env, f.computer, 1); err != nil {
 				t.Fatal(err)
 			}
-			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			var raw []byte
@@ -447,11 +480,13 @@ func TestInitialRootRecoveryKeepsOldEpochGapAndRetainedMetadata(t *testing.T) {
 	lost, failed := f.finalize(t, "lost-first-result")
 	f.enqueue(t, "continue-after-acknowledgment")
 	for range 2 {
-		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 			t.Fatal(err)
 		}
 	}
-	view, err := session.GetSession(t.Context(), f.pool, f.caller(), f.env, f.session)
+	view, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session)
 	if err != nil || len(view.Holds) != 1 || view.Holds[0].RecoveryGap == nil {
 		t.Fatalf("durable gap view %+v %v", view, err)
 	}
@@ -463,7 +498,9 @@ func TestInitialRootRecoveryKeepsOldEpochGapAndRetainedMetadata(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_events WHERE kind='session.recovery_gap'`).Scan(&notices); err != nil || notices != 2 {
 		t.Fatalf("repeated loss duplicated notices %d %v", notices, err)
 	}
-	allocator, err := dispatch.NewAllocator(f.pool, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,17 +509,17 @@ func TestInitialRootRecoveryKeepsOldEpochGapAndRetainedMetadata(t *testing.T) {
 	}
 	req := controlRequest(f, "resume", "acknowledge-initial-state")
 	req.HoldID = view.Holds[0].ID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1`, f.env, definition.ComputerSeedProfile)
 	// Expiring the event stream cannot discard unresolved hold-owned facts.
 	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM session_events WHERE kind='session.recovery_gap'`)
-	admitted, err := session.Start(t.Context(), f.pool, nil, f.caller(), session.StartRequest{EnvironmentID: f.env, Agent: "agent", ComputerID: f.computer, IdempotencyKey: "joined-after-loss", Input: json.RawMessage(`[{"type":"text","text":"continue"}]`)})
+	admitted, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.StartRequest{EnvironmentID: f.env, Agent: "agent", ComputerID: f.computer, IdempotencyKey: "joined-after-loss", Input: json.RawMessage(`[{"type":"text","text":"continue"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined, err := session.GetSession(t.Context(), f.pool, f.caller(), f.env, admitted.SessionID)
+	joined, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, admitted.SessionID)
 	if err != nil || len(joined.Holds) != 1 || joined.Holds[0].RecoveryGap == nil || len(joined.Holds[0].RecoveryGap.AffectedTurnIDs) != 0 || joined.Holds[0].RecoveryGap.HoldID != joined.Holds[0].ID || joined.Holds[0].RecoveryGap.ComputerID != f.computer || joined.Holds[0].RecoveryGap.LeaseEpoch != 1 {
 		t.Fatalf("joined gap %+v %v", joined, err)
 	}
@@ -554,11 +591,15 @@ func TestRecoveryDoesNotSubstituteInitialRootForUnavailablePublishedHead(t *test
 		t.Fatal(err)
 	}
 	f.enqueue(t, "pending")
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET root_id=NULL,payload_retired_at=clock_timestamp() WHERE id=$1`, save.ID)
-	allocator, err := dispatch.NewAllocator(f.pool, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

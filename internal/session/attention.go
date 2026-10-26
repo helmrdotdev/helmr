@@ -3,6 +3,9 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"strings"
 	"time"
 	"unicode"
@@ -76,9 +79,15 @@ const attentionFailedTurnsSQL = `SELECT t.id,t.session_id,ag.key,t.terminal_at,t
 
 // ListAttention reads the Environment's waiting work with the same authority as
 // reading its Sessions, in one snapshot.
-func ListAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env uuid.UUID) (Attention, error) {
+func ListAttention(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, env uuid.UUID) (Attention, error) {
 	result := Attention{Questions: []AttentionItem{}, Holds: []AttentionItem{}, FailedTurns: []AttentionItem{}}
-	err := readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error {
+	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`); err != nil {
+			return err
+		}
+		if err := authorizeRead(ctx, tx, caller, env); err != nil {
+			return err
+		}
 		filter, err := readScopeFor(ctx, tx, caller, env)
 		if err != nil {
 			return err
@@ -118,9 +127,27 @@ func ListAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env u
 			}
 			return nil
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		seen := map[uuid.UUID]bool{}
+		for _, items := range [][]AttentionItem{result.Questions, result.Holds} {
+			for _, item := range items {
+				if seen[item.SessionID] {
+					continue
+				}
+				seen[item.SessionID] = true
+				if err := auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsRead, audit.Event{EnvironmentID: env, SessionID: item.SessionID, Action: "session.content_read", TargetKind: "session", TargetID: item.SessionID, Details: audit.LifecycleDetails{}}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	})
-	return result, err
+	if err != nil {
+		return Attention{}, hideMissing(err)
+	}
+	return result, hideMissing(err)
 }
 
 func attentionRows(ctx context.Context, tx pgx.Tx, sql string, env uuid.UUID, filter sessionReadScope, scan func(pgx.Rows, *AttentionItem, *int64) error) ([]AttentionItem, int64, error) {

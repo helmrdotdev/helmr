@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -25,7 +26,9 @@ func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, other, f.Computer)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_leases(environment_id,computer_id,epoch,worker_host_id,worker_epoch,expires_at,status,allocation_id,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at) SELECT environment_id,$3,epoch,worker_host_id,worker_epoch,clock_timestamp()-interval '1 second','lost',$3,channel_credential_digest,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer, other)
 	actionable := insertRecoveryCommand(t, f, other, false)
-	position, more, err := command.RecoverBatch(t.Context(), f.Pool, command.RecoveryPosition{}, 1)
+	position, more, err := command.RecoverBatch(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, command.RecoveryPosition{}, 1)
 	if err != nil || !more || position.ID != actionable {
 		t.Fatalf("recovery position=%+v more=%v %v", position, more, err)
 	}
@@ -45,7 +48,9 @@ func TestSecretRevocationDiscoveryAdvancesPastStoppedCommands(t *testing.T) {
 		if n == 0 {
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET status='pending',computer_lease_epoch=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)
 		}
-		position, _, err := command.RecoverBatch(t.Context(), f.Pool, command.RecoveryPosition{}, 1)
+		position, _, err := command.RecoverBatch(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.Pool, command.RecoveryPosition{}, 1)
 		if err != nil || position.ID != id {
 			t.Fatalf("revocation discovery %d: position=%+v %v", n, position, err)
 		}

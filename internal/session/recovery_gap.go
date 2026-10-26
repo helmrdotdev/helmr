@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/jackc/pgx/v5"
 	"time"
@@ -27,11 +28,11 @@ type recoveryGapDetails struct {
 // RecordComputerRecoveryGap settles acknowledged file exposure while all open
 // Sessions and the Computer are locked. Failed rows remain historical evidence;
 // newer publications cannot erase the gap or release an existing hold.
-func RecordComputerRecoveryGap(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, epoch int64) error {
+func RecordComputerRecoveryGap(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, computerID uuid.UUID, epoch int64) error {
 	if err := computer.RecordLeaseStoragePressure(ctx, tx, env, computerID, epoch, false); err != nil {
 		return err
 	}
-	if err := reconcileStoragePressureTx(ctx, tx, env, computerID, epoch); err != nil {
+	if err := reconcileStoragePressureTx(ctx, auditPolicy, tx, env, computerID, epoch); err != nil {
 		return err
 	}
 	var gap bool

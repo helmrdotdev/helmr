@@ -14,10 +14,10 @@ func TestPrunedOperationReceiptHasExplicitTransportOutcome(t *testing.T) {
 	server := &Server{}
 	for name, write := range map[string]func(http.ResponseWriter, error){
 		"computer exec": func(w http.ResponseWriter, err error) {
-			server.writeCommandError(w, err, commandCreateOperation)
+			server.writeCommandError(w, httptest.NewRequest(http.MethodPost, "/v1/commands", nil), err, commandCreateOperation)
 		},
 		"computer create": func(w http.ResponseWriter, err error) {
-			server.writeComputerError(w, err, computerCreateOperation, "create Computer failed")
+			server.writeComputerError(w, httptest.NewRequest(http.MethodPost, "/v1/computers", nil), err, computerCreateOperation, "create Computer failed")
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

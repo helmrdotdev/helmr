@@ -112,6 +112,8 @@ output "secret_arns" {
   description = "Secrets Manager container ARNs created by the controlplane module. Populate secret values out-of-band."
   value = merge({
     database_url                       = aws_secretsmanager_secret.database_url.arn
+    database_migration_url             = aws_secretsmanager_secret.database_migration_url.arn
+    database_audit_maintenance_url     = aws_secretsmanager_secret.database_audit_maintenance_url.arn
     worker_host_credential_signing_key = aws_secretsmanager_secret.worker_host_credential_signing_key.arn
     auth_key                           = aws_secretsmanager_secret.auth_key.arn
     encryption_key                     = aws_secretsmanager_secret.encryption_key.arn

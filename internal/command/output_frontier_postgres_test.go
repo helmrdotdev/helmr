@@ -3,6 +3,7 @@ package command
 import (
 	"bytes"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -23,13 +24,13 @@ func TestCommandTerminalAndTailResumeUnderDiagnosticPressure(t *testing.T) {
 	}
 	code := int32(0)
 	report := CompletionReport{EnvironmentID: f.Environment, CommandID: id, InstanceID: start.Lease.InstanceID, WriterGeneration: start.Lease.Epoch, Outcome: "exited", ExitCode: &code, Stdout: OutputBoundary{ThroughSequence: 2, Complete: true}, Stderr: OutputBoundary{ThroughSequence: 1, Complete: true}}
-	if err := Complete(t.Context(), f.Pool, f.host(), report); err != nil {
+	if err := Complete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), report); err != nil {
 		t.Fatal("full telemetry queue blocked terminal", err)
 	}
-	if err := Reconcile(t.Context(), f.Pool, f.host(), report); !errors.Is(err, ErrChanged) {
+	if err := Reconcile(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), report); !errors.Is(err, ErrChanged) {
 		t.Fatal("unsettled output reconciled", err)
 	}
-	claim, err := Claim(t.Context(), f.Pool, f.host(), f.claim())
+	claim, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), f.claim())
 	if err != nil || claim.Start == nil || !claim.Start.TailOnly || claim.Release != nil || len(claim.Start.Secrets) != 0 {
 		t.Fatalf("tail resume: %+v %v", claim, err)
 	}
@@ -74,11 +75,11 @@ func TestCommandTerminalAndTailResumeUnderDiagnosticPressure(t *testing.T) {
 	if _, err := AppendLog(t.Context(), f.Pool, f.host(), end, bounds); err != nil {
 		t.Fatal(err)
 	}
-	claim, err = Claim(t.Context(), f.Pool, f.host(), f.claim())
+	claim, err = Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), f.claim())
 	if err != nil || claim.Release == nil || claim.Start != nil {
 		t.Fatalf("settled release %+v %v", claim, err)
 	}
-	if err := Reconcile(t.Context(), f.Pool, f.host(), report); err != nil {
+	if err := Reconcile(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), report); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := AppendLog(t.Context(), f.Pool, f.host(), end, bounds); !errors.Is(err, ErrChanged) {

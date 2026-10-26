@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -26,17 +27,17 @@ func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 	scopeFixtureToAgent(t, f)
 	req := f.startRequest("scoped")
 	req.ComputerID = f.computer
-	if _, err := session.Start(ctx, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("scoped Computer attachment accepted", err)
 	}
 	req.ComputerID = uuid.Nil()
 	key := "shared-name"
 	req.SessionKey = &key
-	if _, err := session.Start(ctx, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("scoped keyed start accepted", err)
 	}
 	req.SessionKey = nil
-	first, err := session.Start(ctx, f.pool, nil, f.caller(), req)
+	first, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,18 +45,18 @@ func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 	if err = f.pool.QueryRow(ctx, `SELECT origin_slack_connection_id IS NULL AND origin_user_id IS NOT NULL AND origin_user_id=$3 AND computer_id<>$4 FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, first.SessionID, f.user, f.computer).Scan(&fresh); err != nil || !fresh {
 		t.Fatal("invalid scoped origin or Computer", fresh, err)
 	}
-	if _, err = session.Start(ctx, f.pool, nil, f.caller(), req); err != nil {
+	if _, err = session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); err != nil {
 		t.Fatal("own creation retry failed", err)
 	}
-	if _, err = session.GetSession(ctx, f.pool, f.caller(), f.env, f.session); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("Use read another person's Session", err)
 	}
 	other := uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Peer');
  INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$1 FROM environments WHERE id=$2;
  INSERT INTO permission_group_members(org_id,group_id,member_id) SELECT gm.org_id,gm.group_id,other.id FROM permission_group_members gm JOIN org_members existing ON existing.id=gm.member_id JOIN org_members other ON other.org_id=gm.org_id AND other.user_id=$1 WHERE existing.user_id=$3`, pgx.QueryExecModeSimpleProtocol, other, f.env, f.user)
-	peer := session.Caller{Kind: "user", ID: other}
-	if _, err = session.GetSession(ctx, f.pool, peer, f.env, first.SessionID); !errors.Is(err, session.ErrDenied) {
+	peer := session.Caller{Kind: "user", ID: other, CredentialID: uuid.NewV7()}
+	if _, err = session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, peer, f.env, first.SessionID); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("peer read own-origin session", err)
 	}
 	for _, tc := range []struct {
@@ -73,15 +74,15 @@ func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 			t.Fatalf("close scope denied=%v: %v", tc.denied, err)
 		}
 	}
-	second, err := session.Start(ctx, f.pool, nil, peer, f.startRequest("peer"))
+	second, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, peer, f.startRequest("peer"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	page, err := session.ListSessions(ctx, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, Limit: 1})
+	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, Limit: 1})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != first.SessionID || page.NextCursor != uuid.Nil() {
 		t.Fatal("filter ran after pagination", page, err)
 	}
-	if _, err = session.Enqueue(ctx, f.pool, nil, peer, session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "peer-input", Input: req.Input}); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, peer, session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "peer-input", Input: req.Input}); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("peer input accepted", err)
 	}
 	// Session management permits intervention; Computer placement requires its own capability.
@@ -90,26 +91,26 @@ func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.GrantMember(t, f.pool, org, other, &f.env, "sessions.send", "sessions.read")
-	view, err := session.GetSession(ctx, f.pool, peer, f.env, first.SessionID)
+	view, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, peer, f.env, first.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	attachment := f.startRequest("operator-attach")
 	attachment.ComputerID = *view.ComputerID
-	if _, err = session.Start(ctx, f.pool, nil, peer, attachment); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, peer, attachment); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("operator attached a peer to scoped Computer", err)
 	}
-	if _, err = session.ControlSession(ctx, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: first.SessionID, Kind: "interrupt", IdempotencyKey: "own-stop"}); err != nil {
+	if _, err = session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: first.SessionID, Kind: "interrupt", IdempotencyKey: "own-stop"}); err != nil {
 		t.Fatal("own scoped control failed", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
-	if _, err = session.Start(ctx, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("revoked creation receipt exposed", err)
 	}
-	if _, err = session.GetSession(ctx, f.pool, f.caller(), f.env, first.SessionID); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, first.SessionID); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("revoked read accepted", err)
 	}
-	if _, err = session.GetSession(ctx, f.pool, peer, f.env, second.SessionID); err != nil {
+	if _, err = session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, peer, f.env, second.SessionID); err != nil {
 		t.Fatal("independent operator path lost", err)
 	}
 }
@@ -122,14 +123,14 @@ func TestScopedRuntimeRelationsAndQueuedRevocation(t *testing.T) {
 	peer := f.peer(t)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, peer.session)
 	caller := runtimeReadCaller(t, f)
-	if _, err := session.RuntimeGetSession(ctx, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("same-origin peer readable", err)
 	}
 	if _, _, err := session.RuntimeListComputers(ctx, f.pool, caller, computer.ListPage{Limit: 10}); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("scoped runtime listed Computers", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET requester_session_id=$1,causal_depth=1 WHERE id=$2`, f.session, peer.session)
-	if _, err := session.RuntimeGetSession(ctx, f.pool, caller, peer.session); err != nil {
+	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); err != nil {
 		t.Fatal("direct requested root denied", err)
 	}
 	// Revoking the origin prevents a fresh queued Turn and records its failure.
@@ -142,7 +143,7 @@ func TestScopedRuntimeRelationsAndQueuedRevocation(t *testing.T) {
 	if err := f.pool.QueryRow(ctx, `SELECT status='failed' AND error_code='permission_revoked' AND processing_closed_at IS NOT NULL FROM turns WHERE id=$1`, queued.TurnID).Scan(&failed); err != nil || !failed {
 		t.Fatal("denied queue not settled", failed, err)
 	}
-	if _, err := session.RuntimeGetSession(ctx, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("revoked runtime read accepted", err)
 	}
 }
@@ -159,10 +160,10 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	req := f.startRequest("machine")
 	noRetry := req
 	noRetry.IdempotencyKey = ""
-	if _, err := session.Start(ctx, f.pool, nil, caller, noRetry); !errors.Is(err, session.ErrInvalidInput) {
+	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, noRetry); !errors.Is(err, session.ErrInvalidInput) {
 		t.Fatal("scoped key did not require retry key", err)
 	}
-	created, err := session.Start(ctx, f.pool, nil, caller, req)
+	created, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,10 +173,10 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	}
 	// Token rotation leaves the machine principal ID and its receipt ownership intact.
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE api_keys SET token_hash=convert_to('rotated','UTF8') WHERE id=$1`, key)
-	if replay, err := session.Start(ctx, f.pool, nil, caller, req); err != nil || replay.SessionID != created.SessionID {
+	if replay, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); err != nil || replay.SessionID != created.SessionID {
 		t.Fatal("rotation lost receipt", replay, err)
 	}
-	if _, err := session.Enqueue(ctx, f.pool, nil, session.Caller{Kind: "api_key", ID: other}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: created.SessionID, IdempotencyKey: "peer", Input: req.Input}); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "api_key", ID: other}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: created.SessionID, IdempotencyKey: "peer", Input: req.Input}); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("different key controlled scoped run", err)
 	}
 	// Exercise an authenticated runtime on an existing fixture attachment.
@@ -184,17 +185,17 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET origin_user_id=NULL,origin_api_key_id=$1 WHERE id=$2`, key, peer.session)
 	runtime := runtimeReadCaller(t, f)
 	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.read")
-	if _, err := session.GetSession(ctx, f.pool, caller, f.env, peer.session); err != nil {
+	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, peer.session); err != nil {
 		t.Fatal("explicit run-view path denied", err)
 	}
-	if _, err := session.RuntimeGetSession(ctx, f.pool, runtime, peer.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, runtime, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("later elevation widened scoped runtime", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1`, key)
-	if _, err := session.Start(ctx, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("revoked key returned receipt", err)
 	}
-	if _, err := session.RuntimeGetSession(ctx, f.pool, runtime, f.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, runtime, f.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("revoked key runtime remained authorized", err)
 	}
 }
@@ -210,7 +211,7 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 	}
 	caller := session.Caller{Kind: "session", ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
 	for _, method := range []string{"create", "spawn"} {
-		result, err := session.AdmitSession(ctx, f.pool, nil, caller, f.startRequest("scoped-"+method), method)
+		result, err := session.AdmitSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("scoped-"+method), method)
 		if err != nil {
 			t.Fatalf("%s: %v", method, err)
 		}
@@ -223,11 +224,11 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'helper'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, pgx.QueryExecModeSimpleProtocol, f.env, helper, f.agent)
 	req := f.startRequest("helper-denied")
 	req.Agent = "helper"
-	if _, err := session.Spawn(ctx, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Spawn(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("ungranted helper admitted: %v", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
-	if _, err := session.Spawn(ctx, f.pool, nil, caller, f.startRequest("revoked")); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Spawn(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("revoked")); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked origin spawned: %v", err)
 	}
 }
@@ -242,23 +243,23 @@ func TestAPIKeySelectedAgentSessionVisibilityAndRevocation(t *testing.T) {
 	hidden := f.peer(t)
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'hidden'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3; UPDATE sessions SET agent_id=$2 WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, hiddenAgent, f.agent, hidden.session)
 	caller := session.Caller{Kind: "api_key", ID: key}
-	page, err := session.ListSessions(ctx, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
+	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session {
 		t.Fatalf("selected visibility: %+v %v", page, err)
 	}
-	if _, err := session.GetSession(ctx, f.pool, caller, f.env, hidden.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, hidden.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("hidden session readable", err)
 	}
 	req := f.startRequest("hidden-key")
 	req.Agent = "hidden"
-	if _, err := session.Start(ctx, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("hidden Agent admitted", err)
 	}
-	if _, err := session.Start(ctx, f.pool, nil, caller, f.startRequest("selected-key")); err != nil {
+	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("selected-key")); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM role_grants WHERE api_key_id=$1`, key)
-	if _, err := session.GetSession(ctx, f.pool, caller, f.env, f.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, f.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("removed assignment still authorizes", err)
 	}
 }

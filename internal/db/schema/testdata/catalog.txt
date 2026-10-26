@@ -24,6 +24,7 @@ column agents.key text not null
 column agents.revision bigint not null default 1
 column api_keys.created_at timestamp with time zone not null default now()
 column api_keys.created_by_member_id uuid
+column api_keys.credential_version bigint not null default 1
 column api_keys.environment_id uuid not null
 column api_keys.expires_at timestamp with time zone
 column api_keys.id uuid not null
@@ -35,22 +36,43 @@ column api_keys.project_id uuid not null
 column api_keys.revoked_at timestamp with time zone
 column api_keys.token_hash bytea not null
 column audit_events.action text not null
-column audit_events.actor_credential_id uuid
+column audit_events.actor_id uuid
+column audit_events.actor_identity jsonb
 column audit_events.actor_kind text not null
-column audit_events.actor_source text not null default ''::text
-column audit_events.actor_user_id uuid
+column audit_events.actor_member_id uuid
+column audit_events.actor_service text
+column audit_events.authorization_witness jsonb not null
+column audit_events.causality jsonb not null default '{}'::jsonb
+column audit_events.cause_event_id uuid
+column audit_events.channel text not null
+column audit_events.computer_id uuid
+column audit_events.credential_id uuid
+column audit_events.credential_kind text not null
+column audit_events.credential_version bigint
+column audit_events.deployment_id uuid
 column audit_events.details jsonb not null default '{}'::jsonb
 column audit_events.environment_id uuid
+column audit_events.expires_at timestamp with time zone not null
 column audit_events.id uuid not null
-column audit_events.occurred_at timestamp with time zone not null default clock_timestamp()
+column audit_events.occurred_at timestamp with time zone not null
+column audit_events.operation_id uuid not null
 column audit_events.org_id uuid
-column audit_events.outcome text not null default 'succeeded'::text
+column audit_events.outcome text not null
+column audit_events.process_epoch bigint
 column audit_events.project_id uuid
-column audit_events.slack_team_id text not null default ''::text
-column audit_events.slack_user_id text not null default ''::text
+column audit_events.recorded_at timestamp with time zone not null
+column audit_events.retention_seconds bigint not null
+column audit_events.runtime_generation bigint
+column audit_events.schema_version smallint not null
+column audit_events.session_id uuid
+column audit_events.slack_team_id text
+column audit_events.slack_user_id text
+column audit_events.source_ip inet
 column audit_events.target_id uuid
 column audit_events.target_kind text not null
+column audit_events.target_resolution text not null
 column audit_events.target_user_id uuid
+column audit_events.turn_id uuid
 column auth_identities.created_at timestamp with time zone not null default now()
 column auth_identities.email text
 column auth_identities.id uuid not null
@@ -1209,6 +1231,7 @@ constraint agents p PRIMARY KEY (environment_id, id)
 constraint agents u UNIQUE (environment_id, key)
 constraint api_keys c CHECK (btrim(key_prefix) <> ''::text)
 constraint api_keys c CHECK (btrim(name) <> ''::text)
+constraint api_keys c CHECK (credential_version > 0)
 constraint api_keys f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint api_keys f FOREIGN KEY (org_id, created_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (created_by_member_id)
 constraint api_keys f FOREIGN KEY (org_id, project_id) REFERENCES projects(org_id, id) ON DELETE CASCADE
@@ -1216,15 +1239,35 @@ constraint api_keys f FOREIGN KEY (org_id, project_id, environment_id) REFERENCE
 constraint api_keys p PRIMARY KEY (id)
 constraint api_keys u UNIQUE (environment_id, id)
 constraint api_keys u UNIQUE (token_hash)
-constraint audit_events c CHECK (action <> ''::text)
-constraint audit_events c CHECK (actor_kind = 'login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'api_key'::text AND actor_user_id IS NULL AND actor_credential_id IS NOT NULL AND actor_source = ''::text OR actor_kind = 'verified_login'::text AND actor_user_id IS NOT NULL AND actor_credential_id IS NULL AND actor_source <> ''::text OR actor_kind = 'capacity'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source = ''::text OR actor_kind = 'system'::text AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source <> ''::text)
-constraint audit_events c CHECK (actor_kind = ANY (ARRAY['login'::text, 'api_key'::text, 'verified_login'::text, 'capacity'::text, 'system'::text]))
+constraint audit_events c CHECK ((actor_kind <> ALL (ARRAY['human'::text, 'installation_operator'::text])) OR actor_identity ?& ARRAY['source'::text, 'display_name'::text] AND jsonb_typeof(actor_identity -> 'source'::text) = 'string'::text AND (actor_identity ->> 'source'::text) = 'account'::text AND jsonb_typeof(actor_identity -> 'display_name'::text) = 'string'::text AND octet_length(actor_identity ->> 'display_name'::text) > 0)
+constraint audit_events c CHECK ((actor_kind = ANY (ARRAY['human'::text, 'installation_operator'::text])) AND actor_id IS NOT NULL AND actor_identity IS NOT NULL AND actor_service IS NULL OR (actor_kind = ANY (ARRAY['api_key'::text, 'session'::text])) AND actor_id IS NOT NULL AND actor_identity IS NULL AND actor_service IS NULL OR actor_kind = 'service'::text AND actor_id IS NULL AND actor_identity IS NULL AND actor_service IS NOT NULL AND octet_length(actor_service) >= 1 AND octet_length(actor_service) <= 128 OR actor_kind = 'anonymous'::text AND actor_id IS NULL AND actor_identity IS NULL AND actor_service IS NULL)
+constraint audit_events c CHECK (actor_kind <> 'api_key'::text OR credential_kind = 'api_key'::text AND credential_id IS NOT NULL AND credential_id = actor_id AND credential_version IS NOT NULL)
+constraint audit_events c CHECK (actor_kind <> 'session'::text OR runtime_generation IS NOT NULL)
+constraint audit_events c CHECK (actor_kind = ANY (ARRAY['human'::text, 'api_key'::text, 'session'::text, 'service'::text, 'installation_operator'::text, 'anonymous'::text]))
+constraint audit_events c CHECK (actor_member_id IS NULL OR (actor_kind = ANY (ARRAY['human'::text, 'installation_operator'::text])) AND org_id IS NOT NULL)
+constraint audit_events c CHECK (credential_version > 0)
 constraint audit_events c CHECK (environment_id IS NULL OR project_id IS NOT NULL)
-constraint audit_events c CHECK (jsonb_typeof(details) = 'object'::text)
-constraint audit_events c CHECK (outcome = 'succeeded'::text)
+constraint audit_events c CHECK (expires_at > recorded_at AND expires_at = (recorded_at + retention_seconds::double precision * '00:00:01'::interval))
+constraint audit_events c CHECK (isfinite(occurred_at) AND isfinite(recorded_at) AND isfinite(expires_at))
+constraint audit_events c CHECK (jsonb_typeof(actor_identity) = 'object'::text AND pg_column_size(actor_identity) <= 4096)
+constraint audit_events c CHECK (jsonb_typeof(authorization_witness) = 'object'::text AND pg_column_size(authorization_witness) <= 16384)
+constraint audit_events c CHECK (jsonb_typeof(causality) = 'object'::text AND pg_column_size(causality) <= 4096)
+constraint audit_events c CHECK (jsonb_typeof(details) = 'object'::text AND pg_column_size(details) <= 16384)
+constraint audit_events c CHECK (octet_length(action) >= 1 AND octet_length(action) <= 128)
+constraint audit_events c CHECK (octet_length(channel) >= 1 AND octet_length(channel) <= 64)
+constraint audit_events c CHECK (octet_length(credential_kind) >= 1 AND octet_length(credential_kind) <= 64)
+constraint audit_events c CHECK (octet_length(slack_team_id) >= 1 AND octet_length(slack_team_id) <= 100)
+constraint audit_events c CHECK (octet_length(slack_user_id) >= 1 AND octet_length(slack_user_id) <= 100)
+constraint audit_events c CHECK (octet_length(target_kind) >= 1 AND octet_length(target_kind) <= 64)
+constraint audit_events c CHECK (outcome = ANY (ARRAY['accepted'::text, 'succeeded'::text, 'denied'::text, 'failed'::text, 'cancelled'::text, 'unknown'::text]))
+constraint audit_events c CHECK (process_epoch > 0)
 constraint audit_events c CHECK (project_id IS NULL OR org_id IS NOT NULL)
-constraint audit_events c CHECK (target_id IS NOT NULL OR target_kind = 'slack_user_link'::text AND target_user_id IS NOT NULL AND slack_team_id <> ''::text AND slack_user_id <> ''::text)
-constraint audit_events c CHECK (target_kind <> ''::text)
+constraint audit_events c CHECK (retention_seconds > 0)
+constraint audit_events c CHECK (runtime_generation > 0)
+constraint audit_events c CHECK (schema_version > 0)
+constraint audit_events c CHECK (slack_team_id IS NULL AND slack_user_id IS NULL OR target_kind = 'slack_user_link'::text AND target_id IS NULL AND target_user_id IS NOT NULL AND slack_team_id IS NOT NULL AND slack_user_id IS NOT NULL)
+constraint audit_events c CHECK (target_kind <> 'slack_user_link'::text OR target_resolution <> 'verified'::text OR target_id IS NULL AND target_user_id IS NOT NULL AND slack_team_id IS NOT NULL AND slack_user_id IS NOT NULL)
+constraint audit_events c CHECK (target_resolution = ANY (ARRAY['verified'::text, 'unresolved'::text]))
 constraint audit_events p PRIMARY KEY (id)
 constraint auth_identities c CHECK (btrim(provider) <> ''::text)
 constraint auth_identities c CHECK (btrim(subject) <> ''::text)
@@ -2213,7 +2256,11 @@ enum magic_link_purpose (login,invite_accept)
 index CREATE INDEX agent_definitions_deployment ON public.agent_definitions USING btree (environment_id, deployment_id, agent_id)
 index CREATE INDEX api_keys_org_active_idx ON public.api_keys USING btree (org_id, created_at DESC) WHERE (revoked_at IS NULL)
 index CREATE INDEX api_keys_scope_created_idx ON public.api_keys USING btree (org_id, project_id, environment_id, created_at DESC, id DESC)
-index CREATE INDEX audit_events_scope_time ON public.audit_events USING btree (org_id, occurred_at, id)
+index CREATE INDEX audit_events_actor ON public.audit_events USING btree (org_id, actor_kind, actor_id, recorded_at DESC, id DESC)
+index CREATE INDEX audit_events_environment_time ON public.audit_events USING btree (org_id, environment_id, recorded_at DESC, id DESC) WHERE (environment_id IS NOT NULL)
+index CREATE INDEX audit_events_expiry ON public.audit_events USING btree (expires_at, id)
+index CREATE INDEX audit_events_target ON public.audit_events USING btree (org_id, target_kind, target_id, recorded_at DESC, id DESC)
+index CREATE INDEX audit_events_time ON public.audit_events USING btree (org_id, recorded_at DESC, id DESC)
 index CREATE INDEX boot_seed_builds_host ON public.boot_seed_builds USING btree (worker_host_id, worker_epoch) WHERE ((worker_host_id IS NOT NULL) AND (fenced_at IS NULL))
 index CREATE INDEX boot_seed_builds_image ON public.boot_seed_builds USING btree (environment_id, image_id)
 index CREATE INDEX commands_pending ON public.commands USING btree (created_at, id) WHERE (status = 'pending'::text)

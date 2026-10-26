@@ -40,6 +40,6 @@ func (server *Server) workerSessionLog(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, telemetry.ErrDiagnosticConflict), errors.Is(err, telemetry.ErrDiagnosticSequence):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "diagnostic_identity_conflict"})
 	default:
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 	}
 }

@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"sync"
 	"testing"
@@ -33,7 +34,7 @@ func TestSessionInterruptPreservesFinalizingTurnQueueAndPeer(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, peer.execution()); err != nil {
 		t.Fatal(err)
 	}
-	r, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "stop"))
+	r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "stop"))
 	if err != nil || r.HoldID == uuid.Nil() {
 		t.Fatalf("interrupt: %+v %v", r, err)
 	}
@@ -65,7 +66,7 @@ func TestSessionControlRetryAdditiveHoldAndExactResume(t *testing.T) {
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
-			r, err := session.ControlSession(t.Context(), f.pool, f.caller(), req)
+			r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 			results <- r
 			errs <- err
 		})
@@ -82,24 +83,24 @@ func TestSessionControlRetryAdditiveHoldAndExactResume(t *testing.T) {
 			t.Fatalf("retry differs: %+v / %+v", first, r)
 		}
 	}
-	second, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(child, "interrupt", "child"))
+	second, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(child, "interrupt", "child"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	resume := controlRequest(f, "resume", "release")
 	resume.HoldID = first.HoldID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil || r != first {
+	if r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil || r != first {
 		t.Fatalf("released retry: %+v %v", r, err)
 	}
 	req.Reason = "different"
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed interruption: %v", err)
 	}
 	resume.HoldID = second.HoldID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), resume); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed resume: %v", err)
 	}
 	var active int
@@ -121,17 +122,17 @@ func TestSessionRuntimeControlsCannotEscapeOwnershipOrReleaseExternalHolds(t *te
 	peer := f.peer(t)
 	caller := session.Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
 	for _, target := range []fixture{f, peer} {
-		if _, err := session.ControlSession(t.Context(), f.pool, caller, controlRequest(target, "cancel", "foreign")); !errors.Is(err, session.ErrDenied) {
+		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, controlRequest(target, "cancel", "foreign")); !errors.Is(err, session.ErrDenied) {
 			t.Fatalf("non-owned control: %v", err)
 		}
 	}
-	r, err := session.ControlSession(t.Context(), f.pool, caller, controlRequest(child, "interrupt", "programmatic"))
+	r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, controlRequest(child, "interrupt", "programmatic"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	resume := controlRequest(child, "resume", "programmatic-release")
 	resume.HoldID = r.HoldID
-	if _, err := session.ControlSession(t.Context(), f.pool, caller, resume); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume); err != nil {
 		t.Fatal(err)
 	}
 	for _, issuer := range []string{"user", "system"} {
@@ -142,10 +143,10 @@ func TestSessionRuntimeControlsCannotEscapeOwnershipOrReleaseExternalHolds(t *te
 		}
 		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,$2,$3,'local','requires external recovery',$4,$5)`, f.env, hold, child.session, issuer, issuerID)
 		resume.IdempotencyKey, resume.HoldID = issuer, hold
-		if _, err := session.ControlSession(t.Context(), f.pool, caller, resume); !errors.Is(err, session.ErrDenied) {
+		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume); !errors.Is(err, session.ErrDenied) {
 			t.Fatalf("runtime released %s hold: %v", issuer, err)
 		}
-		if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 			t.Fatalf("authorized human release: %v", err)
 		}
 	}
@@ -156,14 +157,14 @@ func TestSessionCancelSettlesQueueAndStopsOnlyOwnedProcesses(t *testing.T) {
 	child := ownedFixture(t, f)
 	peer := f.peer(t)
 	a := child.enqueue(t, "queued")
-	closeReceipt, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close"))
+	closeReceipt, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil || r != closeReceipt {
+	if r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil || r != closeReceipt {
 		t.Fatalf("close receipt changed after escalation: %+v %v", r, err)
 	}
 	var status string
@@ -194,7 +195,7 @@ func TestSessionHeldFinalizingSaveCompletesWithoutBlockingPeer(t *testing.T) {
 	active, save := f.finalize(t, "active")
 	storage := newSaveStorageFixture(t, f)
 	cut, root := storage.cut(t, 2)
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "interrupt")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "interrupt")); err != nil {
 		t.Fatal(err)
 	}
 	// Stop delivery still needs a renewed envelope and replacement attachment.
@@ -233,7 +234,7 @@ func TestSessionControlRejectsInvalidStoredText(t *testing.T) {
 	for _, reason := range []string{strings.Repeat("x", 4097), "bad\x00reason", string([]byte{0xff})} {
 		req := controlRequest(f, "interrupt", "key")
 		req.Reason = reason
-		if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrInvalidInput) {
+		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrInvalidInput) {
 			t.Fatalf("invalid reason: %v", err)
 		}
 	}
@@ -244,7 +245,7 @@ func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
 	child := ownedFixture(t, f)
 	parentTurn := f.enqueue(t, "parent")
 	childTurn := child.enqueue(t, "child")
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
 		t.Fatal(err)
 	}
 	var lifecycle string
@@ -257,7 +258,7 @@ func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
 	// Model settlement without requiring the independent storage-publication
 	// fixture. Closure must consume the same durable terminal state.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET status='failed',terminal_at=clock_timestamp() WHERE id=$1`, parentTurn.TurnID)
-	if err := session.ReconcileSessionClosure(t.Context(), f.pool, f.env, f.session); err != nil {
+	if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, child.session).Scan(&lifecycle); err != nil || lifecycle != "closing" {
@@ -267,7 +268,7 @@ func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
 		t.Fatalf("accepted child work could not dispatch: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET status='failed',terminal_at=clock_timestamp() WHERE id=$1`, childTurn.TurnID)
-	if err := session.ReconcileSessionClosure(t.Context(), f.pool, f.env, child.session); err != nil {
+	if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, child.session); err != nil {
 		t.Fatal(err)
 	}
 	var closed int
@@ -284,30 +285,30 @@ func TestSessionControlAPIKeyRequiresExactPermissionAndHumanAttribution(t *testi
 	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.read")
 	caller := session.Caller{Kind: "api_key", ID: key}
 	req := controlRequest(f, "interrupt", "interrupt")
-	if _, err := session.ControlSession(t.Context(), f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("view permission authorized interrupt: %v", err)
 	}
 	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.interrupt")
-	r, err := session.ControlSession(t.Context(), f.pool, caller, req)
+	r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.resume")
 	resume := controlRequest(f, "resume", "resume")
 	resume.HoldID = r.HoldID
-	if _, err := session.ControlSession(t.Context(), f.pool, caller, resume); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume); err != nil {
 		t.Fatal(err)
 	}
-	human, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "human"))
+	human, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "human"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	resume.IdempotencyKey, resume.HoldID = "human", human.HoldID
-	if _, err := session.ControlSession(t.Context(), f.pool, caller, resume); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("key released human hold without attribution: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1`, key)
-	if _, err := session.ControlSession(t.Context(), f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked key read historical acceptance: %v", err)
 	}
 }
@@ -319,7 +320,7 @@ func TestSessionLocalHoldReleaseDoesNotInvalidateHealthyChild(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','setup failed')`, f.env, hold, f.session)
 	resume := controlRequest(f, "resume", "release")
 	resume.HoldID = hold
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
 	var generation int64
@@ -327,7 +328,7 @@ func TestSessionLocalHoldReleaseDoesNotInvalidateHealthyChild(t *testing.T) {
 		t.Fatalf("local recovery invalidated healthy child: %d %v", generation, err)
 	}
 	resume.IdempotencyKey = "new-noop"
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT authority_generation FROM sessions WHERE id=$1`, f.session).Scan(&generation); err != nil || generation != 2 {

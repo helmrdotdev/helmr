@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -24,7 +26,7 @@ import (
 // Promote atomically switches the current Deployment, closes prior trigger
 // intervals and recomputes background preparation cadence. Existing Sessions keep
 // their deployment pins. Re-promotion starts new intervals, never reopens old ones.
-func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight slackroute.StartPreflight) (Record, error) {
+func Promote(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, principal auth.Principal, scope auth.Scope, id uuid.UUID, preflight slackroute.StartPreflight) (Record, error) {
 	if err := authorize(principal, scope, auth.PermissionDeploymentsPromote); err != nil {
 		return Record{}, err
 	}
@@ -50,7 +52,12 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 		if err != nil {
 			return err
 		}
-		if err := authorizeCurrent(ctx, tx, principal, scope, auth.PermissionDeploymentsPromote); err != nil {
+		current, err := access.Current(ctx, tx, principal, scope)
+		if err != nil {
+			return err
+		}
+		actor, err := audit.Authorized(current, auth.PermissionDeploymentsPromote, scope)
+		if err != nil {
 			return err
 		}
 		// Verify that the selected Deployment belongs to this Environment.
@@ -96,7 +103,7 @@ func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Principal, s
 		if err = appendEvent(ctx, tx, pgvalue.MustUUIDValue(env), id, "deployment.promoted", "Deployment promoted"); err != nil {
 			return err
 		}
-		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.FromPrincipal(principal), EnvironmentID: pgvalue.MustUUIDValue(env), Action: "deployment.promoted", TargetKind: "deployment", TargetID: id}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: pgvalue.MustUUIDValue(env), Action: "deployment.promoted", TargetKind: "deployment", TargetID: id}); err != nil {
 			return err
 		}
 		result, err = readRecord(ctx, tx, pgvalue.MustUUIDValue(env), id)

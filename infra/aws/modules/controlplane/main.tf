@@ -46,8 +46,10 @@ locals {
   clickhouse_reader_secrets   = { CLICKHOUSE_PASSWORD = var.clickhouse_reader_password_secret_arn }
   clickhouse_ingester_secrets = { CLICKHOUSE_PASSWORD = var.clickhouse_ingester_password_secret_arn }
   migration_secrets = {
-    DATABASE_URL        = aws_secretsmanager_secret.database_url.arn
-    CLICKHOUSE_PASSWORD = var.clickhouse_migration_password_secret_arn
+    DATABASE_MIGRATION_URL         = aws_secretsmanager_secret.database_migration_url.arn
+    DATABASE_AUDIT_MAINTENANCE_URL = aws_secretsmanager_secret.database_audit_maintenance_url.arn
+    DATABASE_URL                   = aws_secretsmanager_secret.database_url.arn
+    CLICKHOUSE_PASSWORD            = var.clickhouse_migration_password_secret_arn
   }
   migration_environment         = local.clickhouse_migration_environment
   migration_secret_kms_key_arns = distinct(concat([aws_kms_key.helmr.arn], var.clickhouse_migration_password_kms_key_arns))
@@ -78,9 +80,11 @@ locals {
   }
 
   database_bootstrap_secrets = {
-    DATABASE_ADMIN_USERNAME = "${aws_db_instance.postgres.master_user_secret[0].secret_arn}:username::"
-    DATABASE_ADMIN_PASSWORD = "${aws_db_instance.postgres.master_user_secret[0].secret_arn}:password::"
-    DATABASE_URL            = aws_secretsmanager_secret.database_url.arn
+    DATABASE_MIGRATION_URL         = aws_secretsmanager_secret.database_migration_url.arn
+    DATABASE_AUDIT_MAINTENANCE_URL = aws_secretsmanager_secret.database_audit_maintenance_url.arn
+    DATABASE_ADMIN_USERNAME        = "${aws_db_instance.postgres.master_user_secret[0].secret_arn}:username::"
+    DATABASE_ADMIN_PASSWORD        = "${aws_db_instance.postgres.master_user_secret[0].secret_arn}:password::"
+    DATABASE_URL                   = aws_secretsmanager_secret.database_url.arn
   }
 
   email_environment = merge(
@@ -109,6 +113,7 @@ locals {
   )
 
   controlplane_environment_defaults = merge({
+    AUDIT_RETENTION_SECONDS            = tostring(var.audit_retention_seconds)
     CONTROL_PLANE_ADDR                 = ":${local.controlplane_port}"
     DEPLOYMENT_MODE                    = var.deployment_mode
     CAS_URI                            = "s3://${aws_s3_bucket.cas.bucket}"
@@ -178,10 +183,11 @@ locals {
   controlplane_secrets               = local.controlplane_secret_defaults
 
   dispatcher_environment_defaults = merge(local.clickhouse_ingester_environment, {
-    CONTROL_PLANE_URL  = local.controlplane_url
-    APP_ORIGIN         = local.controlplane_url
-    SLACK_TRANSPORT    = var.slack_transport
-    OUTBOUND_PROXY_URL = var.outbound_proxy_url
+    AUDIT_RETENTION_SECONDS = tostring(var.audit_retention_seconds)
+    CONTROL_PLANE_URL       = local.controlplane_url
+    APP_ORIGIN              = local.controlplane_url
+    SLACK_TRANSPORT         = var.slack_transport
+    OUTBOUND_PROXY_URL      = var.outbound_proxy_url
   })
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
@@ -814,6 +820,8 @@ resource "aws_iam_role_policy" "database_bootstrap_execution" {
         Action = ["secretsmanager:GetSecretValue"]
         Resource = [
           aws_db_instance.postgres.master_user_secret[0].secret_arn,
+          aws_secretsmanager_secret.database_migration_url.arn,
+          aws_secretsmanager_secret.database_audit_maintenance_url.arn,
           aws_secretsmanager_secret.database_url.arn
         ]
       },
@@ -1223,6 +1231,19 @@ resource "aws_ecs_service" "dispatcher" {
     rollback = var.enable_deployment_rollback
   }
 
+}
+
+resource "aws_secretsmanager_secret" "database_migration_url" {
+  name                    = "${local.name}/controlplane/database-migration-url"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+resource "aws_secretsmanager_secret" "database_audit_maintenance_url" {
+  name                    = "${local.name}/controlplane/database-audit-maintenance-url"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
 }
 
 resource "aws_secretsmanager_secret" "database_url" {

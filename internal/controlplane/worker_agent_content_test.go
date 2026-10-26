@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http/httptest"
 	"testing"
 	"uuid"
@@ -17,7 +18,7 @@ func TestWorkerAgentContentAndSuppressedResponse(t *testing.T) {
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	sessionID := runtimeTestSession(f)
-	a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "content", Input: json.RawMessage(`[]`)})
+	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "content", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestWorkerAgentContentAndSuppressedResponse(t *testing.T) {
 	if err := json.Unmarshal(response.Value, &outcome); err != nil || outcome["response"] != nil || string(outcome["status"]) != `"failed"` {
 		t.Fatalf("failed response publication %s %v", response.Value, err)
 	}
-	view, err := session.GetTurn(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, f.Environment, f.Session, a.TurnID)
+	view, err := session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, f.Environment, f.Session, a.TurnID)
 	if err != nil || view.Response != nil {
 		t.Fatalf("failed response read %+v %v", view, err)
 	}

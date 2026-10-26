@@ -36,7 +36,7 @@ func TestWorkerAgentTransactionDiagnosticsKeepHTTPGeneric(t *testing.T) {
 			var logs bytes.Buffer
 			server := &Server{log: slog.New(slog.NewJSONHandler(&logs, nil))}
 			response := httptest.NewRecorder()
-			server.writeAgentWorkerError(response, err)
+			server.writeAgentWorkerError(response, httptest.NewRequest(http.MethodPost, "/", nil), err)
 			if response.Code != http.StatusServiceUnavailable {
 				t.Fatalf("status %d", response.Code)
 			}
@@ -87,7 +87,7 @@ func TestWorkerAgentJoinedTransactionDiagnosticsKeepHTTPGeneric(t *testing.T) {
 	var logs bytes.Buffer
 	server := &Server{log: slog.New(slog.NewJSONHandler(&logs, nil))}
 	response := httptest.NewRecorder()
-	server.writeAgentWorkerError(response, err)
+	server.writeAgentWorkerError(response, httptest.NewRequest(http.MethodPost, "/", nil), err)
 	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"service_unavailable","message":"service is unavailable"`) {
 		t.Fatalf("HTTP failure contract: %d %s", response.Code, response.Body.String())
 	}
@@ -118,7 +118,7 @@ func TestWorkerAgentMissingConversationVerifierIsRetryableAndLogged(t *testing.T
 	var logs bytes.Buffer
 	server := &Server{log: slog.New(slog.NewJSONHandler(&logs, nil))}
 	response := httptest.NewRecorder()
-	server.writeAgentWorkerError(response, session.ErrConversationVerificationUnavailable)
+	server.writeAgentWorkerError(response, httptest.NewRequest(http.MethodPost, "/", nil), session.ErrConversationVerificationUnavailable)
 	if !errors.Is(session.ErrConversationVerificationUnavailable, session.ErrNotReady) || response.Code != http.StatusConflict {
 		t.Fatalf("verification configuration must keep work pending: %d", response.Code)
 	}

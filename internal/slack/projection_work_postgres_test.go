@@ -2,6 +2,7 @@ package slack
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"strings"
 	"testing"
@@ -73,11 +74,13 @@ func TestSlackWorkCapIncludesQuestionSeparatedGroups(t *testing.T) {
 		write(strings.Repeat("x", i+1))
 		f.projectAll(t)
 		ask := uuid.NewV7()
-		if err := session.RuntimeAsk(t.Context(), f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
+		if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
 			t.Fatal(err)
 		}
 		f.projectAll(t)
-		if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
+		if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
 			t.Fatal(err)
 		}
 		f.projectAll(t)

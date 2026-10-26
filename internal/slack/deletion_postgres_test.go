@@ -3,12 +3,14 @@ package slack
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"uuid"
 )
 
 func deleteEvent(t *testing.T, f statusFixture, timestamp string) {
@@ -26,7 +28,7 @@ func TestSlackDeletedRootSuppressesFutureDeliveryButPreservesCoreAndUncertainty(
 	f := newStatusFixture(t)
 	unknown := f.post(t, 1, "unknown", "lifecycle", nil)
 	claim := f.postClaim(t, unknown)
-	if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	pending := f.post(t, 2, "pending", "lifecycle", nil)
@@ -36,7 +38,7 @@ func TestSlackDeletedRootSuppressesFutureDeliveryButPreservesCoreAndUncertainty(
 	if allowed, err := statusClaimAuthorized(t.Context(), f.Pool, status); err != nil || allowed {
 		t.Fatalf("deleted status claim remains authorized: %v %v", allowed, err)
 	}
-	if err := FinishStatus(t.Context(), f.Pool, status, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, status, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	f.noPostClaim(t, pending)
@@ -53,7 +55,7 @@ func TestSlackDeletedRootSuppressesFutureDeliveryButPreservesCoreAndUncertainty(
  AND (SELECT bool_and(status='suppressed' AND error='root_deleted') FROM slack_posts WHERE id IN ($3,$4))`, f.thread, unknown, pending, later).Scan(&correct); err != nil || !correct {
 		t.Fatalf("deletion lost evidence or revived root: %v %v", correct, err)
 	}
-	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "after-delete", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "after-delete", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatalf("projection deletion cancelled core: %v", err)
 	}
 }
@@ -62,14 +64,14 @@ func TestSlackDeletedIndividualPostCannotBeRevivedByLateMutationAck(t *testing.T
 	f := newStatusFixture(t)
 	post := f.post(t, 1, "content", "lifecycle", nil)
 	first := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='pending',desired_revision=2 WHERE id=$1`, post)
 	f.due(t)
 	update := f.postClaim(t, post)
 	deleteEvent(t, f, "123.789")
-	if err := FinishPost(t.Context(), f.Pool, update, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, update, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	f.noPostClaim(t, post)

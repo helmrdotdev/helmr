@@ -75,7 +75,7 @@ func (s *Server) readRetainedAgents(w http.ResponseWriter, r *http.Request, sing
 	}
 	records, err := deployment.ListRetainedAgents(r.Context(), s.tx, principal, scope, key, after, limit, values.Get("view") == "deleted")
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	items := make([]retainedAgent, 0, len(records))

@@ -23,7 +23,8 @@ import (
 // dynamicStatementSites are the call sites whose statement is not a constant,
 // keyed as package:declaration, each with the reason the rule tolerates it.
 var dynamicStatementSites = map[string]string{
-	"cmd/control-plane:bootstrapDatabase":           "runs the checked-in migration files",
+	"cmd/control-plane:bootstrapDatabase":           "formats identifiers and SCRAM password verifiers for role and schema bootstrap; actual-role PostgreSQL tests cover creation and privileges",
+	"internal/db/schema:ConfigurePrivileges":        "quotes role and current table identifiers for migration-owned grants; actual-role PostgreSQL tests cover runtime and maintenance rights",
 	"cmd/internal/dev-controlplane:migrate":         "runs the checked-in migration files",
 	"internal/computer:reclaimComputerGraphRow":     "statement is a constant at each caller, which the preparation test covers",
 	"internal/session:attentionRows":                "statement is a constant at each caller, which the preparation test covers",

@@ -34,16 +34,16 @@ type invitationListCursor struct {
 
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
-	rows, err := org.ListMembers(r.Context(), s.tx, managingMember(principal))
+	rows, err := org.ListMembers(r.Context(), s.tx, s.managingMember(principal))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	items := make([]api.MemberSummary, 0, len(rows))
 	for _, row := range rows {
 		item, err := memberSummaryFromListRow(row)
 		if err != nil {
-			writeError(w, errors.New("format member"))
+			s.writeOperationError(w, r, errors.New("format member"))
 			return
 		}
 		items = append(items, item)
@@ -57,26 +57,26 @@ func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 	if rawCursor := r.URL.Query().Get("cursor"); rawCursor != "" {
 		cursor, err := decodeInvitationListCursor(rawCursor)
 		if err != nil || cursor.OrgID != principal.OrgID.String() {
-			writeError(w, badRequest(errors.New("invitation cursor is invalid")))
+			s.writeOperationError(w, r, badRequest(errors.New("invitation cursor is invalid")))
 			return
 		}
 		createdAt, err := time.Parse(time.RFC3339Nano, cursor.CreatedAt)
 		if err != nil {
-			writeError(w, badRequest(errors.New("invitation cursor is invalid")))
+			s.writeOperationError(w, r, badRequest(errors.New("invitation cursor is invalid")))
 			return
 		}
 		after = &org.InvitationPosition{CreatedAt: createdAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, hasMore, err := org.ListInvitations(r.Context(), s.tx, managingMember(principal), invitationListLimit, after)
+	rows, hasMore, err := org.ListInvitations(r.Context(), s.tx, s.managingMember(principal), invitationListLimit, after)
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	items := make([]api.InvitationSummary, 0, len(rows))
 	for _, row := range rows {
 		item, err := invitationSummaryFromListRow(row)
 		if err != nil {
-			writeError(w, errors.New("format invitation"))
+			s.writeOperationError(w, r, errors.New("format invitation"))
 			return
 		}
 		items = append(items, item)
@@ -89,7 +89,7 @@ func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 			ID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
-			writeError(w, errors.New("list invitations"))
+			s.writeOperationError(w, r, errors.New("list invitations"))
 			return
 		}
 	}
@@ -126,27 +126,27 @@ func decodeInvitationListCursor(raw string) (invitationListCursor, error) {
 // address is reported as such). Both report every address of the batch failed.
 func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, unavailable(err))
+		s.writeOperationError(w, r, unavailable(err))
 		return
 	}
 	principal := principalFromContext(r.Context())
-	manager := managingMember(principal)
+	manager := s.managingMember(principal)
 	if err := manager.Authorize(r.Context(), s.tx, auth.PermissionInvitationsCreate); err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	if !s.emailConfigured() {
-		writeError(w, unavailable(codedError{code: "service_unavailable", message: "email delivery is not configured, so members cannot be invited"}))
+		s.writeOperationError(w, r, unavailable(codedError{code: "service_unavailable", message: "email delivery is not configured, so members cannot be invited"}))
 		return
 	}
 	var input api.CreateInvitationsRequest
 	if err := decodeRequestJSON(r, &input); err != nil {
-		writeError(w, fmt.Errorf("invalid invitation request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid invitation request JSON: %w", err))
 		return
 	}
 	inviter, err := identity.LoadAccount(r.Context(), s.db, principal)
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeOperationError(w, r, identityError(err))
 		return
 	}
 	// The send and the commit outlive a closed tab or a proxy timeout, so a
@@ -165,7 +165,7 @@ func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 		return s.mailer.SendEmails(ctx, messages)
 	})
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	results := make([]api.InvitationResult, len(created))
@@ -238,11 +238,11 @@ func invitationEmailMessage(inviterName string, orgName string, invitation db.In
 func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 	invitationID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, notFound(org.ErrInvitationNotFound))
+		s.writeOperationError(w, r, notFound(org.ErrInvitationNotFound))
 		return
 	}
-	if err := org.RevokeInvitation(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), invitationID); err != nil {
-		writeError(w, orgError(err))
+	if err := org.RevokeInvitation(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())), invitationID); err != nil {
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -251,22 +251,22 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateMemberOwnership(w http.ResponseWriter, r *http.Request) {
 	targetUserID, err := parseUUIDParam(r, "memberID")
 	if err != nil {
-		writeError(w, notFound(org.ErrMemberNotFound))
+		s.writeOperationError(w, r, notFound(org.ErrMemberNotFound))
 		return
 	}
 	var input api.UpdateMemberOwnershipRequest
 	if err := decodeRequestJSON(r, &input); err != nil {
-		writeError(w, fmt.Errorf("invalid member role request JSON: %w", err))
+		s.writeOperationError(w, r, fmt.Errorf("invalid member role request JSON: %w", err))
 		return
 	}
-	updated, err := org.UpdateMemberOwnership(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), targetUserID, input.IsOwner, input.ExpectedIsOwner)
+	updated, err := org.UpdateMemberOwnership(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())), targetUserID, input.IsOwner, input.ExpectedIsOwner)
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	summary, err := memberSummaryFromUpdated(updated)
 	if err != nil {
-		writeError(w, errors.New("format member"))
+		s.writeOperationError(w, r, errors.New("format member"))
 		return
 	}
 	writeJSON(w, http.StatusOK, summary)
@@ -275,18 +275,18 @@ func (s *Server) updateMemberOwnership(w http.ResponseWriter, r *http.Request) {
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	targetUserID, err := parseUUIDParam(r, "memberID")
 	if err != nil {
-		writeError(w, notFound(org.ErrMemberNotFound))
+		s.writeOperationError(w, r, notFound(org.ErrMemberNotFound))
 		return
 	}
-	if err := identity.RemoveMember(r.Context(), s.tx, managingMember(principalFromContext(r.Context())), targetUserID); err != nil {
-		writeError(w, orgError(err))
+	if err := identity.RemoveMember(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())), targetUserID); err != nil {
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func managingMember(principal auth.Principal) org.ManagingMember {
-	return org.ManagingMember{Actor: audit.FromPrincipal(principal), OrgID: principal.OrgID, UserID: principal.UserID, MemberID: principal.MemberID}
+func (s *Server) managingMember(principal auth.Principal) org.ManagingMember {
+	return org.ManagingMember{AuditPolicy: s.auditPolicy, Actor: audit.FromPrincipal(principal), OrgID: principal.OrgID, UserID: principal.UserID, MemberID: principal.MemberID}
 }
 
 func (s *Server) inviteURL(token string) string {
@@ -386,17 +386,17 @@ func invitationSummary(id pgtype.UUID, email string, invitedByMemberID pgtype.UU
 }
 
 func (s *Server) recoverOwnAccess(w http.ResponseWriter, r *http.Request) {
-	result, err := org.RecoverOwnAccess(r.Context(), s.tx, managingMember(principalFromContext(r.Context())))
+	result, err := org.RecoverOwnAccess(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 func (s *Server) ownershipMembers(w http.ResponseWriter, r *http.Request) {
-	result, err := org.OwnershipMembers(r.Context(), s.tx, managingMember(principalFromContext(r.Context())))
+	result, err := org.OwnershipMembers(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())))
 	if err != nil {
-		writeError(w, orgError(err))
+		s.writeOperationError(w, r, orgError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"members": result})

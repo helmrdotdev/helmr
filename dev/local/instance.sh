@@ -126,7 +126,7 @@ helmr_dev_start_postgres() {
   if [ -n "${DATABASE_URL:-}" ]; then
     return 0
   fi
-  for name in initdb pg_ctl postgres; do
+  for name in initdb pg_ctl postgres psql; do
     if ! command -v "${name}" >/dev/null 2>&1; then
       echo "${name} is required unless DATABASE_URL is already set" >&2
       return 1
@@ -164,7 +164,20 @@ helmr_dev_start_postgres() {
   pg_ctl -D "${HELMR_DEV_PGDATA}" -l "${HELMR_DEV_PGLOG}" -o "${postgres_options}" -w start >/dev/null
   HELMR_DEV_OWNED_POSTGRES=1
 
-  export DATABASE_URL="postgres://${USER}@/postgres?host=${HELMR_DEV_PGSOCKET}&port=${HELMR_DEV_POSTGRES_PORT}&sslmode=disable"
+  local admin_url="postgres://${USER}@/postgres?host=${HELMR_DEV_PGSOCKET}&port=${HELMR_DEV_POSTGRES_PORT}&sslmode=disable"
+  psql "${admin_url}" -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='helmr_runtime') THEN CREATE ROLE helmr_runtime LOGIN; END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='helmr_migration') THEN CREATE ROLE helmr_migration LOGIN; END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='helmr_audit_maintenance') THEN CREATE ROLE helmr_audit_maintenance LOGIN; END IF;
+END $$;
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+ALTER SCHEMA public OWNER TO helmr_migration;
+GRANT USAGE ON SCHEMA public TO helmr_runtime, helmr_audit_maintenance;
+SQL
+  export DATABASE_URL="postgres://helmr_runtime@/postgres?host=${HELMR_DEV_PGSOCKET}&port=${HELMR_DEV_POSTGRES_PORT}&sslmode=disable"
+  export DATABASE_MIGRATION_URL="postgres://helmr_migration@/postgres?host=${HELMR_DEV_PGSOCKET}&port=${HELMR_DEV_POSTGRES_PORT}&sslmode=disable"
+  export DATABASE_AUDIT_MAINTENANCE_URL="postgres://helmr_audit_maintenance@/postgres?host=${HELMR_DEV_PGSOCKET}&port=${HELMR_DEV_POSTGRES_PORT}&sslmode=disable"
 }
 
 helmr_dev_write_runtime_descriptor() {

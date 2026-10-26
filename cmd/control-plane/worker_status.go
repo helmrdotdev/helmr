@@ -6,7 +6,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
+	"os"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -43,6 +45,13 @@ func runWorkerGroupStatusCommand(ctx context.Context, output io.Writer, args []s
 	if err != nil {
 		return errors.New("worker group id must be a canonical UUIDv7")
 	}
+	var policy auditpolicy.Policy
+	if command != "status" {
+		policy, err = auditpolicy.Parse(os.Getenv("AUDIT_RETENTION_SECONDS"))
+		if err != nil {
+			return err
+		}
+	}
 	return withWorkerDatabase(ctx, func(pool *pgxpool.Pool) error {
 		var result workergroup.GroupStatus
 		var err error
@@ -50,13 +59,13 @@ func runWorkerGroupStatusCommand(ctx context.Context, output io.Writer, args []s
 		case "status":
 			result, err = workergroup.ReadGroupStatus(ctx, db.New(pool), parsedGroupID)
 		case "pause":
-			result, err = workergroup.PauseGroup(ctx, pool, audit.System("control-plane-cli"), parsedGroupID, expectedClaimVersion)
+			result, err = workergroup.PauseGroup(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, expectedClaimVersion)
 		case "activate":
-			result, err = workergroup.ActivateGroup(ctx, pool, audit.System("control-plane-cli"), parsedGroupID, expectedClaimVersion)
+			result, err = workergroup.ActivateGroup(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, expectedClaimVersion)
 		case "drain":
-			result, err = workergroup.BeginGroupDrain(ctx, pool, audit.System("control-plane-cli"), parsedGroupID, expectedClaimVersion)
+			result, err = workergroup.BeginGroupDrain(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, expectedClaimVersion)
 		case "disable":
-			result, err = workergroup.DisableGroup(ctx, pool, audit.System("control-plane-cli"), parsedGroupID, expectedClaimVersion)
+			result, err = workergroup.DisableGroup(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, expectedClaimVersion)
 		}
 		if err != nil {
 			return err
@@ -93,6 +102,13 @@ func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []st
 	if err != nil {
 		return errors.New("worker group id must be a canonical UUIDv7")
 	}
+	var policy auditpolicy.Policy
+	if command != "status" {
+		policy, err = auditpolicy.Parse(os.Getenv("AUDIT_RETENTION_SECONDS"))
+		if err != nil {
+			return err
+		}
+	}
 	return withWorkerDatabase(ctx, func(pool *pgxpool.Pool) error {
 		var result workergroup.HostStatus
 		var err error
@@ -100,7 +116,7 @@ func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []st
 		case "status":
 			result, err = workergroup.ReadHostStatus(ctx, db.New(pool), parsedGroupID, resourceID)
 		case "lose":
-			result, err = workergroup.MarkHostLost(ctx, pool, audit.System("control-plane-cli"), parsedGroupID, resourceID, expectedClaimVersion)
+			result, err = workergroup.MarkHostLost(ctx, pool, policy, audit.Internal(audit.ControlPlaneCLI), parsedGroupID, resourceID, expectedClaimVersion)
 		}
 		if err != nil {
 			return err

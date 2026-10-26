@@ -2,23 +2,21 @@ package computer
 
 import (
 	"context"
-	"errors"
 	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 )
 
-func authorizeOperation(ctx context.Context, q db.DBTX, p auth.Principal, scope Scope, permission auth.Permission) error {
+func operationActor(ctx context.Context, q db.DBTX, p auth.Principal, scope Scope, permission auth.Permission) (audit.Evidence, error) {
 	s := auth.Scope{OrgID: scope.OrgID, ProjectID: scope.ProjectID.String(), EnvironmentID: scope.EnvironmentID.String()}
 	current, err := access.Current(ctx, q, p, s)
-	if errors.Is(err, access.ErrDenied) {
-		return ErrDenied
-	}
 	if err != nil {
-		return err
+		return audit.Evidence{}, err
 	}
-	if !current.HasPermission(permission, s) {
-		return ErrDenied
+	if permissionErr := auth.Require(current, permission, s,
+		ErrDenied); permissionErr != nil {
+		return audit.Evidence{}, permissionErr
 	}
-	return nil
+	return audit.Authorized(current, permission, s)
 }

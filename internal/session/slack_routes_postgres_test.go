@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -60,7 +61,7 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 		calls++
 		return acceptedStartPreflight(ctx, value)
 	})
-	first, err := slack.Start(t.Context(), f.pool, nil, preflight, f.caller(), req)
+	first, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,16 +70,16 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 		t.Fatal(exact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
-	retry, err := slack.Start(t.Context(), f.pool, nil, preflight, f.caller(), req)
+	retry, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, f.caller(), req)
 	if err != nil || retry.TurnID != first.TurnID || calls != 1 {
 		t.Fatal(retry, calls, err)
 	}
 	req.IdempotencyKey = "continue"
 	req.SlackChannelID = nil
-	if _, err := slack.Start(t.Context(), f.pool, nil, preflight, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("duplicate key: %v", err)
 	}
-	next, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "send", Input: req.Input})
+	next, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "send", Input: req.Input})
 	if err != nil || next.Sequence != 2 || calls != 1 {
 		t.Fatal(next, calls, err)
 	}
@@ -89,13 +90,13 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 	other := "COTHER"
 	req.IdempotencyKey = "different-channel"
 	req.SlackChannelID = &other
-	if _, err = slack.Start(t.Context(), f.pool, nil, preflight, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err = slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatal(err)
 	}
 	req.IdempotencyKey = "fresh"
 	req.SessionKey = nil
 	req.SlackChannelID = &channel
-	if _, err = slack.Start(t.Context(), f.pool, nil, preflight, f.caller(), req); !errors.Is(err, slackroute.ErrTargetNotPublished) {
+	if _, err = slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, f.caller(), req); !errors.Is(err, slackroute.ErrTargetNotPublished) {
 		t.Fatal(err)
 	}
 }
@@ -122,7 +123,7 @@ func TestSlackStartPreflightRejectsWithoutAdmissionAndRechecksGeneration(t *test
 				}
 				return acceptedStartPreflight(ctx, value)
 			})
-			_, err := slack.Start(t.Context(), f.pool, nil, preflight, f.caller(), req)
+			_, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, f.caller(), req)
 			want := slackroute.ErrChannelUnavailable
 			if kind == "changed" {
 				want = slackroute.ErrConversationChanged
@@ -150,7 +151,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 	req := f.startRequest("child")
 	req.ComputerID = f.computer
 
-	child, err := session.Spawn(t.Context(), f.pool, nil, caller, req)
+	child, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +172,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 		}
 		return acceptedStartPreflight(ctx, value)
 	})
-	independent, err := slack.Start(t.Context(), f.pool, nil, preflight, caller, req)
+	independent, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,12 +180,12 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 		t.Fatal(exact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
-	retry, err := slack.Start(t.Context(), f.pool, nil, preflight, caller, req)
+	retry, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, caller, req)
 	if err != nil || retry.TurnID != independent.TurnID {
 		t.Fatal(retry, err)
 	}
 	req.IdempotencyKey = "unavailable"
-	if _, err = slack.Start(t.Context(), f.pool, nil, preflight, caller, req); !errors.Is(err, slack.ErrSourceConversationUnavailable) {
+	if _, err = slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, caller, req); !errors.Is(err, slack.ErrSourceConversationUnavailable) {
 		t.Fatal(err)
 	}
 }

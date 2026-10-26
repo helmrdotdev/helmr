@@ -14,6 +14,7 @@ WITH matched AS (
 )
 SELECT
     matched.id,
+    matched.credential_version,
     matched.org_id,
     matched.project_id,
     matched.environment_id,
@@ -76,7 +77,7 @@ WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
  AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING *;
 
 -- name: RotateActiveAPIKey :one
-UPDATE api_keys SET token_hash=$5,key_prefix=$6
+UPDATE api_keys SET token_hash=$5,key_prefix=$6,credential_version=credential_version+1
 WHERE org_id=$1 AND project_id=$2 AND environment_id=$3 AND id=$4
  AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>clock_timestamp()) RETURNING *;
 

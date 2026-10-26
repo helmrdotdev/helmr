@@ -3,6 +3,7 @@ package session_test
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -138,7 +139,9 @@ func TestSessionLogReceiptSurvivesPhysicalHostRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f, host, installation)
-	if err = session.CompleteComputerRestore(ctx, f.pool, host, f.env, installation, restoreReceipt(installation, true, true)); err != nil {
+	if err = session.CompleteComputerRestore(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, host, f.env, installation, restoreReceipt(installation, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	target := restored.execution()

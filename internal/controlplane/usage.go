@@ -17,19 +17,19 @@ func (s *Server) getUsageHTTP(w http.ResponseWriter, r *http.Request) {
 	if value := r.URL.Query().Get("range"); value != "" {
 		parsed, err := strconv.Atoi(strings.TrimSuffix(value, "d"))
 		if err != nil || !strings.HasSuffix(value, "d") || !session.UsageRanges[parsed] {
-			s.writeAgentHTTPError(w, session.ErrInvalidInput)
+			s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 			return
 		}
 		days = parsed
 	}
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	usage, err := session.ReadUsage(r.Context(), s.tx, caller, env, days)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, usageResponse(usage))

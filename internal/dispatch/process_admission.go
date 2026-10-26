@@ -42,7 +42,7 @@ func (a *Allocator) AllocateSessionProcess(ctx context.Context, env, sessionID u
 		if err != nil {
 			return err
 		}
-		result, err = session.AdmitProcess(ctx, tx, env, sessionID, epoch, host, hostEpoch, admitting)
+		result, err = session.AdmitProcess(ctx, a.auditPolicy, tx, env, sessionID, epoch, host, hostEpoch, admitting)
 		return err
 	})
 	if err != nil {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"uuid"
 
@@ -29,7 +31,7 @@ type deleteReceipt struct {
 // Delete retains the Computer identity and records physical release intent only
 // after logical members and command scopes have settled. A lease remains charged
 // and exclusive until its owning worker or independent fence proves it stopped.
-func Delete(ctx context.Context, txb db.TxBeginner, deletion Deletion) (Deleted, error) {
+func Delete(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginner, deletion Deletion) (Deleted, error) {
 	var result Deleted
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		var found bool
@@ -47,7 +49,8 @@ func Delete(ctx context.Context, txb db.TxBeginner, deletion Deletion) (Deleted,
 				return err
 			}
 		}
-		if err := authorizeOperation(ctx, tx, deletion.Principal, deletion.Scope, auth.PermissionComputersDelete); err != nil {
+		actor, err := operationActor(ctx, tx, deletion.Principal, deletion.Scope, auth.PermissionComputersDelete)
+		if err != nil {
 			return err
 		}
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
@@ -69,6 +72,11 @@ func Delete(ctx context.Context, txb db.TxBeginner, deletion Deletion) (Deleted,
 			receipt, err := json.Marshal(deleteReceipt{ComputerID: deletion.ComputerID.String()})
 			if err != nil {
 				return idempotency.Completion{}, err
+			}
+			if !deleted {
+				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: deletion.Scope.EnvironmentID, ComputerID: deletion.ComputerID, Action: "computer.deleted", TargetKind: "computer", TargetID: deletion.ComputerID}); err != nil {
+					return idempotency.Completion{}, err
+				}
 			}
 			result = Deleted{ComputerID: deletion.ComputerID}
 			return idempotency.Completion{Target: idempotency.Target{ComputerID: deletion.ComputerID}, Receipt: receipt}, nil

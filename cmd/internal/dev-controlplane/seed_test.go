@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 
@@ -40,7 +41,7 @@ func TestDevSeedWithFreshPostgres(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("bootstrap local worker group: %v", err)
 	}
-	cfg := devConfig{environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
+	cfg := devConfig{auditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}, environmentExecutionLimits: devTestExecutionLimits(), bootstrap: config.Bootstrap{RegionID: "dev-local"}}
 	if err := seedDevData(ctx, pool, cfg); err != nil {
 		t.Fatalf("seed fresh database: %v", err)
 	}

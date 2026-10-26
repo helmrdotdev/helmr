@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -11,7 +12,7 @@ import (
 
 // RuntimeHold reports failure of this logical process, including setup before a
 // Turn exists. The existing process failure fact prevents additive retry holds.
-func RuntimeHold(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, reason string) error {
+func RuntimeHold(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, reason string) error {
 	if reason == "" || len(reason) > 4096 || strings.ContainsRune(reason, 0) {
 		return ErrInvalidInput
 	}
@@ -26,6 +27,6 @@ func RuntimeHold(ctx context.Context, pool db.TxBeginner, host workergroup.HostP
 		if recorded || stopped {
 			return nil
 		}
-		return observeSessionFailure(ctx, tx, e, reason)
+		return observeSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, reason)
 	}))
 }

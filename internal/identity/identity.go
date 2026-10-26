@@ -9,6 +9,7 @@ package identity
 import (
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ type Lifetimes struct {
 // verified email addresses whose users become administrators when first
 // created.
 type Config struct {
+	auditPolicy   auditpolicy.Policy
 	sessionKey    []byte
 	magicLinkKey  []byte
 	deviceCodeKey []byte
@@ -75,7 +77,7 @@ type Config struct {
 }
 
 // NewConfig derives the identity configuration from the authentication keys.
-func NewConfig(keys auth.Keys, lifetimes Lifetimes, adminEmails []string) Config {
+func NewConfig(keys auth.Keys, lifetimes Lifetimes, adminEmails []string, policy auditpolicy.Policy) Config {
 	if lifetimes.Session <= 0 {
 		lifetimes.Session = defaultSessionTTL
 	}
@@ -95,6 +97,7 @@ func NewConfig(keys auth.Keys, lifetimes Lifetimes, adminEmails []string) Config
 		}
 	}
 	return Config{
+		auditPolicy:   policy,
 		sessionKey:    keys.Session,
 		magicLinkKey:  keys.MagicLink,
 		deviceCodeKey: keys.DeviceCode,

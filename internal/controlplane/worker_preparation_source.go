@@ -11,49 +11,49 @@ import (
 func (s *Server) workerPreparationSource(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationSourceRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	env, err := uuid.Parse(request.EnvironmentID)
 	if err != nil {
-		s.writeAllocationError(w, computer.ErrInvalidInput)
+		s.writeAllocationError(w, r, computer.ErrInvalidInput)
 		return
 	}
 	build, err := uuid.Parse(request.BuildID)
 	if err != nil {
-		s.writeAllocationError(w, computer.ErrInvalidInput)
+		s.writeAllocationError(w, r, computer.ErrInvalidInput)
 		return
 	}
 	key := computer.PreparationKey{EnvironmentID: env, BuildID: build}
 	host := workerFromContext(r.Context())
 	metadata, err := s.allocationKeys.PreparationStart(r.Context(), host, key)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	bundle, err := s.readExecutableBundle(r.Context(), metadata.BundleDigest)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	program, err := runtimeProgram(metadata.DeploymentID.String(), bundle)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	source, err := s.allocationKeys.PreparationSource(r.Context(), host, key)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	defer source.Disk.Clear()
 	content, err := source.Manifest.Content()
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	if content.Program == nil || program.Runtime != workerapi.CASObject(content.Program.Runtime) || program.Artifact != workerapi.CASObject(content.Program.Artifact) {
-		s.writeAllocationError(w, computer.ErrConflict)
+		s.writeAllocationError(w, r, computer.ErrConflict)
 		return
 	}
 	response := workerapi.PreparationSource{WorkerHostID: source.HostID.String(), WorkerEpoch: source.HostEpoch,

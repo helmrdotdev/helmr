@@ -1,14 +1,18 @@
 package controlplane
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"net/http"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -42,15 +46,6 @@ func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	allAgents, agentIDs := principal.AgentPermissionScope(auth.PermissionTriggersRead, scope)
-	authorizedAgents := make([]pgtype.UUID, 0, len(agentIDs))
-	for _, id := range agentIDs {
-		authorizedAgents = append(authorizedAgents, pgvalue.UUID(id))
-	}
-	if !allAgents && len(agentIDs) == 0 {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
 	limit, cursor, err := parseTriggerListQuery(
 		r,
 		scope.ProjectID,
@@ -72,20 +67,22 @@ func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 		}
 		afterID = pgvalue.UUID(id)
 	}
-	rows, err := s.db.ListTriggers(r.Context(), db.ListTriggersParams{AllAgents: allAgents, AuthorizedAgents: authorizedAgents,
-		IncludeHistory: r.URL.Query().Get("view") == "all",
-		TriggerKey:     pgtype.Text{String: r.URL.Query().Get("key"), Valid: r.URL.Query().Has("key")},
-		OrgID:          pgvalue.UUID(principal.OrgID),
-		ProjectID:      projectID,
-		EnvironmentID:  environmentID,
-		Agent:          pgtype.Text{String: r.URL.Query().Get("agent"), Valid: r.URL.Query().Has("agent")},
-		AfterAgentID:   afterAgent,
-		AfterID:        afterID,
-		LimitCount:     limit + 1,
+	rows, err := s.readTriggerContent(r.Context(), principal, scope, int(limit), func(q *db.Queries, allAgents bool, authorizedAgents []pgtype.UUID) ([]db.ListTriggersRow, error) {
+		return q.ListTriggers(r.Context(), db.ListTriggersParams{AllAgents: allAgents, AuthorizedAgents: authorizedAgents,
+			IncludeHistory: r.URL.Query().Get("view") == "all",
+			TriggerKey:     pgtype.Text{String: r.URL.Query().Get("key"), Valid: r.URL.Query().Has("key")},
+			OrgID:          pgvalue.UUID(principal.OrgID),
+			ProjectID:      projectID,
+			EnvironmentID:  environmentID,
+			Agent:          pgtype.Text{String: r.URL.Query().Get("agent"), Valid: r.URL.Query().Has("agent")},
+			AfterAgentID:   afterAgent,
+			AfterID:        afterID,
+			LimitCount:     limit + 1,
+		})
 	})
 	if err != nil {
 		s.log.Error("list triggers failed", "error", err)
-		writeError(w, errors.New("list triggers"))
+		s.writeOperationError(w, r, err)
 		return
 	}
 	hasMore := len(rows) > int(limit)
@@ -99,7 +96,7 @@ func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 		item, err := triggerResponse(row)
 		if err != nil {
 			s.log.Error("project trigger failed", "trigger_id", pgvalue.UUIDString(row.ID), "error", err)
-			writeError(w, errors.New("list triggers"))
+			s.writeOperationError(w, r, err)
 			return
 		}
 		response.Triggers = append(response.Triggers, item)
@@ -112,7 +109,7 @@ func (s *Server) listTriggers(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			s.log.Error("encode trigger cursor failed", "error", err)
-			writeError(w, errors.New("list triggers"))
+			s.writeOperationError(w, r, err)
 			return
 		}
 	}
@@ -209,25 +206,22 @@ func (s *Server) getTrigger(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	allAgents, agentIDs := principal.AgentPermissionScope(auth.PermissionTriggersRead, scope)
-	authorizedAgents := make([]pgtype.UUID, 0, len(agentIDs))
-	for _, id := range agentIDs {
-		authorizedAgents = append(authorizedAgents, pgvalue.UUID(id))
-	}
-	if !allAgents && len(agentIDs) == 0 {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
 	triggerID, err := ids.Parse(chi.URLParam(r, "triggerID"))
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	row, err := s.db.GetTriggerByID(r.Context(), db.GetTriggerByIDParams{AllAgents: allAgents, AuthorizedAgents: authorizedAgents,
-		OrgID:         pgvalue.UUID(principal.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ID:            pgvalue.UUID(triggerID),
+	rows, err := s.readTriggerContent(r.Context(), principal, scope, 1, func(q *db.Queries, allAgents bool, authorizedAgents []pgtype.UUID) ([]db.ListTriggersRow, error) {
+		row, err := q.GetTriggerByID(r.Context(), db.GetTriggerByIDParams{AllAgents: allAgents, AuthorizedAgents: authorizedAgents,
+			OrgID:         pgvalue.UUID(principal.OrgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			ID:            pgvalue.UUID(triggerID),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return []db.ListTriggersRow{db.ListTriggersRow(row)}, nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("trigger not found")))
@@ -235,13 +229,13 @@ func (s *Server) getTrigger(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.log.Error("get trigger failed", "trigger_id", triggerID.String(), "error", err)
-		writeError(w, errors.New("get trigger"))
+		s.writeOperationError(w, r, err)
 		return
 	}
-	response, err := triggerResponse(db.ListTriggersRow(row))
+	response, err := triggerResponse(rows[0])
 	if err != nil {
 		s.log.Error("project trigger failed", "trigger_id", triggerID.String(), "error", err)
-		writeError(w, errors.New("get trigger"))
+		s.writeOperationError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -269,4 +263,50 @@ func triggerView(r *http.Request) string {
 		return v
 	}
 	return "current"
+}
+
+// Trigger inputs are content. Selection, current permission and disclosure
+// capture share one snapshot; callers receive rows only after capture commits.
+func (s *Server) readTriggerContent(ctx context.Context, principal auth.Principal, scope auth.Scope, captureLimit int, selectRows func(*db.Queries, bool, []pgtype.UUID) ([]db.ListTriggersRow, error)) ([]db.ListTriggersRow, error) {
+	var rows []db.ListTriggersRow
+	err := db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`); err != nil {
+			return err
+		}
+		current, err := access.Current(ctx, tx, principal, scope)
+		if errors.Is(err, access.ErrDenied) {
+			return forbidden(err)
+		}
+		if err != nil {
+			return err
+		}
+		all, agents := current.AgentPermissionScope(auth.PermissionTriggersRead, scope)
+		if !all && len(agents) == 0 {
+			return forbidden(access.ErrDenied)
+		}
+		authorized := make([]pgtype.UUID, 0, len(agents))
+		for _, id := range agents {
+			authorized = append(authorized, pgvalue.UUID(id))
+		}
+		rows, err = selectRows(db.New(tx), all, authorized)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows[:min(len(rows), captureLimit)] {
+			targetScope := scope
+			targetScope.AgentID = pgvalue.UUIDString(row.AgentID)
+			actor, err := audit.Authorized(current, auth.PermissionTriggersRead, targetScope)
+			if err != nil {
+				return err
+			}
+			if err := audit.Append(ctx, tx, s.auditPolicy, audit.Event{Evidence: actor, OrgID: current.OrgID, ProjectID: uuid.MustParse(scope.ProjectID), EnvironmentID: uuid.MustParse(scope.EnvironmentID), DeploymentID: pgvalue.MustUUIDValue(row.DeploymentID), Action: "trigger.content_read", TargetKind: "trigger", TargetID: pgvalue.MustUUIDValue(row.ID), Details: audit.LifecycleDetails{}}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }

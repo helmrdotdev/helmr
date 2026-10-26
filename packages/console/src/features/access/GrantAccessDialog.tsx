@@ -4,8 +4,8 @@ import { listAllApiKeys } from "../../lib/api-keys";
 import { errorMessage } from "../../lib/error";
 import { listMembers } from "../../lib/members";
 import {
-  assignRole, grantRecipientName, isOrganizationRole, listAccessTargets, listGrants, listGroups, listRoles, permissionName, permissionResources,
-  permissionScope, type PermissionDefinition, type PermissionRole, type RoleGrant,
+  assignRole, grantRecipientName, listAccessTargets, listGrants, listGroups, listRoles, permissionName, permissionResources,
+  permissionHasScope, type PermissionDefinition, type PermissionRole, type RoleGrant,
 } from "../../lib/permissions";
 import { useScope } from "../../lib/scope";
 import { FormDialog } from "../../ui/Dialog";
@@ -34,8 +34,8 @@ const joinAnd = (parts: string[]) => parts.length < 2 ? parts.join("") : `${part
 function eligible(role: PermissionRole, kind: AccessKind, catalog: readonly PermissionDefinition[], place: { agent: boolean; environment: boolean }): boolean {
   if (kind === "api_key" && !role.api_key_assignable) return false;
   if (kind === "all_members" && !(role.permissions.length === 1 && role.permissions[0] === "agents.use")) return false;
-  if (place.agent && !role.permissions.some(p => permissionScope(p, catalog) === "agent")) return false;
-  return !((place.agent || place.environment) && isOrganizationRole(role.permissions, catalog));
+  if (place.agent && !role.permissions.some(p => permissionHasScope(p, "agent", catalog))) return false;
+  return !(place.agent || place.environment || kind === "api_key") || role.assignment_levels.includes("environment");
 }
 
 // The one place access is granted or its targets edited: who, which role, where,
@@ -66,6 +66,7 @@ export function GrantAccessDialog(props: {
   const [environmentSlug, setEnvironmentSlug] = createSignal(existing ? "" : props.environment?.environment ?? scope.selectedEnvironmentID());
   const [mode, setMode] = createSignal<"selected" | "all">(existing?.agents_mode === "all" ? "all" : "selected");
   const [agents, setAgents] = createSignal<string[]>(existing?.agent_ids ?? (props.agentID ? [props.agentID] : []));
+  const [assignmentLevel, setAssignmentLevel] = createSignal<"organization" | "environment">(existing?.target_kind ?? "environment");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
@@ -87,9 +88,10 @@ export function GrantAccessDialog(props: {
   });
   const hidden = () => existing ? 0 : (roles.data?.roles.length ?? 0) - options().length;
   const role = () => options().find(r => r.id === roleID());
-  const organizationRole = () => !!role() && isOrganizationRole(role()!.permissions, catalog());
+  const availableLevels = () => (role()?.assignment_levels ?? []).filter(level => level === "environment" || kind() !== "api_key" && !props.environment && !props.agentID);
+  const organizationRole = () => existing ? existing.target_kind === "organization" : availableLevels().length === 1 ? availableLevels()[0] === "organization" : assignmentLevel() === "organization";
   const resources = () => permissionResources(role()?.permissions ?? [], catalog());
-  const hasAgents = () => (role()?.permissions ?? []).some(p => permissionScope(p, catalog()) === "agent");
+  const hasAgents = () => (role()?.permissions ?? []).some(p => permissionHasScope(p, "agent", catalog()));
   const allMembers = () => kind() === "all_members";
   const agentMode = () => allMembers() ? "selected" : mode();
 
@@ -141,14 +143,14 @@ export function GrantAccessDialog(props: {
     if (!role() || !name) return "";
     if (organizationRole()) return `${name} can ${joinAnd(resources().map(actions))} across the organization.`;
     const where = target()?.name ?? "this environment";
-    const parts = resources().map(resource => catalog().some(c => c.resource_type === resource && c.scope_type === "agent")
+    const parts = resources().map(resource => catalog().some(c => c.resource_type === resource && c.scope_types.includes("agent"))
       ? `${actions(resource)} ${agentMode() === "all" ? `on every agent in ${where}, including new ones` : chosenAgents().length ? `on ${chosenAgents().join(", ")} in ${where}` : "on the agents you select"}`
       : `${actions(resource)} across ${where}`);
     return `${name} can ${joinAnd(parts)}.`;
   };
   const readsSessions = () => role()?.permissions.some(p => p === "sessions.read");
   // Waits for current assignments, so a grant never misses one it should add to.
-  const valid = () => (!!existing || !!grants.data) && !!role() && !alreadyGranted() && (allMembers() || !!recipient()) && (organizationRole() || !!target()) && (!hasAgents() || agentMode() === "all" || agents().some(id => !held().includes(id)) || (!current() && (role()?.permissions ?? []).some(p => permissionScope(p, catalog()) === "environment")));
+  const valid = () => (!!existing || !!grants.data) && !!role() && !alreadyGranted() && (allMembers() || !!recipient()) && (organizationRole() || !!target()) && (!hasAgents() || agentMode() === "all" || agents().some(id => !held().includes(id)) || (!current() && (role()?.permissions ?? []).some(p => permissionHasScope(p, "environment", catalog()))));
 
   const chooseKind = (value: AccessKind) => { setKind(value); setRecipient(""); setMode("selected"); };
   const chooseEnvironment = (slug: string) => { setEnvironmentSlug(slug); setAgents([]); if (kind() === "api_key") setRecipient(""); };
@@ -231,6 +233,11 @@ export function GrantAccessDialog(props: {
           </Field>
         </Show>
 
+        <Show when={!fixedWhere() && availableLevels().length > 1}>
+          <Field label="Scope" hint="Organization includes every environment. Environment grants stay within the selected environment.">
+            <Segmented label="Scope" value={assignmentLevel()} options={[{value: "environment" as const, label: "Environment"}, {value: "organization" as const, label: "Organization"}]} onChange={setAssignmentLevel} disabled={busy()} />
+          </Field>
+        </Show>
         <Show when={!organizationRole()}>
           <div class="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
             <Field label="Project">

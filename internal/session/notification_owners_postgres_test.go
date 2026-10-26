@@ -1,6 +1,7 @@
 package session_test
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -32,7 +33,7 @@ func TestMutationOwnersWakeDiscovery(t *testing.T) {
 			var err error
 			switch kind {
 			case "control":
-				_, err = session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "interrupt"))
+				_, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "interrupt"))
 			case "save":
 				err = db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 					return computer.FailSave(t.Context(), tx, f.env, save.ID, "test publication absence")
@@ -44,7 +45,7 @@ func TestMutationOwnersWakeDiscovery(t *testing.T) {
 					return computer.TerminateImageBuild(t.Context(), tx, f.env, build, "test_failure")
 				})
 			case "host":
-				_, err = workergroup.MarkHostLost(t.Context(), f.pool, audit.System("test-fixture"), f.group, "host", 1)
+				_, err = workergroup.MarkHostLost(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.group, "host", 1)
 			}
 			if err != nil {
 				t.Fatal(err)

@@ -20,7 +20,7 @@ import (
 func (s *Server) streamSessionUpdates(w http.ResponseWriter, r *http.Request) {
 	id, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	authorize := func() error {
@@ -33,13 +33,13 @@ func (s *Server) streamSessionUpdates(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		_, err = session.GetSession(current.Context(), s.tx, caller, env, id)
+		err = session.AuthorizeSessionRead(current.Context(), s.tx, caller, env, id)
 		return err
 	}
 	wake, unsubscribe := s.changes.Subscribe("session:" + id.String())
 	defer unsubscribe()
 	if err := authorize(); err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	streamUpdates(w, r, wake, authorize)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -58,7 +59,7 @@ func (s *Server) githubInviteStart(w http.ResponseWriter, r *http.Request) {
 	}
 	_, tokenHash, err := s.resolveInvitation(r, request.Token)
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	s.writeGitHubAuthStart(w, r, browserAuthGitHubInvite, tokenHash, "")
@@ -127,15 +128,24 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	flow, err := s.decodeAuthFlow(r)
 	if err != nil {
+		if !s.refuseOperation(w, r, "authentication_invalid") {
+			return
+		}
 		writeError(w, badRequest(err))
 		return
 	}
 	if (flow.Kind != browserAuthGitHubLogin && flow.Kind != browserAuthGitHubInvite) || request.State == "" || request.State != flow.State {
+		if !s.refuseOperation(w, r, "authentication_invalid") {
+			return
+		}
 		writeError(w, badRequest(errors.New("auth state mismatch")))
 		return
 	}
 	clearAuthFlowCookie(w, r)
 	if request.Error != "" {
+		if !s.refuseOperation(w, r, "authentication_invalid") {
+			return
+		}
 		message := strings.TrimSpace(request.ErrorDescription)
 		if message == "" {
 			message = "authorization failed"
@@ -144,18 +154,24 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if request.Code == "" {
+		if !s.refuseOperation(w, r, "authentication_invalid") {
+			return
+		}
 		writeError(w, badRequest(errors.New("authorization code is required")))
 		return
 	}
 	external, err := s.authProvider.Resolve(r.Context(), request.Code, flow.Verifier)
 	if err != nil {
-		s.log.Warn("auth callback failed", "error", err)
+		if !s.refuseOperation(w, r, "authentication_invalid") {
+			return
+		}
+		s.log.Warn("auth callback failed")
 		writeError(w, badRequest(errors.New("auth callback failed")))
 		return
 	}
 	rawSession, err := s.completeBrowserAuth(r, flow, external)
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	setSessionCookie(w, r, rawSession, s.identity.Lifetimes().Session)
@@ -309,4 +325,14 @@ func identityError(err error) error {
 	default:
 		return err
 	}
+}
+
+// Identity owns its failure facts. This boundary reports capture failure without
+// generating a second refusal for an already recorded identity outcome.
+func (s *Server) writeIdentityError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, audit.ErrCapture) {
+		s.writeOperationError(w, r, err)
+		return
+	}
+	writeError(w, identityError(err))
 }

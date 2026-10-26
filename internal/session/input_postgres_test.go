@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -22,11 +23,11 @@ func TestUniformTextInputAdmission(t *testing.T) {
 	req.Input = json.RawMessage(`[{"type":"text","text":"a\u0000雪"}]`)
 	key := "conversation"
 	req.SessionKey = &key
-	first, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	view, err := session.GetTurn(t.Context(), f.pool, f.caller(), f.env, first.SessionID, first.TurnID)
+	view, err := session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, first.SessionID, first.TurnID)
 	canonical, _ := content.Input(req.Input)
 	if err != nil || string(view.Input) != string(canonical) {
 		t.Fatalf("input changed %s: %v", view.Input, err)
@@ -38,10 +39,10 @@ func TestUniformTextInputAdmission(t *testing.T) {
 	bad := json.RawMessage(`[{"type":"json","value":null}]`)
 	req.Input = bad
 	req.IdempotencyKey = "json"
-	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("existing Session key did not reject a distinct create: %v", err)
 	}
-	if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: bad}); !errors.Is(err, content.ErrUnsupported) {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: bad}); !errors.Is(err, content.ErrUnsupported) {
 		t.Fatalf("enqueue ignored pin: %v", err)
 	}
 	var count int
@@ -49,7 +50,7 @@ func TestUniformTextInputAdmission(t *testing.T) {
 		t.Fatalf("rejection admitted work %d: %v", count, err)
 	}
 	for _, invalid := range []string{`{"type":"job","content":12}`, `{"type":"message","content":12}`, `null`, `"hello"`} {
-		if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: json.RawMessage(invalid)}); !errors.Is(err, content.ErrInvalid) {
+		if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, Input: json.RawMessage(invalid)}); !errors.Is(err, content.ErrInvalid) {
 			t.Fatalf("accepted non-content input %s: %v", invalid, err)
 		}
 	}
@@ -61,7 +62,7 @@ func TestScheduledTextInputRetainsBytes(t *testing.T) {
 	id := seedTrigger(t, f, time.Now().UTC().Truncate(time.Minute))
 	input := json.RawMessage(`[{"type":"text","text":"scheduled\u0000"}]`)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_triggers t SET input=$2 FROM trigger_activations a WHERE a.id=$1 AND (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)`, id, input)
-	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, id); err != nil {
+	if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, id); err != nil {
 		t.Fatal(err)
 	}
 	var got []byte
@@ -81,11 +82,11 @@ func TestStructuredInvocationPreservesJSONAndPinnedContract(t *testing.T) {
 	for i, raw := range []string{`{"count":"2","nested":[true,null]}`, `null`, `[]`, `"text"`, `3`} {
 		req := f.startRequest(fmt.Sprint("structured-", i))
 		req.Input = json.RawMessage(raw)
-		receipt, err := session.Start(t.Context(), f.pool, nil, f.caller(), req)
+		receipt, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		view, err := session.GetTurn(t.Context(), f.pool, f.caller(), f.env, receipt.SessionID, receipt.TurnID)
+		view, err := session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, receipt.SessionID, receipt.TurnID)
 		want, _ := content.Invocation(req.Input)
 		if err != nil || string(view.Input) != string(want) {
 			t.Fatalf("structured input changed: %s %v", view.Input, err)
@@ -99,17 +100,17 @@ func TestStructuredInvocationPreservesJSONAndPinnedContract(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.env, other)
 	for _, id := range retained {
 		// The retained Session accepts JSON after the current definition becomes text.
-		if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: id, Input: json.RawMessage(`{"next":true}`)}); err != nil {
+		if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: id, Input: json.RawMessage(`{"next":true}`)}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	req := f.startRequest("new-text-definition")
 	req.Input = json.RawMessage(`{"next":true}`)
-	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, content.ErrInvalid) && !errors.Is(err, content.ErrUnsupported) {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, content.ErrInvalid) && !errors.Is(err, content.ErrUnsupported) {
 		t.Fatalf("new text definition accepted JSON: %v", err)
 	}
 	req.Input = json.RawMessage(`[{"type":"text","text":"new deployment"}]`)
-	if _, err := session.Start(t.Context(), f.pool, nil, f.caller(), req); err != nil {
+	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); err != nil {
 		t.Fatalf("new text definition rejected text: %v", err)
 	}
 }
@@ -119,7 +120,7 @@ func TestStructuredScheduledInput(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET input_kind='json',input_schema='{"status":"unavailable","reason":"missing_converter"}' WHERE environment_id=$1 AND agent_id=$2`, f.env, f.agent)
 	id := seedTrigger(t, f, time.Now().UTC().Truncate(time.Minute))
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_triggers t SET input=$2 FROM trigger_activations a WHERE a.id=$1 AND (t.environment_id,t.agent_id,t.deployment_id,t.key)=(a.environment_id,a.agent_id,a.deployment_id,a.trigger_key)`, id, []byte(`{"count":"3"}`))
-	if err := agent.EvaluateTrigger(t.Context(), f.pool, nil, f.env, id); err != nil {
+	if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, id); err != nil {
 		t.Fatal(err)
 	}
 	var got []byte

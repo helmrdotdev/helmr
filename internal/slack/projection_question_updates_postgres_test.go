@@ -3,6 +3,7 @@ package slack
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -15,10 +16,12 @@ func TestSlackQuestionWithdrawalPreservesIssuedRevisionAndOtherAsks(t *testing.T
 		t.Run(phase, func(t *testing.T) {
 			f := newStatusFixture(t)
 			turn, ask := f.pendingQuestion(t)
-			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+			execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 			peer := uuid.NewV7()
-			if err := session.RuntimeAsk(t.Context(), f.Pool, host, execution, turn, peer, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"type":"text"}`)); err != nil {
+			if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.Pool, host, execution, turn, peer, json.RawMessage(`{"prompt":[{"type":"text","text":"Independent question"}],"type":"text"}`)); err != nil {
 				t.Fatal(err)
 			}
 			f.projectAll(t)
@@ -30,13 +33,15 @@ func TestSlackQuestionWithdrawalPreservesIssuedRevisionAndOtherAsks(t *testing.T
 			if phase != "pending" {
 				first = f.postClaim(t, post)
 				if phase == "uncertain" {
-					if err := FinishPost(t.Context(), f.Pool, first, DeliveryResult{Disposition: Uncertain}); err != nil {
+					if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Uncertain}); err != nil {
 						t.Fatal(err)
 					}
 				}
 			}
 			for range 2 {
-				if err := session.RuntimeWithdrawAsk(t.Context(), f.Pool, host, execution, turn, ask); err != nil {
+				if err := session.RuntimeWithdrawAsk(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.Pool, host, execution, turn, ask); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -62,7 +67,7 @@ func TestSlackQuestionWithdrawalPreservesIssuedRevisionAndOtherAsks(t *testing.T
 				f.due(t)
 				f.noPostClaim(t, post)
 				if phase == "sending" {
-					if err := FinishPost(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
+					if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -80,7 +85,7 @@ func TestSlackQuestionWithdrawalPreservesIssuedRevisionAndOtherAsks(t *testing.T
 			if updated.Method != want || bytes.Contains(updated.Payload, []byte("helmr.open_answer")) || bytes.Contains(updated.Payload, []byte("helmr_answer_cli")) || !bytes.Contains(updated.Payload, []byte("Question withdrawn.")) {
 				t.Fatal("withdrawal publication", updated.Method, string(updated.Payload))
 			}
-			if err := FinishPost(t.Context(), f.Pool, updated, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, updated, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
 				t.Fatal(err)
 			}
 			f.projectAll(t)

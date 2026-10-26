@@ -229,7 +229,7 @@ func TestEveryActionAPIKeyAssignmentEligibility(t *testing.T) {
 		t.Run(string(definition.ID), func(t *testing.T) {
 			role := f.role(t, string(definition.ID))
 			input := f.input(role)
-			if definition.ScopeType != auth.ScopeAgent {
+			if !auth.SupportsScope(definition.ID, auth.ScopeAgent) {
 				input.AgentsMode = "none"
 				input.AgentIDs = nil
 			}

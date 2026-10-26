@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -20,11 +21,13 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	result := json.RawMessage(`{"answer":42}`)
-	if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome == nil {
+	if outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome == nil {
 		t.Fatalf("prepared result reported terminal: %s %v", outcome, err)
 	}
 	var save computer.SaveRequest
@@ -32,11 +35,13 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.session)
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatalf("close replay: %v", err)
 	}
 	for range 2 {
-		if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome == nil {
+		if outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, result, "drained"); err != nil || outcome == nil {
 			t.Fatalf("pending replay: %s %v", outcome, err)
 		}
 	}
@@ -44,7 +49,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_saves WHERE turn_id=$1`, a.TurnID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("save identity replaced: %d %v", count, err)
 	}
-	if _, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"answer":43}`), "drained"); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"answer":43}`), "drained"); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed result: %v", err)
 	}
 	root, _ := s.cut(t, 8)
@@ -57,7 +62,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, result, "drained")
+	outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, result, "drained")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +75,7 @@ func TestRuntimeFinalizationReconcilesOriginalSaveAfterGrantChange(t *testing.T)
 	}
 	foreign := f.execution()
 	foreign.ProcessEpoch++
-	if _, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), foreign, a.TurnID, result, "drained"); err == nil {
+	if _, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), foreign, a.TurnID, result, "drained"); err == nil {
 		t.Fatal("other process observed result")
 	}
 }
@@ -81,11 +86,13 @@ func TestRuntimeFinalizationDoesNotPromoteStaleGrantForNewResult(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.session)
-	if _, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`null`), "drained"); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`null`), "drained"); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("stale grant admitted result: %v", err)
 	}
 	var count int
@@ -128,21 +135,25 @@ func TestRuntimeFinalizationObservesOriginalTurnAfterPhysicalOwnerRestore(t *tes
 		t.Fatal(err)
 	}
 	acknowledgeComputerMembers(t, f, r.host, p)
-	if err := session.CompleteComputerRestore(t.Context(), f.pool, r.host, f.env, p, restoreReceipt(p, true, true)); err != nil {
+	if err := session.CompleteComputerRestore(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, r.host, f.env, p, restoreReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 	// HTTP authentication replaces only Host identity, leaving the retained
 	// operation's original lease and business generation unchanged.
 	original := f.execution()
 	original.WorkerHostID = r.host.HostID
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, r.host, original, a.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, r.host, original, a.TurnID); err != nil {
 		t.Fatalf("restored close receipt: %v", err)
 	}
-	outcome, err := session.RuntimeFinalize(t.Context(), f.pool, r.host, original, a.TurnID, json.RawMessage(`{"result":1}`), "original native receipt")
+	outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, r.host, original, a.TurnID, json.RawMessage(`{"result":1}`), "original native receipt")
 	if err != nil || string(outcome) != `{"result":{"result":1},"status":"completed"}` {
 		t.Fatalf("restored terminal winner: %s %v", outcome, err)
 	}
-	if _, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"result":1}`), "original native receipt"); err == nil {
+	if _, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`{"result":1}`), "original native receipt"); err == nil {
 		t.Fatal("retired source observed restored process")
 	}
 }
@@ -167,7 +178,7 @@ func TestResultAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
+		outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
 		if err == nil && string(outcome) != `{"status":"interrupted"}` {
 			err = fmt.Errorf("outcome = %s", outcome)
 		}

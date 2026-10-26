@@ -24,18 +24,18 @@ func preparationExecutor(in workerapi.PreparationExecutor) (computer.ImageBuildE
 func (server *Server) workerRenewPreparation(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationExecutor
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.ChannelCredential)
 	ref, err := preparationExecutor(request)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	result, err := computer.RenewImageBuild(r.Context(), server.tx, workerFromContext(r.Context()), ref)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.PreparationRenewal{ExpiresAt: result})
@@ -43,18 +43,18 @@ func (server *Server) workerRenewPreparation(w http.ResponseWriter, r *http.Requ
 func (server *Server) workerPreparationWriteKey(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationExecutor
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.ChannelCredential)
 	ref, err := preparationExecutor(request)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	result, err := server.preparationKeys.WriteKey(r.Context(), workerFromContext(r.Context()), ref)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(result.Key)
@@ -64,18 +64,18 @@ func (server *Server) workerPreparationWriteKey(w http.ResponseWriter, r *http.R
 func (server *Server) workerFailPreparation(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationFailure
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.Executor.ChannelCredential)
 	ref, err := preparationExecutor(request.Executor)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	err = computer.FailImageBuild(r.Context(), server.tx, workerFromContext(r.Context()), ref, request.Code)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -83,18 +83,18 @@ func (server *Server) workerFailPreparation(w http.ResponseWriter, r *http.Reque
 func (server *Server) workerBeginPreparationCapture(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationCaptureBegin
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.Executor.ChannelCredential)
 	ref, err := preparationExecutor(request.Executor)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	err = server.preparationPublisher.BeginCapture(r.Context(), workerFromContext(r.Context()), ref, request.LogicalBytes)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -102,18 +102,18 @@ func (server *Server) workerBeginPreparationCapture(w http.ResponseWriter, r *ht
 func (server *Server) workerRegisterPreparationObject(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationObject
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.Executor.ChannelCredential)
 	ref, err := preparationExecutor(request.Executor)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	err = server.preparationPublisher.RegisterBatch(r.Context(), workerFromContext(r.Context()), ref, request.Inspections)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -121,18 +121,18 @@ func (server *Server) workerRegisterPreparationObject(w http.ResponseWriter, r *
 func (server *Server) workerCertifyPreparationObject(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationObject
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.Executor.ChannelCredential)
 	ref, err := preparationExecutor(request.Executor)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	err = server.preparationPublisher.CertifyBatch(r.Context(), workerFromContext(r.Context()), ref, request.Inspections)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -140,18 +140,18 @@ func (server *Server) workerCertifyPreparationObject(w http.ResponseWriter, r *h
 func (server *Server) workerRecordPreparationCapture(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationPublication
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.Executor.ChannelCredential)
 	ref, err := preparationExecutor(request.Executor)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	err = server.preparationPublisher.Capture(r.Context(), workerFromContext(r.Context()), ref, request.Root, request.Evidence)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -159,18 +159,18 @@ func (server *Server) workerRecordPreparationCapture(w http.ResponseWriter, r *h
 func (server *Server) workerPublishPreparation(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationPublication
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.Executor.ChannelCredential)
 	ref, err := preparationExecutor(request.Executor)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	err = server.preparationPublisher.Publish(r.Context(), workerFromContext(r.Context()), ref, request.Root, request.Evidence)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -181,19 +181,19 @@ func (server *Server) workerPublishPreparation(w http.ResponseWriter, r *http.Re
 func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationExecutor
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.ChannelCredential)
 	ref, err := preparationExecutor(request)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	host := workerFromContext(r.Context())
-	exposed, err := computer.RecordImageBuildExposure(r.Context(), server.tx, host, ref)
+	exposed, err := computer.RecordImageBuildExposure(r.Context(), server.auditPolicy, server.tx, host, ref)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	envelopes := make([]secret.DeliveryEnvelope, 0, len(exposed))
@@ -210,11 +210,11 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 	if hasProtected {
 		captured, err := computer.CaptureImageBuildProxyTrust(r.Context(), server.tx, host, ref.InstanceID)
 		if err != nil {
-			server.writeAllocationError(w, err)
+			server.writeAllocationError(w, r, err)
 			return
 		}
 		if captured.Trust.PreparationID != ref.ImageBuildID || captured.Trust.EnvironmentID != ref.EnvironmentID {
-			server.writeAllocationError(w, session.ErrDenied)
+			server.writeAllocationError(w, r, session.ErrDenied)
 			return
 		}
 		protected = &workerapi.ProtectedEnv{Env: captured.Env, CA: captured.Trust.Certificate}
@@ -226,11 +226,11 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 		}
 	}()
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
-	if _, err = computer.RecordImageBuildExposure(r.Context(), server.tx, host, ref); err != nil {
-		server.writeAllocationError(w, err)
+	if _, err = computer.RecordImageBuildExposure(r.Context(), server.auditPolicy, server.tx, host, ref); err != nil {
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	deliveries, err := projectSecretDeliveries(materials)
@@ -240,7 +240,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 		}
 	}()
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -250,24 +250,24 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.PreparationExecutor
 	if err := decodeRequestJSON(r, &request); err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	defer clear(request.ChannelCredential)
 	ref, err := preparationExecutor(request)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	host := workerFromContext(r.Context())
 	start, err := computer.ReadImageBuildStart(r.Context(), server.tx, host, ref)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	manifest, err := server.readExecutableBundle(r.Context(), start.BundleDigest)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	seedOnly := start.Spec.Program == (artifact.ProgramDescriptor{})
@@ -276,7 +276,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 	if seedOnly {
 		runtime := start.Spec.Runtime
 		if runtime == nil || runtime.Digest != manifest.Runtime.Artifact.Digest || runtime.Architecture != manifest.Program.Metadata.Architecture || runtime.RuntimeContract != manifest.Program.Metadata.RuntimeContract {
-			server.writeAllocationError(w, session.ErrConflict)
+			server.writeAllocationError(w, r, session.ErrConflict)
 			return
 		}
 		computerID = start.Spec.Template
@@ -284,7 +284,7 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 	} else {
 		preparation, ok := manifest.Preparation(start.Spec.TemplateDefinitionID)
 		if !ok || preparation.Artifact != start.Spec.Program {
-			server.writeAllocationError(w, session.ErrConflict)
+			server.writeAllocationError(w, r, session.ErrConflict)
 			return
 		}
 		for _, d := range preparation.Metadata.Definitions {
@@ -296,12 +296,12 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		manifest.Program = preparation
 		program, err = runtimeProgram(start.DeploymentID.String(), manifest)
 		if err != nil {
-			server.writeAllocationError(w, err)
+			server.writeAllocationError(w, r, err)
 			return
 		}
 	}
 	if computerID == nil {
-		server.writeAllocationError(w, session.ErrConflict)
+		server.writeAllocationError(w, r, session.ErrConflict)
 		return
 	}
 	var seedObject workerapi.CASObject
@@ -312,19 +312,19 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if seedObject.Digest != computerID.Seed.ArtifactDigest {
-		server.writeAllocationError(w, session.ErrConflict)
+		server.writeAllocationError(w, r, session.ErrConflict)
 		return
 	}
 	err = computer.StartImageBuild(r.Context(), server.tx, host, ref)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	if seedOnly {
 		// Conservatively retain registered binding versions for eligibility, without
 		// decrypting or delivering any Secret to the fixed qualification probe.
-		if _, err := computer.RecordImageBuildExposure(r.Context(), server.tx, host, ref); err != nil {
-			server.writeAllocationError(w, err)
+		if _, err := computer.RecordImageBuildExposure(r.Context(), server.auditPolicy, server.tx, host, ref); err != nil {
+			server.writeAllocationError(w, r, err)
 			return
 		}
 	}

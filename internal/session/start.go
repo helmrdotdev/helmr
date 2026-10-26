@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"unicode/utf8"
 	"uuid"
@@ -43,11 +44,12 @@ type StartRequest struct {
 
 // StartPlan is a validated start request and the identity of its receipt.
 type StartPlan struct {
-	Caller   Caller
-	Request  StartRequest
-	Method   string
-	Digest   [32]byte
-	HasInput bool
+	AuditPolicy auditpolicy.Policy
+	Caller      Caller
+	Request     StartRequest
+	Method      string
+	Digest      [32]byte
+	HasInput    bool
 }
 
 // StartPin is what a start resolved: the Agent and the Deployment its Session
@@ -57,20 +59,20 @@ type StartPin struct {
 	Fresh                 bool
 }
 
-func Start(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
-	return admitSession(ctx, pool, trust, caller, req, "create")
+func Start(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+	return admitSession(ctx, auditPolicy, pool, trust, caller, req, "create")
 }
-func Spawn(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
-	return admitSession(ctx, pool, trust, caller, req, "spawn")
+func Spawn(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest) (Admission, error) {
+	return admitSession(ctx, auditPolicy, pool, trust, caller, req, "spawn")
 }
 
 // Creation commits a durable Session receipt, optionally with its first Turn and
 // Computer admission. Empty Sessions pin code without allocating execution.
-func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
+func admitSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req StartRequest, method string) (Admission, error) {
 	if req.SlackChannelID != nil {
 		return Admission{}, ErrInvalidInput
 	}
-	plan, err := PlanStart(caller, req, method)
+	plan, err := PlanStart(auditPolicy, caller, req, method)
 	if err != nil {
 		return Admission{}, err
 	}
@@ -90,7 +92,7 @@ func admitSession(ctx context.Context, pool db.TxBeginner, trust computer.TrustI
 }
 
 // PlanStart validates a start request and computes its idempotency digest.
-func PlanStart(caller Caller, req StartRequest, method string) (StartPlan, error) {
+func PlanStart(auditPolicy auditpolicy.Policy, caller Caller, req StartRequest, method string) (StartPlan, error) {
 	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
 		return StartPlan{}, ErrInvalidInput
 	}
@@ -129,7 +131,7 @@ func PlanStart(caller Caller, req StartRequest, method string) (StartPlan, error
 	if err != nil {
 		return StartPlan{}, ErrInvalidInput
 	}
-	return StartPlan{Caller: caller, Request: req, Method: method, Digest: digest, HasInput: hasInput}, nil
+	return StartPlan{AuditPolicy: auditPolicy, Caller: caller, Request: req, Method: method, Digest: digest, HasInput: hasInput}, nil
 }
 
 // StartError reports a start failure the way transports expect: storage
@@ -299,7 +301,7 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			return err
 		}
 		if computerID != uuid.Nil() {
-			if err = computer.NoteExecutionDemand(ctx, tx, req.EnvironmentID, computerID); err != nil {
+			if err = computer.NoteExecutionDemand(ctx, p.AuditPolicy, tx, req.EnvironmentID, computerID); err != nil {
 				return err
 			}
 		}
@@ -349,6 +351,9 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			if _, err = tx.Exec(ctx, `INSERT INTO turns(environment_id,id,session_id,computer_id,seq,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,origin_turn_id) VALUES($1,$2,$3,$4,1,$5,$6,$7,$8,NULLIF($9,''),$10,$11,$12)`, req.EnvironmentID, result.TurnID, result.SessionID, computerID, caller.Kind, caller.ID, method, agentID, req.IdempotencyKey, digest[:], req.Input, nullableID(caller.TurnID)); err != nil {
 				return err
 			}
+		}
+		if err = auditStart(ctx, tx, p, result, agentID, deployment, computerID); err != nil {
+			return err
 		}
 		if hasInput {
 			return event(ctx, tx, req.EnvironmentID, result.SessionID, result.TurnID, "turn.queued")

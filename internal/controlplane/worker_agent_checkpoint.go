@@ -19,7 +19,7 @@ func (server *Server) workerRegisterAgentCheckpoint(w http.ResponseWriter, r *ht
 		err = server.checkpointPublisher.RegisterCheckpoint(r.Context(), session.CheckpointPublication{EnvironmentID: env, Host: workerFromContext(r.Context())}, request.Manifest)
 	}
 	if err != nil {
-		server.writeAgentSaveError(w, err)
+		server.writeAgentSaveError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -35,7 +35,7 @@ func (server *Server) workerCompleteAgentCheckpoint(w http.ResponseWriter, r *ht
 		err = server.checkpointPublisher.CompleteCheckpoint(r.Context(), session.CheckpointPublication{EnvironmentID: env, Host: workerFromContext(r.Context())}, request.Manifest)
 	}
 	if err != nil {
-		server.writeAgentSaveError(w, err)
+		server.writeAgentSaveError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -43,12 +43,12 @@ func (server *Server) workerCompleteAgentCheckpoint(w http.ResponseWriter, r *ht
 func (server *Server) workerReadAgentCheckpoint(w http.ResponseWriter, r *http.Request) {
 	identity, err := decodeAllocationIdentity(r, "computer")
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	result, err := session.ReadComputerCheckpoint(r.Context(), server.tx, workerFromContext(r.Context()), computer.LeaseIdentity{EnvironmentID: identity.EnvironmentID, ComputerID: identity.OwnerID, InstanceID: identity.InstanceID, Epoch: identity.Epoch})
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

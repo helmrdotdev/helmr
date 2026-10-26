@@ -49,7 +49,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		allowed, err := initialSessionDemand(ctx, tx, env, computerID, sessions)
+		allowed, err := initialSessionDemand(ctx, a.auditPolicy, tx, env, computerID, sessions)
 		if err != nil {
 			return err
 		}
@@ -86,7 +86,7 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err = a.insertComputerAllocation(ctx, tx, &result); err != nil {
 			return err
 		}
-		if err = session.AssignInitialProcesses(ctx, tx, result, sessions); err != nil {
+		if err = session.AssignInitialProcesses(ctx, a.auditPolicy, tx, result, sessions); err != nil {
 			return err
 		}
 		if err = requireAllocationFreshSupply(ctx, tx, supply); err != nil {

@@ -92,6 +92,12 @@ if [ -n "$worker_enrollment_secret_arn" ]; then
   put_secret_arn "worker_enrollment_token" "$worker_enrollment_secret_arn" "hlmr_wgt_$(random_base64url_32)"
 fi
 
+if [ -n "${HELMR_DATABASE_MIGRATION_URL:-}" ]; then
+  put_secret database_migration_url "$HELMR_DATABASE_MIGRATION_URL"
+fi
+if [ -n "${HELMR_DATABASE_AUDIT_MAINTENANCE_URL:-}" ]; then
+  put_secret database_audit_maintenance_url "$HELMR_DATABASE_AUDIT_MAINTENANCE_URL"
+fi
 if [ -n "${HELMR_DATABASE_URL:-}" ]; then
   put_secret database_url "$HELMR_DATABASE_URL"
 fi

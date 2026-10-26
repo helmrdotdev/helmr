@@ -84,27 +84,27 @@ func parseAskCursor(raw string, env, sessionID, turn uuid.UUID) (int64, error) {
 func (s *Server) listAgentAsksHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.askHTTPAuthority(r, false)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, turn, _, err := askHTTPIDs(r, false)
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	limit, err := agentPageLimit(r)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	after, err := parseAskCursor(r.URL.Query().Get("cursor"), env, sessionID, turn)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
-	page, err := session.ListAsks(r.Context(), s.tx, caller, session.TurnListRequest{EnvironmentID: env, SessionID: sessionID, After: after, Limit: limit}, turn)
+	page, err := session.ListAsks(r.Context(), s.auditPolicy, s.tx, caller, session.TurnListRequest{EnvironmentID: env, SessionID: sessionID, After: after, Limit: limit}, turn)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	asks := make([]map[string]any, 0, len(page.Asks))
@@ -120,17 +120,17 @@ func (s *Server) listAgentAsksHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getAgentAskHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.askHTTPAuthority(r, false)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, turn, id, err := askHTTPIDs(r, true)
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
-	view, err := session.GetAsk(r.Context(), s.tx, caller, env, sessionID, turn, id)
+	view, err := session.GetAsk(r.Context(), s.auditPolicy, s.tx, caller, env, sessionID, turn, id)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, askHTTPView(view))
@@ -138,12 +138,12 @@ func (s *Server) getAgentAskHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) answerAgentAskHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.askHTTPAuthority(r, true)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	sessionID, turn, id, err := askHTTPIDs(r, true)
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	request, err := decodeAskAnswerRequest(r)
@@ -151,9 +151,9 @@ func (s *Server) answerAgentAskHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	view, err := session.AnswerAsk(r.Context(), s.tx, caller, session.AskAnswerRequest{EnvironmentID: env, SessionID: sessionID, TurnID: turn, AskID: id, AnswerID: request.AnswerID, Answer: request.Answer})
+	view, err := session.AnswerAsk(r.Context(), s.auditPolicy, s.tx, caller, session.AskAnswerRequest{EnvironmentID: env, SessionID: sessionID, TurnID: turn, AskID: id, AnswerID: request.AnswerID, Answer: request.Answer})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	receipt := askHTTPView(view)

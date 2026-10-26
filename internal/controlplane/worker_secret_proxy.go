@@ -57,7 +57,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 	}()
 	isPreparation, err := computer.IsImageBuildProxyInstance(r.Context(), s.tx, instanceID)
 	if err != nil {
-		s.writeAllocationError(w, err)
+		s.writeAllocationError(w, r, err)
 		return
 	}
 	// These ordinary primary SELECTs each run as a fresh command snapshot. Do

@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -18,12 +19,14 @@ func TestRuntimeFailurePreservesReceiptAndContinuesSession(t *testing.T) {
 	}
 	failure := session.TurnError{Code: "application_error", Message: "bad\x00input"}
 	fail := func() (json.RawMessage, error) {
-		return session.RuntimeFail(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, failure, "drained")
+		return session.RuntimeFail(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, failure, "drained")
 	}
 	if _, err := fail(); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("unclosed failure: %v", err)
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	first, err := fail()
@@ -62,11 +65,13 @@ func TestRuntimeFailureHonorsElapsedDeadline(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, a.TurnID)
-	outcome, err := session.RuntimeFail(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, session.TurnError{Code: "error"}, "drained")
+	outcome, err := session.RuntimeFail(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, session.TurnError{Code: "error"}, "drained")
 	if err != nil || string(outcome) != `{"status":"interrupted"}` {
 		t.Fatalf("deadline outcome %s: %v", outcome, err)
 	}

@@ -55,7 +55,7 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		r.Context(), principal, scope, request.BundleDigest, request.IdempotencyKey,
 	)
 	if err != nil {
-		s.writeDeploymentError(w, err)
+		s.writeDeploymentError(w, r, err)
 		return
 	}
 	streamDeploymentFinalization(w, r, s.log, deploymentFinalizePingEvery, finalization.BundleDigest(), func(

@@ -1,4 +1,7 @@
 mock_provider "aws" {
+  mock_resource "aws_ecs_cluster" { defaults = { arn = "arn:aws:ecs:us-east-1:000000000000:cluster/mock" } }
+  mock_resource "aws_ecs_task_definition" { defaults = { arn = "arn:aws:ecs:us-east-1:000000000000:task-definition/mock:1" } }
+  mock_resource "aws_cloudwatch_event_rule" { defaults = { arn = "arn:aws:events:us-east-1:000000000000:rule/mock" } }
   mock_data "aws_region" { defaults = { region = "us-east-1" } }
   mock_data "aws_caller_identity" { defaults = { account_id = "000000000000" } }
   mock_data "aws_partition" { defaults = { partition = "aws", dns_suffix = "amazonaws.com" } }
@@ -70,6 +73,7 @@ override_resource {
 }
 
 variables {
+  audit_retention_seconds = 2592000
   controlplane_environment = {
     ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
     ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
@@ -506,4 +510,38 @@ run "private_rejects_implicit_sources" {
   command = plan
   variables { ingress_mode = "private" }
   expect_failures = [terraform_data.ingress_contract]
+}
+
+run "audit_purge_is_bounded_and_isolated" {
+  command = apply
+  variables { create_controlplane_service = true }
+  assert {
+    condition     = jsondecode(aws_ecs_task_definition.audit_maintenance.container_definitions)[0].command == ["audit-maintenance", "purge"]
+    error_message = "Periodic maintenance must only run purge."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_ecs_task_definition.audit_maintenance.container_definitions)[0].secrets : s.name] == ["DATABASE_AUDIT_MAINTENANCE_URL"]
+    error_message = "Purge must not receive migration, runtime or unrelated secrets."
+  }
+  assert {
+    condition     = alltrue([for task in [aws_ecs_task_definition.controlplane, aws_ecs_task_definition.dispatcher] : !contains([for s in jsondecode(task.container_definitions)[0].secrets : s.name], "DATABASE_AUDIT_MAINTENANCE_URL")])
+    error_message = "Serving tasks must not receive audit deletion authority."
+  }
+  assert {
+    condition     = { for e in jsondecode(aws_ecs_task_definition.audit_maintenance.container_definitions)[0].environment : e.name => e.value }.AUDIT_PURGE_MAX_BATCHES == "50" && aws_cloudwatch_event_rule.audit_purge.schedule_expression == "rate(15 minutes)"
+    error_message = "Purge must have finite execution and an installed periodic schedule."
+  }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.audit_purge_missing[0].treat_missing_data == "breaching"
+    error_message = "Missing or failed maintenance must be observable without a successful task launch."
+  }
+}
+
+run "audit_purge_rejects_deadline_without_setup_margin" {
+  command = plan
+  variables {
+    audit_maintenance_timeout_seconds = 300
+    audit_purge_max_batches = 60
+  }
+  expect_failures = [aws_ecs_task_definition.audit_maintenance]
 }

@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"log/slog"
 	"time"
 	"uuid"
@@ -19,7 +21,7 @@ const terminalProcessPhysicallyStopped = `s.status IN ('closed','cancelled') AND
 
 // RunSessionLifecycle owns deadline settlement and accepted terminal-control convergence
 // independently of guest connections. The process root cancels and joins it.
-func RunSessionLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) error {
+func RunSessionLifecycle(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return errors.New("session lifecycle database and logger are required")
 	}
@@ -27,7 +29,7 @@ func RunSessionLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger
 	defer ticker.Stop()
 	var position sessionLifecyclePosition
 	for {
-		next, more, err := reconcileSessionLifecycle(ctx, database, position)
+		next, more, err := reconcileSessionLifecycle(ctx, auditPolicy, database, position)
 		position = next
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -46,7 +48,7 @@ func RunSessionLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger
 	}
 }
 
-func reconcileSessionLifecycle(ctx context.Context, database db.TxDB, after sessionLifecyclePosition) (sessionLifecyclePosition, bool, error) {
+func reconcileSessionLifecycle(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, after sessionLifecyclePosition) (sessionLifecyclePosition, bool, error) {
 	// Keyset traversal revisits durable intent on the next pass without letting
 	// a blocked or failing root permanently exclude later Sessions from a batch.
 	scanCtx, cancelScan := context.WithTimeout(ctx, 10*time.Second)
@@ -94,18 +96,18 @@ func reconcileSessionLifecycle(ctx context.Context, database db.TxDB, after sess
 			break
 		}
 		after = candidate
-		err := reconcileSessionStoragePressure(ctx, database, candidate.environment, candidate.session)
+		err := reconcileSessionStoragePressure(ctx, auditPolicy, database, candidate.environment, candidate.session)
 		if err == nil {
-			err = reconcileProcessStopDeadline(ctx, database, candidate.environment, candidate.session)
+			err = reconcileProcessStopDeadline(ctx, auditPolicy, database, candidate.environment, candidate.session)
 		}
 		if err == nil {
-			err = expireSessionDeadline(ctx, database, candidate.environment, candidate.session)
+			err = expireSessionDeadline(ctx, auditPolicy, database, candidate.environment, candidate.session)
 		}
 		if err == nil {
 			err = reconcileSessionIdle(ctx, database, candidate.environment, candidate.session)
 		}
 		if err == nil {
-			err = ReconcileSessionClosure(ctx, database, candidate.environment, candidate.session)
+			err = ReconcileSessionClosure(ctx, auditPolicy, database, candidate.environment, candidate.session)
 		}
 		if err == nil {
 			err = reconcileTerminalSessionStop(ctx, database, candidate.environment, candidate.session)
@@ -151,7 +153,7 @@ func reconcileTerminalSessionStop(ctx context.Context, pool db.TxBeginner, env, 
 }
 
 // A wedged program cannot extend the durable stop budget through reconnection.
-func reconcileProcessStopDeadline(ctx context.Context, pool db.TxBeginner, env, session uuid.UUID) error {
+func reconcileProcessStopDeadline(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, env, session uuid.UUID) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -167,6 +169,6 @@ func reconcileProcessStopDeadline(ctx context.Context, pool db.TxBeginner, env, 
 		if err != nil {
 			return err
 		}
-		return observeSessionFailure(ctx, tx, Execution{EnvironmentID: env, SessionID: session, ProcessEpoch: epoch}, "Session cooperative stop deadline elapsed; reconstruction required")
+		return observeSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), Execution{EnvironmentID: env, SessionID: session, ProcessEpoch: epoch}, "Session cooperative stop deadline elapsed; reconstruction required")
 	})
 }

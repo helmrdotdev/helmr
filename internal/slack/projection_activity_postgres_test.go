@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"strings"
@@ -16,7 +17,7 @@ import (
 )
 
 func activityExecution(f statusFixture) session.Execution {
-	return session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+	return session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 }
 func activityHost(f statusFixture) workergroup.HostPrincipal {
 	return workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
@@ -36,7 +37,7 @@ func activityChildOrigin(t *testing.T, f statusFixture, running, explicitOrigin 
 	}
 	host := activityHost(f)
 	caller := session.Caller{Kind: "session", ID: f.Session, TurnID: parentTurn, Execution: activityExecution(f), Host: &host}
-	receipt, err := session.Spawn(t.Context(), f.Pool, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: f.Computer, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"PRIVATE CHILD ASSIGNMENT"}]`)})
+	receipt, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: f.Computer, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"PRIVATE CHILD ASSIGNMENT"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,9 @@ func TestOwnedActivityPreservesContentAndShowsPhysicalStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.RuntimeAsk(t.Context(), f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), json.RawMessage(`{"prompt":[{"type":"text","text":"Must not become a public ask"}],"type":"text"}`)); !errors.Is(err, session.ErrRootSessionRequired) {
+	if err = session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, activityHost(child), activityExecution(child), turn.TurnID, uuid.NewV7(), json.RawMessage(`{"prompt":[{"type":"text","text":"Must not become a public ask"}],"type":"text"}`)); !errors.Is(err, session.ErrRootSessionRequired) {
 		t.Fatal(err)
 	}
 	write("Original front explanation.")
@@ -127,11 +130,11 @@ func TestOwnedActivityPreservesContentAndShowsPhysicalStop(t *testing.T) {
 		t.Fatal("unchanged activity revised")
 	}
 	claim := f.postClaim(t, id)
-	if err = FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
+	if err = FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
 		t.Fatal(err)
 	}
 	request := f.nativeStop(t, "stop-child")
-	if err = admitNativeStop(t.Context(), f.Pool, request); err != nil {
+	if err = admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, request); err != nil {
 		t.Fatal(err)
 	}
 	projectAllActivity(t, f)
@@ -139,7 +142,9 @@ func TestOwnedActivityPreservesContentAndShowsPhysicalStop(t *testing.T) {
 	if afterID != id || next <= revision || stopping.Blocks[1].Status != "in_progress" || !strings.Contains(stopping.Text, "Stopping") || stopping.Blocks[1].TaskID != before.Blocks[1].TaskID || stopping.Blocks[1].BlockID == before.Blocks[1].BlockID {
 		t.Fatal("stop claim overstated cessation", stopping)
 	}
-	if err = session.ObserveSessionStopped(t.Context(), f.Pool, activityHost(child), activityExecution(child), attachment.Sequence); err != nil {
+	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, activityHost(child), activityExecution(child), attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
 	projectAllActivity(t, f)
@@ -192,11 +197,13 @@ func TestOwnedActivityKeepsFirstAppearanceAcrossQuestion(t *testing.T) {
 		t.Fatal(err)
 	}
 	ask := uuid.NewV7()
-	if err := session.RuntimeAsk(t.Context(), f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
+	if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
 		t.Fatal(err)
 	}
 	projectAllActivity(t, f)
-	if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
 		t.Fatal(err)
 	}
 	_, second := activityChild(t, f, false)
@@ -252,7 +259,7 @@ func TestOwnedActivityTurnInterruptAcknowledgementStopsOnlyThatCard(t *testing.T
 	child, turn := activityChild(t, f, true)
 	write("Original explanation.")
 	projectAllActivity(t, f)
-	_, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, TurnID: turn.TurnID, Kind: "turn_interrupt", IdempotencyKey: "stop-only-turn"})
+	_, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, TurnID: turn.TurnID, Kind: "turn_interrupt", IdempotencyKey: "stop-only-turn"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,14 +284,14 @@ func TestOwnedActivityTurnInterruptAcknowledgementStopsOnlyThatCard(t *testing.T
 	if stopped.Blocks[1].Status != "error" || !strings.Contains(stopped.Text, "Stopped.") {
 		t.Fatal("turn-only stop never converged", stopped)
 	}
-	next, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "next-child-turn", Input: json.RawMessage(`[]`)})
+	next, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "next-child-turn", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dispatchRuntimeTurn(t.Context(), f.Pool, execution); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, TurnID: next.TurnID, Kind: "turn_interrupt", IdempotencyKey: "stop-next-turn"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, TurnID: next.TurnID, Kind: "turn_interrupt", IdempotencyKey: "stop-next-turn"}); err != nil {
 		t.Fatal(err)
 	}
 	projectAllActivity(t, f)
@@ -293,7 +300,7 @@ func TestOwnedActivityTurnInterruptAcknowledgementStopsOnlyThatCard(t *testing.T
 		t.Fatal("later turn reopened old stop", nextStopping)
 	}
 	// A new unrelated Session hold must not reopen the old Turn's stop observation.
-	_, err = session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, Kind: "interrupt", IdempotencyKey: "later-hold", Reason: "fixture"})
+	_, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, Kind: "interrupt", IdempotencyKey: "later-hold", Reason: "fixture"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +339,7 @@ func TestOwnedActivityDoesNotConfirmUnceasedCancellationOrLostInterrupt(t *testi
 			if kind == "turn_interrupt" {
 				req.TurnID = turn.TurnID
 			}
-			if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, req); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, req); err != nil {
 				t.Fatal(err)
 			}
 			projectAllActivity(t, f)
@@ -340,7 +347,11 @@ func TestOwnedActivityDoesNotConfirmUnceasedCancellationOrLostInterrupt(t *testi
 			if stopping.Blocks[1].Status != "in_progress" || !strings.Contains(stopping.Text, "Stopping") {
 				t.Fatal("premature cessation", stopping)
 			}
-			if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error { return session.LoseProcess(t.Context(), tx, activityExecution(child), false) }); err != nil {
+			if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
+				return session.LoseProcess(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, tx, activityExecution(child), false)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			projectAllActivity(t, f)
@@ -362,9 +373,15 @@ func TestOwnedActivityProcessFailureDoesNotImplyCessation(t *testing.T) {
 			projectAllActivity(t, f)
 			var err error
 			if kind == "loss" {
-				err = db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error { return session.LoseProcess(t.Context(), tx, activityExecution(child), false) })
+				err = db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
+					return session.LoseProcess(t.Context(), auditpolicy.Policy{
+						RetentionSeconds: 3600,
+					}, tx, activityExecution(child), false)
+				})
 			} else {
-				err = session.RuntimeHold(t.Context(), f.Pool, activityHost(child), activityExecution(child), "fixture native failure")
+				err = session.RuntimeHold(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.Pool, activityHost(child), activityExecution(child), "fixture native failure")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -394,10 +411,12 @@ func TestOwnedActivitySessionCallerUsesAdmissionOrdering(t *testing.T) {
 					t.Fatal(err)
 				}
 				ask := uuid.NewV7()
-				if err := session.RuntimeAsk(t.Context(), f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
+				if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
+				if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -456,19 +475,21 @@ func TestOwnedActivitySessionCallerSuccessorsUseTheirOwnAdmission(t *testing.T) 
 		t.Fatal(err)
 	}
 	ask := uuid.NewV7()
-	if err := session.RuntimeAsk(t.Context(), f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
+	if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, activityHost(f), activityExecution(f), turn, ask, json.RawMessage(`{"type":"text","prompt":[{"type":"text","text":"Continue?"}]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.AnswerAsk(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
 		t.Fatal(err)
 	}
 	write("Second explanation.")
 	host := activityHost(f)
-	second, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "session", ID: f.Session, Execution: activityExecution(f), Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "successor", Input: json.RawMessage(`[]`)})
+	second, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "session", ID: f.Session, Execution: activityExecution(f), Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "successor", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	userTurn, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "user-successor", Input: json.RawMessage(`[]`)})
+	userTurn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "user-successor", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -482,14 +503,14 @@ func TestOwnedActivitySessionCallerSuccessorsUseTheirOwnAdmission(t *testing.T) 
 		t.Fatalf("user turn attached: %d %v", count, err)
 	}
 	// A caller with no active front Turn cannot borrow a previous explanation.
-	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, Kind: "turn_interrupt", IdempotencyKey: "finish-front"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, Kind: "turn_interrupt", IdempotencyKey: "finish-front"}); err != nil {
 		t.Fatal(err)
 	}
 	execution := activityExecution(f)
 	if err := f.Pool.QueryRow(t.Context(), `SELECT authority_generation FROM sessions WHERE id=$1`, f.Session).Scan(&execution.AuthorityGeneration); err != nil {
 		t.Fatal(err)
 	}
-	later, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "session", ID: f.Session, Execution: execution, Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "inactive-front", Input: json.RawMessage(`[]`)})
+	later, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "session", ID: f.Session, Execution: execution, Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "inactive-front", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

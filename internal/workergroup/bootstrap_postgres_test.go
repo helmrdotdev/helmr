@@ -2,6 +2,7 @@ package workergroup
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestBootstrapCreatesOneRegionGroupAndToken(t *testing.T) {
 	}
 	cfg := BootstrapConfig{
 		RegionID:          "local",
-		RegionDisplayName: "Local", GroupName: "default", EnrollmentToken: token.Raw,
+		RegionDisplayName: "Local", GroupName: "default", EnrollmentToken: token.Raw, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600},
 	}
 	if err := Bootstrap(ctx, database.Pool, cfg); err != nil {
 		t.Fatal(err)
@@ -61,7 +62,7 @@ func TestBootstrapPreservesExistingRowsWithoutParsingToken(t *testing.T) {
 	}
 	initial := BootstrapConfig{
 		RegionID:          "local",
-		RegionDisplayName: "Original", GroupName: "default", EnrollmentToken: token.Raw,
+		RegionDisplayName: "Original", GroupName: "default", EnrollmentToken: token.Raw, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600},
 	}
 	if err := Bootstrap(ctx, database.Pool, initial); err != nil {
 		t.Fatal(err)
@@ -102,7 +103,7 @@ func TestBootstrapCreatesAnotherSeedWithoutChangingTheExistingSeed(t *testing.T)
 	}
 	if err := Bootstrap(ctx, database.Pool, BootstrapConfig{
 		RegionID: "primary", RegionDisplayName: "Primary",
-		GroupName: "default", EnrollmentToken: firstToken.Raw,
+		GroupName: "default", EnrollmentToken: firstToken.Raw, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +113,7 @@ func TestBootstrapCreatesAnotherSeedWithoutChangingTheExistingSeed(t *testing.T)
 	}
 	if err := Bootstrap(ctx, database.Pool, BootstrapConfig{
 		RegionID: "secondary", RegionDisplayName: "Secondary",
-		GroupName: "default", EnrollmentToken: secondToken.Raw,
+		GroupName: "default", EnrollmentToken: secondToken.Raw, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +150,7 @@ func TestBootstrapSerializesConcurrentBootstrap(t *testing.T) {
 	}
 	cfg := BootstrapConfig{
 		RegionID:          "local",
-		RegionDisplayName: "Local", GroupName: "default", EnrollmentToken: token.Raw,
+		RegionDisplayName: "Local", GroupName: "default", EnrollmentToken: token.Raw, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600},
 	}
 	errorsByReplica := make([]error, 2)
 	var wait sync.WaitGroup
@@ -185,7 +186,7 @@ func TestBootstrapRollsBackRegionWhenMissingGroupTokenIsInvalid(t *testing.T) {
 	}
 	err := Bootstrap(ctx, database.Pool, BootstrapConfig{
 		RegionID: "local", RegionDisplayName: "Local",
-		GroupName: "default", EnrollmentToken: "invalid",
+		GroupName: "default", EnrollmentToken: "invalid", AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600},
 	})
 	if err == nil {
 		t.Fatal("bootstrap accepted an invalid token")

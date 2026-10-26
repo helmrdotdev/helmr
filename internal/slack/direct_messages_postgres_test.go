@@ -2,6 +2,7 @@ package slack
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"net/http"
 	"strings"
@@ -39,7 +40,7 @@ func (f statusFixture) directEvent(t *testing.T, key, ts, thread string) uuid.UU
 }
 func (f statusFixture) reconcileDirect(t *testing.T, id uuid.UUID) {
 	t.Helper()
-	if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), directClient(t, "human", nil), id); err != nil {
+	if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), directClient(t, "human", nil), id); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -63,7 +64,7 @@ func TestSlackDirectRootReplyRaceAndSeparateSessions(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
-			if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), directClient(t, "human", nil), first); err != nil {
+			if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), directClient(t, "human", nil), first); err != nil {
 				t.Error(err)
 			}
 		})
@@ -138,7 +139,7 @@ func TestSlackDirectRequiresGrantsAndChannelKeepsWorking(t *testing.T) {
 	f.reconcileDirect(t, old)
 	f.receiptStatus(t, old, "rejected")
 	channel := f.reply(t, "channel", false)
-	if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), channel); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), channel); err != nil {
 		t.Fatal(err)
 	}
 	f.receiptStatus(t, channel, "accepted")
@@ -179,7 +180,7 @@ func TestSlackDirectReplyRejectsAuthorityChanges(t *testing.T) {
 				if err := f.Pool.QueryRow(t.Context(), `SELECT session_id FROM slack_requests WHERE id=$1`, first).Scan(&sid); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: sid, Kind: "cancel", IdempotencyKey: "close"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: sid, Kind: "cancel", IdempotencyKey: "close"}); err != nil {
 					t.Fatal(err)
 				}
 			case "grants":
@@ -281,7 +282,7 @@ func TestSlackDirectAnswersAndNativeStopVerifyPeer(t *testing.T) {
 				peer = "other"
 				want = "rejected"
 			}
-			if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), directClient(t, peer, nil), id); err != nil {
+			if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), directClient(t, peer, nil), id); err != nil {
 				t.Fatal(err)
 			}
 			f.receiptStatus(t, id, want)
@@ -314,7 +315,7 @@ func TestSlackDirectDeliveryVerifiesRetainedPeer(t *testing.T) {
 			})
 			var err error
 			if strings.HasSuffix(kind, "status") {
-				_, err = ReconcileStatus(t.Context(), f.Pool, c, f.thread)
+				_, err = ReconcileStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, f.thread)
 			} else {
 				var post uuid.UUID
 				if kind == "stream" {
@@ -322,7 +323,7 @@ func TestSlackDirectDeliveryVerifiesRetainedPeer(t *testing.T) {
 				} else {
 					post = f.post(t, 1, "content", "lifecycle", nil)
 				}
-				_, err = ReconcilePost(t.Context(), f.Pool, c, post)
+				_, err = ReconcilePost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, post)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -363,7 +364,7 @@ func TestSlackDirectControlsExpireWithoutRemoteAccess(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, f.installation)
 			}
 			// No client proves that expiry/known route loss precedes token or API access.
-			if err := ReconcileRequest(t.Context(), f.Pool, nil, testProjectionConfig(), nil, id); err != nil {
+			if err := ReconcileRequest(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, testProjectionConfig(), nil, id); err != nil {
 				t.Fatal(err)
 			}
 			f.receiptStatus(t, id, "rejected")
@@ -404,7 +405,7 @@ func TestSlackDirectUncertainDeliveryDoesNotReplayAndAcceptsExactEvidence(t *tes
 	if claim.PeerID != "human" {
 		t.Fatal("missing peer on durable delivery")
 	}
-	if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)

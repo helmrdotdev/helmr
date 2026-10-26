@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -22,7 +23,7 @@ func TestComputerManualPolicyNeedsExplicitHibernate(t *testing.T) {
 		t.Fatalf("manual capture: %v", err)
 	}
 	req := f.executionRequest("hibernate", "sleep")
-	accepted, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req)
+	accepted, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil || accepted.Status != "accepted" {
 		t.Fatalf("hibernate: %+v %v", accepted, err)
 	}
@@ -30,7 +31,7 @@ func TestComputerManualPolicyNeedsExplicitHibernate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req)
+	replay, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil || replay.ID != accepted.ID {
 		t.Fatalf("replay: %+v %v", replay, err)
 	}
@@ -43,7 +44,7 @@ func TestComputerManualPolicyNeedsExplicitHibernate(t *testing.T) {
 func TestComputerHibernateRequiresNoForegroundAndNewInputCancelsIntent(t *testing.T) {
 	f := newFixture(t)
 	req := f.executionRequest("hibernate", "sleep")
-	accepted, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req)
+	accepted, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +54,7 @@ func TestComputerHibernateRequiresNoForegroundAndNewInputCancelsIntent(t *testin
 		t.Fatalf("intent survived new work: %s %v", code, err)
 	}
 	req.IdempotencyKey = "busy"
-	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req); !errors.Is(err, computer.ErrBusy) {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("queued work: %v", err)
 	}
 }
@@ -80,7 +81,7 @@ func TestComputerAfterTurnRequiresEveryMemberAndWakeRearms(t *testing.T) {
 	// Closing/fencing the peer is irrelevant to the original member's policy.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, peer.session)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed' WHERE id=$1`, peer.session)
-	wake, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), f.executionRequest("wake", "already-awake"))
+	wake, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("wake", "already-awake"))
 	if err != nil || wake.Status != "completed" {
 		t.Fatalf("wake: %+v %v", wake, err)
 	}
@@ -100,11 +101,11 @@ func TestComputerAfterTurnRequiresEveryMemberAndWakeRearms(t *testing.T) {
 func TestComputerExecutionRechecksAuthorityOnReplay(t *testing.T) {
 	f := newFixture(t)
 	req := f.executionRequest("wake", "wake")
-	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
-	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked actor replay: %v", err)
 	}
 }
@@ -113,15 +114,17 @@ func TestComputerExecutionDeadlineSettlesWithoutClaimingRollback(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	req := f.executionRequest("hibernate", "unreachable-host")
-	accepted, err := session.ControlComputerExecution(ctx, f.pool, f.caller(), req)
+	accepted, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE computer_controls SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, accepted.ID)
-	if err := computer.ReconcileExecutionControls(ctx, f.pool); err != nil {
+	if err := computer.ReconcileExecutionControls(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool); err != nil {
 		t.Fatal(err)
 	}
-	replay, err := session.ControlComputerExecution(ctx, f.pool, f.caller(), req)
+	replay, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil || replay.Status != "failed" || replay.ErrorCode == nil || *replay.ErrorCode != "execution_deadline_exceeded" {
 		t.Fatalf("deadline receipt: %+v %v", replay, err)
 	}
@@ -145,7 +148,7 @@ func TestComputerParkedProjectionAndRejectedWakePreserveCheckpoint(t *testing.T)
 		t.Fatalf("parked: %+v %v", snapshot, err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE environments SET max_memory_bytes=1 WHERE id=$1`, f.env)
-	if _, err := session.ControlComputerExecution(ctx, f.pool, f.caller(), f.executionRequest("wake", "no-room")); !errors.Is(err, computer.ErrExecutionLimit) {
+	if _, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("wake", "no-room")); !errors.Is(err, computer.ErrExecutionLimit) {
 		t.Fatalf("wake limit: %v", err)
 	}
 	var preserved bool
@@ -167,7 +170,7 @@ func TestComputerHibernateConfirmationBindsSharedMembership(t *testing.T) {
 	req := f.executionRequest("hibernate", "confirmed")
 	req.ExpectedScope = scope.Digest
 	peer := f.peer(t)
-	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("stale shared membership accepted: %v", err)
 	}
 	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
@@ -181,7 +184,7 @@ func TestComputerHibernateConfirmationBindsSharedMembership(t *testing.T) {
 		t.Fatalf("missing shared Session %s: %+v", peer.session, scope)
 	}
 	req.ExpectedScope = scope.Digest
-	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 		t.Fatalf("current confirmation rejected: %v", err)
 	}
 }
@@ -191,7 +194,7 @@ func TestComputerWakeFromClosedThreadDoesNotAdmitExecution(t *testing.T) {
 	req := f.executionRequest("wake", "closed-thread")
 	req.OpenSessionID = f.session
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed' WHERE id=$1`, f.session)
-	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), req); !errors.Is(err, session.ErrTerminal) {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrTerminal) {
 		t.Fatalf("closed thread wake: %v", err)
 	}
 	var count int

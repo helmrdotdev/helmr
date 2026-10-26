@@ -2,11 +2,11 @@ package secret
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -21,14 +21,13 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	environmentID := seedSecretEnvironment(t, database.Pool)
-	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32))
+	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	created, err := store.Create(
-		t.Context(), audit.System("test-fixture"),
-		environmentID,
+		t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID,
 		"API_TOKEN",
 		[]byte("first-value"),
 		"create-1",
@@ -37,8 +36,7 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayed, err := store.Create(
-		t.Context(), audit.System("test-fixture"),
-		environmentID,
+		t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID,
 		"API_TOKEN",
 		[]byte("first-value"),
 		"create-1",
@@ -52,8 +50,7 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 		t.Fatalf("create replay changed authority: first=%+v replay=%+v", created, replayed)
 	}
 	_, err = store.Create(
-		t.Context(), audit.System("test-fixture"),
-		environmentID,
+		t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID,
 		"API_TOKEN",
 		[]byte("different-value"),
 		"create-1",
@@ -64,8 +61,7 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 
 	secretID := pgvalue.MustUUIDValue(created.ID)
 	rotated, err := store.Rotate(
-		t.Context(), audit.System("test-fixture"),
-		environmentID,
+		t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID,
 		secretID,
 		[]byte("second-value"),
 		"rotate-1",
@@ -74,8 +70,7 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayedRotation, err := store.Rotate(
-		t.Context(), audit.System("test-fixture"),
-		environmentID,
+		t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID,
 		secretID,
 		[]byte("second-value"),
 		"rotate-1",
@@ -94,39 +89,39 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 		t.Fatalf("rotation replay changed version: first=%+v replay=%+v", rotated, replayedRotation)
 	}
 
-	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), environmentID, secretID, []byte("third-value"), "rotate-2"); err != nil {
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, secretID, []byte("third-value"), "rotate-2"); err != nil {
 		t.Fatal(err)
 	}
 	// Original retry identities must compare against their original encrypted value,
 	// not the newest value, and must never roll the Secret back to that version.
 	latest := currentSecretVersion(t, database.Pool, environmentID, created.ID)
-	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), environmentID, secretID, []byte("second-value"), "rotate-1"); err != nil {
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, secretID, []byte("second-value"), "rotate-1"); err != nil {
 		t.Fatal(err)
 	}
 	if got := currentSecretVersion(t, database.Pool, environmentID, created.ID); got != latest {
 		t.Fatal("replay rolled back current version")
 	}
-	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), environmentID, secretID, []byte("third-value"), "rotate-1"); !errors.Is(err, ErrMutationConflict) {
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, secretID, []byte("third-value"), "rotate-1"); !errors.Is(err, ErrMutationConflict) {
 		t.Fatalf("changed rotation replay: %v", err)
 	}
-	if other, err := store.Create(t.Context(), audit.System("test-fixture"), environmentID, "OTHER", []byte("first-value"), "create-1"); err != nil || other.ID == created.ID {
+	if other, err := store.Create(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, "OTHER", []byte("first-value"), "create-1"); err != nil || other.ID == created.ID {
 		t.Fatalf("name-scoped create key: %v", err)
 	}
-	if _, err = store.Revoke(t.Context(), audit.System("test-fixture"), environmentID, secretID, "revoke-1"); err != nil {
+	if _, err = store.Revoke(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, secretID, "revoke-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.Revoke(t.Context(), audit.System("test-fixture"), environmentID, secretID, ""); err != nil {
+	if _, err = store.Revoke(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, secretID, ""); err != nil {
 		t.Fatal(err)
 	}
-	replayed, err = store.Create(t.Context(), audit.System("test-fixture"), environmentID, "API_TOKEN", []byte("first-value"), "create-1")
+	replayed, err = store.Create(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, "API_TOKEN", []byte("first-value"), "create-1")
 	if err != nil || replayed.Status != "revoked" {
 		t.Fatalf("revoked create replay: %+v %v", replayed, err)
 	}
-	replayed, err = store.Rotate(t.Context(), audit.System("test-fixture"), environmentID, secretID, []byte("second-value"), "rotate-1")
+	replayed, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, secretID, []byte("second-value"), "rotate-1")
 	if err != nil || replayed.Status != "revoked" {
 		t.Fatalf("revoked rotate replay: %+v %v", replayed, err)
 	}
-	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), environmentID, secretID, []byte("new"), "rotate-3"); !IsUnavailable(err) {
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, secretID, []byte("new"), "rotate-3"); !IsUnavailable(err) {
 		t.Fatalf("revoked rotation: %v", err)
 	}
 	var versions int
@@ -142,7 +137,7 @@ func TestSecretMutationConcurrentRetriesAndEnvironmentScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := seedSecretEnvironment(t, database.Pool)
-	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32))
+	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +147,7 @@ func TestSecretMutationConcurrentRetriesAndEnvironmentScope(t *testing.T) {
 	var wg sync.WaitGroup
 	for range clients {
 		wg.Go(func() {
-			row, err := store.Create(t.Context(), audit.System("test-fixture"), env, "TOKEN", []byte("first"), "same-create")
+			row, err := store.Create(t.Context(), dbtest.SecretManager(t, database.Pool, env), env, "TOKEN", []byte("first"), "same-create")
 			created <- row
 			errs <- err
 		})
@@ -175,7 +170,7 @@ func TestSecretMutationConcurrentRetriesAndEnvironmentScope(t *testing.T) {
 	errs = make(chan error, clients)
 	for range clients {
 		wg.Go(func() {
-			_, err := store.Rotate(t.Context(), audit.System("test-fixture"), env, pgvalue.MustUUIDValue(id), []byte("second"), "same-rotate")
+			_, err := store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, env), env, pgvalue.MustUUIDValue(id), []byte("second"), "same-rotate")
 			errs <- err
 		})
 	}
@@ -191,17 +186,17 @@ func TestSecretMutationConcurrentRetriesAndEnvironmentScope(t *testing.T) {
 		t.Fatalf("versions=%d: %v", count, err)
 	}
 	other := seedSecretEnvironment(t, database.Pool)
-	if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), other, pgvalue.MustUUIDValue(id), []byte("second"), "same-rotate"); err == nil {
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, other), other, pgvalue.MustUUIDValue(id), []byte("second"), "same-rotate"); err == nil {
 		t.Fatal("foreign rotation accepted")
 	}
-	if _, err = store.Revoke(t.Context(), audit.System("test-fixture"), other, pgvalue.MustUUIDValue(id), "revoke"); err == nil {
+	if _, err = store.Revoke(t.Context(), dbtest.SecretManager(t, database.Pool, other), other, pgvalue.MustUUIDValue(id), "revoke"); err == nil {
 		t.Fatal("foreign revocation accepted")
 	}
-	if _, err = store.Create(t.Context(), audit.System("test-fixture"), other, "TOKEN", []byte("other"), "same-create"); err != nil {
+	if _, err = store.Create(t.Context(), dbtest.SecretManager(t, database.Pool, other), other, "TOKEN", []byte("other"), "same-create"); err != nil {
 		t.Fatalf("retry identity leaked across Environments: %v", err)
 	}
 	for _, key := range []string{"", "bad\x00key", string([]byte{0xff})} {
-		if _, err = store.Rotate(t.Context(), audit.System("test-fixture"), env, pgvalue.MustUUIDValue(id), []byte("bad"), key); !errors.Is(err, ErrInvalidMutation) {
+		if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, env), env, pgvalue.MustUUIDValue(id), []byte("bad"), key); !errors.Is(err, ErrInvalidMutation) {
 			t.Fatalf("invalid key accepted %v", err)
 		}
 	}
@@ -270,11 +265,11 @@ func TestSecretDistinctConcurrentMutationsDoNotUpgradeForeignKeyLocks(t *testing
 		t.Fatal(err)
 	}
 	env := seedSecretEnvironment(t, database.Pool)
-	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32))
+	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := store.Create(t.Context(), audit.System("test-fixture"), env, "TOKEN", []byte("first"), "create")
+	created, err := store.Create(t.Context(), dbtest.SecretManager(t, database.Pool, env), env, "TOKEN", []byte("first"), "create")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +278,7 @@ func TestSecretDistinctConcurrentMutationsDoNotUpgradeForeignKeyLocks(t *testing
 	for range 8 {
 		key := uuid.NewV7().String()
 		go func() {
-			_, err := store.Rotate(t.Context(), audit.System("test-fixture"), env, id, []byte("rotated"), key)
+			_, err := store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, env), env, id, []byte("rotated"), key)
 			results <- err
 		}()
 	}

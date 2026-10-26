@@ -3,6 +3,7 @@ package session_test
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"time"
@@ -110,7 +111,7 @@ func TestExecutionAdmissionSerializesLastHostSlotAcrossEnvironments(t *testing.T
 }
 func TestExecutionAdmissionDeadlineFailsQueuedWorkWithoutRetry(t *testing.T) {
 	f := newAdmissionFixture(t)
-	first, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("bounded"))
+	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("bounded"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,14 +120,14 @@ func TestExecutionAdmissionDeadlineFailsQueuedWorkWithoutRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
-	if err = dispatch.ReconcileExecutionAdmissions(t.Context(), f.pool); err != nil {
+	if err = dispatch.ReconcileExecutionAdmissions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var state, code string
 	if err = f.pool.QueryRow(t.Context(), `SELECT status,error_code FROM turns WHERE id=$1`, first.TurnID).Scan(&state, &code); err != nil || state != "failed" || code != "execution_deadline_exceeded" {
 		t.Fatalf("turn=%s %s %v", state, code, err)
 	}
-	if err = dispatch.ReconcileExecutionAdmissions(t.Context(), f.pool); err != nil {
+	if err = dispatch.ReconcileExecutionAdmissions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var events int
@@ -134,7 +135,7 @@ func TestExecutionAdmissionDeadlineFailsQueuedWorkWithoutRetry(t *testing.T) {
 		t.Fatalf("events=%d %v", events, err)
 	}
 	// Only new explicit input can start a new episode after settlement.
-	_, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "new-episode", Input: f.startRequest("").Input})
+	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: first.SessionID, IdempotencyKey: "new-episode", Input: f.startRequest("").Input})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +180,7 @@ func TestExecutionAllocationPreservesEarlierPendingShapePlacement(t *testing.T) 
 
 func TestExecutionHeldQueueReleasesClaimAndResumeReadmits(t *testing.T) {
 	f := newAdmissionFixture(t)
-	started, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("held-claim"))
+	started, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("held-claim"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +188,7 @@ func TestExecutionHeldQueueReleasesClaimAndResumeReadmits(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT computer_id FROM sessions WHERE id=$1`, started.SessionID).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	hold, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "interrupt", IdempotencyKey: "hold"})
+	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "interrupt", IdempotencyKey: "hold"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +198,7 @@ func TestExecutionHeldQueueReleasesClaimAndResumeReadmits(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1000 WHERE id=$1`, f.env)
 	resume := session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "resume", HoldID: hold.HoldID, IdempotencyKey: "resume"}
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), resume); !errors.Is(err, computer.ErrExecutionLimit) {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); !errors.Is(err, computer.ErrExecutionLimit) {
 		t.Fatalf("resume without quota: %v", err)
 	}
 	var held bool
@@ -205,7 +206,7 @@ func TestExecutionHeldQueueReleasesClaimAndResumeReadmits(t *testing.T) {
 		t.Fatalf("failed resume released hold: %v %v", held, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=2000 WHERE id=$1`, f.env)
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), resume); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.pool.QueryRow(t.Context(), `SELECT execution_deadline_at IS NOT NULL FROM computers WHERE id=$1`, id).Scan(&pending); err != nil || !pending {
@@ -289,16 +290,16 @@ func TestExecutionExpiredBootCannotRenewOrReportReady(t *testing.T) {
 
 func TestExecutionInputWhileHeldDoesNotReserveCapacity(t *testing.T) {
 	f := newAdmissionFixture(t)
-	started, err := session.Start(t.Context(), f.pool, nil, f.caller(), f.startRequest("held-input"))
+	started, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("held-input"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "interrupt", IdempotencyKey: "hold"})
+	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "interrupt", IdempotencyKey: "hold"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=1000 WHERE id=$1`, f.env)
-	if _, err = session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: started.SessionID, IdempotencyKey: "held-followup", Input: f.startRequest("").Input}); err != nil {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: started.SessionID, IdempotencyKey: "held-followup", Input: f.startRequest("").Input}); err != nil {
 		t.Fatal(err)
 	}
 	var reserved bool
@@ -306,7 +307,7 @@ func TestExecutionInputWhileHeldDoesNotReserveCapacity(t *testing.T) {
 		t.Fatalf("held input reserved execution: %v %v", reserved, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET max_cpu_millis=2000 WHERE id=$1`, f.env)
-	if _, err = session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "resume", HoldID: hold.HoldID, IdempotencyKey: "resume"}); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: started.SessionID, Kind: "resume", HoldID: hold.HoldID, IdempotencyKey: "resume"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -314,7 +315,7 @@ func TestExecutionInputWhileHeldDoesNotReserveCapacity(t *testing.T) {
 func TestExpiredInitialExecutionCannotAllocateWithoutNewInput(t *testing.T) {
 	f, allocator, id := freshComputerAllocationFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, id)
-	if err := dispatch.ReconcileExecutionAdmissions(t.Context(), f.pool); err != nil {
+	if err := dispatch.ReconcileExecutionAdmissions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool); err != nil {
 		t.Fatal(err)
 	}
 	if demand, err := workergroup.HasQueuedDemand(t.Context(), f.pool, f.group); err != nil || demand {
@@ -334,7 +335,7 @@ func TestExpiredInitialExecutionCannotAllocateWithoutNewInput(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE computer_id=$1`, id).Scan(&target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.Enqueue(t.Context(), f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: target, IdempotencyKey: "explicit-retry", Input: f.startRequest("").Input}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: target, IdempotencyKey: "explicit-retry", Input: f.startRequest("").Input}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := allocator.AllocateFreshLease(t.Context(), f.env, id, 1, f.worker); err != nil {
@@ -401,7 +402,7 @@ func TestSessionCloseDoesNotWaitForRegionalPlacement(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	if _, err = session.ControlSession(ctx, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "independent-close"}); err != nil {
+	if _, err = session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "independent-close"}); err != nil {
 		t.Fatal(err)
 	}
 }

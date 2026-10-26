@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -26,7 +27,7 @@ func (f fixture) captureRequest() session.ComputerCaptureRequest {
 }
 func beginCapture(t *testing.T, f fixture, req session.ComputerCaptureRequest) (session.ComputerCapture, *agentv1.ComputerSessionCapture) {
 	t.Helper()
-	if _, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil {
 		t.Fatal(err)
 	}
 	t.Helper()
@@ -66,7 +67,7 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 		}
 	}
 	caller := session.Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
-	if _, err = session.Enqueue(t.Context(), f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
+	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("sealed guest admitted side effect: %v", err)
 	}
 	other := req
@@ -129,7 +130,7 @@ func TestComputerCaptureSerializesWithNewAdmission(t *testing.T) {
 		t.Run(first+" first", func(t *testing.T) {
 			f := newFixture(t)
 			req := f.captureRequest()
-			if control, err := session.ControlComputerExecution(t.Context(), f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
+			if control, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("hibernate", req.CheckpointID.String())); err != nil || control.Status != "accepted" {
 				t.Fatalf("idle hibernate intent: %+v %v", control, err)
 			}
 			hold, err := f.pool.Begin(t.Context())
@@ -147,14 +148,14 @@ func TestComputerCaptureSerializesWithNewAdmission(t *testing.T) {
 				}
 				err = commitWithBlockedOperation(t, f, hold, func(ctx context.Context) error {
 					var err error
-					admitted, err = session.Enqueue(ctx, f.pool, nil, f.caller(), input)
+					admitted, err = session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), input)
 					return err
 				})
 				if err != nil {
 					t.Fatalf("public admission behind capture: %v", err)
 				}
 			} else {
-				admitted, err = session.Enqueue(t.Context(), hold, nil, f.caller(), input)
+				admitted, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, hold, nil, f.caller(), input)
 				if err != nil || admitted.TurnID == uuid.Nil() {
 					t.Fatalf("new admission positive control: %+v %v", admitted, err)
 				}
@@ -205,12 +206,16 @@ func TestComputerCaptureNeverSealedCancellationAndVersion(t *testing.T) {
 	req := f.captureRequest()
 	result, request := beginCapture(t, f, req)
 	early := session.UnsealedCaptureEvidence{AbsentObservedAt: time.Now()}
-	if err := session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, early); !errors.Is(err, session.ErrNotReady) {
+	if err := session.CancelUnsealedComputerCapture(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, req.CheckpointID, early); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("early absence unsealed dispatch: %v", err)
 	}
 	rejected := session.UnsealedCaptureEvidence{Rejected: true}
 	for range 2 {
-		if err := session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, rejected); err != nil {
+		if err := session.CancelUnsealedComputerCapture(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), f.env, req.CheckpointID, rejected); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -242,7 +247,9 @@ func TestComputerCaptureSealedCannotBeCancelledAsAbsent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, session.ErrNotReady) {
+	if err := session.CancelUnsealedComputerCapture(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("sealed capture discarded: %v", err)
 	}
 }
@@ -255,12 +262,14 @@ func TestComputerCaptureSourceLossRequiresFenceAndRetainsHolds(t *testing.T) {
 
 	// Independent user holds survive alongside the ineligible-recovery hold.
 	for _, member := range []fixture{f, peer} {
-		if _, err := session.ControlSession(t.Context(), f.pool, member.caller(), controlRequest(member, "interrupt", "independent")); err != nil {
+		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, member.caller(), controlRequest(member, "interrupt", "independent")); err != nil {
 			t.Fatal(err)
 		}
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'`)
-	if err := dispatch.ExpireLease(t.Context(), f.pool, f.env, f.computer, 1); err != nil {
+	if err := dispatch.ExpireLease(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, f.env, f.computer, 1); err != nil {
 		t.Fatal(err)
 	}
 	var unfenced bool
@@ -272,7 +281,9 @@ func TestComputerCaptureSourceLossRequiresFenceAndRetainsHolds(t *testing.T) {
 		t.Fatalf("expiry discarded unfenced capture: %v %v", retained, err)
 	}
 	for range 2 {
-		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -322,10 +333,14 @@ func TestComputerCaptureAbsentEvidenceMustFollowExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET capture_expires_at=$2,capture_request=$3 WHERE id=$1`, req.CheckpointID, expired, raw)
-	if err = session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{AbsentObservedAt: expired.Add(-time.Second)}); !errors.Is(err, session.ErrNotReady) {
+	if err = session.CancelUnsealedComputerCapture(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{AbsentObservedAt: expired.Add(-time.Second)}); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("late delivery of old absence accepted: %v", err)
 	}
-	if err = session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{AbsentObservedAt: time.Now()}); err != nil {
+	if err = session.CancelUnsealedComputerCapture(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{AbsentObservedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
 	f.enqueue(t, "after-cancel")
@@ -339,7 +354,9 @@ func TestComputerCaptureContradictoryDiskCutKeepsSeal(t *testing.T) {
 	req := f.captureRequest()
 	result, _ := beginCapture(t, f, req)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='captured',captured_root_digest=decode(repeat('1',64),'hex'),capture_evidence='cut',flush_acknowledged_at=clock_timestamp(),captured_at=clock_timestamp() WHERE id=$1`, result.SaveID)
-	if err := session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, computer.ErrConflict) {
+	if err := session.CancelUnsealedComputerCapture(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{Rejected: true}); !errors.Is(err, computer.ErrConflict) {
 		t.Fatalf("disk cut was silently discarded: %v", err)
 	}
 	var state string
@@ -366,7 +383,9 @@ func TestComputerCaptureUnsealedCancelAllowsMemberFencing(t *testing.T) {
 	req := f.captureRequest()
 	beginCapture(t, f, req)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, peer.session)
-	if err := session.CancelUnsealedComputerCapture(t.Context(), f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{Rejected: true}); err != nil {
+	if err := session.CancelUnsealedComputerCapture(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.env, req.CheckpointID, session.UnsealedCaptureEvidence{Rejected: true}); err != nil {
 		t.Fatalf("membership drift trapped never-sealed source: %v", err)
 	}
 	var scrubbed bool
@@ -391,7 +410,9 @@ func TestComputerCaptureLossFailsUnpublishedSaveAndScrubsRequest(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
+			if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, f.pool, *f.host(), leaseIdentity(f), uuid.Nil(), uuid.Nil()); err != nil {
 				t.Fatal(err)
 			}
 			var state string
@@ -483,7 +504,7 @@ func TestPublishedCaptureCloseReleasesSourceWithoutWakingPeer(t *testing.T) {
 	_, capture := beginCapture(t, f, request)
 	// Certified publication, retaining both physical processes on the source.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM computer_leases WHERE computer_id=$2 AND epoch=1),ready_at=clock_timestamp() WHERE id=$1`, request.CheckpointID, f.computer)
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "close", "close-sleeping")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close-sleeping")); err != nil {
 		t.Fatal(err)
 	}
 	observed, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), request)

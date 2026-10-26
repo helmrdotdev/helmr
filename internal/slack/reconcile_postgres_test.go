@@ -3,6 +3,7 @@ package slack
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -26,7 +27,7 @@ func TestSlackPositiveReconciliationRequiresAuthorDestinationAndCompleteContent(
 			f := newStatusFixture(t)
 			post := f.post(t, 1, "content", "lifecycle", nil)
 			claim := f.postClaim(t, post)
-			if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 				t.Fatal(err)
 			}
 			m := observedClaim(t, claim)
@@ -68,7 +69,7 @@ func TestSlackPositiveOpeningReconciliationUnblocksExactThread(t *testing.T) {
 	post := f.opening(t)
 	reply := f.post(t, 2, "reply", "lifecycle", nil)
 	claim := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -93,13 +94,13 @@ func TestSlackPositiveUpdateReconciliationRequiresExactMessageTimestamp(t *testi
 	f := newStatusFixture(t)
 	post := f.post(t, 1, "card", "lifecycle", nil)
 	first := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='pending',desired_revision=2 WHERE id=$1`, post)
 	f.due(t)
 	update := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, update, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, update, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	message := observedClaim(t, update)

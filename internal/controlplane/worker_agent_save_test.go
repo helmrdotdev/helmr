@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -52,8 +53,8 @@ func TestWorkerAgentSavePublicationThroughHTTP(t *testing.T) {
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
-	a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "save-http", Input: json.RawMessage(`[]`)})
+	execution := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
+	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "save-http", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,13 +209,13 @@ func TestWorkerSaveTerminalErrorIsNotRetryable(t *testing.T) {
 	server := &Server{log: discardTestLogger()}
 	for _, err := range []error{session.ErrTerminal, fmt.Errorf("save disposition: %w", session.ErrTerminal)} {
 		response := httptest.NewRecorder()
-		server.writeAgentSaveError(response, err)
+		server.writeAgentSaveError(response, httptest.NewRequest(http.MethodPost, "/", nil), err)
 		if response.Code != http.StatusConflict {
 			t.Fatalf("terminal save response: %d", response.Code)
 		}
 	}
 	response := httptest.NewRecorder()
-	server.writeAgentSaveError(response, fmt.Errorf("database unavailable"))
+	server.writeAgentSaveError(response, httptest.NewRequest(http.MethodPost, "/", nil), fmt.Errorf("database unavailable"))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unknown save outcome response: %d", response.Code)
 	}

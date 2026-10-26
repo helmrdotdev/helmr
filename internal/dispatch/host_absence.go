@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"uuid"
 
@@ -15,7 +16,7 @@ import (
 // ObserveProviderAbsentHost consumes confirmed physical absence in the
 // transaction recording it. Failure rolls back the complete confirmation; retry
 // cannot leave only part of the host physically reconciled.
-func ObserveProviderAbsentHost(ctx context.Context, absence workergroup.ConfirmedProviderAbsence) error {
+func ObserveProviderAbsentHost(ctx context.Context, auditPolicy auditpolicy.Policy, absence workergroup.ConfirmedProviderAbsence) error {
 	tx, host := absence.Transaction(), absence.HostID()
 	if tx == nil || host == uuid.Nil() {
 		return ErrInvalidInput
@@ -92,7 +93,7 @@ func ObserveProviderAbsentHost(ctx context.Context, absence workergroup.Confirme
 		start = end
 	}
 	for _, a := range allocations {
-		if err := recordComputerStopped(ctx, tx, host, a.hostEpoch, a.identity, "provider confirmed physical host absence", uuid.Nil(), uuid.Nil()); err != nil {
+		if err := recordComputerStopped(ctx, auditPolicy, tx, host, a.hostEpoch, a.identity, "provider confirmed physical host absence", uuid.Nil(), uuid.Nil()); err != nil {
 			return err
 		}
 	}

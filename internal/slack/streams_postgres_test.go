@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"log/slog"
 	"net/http"
@@ -68,22 +69,22 @@ func TestSlackStreamStartAppendStopRepairsAggregateAndKeepsQuestionsIndependent(
 	f.noPostClaim(t, peer)
 	question := f.post(t, 3, "question-status", "lifecycle", nil)
 	independent := f.postClaim(t, question)
-	if err := FinishPost(t.Context(), f.Pool, independent, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.780"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, independent, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.780"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := FinishPost(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
 	f.noPostClaim(t, peer)
 	repair := f.claim(t, "suspended")
-	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Uncertain}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
 	f.noPostClaim(t, peer)
 	repair = f.claim(t, "suspended")
-	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	f.reviseStream(t, post, "first second")
@@ -92,7 +93,7 @@ func TestSlackStreamStartAppendStopRepairsAggregateAndKeepsQuestionsIndependent(
 	if appendClaim.Method != "chat.appendStream" || appendClaim.OwnsStatus || bytes.Contains(appendClaim.Payload, []byte("first")) || !bytes.Contains(appendClaim.Payload, []byte(" second")) {
 		t.Fatal("append resent prefix", string(appendClaim.Payload))
 	}
-	if err := FinishPost(t.Context(), f.Pool, appendClaim, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, appendClaim, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET closed_at=clock_timestamp() WHERE id=$1`, post)
@@ -101,7 +102,7 @@ func TestSlackStreamStartAppendStopRepairsAggregateAndKeepsQuestionsIndependent(
 	if stop.Method != "chat.stopStream" || !stop.OwnsStatus || !bytes.Contains(stop.Payload, []byte(`"session_status":"suspended"`)) || bytes.Contains(stop.Payload, []byte("chunks")) {
 		t.Fatal("incorrect stop", string(stop.Payload))
 	}
-	if err := FinishPost(t.Context(), f.Pool, stop, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, stop, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	var stopped bool
@@ -110,7 +111,7 @@ func TestSlackStreamStartAppendStopRepairsAggregateAndKeepsQuestionsIndependent(
 	}
 	f.due(t)
 	repair = f.claim(t, "suspended")
-	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -122,30 +123,30 @@ func TestSlackStreamUnknownContentIsNotReplayedAndStopHasNoContent(t *testing.T)
 	f := newStatusFixture(t)
 	unknown := f.streamPost(t, 1, "unknown")
 	start := f.postClaim(t, unknown)
-	if err := FinishPost(t.Context(), f.Pool, start, DeliveryResult{Disposition: Uncertain}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, start, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
 	f.noPostClaim(t, unknown)
 	repair := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	known := f.streamPost(t, 2, "known")
 	f.due(t)
 	c := f.postClaim(t, known)
-	if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
 	repair = f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET closed_at=clock_timestamp() WHERE id=$1`, known)
 	f.due(t)
 	stop := f.postClaim(t, known)
-	if err := FinishPost(t.Context(), f.Pool, stop, DeliveryResult{Disposition: Uncertain}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, stop, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
 	// The old stop can land later; current status is repaired independently. Its
@@ -153,7 +154,7 @@ func TestSlackStreamUnknownContentIsNotReplayedAndStopHasNoContent(t *testing.T)
 	f.pendingQuestion(t)
 	f.due(t)
 	repair = f.claim(t, "suspended")
-	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -161,7 +162,7 @@ func TestSlackStreamUnknownContentIsNotReplayedAndStopHasNoContent(t *testing.T)
 	if retry.Method != "chat.stopStream" || !bytes.Contains(retry.Payload, []byte(`"session_status":"suspended"`)) || bytes.Contains(retry.Payload, []byte("known")) {
 		t.Fatal("stop replayed content/stale status", string(retry.Payload))
 	}
-	if err := FinishPost(t.Context(), f.Pool, retry, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, retry, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	f.noPostClaim(t, unknown)
@@ -203,7 +204,7 @@ func TestSlackStreamPositiveReconciliationNeverReplaysUnknownContent(t *testing.
 	f := newStatusFixture(t)
 	post := f.streamPost(t, 1, "first <@human>\nline")
 	c := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Uncertain}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
 	good := observedStream(t, f, post, "first <@human>\nline", "in_progress")
@@ -230,7 +231,7 @@ func TestSlackStreamPositiveReconciliationNeverReplaysUnknownContent(t *testing.
 	}
 	f.due(t)
 	repair := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	f.reviseStream(t, post, "first <@human>\nline second")
@@ -239,7 +240,7 @@ func TestSlackStreamPositiveReconciliationNeverReplaysUnknownContent(t *testing.
 	if appendClaim.Method != "chat.appendStream" {
 		t.Fatal(appendClaim.Method)
 	}
-	if err := FinishPost(t.Context(), f.Pool, appendClaim, DeliveryResult{Disposition: Uncertain}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, appendClaim, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
 	// A newer desired revision must not overwrite the frozen content being proved.
@@ -265,18 +266,18 @@ func TestSlackStreamRejectionStopsWithoutRepublishingRejectedAppend(t *testing.T
 			f := newStatusFixture(t)
 			post := f.streamPost(t, 1, "first")
 			start := f.postClaim(t, post)
-			if err := FinishPost(t.Context(), f.Pool, start, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, start, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
 				t.Fatal(err)
 			}
 			f.due(t)
 			repair := f.claim(t, "active")
-			if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+			if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 				t.Fatal(err)
 			}
 			f.reviseStream(t, post, "first rejected")
 			f.due(t)
 			appendClaim := f.postClaim(t, post)
-			if err := FinishPost(t.Context(), f.Pool, appendClaim, DeliveryResult{Disposition: Rejected, Code: code}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, appendClaim, DeliveryResult{Disposition: Rejected, Code: code}); err != nil {
 				t.Fatal(err)
 			}
 			f.due(t)
@@ -285,7 +286,7 @@ func TestSlackStreamRejectionStopsWithoutRepublishingRejectedAppend(t *testing.T
 				if stop.Method != "chat.stopStream" || bytes.Contains(stop.Payload, []byte("rejected")) {
 					t.Fatal("rejected content retried", string(stop.Payload))
 				}
-				if err := FinishPost(t.Context(), f.Pool, stop, DeliveryResult{Disposition: Acknowledged}); err != nil {
+				if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, stop, DeliveryResult{Disposition: Acknowledged}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -303,7 +304,7 @@ func TestSlackStreamSuppressedRevisionCanReconcileAndStop(t *testing.T) {
 	f := newStatusFixture(t)
 	post := f.streamPost(t, 1, "published")
 	c := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Uncertain}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
 	f.reviseStream(t, post, "published suppressed")
@@ -316,7 +317,7 @@ func TestSlackStreamSuppressedRevisionCanReconcileAndStop(t *testing.T) {
 	}
 	f.due(t)
 	repair := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -324,7 +325,7 @@ func TestSlackStreamSuppressedRevisionCanReconcileAndStop(t *testing.T) {
 	if stop.Method != "chat.stopStream" || bytes.Contains(stop.Payload, []byte("suppressed")) {
 		t.Fatal("cutoff republished", string(stop.Payload))
 	}
-	if err := FinishPost(t.Context(), f.Pool, stop, DeliveryResult{Disposition: Rejected, Code: "message_not_in_streaming_state"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, stop, DeliveryResult{Disposition: Rejected, Code: "message_not_in_streaming_state"}); err != nil {
 		t.Fatal(err)
 	}
 	var settled bool
@@ -341,18 +342,18 @@ func TestSlackDeletedStreamKeepsIndependentResponseWithoutRetry(t *testing.T) {
 			post := f.streamPost(t, 1, "first")
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET role='intermediate',turn_id=$2 WHERE id=$1`, post, turn)
 			start := f.postClaim(t, post)
-			if err := FinishPost(t.Context(), f.Pool, start, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, start, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
 				t.Fatal(err)
 			}
 			f.due(t)
 			repair := f.claim(t, "suspended")
-			if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+			if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 				t.Fatal(err)
 			}
 			response := f.post(t, 2, "response", "response", &turn)
 			f.due(t)
 			independent := f.postClaim(t, response)
-			if err := FinishPost(t.Context(), f.Pool, independent, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.791"}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, independent, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.791"}); err != nil {
 				t.Fatal(err)
 			}
 			if method == "event" {
@@ -368,7 +369,7 @@ func TestSlackDeletedStreamKeepsIndependentResponseWithoutRetry(t *testing.T) {
 				}
 				f.due(t)
 				c := f.postClaim(t, post)
-				if err := FinishPost(t.Context(), f.Pool, c, DeliveryResult{Disposition: Rejected, Code: "message_not_found"}); err != nil {
+				if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, c, DeliveryResult{Disposition: Rejected, Code: "message_not_found"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -391,7 +392,7 @@ func TestSlackDeletedRootConvergesKnownStreamsWithContentFreeStop(t *testing.T) 
 				post := f.streamPost(t, 1, "visible")
 				start := f.postClaim(t, post)
 				if completion == "already-open" {
-					if err := FinishPost(t.Context(), f.Pool, start, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
+					if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, start, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -404,11 +405,11 @@ func TestSlackDeletedRootConvergesKnownStreamsWithContentFreeStop(t *testing.T) 
 				}
 				switch completion {
 				case "late-ack":
-					if err := FinishPost(t.Context(), f.Pool, start, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
+					if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, start, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.790"}); err != nil {
 						t.Fatal(err)
 					}
 				case "positive-read":
-					if err := FinishPost(t.Context(), f.Pool, start, DeliveryResult{Disposition: Uncertain}); err != nil {
+					if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, start, DeliveryResult{Disposition: Uncertain}); err != nil {
 						t.Fatal(err)
 					}
 					m := observedStream(t, f, post, "visible", "in_progress")
@@ -429,7 +430,7 @@ func TestSlackDeletedRootConvergesKnownStreamsWithContentFreeStop(t *testing.T) 
 					}
 					return `{"ok":true,"ts":"123.790","channel":"C1"}`
 				})
-				if _, err := ReconcileDelivery(t.Context(), f.Pool, client, 4); err != nil {
+				if _, err := ReconcileDelivery(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, 4); err != nil {
 					t.Fatal(err)
 				}
 				var settled bool
@@ -463,7 +464,7 @@ func TestSlackCrashedStreamReconciliationReleasesOnlyItsStatusClaim(t *testing.T
 			if ok, err := confirmMessage(t.Context(), f.Pool, f.installation, message); err != nil || !ok {
 				t.Fatal(ok, err)
 			}
-			if err := FinishPost(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged, Timestamp: message.Timestamp}); err != nil {
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged, Timestamp: message.Timestamp}); err != nil {
 				t.Fatal(err)
 			}
 			var safe bool
@@ -476,7 +477,7 @@ func TestSlackCrashedStreamReconciliationReleasesOnlyItsStatusClaim(t *testing.T
 			if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_attempt_id IS NULL AND claimed_until IS NULL AND stream_status_repair AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread).Scan(&safe); err != nil || !safe {
 				t.Fatal("confirmed crash retained claim or lost repair", safe, err)
 			}
-			if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "retire"}); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "retire"}); err != nil {
 				t.Fatal(err)
 			}
 			// The fixture supplies physical fencing and consumed lifecycle events; the
@@ -559,14 +560,14 @@ func TestSlackLateStreamCompletionPreservesNewerStatusAttempt(t *testing.T) {
 	status := f.claim(t, "active")
 	// The old content HTTP completes before content reconciliation observes expiry.
 	// It may settle its post, but must leave the newer status HTTP claim intact.
-	if err := FinishPost(t.Context(), f.Pool, stream, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, stream, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT p.status='posted' AND t.inflight_attempt_id=$3 AND t.inflight_method='agents.sessions.setStatus' AND t.status_confirmation='unknown' AND t.stream_status_repair FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id WHERE p.id=$1 AND t.id=$2`, post, f.thread, status.AttemptID).Scan(&exact); err != nil || !exact {
 		t.Fatalf("late stream completion changed newer status attempt: %v %v", exact, err)
 	}
-	if err := FinishStatus(t.Context(), f.Pool, status, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, status, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_attempt_id IS NULL AND status_confirmation='acknowledged' AND NOT stream_status_repair FROM slack_threads WHERE id=$1`, f.thread).Scan(&exact); err != nil || !exact {

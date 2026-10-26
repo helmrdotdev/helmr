@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -69,7 +70,9 @@ func TestBootSeedAllocationRetainsCapacityUntilPhysicalStop(t *testing.T) {
 	if err != nil || !bytes.Equal(delivered.Executor.ChannelCredential, again.Executor.ChannelCredential) {
 		t.Fatalf("unstable delivery: %v", err)
 	}
-	other, _ := dispatch.NewAllocator(f.pool, bytes.Repeat([]byte{20}, 32), nil)
+	other, _ := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, bytes.Repeat([]byte{20}, 32), nil)
 	if _, err := other.DeliverBootSeed(t.Context(), *f.host(), bootSeedReceipt(r)); !errors.Is(err, dispatch.ErrDenied) {
 		t.Fatalf("credential authority: %v", err)
 	}
@@ -210,7 +213,9 @@ func TestBootSeedPublicationAndRetention(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET boot_seed_build_id=$2 WHERE environment_id=$1 AND computer_id=$3 AND epoch=1`, f.env, id, f.computer)
 	reconcile()
 	count(3)
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), uuid.NewV7()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), identity, uuid.Nil(), uuid.NewV7()); err != nil {
 		t.Fatalf("optional seed mismatch blocked physical stop: %v", err)
 	}
 	var stoppedWithoutExclusion bool
@@ -218,7 +223,9 @@ func TestBootSeedPublicationAndRetention(t *testing.T) {
 		t.Fatalf("mismatched hint affected exact stop: %v %v", stoppedWithoutExclusion, err)
 	}
 	for range 2 {
-		if err := dispatch.ObserveLeaseStopped(t.Context(), f.pool, *f.host(), identity, uuid.Nil(), id); err != nil {
+		if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), identity, uuid.Nil(), id); err != nil {
 			t.Fatalf("selected seed failure/reply replay: %v", err)
 		}
 	}
@@ -254,7 +261,9 @@ func TestBootSeedHostRecoveryRetainsUnknownQualificationVM(t *testing.T) {
 	}
 	host := recoveringComputerHost(t, f.fixture)
 	// Qualification children have fresh identities, distinct from the allocation.
-	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{uuid.NewV7()}); err != nil {
+	if err := dispatch.ObserveRecoveredHost(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, host, []uuid.UUID{uuid.NewV7()}); err != nil {
 		t.Fatal(err)
 	}
 	assertFenced := func(want bool) {
@@ -265,7 +274,9 @@ func TestBootSeedHostRecoveryRetainsUnknownQualificationVM(t *testing.T) {
 		}
 	}
 	assertFenced(false)
-	if err := dispatch.ObserveRecoveredHost(t.Context(), f.pool, host, []uuid.UUID{}); err != nil {
+	if err := dispatch.ObserveRecoveredHost(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, host, []uuid.UUID{}); err != nil {
 		t.Fatal(err)
 	}
 	assertFenced(true)

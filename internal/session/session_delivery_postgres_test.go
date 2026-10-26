@@ -3,6 +3,7 @@ package session_test
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 
@@ -60,7 +61,7 @@ func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hold, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
+	hold, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "hold"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,14 +74,14 @@ func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 	}
 	req := controlRequest(f, "resume", "release")
 	req.HoldID = hold.HoldID
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
 	resumed, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
 	if err != nil || resumed.Kind != "resume" || resumed.Generation != 3 {
 		t.Fatalf("resume: %+v %v", resumed, err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
 	stop, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence)
@@ -95,7 +96,9 @@ func TestSessionDeliveryCurrentHoldAndPhysicalStopAreSeparate(t *testing.T) {
 		t.Fatalf("command receipt fenced live process: %v %v", fenced, err)
 	}
 	for range 2 {
-		if err := session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+		if err := session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -137,7 +140,9 @@ func TestSessionDeliveryFailureIsInspectableAndDoesNotAcknowledge(t *testing.T) 
 	if err != nil || failed.Acknowledged || failed.Error != "native work did not converge" || failed.Sequence != delivery.Sequence {
 		t.Fatalf("failure receipt: %+v %v", failed, err)
 	}
-	if err := session.ObserveSessionStopped(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
+	if err := session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatalf("physical stop after control failure: %v", err)
 	}
 }

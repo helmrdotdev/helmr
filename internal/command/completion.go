@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -121,27 +122,27 @@ func validID(id uuid.UUID) bool {
 // never saves, closes or releases the Computer, and an uncertain process
 // scope stays attached to its Instance. Replaying the recorded result is
 // accepted even after the Instance's writer expired or was reclaimed.
-func Complete(ctx context.Context, txb db.TxBeginner, worker workergroup.HostPrincipal, report CompletionReport) error {
-	return settle(ctx, txb, worker, report, false)
+func Complete(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginner, worker workergroup.HostPrincipal, report CompletionReport) error {
+	return settle(ctx, auditPolicy, txb, worker, report, false)
 }
 
 // Reconcile records that the worker host released the process scope of a
 // terminal Command whose result and settled or fenced output permit release.
-func Reconcile(ctx context.Context, txb db.TxBeginner, worker workergroup.HostPrincipal, report CompletionReport) error {
-	return settle(ctx, txb, worker, report, true)
+func Reconcile(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginner, worker workergroup.HostPrincipal, report CompletionReport) error {
+	return settle(ctx, auditPolicy, txb, worker, report, true)
 }
 
-func settle(ctx context.Context, txb db.TxBeginner, worker workergroup.HostPrincipal, report CompletionReport, reconcile bool) error {
+func settle(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginner, worker workergroup.HostPrincipal, report CompletionReport, reconcile bool) error {
 	p, err := report.parse()
 	if err != nil {
 		return err
 	}
 	return changed(db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		return applyCompletion(ctx, tx, worker, p, report.WriterGeneration, reconcile)
+		return applyCompletion(ctx, auditPolicy, tx, worker, p, report.WriterGeneration, reconcile)
 	}))
 }
 
-func applyCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, p completion, writerGeneration int64, reconcile bool) error {
+func applyCompletion(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, worker workergroup.HostPrincipal, p completion, writerGeneration int64, reconcile bool) error {
 	if reconcile && !p.releaseSafe {
 		return pgx.ErrNoRows
 	}
@@ -221,6 +222,9 @@ func applyCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrin
  stdout_final_through=$9,stdout_final_complete=$10,stdout_final_gapped=$11,stderr_final_through=$12,stderr_final_complete=$13,stderr_final_gapped=$14,output_fenced=$15,
  result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
  WHERE environment_id=$1 AND id=$2`, l.EnvironmentID, p.command, p.status, p.exit, p.failure, p.detail, p.exited, p.reason, p.stdout.ThroughSequence, p.stdout.Complete, p.stdout.Gapped, p.stderr.ThroughSequence, p.stderr.Complete, p.stderr.Gapped, p.outputFenced); err != nil {
+			return err
+		}
+		if err = auditCompletion(ctx, tx, auditPolicy, worker, l, c, p, writerGeneration); err != nil {
 			return err
 		}
 	}

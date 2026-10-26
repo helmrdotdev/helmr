@@ -19,7 +19,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	}
 	account, err := identity.LoadAccount(r.Context(), s.db, principal)
 	if err != nil {
-		writeError(w, identityError(err))
+		s.writeIdentityError(w, r, err)
 		return
 	}
 	hasOrg := principal.OrgID != uuid.Nil()
@@ -91,19 +91,17 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cookie, err := r.Cookie(sessionCookieName(r)); err == nil {
-		s.revokeLoginSession(r, cookie.Value)
+		if err := identity.RevokeLoginSession(r.Context(), s.tx, s.identity, cookie.Value); err != nil {
+			writeError(w, unavailable(err))
+			return
+		}
 	}
 	if token, ok := bearerToken(r.Header.Get("authorization")); ok {
-		s.revokeLoginSession(r, token)
+		if err := identity.RevokeLoginSession(r.Context(), s.tx, s.identity, token); err != nil {
+			writeError(w, unavailable(err))
+			return
+		}
 	}
 	clearSessionCookie(w, r)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// revokeLoginSession revokes a presented login session. Logout succeeds
-// whether or not revocation does, so a failure is only logged.
-func (s *Server) revokeLoginSession(r *http.Request, raw string) {
-	if err := identity.RevokeLoginSession(r.Context(), s.db, s.identity, raw); err != nil {
-		s.log.Warn("revoke login session failed", "error", err)
-	}
 }

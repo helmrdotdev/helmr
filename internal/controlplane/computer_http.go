@@ -27,30 +27,31 @@ func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	var request api.CreateComputerRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		if isRequestBodyTooLarge(err) {
-			writeError(w, err)
+			s.writeOperationError(w, r, err)
 			return
 		}
-		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
 		return
 	}
 	declaredID := request.Template
 	if err := api.ValidateDefinitionID(declaredID); err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
 		return
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersCreate, scope) {
-		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersCreate, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	result, err := s.computers.Create(r.Context(), s.tx, computer.Request{Principal: principal,
@@ -62,7 +63,7 @@ func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		IdempotencyKey:    idempotencyKey,
 	})
 	if err != nil {
-		s.writeComputerError(w, err, computerCreateOperation, "create Computer failed")
+		s.writeComputerError(w, r, err, computerCreateOperation, "create Computer failed")
 		return
 	}
 	writeJSON(w, http.StatusCreated, apiComputerSnapshot(result.Snapshot))
@@ -72,23 +73,24 @@ func (s *Server) getComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersRead, scope) {
-		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersRead, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	computerID, err := ids.Parse(chi.URLParam(r, "computerID"))
 	if err != nil {
-		writeError(w, badRequest(codedError{
+		s.writeOperationError(w, r, badRequest(codedError{
 			code: "invalid_computer_reference", message: "computerID must be a canonical UUIDv7",
 		}))
 		return
 	}
 	snapshot, err := computer.Read(r.Context(), s.tx, computerScope(principal.OrgID, projectID, environmentID), computerID)
 	if err != nil {
-		s.writeComputerError(w, err, computerReadOperation, "read Computer failed")
+		s.writeComputerError(w, r, err, computerReadOperation, "read Computer failed")
 		return
 	}
 	view := apiComputerSnapshot(snapshot)
@@ -102,7 +104,7 @@ func (s *Server) getComputerHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	computerID, err := ids.Parse(chi.URLParam(r, "computerID"))
 	if err != nil {
-		writeError(w, badRequest(codedError{
+		s.writeOperationError(w, r, badRequest(codedError{
 			code:    "invalid_computer_reference",
 			message: "computer ID is invalid",
 		}))
@@ -111,34 +113,35 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	var request api.DeleteComputerRequest
 	if err := decodeOptionalRequestJSON(r, &request); err != nil {
 		if isRequestBodyTooLarge(err) {
-			writeError(w, err)
+			s.writeOperationError(w, r, err)
 			return
 		}
-		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
 	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
 		return
 	}
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersDelete, scope) {
-		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersDelete, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
-	result, err := computer.Delete(r.Context(), s.tx, computer.Deletion{Principal: principal,
+	result, err := computer.Delete(r.Context(), s.auditPolicy, s.tx, computer.Deletion{Principal: principal,
 		Scope:          computerScope(principal.OrgID, projectID, environmentID),
 		ComputerID:     computerID,
 		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
-		s.writeComputerError(w, err, computerDeleteOperation, "delete Computer failed")
+		s.writeComputerError(w, r, err, computerDeleteOperation, "delete Computer failed")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, api.DeleteComputerReceipt{ComputerID: result.ComputerID.String()})
@@ -180,30 +183,31 @@ func (s *Server) updateComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if !principal.HasPermission(auth.PermissionComputersUpdateRetention, scope) {
-		writeError(w, forbidden(codedError{code: "permission_required", message: errPermissionRequired.Error()}))
+	if permissionErr := auth.Require(principal, auth.PermissionComputersUpdateRetention, scope,
+		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
+		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
 	id, err := ids.Parse(chi.URLParam(r, "computerID"))
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: "computer ID is invalid"}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: "computer ID is invalid"}))
 		return
 	}
 	var request api.UpdateComputerRequest
 	if err = decodeRequestJSON(r, &request); err != nil {
 		if isRequestBodyTooLarge(err) {
-			writeError(w, err)
+			s.writeOperationError(w, r, err)
 			return
 		}
-		writeError(w, badRequest(codedError{code: "invalid_computer_update", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_update", message: err.Error()}))
 		return
 	}
-	snapshot, err := computer.UpdateRetention(r.Context(), s.tx, principal, computerScope(principal.OrgID, projectID, environmentID), id, request.DeleteAfterUnused)
+	snapshot, err := computer.UpdateRetention(r.Context(), s.auditPolicy, s.tx, principal, computerScope(principal.OrgID, projectID, environmentID), id, request.DeleteAfterUnused)
 	if err != nil {
-		s.writeComputerError(w, err, computerCreateOperation, "update Computer failed")
+		s.writeComputerError(w, r, err, computerCreateOperation, "update Computer failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, apiComputerSnapshot(snapshot))

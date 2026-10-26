@@ -2,6 +2,7 @@ package computer
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computercheckpoint"
@@ -62,7 +63,7 @@ func PublishCheckpointObjects(ctx context.Context, tx pgx.Tx, env uuid.UUID, man
 
 // MarkCheckpointReady records readiness after object publication and the final
 // authority check. The caller holds the capture locks.
-func MarkCheckpointReady(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UUID) error {
+func MarkCheckpointReady(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, checkpoint uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `UPDATE checkpoints SET status='ready',ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, checkpoint); err != nil {
 		return err
 	}
@@ -73,7 +74,7 @@ func MarkCheckpointReady(ctx context.Context, tx pgx.Tx, env, checkpoint uuid.UU
  AND (EXISTS(SELECT 1 FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) WHERE t.environment_id=c.environment_id AND t.computer_id=c.id AND t.status='queued' AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending') OR EXISTS(SELECT 1 FROM computer_controls control WHERE control.environment_id=c.environment_id AND control.computer_id=c.id AND control.kind='wake' AND control.status='accepted'))`, env, checkpoint); err != nil {
 		return err
 	}
-	return settleHibernateCapture(ctx, tx, env, checkpoint, "")
+	return settleHibernateCapture(ctx, auditPolicy, tx, env, checkpoint, "")
 }
 
 // ValidateCheckpointRuntime matches the host platform recorded for the checkpoint.

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -111,16 +111,16 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET bundle_digest=$1 WHERE environment_id=$2 AND id=$3`, digest, f.Environment, f.Deployment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='starting' WHERE session_id=$1`, f.Session)
-	secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+	secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "START_TOKEN", []byte("first-env-value"), "start-create")
+	record, err := secrets.Create(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, "START_TOKEN", []byte("first-env-value"), "start-create")
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := pgvalue.MustUUIDValue(record.ID)
-	fileRecord, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "START_FILE", []byte("first-file-value"), "start-file-create")
+	fileRecord, err := secrets.Create(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, "START_FILE", []byte("first-file-value"), "start-file-create")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,10 +184,10 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 		}
 	}
 	assertDelivery(first)
-	if _, err = secrets.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, id, []byte("second-value"), "start-rotate"); err != nil {
+	if _, err = secrets.Rotate(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, id, []byte("second-value"), "start-rotate"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = secrets.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, fileID, []byte("second-file-value"), "start-file-rotate"); err != nil {
+	if _, err = secrets.Rotate(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, fileID, []byte("second-file-value"), "start-file-rotate"); err != nil {
 		t.Fatal(err)
 	}
 	retry, err := client.AuthorizeAgentStart(t.Context(), request)
@@ -202,7 +202,7 @@ func TestWorkerAgentStartDeliversProcessPinnedSecrets(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_exposures WHERE environment_id=$1 AND session_id=$2`, f.Environment, f.Session).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("logical exposure count %d: %v", count, err)
 	}
-	if _, err = secrets.Revoke(t.Context(), audit.System("test-fixture"), f.Environment, id, "start-revoke"); err != nil {
+	if _, err = secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, id, "start-revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = client.AuthorizeAgentStart(t.Context(), request); !httpclient.IsStatus(err, http.StatusConflict) {

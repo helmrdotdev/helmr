@@ -11,6 +11,7 @@ type StandardRoleDefinition struct {
 
 func StandardRoles() []StandardRoleDefinition {
 	return []StandardRoleDefinition{
+		{Key: "auditor", Name: "Auditor", Description: "Read security audit facts for the assigned organization or environment, without execution content.", Permissions: []Permission{PermissionAuditEventsRead}},
 		{Key: "agent_user", Name: "Agent User", Description: "Use assigned Agents in own and authorized shared conversations.", Permissions: []Permission{PermissionAgentsUse}},
 		{Key: "agent_administrator", Name: "Agent Administrator", Description: "Read, use, delete and restore assigned Agents and configure their chat connections. Does not grant Session history or deployment changes.", Permissions: []Permission{PermissionAgentsRead, PermissionAgentsUse, PermissionAgentsDelete, PermissionAgentsRestore, PermissionAgentConnectionsRead, PermissionAgentConnectionsCreate, PermissionAgentConnectionsUpdateCredentials, PermissionAgentConnectionsAuthorize, PermissionAgentConnectionsDelete}},
 		{Key: "session_viewer", Name: "Session Viewer", Description: "Read all conversations and schedule inputs for assigned Agents, including other people’s personal Sessions.", Permissions: []Permission{PermissionAgentsRead, PermissionSessionsRead, PermissionTriggersRead}},

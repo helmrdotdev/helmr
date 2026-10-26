@@ -20,7 +20,7 @@ func TestDedicatedCallbackAuthenticatesSelectedRegistrationBeforeInstallation(t 
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'pending')`, f.Environment, otherAgent)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) VALUES($1,$2,$3,$4,$5)`, uuid.NewV7(), f.Environment, otherAgent, registration, f.User)
 	credentials := AppCredentials{ClientID: "client", ClientSecret: "private-client", SigningSecret: "selected-signing-secret"}
-	if err := store.StoreAppCredentials(t.Context(), audit.System("test-fixture"), org, f.User, registration, credentials); err != nil {
+	if err := store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, registration, credentials); err != nil {
 		t.Fatal(err)
 	}
 	handler := store.CallbackHandler(registration, EventHandler{Database: f.Pool}, nil)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -34,7 +35,9 @@ func TestRuntimeFinalizeLocksSupplyOnceOnCompletionAndReplay(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	tracer := &finalizeClaimTracer{}
@@ -48,7 +51,7 @@ func TestRuntimeFinalizeLocksSupplyOnceOnCompletionAndReplay(t *testing.T) {
 	for range 2 {
 		tracer.groups.Store(0)
 		tracer.hosts.Store(0)
-		if outcome, err := session.RuntimeFinalize(t.Context(), pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined"); err != nil || outcome == nil {
+		if outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined"); err != nil || outcome == nil {
 			t.Fatalf("finalize %s %v", outcome, err)
 		}
 		if tracer.groups.Load() != 1 || tracer.hosts.Load() != 1 {
@@ -63,7 +66,9 @@ func TestRuntimeFinalizeRechecksLeaseExpiryAfterOwnerWait(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), a.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.pool.Begin(t.Context())
@@ -77,7 +82,7 @@ func TestRuntimeFinalizeRechecksLeaseExpiryAfterOwnerWait(t *testing.T) {
 	joined := make(chan struct{})
 	go func() {
 		defer close(joined)
-		_, err := session.RuntimeFinalize(ctx, f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
+		_, err := session.RuntimeFinalize(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, json.RawMessage(`1`), "joined")
 		done <- err
 	}()
 	defer func() { cancel(); <-joined }()

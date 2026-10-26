@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -22,6 +23,8 @@ func TestLoadDatabaseBootstrapConfig(t *testing.T) {
 	t.Setenv("DATABASE_ADMIN_PASSWORD", "admin password")
 	t.Setenv("DATABASE_NAME", "helmr")
 	t.Setenv("DATABASE_URL", "postgres://helmr_app:application%20password@db.example.test:5433/helmr?sslmode=require")
+	t.Setenv("DATABASE_MIGRATION_URL", "postgres://helmr_migration:secret@db.example.test:5433/helmr?sslmode=require")
+	t.Setenv("DATABASE_AUDIT_MAINTENANCE_URL", "postgres://helmr_maintenance:secret@db.example.test:5433/helmr?sslmode=require")
 
 	cfg, err := loadDatabaseBootstrapConfig()
 	if err != nil {
@@ -108,10 +111,7 @@ func TestRunDatabaseBootstrapRejectsUnknownOperation(t *testing.T) {
 }
 
 func TestBootstrapDatabasePostgres(t *testing.T) {
-	adminBaseURL := strings.TrimSpace(os.Getenv("HELMR_TEST_DATABASE_URL"))
-	if adminBaseURL == "" {
-		t.Skip("HELMR_TEST_DATABASE_URL is required")
-	}
+	adminBaseURL := dbtest.Open(t).DSN
 	ctx := context.Background()
 	// Administrative connection for role and database DDL.
 	adminPool, err := pgxpool.New(ctx, adminBaseURL)
@@ -124,6 +124,8 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	databaseName := "helmr_bootstrap_" + suffix
 	adminRole := "helmr_admin_" + suffix
 	applicationRole := "helmr_app_" + suffix
+	migrationRole := "helmr_migration_" + suffix
+	maintenanceRole := "helmr_maintenance_" + suffix
 	// U+212B normalizes to U+00C5 under the PRECIS profile used by PostgreSQL
 	// SCRAM clients. Successful verification proves the stored verifier and
 	// pgx authenticate the same password representation.
@@ -141,6 +143,11 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 		if _, err := adminPool.Exec(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{applicationRole}.Sanitize()); err != nil {
 			t.Errorf("drop role: %v", err)
 		}
+		for _, name := range []string{migrationRole, maintenanceRole} {
+			if _, err := adminPool.Exec(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{name}.Sanitize()); err != nil {
+				t.Errorf("drop role: %v", err)
+			}
+		}
 		if _, err := adminPool.Exec(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{adminRole}.Sanitize()); err != nil {
 			t.Errorf("drop admin role: %v", err)
 		}
@@ -152,8 +159,18 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	migrationURL := databaseTestURL(t, adminBaseURL, databaseName, migrationRole, "migration-password")
+	migrationConfig, err := pgxpool.ParseConfig(migrationURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintenanceConfig, err := pgxpool.ParseConfig(databaseTestURL(t, adminBaseURL, databaseName, maintenanceRole, "maintenance-password"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := databaseBootstrapConfig{
-		adminURL:        adminURL,
+		adminURL:  adminURL,
+		migration: migrationConfig, maintenance: maintenanceConfig,
 		application:     applicationConfig,
 		applicationRole: applicationRole,
 		databaseName:    databaseName,
@@ -164,10 +181,10 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	if err := bootstrapDatabase(ctx, cfg); err != nil {
 		t.Fatalf("idempotent bootstrap: %v", err)
 	}
-	if err := dbschema.Up(ctx, applicationURL); err != nil {
+	if err := dbschema.Up(ctx, migrationURL); err != nil {
 		t.Fatalf("application role cannot run the complete schema migration: %v", err)
 	}
-	markerPool, err := dbpool.New(ctx, applicationConfig)
+	markerPool, err := dbpool.New(ctx, migrationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,17 +196,23 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	if err := bootstrapDatabase(ctx, cfg); err != nil {
 		t.Fatalf("reset bootstrap: %v", err)
 	}
-	if err := dbschema.Up(ctx, applicationURL); err != nil {
+	if err := dbschema.Up(ctx, migrationURL); err != nil {
 		t.Fatalf("application role cannot migrate after reset: %v", err)
 	}
 
+	if err := dbschema.ConfigurePrivileges(ctx, migrationURL, applicationRole, maintenanceRole); err != nil {
+		t.Fatal(err)
+	}
 	applicationPool, err := dbpool.New(ctx, applicationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer applicationPool.Close()
-	if _, err := applicationPool.Exec(ctx, "CREATE TABLE bootstrap_probe (id bigint PRIMARY KEY)"); err != nil {
-		t.Fatalf("application role cannot create schema objects: %v", err)
+	if _, err := applicationPool.Exec(ctx, "CREATE TABLE bootstrap_probe (id bigint PRIMARY KEY)"); err == nil {
+		t.Fatal("runtime created a table")
+	}
+	if err := audit.ValidatePrivileges(ctx, applicationPool, false); err != nil {
+		t.Fatal(err)
 	}
 	var resetProbeExists bool
 	if err := applicationPool.QueryRow(ctx, "SELECT to_regclass('public.reset_probe') IS NOT NULL").Scan(&resetProbeExists); err != nil {

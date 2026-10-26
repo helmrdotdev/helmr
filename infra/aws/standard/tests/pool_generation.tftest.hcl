@@ -1,4 +1,7 @@
 mock_provider "aws" {
+  mock_resource "aws_ecs_cluster" { defaults = { arn = "arn:aws:ecs:us-east-1:000000000000:cluster/mock" } }
+  mock_resource "aws_ecs_task_definition" { defaults = { arn = "arn:aws:ecs:us-east-1:000000000000:task-definition/mock:1" } }
+  mock_resource "aws_cloudwatch_event_rule" { defaults = { arn = "arn:aws:events:us-east-1:000000000000:rule/mock" } }
   mock_data "aws_region" { defaults = { region = "us-east-1" } }
   mock_data "aws_caller_identity" { defaults = { account_id = "111122223333" } }
   mock_data "aws_partition" { defaults = { partition = "aws", dns_suffix = "amazonaws.com" } }
@@ -53,6 +56,7 @@ override_module {
 }
 
 variables {
+  audit_retention_seconds = 2592000
   controlplane_environment = {
     ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
     ENVIRONMENT_MAX_CPU_MILLIS             = "16000"

@@ -15,6 +15,7 @@ const baseURL = externalBaseURL ?? `http://127.0.0.1:${selfPort}`;
 
 const managedWebServerEnv: Record<string, string> = {
   HELMR_DEV_DIR: e2eDevDir,
+  AUDIT_RETENTION_SECONDS: "3600",
   HELMR_DEV_CONSOLE_MODE: "preview",
   HELMR_DEV_CONSOLE_PORT: String(selfPort),
   HELMR_DEV_CONTROL_PLANE_PORT: String(selfPort),

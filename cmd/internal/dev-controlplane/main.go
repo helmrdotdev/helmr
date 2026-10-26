@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"log/slog"
 	"net"
 	"net/http"
@@ -82,7 +84,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load dev config: %w", err)
 	}
-	poolConfig, err := pgxpool.ParseConfig(cfg.databaseURL)
+	poolConfig, err := pgxpool.ParseConfig(cfg.migrationURL)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
 	}
@@ -96,7 +98,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("migrate database: %w", err)
 	}
 	if cfg.bootstrap.Enabled {
-		if err := workergroup.Bootstrap(ctx, pool, workergroup.BootstrapConfig{
+		if err := workergroup.Bootstrap(ctx, pool, workergroup.BootstrapConfig{AuditPolicy: cfg.auditPolicy,
 			RegionID: cfg.bootstrap.RegionID, RegionDisplayName: cfg.bootstrap.RegionDisplayName,
 			RegionLocation: cfg.bootstrap.RegionLocation, GroupName: cfg.bootstrap.WorkerGroupName,
 			EnrollmentToken: cfg.bootstrap.WorkerToken,
@@ -127,11 +129,29 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	}
 	bundleAdmission := bundle.Admission{Runtime: runtimeDescriptor}
 	pool.Close()
+	runtimeConfig, err := pgxpool.ParseConfig(cfg.databaseURL)
+	if err != nil {
+		return err
+	}
+	maintenanceConfig, err := pgxpool.ParseConfig(cfg.maintenanceURL)
+	if err != nil {
+		return err
+	}
+	if err := schema.ConfigurePrivileges(ctx, cfg.migrationURL, runtimeConfig.ConnConfig.User, maintenanceConfig.ConnConfig.User); err != nil {
+		return err
+	}
+	poolConfig = runtimeConfig
 	pool, err = dbpool.New(ctx, poolConfig)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
 	}
 	defer pool.Close()
+	if err := audit.ValidatePrivileges(ctx, pool, false); err != nil {
+		return err
+	}
+	if err := audit.ObservePolicy(ctx, pool, cfg.auditPolicy, audit.ControlPlane); err != nil {
+		return err
+	}
 	diagnosticAdmission, err := config.LoadDiagnosticAdmission()
 	if err != nil {
 		return err
@@ -159,7 +179,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	}
 	defer clickHouseClient.Close()
 	telemetryReader := clickhouse.NewReader(clickHouseClient)
-	secretStore, err := secret.New(queries, pool, cfg.encryptionKey)
+	secretStore, err := secret.New(queries, pool, cfg.encryptionKey, cfg.auditPolicy)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
@@ -173,7 +193,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Computer wrapping key: %w", err)
 	}
-	allocator, err := dispatch.NewAllocator(pool, cfg.computerFencingKey, secretStore)
+	allocator, err := dispatch.NewAllocator(pool, cfg.auditPolicy, cfg.computerFencingKey, secretStore)
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
@@ -181,7 +201,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	changes := dbnotify.New()
 	allocationWake, stopAllocationWake := changes.Subscribe("dispatch")
 	defer stopAllocationWake()
-	app, err := controlplane.NewServer(controlplane.ServerConfig{
+	app, err := controlplane.NewServer(controlplane.ServerConfig{AuditPolicy: cfg.auditPolicy,
 		Changes:                        changes,
 		Allocator:                      allocator,
 		DiagnosticDB:                   diagnosticPool,
@@ -228,14 +248,18 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	loops := []backgroundLoop{
 		{name: "database notifications", run: func(ctx context.Context) error { return changes.Run(ctx, pool.Config().ConnConfig, log) }},
 		{name: "allocation", run: func(ctx context.Context) error { return allocator.Run(ctx, log, allocationWake) }},
-		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) }},
+		{name: "commands", run: func(ctx context.Context) error { return command.ReconcileCommands(ctx, cfg.auditPolicy, pool, log) }},
 		{name: "Session history retention", run: func(ctx context.Context) error { return slack.RunHistoryRetention(ctx, pool, log) }},
-		{name: "Session lifecycle", run: func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) }},
-		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, pool, log) }},
-		{name: "Computer execution admissions", run: func(ctx context.Context) error { return dispatch.RunExecutionAdmissions(ctx, pool, log) }},
-		{name: "Computer execution controls", run: func(ctx context.Context) error { return computer.RunExecutionControls(ctx, pool, log) }},
-		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) }},
-		{name: "preparation lifecycle", run: func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) }},
+		{name: "Session lifecycle", run: func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, cfg.auditPolicy, pool, log) }},
+		{name: "Computer retention", run: func(ctx context.Context) error { return computer.RunRetention(ctx, cfg.auditPolicy, pool, log) }},
+		{name: "Computer execution admissions", run: func(ctx context.Context) error {
+			return dispatch.RunExecutionAdmissions(ctx, cfg.auditPolicy, pool, log)
+		}},
+		{name: "Computer execution controls", run: func(ctx context.Context) error { return computer.RunExecutionControls(ctx, cfg.auditPolicy, pool, log) }},
+		{name: "Computer lifecycle", run: func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, cfg.auditPolicy, pool, log) }},
+		{name: "preparation lifecycle", run: func(ctx context.Context) error {
+			return dispatch.RunImageBuildLifecycle(ctx, cfg.auditPolicy, pool, log)
+		}},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
 		{name: "magic link delivery", run: magicLinkDelivery.Run},
 	}
@@ -320,10 +344,13 @@ func serveDev(
 }
 
 type devConfig struct {
+	auditPolicy                     auditpolicy.Policy
 	environmentExecutionLimits      org.ExecutionLimits
 	addr                            string
 	deploymentMode                  string
 	databaseURL                     string
+	migrationURL                    string
+	maintenanceURL                  string
 	bootstrap                       config.Bootstrap
 	clickHouseURL                   string
 	clickHouseUser                  string
@@ -346,10 +373,17 @@ func loadConfig() (devConfig, error) {
 	if err != nil {
 		return devConfig{}, err
 	}
+	policy, err := auditpolicy.Parse(textEnv("AUDIT_RETENTION_SECONDS", ""))
+	if err != nil {
+		return devConfig{}, err
+	}
 	cfg := devConfig{
+		auditPolicy:                     policy,
 		addr:                            textEnv("CONTROL_PLANE_ADDR", defaultAddr),
 		deploymentMode:                  textEnv("DEPLOYMENT_MODE", "self-hosted"),
 		databaseURL:                     textEnv("DATABASE_URL", ""),
+		migrationURL:                    textEnv("DATABASE_MIGRATION_URL", ""),
+		maintenanceURL:                  textEnv("DATABASE_AUDIT_MAINTENANCE_URL", ""),
 		bootstrap:                       bootstrapConfig,
 		clickHouseURL:                   textEnv("CLICKHOUSE_URL", ""),
 		clickHouseUser:                  textEnv("CLICKHOUSE_USER", ""),
@@ -378,6 +412,9 @@ func loadConfig() (devConfig, error) {
 		if err != nil {
 			return cfg, err
 		}
+	}
+	if cfg.migrationURL == "" || cfg.maintenanceURL == "" {
+		return cfg, errors.New("DATABASE_MIGRATION_URL and DATABASE_AUDIT_MAINTENANCE_URL are required")
 	}
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("DATABASE_URL is required")

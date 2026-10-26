@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 	"uuid"
@@ -56,10 +57,10 @@ func (f statusFixture) claim(t *testing.T, want string) StatusClaim {
 func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) {
 	f := newStatusFixture(t)
 	active := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, active, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, active, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	queued, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)})
+	queued, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) 
 	if working.Status == active.Status {
 		t.Fatal("work did not revise aggregate")
 	}
-	if err := FinishStatus(t.Context(), f.Pool, working, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, working, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	peer, participant, hold := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
@@ -77,7 +78,7 @@ func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) 
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($5,$6,$2,'local','needs attention')`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment, hold)
 	f.due(t)
 	suspended := f.claim(t, "processing")
-	if err := FinishStatus(t.Context(), f.Pool, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE turns SET status='cancelled',terminal_at=clock_timestamp() WHERE id=$1`, queued.TurnID)
@@ -86,13 +87,13 @@ func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) 
 	if still.Status == suspended.Status {
 		t.Fatal("ending active work did not reveal held attention")
 	}
-	if err := FinishStatus(t.Context(), f.Pool, still, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, still, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_holds SET released_at=clock_timestamp() WHERE id=$1`, hold)
 	f.due(t)
 	idle := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, idle, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, idle, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -118,14 +119,14 @@ func TestSlackStatusAmbiguityAndStaleCompletionCannotClearNewWork(t *testing.T) 
 	if allowed, err := statusClaimAuthorized(t.Context(), f.Pool, current); err != nil || !allowed {
 		t.Fatalf("current attempt denied: %v %v", allowed, err)
 	}
-	if err := FinishStatus(t.Context(), f.Pool, old, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, old, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_attempt_id=$2 AND last_acknowledged_status IS NULL AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread, current.AttemptID).Scan(&exact); err != nil || !exact {
 		t.Fatalf("stale finish changed lane: %v %v", exact, err)
 	}
-	if err := FinishStatus(t.Context(), f.Pool, current, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, current, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_attempt_id IS NULL AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread).Scan(&exact); err != nil || !exact {
@@ -133,7 +134,7 @@ func TestSlackStatusAmbiguityAndStaleCompletionCannotClearNewWork(t *testing.T) 
 	}
 	f.due(t)
 	repair := f.claim(t, "processing")
-	if err := FinishStatus(t.Context(), f.Pool, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, repair, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	// No new core event is necessary to repair a delayed older remote effect.
@@ -152,7 +153,7 @@ func TestSlackStatusRejectsRevokedRouteAndScopesAuthorizationLoss(t *testing.T) 
 			if reauthorized {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorized_at=authorized_at+interval '1 second' WHERE id=$1`, f.installation)
 			}
-			if err := FinishStatus(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Rejected, Code: "token_revoked"}); err != nil {
+			if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Rejected, Code: "token_revoked"}); err != nil {
 				t.Fatal(err)
 			}
 			var lost bool
@@ -173,18 +174,18 @@ func TestSlackStatusTerminalChildDoesNotMaskWorkingFront(t *testing.T) {
 	peer, participant := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$5,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment)
-	caller := session.Caller{Kind: "user", ID: f.User}
-	if _, err := session.Enqueue(t.Context(), f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
+	caller := session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause", Reason: "attention"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause", Reason: "attention"}); err != nil {
 		t.Fatal(err)
 	}
 	suspended := f.claim(t, "processing")
-	if err := FinishStatus(t.Context(), f.Pool, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	f.due(t)
@@ -198,7 +199,7 @@ func TestSlackStatusRateLimitDelaysOtherThread(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE id=$1;
  INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $4,$6,$2,$5,org_id,team_id,slack_channel_id,'789.012','other' FROM slack_channel_bindings WHERE id=$5;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$6,$2)`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, other, f.channel, f.Environment)
-	if err := FinishStatus(t.Context(), f.Pool, claim, DeliveryResult{Disposition: RateLimited, Code: "ratelimited", RetryAfter: 90 * time.Second}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: RateLimited, Code: "ratelimited", RetryAfter: 90 * time.Second}); err != nil {
 		t.Fatal(err)
 	}
 	var remaining float64
@@ -217,7 +218,7 @@ func TestSlackStatusRateLimitDelaysOtherThread(t *testing.T) {
 func TestSlackStatusDisabledFeatureDoesNotRevokeInstallation(t *testing.T) {
 	f := newStatusFixture(t)
 	claim := f.claim(t, "active")
-	if err := FinishStatus(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Rejected, Code: "feature_disabled"}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Rejected, Code: "feature_disabled"}); err != nil {
 		t.Fatal(err)
 	}
 	var usable bool
@@ -231,14 +232,14 @@ func TestSlackStatusDisabledFeatureDoesNotRevokeInstallation(t *testing.T) {
 func TestSlackStatusAcknowledgesOnlyTheClaimedValue(t *testing.T) {
 	f := newStatusFixture(t)
 	first := f.claim(t, "active")
-	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "while-sending", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "while-sending", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	// Recompute the desired state while the original HTTP attempt still owns the lane.
 	if claim, err := ClaimStatus(t.Context(), f.Pool, f.thread); err != nil || claim != nil {
 		t.Fatalf("overlapping claim: %+v %v", claim, err)
 	}
-	if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool
@@ -250,13 +251,13 @@ func TestSlackStatusAcknowledgesOnlyTheClaimedValue(t *testing.T) {
 	if next.AttemptID == first.AttemptID || next.Status == first.Status {
 		t.Fatal("new state did not get a new attempt", next)
 	}
-	if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT last_acknowledged_status=$2 AND inflight_attempt_id=$3 FROM slack_threads WHERE id=$1`, f.thread, first.Status, next.AttemptID).Scan(&exact); err != nil || !exact {
 		t.Fatalf("duplicate success changed newer attempt: %v %v", exact, err)
 	}
-	if err := FinishStatus(t.Context(), f.Pool, next, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, next, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT last_acknowledged_status=desired_status AND last_acknowledged_status=$2 FROM slack_threads WHERE id=$1`, f.thread, next.Status).Scan(&exact); err != nil || !exact {
@@ -270,13 +271,13 @@ func TestSlackStatusCoalescesReturnToAcknowledgedValue(t *testing.T) {
 			f := newStatusFixture(t)
 			first := f.claim(t, "active")
 			if !inFlight {
-				if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+				if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
 					t.Fatal(err)
 				}
 				// Defer sending without deferring observation of authoritative state.
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET next_attempt_at=clock_timestamp()+interval '1 hour' WHERE id=$1`, f.thread)
 			}
-			turn, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "brief-work", Input: json.RawMessage(`[]`)})
+			turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "brief-work", Input: json.RawMessage(`[]`)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -292,7 +293,7 @@ func TestSlackStatusCoalescesReturnToAcknowledgedValue(t *testing.T) {
 				t.Fatalf("deferred active claim: %+v %v", claim, err)
 			}
 			if inFlight {
-				if err := FinishStatus(t.Context(), f.Pool, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
+				if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -318,7 +319,7 @@ func TestSlackStatusAcceptsExpiredUnreplacedCompletion(t *testing.T) {
 	f := newStatusFixture(t)
 	claim := f.claim(t, "active")
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET claimed_until=clock_timestamp()-interval '1 second' WHERE id=$1`, f.thread)
-	if err := FinishStatus(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	var acknowledged bool
@@ -330,7 +331,7 @@ func TestSlackStatusAcceptsExpiredUnreplacedCompletion(t *testing.T) {
 func TestSlackStatusPeriodicAssertionRepairsLateRemoteWrite(t *testing.T) {
 	f := newStatusFixture(t)
 	old := f.claim(t, "active")
-	if _, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "current-work", Input: json.RawMessage(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "current-work", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	// Recover after the original sender disappeared with an unresolved request.
@@ -347,12 +348,12 @@ func TestSlackStatusPeriodicAssertionRepairsLateRemoteWrite(t *testing.T) {
 		calls++
 		return DeliveryResult{Disposition: Acknowledged}
 	})
-	if sent, err := ReconcileStatus(t.Context(), f.Pool, client, f.thread); err != nil || !sent || remote != "processing" {
+	if sent, err := ReconcileStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, f.thread); err != nil || !sent || remote != "processing" {
 		t.Fatalf("recovery assertion: %v %s %v", sent, remote, err)
 	}
 	// Slack may apply an obsolete request even after its local owner was replaced.
 	remote = old.Status
-	if err := FinishStatus(t.Context(), f.Pool, old, DeliveryResult{Disposition: Acknowledged}); err != nil {
+	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, old, DeliveryResult{Disposition: Acknowledged}); err != nil {
 		t.Fatal(err)
 	}
 	var current bool
@@ -360,7 +361,7 @@ func TestSlackStatusPeriodicAssertionRepairsLateRemoteWrite(t *testing.T) {
 		t.Fatalf("obsolete response changed local confirmation: %v %v", current, err)
 	}
 	f.due(t)
-	if sent, err := ReconcileStatus(t.Context(), f.Pool, client, f.thread); err != nil || !sent || remote != "processing" || calls != 2 {
+	if sent, err := ReconcileStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, f.thread); err != nil || !sent || remote != "processing" || calls != 2 {
 		t.Fatalf("same-value refresh failed to repair remote: %v %s calls=%d %v", sent, remote, calls, err)
 	}
 }

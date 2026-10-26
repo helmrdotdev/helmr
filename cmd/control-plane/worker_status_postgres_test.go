@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"strconv"
 	"testing"
@@ -22,8 +23,9 @@ func TestWorkerStatusCommandsUseWorkerGroupOperationsPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("DATABASE_URL", database.DSN)
+	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
 	dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO regions (id, display_name) VALUES ('local', 'Local')`)
-	created, err := workergroup.CreateGroup(t.Context(), database.Pool, audit.System("test-fixture"), workergroup.GroupInput{RegionID: "local", Name: "default"})
+	created, err := workergroup.CreateGroup(t.Context(), database.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), workergroup.GroupInput{RegionID: "local", Name: "default"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +57,7 @@ func TestWorkerStatusCommandsUseWorkerGroupOperationsPostgres(t *testing.T) {
 		t.Fatalf("missing group status error = %v", err)
 	}
 
-	_, pool, err := workergroup.CreatePool(t.Context(), database.Pool, audit.System("test-fixture"), uuid.UUID(created.Group.ID.Bytes), "pending", paused.ClaimVersion)
+	_, pool, err := workergroup.CreatePool(t.Context(), database.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), uuid.UUID(created.Group.ID.Bytes), "pending", paused.ClaimVersion)
 	if err != nil {
 		t.Fatal(err)
 	}

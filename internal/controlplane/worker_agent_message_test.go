@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -25,7 +26,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	sessionID := runtimeTestSession(f)
-	a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, Input: json.RawMessage(`[]`)})
+	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +123,10 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 		if err := client.ObserveAgentMessage(t.Context(), receipt); err != nil {
 			t.Fatal(err)
 		}
+	}
+	var observed bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(actor_worker_host_id IS NOT NULL AND credential_kind='worker_host' AND credential_id=$2) FROM audit_events WHERE action='message.delivered' AND session_id=$1`, f.Session, f.Worker).Scan(&observed); err != nil || !observed {
+		t.Fatal("delivery observer attribution", observed, err)
 	}
 	if next, err := client.NextAgentMessage(t.Context(), request); err != nil || next != nil {
 		t.Fatalf("completed replay: %+v %v", next, err)

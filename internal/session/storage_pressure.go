@@ -3,8 +3,10 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -13,7 +15,7 @@ import (
 
 // ReportStoragePressure retains the first server observation for this physical
 // writer. Retries cannot reset the server-owned budget.
-func ReportStoragePressure(ctx context.Context, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, active bool) error {
+func ReportStoragePressure(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, active bool) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}
@@ -34,11 +36,11 @@ func ReportStoragePressure(ctx context.Context, database db.TxBeginner, host wor
 		if err := computer.RecordLeaseStoragePressure(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, active); err != nil {
 			return err
 		}
-		return reconcileStoragePressureTx(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)
+		return reconcileStoragePressureTx(ctx, auditPolicy, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch)
 	}))
 }
 
-func reconcileSessionStoragePressure(ctx context.Context, database db.TxBeginner, env, id uuid.UUID) error {
+func reconcileSessionStoragePressure(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxBeginner, env, id uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		var computerID, host, group uuid.UUID
 		var epoch int64
@@ -58,12 +60,12 @@ func reconcileSessionStoragePressure(ctx context.Context, database db.TxBeginner
 		if _, err := LockComputerMembers(ctx, tx, env, computerID); err != nil {
 			return err
 		}
-		return reconcileStoragePressureTx(ctx, tx, env, computerID, epoch)
+		return reconcileStoragePressureTx(ctx, auditPolicy, tx, env, computerID, epoch)
 	})
 }
 
 // The caller holds the supply gates, all open Session ownership roots and the Computer lock.
-func reconcileStoragePressureTx(ctx context.Context, tx pgx.Tx, env, computerID uuid.UUID, epoch int64) error {
+func reconcileStoragePressureTx(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, computerID uuid.UUID, epoch int64) error {
 	var pressured, live, prolonged, exhausted bool
 	if err := tx.QueryRow(ctx, `SELECT l.storage_pressure_since IS NOT NULL,
  l.status IN ('active','releasing') AND l.fenced_at IS NULL AND l.expires_at>clock_timestamp()
@@ -107,6 +109,9 @@ func reconcileStoragePressureTx(ctx context.Context, tx pgx.Tx, env, computerID 
 			state = "resolved"
 		}
 		if state != "" {
+			if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: id, Action: "session.authority_changed", TargetKind: "session", TargetID: id, Details: audit.LifecycleDetails{RequestID: *hold}}); err != nil {
+				return err
+			}
 			if err = advanceControlAuthority(ctx, tx, env, []uuid.UUID{id}); err != nil {
 				return err
 			}
@@ -125,7 +130,10 @@ func reconcileStoragePressureTx(ctx context.Context, tx pgx.Tx, env, computerID 
 				return err
 			}
 			if turn != nil && process != nil {
-				if err = interruptControlledTurn(ctx, tx, env, id, *turn, *process); err != nil {
+				if err = interruptControlledTurn(ctx, auditPolicy, tx, env, id, *turn, *process); err != nil {
+					return err
+				}
+				if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: id, TurnID: *turn, Action: "turn.interrupted", TargetKind: "turn", TargetID: *turn, Details: audit.LifecycleDetails{Generation: *process}}); err != nil {
 					return err
 				}
 				if err = advanceControlAuthority(ctx, tx, env, []uuid.UUID{id}); err != nil {

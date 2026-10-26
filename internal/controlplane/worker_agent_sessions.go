@@ -15,17 +15,17 @@ func (s *Server) workerAgentInspectSession(w http.ResponseWriter, r *http.Reques
 		SessionID string `json:"sessionId"`
 	}
 	if err := decodeAgentPayload(request.Payload, &input); err != nil {
-		s.writeAgentAdmissionError(w, request.RequestID, session.ErrInvalidInput)
+		s.writeAgentAdmissionError(w, r, request.RequestID, session.ErrInvalidInput)
 		return
 	}
 	id, err := uuid.Parse(input.SessionID)
 	if err != nil || id == uuid.Nil() {
-		s.writeAgentAdmissionError(w, request.RequestID, session.ErrInvalidInput)
+		s.writeAgentAdmissionError(w, r, request.RequestID, session.ErrInvalidInput)
 		return
 	}
-	view, err := session.RuntimeGetSession(r.Context(), s.tx, caller, id)
+	view, err := session.RuntimeGetSession(r.Context(), s.auditPolicy, s.tx, caller, id)
 	if err != nil {
-		s.writeAgentAdmissionError(w, request.RequestID, err)
+		s.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
 	}
 	value := agentSessionResponse(view)
@@ -41,7 +41,7 @@ func (s *Server) workerAgentListSessions(w http.ResponseWriter, r *http.Request,
 		Limit    *int     `json:"limit,omitempty"`
 	}
 	if err := decodeAgentPayload(request.Payload, &input); err != nil {
-		s.writeAgentAdmissionError(w, request.RequestID, session.ErrInvalidInput)
+		s.writeAgentAdmissionError(w, r, request.RequestID, session.ErrInvalidInput)
 		return
 	}
 	query := session.RuntimeSessionListRequest{Relation: input.Relation, Statuses: input.Status, Limit: 50}
@@ -52,13 +52,13 @@ func (s *Server) workerAgentListSessions(w http.ResponseWriter, r *http.Request,
 		var err error
 		query.Before, err = uuid.Parse(input.Cursor)
 		if err != nil || query.Before == uuid.Nil() {
-			s.writeAgentAdmissionError(w, request.RequestID, session.ErrInvalidInput)
+			s.writeAgentAdmissionError(w, r, request.RequestID, session.ErrInvalidInput)
 			return
 		}
 	}
-	page, err := session.RuntimeListSessions(r.Context(), s.tx, caller, query)
+	page, err := session.RuntimeListSessions(r.Context(), s.auditPolicy, s.tx, caller, query)
 	if err != nil {
-		s.writeAgentAdmissionError(w, request.RequestID, err)
+		s.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
 	}
 	result := api.AgentSessionsPage{Sessions: []api.AgentSession{}}

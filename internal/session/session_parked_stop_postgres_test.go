@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"bytes"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -23,18 +24,20 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 				ctx := t.Context()
 				park := func() {
 					t.Helper()
-					if err := dispatch.ObserveLeaseStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
+					if err := dispatch.ObserveLeaseStopped(ctx, auditpolicy.Policy{
+						RetentionSeconds: 3600,
+					}, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
 						t.Fatal(err)
 					}
 				}
 				if order == "park-before-control" {
 					park()
 				}
-				if _, err := session.ControlSession(ctx, f.pool, f.caller(), controlRequest(f, kind, "terminal")); err != nil {
+				if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, kind, "terminal")); err != nil {
 					t.Fatal(err)
 				}
 				if order == "control-before-park" {
-					if _, _, err := session.ReconcileSessionLifecycle(ctx, f.pool, session.SessionLifecyclePosition{}); err != nil {
+					if _, _, err := session.ReconcileSessionLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 						t.Fatal(err)
 					}
 					assertParkedProcessStopped(t, f, false)
@@ -45,7 +48,7 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 					t.Fatal(err)
 				}
 				for range 2 {
-					if _, _, err := session.ReconcileSessionLifecycle(ctx, f.pool, session.SessionLifecyclePosition{}); err != nil {
+					if _, _, err := session.ReconcileSessionLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -77,7 +80,9 @@ func TestSessionLifecycleStopsTerminalParkedProcess(t *testing.T) {
 					t.Fatal(err)
 				}
 				acknowledgeComputerMembers(t, f, restored.host, installation)
-				if err := session.CompleteComputerRestore(ctx, f.pool, restored.host, f.env, installation, restoreReceipt(installation, true, true)); err != nil {
+				if err := session.CompleteComputerRestore(ctx, auditpolicy.Policy{
+					RetentionSeconds: 3600,
+				}, f.pool, restored.host, f.env, installation, restoreReceipt(installation, true, true)); err != nil {
 					t.Fatal(err)
 				}
 			})
@@ -101,17 +106,17 @@ func TestSessionLifecycleRequiresPhysicalStopForParkedControl(t *testing.T) {
 					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1 AND epoch=2`, f.computer)
 				}
 			}
-			if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+			if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 				t.Fatal(err)
 			}
 			assertParkedProcessStopped(t, f, false)
 			// Revisit durable control after physical cleanup; no second user control
 			// or live attachment is needed to finish the accepted cancellation.
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='joined physical closure' WHERE computer_id=$1 AND fenced_at IS NULL`, f.computer)
-			if _, _, err := session.ReconcileSessionLifecycle(t.Context(), f.pool, session.SessionLifecyclePosition{}); err != nil {
+			if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
 				t.Fatal(err)
 			}
 			assertParkedProcessStopped(t, f, true)
@@ -131,10 +136,12 @@ func TestSessionLifecycleRechecksRestoreTargetAfterComputerLock(t *testing.T) {
 	checkpoint := readyCheckpointFixture(t)
 	f := checkpoint.f
 	ctx := t.Context()
-	if err := dispatch.ObserveLeaseStopped(ctx, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: f.computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(ctx, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
+	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.pool.Begin(ctx)

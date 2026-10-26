@@ -13,12 +13,12 @@ import (
 func (s *Server) getOverviewHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
-	overview, err := session.ReadOverview(r.Context(), s.tx, caller, env)
+	overview, err := session.ReadOverview(r.Context(), s.auditPolicy, s.tx, caller, env)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, overviewResponse(overview))

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -90,7 +91,7 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	defer pool.Close()
 	q := db.New(pool)
 	logFile := os.Stdout
-	secrets, err := secret.New(q, pool, input.Key)
+	secrets, err := secret.New(q, pool, input.Key, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,9 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allocator, err := dispatch.NewAllocator(pool, input.Key, secrets)
+	allocator, err := dispatch.NewAllocator(pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, input.Key, secrets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,10 +165,22 @@ func TestNativeControlPlaneProcess(t *testing.T) {
 		reclaimer.Run,
 		func(ctx context.Context) error { return computer.RunDiskRetention(ctx, pool, log) },
 		func(ctx context.Context) error { return allocator.Run(ctx, log, allocationWake) },
-		func(ctx context.Context) error { return dispatch.RunImageBuildLifecycle(ctx, pool, log) },
-		func(ctx context.Context) error { return session.RunSessionLifecycle(ctx, pool, log) },
-		func(ctx context.Context) error { return dispatch.RunLeaseLifecycle(ctx, pool, log) },
-		func(ctx context.Context) error { return command.ReconcileCommands(ctx, pool, log) },
+		func(ctx context.Context) error {
+			return dispatch.RunImageBuildLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, log)
+		},
+		func(ctx context.Context) error {
+			return session.RunSessionLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, log)
+		},
+		func(ctx context.Context) error {
+			return dispatch.RunLeaseLifecycle(ctx, auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, pool, log)
+		},
+		func(ctx context.Context) error {
+			return command.ReconcileCommands(ctx, auditpolicy.Policy{
+				RetentionSeconds: 3600,
+			}, pool, log)
+		},
 		func(context.Context) error { return server.Serve(listener) },
 	} {
 		jobs.Go(func() { failures <- run(ctx) })

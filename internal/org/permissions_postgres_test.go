@@ -2,7 +2,10 @@ package org_test
 
 import (
 	"errors"
+	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strconv"
+	"strings"
 	"testing"
 	"uuid"
 
@@ -30,14 +33,18 @@ func TestScopedRoleGrantsAndSharedEdits(t *testing.T) {
 	otherEnv := pgvalue.MustUUIDValue(environments[1].ID)
 	agent, otherAgent := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(id,environment_id,key) VALUES($1,$2,'invoice'),($3,$2,'faq')`, agent, env, otherAgent)
-	if err = db.RunTx(ctx, f.pool, func(tx pgx.Tx) error { return org.SeedStandardRoles(ctx, tx, m.OrgID, m.Actor) }); err != nil {
+	if err = db.RunTx(ctx, f.pool, func(tx pgx.Tx) error {
+		return org.SeedStandardRoles(ctx, tx, auditpolicy.Policy{RetentionSeconds: 3600}, m.OrgID, m.Actor)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	roles, err := org.ListPermissionRoles(ctx, f.pool, m)
-	if err != nil || len(roles) != 16 {
+	if err != nil || len(roles) != 17 {
 		t.Fatalf("standard roles=%v %v", roles, err)
 	}
-	if err = db.RunTx(ctx, f.pool, func(tx pgx.Tx) error { return org.SeedStandardRoles(ctx, tx, m.OrgID, m.Actor) }); err != nil {
+	if err = db.RunTx(ctx, f.pool, func(tx pgx.Tx) error {
+		return org.SeedStandardRoles(ctx, tx, auditpolicy.Policy{RetentionSeconds: 3600}, m.OrgID, m.Actor)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	group, err := org.SavePermissionGroup(ctx, f.pool, m, uuid.Nil(), "Business team")
@@ -179,5 +186,76 @@ func TestOffboardRacesGroupAdd(t *testing.T) {
 	}
 	if err := org.SetPermissionGroupMember(ctx, f.pool, f.admin, group.ID, f.member.MemberID, true); !errors.Is(err, org.ErrMemberNotFound) {
 		t.Fatal("disabled member re-added", err)
+	}
+}
+
+func TestRoleRenameAndGroupRemovalWithManyGrants(t *testing.T) {
+	f := newMemberFixture(t)
+	ctx := t.Context()
+	role, err := org.SavePermissionRole(ctx, f.pool, f.owner, uuid.Nil(), org.RoleInput{Name: "Many grants", Permissions: []string{"members.read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	group, err := org.SavePermissionGroup(ctx, f.pool, f.owner, uuid.Nil(), "Many assignments")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Distinct groups carry valid Organization grants without an artificial grant
+	// count cap. Their aggregate snapshots exceed a single event's detail bound.
+	for i := 0; i < 60; i++ {
+		gid := uuid.NewV7()
+		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO permission_groups(id,org_id,name) VALUES($1,$2,$3)`, gid, f.owner.OrgID, fmt.Sprintf("Assignment group %d", i))
+		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grants(id,org_id,group_id,role_id) VALUES($1,$2,$3,$4)`, uuid.NewV7(), f.owner.OrgID, gid, role.ID)
+	}
+	renamed, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: "Renamed", Permissions: role.Permissions, ExpectedRevision: strconv.FormatInt(role.Revision, 10)})
+	if err != nil || renamed.Name != "Renamed" {
+		t.Fatalf("many-grant rename: %+v %v", renamed, err)
+	}
+	// Group removal already records each grant; the parent must not repeat all IDs.
+	for i := 0; i < 450; i++ {
+		rid := uuid.NewV7()
+		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO roles(id,org_id,name,permissions) VALUES($1,$2,$3,ARRAY['members.read'])`, rid, f.owner.OrgID, fmt.Sprintf("Group role %d", i))
+		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grants(id,org_id,group_id,role_id) VALUES($1,$2,$3,$4)`, uuid.NewV7(), f.owner.OrgID, group.ID, rid)
+	}
+	if err := org.DeletePermissionGroup(ctx, f.pool, f.owner, group.ID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='role_grant.deleted' AND details->'before'->>'group_id'=$1`, group.ID.String()).Scan(&count); err != nil || count != 450 {
+		t.Fatalf("bounded grant facts: %d %v", count, err)
+	}
+}
+
+func TestGrantAuditAtMaximumSelectedAgentSize(t *testing.T) {
+	f := newMemberFixture(t)
+	ctx := t.Context()
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('max-agent','Maximum')`)
+	project, envs, err := org.CreateProject(ctx, f.pool, f.owner, org.ProjectInput{ProjectDetails: org.ProjectDetails{Slug: "max-agent", Name: "Maximum"}, ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, env := pgvalue.MustUUIDValue(project.ID), pgvalue.MustUUIDValue(envs[0].ID)
+	ids := make([]uuid.UUID, 100)
+	for i := range ids {
+		ids[i] = uuid.NewV7()
+		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(id,environment_id,key) VALUES($1,$2,$3)`, ids[i], env, fmt.Sprintf("a%03d%s", i, strings.Repeat("a", 124)))
+	}
+	role, err := org.SavePermissionRole(ctx, f.pool, f.owner, uuid.Nil(), org.RoleInput{Name: "Maximum agents", Permissions: []string{"agents.use"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := org.GrantInput{ProjectID: &pid, EnvironmentID: &env, Subject: org.GrantSubject{Type: "member", MemberID: &f.member.MemberID}, RoleID: role.ID, ExpectedRoleRevision: role.Revision, AgentsMode: "selected", AgentIDs: ids}
+	grants, err := org.AssignRole(ctx, f.pool, f.owner, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.ExpectedRevision = strconv.FormatInt(grants[0].Revision, 10)
+	input.AgentIDs = ids[:99]
+	if _, err := org.UpdateRoleGrant(ctx, f.pool, f.owner, grants[0].ID, input); err != nil {
+		t.Fatal(err)
+	}
+	var bounded bool
+	if err := f.pool.QueryRow(ctx, `SELECT bool_and(octet_length(details::text)<16384 AND NOT(details->'after' ? 'agent_keys')) FROM audit_events WHERE target_id=$1`, grants[0].ID).Scan(&bounded); err != nil || !bounded {
+		t.Fatalf("grant evidence unbounded: %v %v", bounded, err)
 	}
 }

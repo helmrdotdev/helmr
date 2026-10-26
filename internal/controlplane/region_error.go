@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/region"
 )
 
@@ -26,10 +27,14 @@ func regionError(err error) error {
 
 // writeRegionError writes a region owner error, logging the failures it does
 // not describe to the client.
-func (s *Server) writeRegionError(w http.ResponseWriter, err error) {
+func (s *Server) writeRegionError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, audit.ErrCapture) {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	mapped := regionError(err)
 	if errorStatus(mapped) != http.StatusInternalServerError {
-		writeError(w, mapped)
+		s.writeOperationError(w, r, mapped)
 		return
 	}
 	s.log.Error("region request failed", "error", err)

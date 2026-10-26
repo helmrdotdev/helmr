@@ -3,6 +3,7 @@ package api
 // Permission management uses organization-owned roles and groups. Resource scope
 // belongs to each grant, not to a role definition.
 type PermissionRole struct {
+	AssignmentLevels []string `json:"assignment_levels"`
 	APIKeyAssignable bool     `json:"api_key_assignable"`
 	ID               string   `json:"id"`
 	Name             string   `json:"name"`
@@ -14,12 +15,13 @@ type PermissionRole struct {
 	Revision         int64    `json:"revision"`
 }
 type PermissionDefinition struct {
-	ResourceType     string `json:"resource_type"`
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Description      string `json:"description"`
-	ScopeType        string `json:"scope_type"`
-	APIKeyAssignable bool   `json:"api_key_assignable"`
+	ResourceType     string   `json:"resource_type"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	ScopeTypes       []string `json:"scope_types"`
+	AssignmentLevels []string `json:"assignment_levels"`
+	APIKeyAssignable bool     `json:"api_key_assignable"`
 }
 type PermissionRolesResponse struct {
 	NextCursor string                 `json:"next_cursor,omitempty"`

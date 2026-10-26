@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/computerkey"
@@ -107,7 +106,7 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 					case "expire":
 						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, ref.ImageBuildID)
 					case "revoke":
-						if _, err := f.secrets.Revoke(t.Context(), audit.System("test-fixture"), f.env, f.secretID, "revoke"); err != nil {
+						if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke"); err != nil {
 							t.Fatal(err)
 						}
 					case "stop":

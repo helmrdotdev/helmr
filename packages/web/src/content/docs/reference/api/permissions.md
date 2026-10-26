@@ -59,16 +59,24 @@ A workload assignment covers one environment. Explicit Agent actions use
 includes current and future Agents. `none` is required when the Role has no
 explicit Agent actions. Only `selected` accepts IDs. Other resource types apply
 to the entire environment. Organization Roles use `none` without Project or
-Environment IDs and cannot contain workload actions. All members accepts only
+Environment IDs. A Role must have at least one assignment level supported by
+every included permission. All members accepts only
 `agents.use` with selected Agents, and starts with no assignments.
 
-The catalog supplies `resource_type`, `scope_type` and `api_key_assignable` for
-each action. Permissions are exact: no action implies another. Responses expose
+The catalog supplies `resource_type`, `scope_types`, `assignment_levels` and
+`api_key_assignable` for each action. `scope_types` describes the resource scopes
+on which the permission operates; `assignment_levels` lists where the permission
+can be assigned; a Role returns the intersection for all its permissions. Permissions are exact: no action implies another. Responses expose
 `targets` grouped by resource type, including the effective mode, selected Agent
 names and IDs, and permissions. Agent, connection, Session and Trigger actions
 share the assignment's Agent selection. Environment actions apply throughout the
 chosen environment. A Role can combine these two kinds of actions. Organization
-actions cannot be mixed with either.
+actions cannot be mixed with either unless every permission supports that
+assignment level. `audit_events.read` supports Organization and Environment
+assignments; an audit-only Role can use either. Mixing it with Organization-only
+actions requires Organization assignment; mixing it with Environment/Agent actions
+requires Environment assignment and preserves the Agent selection. See
+[audit events](/docs/reference/api/audit-events) for disclosure and reader boundaries.
 
 Sending input, answering questions or resuming somebody else's Session requires
 the corresponding `sessions.send`, `sessions.answer` or `sessions.resume` action

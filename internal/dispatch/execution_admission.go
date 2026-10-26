@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"log/slog"
 	"time"
 	"uuid"
@@ -18,11 +19,11 @@ import (
 
 // RunExecutionAdmissions settles queued work whose accepted provisioning period
 // expired. No automatic new episode is created by the unchanged queued work.
-func RunExecutionAdmissions(ctx context.Context, database db.TxDB, log *slog.Logger) error {
+func RunExecutionAdmissions(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, log *slog.Logger) error {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if err := ReconcileExecutionAdmissions(ctx, database); err != nil && ctx.Err() == nil {
+		if err := ReconcileExecutionAdmissions(ctx, auditPolicy, database); err != nil && ctx.Err() == nil {
 			log.ErrorContext(ctx, "execution admission reconciliation failed", "error", err)
 		}
 		select {
@@ -33,7 +34,7 @@ func RunExecutionAdmissions(ctx context.Context, database db.TxDB, log *slog.Log
 	}
 }
 
-func ReconcileExecutionAdmissions(ctx context.Context, database db.TxDB) error {
+func ReconcileExecutionAdmissions(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB) error {
 	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id FROM computers c WHERE c.execution_deadline_at<=clock_timestamp()
  AND `+computer.RunnableExecutionDemandSQL+`
  ORDER BY c.execution_deadline_at,c.environment_id,c.id LIMIT 100`)
@@ -51,14 +52,14 @@ func ReconcileExecutionAdmissions(ctx context.Context, database db.TxDB) error {
 	}
 	var failures []error
 	for _, t := range targets {
-		if err := expireExecutionAdmission(ctx, database, t.env, t.id); err != nil {
+		if err := expireExecutionAdmission(ctx, auditPolicy, database, t.env, t.id); err != nil {
 			failures = append(failures, err)
 		}
 	}
 	return errors.Join(failures...)
 }
 
-func expireExecutionAdmission(ctx context.Context, database db.TxBeginner, env, id uuid.UUID) error {
+func expireExecutionAdmission(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxBeginner, env, id uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -80,7 +81,7 @@ func expireExecutionAdmission(ctx context.Context, database db.TxBeginner, env, 
 		if !due {
 			return nil
 		}
-		if err = session.FailQueuedExecutionTurns(ctx, tx, env, id); err != nil {
+		if err = session.FailQueuedExecutionTurns(ctx, auditPolicy, tx, env, id); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT id,revision FROM commands WHERE environment_id=$1 AND computer_id=$2 AND status='pending' AND computer_lease_epoch IS NULL ORDER BY id`, env, id)
@@ -96,11 +97,11 @@ func expireExecutionAdmission(ctx context.Context, database db.TxBeginner, env, 
 			return err
 		}
 		for _, pending := range commands {
-			if err = command.FailPending(ctx, tx, pending, command.Failure{Code: "execution_deadline_exceeded", Detail: []byte(`{"code":"execution_deadline_exceeded"}`)}); err != nil {
+			if err = command.FailPending(ctx, auditPolicy, tx, pending, command.Failure{Code: "execution_deadline_exceeded", Detail: []byte(`{"code":"execution_deadline_exceeded"}`)}); err != nil {
 				return err
 			}
 		}
-		if err = computer.FailExecutionAdmission(ctx, tx, env, id); err != nil {
+		if err = computer.FailExecutionAdmission(ctx, auditPolicy, tx, env, id); err != nil {
 			return err
 		}
 		return computer.RetireUnusedExecutionAdmission(ctx, tx, env, id)

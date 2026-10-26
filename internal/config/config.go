@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net"
 	"net/netip"
 	"net/url"
@@ -27,6 +28,7 @@ const (
 )
 
 type ControlPlane struct {
+	AuditPolicy                     auditpolicy.Policy
 	SlackTransport                  string
 	OutboundProxyURL                string
 	DiagnosticAdmission             DiagnosticAdmission
@@ -74,6 +76,7 @@ type Bootstrap struct {
 }
 
 type Dispatcher struct {
+	AuditPolicy        auditpolicy.Policy
 	SlackTransport     string
 	OutboundProxyURL   string
 	AppOrigin          string

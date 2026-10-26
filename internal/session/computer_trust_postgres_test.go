@@ -3,6 +3,7 @@ package session_test
 import (
 	"bytes"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"sync"
 	"sync/atomic"
@@ -40,11 +41,11 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secret_bindings(environment_id,deployment_id,template_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
  VALUES($1,$2,$2,$3,'env','RUNTIME_TOKEN','protected',ARRAY['https://api.example.com'],$4)`, f.env, f.deployment, f.secretID, marker)
 	req := f.startRequest("computer-trust")
-	if _, err = session.Start(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, computer.ErrNotReady) {
+	if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("missing issuer: %v", err)
 	}
 	failed := &countingComputerTrust{store: f.secrets, failure: errors.New("signing failed")}
-	if _, err = session.Start(t.Context(), f.pool, failed, f.caller(), req); !errors.Is(err, failed.failure) {
+	if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, failed, f.caller(), req); !errors.Is(err, failed.failure) {
 		t.Fatalf("failed issuer: %v", err)
 	}
 	var count int
@@ -58,7 +59,7 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 	var wg sync.WaitGroup
 	for range n {
 		wg.Go(func() {
-			r, e := session.Start(t.Context(), f.pool, issuer, f.caller(), req)
+			r, e := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, issuer, f.caller(), req)
 			receipts <- r
 			failures <- e
 		})
@@ -93,7 +94,7 @@ func TestComputerTrustCreationIsAtomicAndRetriesPreserveSigner(t *testing.T) {
 		t.Fatalf("Computer trust: %v", err)
 	}
 	clear(key)
-	if _, err = session.Start(t.Context(), f.pool, nil, f.caller(), req); err != nil {
+	if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); err != nil {
 		t.Fatalf("retry required new signer: %v", err)
 	}
 	var replay []byte

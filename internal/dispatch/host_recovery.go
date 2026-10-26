@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -17,7 +18,7 @@ import (
 // local VM inventory and physical cleanup. Quarantined instances remain unknown.
 // Epoch advancement alone does not authorize this operation. Each Computer is
 // settled in its own ownership transaction, so a retry can finish partial progress.
-func ObserveRecoveredHost(ctx context.Context, database db.TxDB, host workergroup.HostPrincipal, quarantined []uuid.UUID) error {
+func ObserveRecoveredHost(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, host workergroup.HostPrincipal, quarantined []uuid.UUID) error {
 	if quarantined == nil {
 		return ErrInvalidInput
 	}
@@ -57,7 +58,7 @@ func ObserveRecoveredHost(ctx context.Context, database db.TxDB, host workergrou
 				return err
 			}
 			hostLocked = true
-			return recordComputerStopped(ctx, tx, host.HostID, a.hostEpoch, a.identity, "successor worker completed local VM inventory and physical cleanup", uuid.Nil(), uuid.Nil())
+			return recordComputerStopped(ctx, auditPolicy, tx, host.HostID, a.hostEpoch, a.identity, "successor worker completed local VM inventory and physical cleanup", uuid.Nil(), uuid.Nil())
 		}); err != nil {
 			var lock *pgconn.PgError
 			if (errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady) || errors.Is(err, session.ErrNotReady)) || (errors.As(err, &lock) && lock.Code == "55P03") {

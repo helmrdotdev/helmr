@@ -5,6 +5,8 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
@@ -26,7 +28,7 @@ func TestOverviewSummarizesVisibleWork(t *testing.T) {
 	future := f.enqueue(t, "future").TurnID
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE turns SET created_at=clock_timestamp()+interval '5 minutes' WHERE environment_id=$1 AND id=$2`, f.env, future)
 
-	o, err := session.ReadOverview(ctx, f.pool, f.caller(), f.env)
+	o, err := session.ReadOverview(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +50,7 @@ func TestOverviewSummarizesVisibleWork(t *testing.T) {
 	child := f.requestedPeer(t)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET parent_session_id=$2,root_session_id=$2 WHERE environment_id=$1 AND id=$3;
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'subtree','paused','user',$4)`, pgx.QueryExecModeSimpleProtocol, f.env, f.session, child.session, f.user)
-	if o, err = session.ReadOverview(ctx, f.pool, f.caller(), f.env); err != nil || o.ActiveCount != 2 || o.Held != 2 || len(o.Active) != 2 || o.Active[0].State != "held" || o.Active[1].State != "held" || o.Agents[0].Active != 2 {
+	if o, err = session.ReadOverview(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env); err != nil || o.ActiveCount != 2 || o.Held != 2 || len(o.Active) != 2 || o.Active[0].State != "held" || o.Active[1].State != "held" || o.Agents[0].Active != 2 {
 		t.Fatalf("held %+v %v", o, err)
 	}
 }
@@ -65,8 +67,8 @@ func TestOverviewKeepsSessionReadBounds(t *testing.T) {
  INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$5 FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherAgent, f.agent, peer.session, viewer)
 	f.enqueue(t, "visible")
 	peer.enqueue(t, "hidden")
-	caller := session.Caller{Kind: "user", ID: viewer}
-	if _, err := session.ReadOverview(ctx, f.pool, caller, f.env); !errors.Is(err, session.ErrDenied) {
+	caller := session.Caller{Kind: "user", ID: viewer, CredentialID: uuid.NewV7()}
+	if _, err := session.ReadOverview(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("overview without session access", err)
 	}
 	var org uuid.UUID
@@ -76,11 +78,33 @@ func TestOverviewKeepsSessionReadBounds(t *testing.T) {
 	member := dbtest.GrantMember(t, f.pool, org, viewer, &f.env, "sessions.read")
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id=$1;
  INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE member_id=$1`, pgx.QueryExecModeSimpleProtocol, member, f.agent)
-	o, err := session.ReadOverview(ctx, f.pool, caller, f.env)
+	o, err := session.ReadOverview(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if o.Turns != 1 || o.ActiveCount != 1 || o.Active[0].ID != f.session || len(o.Agents) != 1 || o.Agents[0].Agent == "other" {
 		t.Fatalf("overview escaped the selected Agent: %+v", o)
+	}
+}
+
+func TestOverviewCapturesFailureContentBeforeDisclosure(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	const code = "private application failure payload"
+	turn := f.enqueue(t, "failure-content").TurnID
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE turns SET status='failed',error_code=$3,error_message='\x00'::bytea,terminal_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.env, turn, code)
+	policy := auditpolicy.Policy{RetentionSeconds: 3600}
+	o, err := session.ReadOverview(ctx, policy, f.pool, f.caller(), f.env)
+	if err != nil || len(o.Failures) != 1 || o.Failures[0].ErrorCode != code {
+		t.Fatalf("failure content: %+v %v", o, err)
+	}
+	var count int
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='session.content_read' AND session_id=$1 AND turn_id=$2`, f.session, turn).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("disclosure fact count=%d error=%v", count, err)
+	}
+	dbtest.MustExec(t, ctx, f.pool, `CREATE FUNCTION reject_overview_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$; CREATE TRIGGER reject_overview_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_overview_audit()`)
+	o, err = session.ReadOverview(ctx, policy, f.pool, f.caller(), f.env)
+	if !errors.Is(err, audit.ErrCapture) || len(o.Failures) != 0 {
+		t.Fatalf("unaudited disclosure: %+v %v", o, err)
 	}
 }

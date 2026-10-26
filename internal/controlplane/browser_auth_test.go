@@ -62,13 +62,11 @@ func (continuationAuthProvider) Resolve(context.Context, string, string) (identi
 }
 
 func TestBrowserAuthSupersededCallbackKeepsNewerFlow(t *testing.T) {
-	cfg := completeServerConfig(t)
-	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "helmr.example.test"}
-	cfg.AuthProvider = continuationAuthProvider{}
-	handler, err := NewServer(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	f := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
+		cfg.AppOrigin = &url.URL{Scheme: "https", Host: "helmr.example.test"}
+		cfg.AuthProvider = continuationAuthProvider{}
+	})
+	handler := f.handler
 	payload, _ := json.Marshal(api.GitHubAuthStartRequest{Next: "/auth/device?code=NEW"})
 	start := httptest.NewRecorder()
 	handler.ServeHTTP(start, httptest.NewRequest("POST", "https://helmr.example.test/api/auth/github/start", bytes.NewReader(payload)))

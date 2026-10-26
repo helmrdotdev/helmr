@@ -5,6 +5,9 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
@@ -120,9 +123,15 @@ const overviewFailuresSQL = `SELECT a.key,COALESCE(t.error_code,''),count(*),cou
 
 // ReadOverview summarizes the Environment with the same authority as listing
 // its Sessions, in one snapshot.
-func ReadOverview(ctx context.Context, pool db.TxBeginner, caller Caller, env uuid.UUID) (Overview, error) {
+func ReadOverview(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner, caller Caller, env uuid.UUID) (Overview, error) {
 	result := Overview{Agents: []OverviewAgent{}, Active: []OverviewSession{}, Failures: []OverviewFailure{}}
-	err := readTransaction(ctx, pool, caller, env, func(tx pgx.Tx) error {
+	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`); err != nil {
+			return err
+		}
+		if err := authorizeRead(ctx, tx, caller, env); err != nil {
+			return err
+		}
 		filter, err := readScopeFor(ctx, tx, caller, env)
 		if err != nil {
 			return err
@@ -148,9 +157,19 @@ func ReadOverview(ctx context.Context, pool db.TxBeginner, caller Caller, env uu
 		if result.Failures, err = overviewFailures(ctx, tx, args(overviewFailureLimit)); err != nil {
 			return err
 		}
-		return err
+		// Failure codes are application-provided text, not a fixed taxonomy.
+		// Capture the displayed source Turn before releasing each failure group.
+		for _, failure := range result.Failures {
+			if err := auditOperation(ctx, tx, policy, caller, auth.PermissionSessionsRead, audit.Event{EnvironmentID: env, SessionID: failure.LastSessionID, TurnID: failure.LastTurnID, Action: "session.content_read", TargetKind: "session", TargetID: failure.LastSessionID, Details: audit.LifecycleDetails{}}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
-	return result, err
+	if err != nil {
+		return Overview{}, hideMissing(err)
+	}
+	return result, nil
 }
 
 func overviewAgents(ctx context.Context, tx pgx.Tx, args []any) ([]OverviewAgent, error) {

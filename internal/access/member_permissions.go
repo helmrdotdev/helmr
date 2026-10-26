@@ -63,8 +63,8 @@ func MemberPermissions(ctx context.Context, database db.TxBeginner, caller auth.
   LEFT JOIN environments e ON e.id=g.environment_id LEFT JOIN projects p ON p.id=e.project_id
   LEFT JOIN agents a ON (a.environment_id,a.id)=(g.environment_id,g.agent_id)
   LEFT JOIN permission_groups pg ON (pg.org_id,pg.id)=(g.org_id,g.group_id)
-  WHERE ($4='' OR p.slug=$4) AND ($5='' OR e.slug=$5)
-  AND ($6='' OR a.key=$6 OR (g.environment_id IS NOT NULL AND g.agent_id IS NULL)) ORDER BY g.id`, auth.AgentPermissionIDs(), caller.OrgID, member, filter.Project, filter.Environment, filter.Agent)
+  WHERE ($4='' OR p.slug=$4 OR g.environment_id IS NULL AND g.permission=ANY($7::text[])) AND ($5='' OR e.slug=$5 OR g.environment_id IS NULL AND g.permission=ANY($7::text[]))
+  AND ($6='' OR a.key=$6 OR (g.environment_id IS NOT NULL AND g.agent_id IS NULL) OR g.environment_id IS NULL AND g.permission=ANY($7::text[])) ORDER BY g.id`, auth.AgentPermissionIDs(), caller.OrgID, member, filter.Project, filter.Environment, filter.Agent, []string{string(auth.PermissionAuditEventsRead)})
 		if err != nil {
 			return err
 		}

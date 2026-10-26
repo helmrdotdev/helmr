@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"log/slog"
 	"time"
 	"uuid"
@@ -44,7 +45,7 @@ func claimRequests(ctx context.Context, pool db.TxBeginner, limit int) ([]uuid.U
 
 // ReconcileRequest owns completion of one durable input receipt. Success means
 // the receipt is terminal, not that an admitted Turn has started or completed.
-func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, id uuid.UUID) error {
+func ReconcileRequest(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, id uuid.UUID) error {
 	if !config.valid() {
 		return errGestureInvalid
 	}
@@ -74,7 +75,7 @@ func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.Tr
 		var allowed bool
 		allowed, err = verifyControlConversation(ctx, pool, client, id, uuid.Nil())
 		if err == nil && allowed {
-			err = admitNativeStop(ctx, pool, id)
+			err = admitNativeStop(ctx, auditPolicy, pool, id)
 		}
 	} else if nonnullJSON(payload.Control) == (payload.Timestamp != "") {
 		err = errGestureInvalid
@@ -86,11 +87,11 @@ func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.Tr
 			var allowed bool
 			allowed, err = verifyControlConversation(ctx, pool, client, id, control.Target.Thread)
 			if err == nil && allowed {
-				err = admitControl(ctx, pool, id)
+				err = admitControl(ctx, auditPolicy, pool, id)
 			}
 		}
 	} else {
-		err = admitMessage(ctx, pool, trust, client, id)
+		err = admitMessage(ctx, auditPolicy, pool, trust, client, id)
 	}
 	if errors.Is(err, errGestureInvalid) || errors.Is(err, errControlInvalid) {
 		return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return rejectMessage(ctx, tx, id, "gesture_invalid") })
@@ -101,14 +102,14 @@ func ReconcileRequest(ctx context.Context, pool db.TxBeginner, trust computer.Tr
 // ReconcileRequests advances a bounded batch. Operational errors leave received
 // rows retryable after the reserved interval; source expiry still prevents late
 // admission. One failed request does not prevent independent receipts progressing.
-func ReconcileRequests(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, limit int) (int, error) {
+func ReconcileRequests(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, limit int) (int, error) {
 	ids, err := claimRequests(ctx, pool, limit)
 	if err != nil {
 		return 0, err
 	}
 	var failures []error
 	for _, id := range ids {
-		if err := ReconcileRequest(ctx, pool, trust, config, client, id); err != nil {
+		if err := ReconcileRequest(ctx, auditPolicy, pool, trust, config, client, id); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -117,7 +118,7 @@ func ReconcileRequests(ctx context.Context, pool db.TxBeginner, trust computer.T
 
 // RunRequests consumes only authenticated durable receipts. Slack HTTP handlers
 // acknowledge persistence; this dispatcher loop owns subsequent core admission.
-func RunRequests(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, log *slog.Logger, changes *dbnotify.Hub) error {
+func RunRequests(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, config ProjectionConfig, client *WebClient, log *slog.Logger, changes *dbnotify.Hub) error {
 	if pool == nil || client == nil || log == nil || !config.valid() {
 		return errGestureInvalid
 	}
@@ -128,7 +129,7 @@ func RunRequests(ctx context.Context, pool db.TxBeginner, trust computer.TrustIs
 	defer ticker.Stop()
 	for {
 		batch, cancel := context.WithTimeout(ctx, 30*time.Second)
-		_, err := ReconcileRequests(batch, pool, trust, config, client, 64)
+		_, err := ReconcileRequests(batch, auditPolicy, pool, trust, config, client, 64)
 		_, feedbackErr := ReconcileRejectedFeedback(batch, pool, client, config, 4)
 		err = errors.Join(err, feedbackErr)
 		cancel()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -35,12 +36,12 @@ func (e *CursorExpired) Error() string { return "Session event cursor has expire
 
 // ListEvents reads both the retention boundary and its page from one snapshot.
 // Inspection depends on current reader authority, not execution eligibility.
-func ListEvents(ctx context.Context, pool db.TxBeginner, caller Caller, req TurnListRequest) (EventPage, error) {
+func ListEvents(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req TurnListRequest) (EventPage, error) {
 	result := EventPage{Records: []EventView{}, NextAfter: req.After}
 	if req.After < 0 || req.After > 9007199254740991 || req.Limit < 1 || req.Limit > 1000 {
 		return result, ErrInvalidInput
 	}
-	err := readTransaction(ctx, pool, caller, req.EnvironmentID, func(tx pgx.Tx) error {
+	err := discloseTransaction(ctx, auditPolicy, pool, caller, req.EnvironmentID, req.SessionID, uuid.Nil(), func(tx pgx.Tx) error {
 		if err := authorizeSessionRead(ctx, tx, caller, req.EnvironmentID, req.SessionID); err != nil {
 			return err
 		}
@@ -81,5 +82,8 @@ func ListEvents(ctx context.Context, pool db.TxBeginner, caller Caller, req Turn
 		}
 		return nil
 	})
+	if err != nil {
+		return EventPage{}, hideMissing(err)
+	}
 	return result, err
 }

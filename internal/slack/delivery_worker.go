@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -65,7 +66,7 @@ func deliveryCandidates(ctx context.Context, pool db.TxBeginner, limit int) ([]d
 // interval; stream repair gets the same head start. Periodic refresh keeps its deadline.
 // Existing next-attempt fields rotate skipped rows without adding a second claim;
 // a crash before rotation merely repeats safe claim/reconciliation checks.
-func ReconcileDelivery(ctx context.Context, pool db.TxBeginner, client *WebClient, limit int) (int, error) {
+func ReconcileDelivery(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, client *WebClient, limit int) (int, error) {
 	candidates, err := deliveryCandidates(ctx, pool, limit)
 	if err != nil {
 		return 0, err
@@ -77,9 +78,9 @@ func ReconcileDelivery(ctx context.Context, pool db.TxBeginner, client *WebClien
 			break
 		}
 		if candidate.kind == "status" {
-			_, err = ReconcileStatus(ctx, pool, client, candidate.id)
+			_, err = ReconcileStatus(ctx, pool, policy, client, candidate.id)
 		} else {
-			_, err = ReconcilePost(ctx, pool, client, candidate.id)
+			_, err = ReconcilePost(ctx, pool, policy, client, candidate.id)
 			if err == nil {
 				_, err = ReconcileUnknownPost(ctx, pool, client, candidate.id)
 			}

@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -27,7 +28,7 @@ func TestSlackOperationOwnersWakeRequestAndDeliveryConsumers(t *testing.T) {
 	opening := f.opening(t)
 	claim := f.postClaim(t, opening)
 	_ = topics()
-	if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := topics(); !got["slack_delivery"] {
@@ -46,7 +47,7 @@ func TestStreamReconciliationNotifiesNewerDeliveryAndIgnoresReplay(t *testing.T)
 	f := newStatusFixture(t)
 	post := f.streamPost(t, 1, "first")
 	claim := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
 	f.reviseStream(t, post, "first and newer content")

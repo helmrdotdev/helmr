@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"log/slog"
 	"time"
 	"uuid"
@@ -18,7 +19,7 @@ type LeaseLifecyclePosition struct {
 
 // RunLeaseLifecycle settles expired execution authority independently of
 // worker connectivity. Its process owner cancels and joins the scan.
-func RunLeaseLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) error {
+func RunLeaseLifecycle(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return errors.New("computer lifecycle database and logger are required")
 	}
@@ -26,7 +27,7 @@ func RunLeaseLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) 
 	defer ticker.Stop()
 	var position LeaseLifecyclePosition
 	for {
-		next, more, err := ReconcileLeaseLifecycle(ctx, database, position)
+		next, more, err := ReconcileLeaseLifecycle(ctx, auditPolicy, database, position)
 		position = next
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -45,7 +46,7 @@ func RunLeaseLifecycle(ctx context.Context, database db.TxDB, log *slog.Logger) 
 	}
 }
 
-func ReconcileLeaseLifecycle(ctx context.Context, database db.TxDB, after LeaseLifecyclePosition) (LeaseLifecyclePosition, bool, error) {
+func ReconcileLeaseLifecycle(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, after LeaseLifecyclePosition) (LeaseLifecyclePosition, bool, error) {
 	scanCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	// Separate time and host-loss ranges so healthy leases need no per-row host lookup.
@@ -85,7 +86,7 @@ func ReconcileLeaseLifecycle(ctx context.Context, database db.TxDB, after LeaseL
 			break
 		}
 		after = candidate
-		if err := ExpireLease(ctx, database, candidate.environment, candidate.computer, candidate.epoch); err != nil {
+		if err := ExpireLease(ctx, auditPolicy, database, candidate.environment, candidate.computer, candidate.epoch); err != nil {
 			failures = append(failures, err)
 		}
 	}

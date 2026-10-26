@@ -5,13 +5,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -25,11 +25,11 @@ import (
 func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testing.T) {
 	f, executor := preparationTransportFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1`, f.Worker)
-	store, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+	store, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := store.Create(t.Context(), audit.System("test-fixture"), f.Environment, "BUILD_TOKEN", []byte("protected-first"), "create-protected")
+	record, err := store.Create(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, "BUILD_TOKEN", []byte("protected-first"), "create-protected")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testin
 	if err != nil || bytes.Contains(raw, []byte("protected-first")) || bytes.Contains(raw, []byte("PRIVATE KEY")) {
 		t.Fatal("guest delivery exposed private material")
 	}
-	if _, err := store.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, secretID, []byte("protected-second"), "rotate-protected"); err != nil {
+	if _, err := store.Rotate(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, []byte("protected-second"), "rotate-protected"); err != nil {
 		t.Fatal(err)
 	}
 	response, err := client.ResolveSecretProxy(t.Context(), request)

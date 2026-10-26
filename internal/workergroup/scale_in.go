@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -101,7 +102,7 @@ func PendingScaleInOperation(ctx context.Context, q db.DBTX, groupID uuid.UUID) 
 // SelectScaleIn commits one immutable selection with its drain. A group lock
 // serializes keys, ordinary admissions and policy mutations; response loss cannot
 // cause the retry to select a second host.
-func SelectScaleIn(ctx context.Context, txb db.TxBeginner, actor audit.Actor, groupID, poolID, key uuid.UUID) (ScaleInOperation, bool, error) {
+func SelectScaleIn(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID, poolID, key uuid.UUID) (ScaleInOperation, bool, error) {
 	if groupID == uuid.Nil() || poolID == uuid.Nil() || key == uuid.Nil() {
 		return ScaleInOperation{}, false, invalidInput("group, pool and operation key are required")
 	}
@@ -182,7 +183,7 @@ func SelectScaleIn(ctx context.Context, txb db.TxBeginner, actor audit.Actor, gr
 		if err != nil {
 			return err
 		}
-		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_host.draining", TargetKind: "worker_host", TargetID: host}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.draining", TargetKind: "worker_host", TargetID: host}); err != nil {
 			return err
 		}
 		if err := dbnotify.Notify(ctx, tx, "dispatch", "capacity"); err != nil {

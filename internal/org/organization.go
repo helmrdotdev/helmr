@@ -3,6 +3,7 @@ package org
 import (
 	"context"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -14,7 +15,8 @@ import (
 
 // OrganizationInput describes an organization to create and the user who owns it.
 type OrganizationInput struct {
-	Actor       audit.Actor
+	AuditPolicy auditpolicy.Policy
+	Actor       audit.Evidence
 	Slug        string
 	Name        string
 	OwnerUserID uuid.UUID
@@ -29,6 +31,9 @@ type OrganizationInput struct {
 // so concurrent setups admit one organization. The caller commits the owner
 // membership and any initial administrator grant in this transaction.
 func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput) (db.Organization, error) {
+	if input.Actor.Authorization.Decision == "" {
+		input.Actor.Authorization = audit.NotEvaluated()
+	}
 	slug, name, err := normalizeSlugName(input.Slug, input.Name)
 	if err != nil {
 		return db.Organization{}, err
@@ -67,7 +72,7 @@ func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput)
 		return db.Organization{}, fmt.Errorf("create organization owner: %w", err)
 	}
 	orgID := pgvalue.MustUUIDValue(organization.ID)
-	if err := SeedStandardRoles(ctx, tx, orgID, input.Actor); err != nil {
+	if err := SeedStandardRoles(ctx, tx, input.AuditPolicy, orgID, input.Actor); err != nil {
 		return db.Organization{}, err
 	}
 	for _, key := range []string{"access_administrator", "organization_structure_administrator"} {
@@ -79,14 +84,14 @@ func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput)
 		if _, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,created_by) VALUES($1,$2,$3,$4,$5)`, grantID, orgID, role, owner.ID, input.OwnerUserID); err != nil {
 			return db.Organization{}, err
 		}
-		if err := accessAudit(ctx, tx, ManagingMember{Actor: input.Actor, OrgID: orgID}, "role_grant.created", "role_grant", grantID, nil, &audit.AccessSnapshot{SubjectKind: "member", MemberID: pgvalue.MustUUIDValue(owner.ID).String(), RoleID: role.String(), TargetKind: "organization"}, nil); err != nil {
+		if err := accessAudit(ctx, tx, ManagingMember{Actor: input.Actor, OrgID: orgID, AuditPolicy: input.AuditPolicy}, "role_grant.created", "role_grant", grantID, nil, &audit.AccessSnapshot{SubjectKind: "member", MemberID: pgvalue.MustUUIDValue(owner.ID).String(), RoleID: role.String(), TargetKind: "organization"}); err != nil {
 			return db.Organization{}, err
 		}
 	}
-	if err := audit.Append(ctx, tx, audit.Event{Actor: input.Actor, OrgID: orgID, Action: "organization.created", TargetKind: "organization", TargetID: orgID}); err != nil {
+	if err := audit.Append(ctx, tx, input.AuditPolicy, audit.Event{Evidence: input.Actor, OrgID: orgID, Action: "organization.created", TargetKind: "organization", TargetID: orgID}); err != nil {
 		return db.Organization{}, err
 	}
-	if err := audit.Append(ctx, tx, audit.Event{Actor: input.Actor, OrgID: orgID, Action: "member.granted", TargetKind: "member", TargetID: pgvalue.MustUUIDValue(owner.ID), Details: audit.MembershipDetails{MembershipID: pgvalue.UUIDString(owner.ID), IsOwner: true}}); err != nil {
+	if err := audit.Append(ctx, tx, input.AuditPolicy, audit.Event{Evidence: input.Actor, OrgID: orgID, Action: "member.granted", TargetKind: "member", TargetID: pgvalue.MustUUIDValue(owner.ID), Details: audit.MembershipDetails{MembershipID: pgvalue.UUIDString(owner.ID), IsOwner: true}}); err != nil {
 		return db.Organization{}, err
 	}
 	return organization, nil

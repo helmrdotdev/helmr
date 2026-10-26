@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"io"
 	"log/slog"
@@ -60,7 +61,7 @@ func TestSlackDeliveryRunProgressesPeerWhileAnotherRequestIsInFlight(t *testing.
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- RunDelivery(ctx, f.Pool, client, slog.New(slog.NewTextHandler(io.Discard, nil)), dbnotify.New())
+		done <- RunDelivery(ctx, f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, slog.New(slog.NewTextHandler(io.Discard, nil)), dbnotify.New())
 	}()
 	select {
 	case <-entered:

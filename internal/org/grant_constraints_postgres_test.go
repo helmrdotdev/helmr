@@ -2,6 +2,7 @@ package org_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -33,7 +34,7 @@ func TestGrantSchemaRejectsInvalidSubjectAndTenant(t *testing.T) {
 	foreignMember := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, foreignMember, foreignOrg, f.owner.UserID)
 	dbtest.GrantMember(t, f.pool, foreignOrg, f.owner.UserID, nil, "projects.create")
-	_, foreignEnvironments, err := org.CreateProject(t.Context(), f.pool, org.ManagingMember{OrgID: foreignOrg, UserID: f.owner.UserID, MemberID: foreignMember, Actor: f.owner.Actor}, input)
+	_, foreignEnvironments, err := org.CreateProject(t.Context(), f.pool, org.ManagingMember{OrgID: foreignOrg, UserID: f.owner.UserID, MemberID: foreignMember, Actor: f.owner.Actor, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, input)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"uuid"
 )
 
 func TestWorkerAgentReadyUsesCurrentAttachment(t *testing.T) {
@@ -45,7 +47,7 @@ func TestWorkerAgentReadyUsesCurrentAttachment(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status='ready' FROM session_processes WHERE session_id=$1`, f.Session).Scan(&ready); err != nil || !ready {
 		t.Fatalf("setup receipt: %v %v", ready, err)
 	}
-	if _, err = session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = client.ObserveAgentReady(t.Context(), request); err != nil {

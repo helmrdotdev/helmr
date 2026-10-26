@@ -199,6 +199,7 @@ CREATE TABLE api_keys (
     created_by_member_id uuid,
     name text NOT NULL CHECK (btrim(name) <> ''),
     key_prefix text NOT NULL CHECK (btrim(key_prefix) <> ''),
+    credential_version bigint NOT NULL DEFAULT 1 CHECK (credential_version > 0),
     token_hash bytea NOT NULL UNIQUE,
     created_at timestamptz NOT NULL DEFAULT now(),
     last_used_at timestamptz,
@@ -2321,34 +2322,91 @@ ALTER TABLE disk_encryption_keys
 -- Historical facts deliberately do not reference mutable or prunable authority rows.
 CREATE TABLE audit_events (
     id uuid PRIMARY KEY,
-    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    outcome text NOT NULL DEFAULT 'succeeded' CHECK (outcome = 'succeeded'),
-    actor_kind text NOT NULL CHECK (actor_kind IN ('login','api_key','verified_login','capacity','system')),
-    actor_user_id uuid,
-    actor_credential_id uuid,
-    actor_source text NOT NULL DEFAULT '',
     org_id uuid,
     project_id uuid,
     environment_id uuid,
-    action text NOT NULL CHECK (action <> ''),
-    target_kind text NOT NULL CHECK (target_kind <> ''),
+    schema_version smallint NOT NULL CHECK (schema_version > 0),
+    occurred_at timestamptz NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    retention_seconds bigint NOT NULL CHECK (retention_seconds > 0),
+    expires_at timestamptz NOT NULL,
+    CHECK (isfinite(occurred_at) AND isfinite(recorded_at) AND isfinite(expires_at)),
+    CHECK (expires_at > recorded_at AND
+           expires_at = recorded_at + retention_seconds * interval '1 second'),
+    actor_user_id uuid,
+    actor_api_key_id uuid,
+    actor_session_id uuid,
+    actor_worker_host_id uuid,
+    actor_component text CHECK (actor_component IN ('control_plane','dispatcher','control_plane_cli','audit_maintenance','development','capacity_controller')),
+    actor_identity jsonb CHECK (jsonb_typeof(actor_identity)='object' AND pg_column_size(actor_identity)<=4096),
+    authentication_result text NOT NULL CHECK (authentication_result IN ('verified','failed','absent','not_attempted')),
+    authentication_origin text NOT NULL CHECK (authentication_origin IN ('request','internal')),
+    identity_provider text CHECK (octet_length(identity_provider) BETWEEN 1 AND 64),
+    credential_kind text CHECK (credential_kind IN ('login_session','api_key','worker_host','capacity_token','provider_assertion','magic_link','device_code')),
+    credential_id uuid,
+    credential_version bigint CHECK (credential_version > 0),
+    runtime_generation bigint CHECK (runtime_generation > 0),
+    process_epoch bigint CHECK (process_epoch > 0),
+    action text NOT NULL CHECK (octet_length(action) BETWEEN 1 AND 128),
+    outcome text NOT NULL CHECK (outcome IN ('accepted','succeeded','denied','failed','cancelled','unknown')),
+    target_kind text NOT NULL CHECK (octet_length(target_kind) BETWEEN 1 AND 64),
     target_id uuid,
     target_user_id uuid,
-    slack_team_id text NOT NULL DEFAULT '',
-    slack_user_id text NOT NULL DEFAULT '',
-    details jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(details) = 'object'),
+    slack_team_id text CHECK (octet_length(slack_team_id) BETWEEN 1 AND 100),
+    slack_user_id text CHECK (octet_length(slack_user_id) BETWEEN 1 AND 100),
+    target_resolution text NOT NULL CHECK (target_resolution IN ('verified','unresolved')),
+    authorization_evidence jsonb NOT NULL CHECK (jsonb_typeof(authorization_evidence)='object' AND pg_column_size(authorization_evidence)<=16384
+      AND authorization_evidence ?& ARRAY['decision','checks']
+      AND jsonb_typeof(authorization_evidence->'decision')='string'
+      AND authorization_evidence->>'decision' IN ('allowed','denied','not_evaluated')
+      AND jsonb_typeof(authorization_evidence->'checks')='array'
+      AND ((authorization_evidence->>'decision'='not_evaluated') = (jsonb_array_length(authorization_evidence->'checks')=0))),
+    operation_id uuid NOT NULL,
+    session_id uuid,
+    turn_id uuid,
+    computer_id uuid,
+    deployment_id uuid,
+    cause_event_id uuid,
+    causality jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(causality)='object' AND pg_column_size(causality)<=4096),
+    source_ip inet,
+    channel text NOT NULL CHECK (octet_length(channel) BETWEEN 1 AND 64),
+    details jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(details)='object' AND pg_column_size(details)<=16384),
+    CHECK ((slack_team_id IS NULL AND slack_user_id IS NULL) OR
+           (target_kind='slack_user_link' AND target_id IS NULL AND
+            target_user_id IS NOT NULL AND slack_team_id IS NOT NULL AND slack_user_id IS NOT NULL)),
+    CHECK (target_kind<>'slack_user_link' OR target_resolution<>'verified' OR
+           (target_id IS NULL AND target_user_id IS NOT NULL AND slack_team_id IS NOT NULL AND slack_user_id IS NOT NULL)),
     CHECK (project_id IS NULL OR org_id IS NOT NULL),
     CHECK (environment_id IS NULL OR project_id IS NOT NULL),
-    CHECK (
-        (actor_kind = 'login' AND actor_user_id IS NOT NULL AND actor_credential_id IS NOT NULL AND actor_source = '') OR
-        (actor_kind = 'api_key' AND actor_user_id IS NULL AND actor_credential_id IS NOT NULL AND actor_source = '') OR
-        (actor_kind = 'verified_login' AND actor_user_id IS NOT NULL AND actor_credential_id IS NULL AND actor_source <> '') OR
-        (actor_kind = 'capacity' AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source = '') OR
-        (actor_kind = 'system' AND actor_user_id IS NULL AND actor_credential_id IS NULL AND actor_source <> '')
-    ),
-    CHECK (target_id IS NOT NULL OR (target_kind = 'slack_user_link' AND target_user_id IS NOT NULL AND slack_team_id <> '' AND slack_user_id <> ''))
+    CHECK (num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)<=1),
+    CHECK ((num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)=0) = (authentication_result IN ('failed','absent'))),
+    CHECK ((actor_user_id IS NOT NULL) = (actor_identity IS NOT NULL)),
+    CHECK (actor_user_id IS NULL OR
+           (actor_identity ?& ARRAY['source','display_name'] AND
+            jsonb_typeof(actor_identity->'source')='string' AND actor_identity->>'source'='account' AND
+            jsonb_typeof(actor_identity->'display_name')='string' AND octet_length(actor_identity->>'display_name')>0)),
+    CHECK ((authentication_origin='internal')=(authentication_result='not_attempted')),
+    CHECK (authentication_origin<>'internal' OR (actor_component IS NOT NULL AND credential_kind IS NULL)),
+    CHECK (authentication_result='verified' OR (credential_id IS NULL AND credential_version IS NULL AND runtime_generation IS NULL AND process_epoch IS NULL)),
+    CHECK (authentication_result<>'verified' OR credential_kind IS NOT NULL),
+    CHECK (identity_provider IS NULL OR (credential_kind IS NOT NULL AND credential_kind IN ('provider_assertion','magic_link'))),
+    CHECK (actor_api_key_id IS NULL OR (credential_kind='api_key' AND credential_id IS NOT NULL AND credential_id=actor_api_key_id AND credential_version IS NOT NULL)),
+    CHECK (actor_worker_host_id IS NULL OR (credential_kind='worker_host' AND credential_id IS NOT NULL AND credential_id=actor_worker_host_id AND credential_version IS NOT NULL)),
+    CHECK (actor_session_id IS NULL OR (credential_kind='worker_host' AND credential_id IS NOT NULL AND credential_version IS NOT NULL AND runtime_generation IS NOT NULL)),
+    CHECK (authentication_result NOT IN ('failed','absent') OR authorization_evidence->>'decision'='not_evaluated'),
+    CHECK (authentication_result NOT IN ('failed','absent') OR outcome IN ('denied','failed') OR
+      (authentication_result='absent' AND action IN ('identity.device_started','identity.magic_link_requested'))),
+    CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','magic_link','device_code')),
+    CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('login_session','device_code','magic_link') OR credential_id IS NOT NULL),
+    CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('provider_assertion') OR identity_provider IS NOT NULL),
+    CHECK (actor_component IS NULL OR authentication_result<>'verified' OR (actor_component='capacity_controller' AND credential_kind='capacity_token')),
+    CHECK (actor_session_id IS NOT NULL OR (runtime_generation IS NULL AND process_epoch IS NULL))
 );
-CREATE INDEX audit_events_scope_time ON audit_events (org_id, occurred_at, id);
+CREATE INDEX audit_events_time ON audit_events(org_id,recorded_at DESC,id DESC);
+CREATE INDEX audit_events_actor ON audit_events(org_id,(COALESCE(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id)),recorded_at DESC,id DESC);
+CREATE INDEX audit_events_target ON audit_events(org_id,target_kind,target_id,recorded_at DESC,id DESC);
+CREATE INDEX audit_events_expiry ON audit_events(expires_at,id);
+CREATE INDEX audit_events_environment_time ON audit_events(org_id,environment_id,recorded_at DESC,id DESC) WHERE environment_id IS NOT NULL;
 
 -- A Slack channel Helmr has verified, one per workspace installation and
 -- channel, whichever agents use it: the name Slack reported when it was last

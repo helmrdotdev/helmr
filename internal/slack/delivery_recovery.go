@@ -9,6 +9,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	sessionowner "github.com/helmrdotdev/helmr/internal/session"
@@ -46,7 +48,8 @@ type DeliveryView struct {
 
 // ListSessionDelivery exposes only diagnostics and authored fallback text, never
 // signed controls, provider credentials or frozen transport request bodies.
-func ListSessionDelivery(ctx context.Context, pool db.TxBeginner, org, user, environment, session uuid.UUID, after int64, limit int) ([]DeliveryView, error) {
+func ListSessionDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner, principal auth.Principal, environment, session uuid.UUID, after int64, limit int) ([]DeliveryView, error) {
+	org, user := principal.OrgID, principal.UserID
 	result := []DeliveryView{}
 	if after < 0 || limit < 1 || limit > 100 {
 		return nil, ErrDeliveryUnavailable
@@ -96,9 +99,16 @@ func ListSessionDelivery(ctx context.Context, pool db.TxBeginner, org, user, env
 			}
 			result = append(result, v)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+		return sessionowner.RecordContentRead(ctx, policy, tx, sessionowner.Caller{Kind: "user", ID: user, CredentialID: principal.SessionID}, environment, session)
 	})
-	return result, err
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 type DeliveryRecovery struct {
@@ -109,7 +119,8 @@ type DeliveryRecovery struct {
 // RecoverDelivery requests read-only evidence or records a human's unsuccessful
 // logical-publication disposition. Neither operation resends content, replaces a
 // root, changes core work, or treats missing evidence as non-delivery.
-func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environment, session, post uuid.UUID, input DeliveryRecovery, action string) error {
+func RecoverDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner, principal auth.Principal, environment, session, post uuid.UUID, input DeliveryRecovery, action string) error {
+	org, user := principal.OrgID, principal.UserID
 	if input.AttemptID == uuid.Nil() || input.PublicationRevision < 1 || (action != "check" && action != "abandon") {
 		return ErrDeliveryChanged
 	}
@@ -140,6 +151,29 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 				return errInstallationAuthority
 			}
 			return err
+		}
+		p.SessionID = principal.SessionID
+		actor, err := audit.Authorized(p, permission, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()})
+		if err != nil {
+			return err
+		}
+		scope := auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}
+		readDecisions, canRead := p.Decide(auth.PermissionSessionsRead, scope)
+		if !canRead {
+			// The Session owner above verified the own-session alternative.
+			readDecisions, canRead = p.Decide(auth.PermissionAgentsUse, scope)
+			actor.Authorization.Checks = append(actor.Authorization.Checks, audit.OriginCheck{Type: "session_origin", SessionID: session, InitiatorKind: "user", InitiatorID: user, Result: "passed"})
+		}
+		if !canRead {
+			return errInstallationAuthority
+		}
+		actor.Authorization.Checks = append(actor.Authorization.Checks, audit.PermissionEvidence(p, readDecisions)...)
+		capture := func() error {
+			name := "session.delivery_check_requested"
+			if action == "abandon" {
+				name = "session.delivery_abandoned"
+			}
+			return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: environment, SessionID: session, TargetKind: "session", TargetID: session, Action: name, Details: audit.LifecycleDetails{RequestID: input.AttemptID, Generation: input.PublicationRevision}})
 		}
 		var installation, thread, participant uuid.UUID
 		var publication string
@@ -194,7 +228,10 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
 				return ErrDeliveryCheckUnavailable
 			}
 			_, err = tx.Exec(ctx, `UPDATE slack_posts SET reconciliation_cursor='',reconciliation_pages=0,reconciliation_paused_at=NULL,next_attempt_at=clock_timestamp() WHERE id=$1`, post)
-			return err
+			if err != nil {
+				return err
+			}
+			return capture()
 		}
 		if disposed {
 			return nil
@@ -229,6 +266,9 @@ func RecoverDelivery(ctx context.Context, pool db.TxBeginner, org, user, environ
  inflight_stream_text=CASE WHEN status='pending' THEN NULL ELSE inflight_stream_text END,
  next_attempt_at=clock_timestamp()
  WHERE thread_source_id=$1 AND post_key=$2`, participant, publication, user)
-		return err
+		if err != nil {
+			return err
+		}
+		return capture()
 	})
 }

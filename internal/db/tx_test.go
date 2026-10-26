@@ -289,3 +289,25 @@ func TestRunTxCommitAndRollbackDiagnostics(t *testing.T) {
 		})
 	}
 }
+
+func TestCommitOutcomeUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+		want  bool
+	}{
+		{"lost acknowledgement", io.EOF, true}, {"cancel during commit", context.Canceled, true}, {"rollback", pgx.ErrTxCommitRollback, false}, {"closed", pgx.ErrTxClosed, false}, {"server rejection", &pgconn.PgError{Code: "40001"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := db.RunTx(t.Context(), testTxBeginner{tx: &testTransaction{commitErr: tc.cause}}, func(pgx.Tx) error { return nil })
+			if db.CommitOutcomeUnknown(err) != tc.want {
+				t.Fatal(err)
+			}
+		})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	err := db.RunTx(ctx, testTxBeginner{tx: &testTransaction{}}, func(pgx.Tx) error { cancel(); return nil })
+	if db.CommitOutcomeUnknown(err) {
+		t.Fatal("cancel before commit cannot have committed")
+	}
+}

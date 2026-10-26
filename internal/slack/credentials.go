@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -30,12 +31,16 @@ func (b credentialBundle) valid() bool {
 }
 
 type CredentialStore struct {
-	pool       db.TxBeginner
-	encryption cipher.AEAD
-	mode       Transport
+	auditPolicy auditpolicy.Policy
+	pool        db.TxBeginner
+	encryption  cipher.AEAD
+	mode        Transport
 }
 
-func NewCredentialStore(pool db.TxBeginner, key []byte, mode Transport) (*CredentialStore, error) {
+func NewCredentialStore(pool db.TxBeginner, key []byte, mode Transport, policy auditpolicy.Policy) (*CredentialStore, error) {
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
 	if pool == nil || len(key) != 32 || !mode.enabled() {
 		return nil, errors.New("the Slack credential database and 32-byte encryption key are required")
 	}
@@ -47,7 +52,7 @@ func NewCredentialStore(pool db.TxBeginner, key []byte, mode Transport) (*Creden
 	if err != nil {
 		return nil, err
 	}
-	return &CredentialStore{pool: pool, encryption: encryption, mode: mode}, nil
+	return &CredentialStore{auditPolicy: policy, pool: pool, encryption: encryption, mode: mode}, nil
 }
 
 func credentialAAD(org, installation uuid.UUID, revision int64) []byte {

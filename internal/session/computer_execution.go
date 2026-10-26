@@ -2,6 +2,9 @@ package session
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"unicode/utf8"
 	"uuid"
@@ -25,7 +28,7 @@ type ComputerExecutionRequest struct {
 
 // ControlComputerExecution owns membership and authorization for the whole VM.
 // A Session hold is neither created nor released by this operation.
-func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Caller, req ComputerExecutionRequest) (computer.ExecutionControl, error) {
+func ControlComputerExecution(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req ComputerExecutionRequest) (computer.ExecutionControl, error) {
 	var result computer.ExecutionControl
 	if req.EnvironmentID == uuid.Nil() || req.ComputerID == uuid.Nil() || caller.ID == uuid.Nil() || (req.Kind != "hibernate" && req.Kind != "wake") || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) {
 		return result, ErrInvalidInput
@@ -36,7 +39,7 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 				return err
 			}
 		}
-		if err := authorizeComputerExecution(ctx, tx, caller, req.EnvironmentID, req.Kind); err != nil {
+		if _, err := authorizeComputerExecution(ctx, tx, caller, req.EnvironmentID, req.Kind); err != nil {
 			return err
 		}
 		if _, err := org.LockAdmission(ctx, tx, req.EnvironmentID); err != nil {
@@ -45,7 +48,8 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 		if _, err := LockComputerMembers(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {
 			return err
 		}
-		if err := authorizeComputerExecution(ctx, tx, caller, req.EnvironmentID, req.Kind); err != nil {
+		p, err := authorizeComputerExecution(ctx, tx, caller, req.EnvironmentID, req.Kind)
+		if err != nil {
 			return err
 		}
 		if req.OpenSessionID != uuid.Nil() {
@@ -65,7 +69,6 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 			return computer.ErrDeleting
 		}
 		var found bool
-		var err error
 		result, found, err = computer.FindExecutionControl(ctx, tx, req.EnvironmentID, req.ComputerID, caller.Kind, caller.ID, req.Kind, req.IdempotencyKey)
 		if err != nil || found {
 			return err
@@ -116,7 +119,28 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 			}
 		}
 		result, err = computer.RequestExecutionControl(ctx, tx, req.EnvironmentID, req.ComputerID, caller.Kind, caller.ID, req.Kind, req.IdempotencyKey, complete)
-		return err
+		if err != nil {
+			return err
+		}
+		p.SessionID = caller.CredentialID
+		permission := auth.PermissionComputersWake
+		if req.Kind == "hibernate" {
+			permission = auth.PermissionComputersHibernate
+		}
+		actor, err := audit.Authorized(p, permission, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID})
+		if err != nil {
+			return err
+		}
+		callerAuthentication(&actor, caller)
+		event := audit.Event{Evidence: actor, EnvironmentID: req.EnvironmentID, ComputerID: req.ComputerID, Action: "computer.control_requested", Outcome: "accepted", TargetKind: "computer", TargetID: req.ComputerID, Details: audit.ComputerControlDetails{Kind: req.Kind, RequestID: result.ID}}
+		if err := audit.Append(ctx, tx, auditPolicy, event); err != nil {
+			return err
+		}
+		if result.Status == "completed" {
+			event.Action, event.Outcome = "computer.control_settled", "succeeded"
+			return audit.Append(ctx, tx, auditPolicy, event)
+		}
+		return nil
 	})
 	if err != nil {
 		return computer.ExecutionControl{}, hideMissing(err)
@@ -124,12 +148,23 @@ func ControlComputerExecution(ctx context.Context, pool db.TxBeginner, caller Ca
 	return result, nil
 }
 
-func authorizeComputerExecution(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID, kind string) error {
+func authorizeComputerExecution(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID, kind string) (auth.Principal, error) {
 	permission := auth.PermissionComputersWake
 	if kind == "hibernate" {
 		permission = auth.PermissionComputersHibernate
 	} else if kind != "wake" {
-		return ErrInvalidInput
+		return auth.Principal{}, ErrInvalidInput
 	}
-	return requirePermission(ctx, tx, caller.Kind, caller.ID, env, uuid.Nil(), permission)
+	p, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+	if err != nil {
+		return auth.Principal{}, err
+	}
+	if caller.Kind == "api_key" && caller.CredentialVersion > 0 && caller.CredentialVersion != p.CredentialVersion {
+		return auth.Principal{}, ErrDenied
+	}
+	if permissionErr := auth.Require(p, permission, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID},
+		ErrDenied); permissionErr != nil {
+		return auth.Principal{}, permissionErr
+	}
+	return p, nil
 }

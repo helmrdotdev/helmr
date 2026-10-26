@@ -30,7 +30,7 @@ func (s *Server) workerAgentListComputers(w http.ResponseWriter, r *http.Request
 	}
 	listing, scope, err := session.RuntimeListComputers(r.Context(), s.tx, caller, page)
 	if err != nil {
-		s.writeAgentAdmissionError(w, requestID, err)
+		s.writeAgentAdmissionError(w, r, requestID, err)
 		return
 	}
 	result := api.ListComputersResponse{Computers: []api.ComputerListItem{}}
@@ -41,13 +41,13 @@ func (s *Server) workerAgentListComputers(w http.ResponseWriter, r *http.Request
 		last := listing.Items[len(listing.Items)-1]
 		result.NextCursor, err = encodeComputerListCursor(computerListCursor{ProjectID: scope.ProjectID.String(), EnvironmentID: scope.EnvironmentID.String(), CreatedAt: last.CreatedAt, ID: last.ID})
 		if err != nil {
-			s.writeAgentAdmissionError(w, requestID, err)
+			s.writeAgentAdmissionError(w, r, requestID, err)
 			return
 		}
 	}
 	body, err := json.Marshal(result)
 	if err != nil {
-		s.writeAgentAdmissionError(w, requestID, err)
+		s.writeAgentAdmissionError(w, r, requestID, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: requestID, Value: body})

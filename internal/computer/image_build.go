@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"strings"
 	"time"
@@ -208,7 +210,7 @@ type ExposedSecret struct {
 	Ciphertext     []byte
 }
 
-func RecordImageBuildExposure(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) ([]ExposedSecret, error) {
+func RecordImageBuildExposure(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, ref ImageBuildExecutor) ([]ExposedSecret, error) {
 	if !ref.Valid() {
 		return nil, ErrInvalidInput
 	}
@@ -305,9 +307,16 @@ func RecordImageBuildExposure(ctx context.Context, pool db.TxBeginner, host work
 			versions = prior // Reconnect never replaces an attempt's already exposed version.
 		} else {
 			for _, id := range ids {
-				if _, err = tx.Exec(ctx, `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3`, ref.EnvironmentID, ref.ImageBuildID, id, versions[id]); err != nil {
+				var exposureID uuid.UUID
+				var generation int64
+				if err = tx.QueryRow(ctx, `INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id,revocation_generation) SELECT uuidv7(),$1,$2,$3,$4,revocation_generation FROM secrets WHERE environment_id=$1 AND id=$3 RETURNING id,revocation_generation`, ref.EnvironmentID, ref.ImageBuildID, id, versions[id]).Scan(&exposureID, &generation); err != nil {
 					return err
 				}
+				actor := audit.AssignedWorker(host.HostID, host.HostClaimVersion, "image_build", ref.ImageBuildID, ref.Epoch)
+				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: ref.EnvironmentID, Action: "secret.exposed", TargetKind: "secret", TargetID: id, Details: audit.SecretExposureDetails{ExposureID: exposureID, VersionID: versions[id], RevocationGeneration: generation, ImageBuildID: ref.ImageBuildID}}); err != nil {
+					return err
+				}
+
 			}
 		}
 		for _, binding := range bindings {

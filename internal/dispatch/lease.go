@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -15,7 +16,7 @@ import (
 // ObserveLeaseStopped is called only after the owning worker has joined the
 // exact physical VM's closure. Expiry and an epoch change are not this evidence.
 // A retained coherent checkpoint keeps its logical processes available to restore.
-func ObserveLeaseStopped(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, invalidCheckpoint, failedBootSeed uuid.UUID) error {
+func ObserveLeaseStopped(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, identity computer.LeaseIdentity, invalidCheckpoint, failedBootSeed uuid.UUID) error {
 	if !identity.Valid() {
 		return ErrInvalidInput
 	}
@@ -23,13 +24,13 @@ func ObserveLeaseStopped(ctx context.Context, pool db.TxBeginner, host workergro
 		if err := computer.LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		return recordComputerStopped(ctx, tx, host.HostID, host.Epoch, identity, "owning worker joined physical VM closure", invalidCheckpoint, failedBootSeed)
+		return recordComputerStopped(ctx, auditPolicy, tx, host.HostID, host.Epoch, identity, "owning worker joined physical VM closure", invalidCheckpoint, failedBootSeed)
 	}))
 }
 
 // Expiry rejects new execution and retains the unique writer blocker. Only a
 // later physical observation may fence the lease and release its allocation.
-func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID, epoch int64) error {
+func ExpireLease(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, env, computerID uuid.UUID, epoch int64) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -64,7 +65,7 @@ func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.U
 		if err = computer.SettleLostSaves(ctx, tx, env, computerID, epoch); err != nil {
 			return err
 		}
-		if err = session.RecordComputerRecoveryGap(ctx, tx, env, computerID, epoch); err != nil {
+		if err = session.RecordComputerRecoveryGap(ctx, auditPolicy, tx, env, computerID, epoch); err != nil {
 			return err
 		}
 		eligible, err := computer.DiskRecoveryEligible(ctx, tx, env, computerID)
@@ -75,7 +76,7 @@ func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.U
 		if eligible {
 			disposition = session.ComputerLossRecoverable
 		}
-		if err := session.LoseLeaseProcesses(ctx, tx, env, computerID, epoch, members, false, disposition); err != nil {
+		if err := session.LoseLeaseProcesses(ctx, auditPolicy, tx, env, computerID, epoch, members, false, disposition); err != nil {
 			return err
 		}
 		return nil
@@ -84,7 +85,7 @@ func ExpireLease(ctx context.Context, pool db.TxBeginner, env, computerID uuid.U
 
 // The caller has locked and validated the observer's supply authority. hostEpoch
 // identifies the stopped allocation, which may precede the observer after recovery.
-func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.LeaseIdentity, evidence string, invalidCheckpoint, failedBootSeed uuid.UUID) error {
+func recordComputerStopped(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, hostID uuid.UUID, hostEpoch int64, identity computer.LeaseIdentity, evidence string, invalidCheckpoint, failedBootSeed uuid.UUID) error {
 	members, err := session.LockCheckpointMembers(ctx, tx, identity.EnvironmentID, identity.ComputerID, invalidCheckpoint)
 	if err != nil {
 		return err
@@ -121,7 +122,7 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 	if err = computer.SettleLostSaves(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
 		return err
 	}
-	if err = session.RecordComputerRecoveryGap(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
+	if err = session.RecordComputerRecoveryGap(ctx, auditPolicy, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
 		return err
 	}
 	eligible, err := computer.DiskRecoveryEligible(ctx, tx, identity.EnvironmentID, identity.ComputerID)
@@ -153,12 +154,12 @@ func recordComputerStopped(ctx context.Context, tx pgx.Tx, hostID uuid.UUID, hos
 			if !stopped {
 				return ErrNotReady
 			}
-			if err := session.LoseLeaseProcesses(ctx, tx, identity.EnvironmentID, identity.ComputerID, member.LeaseEpoch, []session.ComputerMember{member}, true, disposition); err != nil {
+			if err := session.LoseLeaseProcesses(ctx, auditPolicy, tx, identity.EnvironmentID, identity.ComputerID, member.LeaseEpoch, []session.ComputerMember{member}, true, disposition); err != nil {
 				return err
 			}
 		}
 	}
-	if err = session.LoseLeaseProcesses(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, members, true, disposition); err != nil {
+	if err = session.LoseLeaseProcesses(ctx, auditPolicy, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch, members, true, disposition); err != nil {
 		return err
 	}
 	if err = computer.LoseLeaseCheckpoints(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {

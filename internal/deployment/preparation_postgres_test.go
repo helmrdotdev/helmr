@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"testing"
 	"uuid"
@@ -16,7 +17,7 @@ func TestPromotionPreparesBeforeChangingCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Promote(t.Context(), f.pool, f.principal(), f.scope(), prior.ID, nil); err != nil {
+	if _, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), prior.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	f.request.idempotencyKey = "prepared-candidate"
@@ -29,7 +30,7 @@ func TestPromotionPreparesBeforeChangingCurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		pending, err := Promote(t.Context(), f.pool, f.principal(), f.scope(), candidate.ID, nil)
+		pending, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), candidate.ID, nil)
 		if err != nil || pending.PreparationState != "preparing" {
 			t.Fatalf("initial preparation: %+v %v", pending, err)
 		}
@@ -47,7 +48,7 @@ func TestPromotionPreparesBeforeChangingCurrent(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE id=$1`, attempt)
-	if _, err := Promote(t.Context(), f.pool, f.principal(), f.scope(), candidate.ID, nil); !errors.Is(err, computer.ErrNotReady) {
+	if _, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), candidate.ID, nil); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("unusable build reported as accepted preparation: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, attempt)
@@ -61,7 +62,7 @@ func TestPromotionPreparesBeforeChangingCurrent(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds`).Scan(&count); err != nil || count != 1 {
 		t.Fatal("observation retried authored preparation")
 	}
-	if _, err := Promote(t.Context(), f.pool, f.principal(), f.scope(), candidate.ID, nil); err != nil {
+	if _, err := Promote(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.principal(), f.scope(), candidate.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM image_builds`).Scan(&count); err != nil || count != 2 {

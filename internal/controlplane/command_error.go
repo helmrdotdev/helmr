@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/command"
@@ -131,10 +132,14 @@ func publicCommandError(err error, operation commandOperation) error {
 
 // writeCommandError writes the API error of a public Command operation and
 // logs the errors it reports as unavailable.
-func (s *Server) writeCommandError(w http.ResponseWriter, err error, operation commandOperation) {
+func (s *Server) writeCommandError(w http.ResponseWriter, r *http.Request, err error, operation commandOperation) {
+	if errors.Is(err, audit.ErrCapture) {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	mapped := commandError(err, operation)
 	if errorStatus(mapped) == http.StatusServiceUnavailable {
 		s.log.Error(commandFailed[operation], "error", err)
 	}
-	writeError(w, mapped)
+	s.writeOperationError(w, r, mapped)
 }

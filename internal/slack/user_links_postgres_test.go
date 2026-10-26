@@ -2,6 +2,7 @@ package slack
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
 
@@ -12,42 +13,42 @@ import (
 func TestSlackUserLinksNeverMergeAndPreserveHistoricalAdmissions(t *testing.T) {
 	f, _, org := credentialFixture(t)
 	first := UserIdentity{TeamID: "team", SlackUserID: "human"}
-	if err := LinkUser(t.Context(), f.Pool, audit.System("test-fixture"), org, f.User, f.installation, first); err != nil {
+	if err := LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.installation, first); err != nil {
 		t.Fatal(err)
 	}
 	accepted := f.reply(t, "already-admitted", false)
-	if err := admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), accepted); err != nil {
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), accepted); err != nil {
 		t.Fatal(err)
 	}
 	links, err := ListUserLinks(t.Context(), f.Pool, org, f.User, "", 50)
 	if err != nil || len(links) != 1 {
 		t.Fatal(links, err)
 	}
-	if err = LinkUser(t.Context(), f.Pool, audit.System("test-fixture"), org, f.User, f.installation, first); err != nil {
+	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.installation, first); err != nil {
 		t.Fatal(err)
 	}
 	retried, err := ListUserLinks(t.Context(), f.Pool, org, f.User, "", 50)
 	if err != nil || !retried[0].LinkedAt.Equal(links[0].LinkedAt) {
 		t.Fatal("retry renewed authority", err)
 	}
-	if err = LinkUser(t.Context(), f.Pool, audit.System("test-fixture"), org, f.User, f.installation, UserIdentity{TeamID: "team", SlackUserID: "other"}); !errors.Is(err, ErrUserLinkConflict) {
+	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.installation, UserIdentity{TeamID: "team", SlackUserID: "other"}); !errors.Is(err, ErrUserLinkConflict) {
 		t.Fatal("identity replaced without unlink", err)
 	}
 	delayed := f.reply(t, "delayed-before-unlink", false)
-	if err = UnlinkUser(t.Context(), f.Pool, audit.System("test-fixture"), org, f.User, "team", "human"); err != nil {
+	if err = UnlinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(f.User, "fixture"), org, f.User, "team", "human"); err != nil {
 		t.Fatal(err)
 	}
-	if err = LinkUser(t.Context(), f.Pool, audit.System("test-fixture"), org, f.User, f.installation, first); err != nil {
+	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.installation, first); err != nil {
 		t.Fatal(err)
 	}
-	if err = admitMessage(t.Context(), f.Pool, nil, f.admissionClient(t), delayed); err != nil {
+	if err = admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), delayed); err != nil {
 		t.Fatal(err)
 	}
 	var exact bool
 	if err = f.Pool.QueryRow(t.Context(), `SELECT a.status='accepted' AND a.user_id=$1 AND b.status='rejected' AND b.error='identity_unlinked' FROM slack_requests a,slack_requests b WHERE a.id=$2 AND b.id=$3`, f.User, accepted, delayed).Scan(&exact); err != nil || !exact {
 		t.Fatal("relink replayed gesture or erased accepted identity", err)
 	}
-	if err = UnlinkUser(t.Context(), f.Pool, audit.System("test-fixture"), org, f.User, "team", "other"); err != nil {
+	if err = UnlinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(f.User, "fixture"), org, f.User, "team", "other"); err != nil {
 		t.Fatal(err)
 	}
 	links, err = ListUserLinks(t.Context(), f.Pool, org, f.User, "", 50)
@@ -55,7 +56,7 @@ func TestSlackUserLinksNeverMergeAndPreserveHistoricalAdmissions(t *testing.T) {
 		t.Fatal("stale unlink removed replacement", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE org_id=$1 AND user_id=$2`, org, f.User)
-	if err = LinkUser(t.Context(), f.Pool, audit.System("test-fixture"), org, f.User, f.installation, first); !errors.Is(err, ErrUserLinkDenied) {
+	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.installation, first); !errors.Is(err, ErrUserLinkDenied) {
 		t.Fatal("disabled member linked", err)
 	}
 }
@@ -70,7 +71,7 @@ func TestSlackUserLinksCompetingUsersCannotStealIdentity(t *testing.T) {
 	for _, user := range []uuid.UUID{f.User, other} {
 		go func() {
 			<-ready
-			results <- LinkUser(t.Context(), f.Pool, audit.System("test-fixture"), org, user, f.installation, UserIdentity{TeamID: "team", SlackUserID: "human"})
+			results <- LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(user, "fixture"), org, user, f.installation, UserIdentity{TeamID: "team", SlackUserID: "human"})
 		}()
 	}
 	close(ready)

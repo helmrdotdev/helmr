@@ -3,6 +3,7 @@ package audit
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 )
 
@@ -86,7 +87,6 @@ type AccessSnapshot struct {
 	GrantID    string   `json:"grant_id,omitempty"`
 	AgentsMode string   `json:"agents_mode,omitempty"`
 	AgentIDs   []string `json:"agent_ids,omitempty"`
-	AgentKeys  []string `json:"agent_keys,omitempty"`
 	Revision   int64    `json:"revision,omitempty"`
 
 	MemberName      string   `json:"member_name,omitempty"`
@@ -109,13 +109,10 @@ type AccessSnapshot struct {
 	UserID          string   `json:"user_id,omitempty"`
 }
 type AccessChangeDetails struct {
-	CauseAgentID      string            `json:"cause_agent_id,omitempty"`
-	Reason            string            `json:"reason,omitempty"`
-	BeforeAssignments []*AccessSnapshot `json:"before_assignments,omitempty"`
-	AfterAssignments  []*AccessSnapshot `json:"after_assignments,omitempty"`
-	Before            *AccessSnapshot   `json:"before"`
-	After             *AccessSnapshot   `json:"after"`
-	AffectedGrantIDs  []string          `json:"affected_grant_ids,omitempty"`
+	CauseAgentID string          `json:"cause_agent_id,omitempty"`
+	Reason       string          `json:"reason,omitempty"`
+	Before       *AccessSnapshot `json:"before"`
+	After        *AccessSnapshot `json:"after"`
 }
 
 func (AccessChangeDetails) auditDetails() {}
@@ -139,8 +136,48 @@ type AgentChangeDetails struct {
 func (AgentChangeDetails) auditDetails() {}
 
 func marshalDetails(action string, details Details) ([]byte, error) {
+	if _, ok := Lookup(action); !ok {
+		return nil, fmt.Errorf("unknown audit action %s", action)
+	}
 	valid := false
 	switch action {
+	case "identity.sign_in", "identity.session_issued", "identity.session_revoked", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested":
+		d, ok := details.(AuthenticationDetails)
+		valid = ok && d.Method != "" && len(d.Method) <= 64 && len(d.Provider) <= 128 && len(d.Subject) <= 512
+	case "audit.searched":
+		d, ok := details.(SearchDetails)
+		valid = ok && !d.From.IsZero() && d.To.After(d.From) && d.ResultCount >= 0 && d.ResultCount <= 500
+	case "audit.retention_configured":
+		d, ok := details.(RetentionObservedDetails)
+		valid = ok && (auditpolicy.Policy{RetentionSeconds: d.RetentionSeconds}).Validate() == nil
+	case "audit.purge_completed":
+		d, ok := details.(PurgeDetails)
+		valid = ok && d.Count > 0 && !d.Cutoff.IsZero() && !d.MinExpiry.IsZero() && !d.MaxExpiry.Before(d.MinExpiry) && !d.MaxExpiry.After(d.Cutoff)
+	case "audit.restore_recorded":
+		d, ok := details.(RestoreDetails)
+		valid = ok && len(d.BackupReference) > 0 && len(d.BackupReference) <= 256 && !d.UnknownFrom.IsZero() && !d.UnknownTo.Before(d.UnknownFrom)
+	case "secret.exposed":
+		d, ok := details.(SecretExposureDetails)
+		valid = ok && d.ExposureID != (SecretExposureDetails{}).ExposureID && d.VersionID != (SecretExposureDetails{}).VersionID && d.RevocationGeneration >= 0
+	case "mcp.admitted":
+		d, ok := details.(MCPDetails)
+		valid = ok && (d.Tool == "list_agents" || d.Tool == "list_computers" || d.Tool == "spawn" || d.Tool == "start" || d.Tool == "inspect_turn" || d.Tool == "inspect_session" || d.Tool == "list_sessions" || d.Tool == "send_turn" || d.Tool == "interrupt_turn" || d.Tool == "interrupt_session" || d.Tool == "resume_session" || d.Tool == "close_session" || d.Tool == "cancel_session" || d.Tool == "enqueue")
+	case "region.created", "region.updated":
+		d, ok := details.(RegionDetails)
+		valid = ok && len(d.RegionID) > 0 && len(d.RegionID) <= 128
+	case "computer.retention_changed":
+		d, ok := details.(ComputerRetentionDetails)
+		valid = ok && (d.Before == nil || *d.Before > 0) && (d.After == nil || *d.After > 0)
+	case "computer.control_requested", "computer.control_settled":
+		d, ok := details.(ComputerControlDetails)
+		valid = ok && d.RequestID != (ComputerControlDetails{}).RequestID && (d.Kind == "wake" || d.Kind == "hibernate")
+	case "session.control_requested":
+		d, ok := details.(SessionControlDetails)
+		valid = ok && d.RequestID != (SessionControlDetails{}).RequestID && (d.Kind == "close" || d.Kind == "cancel" || d.Kind == "interrupt" || d.Kind == "turn_interrupt" || d.Kind == "resume")
+	case "trigger.content_read", "computer.restore_completed", "computer.checkpoint_published", "session.delivery_check_requested", "session.delivery_abandoned", "input.requested", "message.delivered", "message.rejected", "turn.interrupted", "computer.created", "command.cancel_requested", "message.admitted", "worker_group.updated", "template.refreshed", "session.created", "session.admitted", "session.closed", "session.cancelled", "session.resumed", "session.interrupted", "session.authority_changed", "session.content_read", "turn.admitted", "turn.completed", "turn.cancelled", "input.answered", "input.rejected", "command.admitted", "command.completed", "command.cancelled", "command.output_read":
+		d, ok := details.(LifecycleDetails)
+		valid = ok && d.Sequence >= 0 && d.Generation >= 0
+
 	case "slack_connection.disconnected":
 		if details == nil {
 			return []byte("{}"), nil

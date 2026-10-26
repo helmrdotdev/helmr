@@ -16,7 +16,7 @@ func TestComputerContinuationCapacityRejectionIsDefinitive(t *testing.T) {
 	for _, rejection := range []error{workergroup.ErrCapacityUnavailable, workergroup.ErrCapacityExhausted, workergroup.ErrCapacityIncompatible, computer.ErrExecutionLimit} {
 		t.Run(rejection.Error(), func(t *testing.T) {
 			response := httptest.NewRecorder()
-			(&Server{}).writeAgentComputerError(response, rejection)
+			(&Server{}).writeAgentComputerError(response, httptest.NewRequest(http.MethodPost, "/worker/v1/agent-computers/capture/begin", nil), rejection)
 			var body api.HTTPErrorResponse
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 				t.Fatal(err)

@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"time"
 	"uuid"
 
@@ -240,7 +242,7 @@ func CommitComputerRestore(ctx context.Context, pool db.TxBeginner, host workerg
 
 // CompleteComputerRestore admits business only after physical activation and
 // current durable controls are acknowledged for every retained process.
-func CompleteComputerRestore(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
+func CompleteComputerRestore(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, env uuid.UUID, p *agentv1.ComputerSessionInstallation, observed *agentv1.ComputerSessionReceipt) error {
 	identity, err := computerInstallationIdentity(p, false)
 	if err != nil {
 		return err
@@ -275,7 +277,10 @@ func CompleteComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if err = computer.ActivateRestoredLease(ctx, tx, env, r.Computer, int64(p.GetEnvelope().GetWriterGeneration())); err != nil {
 			return err
 		}
-		return computer.ReconcileCheckpointControls(ctx, tx, env, checkpoint)
+		if err := computer.ReconcileCheckpointControls(ctx, auditPolicy, tx, env, checkpoint); err != nil {
+			return err
+		}
+		return audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: audit.AssignedWorker(host.HostID, host.HostClaimVersion, "computer", r.Computer, int64(p.GetEnvelope().GetWriterGeneration())), EnvironmentID: env, ComputerID: r.Computer, TargetKind: "computer", TargetID: r.Computer, Action: "computer.restore_completed", Details: audit.LifecycleDetails{RequestID: checkpoint, Generation: int64(p.GetEnvelope().GetWriterGeneration())}})
 	}))
 }
 

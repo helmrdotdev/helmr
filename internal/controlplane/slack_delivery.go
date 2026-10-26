@@ -7,6 +7,7 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -19,32 +20,32 @@ func (s *Server) sessionSlackDelivery(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	principal := principalFromContext(r.Context())
 	sessionID, err := ids.Parse(chi.URLParam(r, "sessionID"))
 	if err != nil || sessionID == uuid.Nil() {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	if r.Method == http.MethodGet {
 		limit, err := agentPageLimit(r)
 		if err != nil {
-			s.writeAgentHTTPError(w, err)
+			s.writeAgentHTTPError(w, r, err)
 			return
 		}
 		var after int64
 		if cursor := r.URL.Query().Get("cursor"); cursor != "" {
 			after, err = strconv.ParseInt(cursor, 10, 64)
 			if err != nil || after < 0 {
-				s.writeAgentHTTPError(w, session.ErrInvalidInput)
+				s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 				return
 			}
 		}
-		rows, err := slack.ListSessionDelivery(r.Context(), s.tx, principal.OrgID, principal.UserID, environment, sessionID, after, limit)
+		rows, err := slack.ListSessionDelivery(r.Context(), s.auditPolicy, s.tx, principal, environment, sessionID, after, limit)
 		if err != nil {
-			s.writeSlackDeliveryError(w, err)
+			s.writeSlackDeliveryError(w, r, err)
 			return
 		}
 		page := map[string]any{"posts": rows}
@@ -60,7 +61,7 @@ func (s *Server) sessionSlackDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 	post, err := ids.Parse(chi.URLParam(r, "postID"))
 	if err != nil || post == uuid.Nil() {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	if chi.URLParam(r, "recovery") == "check" && s.slackConfig == nil {
@@ -72,22 +73,26 @@ func (s *Server) sessionSlackDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	err = slack.RecoverDelivery(r.Context(), s.tx, principal.OrgID, principal.UserID, environment, sessionID, post, input, chi.URLParam(r, "recovery"))
+	err = slack.RecoverDelivery(r.Context(), s.auditPolicy, s.tx, principal, environment, sessionID, post, input, chi.URLParam(r, "recovery"))
 	if err != nil {
-		s.writeSlackDeliveryError(w, err)
+		s.writeSlackDeliveryError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-func (s *Server) writeSlackDeliveryError(w http.ResponseWriter, err error) {
+func (s *Server) writeSlackDeliveryError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, audit.ErrCapture) {
+		s.writeOperationError(w, r, err)
+		return
+	}
 	switch {
 	case errors.Is(err, slack.ErrDeliveryUnavailable):
-		writeError(w, notFound(err))
+		s.writeOperationError(w, r, notFound(err))
 	case errors.Is(err, slack.ErrDeliveryChanged):
-		writeError(w, conflict(err))
+		s.writeOperationError(w, r, conflict(err))
 	case errors.Is(err, slack.ErrDeliveryCheckUnavailable):
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 	default:
-		s.writeSlackError(w, err)
+		s.writeSlackError(w, r, err)
 	}
 }

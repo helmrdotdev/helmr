@@ -3,6 +3,7 @@ package session_test
 import (
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"uuid"
@@ -25,7 +26,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID); !errors.Is(err, session.ErrMessageClosed) {
+	if _, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID); !errors.Is(err, session.ErrMessageClosed) {
 		t.Fatalf("unregistered: %v", err)
 	}
 	if err := session.RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
@@ -35,7 +36,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			r, err := session.RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
+			r, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 			if err != nil {
 				t.Error(err)
 			}
@@ -54,7 +55,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 		}
 	}
 	req.IdempotencyKey = "later"
-	later, err := session.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
+	later, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,33 +71,37 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	if err != nil || repeated == nil || repeated.ID != message.ID {
 		t.Fatalf("claim retry: %+v %v", repeated, err)
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	var rejected bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='rejected' AND rejection_reason='turn_closed' FROM turn_messages WHERE id=$1`, later.MessageID).Scan(&rejected); err != nil || !rejected {
 		t.Fatalf("unstarted message survived: %v %v", rejected, err)
 	}
-	if outcome, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil || outcome != nil {
+	if outcome, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil || outcome != nil {
 		t.Fatalf("started callback finalized: %s %v", outcome, err)
 	}
-	if err := session.CompleteRuntimeMessage(t.Context(), f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID, message.ID, "message_rejected"); err != nil {
+	if err := session.CompleteRuntimeMessage(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), attachment.Sequence, first.TurnID, message.ID, "message_rejected"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.RuntimeFinalize(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil {
+	if _, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil {
 		t.Fatal(err)
 	}
 	req.IdempotencyKey = "steer"
-	retried, err := session.RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
+	retried, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil || retried.MessageID != admitted.MessageID {
 		t.Fatalf("rejected steering fell back: %+v %v", retried, err)
 	}
 	req.Input = json.RawMessage(`[{"type":"text","text":"false"}]`)
-	if _, err := session.RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
+	if _, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed retry: %v", err)
 	}
 	req.IdempotencyKey = "new"
-	queued, err := session.RouteSlackInput(t.Context(), f.pool, nil, f.caller(), req)
+	queued, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil || queued.MessageID != uuid.Nil() || queued.TurnID == first.TurnID {
 		t.Fatalf("new send didn't queue: %+v %v", queued, err)
 	}
@@ -111,11 +116,11 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[]`)}
-	admitted, err := session.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
+	admitted, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	var rejected bool
@@ -123,12 +128,12 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 		t.Fatalf("cancel didn't reject: %v %v", rejected, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turn_messages SET message=NULL,payload_expired_at=clock_timestamp() WHERE id=$1`, admitted.MessageID)
-	repeated, err := session.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID)
+	repeated, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID)
 	if err != nil || repeated.MessageID != admitted.MessageID {
 		t.Fatalf("expired retry: %+v %v", repeated, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.user)
-	if _, err := session.SendTurn(t.Context(), f.pool, f.caller(), req, first.TurnID); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked retry: %v", err)
 	}
 }
@@ -142,29 +147,31 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 	if err := session.RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
 		t.Fatal(err)
 	}
 	runtime := session.Caller{Kind: "session", ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
 	for _, caller := range []session.Caller{f.caller()} {
 		req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}
-		exact, err := session.SendTurn(t.Context(), f.pool, caller, req, first.TurnID)
+		exact, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, req, first.TurnID)
 		if err != nil || exact.MessageID == uuid.Nil() {
 			t.Fatalf("closing exact %s: %+v %v", caller.Kind, exact, err)
 		}
-		routed, err := session.RouteSlackInput(t.Context(), f.pool, nil, caller, req)
+		routed, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
 		if err != nil || routed.MessageID == uuid.Nil() {
 			t.Fatalf("closing send %s: %+v %v", caller.Kind, routed, err)
 		}
-		if _, err := session.Enqueue(t.Context(), f.pool, nil, caller, req); err == nil {
+		if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); err == nil {
 			t.Fatalf("closing enqueue allowed: %s", caller.Kind)
 		}
 	}
-	if err := session.RuntimeCloseProcessing(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
+	if err := session.RuntimeCloseProcessing(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
 		t.Fatal(err)
 	}
 	for _, caller := range []session.Caller{f.caller(), runtime} {
-		if _, err := session.RouteSlackInput(t.Context(), f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}); err == nil {
+		if _, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}); err == nil {
 			t.Fatalf("closing send fell back: %s", caller.Kind)
 		}
 	}
@@ -202,7 +209,7 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: test.target.session, IdempotencyKey: test.name, Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}
-			first, err := session.SendTurn(t.Context(), f.pool, test.caller, req, turns[test.target.session])
+			first, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, test.caller, req, turns[test.target.session])
 			if !test.allowed {
 				if !errors.Is(err, session.ErrDenied) {
 					t.Fatalf("non-owned send: %v", err)
@@ -212,7 +219,7 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			replay, err := session.SendTurn(t.Context(), f.pool, test.caller, req, turns[test.target.session])
+			replay, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, test.caller, req, turns[test.target.session])
 			if err != nil || replay != first {
 				t.Fatalf("retry: %+v %v", replay, err)
 			}

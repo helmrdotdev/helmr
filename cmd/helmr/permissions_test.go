@@ -289,7 +289,7 @@ func TestPermissionCLIGrantPreviewUsesInspectedRoleRevision(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/role-grants/" + grant:
-			json.NewEncoder(w).Encode(map[string]any{"id": grant, "revision": 3, "role_revision": 8, "subject_kind": "group", "group_id": group, "group_name": "Team", "role_id": role, "role_name": "Tools", "project": "work", "environment": "production", "target_kind": "environment", "agents_mode": "selected", "agent_ids": []string{agent}, "agent_keys": []string{"invoice"}, "permissions": []string{"agents.use"}, "targets": []any{map[string]any{"resource_type": "agents", "mode": "selected", "permissions": []string{"agents.use"}}}})
+			json.NewEncoder(w).Encode(map[string]any{"id": grant, "revision": 3, "role_revision": 8, "subject_kind": "group", "group_id": group, "group_name": "Team", "role_id": role, "role_name": "Tools", "environment_id": env, "project": "work", "environment": "production", "target_kind": "environment", "agents_mode": "selected", "agent_ids": []string{agent}, "agent_keys": []string{"invoice"}, "permissions": []string{"agents.use"}, "targets": []any{map[string]any{"resource_type": "agents", "mode": "selected", "permissions": []string{"agents.use"}}}})
 		case "GET /api/roles/" + role:
 			// The Role changed after the assignment response was read.
 			json.NewEncoder(w).Encode(map[string]any{"id": role, "revision": 9, "name": "Tools", "permissions": []string{"agents.use", "sessions.send", "secrets.create"}})

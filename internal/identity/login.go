@@ -54,8 +54,8 @@ func (i ExternalIdentity) Verifies(email string) bool {
 // SignIn records the external identity, creating its user on first sign-in,
 // and issues a login session that selects no organization in one
 // transaction. It returns the raw session token.
-func SignIn(ctx context.Context, txb db.TxBeginner, cfg Config, external ExternalIdentity) (string, error) {
-	var rawSession string
+func SignIn(ctx context.Context, txb db.TxBeginner, cfg Config, external ExternalIdentity) (rawSession string, resultErr error) {
+	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Evidence: audit.Unauthenticated("failed", "provider_assertion"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		user, err := upsertExternalIdentity(ctx, tx, cfg, external)
 		if err != nil {
@@ -92,8 +92,8 @@ func ResolveInvitation(ctx context.Context, q db.Querier, cfg Config, rawToken s
 // invitationTokenHash for the external identity, which must verify the
 // invitee email, and issues a login session for the invitation's organization.
 // It returns the raw session token.
-func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, invitationTokenHash []byte, external ExternalIdentity) (string, error) {
-	var rawSession string
+func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, invitationTokenHash []byte, external ExternalIdentity) (rawSession string, resultErr error) {
+	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Evidence: audit.Unauthenticated("failed", "provider_assertion"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		invitation, err := org.PendingInvitationByTokenHash(ctx, q, invitationTokenHash)
@@ -118,8 +118,9 @@ func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, in
 
 // signedInUser is the user an identity upsert selected.
 type signedInUser struct {
-	actor audit.Actor
-	id    pgtype.UUID
+	actor          audit.Evidence
+	authentication audit.AuthenticationDetails
+	id             pgtype.UUID
 }
 
 func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external ExternalIdentity) (signedInUser, error) {
@@ -144,30 +145,29 @@ func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external
 		return signedInUser{}, fmt.Errorf("record auth identity: %w", err)
 	}
 	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, external.EmailVerified) {
-		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
+		if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
 			return signedInUser{}, err
 		}
 	}
-	return signedInUser{id: user.ID, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
+	return signedInUser{id: user.ID, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider), authentication: audit.AuthenticationDetails{Method: "provider", Provider: external.Provider, Subject: external.Subject}}, nil
 }
 
 // startLoginSession issues a login session for the authenticated user. With an
 // invitation, the user first joins its organization and the session selects
 // that organization.
 func startLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedInUser, displayName string, invitation *org.PendingInvitation) (string, error) {
-	q := db.New(tx)
 	orgID := pgtype.UUID{}
 	if invitation != nil {
 		userID, err := pgvalue.UUIDValue(user.id)
 		if err != nil {
 			return "", fmt.Errorf("user id: %w", err)
 		}
-		if err := AcceptInvitation(ctx, tx, user.actor, *invitation, userID, displayName); err != nil {
+		if err := AcceptInvitation(ctx, tx, cfg.auditPolicy, user.actor, *invitation, userID, displayName); err != nil {
 			return "", acceptanceError(err)
 		}
 		orgID = pgvalue.UUID(invitation.OrgID)
 	}
-	return issueLoginSession(ctx, q, cfg, user.id, orgID)
+	return issueLoginSession(ctx, tx, cfg, user, orgID)
 }
 
 // acceptanceError reports the org errors of invitation acceptance as the
@@ -185,7 +185,9 @@ func acceptanceError(err error) error {
 
 // issueLoginSession creates a login session for the user, selecting orgID when
 // it is valid, and returns its raw token.
-func issueLoginSession(ctx context.Context, q db.Querier, cfg Config, userID pgtype.UUID, orgID pgtype.UUID) (string, error) {
+func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedInUser, orgID pgtype.UUID) (string, error) {
+	q := db.New(tx)
+	sessionID := uuid.NewV7()
 	raw, err := auth.GenerateOpaque(loginSessionTokenBytes)
 	if err != nil {
 		return "", fmt.Errorf("generate login session: %w", err)
@@ -195,15 +197,33 @@ func issueLoginSession(ctx context.Context, q db.Querier, cfg Config, userID pgt
 		return "", fmt.Errorf("hash login session: %w", err)
 	}
 	if _, err := q.CreateLoginSession(ctx, db.CreateLoginSessionParams{
-		ID:        pgvalue.UUID(uuid.NewV7()),
+		ID:        pgvalue.UUID(sessionID),
 		OrgID:     orgID,
-		UserID:    userID,
+		UserID:    user.id,
 		TokenHash: hash,
 		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(cfg.lifetimes.Session)),
 	}); err != nil {
 		return "", fmt.Errorf("create login session: %w", err)
 	}
+	if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: user.actor, Action: "identity.sign_in", TargetKind: "login_session", TargetID: sessionID, Details: user.authentication}); err != nil {
+		return "", err
+	}
+	if err := appendSessionLifecycle(ctx, tx, cfg, user.actor, orgID, "identity.session_issued", sessionID, user.authentication); err != nil {
+		return "", err
+	}
 	return raw, nil
+}
+
+func appendSessionLifecycle(ctx context.Context, tx pgx.Tx, cfg Config, actor audit.Evidence, orgID pgtype.UUID, action string, id uuid.UUID, details audit.AuthenticationDetails) error {
+	event := audit.Event{Evidence: actor, Action: action, TargetKind: "login_session", TargetID: id, Details: details}
+	if err := audit.Append(ctx, tx, cfg.auditPolicy, event); err != nil {
+		return err
+	}
+	if orgID.Valid {
+		event.OrgID = pgvalue.MustUUIDValue(orgID)
+		return audit.Append(ctx, tx, cfg.auditPolicy, event)
+	}
+	return nil
 }
 
 // AuthenticateLoginSession resolves a raw login session token to its
@@ -265,7 +285,7 @@ func AuthenticateLoginSession(ctx context.Context, database db.DBTX, cfg Config,
 
 // RevokeLoginSession revokes the login session with the raw token. An empty,
 // unknown or already revoked token revokes nothing.
-func RevokeLoginSession(ctx context.Context, q db.Querier, cfg Config, rawSession string) error {
+func RevokeLoginSession(ctx context.Context, database db.TxBeginner, cfg Config, rawSession string) error {
 	tokenHash, err := auth.HashToken(cfg.sessionKey, rawSession)
 	if errors.Is(err, auth.ErrUnauthenticated) {
 		return nil
@@ -273,8 +293,18 @@ func RevokeLoginSession(ctx context.Context, q db.Querier, cfg Config, rawSessio
 	if err != nil {
 		return err
 	}
-	if _, err := q.RevokeLoginSessionByTokenHash(ctx, tokenHash); err != nil {
-		return fmt.Errorf("revoke login session: %w", err)
-	}
-	return nil
+	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		var id, user uuid.UUID
+		var orgID pgtype.UUID
+		err := tx.QueryRow(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE token_hash=$1 AND revoked_at IS NULL RETURNING id,user_id,org_id`, tokenHash).Scan(&id, &user, &orgID)
+		if isNoRows(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		actor := audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: id})
+		actor.Authorization = audit.NotEvaluated()
+		return appendSessionLifecycle(ctx, tx, cfg, actor, orgID, "identity.session_revoked", id, audit.AuthenticationDetails{Method: "logout"})
+	})
 }

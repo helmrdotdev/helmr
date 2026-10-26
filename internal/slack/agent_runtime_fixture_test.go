@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -31,7 +32,9 @@ func dispatchRuntimeTurn(ctx context.Context, pool db.TxBeginner, e session.Exec
 		}
 		sequence = a.Sequence
 	}
-	dispatch, err := session.DispatchRuntimeTurn(ctx, pool, host, e, sequence, fixtureConversationVerifier(true))
+	dispatch, err := session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, pool, host, e, sequence, fixtureConversationVerifier(true))
 	if err != nil {
 		return session.TurnDispatch{}, err
 	}

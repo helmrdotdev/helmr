@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	f, a, id, _ := askFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=60 WHERE id=(SELECT project_id FROM environments WHERE id=(SELECT environment_id FROM sessions WHERE id=$1))`, f.session)
 	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "answer", Answer: json.RawMessage(`""`)}
-	if _, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.RuntimeRespond(t.Context(), f.pool, *f.host(), f.execution(), a.TurnID, uuid.NewV7(), json.RawMessage(`[{"type":"text","text":"response"}]`)); err != nil {
@@ -48,7 +49,7 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	if historyClock(t, f) != nil {
 		t.Fatal("open Session started clock")
 	}
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='lost' WHERE session_id=$1`, f.session)
@@ -66,34 +67,34 @@ func TestHistoryRetentionClockPurgeAndReplay(t *testing.T) {
 	if got := historyClock(t, f); got == nil || !got.Equal(*first) {
 		t.Fatal("clock moved")
 	}
-	view, err := session.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
+	view, err := session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session, a.TurnID)
 	if err != nil || view.Input == nil || view.PayloadExpiredAt != nil {
 		t.Fatalf("premature expiry: %+v %v", view, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET history_eligible_at=statement_timestamp()-interval '2 minutes' WHERE id=$1`, f.session)
 	reconcileHistory(t, f)
 	reconcileHistory(t, f)
-	view, err = session.GetTurn(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID)
+	view, err = session.GetTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session, a.TurnID)
 	if err != nil || view.Input != nil || view.Result != nil || view.Response != nil || view.PayloadExpiredAt == nil || view.TerminalAt == nil || view.Status != "cancelled" {
 		t.Fatalf("expired Turn: %+v %v", view, err)
 	}
-	answer, err := session.GetAsk(t.Context(), f.pool, f.caller(), f.env, f.session, a.TurnID, id)
+	answer, err := session.GetAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session, a.TurnID, id)
 	if err != nil || answer.Question != nil || answer.Answer != nil || answer.PayloadExpiredAt == nil || answer.AnsweredByUserID == nil {
 		t.Fatalf("expired answer: %+v %v", answer, err)
 	}
-	replay, err := session.AnswerAsk(t.Context(), f.pool, f.caller(), req)
+	replay, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
 	if err != nil || replay.PayloadExpiredAt == nil {
 		t.Fatalf("answer replay: %+v %v", replay, err)
 	}
 	if retry := f.enqueue(t, "ask"); retry.TurnID != a.TurnID {
 		t.Fatal("admission retry changed")
 	}
-	_, err = session.ListEvents(t.Context(), f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 100})
+	_, err = session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 100})
 	var expired *session.CursorExpired
 	if !errors.As(err, &expired) || expired.RetainedAfter == 0 {
 		t.Fatalf("cursor floor: %v", err)
 	}
-	page, err := session.ListEvents(t.Context(), f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 100, After: expired.RetainedAfter})
+	page, err := session.ListEvents(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.TurnListRequest{EnvironmentID: f.env, SessionID: f.session, Limit: 100, After: expired.RetainedAfter})
 	if err != nil || len(page.Records) != 0 {
 		t.Fatalf("expired event read: %+v %v", page, err)
 	}
@@ -106,7 +107,7 @@ func TestHistoryRetentionPendingSaveAndNever(t *testing.T) {
 	f := newFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=NULL WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
 	_, save := f.finalize(t, "save")
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -169,7 +170,7 @@ func TestHistoryRetentionKeysetPassesObligatedPrefix(t *testing.T) {
 func TestHistoryRetentionMaximumDurationIsExact(t *testing.T) {
 	f := newFixture(t)
 	f.enqueue(t, "max-duration")
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -188,7 +189,7 @@ func TestHistoryRetentionMaximumDurationIsExact(t *testing.T) {
 func TestHistoryRetentionRollsBackWhenSlackPurgeFails(t *testing.T) {
 	f := newFixture(t)
 	turn := f.enqueue(t, "retention-rollback")
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -217,7 +218,7 @@ func TestHistoryRetentionCurrentProjectPolicy(t *testing.T) {
 	f := newFixture(t)
 	turn := f.enqueue(t, "current-policy")
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE projects SET history_retention_seconds=NULL WHERE id=(SELECT project_id FROM environments WHERE id=$1)`, f.env)
-	if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 		t.Fatal(err)
 	}
 	fenceHistoryProcess(t, f)
@@ -229,7 +230,7 @@ func TestHistoryRetentionCurrentProjectPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	memberID := dbtest.GrantMember(t, f.pool, orgID, f.user, nil, "projects.update_retention")
-	manager := org.ManagingMember{OrgID: orgID, UserID: f.user, MemberID: memberID, Actor: audit.System("test")}
+	manager := org.ManagingMember{OrgID: orgID, UserID: f.user, MemberID: memberID, Actor: audit.VerifiedLogin(f.user, "fixture"), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
 	for _, seconds := range []*int64{nil, ptrInt64(3 * 86400), nil, ptrInt64(86400)} {
 		if err := org.UpdateProjectHistoryRetention(t.Context(), f.pool, manager, projectID, seconds); err != nil {
 			t.Fatal(err)
@@ -266,7 +267,7 @@ func TestHistoryRetentionWaitsForProtectivePolicyUpdate(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			f := newFixture(t)
 			turn := f.enqueue(t, "policy-race")
-			if _, err := session.ControlSession(t.Context(), f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "cancel", IdempotencyKey: "stop"}); err != nil {
 				t.Fatal(err)
 			}
 			fenceHistoryProcess(t, f)

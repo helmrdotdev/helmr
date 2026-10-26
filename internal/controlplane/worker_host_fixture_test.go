@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -54,7 +55,9 @@ func newPostgresServer(t *testing.T, pool *pgxpool.Pool, configure ...func(*Serv
 	cfg.DB = queries
 	cfg.TX = pool
 	cfg.DiagnosticDB = pool
-	allocator, err := dispatch.NewAllocator(pool, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,19 +73,16 @@ func newPostgresServer(t *testing.T, pool *pgxpool.Pool, configure ...func(*Serv
 	return handler
 }
 
-// seededHostSecret is a host secret for a worker host that a test seeded
-// directly in the database, bound to the service that holds its current
-// epoch.
+// Feature fixtures pace ordinary authenticated requests. Worker polling has its
+// own lifecycle and must retain its real concurrency. Limit tests use raw handlers.
+
+// seededHostSecret identifies a fixture host secret and its current service.
 type seededHostSecret struct {
 	hostID    uuid.UUID
 	secret    string
 	serviceID uuid.UUID
 }
 
-// seedHostSecret gives a seeded worker host a host secret keyed like
-// completeServerConfig, revoking its other host secrets, and binds the host's
-// current epoch to a service so that exchanging the secret keeps that epoch.
-// The host secret's key prefix is the whole secret, which keeps it unique.
 func seedHostSecret(t *testing.T, pool *pgxpool.Pool, hostID uuid.UUID) seededHostSecret {
 	t.Helper()
 	keys, err := auth.NewKeys(testAuthRootKey())

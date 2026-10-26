@@ -29,7 +29,7 @@ func (server *Server) workerAgentMessage(w http.ResponseWriter, r *http.Request)
 	}
 	next, err := session.ClaimRuntimeMessage(r.Context(), server.tx, host, e, request.AttachmentSequence, turn, verifier)
 	if err != nil {
-		server.writeAgentWorkerError(w, err)
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	var response *workerapi.AgentMessageDispatch
@@ -52,8 +52,8 @@ func (server *Server) workerAgentMessageReceipt(w http.ResponseWriter, r *http.R
 		writeError(w, badRequest(errors.New("invalid message receipt identity")))
 		return
 	}
-	if err := session.CompleteRuntimeMessage(r.Context(), server.tx, host, e, request.AttachmentSequence, turn, id, request.RejectionReason); err != nil {
-		server.writeAgentWorkerError(w, err)
+	if err := session.CompleteRuntimeMessage(r.Context(), server.auditPolicy, server.tx, host, e, request.AttachmentSequence, turn, id, request.RejectionReason); err != nil {
+		server.writeAgentWorkerError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, nil)

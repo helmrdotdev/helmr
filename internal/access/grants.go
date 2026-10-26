@@ -11,7 +11,7 @@ import (
 // grantPermissionsSQL expands current Role permissions without copying the
 // catalog's resource classification into the database schema.
 const grantPermissionsSQL = `SELECT g.id,g.org_id,g.role_id,g.member_id,g.group_id,g.api_key_id,g.all_members,g.environment_id,
- a.agent_id,p.permission
+ a.agent_id,p.permission,g.revision AS grant_revision,r.revision AS role_revision
  FROM role_grants g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
  CROSS JOIN LATERAL unnest(r.permissions) p(permission)
  LEFT JOIN role_grant_agents a ON a.grant_id=g.id
@@ -40,7 +40,7 @@ type MemberGrant struct {
 func MemberGrants(ctx context.Context, database db.DBTX, org, member uuid.UUID) ([]MemberGrant, error) {
 	rows, err := database.Query(ctx, `SELECT DISTINCT g.permission,COALESCE(e.project_id::text,''),
  COALESCE(g.environment_id::text,''),COALESCE(g.agent_id::text,''),
- COALESCE(p.slug,''),COALESCE(e.slug,''),COALESCE(a.key,'')
+ COALESCE(p.slug,''),COALESCE(e.slug,''),COALESCE(a.key,''),g.id::text,g.grant_revision,g.role_id::text,g.role_revision,COALESCE(g.group_id::text,''),CASE WHEN g.all_members THEN 'all_members' WHEN g.member_id IS NOT NULL THEN 'member' ELSE 'group' END
  FROM (`+MemberPermissionGrantsSQL+`) g
  LEFT JOIN environments e ON e.id=g.environment_id LEFT JOIN projects p ON p.id=e.project_id
  LEFT JOIN agents a ON (a.environment_id,a.id)=(g.environment_id,g.agent_id)
@@ -52,7 +52,7 @@ func MemberGrants(ctx context.Context, database db.DBTX, org, member uuid.UUID) 
 	grants := []MemberGrant{}
 	for rows.Next() {
 		var g MemberGrant
-		if err := rows.Scan(&g.Permission, &g.ProjectID, &g.EnvironmentID, &g.AgentID, &g.ProjectSlug, &g.EnvironmentSlug, &g.AgentKey); err != nil {
+		if err := rows.Scan(&g.Permission, &g.ProjectID, &g.EnvironmentID, &g.AgentID, &g.ProjectSlug, &g.EnvironmentSlug, &g.AgentKey, &g.AssignmentID, &g.AssignmentRevision, &g.RoleID, &g.RoleRevision, &g.GroupID, &g.Subject); err != nil {
 			return nil, err
 		}
 		grants = append(grants, g)
@@ -63,7 +63,7 @@ func MemberGrants(ctx context.Context, database db.DBTX, org, member uuid.UUID) 
 // APIKeyGrants reads only this valid key's assignments. Human audiences never
 // apply to machines; eligibility is enforced when policy is written.
 func APIKeyGrants(ctx context.Context, database db.DBTX, org, key uuid.UUID) ([]auth.PermissionGrant, error) {
-	rows, err := database.Query(ctx, `SELECT DISTINCT g.permission,e.project_id::text,g.environment_id::text,COALESCE(g.agent_id::text,'')
+	rows, err := database.Query(ctx, `SELECT DISTINCT g.permission,e.project_id::text,g.environment_id::text,COALESCE(g.agent_id::text,''),g.id::text,g.grant_revision,g.role_id::text,g.role_revision
  FROM (`+grantPermissionsSQL+`) g
  JOIN api_keys k ON (k.org_id,k.environment_id,k.id)=(g.org_id,g.environment_id,g.api_key_id)
  JOIN environments e ON e.id=g.environment_id
@@ -76,7 +76,8 @@ func APIKeyGrants(ctx context.Context, database db.DBTX, org, key uuid.UUID) ([]
 	grants := []auth.PermissionGrant{}
 	for rows.Next() {
 		var g auth.PermissionGrant
-		if err := rows.Scan(&g.Permission, &g.ProjectID, &g.EnvironmentID, &g.AgentID); err != nil {
+		g.Subject = "api_key"
+		if err := rows.Scan(&g.Permission, &g.ProjectID, &g.EnvironmentID, &g.AgentID, &g.AssignmentID, &g.AssignmentRevision, &g.RoleID, &g.RoleRevision); err != nil {
 			return nil, err
 		}
 		grants = append(grants, g)

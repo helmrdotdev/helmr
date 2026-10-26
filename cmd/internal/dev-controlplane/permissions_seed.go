@@ -3,14 +3,15 @@ package main
 import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/jackc/pgx/v5"
 )
 
 // Permission fixtures contain people and policy only. Agent registrations have
 // no deployment or executable bundle and cannot create Worker demand.
-func seedPermissionData(ctx context.Context, tx pgx.Tx) error {
-	if err := org.SeedStandardRoles(ctx, tx, mustUUID("00000000-0000-7000-8000-000000000201"), audit.System("local-development")); err != nil {
+func seedPermissionData(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy) error {
+	if err := org.SeedStandardRoles(ctx, tx, policy, mustUUID("00000000-0000-7000-8000-000000000201"), audit.Internal(audit.Development)); err != nil {
 		return err
 	}
 	_, err := tx.Exec(ctx, permissionSeedSQL)

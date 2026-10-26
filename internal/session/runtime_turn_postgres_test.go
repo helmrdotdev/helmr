@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"time"
 
@@ -30,7 +31,9 @@ func TestRuntimeTurnRechecksLeaseAfterProcessLock(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := session.DispatchRuntimeTurn(t.Context(), f.pool, *f.host(), f.execution(), a.Sequence, nil)
+		_, err := session.DispatchRuntimeTurn(t.Context(), auditpolicy.Policy{
+			RetentionSeconds: 3600,
+		}, f.pool, *f.host(), f.execution(), a.Sequence, nil)
 		done <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)

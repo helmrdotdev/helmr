@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -358,7 +359,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatalf("SDK HTTP composition: %v\n%s", err, output)
 	}
 	t.Run("exact Turn interrupt across public clients", func(t *testing.T) {
-		a, err := session.Enqueue(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
+		a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -375,7 +376,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 				t.Fatalf("queued rejection details: %s %v", raw, err)
 			}
 		}
-		e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1}
+		e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 		if _, err := dispatchRuntimeTurn(t, f.Pool, e); err != nil {
 			t.Fatal(err)
 		}
@@ -479,7 +480,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 func TestAgentHTTPTransientFailure(t *testing.T) {
 	server := &Server{log: discardTestLogger()}
 	response := httptest.NewRecorder()
-	server.writeAgentHTTPError(response, errors.New("connection lost with private details"))
+	server.writeAgentHTTPError(response, httptest.NewRequest(http.MethodPost, "/v1/sessions", nil), errors.New("connection lost with private details"))
 	var body api.HTTPErrorResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != http.StatusServiceUnavailable || body.Error.Code != "service_unavailable" || body.Error.Message == "connection lost with private details" {
 		t.Fatalf("transient failure: %d %s (%v)", response.Code, response.Body.String(), err)

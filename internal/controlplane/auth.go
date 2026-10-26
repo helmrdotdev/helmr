@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -30,12 +31,21 @@ func (s *Server) requireAPIKeyWithErrorWriter(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := bearerToken(r.Header.Get("authorization"))
 		if !ok || !strings.HasPrefix(strings.TrimSpace(token), auth.APIKeyPrefix) {
+			if presentedCredential(r) && !s.refuseOperation(w, r, "authentication_invalid") {
+				return
+			}
 			writeAuthError(w, s.log, auth.ErrUnauthenticated)
 			return
 		}
 		principal, err := s.apiKeyPrincipal(r, token)
 		if err != nil {
+			if presentedCredential(r) && !s.refuseOperation(w, r, "authentication_invalid") {
+				return
+			}
 			writeAuthError(w, s.log, err)
+			return
+		}
+		if !s.admitPrincipal(w, r, principal) {
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
@@ -74,6 +84,10 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !principalFromContext(r.Context()).Admin {
+			evidence, _ := audit.InstallationOperator(principalFromContext(r.Context()))
+			if !s.refuseOperation(w, r, "installation_authority_required", &audit.Refusal{Authorization: evidence.Authorization, Cause: errors.New("administrator access is required")}) {
+				return
+			}
 			writeError(w, forbidden(errors.New("administrator access is required")))
 			return
 		}
@@ -89,12 +103,21 @@ func (s *Server) requireSessionWithErrorWriter(
 		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
 			token = strings.TrimSpace(token)
 			if strings.HasPrefix(token, auth.APIKeyPrefix) || !looksLikeSessionBearerToken(token) {
+				if presentedCredential(r) && !s.refuseOperation(w, r, "authentication_invalid") {
+					return
+				}
 				writeAuthError(w, s.log, auth.ErrUnauthenticated)
 				return
 			}
 			principal, err := s.sessionPrincipalFromToken(r, token)
 			if err != nil {
+				if presentedCredential(r) && !s.refuseOperation(w, r, "authentication_invalid") {
+					return
+				}
 				writeAuthError(w, s.log, err)
+				return
+			}
+			if !s.admitPrincipal(w, r, principal) {
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
@@ -103,7 +126,13 @@ func (s *Server) requireSessionWithErrorWriter(
 		principal, rawSession, err := s.sessionPrincipal(r)
 		if err != nil {
 			clearSessionCookie(w, r)
+			if presentedCredential(r) && !s.refuseOperation(w, r, "authentication_invalid") {
+				return
+			}
 			writeAuthError(w, s.log, err)
+			return
+		}
+		if !s.admitPrincipal(w, r, principal) {
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
@@ -138,11 +167,11 @@ func (s *Server) requireSessionPermission(permission auth.Permission, next http.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal := principalFromContext(r.Context())
 		if principal.MemberID == uuid.Nil() {
-			writeError(w, forbidden(errors.New("organization is required")))
+			s.writeOperationError(w, r, forbidden(errors.New("organization is required")))
 			return
 		}
 		scope := auth.Scope{OrgID: principal.OrgID}
-		if !auth.IsOrganizationPermission(permission) {
+		if !auth.SupportsScope(permission, auth.ScopeOrganization) {
 			resolved, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 			if err != nil {
 				writeError(w, err)
@@ -150,8 +179,8 @@ func (s *Server) requireSessionPermission(permission auth.Permission, next http.
 			}
 			scope = resolved
 		}
-		if !principal.HasPermission(permission, scope) {
-			writeError(w, forbidden(errors.New("permission is required")))
+		if err := auth.Require(principal, permission, scope, errors.New("permission is required")); err != nil {
+			s.writeOperationError(w, r, forbidden(err))
 			return
 		}
 		next.ServeHTTP(w, r)

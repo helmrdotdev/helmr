@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
@@ -142,11 +143,11 @@ func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel
 // Slack when the request names a channel or the runtime caller's root has a
 // Slack route. The opening post is prepared outside the transaction; the
 // thread, its membership and the opening post commit with the Session.
-func Start(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, preflight slackroute.StartPreflight, caller session.Caller, req session.StartRequest) (session.Admission, error) {
+func Start(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, trust computer.TrustIssuer, preflight slackroute.StartPreflight, caller session.Caller, req session.StartRequest) (session.Admission, error) {
 	if req.SlackChannelID == nil && caller.Kind != "session" {
-		return session.Start(ctx, pool, trust, caller, req)
+		return session.Start(ctx, auditPolicy, pool, trust, caller, req)
 	}
-	plan, err := session.PlanStart(caller, req, "create")
+	plan, err := session.PlanStart(auditPolicy, caller, req, "create")
 	if err != nil {
 		return session.Admission{}, err
 	}
@@ -198,7 +199,7 @@ func Start(ctx context.Context, pool db.TxBeginner, trust computer.TrustIssuer, 
 		return session.Admission{}, session.StartError(err)
 	}
 	if route == nil {
-		return session.Start(ctx, pool, trust, caller, req)
+		return session.Start(ctx, auditPolicy, pool, trust, caller, req)
 	}
 	if preflight == nil {
 		return session.Admission{}, slackroute.ErrChannelUnavailable

@@ -3,6 +3,8 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"time"
 	"uuid"
@@ -19,7 +21,7 @@ type TurnError struct {
 
 // RuntimeFail settles an application exception only after native convergence.
 // Retained terminal receipts remain observable without admitting fresh work.
-func RuntimeFail(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn uuid.UUID, failure TurnError, evidence string) (json.RawMessage, error) {
+func RuntimeFail(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, turn uuid.UUID, failure TurnError, evidence string) (json.RawMessage, error) {
 	if failure.Code == "" || evidence == "" || strings.ContainsRune(failure.Code+evidence, 0) {
 		return nil, ErrInvalidInput
 	}
@@ -50,7 +52,7 @@ func RuntimeFail(ctx context.Context, pool db.TxBeginner, host workergroup.HostP
 		if status != "running" || closed == nil {
 			return ErrNotReady
 		}
-		if err := expireSessionDeadlineTx(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
+		if err := expireSessionDeadlineTx(ctx, auditPolicy, tx, e.EnvironmentID, e.SessionID); err != nil {
 			return err
 		}
 		if err := tx.QueryRow(ctx, `SELECT status FROM turns WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, turn).Scan(&status); err != nil {
@@ -70,13 +72,16 @@ func RuntimeFail(ctx context.Context, pool db.TxBeginner, host workergroup.HostP
 		if _, err := tx.Exec(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),error_code=$3,error_message=$4,drain_evidence=$5 WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, turn, failure.Code, []byte(failure.Message), evidence); err != nil {
 			return err
 		}
-		if err := cancelTurnAsks(ctx, tx, e.EnvironmentID, e.SessionID, turn); err != nil {
+		if err := cancelTurnAsks(ctx, auditPolicy, tx, e.EnvironmentID, e.SessionID, turn); err != nil {
 			return err
 		}
-		if err := rejectTurnMessages(ctx, tx, e.EnvironmentID, e.SessionID, turn, true, "turn_terminated"); err != nil {
+		if err := rejectTurnMessages(ctx, auditPolicy, tx, e.EnvironmentID, e.SessionID, turn, true, "turn_terminated"); err != nil {
 			return err
 		}
 		if err := event(ctx, tx, e.EnvironmentID, e.SessionID, turn, "turn.failed"); err != nil {
+			return err
+		}
+		if err = auditRuntimeEvent(ctx, tx, auditPolicy, e, turn, "turn.failed", "failed", audit.FailureDetails{Reason: "operation_failed"}); err != nil {
 			return err
 		}
 		outcome, err = runtimeTurnOutcome("failed", nil, &failure.Code, []byte(failure.Message), nil)

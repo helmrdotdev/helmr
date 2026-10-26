@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"uuid"
 
@@ -68,7 +69,7 @@ func GetGroup(ctx context.Context, q db.Querier, groupID uuid.UUID) (db.WorkerGr
 
 // CreateGroup creates an active worker group with a new enrollment token in an
 // existing region, serialized with other creators in that region.
-func CreateGroup(ctx context.Context, txb db.TxBeginner, actor audit.Actor, input GroupInput) (CreatedGroup, error) {
+func CreateGroup(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, input GroupInput) (CreatedGroup, error) {
 	if err := region.ValidateID(input.RegionID); err != nil {
 		return CreatedGroup{}, InputError{message: err.Error()}
 	}
@@ -99,7 +100,7 @@ func CreateGroup(ctx context.Context, txb db.TxBeginner, actor audit.Actor, inpu
 		if err != nil {
 			return fmt.Errorf("create worker group: %w", err)
 		}
-		if err := audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_group.created", TargetKind: "worker_group", TargetID: pgvalue.MustUUIDValue(created.ID)}); err != nil {
 			return err
 		}
 		return nil
@@ -126,7 +127,7 @@ func UpdateGroupDescription(ctx context.Context, q db.Querier, groupID uuid.UUID
 
 // RotateGroupToken replaces a worker group's enrollment token and returns the
 // new raw token.
-func RotateGroupToken(ctx context.Context, database db.TxBeginner, actor audit.Actor, groupID uuid.UUID) (string, error) {
+func RotateGroupToken(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, groupID uuid.UUID) (string, error) {
 	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		return "", err
@@ -142,7 +143,7 @@ func RotateGroupToken(ctx context.Context, database db.TxBeginner, actor audit.A
 		if err != nil {
 			return fmt.Errorf("rotate worker group token: %w", err)
 		}
-		return audit.Append(ctx, tx, audit.Event{Actor: actor, Action: "worker_group.token_rotated", TargetKind: "worker_group", TargetID: groupID})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_group.token_rotated", TargetKind: "worker_group", TargetID: groupID})
 	})
 	if err != nil {
 		return "", err

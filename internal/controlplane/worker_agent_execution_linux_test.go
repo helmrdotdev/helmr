@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1155,11 +1156,11 @@ func seedNativeExecution(t *testing.T, pool *pgxpool.Pool, extraPermissions ...a
 	if err != nil {
 		t.Fatal(err)
 	}
-	group, err := workergroup.CreateGroup(t.Context(), pool, audit.System("test-fixture"), workergroup.GroupInput{RegionID: "native-proof", Name: "native-proof"})
+	group, err := workergroup.CreateGroup(t.Context(), pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), workergroup.GroupInput{RegionID: "native-proof", Name: "native-proof"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := workergroup.CreatePool(t.Context(), pool, audit.System("test-fixture"), pgvalue.MustUUIDValue(group.Group.ID), "native-proof", group.Group.ClaimVersion); err != nil {
+	if _, _, err := workergroup.CreatePool(t.Context(), pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), pgvalue.MustUUIDValue(group.Group.ID), "native-proof", group.Group.ClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	return env, issued.Raw, group.EnrollmentToken

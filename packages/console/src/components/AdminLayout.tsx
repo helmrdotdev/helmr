@@ -5,6 +5,7 @@ import { ui } from "../ui/styles";
 import { AppBar } from "./AppBar";
 
 const ADMIN_NAV = [
+  { href: "/admin/audit-events", label: "Audit events" },
   { href: "/admin/worker-groups", label: "Worker groups" },
   { href: "/admin/regions", label: "Regions" },
 ];

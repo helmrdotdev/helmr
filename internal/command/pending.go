@@ -2,6 +2,8 @@ package command
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -29,11 +31,11 @@ type Failure struct {
 // candidate that was bound after discovery locks that Instance before it is
 // rejected. A Command that is missing, changed revision or is no longer
 // pending and unbound returns ErrChanged.
-func FailPending(ctx context.Context, tx pgx.Tx, pending Pending, failure Failure) error {
-	return changed(failPending(ctx, tx, pending, failure))
+func FailPending(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, pending Pending, failure Failure) error {
+	return changed(failPending(ctx, auditPolicy, tx, pending, failure))
 }
 
-func failPending(ctx context.Context, tx pgx.Tx, pending Pending, failure Failure) error {
+func failPending(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, pending Pending, failure Failure) error {
 	q := db.New(tx)
 	commandID := pgvalue.UUID(pending.CommandID)
 	target, err := q.GetCommandTarget(ctx, db.GetCommandTargetParams{EnvironmentID: pgvalue.UUID(pending.EnvironmentID), CommandID: commandID})
@@ -56,5 +58,8 @@ func failPending(ctx context.Context, tx pgx.Tx, pending Pending, failure Failur
 	_, err = tx.Exec(ctx, `UPDATE commands SET status='failed',failure_reason='dispatch_failed',error=$3,
  terminal_at=clock_timestamp(),terminal_reason_code=$4,result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
  WHERE environment_id=$1 AND id=$2`, target.EnvironmentID, commandID, failure.Detail, failure.Code)
-	return err
+	if err != nil {
+		return err
+	}
+	return auditServiceFailure(ctx, tx, auditPolicy, command, audit.ControlPlane, "failed", "delivery_failed")
 }

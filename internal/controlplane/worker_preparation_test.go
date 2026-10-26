@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/audit"
+
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
@@ -130,11 +131,11 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 		for _, kind := range []string{"env", "file"} {
 			t.Run(transition+"/"+kind, func(t *testing.T) {
 				f, request := preparationTransportFixture(t)
-				secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+				secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 				if err != nil {
 					t.Fatal(err)
 				}
-				record, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "BUILD_TOKEN", []byte("first"), "create")
+				record, err := secrets.Create(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, "BUILD_TOKEN", []byte("first"), "create")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -161,7 +162,7 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 					t.Fatal("file placement lost")
 				}
 				clear(first.Secrets[0].Value)
-				if _, err := secrets.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, secretID, []byte("second"), "rotate"); err != nil {
+				if _, err := secrets.Rotate(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, []byte("second"), "rotate"); err != nil {
 					t.Fatal(err)
 				}
 				replay, err := client.PreparationSecrets(t.Context(), request)
@@ -176,7 +177,7 @@ func TestWorkerPreparationSecretsPinBeforeOpeningAndRecheck(t *testing.T) {
 					case "seal":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_builds SET logical_bytes=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, request.Identity.OwnerID, disk.SeedCapacity)
 					case "revocation":
-						if _, err := secrets.Revoke(t.Context(), audit.System("test-fixture"), f.Environment, secretID, "revoke"); err != nil {
+						if _, err := secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, "revoke"); err != nil {
 							t.Error(err)
 						}
 					}
@@ -382,11 +383,11 @@ func TestSeedOnlyPreparationPinsBindingsWithoutSecretDelivery(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE image_specs SET spec=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, string(specRaw))
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET bundle_digest=$3 WHERE environment_id=$1 AND id=$2`, f.Environment, f.Deployment, digest)
-	secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32))
+	secrets, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	record, err := secrets.Create(t.Context(), audit.System("test-fixture"), f.Environment, "BUILD_TOKEN", []byte("first"), "create")
+	record, err := secrets.Create(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, "BUILD_TOKEN", []byte("first"), "create")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +411,7 @@ func TestSeedOnlyPreparationPinsBindingsWithoutSecretDelivery(t *testing.T) {
 		return version
 	}
 	pinned := readVersion()
-	if _, err := secrets.Rotate(t.Context(), audit.System("test-fixture"), f.Environment, secretID, []byte("second"), "rotate"); err != nil {
+	if _, err := secrets.Rotate(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, []byte("second"), "rotate"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.PreparationStart(t.Context(), request); err != nil {
@@ -423,7 +424,7 @@ func TestSeedOnlyPreparationPinsBindingsWithoutSecretDelivery(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT current_version_id::text=$3 FROM secrets WHERE environment_id=$1 AND id=$2`, f.Environment, secretID, pinned).Scan(&current); err != nil || current {
 		t.Fatalf("rotation did not invalidate binding version: %v", err)
 	}
-	if _, err := secrets.Revoke(t.Context(), audit.System("test-fixture"), f.Environment, secretID, "revoke"); err != nil {
+	if _, err := secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, "revoke"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.PreparationStart(t.Context(), request); err == nil {

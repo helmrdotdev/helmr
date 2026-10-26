@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"io"
 	"log/slog"
@@ -50,7 +51,9 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allocator, err := dispatch.NewAllocator(panicDatabase{}, make([]byte, 32), nil)
+	allocator, err := dispatch.NewAllocator(panicDatabase{}, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, make([]byte, 32), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +77,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		AppOrigin:                      appOrigin,
 		TelemetryReader:                controlplanetestTelemetryReader{store: store},
 		MagicLinkDebugURLs:             true,
-		Mailer:                         configuredEmailSender(log, config.ControlPlane{EmailProvider: config.EmailProviderNone}, nil),
+		Mailer:                         configuredEmailSender(log, config.ControlPlane{EmailProvider: config.EmailProviderNone}, nil), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -259,6 +262,7 @@ func (controlplanetestSecretDeliveryOpener) OpenDeliveries(
 func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
+	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
 	addr := freeSmokeAddr(t)
 	runtimeDescriptor, err := artifact.CanonicalRuntimeDescriptor(smokeRuntimeDescriptor())
 	if err != nil {
@@ -326,6 +330,16 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 
 	baseURL := "http://" + addr
 	waitForHTTPStatus(t, baseURL+"/readyz", http.StatusOK)
+	observation, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed int
+	if err := observation.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='audit.retention_configured' AND actor_component=$1 AND retention_seconds=3600`, "control_plane").Scan(&observed); err != nil || observed != 1 {
+		t.Fatalf("startup observation: %d %v", observed, err)
+	}
+	observation.Close(ctx)
+
 	rec := postJSON(t, baseURL+"/api/auth/device/start", `{}`)
 	if rec.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(rec.Body)
@@ -391,6 +405,7 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 	}
 	dbName := "helmr_smoke_" + strings.ReplaceAll(uuid.NewV7().String(), "-", "")
 	dbIdentifier := pgx.Identifier{dbName}.Sanitize()
+	runtimeRole, maintenanceRole := dbName+"_runtime", dbName+"_maintenance"
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+dbIdentifier); err != nil {
 		admin.Close()
 		t.Fatal(err)
@@ -400,14 +415,15 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 		defer cancel()
 		_, _ = admin.Exec(cleanupCtx, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1`, dbName)
 		_, _ = admin.Exec(cleanupCtx, "DROP DATABASE IF EXISTS "+dbIdentifier)
+		_, _ = admin.Exec(cleanupCtx, "DROP ROLE IF EXISTS "+pgx.Identifier{runtimeRole}.Sanitize()+", "+pgx.Identifier{maintenanceRole}.Sanitize())
 		admin.Close()
 	})
-	config, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		t.Fatal(err)
+	parsed, err := url.Parse(dsn)
+	if err != nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") {
+		t.Fatal("smoke database requires a PostgreSQL URL")
 	}
-	config.ConnConfig.Database = dbName
-	databaseURL := config.ConnString()
+	parsed.Path = "/" + dbName
+	databaseURL := parsed.String()
 	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	// Probe connection for the server version check.
@@ -427,7 +443,24 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 	if err := schema.Up(ctx, databaseURL); err != nil {
 		t.Fatal(err)
 	}
-	return databaseURL
+	for _, role := range []string{runtimeRole, maintenanceRole} {
+		if _, err := admin.Exec(ctx, "CREATE ROLE "+pgx.Identifier{role}.Sanitize()+" LOGIN"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owner, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Exec(ctx, "REVOKE CREATE ON SCHEMA public FROM PUBLIC; GRANT USAGE ON SCHEMA public TO "+pgx.Identifier{runtimeRole}.Sanitize()+", "+pgx.Identifier{maintenanceRole}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	owner.Close(ctx)
+	if err := schema.ConfigurePrivileges(ctx, databaseURL, runtimeRole, maintenanceRole); err != nil {
+		t.Fatal(err)
+	}
+	parsed.User = url.User(runtimeRole)
+	return parsed.String()
 }
 
 func freeSmokeAddr(t *testing.T) string {

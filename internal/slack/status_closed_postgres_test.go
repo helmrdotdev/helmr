@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"log/slog"
 	"testing"
@@ -41,7 +42,7 @@ func TestSlackClosedStatusFollowsExternalCloseCancelAndIdleExpiry(t *testing.T) 
 				ctx, cancel := context.WithCancel(t.Context())
 				done := make(chan error, 1)
 				go func() {
-					done <- session.RunSessionLifecycle(ctx, f.Pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
+					done <- session.RunSessionLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, slog.New(slog.NewTextHandler(io.Discard, nil)))
 				}()
 				t.Cleanup(func() {
 					cancel()
@@ -68,10 +69,10 @@ func TestSlackClosedStatusFollowsExternalCloseCancelAndIdleExpiry(t *testing.T) 
 					}
 				}
 			} else {
-				if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: kind, IdempotencyKey: kind}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: kind, IdempotencyKey: kind}); err != nil {
 					t.Fatal(err)
 				}
-				if err := session.ReconcileSessionClosure(t.Context(), f.Pool, f.Environment, f.Session); err != nil {
+				if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Environment, f.Session); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -83,7 +84,7 @@ func TestSlackClosedStatusFollowsExternalCloseCancelAndIdleExpiry(t *testing.T) 
 			projectAllActivity(t, f)
 			f.assertAggregate(t, "closed")
 			claim := f.claim(t, "closed")
-			if err := FinishStatus(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged}); err != nil {
+			if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged}); err != nil {
 				t.Fatal(err)
 			}
 			later := f.threadMessage(t, "after-end", "more work", time.Now())
@@ -120,7 +121,7 @@ func TestSlackClosedStatusWaitsForAllContributorsAndFinalDelivery(t *testing.T) 
 	post := f.post(t, 1, "last-output", "lifecycle", nil)
 	f.assertAggregate(t, "processing")
 	claim := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain, Code: "transport_outcome_unknown"}); err != nil {
 		t.Fatal(err)
 	}
 	f.assertAggregate(t, "processing")
@@ -135,10 +136,10 @@ func TestSlackClosedStatusWaitsForLaterPhysicalFenceProjection(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
 	stop := f.nativeStop(t, "stop")
-	if err := admitNativeStop(t.Context(), f.Pool, stop); err != nil {
+	if err := admitNativeStop(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, stop); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), f.Pool, session.Caller{Kind: "user", ID: f.User}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='lost',failure_recorded_at=clock_timestamp() WHERE session_id=$1`, f.Session)
@@ -156,7 +157,7 @@ func TestSlackClosedStatusWaitsForLaterPhysicalFenceProjection(t *testing.T) {
 	}
 	f.assertAggregate(t, "processing")
 	claim := f.postClaim(t, post)
-	if err := FinishPost(t.Context(), f.Pool, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "456.789"}); err != nil {
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "456.789"}); err != nil {
 		t.Fatal(err)
 	}
 	var after int64

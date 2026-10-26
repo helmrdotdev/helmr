@@ -18,12 +18,12 @@ import (
 func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
-	waiting, err := session.ListAttention(r.Context(), s.tx, caller, env)
+	waiting, err := session.ListAttention(r.Context(), s.auditPolicy, s.tx, caller, env)
 	if err != nil && !errors.Is(err, session.ErrDenied) {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	runsAllowed := err == nil
@@ -58,7 +58,7 @@ func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 		case slack.IsInstallationDenied(err):
 			// Management authority changed since sign-in; the kind stays hidden.
 		case err != nil:
-			s.writeSlackError(w, err)
+			s.writeSlackError(w, r, err)
 			return
 		default:
 			response.Counts.SlackReauthorization = &count
@@ -68,7 +68,7 @@ func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !runsAllowed && response.Counts.SlackReauthorization == nil {
-		s.writeAgentHTTPError(w, session.ErrDenied)
+		s.writeAgentHTTPError(w, r, session.ErrDenied)
 		return
 	}
 	sort.SliceStable(response.Items, func(i, j int) bool {

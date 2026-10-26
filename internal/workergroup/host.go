@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"uuid"
 
@@ -42,7 +43,7 @@ type EnrolledHost struct {
 // existing allocations so a lock wait cannot hide a newly committed writer.
 // This uses the database's READ COMMITTED isolation; allocation transactions
 // must retain at least a shared group lock through their commit.
-func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enrollment Enrollment) (EnrolledHost, error) {
+func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, cfg HostAuthConfig, enrollment Enrollment) (EnrolledHost, error) {
 	if enrollment.ResourceID == "" || strings.TrimSpace(enrollment.ResourceID) != enrollment.ResourceID || len(enrollment.ResourceID) > MaxResourceIDBytes {
 		return EnrolledHost{}, invalidInput("resource_id is required and must not exceed %d bytes", MaxResourceIDBytes)
 	}
@@ -94,7 +95,7 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, cfg HostAuthConfig, enr
 			return err
 		}
 		if pgvalue.MustUUIDValue(hostSecret.WorkerPoolID) == proposedPool {
-			return audit.Append(ctx, tx, audit.Event{Actor: audit.System("worker-pool-bootstrap"), Action: "worker_pool.created", TargetKind: "worker_pool", TargetID: proposedPool})
+			return audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "worker_pool.created", TargetKind: "worker_pool", TargetID: proposedPool})
 		}
 		return nil
 	})
@@ -125,7 +126,7 @@ type Activation struct {
 // the group, then the host's pool, then the host. A pending pool is sealed
 // with the reported template and CPU shapes and becomes the group's initial
 // primary pool; an active or draining pool must match the template exactly.
-func ActivateHost(ctx context.Context, txb db.TxBeginner, principal HostPrincipal, activation Activation) error {
+func ActivateHost(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, principal HostPrincipal, activation Activation) error {
 	template := activation.Template
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		q := db.New(tx)
@@ -186,7 +187,7 @@ func ActivateHost(ctx context.Context, txb db.TxBeginner, principal HostPrincipa
 				return err
 			}
 			if !group.PrimaryPoolID.Valid && selected.PrimaryPoolID.Valid {
-				if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("worker-pool-bootstrap"), Action: "worker_pool.primary_selected", TargetKind: "worker_pool", TargetID: pgvalue.MustUUIDValue(selected.PrimaryPoolID)}); err != nil {
+				if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "worker_pool.primary_selected", TargetKind: "worker_pool", TargetID: pgvalue.MustUUIDValue(selected.PrimaryPoolID)}); err != nil {
 					return err
 				}
 			}

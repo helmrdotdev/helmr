@@ -4,15 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
 // Deadline settlement uses server time after the ownership locks. It needs no
 // live worker or guest; native stop converges separately through Session control.
-func expireSessionDeadline(ctx context.Context, pool db.TxBeginner, env, session uuid.UUID) error {
+func expireSessionDeadline(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, env, session uuid.UUID) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		// Bound lock contention without imposing a total runtime ceiling on a
 		// finite transaction. A timed-out attempt rolls back and remains due.
@@ -22,11 +24,11 @@ func expireSessionDeadline(ctx context.Context, pool db.TxBeginner, env, session
 		if _, err := lockSession(ctx, tx, env, session); err != nil {
 			return err
 		}
-		return expireSessionDeadlineTx(ctx, tx, env, session)
+		return expireSessionDeadlineTx(ctx, auditPolicy, tx, env, session)
 	})
 }
 
-func expireSessionDeadlineTx(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) error {
+func expireSessionDeadlineTx(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session uuid.UUID) error {
 	var turn uuid.UUID
 	var epoch int64
 	err := tx.QueryRow(ctx, `UPDATE turns SET status='interrupted',terminal_at=clock_timestamp(),processing_closed_at=COALESCE(processing_closed_at,clock_timestamp())
@@ -59,10 +61,16 @@ func expireSessionDeadlineTx(ctx context.Context, tx pgx.Tx, env, session uuid.U
 	if err = eventData(ctx, tx, env, session, turn, "session.deadline", data); err != nil {
 		return err
 	}
-	if err := cancelTurnAsks(ctx, tx, env, session, turn); err != nil {
+	if err := cancelTurnAsks(ctx, auditPolicy, tx, env, session, turn); err != nil {
 		return err
 	}
-	if err := rejectTurnMessages(ctx, tx, env, session, turn, true, "turn_terminated"); err != nil {
+	if err := rejectTurnMessages(ctx, auditPolicy, tx, env, session, turn, true, "turn_terminated"); err != nil {
+		return err
+	}
+	if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, Action: "session.authority_changed", TargetKind: "session", TargetID: session, Details: audit.LifecycleDetails{RequestID: hold}}); err != nil {
+		return err
+	}
+	if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, TurnID: turn, Action: "turn.interrupted", TargetKind: "turn", TargetID: turn, Details: audit.LifecycleDetails{Generation: epoch}}); err != nil {
 		return err
 	}
 	return event(ctx, tx, env, session, turn, "turn.interrupted")

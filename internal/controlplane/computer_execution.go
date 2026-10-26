@@ -28,12 +28,12 @@ func (s *Server) controlComputerExecutionHTTP(w http.ResponseWriter, r *http.Req
 	}
 	caller, env, err := s.agentRequestAuthority(r, permission)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	id, err := ids.Parse(chi.URLParam(r, "computerID"))
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: "computer ID is invalid"}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: "computer ID is invalid"}))
 		return
 	}
 	var body struct {
@@ -41,28 +41,28 @@ func (s *Server) controlComputerExecutionHTTP(w http.ResponseWriter, r *http.Req
 		ExpectedScope  string `json:"expected_scope,omitempty"`
 	}
 	if err := decodeOptionalRequestJSON(r, &body); err != nil {
-		writeError(w, badRequest(err))
+		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
 	key, err := normalizeIdempotencyKey(body.IdempotencyKey)
 	if err != nil {
-		writeError(w, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
+		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_idempotency_key", message: err.Error()}))
 		return
 	}
 	if key == "" {
 		key = uuid.NewV7().String()
 	}
-	result, err := session.ControlComputerExecution(r.Context(), s.tx, caller, session.ComputerExecutionRequest{EnvironmentID: env, ComputerID: id, Kind: kind, IdempotencyKey: key, ExpectedScope: body.ExpectedScope})
+	result, err := session.ControlComputerExecution(r.Context(), s.auditPolicy, s.tx, caller, session.ComputerExecutionRequest{EnvironmentID: env, ComputerID: id, Kind: kind, IdempotencyKey: key, ExpectedScope: body.ExpectedScope})
 	if err != nil {
 		switch {
 		case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady):
-			writeError(w, conflict(codedError{code: "computer_execution_unavailable", message: "Computer cannot change execution state right now. Review its current status before trying again."}))
+			s.writeOperationError(w, r, conflict(codedError{code: "computer_execution_unavailable", message: "Computer cannot change execution state right now. Review its current status before trying again."}))
 		case errors.Is(err, computer.ErrBusy):
-			writeError(w, conflict(codedError{code: "computer_busy", message: "Computer has active work or an unfinished control request"}))
+			s.writeOperationError(w, r, conflict(codedError{code: "computer_busy", message: "Computer has active work or an unfinished control request"}))
 		case errors.Is(err, computer.ErrDeleting):
-			writeError(w, conflict(codedError{code: "computer_deleting", message: "Computer is being deleted"}))
+			s.writeOperationError(w, r, conflict(codedError{code: "computer_deleting", message: "Computer is being deleted"}))
 		default:
-			s.writeAgentHTTPError(w, err)
+			s.writeAgentHTTPError(w, r, err)
 		}
 		return
 	}
@@ -82,12 +82,12 @@ func (s *Server) executionScopeHTTP(w http.ResponseWriter, r *http.Request, clos
 	}
 	caller, env, err := s.agentRequestAuthority(r, permission)
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	id, err := ids.Parse(chi.URLParam(r, param))
 	if err != nil {
-		s.writeAgentHTTPError(w, session.ErrInvalidInput)
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var scope session.ExecutionScope
@@ -108,7 +108,7 @@ func (s *Server) executionScopeHTTP(w http.ResponseWriter, r *http.Request, clos
 		return err
 	})
 	if err != nil {
-		s.writeAgentHTTPError(w, err)
+		s.writeAgentHTTPError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, scope)

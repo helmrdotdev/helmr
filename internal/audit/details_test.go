@@ -15,7 +15,6 @@ func TestDetailsPreserveActionFacts(t *testing.T) {
 		details Details
 		want    string
 	}{
-		{"member.role_changed", RoleChangedDetails{OldRole: "admin", NewRole: "member"}, `{"old_role":"admin","new_role":"member"}`},
 		{"member.granted", MembershipDetails{MembershipID: "member", IsOwner: true}, `{"membership_id":"member","is_owner":true}`},
 		{"installation_admin.granted", RoleGrantedDetails{NewRole: "admin"}, `{"new_role":"admin"}`},
 		{"invitation.accepted", MembershipDetails{MembershipID: "member"}, `{"membership_id":"member","is_owner":false}`},

@@ -146,6 +146,11 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  audit_retention_seconds           = var.audit_retention_seconds
+  audit_purge_interval_minutes      = var.audit_purge_interval_minutes
+  audit_maintenance_timeout_seconds = var.audit_maintenance_timeout_seconds
+  audit_purge_max_batches           = var.audit_purge_max_batches
+  audit_maintenance_alarm_actions   = var.audit_maintenance_alarm_actions
   ingress_mode                      = "private"
   restrict_platform_egress          = true
   private_client_ipv4_cidrs         = var.company_client_ipv4_cidrs

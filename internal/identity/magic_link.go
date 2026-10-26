@@ -114,7 +114,9 @@ func CreateMagicLink(ctx context.Context, txb db.TxBeginner, cfg Config, recipie
 		}
 		link = PendingMagicLink{ID: linkID, Recipient: recipient, Token: rawToken, ExpiresAt: expiresAt}
 		created = true
-		return nil
+		actor := audit.Unauthenticated("absent", "")
+		actor.Authorization = audit.NotEvaluated()
+		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: actor, Action: "identity.magic_link_requested", TargetKind: "login_session", Details: audit.AuthenticationDetails{Method: "magic_link"}})
 	})
 	if err != nil {
 		return PendingMagicLink{}, false, err
@@ -196,7 +198,8 @@ type CompletedMagicLink struct {
 // invitation link accepts the invitation and issues a session for its
 // organization. An unknown, consumed, revoked or expired link is
 // ErrInvalidToken.
-func CompleteMagicLink(ctx context.Context, txb db.TxBeginner, cfg Config, rawToken string) (CompletedMagicLink, error) {
+func CompleteMagicLink(ctx context.Context, txb db.TxBeginner, cfg Config, rawToken string) (result CompletedMagicLink, resultErr error) {
+	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Evidence: audit.Unauthenticated("failed", "magic_link"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
 	tokenHash, err := auth.HashToken(cfg.magicLinkKey, rawToken)
 	if err != nil {
 		return CompletedMagicLink{}, ErrInvalidToken
@@ -234,7 +237,7 @@ func CompleteMagicLink(ctx context.Context, txb db.TxBeginner, cfg Config, rawTo
 		default:
 			return errors.New("unknown magic link purpose")
 		}
-		user, err := upsertMagicLinkIdentity(ctx, tx, cfg, external)
+		user, err := upsertMagicLinkIdentity(ctx, tx, cfg, external, pgvalue.MustUUIDValue(link.ID))
 		if err != nil {
 			return err
 		}
@@ -277,7 +280,7 @@ func magicLinkIdentity(email string) ExternalIdentity {
 // upsertMagicLinkIdentity records a magic link identity. Unlike a provider
 // identity, a delivered link verifies its address, which always becomes the
 // user's primary email.
-func upsertMagicLinkIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external ExternalIdentity) (signedInUser, error) {
+func upsertMagicLinkIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external ExternalIdentity, linkID uuid.UUID) (signedInUser, error) {
 	q := db.New(tx)
 	proposedUser := uuid.NewV7()
 	user, err := q.UpsertMagicLinkAuthIdentity(ctx, db.UpsertMagicLinkAuthIdentityParams{
@@ -294,9 +297,9 @@ func upsertMagicLinkIdentity(ctx context.Context, tx pgx.Tx, cfg Config, externa
 		return signedInUser{}, fmt.Errorf("record magic link identity: %w", err)
 	}
 	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, true) {
-		if err := audit.Append(ctx, tx, audit.Event{Actor: audit.System("initial-admin-config"), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
+		if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "installation_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.RoleGrantedDetails{NewRole: "admin"}}); err != nil {
 			return signedInUser{}, err
 		}
 	}
-	return signedInUser{id: user.ID, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider)}, nil
+	return signedInUser{id: user.ID, actor: audit.VerifiedMagicLink(pgvalue.MustUUIDValue(user.ID), linkID, external.Provider), authentication: audit.AuthenticationDetails{Method: "magic_link", Provider: external.Provider, Subject: external.Subject}}, nil
 }

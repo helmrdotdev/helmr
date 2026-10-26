@@ -3,6 +3,7 @@ package session_test
 import (
 	"bytes"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -76,7 +77,9 @@ func TestPreparationTrustConcurrentAllocationCommitsOneSigner(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT proxy_ca_private_key_ciphertext FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&before); err != nil || len(before) == 0 {
 		t.Fatalf("committed signer: %v", err)
 	}
-	restarted, err := dispatch.NewAllocator(f.pool, bytes.Repeat([]byte{19}, 32), issuer)
+	restarted, err := dispatch.NewAllocator(f.pool, auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, bytes.Repeat([]byte{19}, 32), issuer)
 	if err != nil {
 		t.Fatal(err)
 	}

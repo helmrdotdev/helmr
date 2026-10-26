@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
 	"sync"
 	"testing"
@@ -126,12 +128,35 @@ func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Recreating the publisher retains exact operation identity through DB/CAS.
-	restarted, err := session.NewCheckpointPublisher(f.f.pool, f.remote)
+	restarted, err := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.remote)
 	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, f.f.pool, `ALTER TABLE audit_events ADD CONSTRAINT reject_checkpoint_audit CHECK(action<>'computer.checkpoint_published') NOT VALID`)
+	if err = restarted.CompleteCheckpoint(ctx, f.ref, f.manifest); !errors.Is(err, audit.ErrCapture) {
+		t.Fatalf("publication escaped audit failure: %v", err)
+	}
+	var unchanged bool
+	if err = f.f.pool.QueryRow(ctx, `SELECT status='sealed' FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatal("publication was not rolled back", unchanged, err)
+	}
+	dbtest.MustExec(t, ctx, f.f.pool, `ALTER TABLE audit_events DROP CONSTRAINT reject_checkpoint_audit`)
+	if err = restarted.CompleteCheckpoint(ctx, f.ref, f.manifest); err != nil {
 		t.Fatal(err)
 	}
 	if err = restarted.CompleteCheckpoint(ctx, f.ref, f.manifest); err != nil {
 		t.Fatal(err)
+	}
+	var facts int
+	if err = f.f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='computer.checkpoint_published' AND computer_id=$1 AND credential_id=$2`, f.f.computer, f.ref.Host.HostID).Scan(&facts); err != nil || facts != 1 {
+		t.Fatal("publication replay or actor", facts, err)
+	}
+	dbtest.MustExec(t, ctx, f.f.pool, `DELETE FROM audit_events WHERE action='computer.checkpoint_published'`)
+	if err = restarted.CompleteCheckpoint(ctx, f.ref, f.manifest); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='computer.checkpoint_published'`).Scan(&facts); err != nil || facts != 0 {
+		t.Fatal("publication fact recreated", facts, err)
 	}
 	var status string
 	if err = f.f.pool.QueryRow(ctx, `SELECT status FROM checkpoints WHERE id=$1`, f.manifest.CheckpointID).Scan(&status); err != nil || status != "ready" {
@@ -143,7 +168,7 @@ func TestCheckpointRuntimeReadinessRetainsCompleteImage(t *testing.T) {
 		t.Fatalf("ready dispatched: %v", err)
 	}
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE computer_id=$1`, f.f.computer)
-	unavailable, _ := session.NewCheckpointPublisher(f.f.pool, saveStatFunc(func(context.Context, string) (cas.Object, error) {
+	unavailable, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, saveStatFunc(func(context.Context, string) (cas.Object, error) {
 		t.Fatal("committed receipt consulted storage")
 		return cas.Object{}, nil
 	}))
@@ -213,7 +238,7 @@ func TestCheckpointRuntimeRechecksAuthorityAfterIO(t *testing.T) {
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	first := true
-	blocked, _ := session.NewCheckpointPublisher(f.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
+	blocked, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		if first {
 			first = false
 			close(entered)
@@ -264,7 +289,7 @@ func TestCheckpointRuntimeForeignReceiptsAndAbortRace(t *testing.T) {
 				return
 			}
 			if action == "changed-descriptor" {
-				wrong, _ := session.NewCheckpointPublisher(f.f.pool, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
+				wrong, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
 					o, e := f.remote.Stat(ctx, d)
 					o.SizeBytes++
 					return o, e
@@ -317,7 +342,7 @@ func TestCheckpointRuntimeReadyCannotReplayAfterAbort(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
-	if _, err := session.ControlComputerExecution(ctx, f.f.pool, f.f.caller(), f.f.executionRequest("wake", "resume-published-source")); err != nil {
+	if _, err := session.ControlComputerExecution(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.f.pool, f.f.caller(), f.f.executionRequest("wake", "resume-published-source")); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.ValidateComputerSourceAbort(ctx, f.f.pool, f.ref.Host, f.f.env, p, abortReceipt(p, false, false)); err != nil {
@@ -351,7 +376,7 @@ func TestCheckpointRuntimeAbortDuringRemoteVerification(t *testing.T) {
 	p, _ := sourceAbortForCheckpoint(t, f.f, f.manifest.CheckpointID)
 	entered, release := make(chan struct{}), make(chan struct{})
 	first := true
-	blocked, _ := session.NewCheckpointPublisher(f.f.pool, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
+	blocked, _ := session.NewCheckpointPublisher(f.f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, saveStatFunc(func(ctx context.Context, d string) (cas.Object, error) {
 		if first {
 			first = false
 			close(entered)
@@ -460,7 +485,7 @@ func TestStandaloneComputerPublishesAndWakesWithoutSessions(t *testing.T) {
 	if err := f.checkpoints.CompleteCheckpoint(t.Context(), f.ref, f.manifest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlComputerExecution(t.Context(), base.pool, base.caller(), base.executionRequest("wake", "standalone-wake")); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, base.pool, base.caller(), base.executionRequest("wake", "standalone-wake")); err != nil {
 		t.Fatal(err)
 	}
 	observed := &agentv1.ComputerSessionReceipt{CheckpointId: f.manifest.CheckpointID.String(), DesiredVersion: f.manifest.ControlVersion, Frozen: true}
@@ -486,7 +511,9 @@ func TestStandaloneComputerPublishesAndWakesWithoutSessions(t *testing.T) {
 	if err := base.pool.QueryRow(t.Context(), `SELECT execution_deadline_at IS NOT NULL FROM computers WHERE id=$1`, base.computer).Scan(&pending); err != nil || pending {
 		t.Fatalf("committed source retained preparation deadline: %v %v", pending, err)
 	}
-	if err := session.CompleteComputerSourceAbort(t.Context(), base.pool, *base.host(), base.env, p, abortReceipt(p, true, true)); err != nil {
+	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, base.pool, *base.host(), base.env, p, abortReceipt(p, true, true)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -494,7 +521,9 @@ func TestStandaloneComputerPublishesAndWakesWithoutSessions(t *testing.T) {
 func TestHibernateReceiptWaitsForOwnedPublication(t *testing.T) {
 	f := newCheckpointStorageFixture(t)
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE computer_controls SET deadline_at=clock_timestamp()-interval '1 minute' WHERE computer_id=$1`, f.f.computer)
-	if err := computer.ReconcileExecutionControls(t.Context(), f.f.pool); err != nil {
+	if err := computer.ReconcileExecutionControls(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.f.pool); err != nil {
 		t.Fatal(err)
 	}
 	var state string

@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"uuid"
 
@@ -12,7 +14,7 @@ import (
 
 // ExpireImageWaiter fails only never-dispatched work. Computer storage and
 // the executor's physical lifetime remain owned by their separate reconcilers.
-func ExpireImageWaiter(ctx context.Context, pool db.TxBeginner, env, computerID uuid.UUID) error {
+func ExpireImageWaiter(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, env, computerID uuid.UUID) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
 			return err
@@ -82,6 +84,9 @@ func ExpireImageWaiter(ctx context.Context, pool db.TxBeginner, env, computerID 
 			return err
 		}
 		for _, turn := range failedTurns {
+			if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: turn.session, TurnID: turn.turn, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: turn.turn, Details: audit.FailureDetails{Reason: "expired"}}); err != nil {
+				return err
+			}
 			if err = eventData(ctx, tx, env, turn.session, turn.turn, "turn.failed", []byte(`{"code":"preparation_deadline"}`)); err != nil {
 				return err
 			}
@@ -92,6 +97,6 @@ func ExpireImageWaiter(ctx context.Context, pool db.TxBeginner, env, computerID 
 		if err = notifySessionsChanged(ctx, tx, env, after...); err != nil {
 			return err
 		}
-		return drainClosingSessions(ctx, tx, env, after)
+		return drainClosingSessions(ctx, auditPolicy, tx, env, after)
 	}))
 }

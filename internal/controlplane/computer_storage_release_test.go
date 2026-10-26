@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"sync"
 	"testing"
 	"uuid"
@@ -38,7 +39,7 @@ func computerStorageFixture(t *testing.T) (sessiontest.Fixture, computer.Scope) 
 func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	f, scope := computerStorageFixture(t)
 	start := func(key string) error {
-		_, err := session.Start(t.Context(), f.Pool, nil, session.Caller{Kind: "user", ID: f.User}, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
+		_, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
 		return err
 	}
 	assertStatus := func(want computer.Status) {
@@ -49,7 +50,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 		}
 	}
 	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete"}
-	if _, err := computer.Delete(t.Context(), f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
+	if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("live Session allowed deletion: %v", err)
 	}
 	if err := start("before-delete"); !errors.Is(err, computer.ErrNotReady) {
@@ -58,7 +59,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	// Logical work has ended; the Worker has not yet confirmed physical stop.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1;
  UPDATE sessions SET status='closed' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment)
-	if _, err := computer.Delete(t.Context(), f.Pool, deletion); err != nil {
+	if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion); err != nil {
 		t.Fatal(err)
 	}
 	if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {
@@ -69,7 +70,9 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 		t.Fatalf("unfenced deletion released capacity: %v", err)
 	}
 	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	if err := dispatch.ObserveLeaseStopped(t.Context(), f.Pool, host, computer.LeaseIdentity{EnvironmentID: f.Environment, ComputerID: f.Computer, InstanceID: f.Computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
+	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
+		RetentionSeconds: 3600,
+	}, f.Pool, host, computer.LeaseIdentity{EnvironmentID: f.Environment, ComputerID: f.Computer, InstanceID: f.Computer, Epoch: 1}, uuid.Nil(), uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	assertStatus(computer.StatusDeleting)
@@ -95,7 +98,7 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT c.storage_reservation_bytes IS NULL AND c.initial_root_id IS NULL AND s.status='closed' FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id WHERE c.id=$1`, f.Computer).Scan(&history); err != nil || !history {
 		t.Fatalf("storage release or history invalid: %v %v", history, err)
 	}
-	if result, err := computer.Delete(t.Context(), f.Pool, deletion); err != nil || !result.Replayed {
+	if result, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion); err != nil || !result.Replayed {
 		t.Fatalf("deletion retry lost receipt: %+v %v", result, err)
 	}
 	admissions := make(chan error, 8)
@@ -123,7 +126,7 @@ func TestComputerDeletionReleasesUninitializedStorage(t *testing.T) {
 			f, scope := computerStorageFixture(t)
 			// Leave the original live Computer in place and make one free slot.
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET max_reserved_storage_bytes=$2 WHERE id=$1`, f.Environment, 2*disk.SeedCapacity)
-			creator := computer.NewCreator(nil)
+			creator := computer.NewCreator(nil, auditpolicy.Policy{RetentionSeconds: 3600})
 			created, err := creator.Create(t.Context(), f.Pool, computer.Request{Principal: f.Principal(t), Scope: scope, DefinitionKey: "fixture-computer", IdempotencyKey: "first"})
 			if err != nil {
 				t.Fatal(err)
@@ -131,7 +134,7 @@ func TestComputerDeletionReleasesUninitializedStorage(t *testing.T) {
 			if failed {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET preparation_failed_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.Environment, created.ComputerID)
 			}
-			if _, err := computer.Delete(t.Context(), f.Pool, computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: created.ComputerID, IdempotencyKey: "delete"}); err != nil {
+			if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: created.ComputerID, IdempotencyKey: "delete"}); err != nil {
 				t.Fatal(err)
 			}
 			if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {

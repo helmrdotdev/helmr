@@ -21,7 +21,7 @@ func (server *Server) workerPreparationLog(w http.ResponseWriter, r *http.Reques
 	host := workerFromContext(r.Context())
 	executor, err := preparationExecutor(request.Executor)
 	if err != nil {
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 		return
 	}
 	record := diagnostic.Record{Stream: request.Stream, Kind: request.Kind, Sequence: request.Sequence, ThroughSequence: request.ThroughSequence, ObservedAtUnixNano: request.ObservedAtUnixNano, Data: request.Data, DroppedBytes: request.DroppedBytes, Complete: request.Complete}
@@ -42,6 +42,6 @@ func (server *Server) workerPreparationLog(w http.ResponseWriter, r *http.Reques
 	case errors.Is(err, telemetry.ErrDiagnosticConflict), errors.Is(err, telemetry.ErrDiagnosticSequence):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "diagnostic_identity_conflict"})
 	default:
-		server.writeAllocationError(w, err)
+		server.writeAllocationError(w, r, err)
 	}
 }

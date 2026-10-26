@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"math/big"
 	"os"
 	"sort"
@@ -532,7 +533,7 @@ func TestHistoryRetentionPolicyDefaultsAndAtomic(t *testing.T) {
 	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, f.manager, id, &zero); err == nil {
 		t.Fatal("accepted zero")
 	}
-	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, ManagingMember{OrgID: uuid.NewV7(), UserID: f.manager.UserID, MemberID: f.manager.MemberID}, id, nil); !errors.Is(err, ErrMemberManagementRequired) {
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, ManagingMember{OrgID: uuid.NewV7(), UserID: f.manager.UserID, MemberID: f.manager.MemberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, id, nil); !errors.Is(err, ErrMemberManagementRequired) {
 		t.Fatalf("cross-organization: %v", err)
 	}
 	for range 2 {
@@ -568,7 +569,7 @@ func projectManager(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) ManagingM
 			dbtest.GrantMember(t, pool, orgID, userID, nil, permissions...)
 		}
 	}
-	return ManagingMember{Actor: audit.System("fixture"), OrgID: orgID, UserID: userID, MemberID: memberID}
+	return ManagingMember{Actor: audit.VerifiedLogin(userID, "fixture"), OrgID: orgID, UserID: userID, MemberID: memberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
 }
 
 func TestCreateProjectWaitsBeforeLockingMemberAndRechecksRemoval(t *testing.T) {

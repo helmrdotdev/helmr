@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/url"
 	"testing"
@@ -44,7 +45,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 		if err != nil || claim == nil {
 			t.Fatal(claim, err)
 		}
-		if err = slack.FinishPost(t.Context(), f.Pool, *claim, slack.DeliveryResult{Disposition: slack.Uncertain}); err != nil {
+		if err = slack.FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, *claim, slack.DeliveryResult{Disposition: slack.Uncertain}); err != nil {
 			t.Fatal(err)
 		}
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET reconciliation_paused_at=clock_timestamp() WHERE id=$1`, post)
@@ -56,7 +57,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
-	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP)
+	store, err := slack.NewCredentialStore(f.Pool, bytes.Repeat([]byte{1}, 32), slack.TransportHTTP, auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
 		t.Fatal(err)
 	}
