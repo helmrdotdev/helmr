@@ -179,8 +179,12 @@ Select `hibernate` for ordinary driver-owned Hibernate/Wake, or `drain` for
 operator-controlled logical Host replacement on the same retained physical host.
 For `drain`, wait for `ready-for-drain.json`, invoke native
 `worker drain --wait-timeout 10m` using the profile's Worker environment, and
-require successful drain plus `capture-observed.json`. The driver allows 15
-minutes for drain capture, including time to observe the marker and start drain;
+require successful drain plus `capture-observed.json`. The driver waits up to two
+minutes for a fresh `draining` observation of that exact source Host and Worker
+incarnation, records `draining-observed.json`, then requests ordinary Computer
+Hibernate. Manual Sessions require this explicit request even after their Host
+starts draining; completed Turns alone do not authorize capture. The driver allows
+15 minutes for drain capture, including time to observe the marker and start drain;
 Hibernate capture retains its 10-minute deadline. Only then stop/start
 `helmr-worker.service` and require native readiness. Atomically write
 `worker-restarted.json` in the evidence directory, copying exactly `computerIds`

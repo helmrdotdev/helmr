@@ -120,11 +120,24 @@ await verify(`execution-policies-${subject}-${mode}`, async ({ marker, objects, 
   const target = { computer: subjectComputer, session: started.session, source: subjectStartup.lease,
     members: [started.session.id, ...(subject === "finite" ? [report.parse(first).child.sessionId] : [])] }
   await record("before.json", { subject, baseline, first, subjectStartup })
-  if (mode === "hibernate") {
-    await target.computer.hibernate({ idempotencyKey: `${marker}:hibernate:${target.computer.id}` })
-  } else {
+  if (mode === "drain") {
+    const requestedAt = Date.now(), signal = deadline(2 * 60_000)
     await record("ready-for-drain.json", { computerIds: [target.computer.id], sourceHostId: worker.id })
+    for (;;) {
+      const rows = await hostObservation("worker-state", { resource_ids: [resource] })
+      assertEqual(rows.length, 1, "Expected one current Worker before drain capture")
+      const current = rows[0], observed = Date.parse(current.resource_observed_at)
+      assertEqual(current.id, worker.id, "Source Host changed before drain capture")
+      assertEqual(current.current_epoch, worker.current_epoch, "Source Worker incarnation changed before drain capture")
+      if (current.status === "draining" && observed > requestedAt && observed <= Date.now() && Date.now() - observed < 60_000) {
+        await record("draining-observed.json", current)
+        break
+      }
+      await delay(500, undefined, { signal })
+    }
   }
+  // Manual Sessions require explicit Hibernate even after their Host starts draining.
+  await target.computer.hibernate({ idempotencyKey: `${marker}:hibernate:${target.computer.id}` })
 
   const captureSignal = deadline((mode === "drain" ? 15 : 10) * 60_000)
   let captured: any, checkpoint: any
