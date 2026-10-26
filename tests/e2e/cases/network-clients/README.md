@@ -81,9 +81,18 @@ The endpoint owns `10.60.1.2`; the Worker host owns only its transit address.
 The gateway's upstream socket uses the host's route to the independent endpoint.
 Do not add a deny exception or a forwarding/NAT bypass for HTTPS.
 
-Provide a trusted resolver on the host, bound only to the transit address
-`100.111.0.1:53`, forwarding other names to the retained installation's selected
-resolver. For example, with a dnsmasq binary from the same pinned Nix input:
+The selected resolver must be routed outside the Worker host. The
+[ordinary DNS rules](../../../../internal/firecracker/network_policy_contract.go)
+allow selected DNS through the allocation's forward chain, but the
+[root policy](../../../../internal/firecracker/network_policy_linux.go) drops
+allocation traffic addressed to the host itself. A resolver bound only to the
+host's transit address cannot serve an ordinary Computer through that boundary.
+
+Use the host's `100.111.0.1:53` resolver only as the fixture's upstream. It holds
+the seven fixture records and forwards other names to the pre-fixture selected
+resolver. `ORIGINAL_RESOLVER_IPV4` must resolve public names from the host and
+must differ from both fixture resolvers, avoiding a forwarding loop. For example,
+with a dnsmasq binary from the same pinned Nix input:
 
 ```sh
 sudo systemd-run --unit=helmr-client-dns --collect --property=Type=exec \
@@ -99,15 +108,35 @@ sudo systemd-run --unit=helmr-client-dns --collect --property=Type=exec \
   --host-record=denied.network.test,10.60.1.2
 ```
 
-Configure the native installation through its approved drained profile operation:
+Expose the selected resolver at the endpoint-owned `10.60.1.2:53`, forwarding to
+that host upstream over the fixture veth. This second service joins the endpoint
+network namespace; it needs no private tools mount because its pinned dnsmasq
+binary uses the host filesystem:
+
+```sh
+sudo systemd-run --unit=helmr-client-endpoint-dns --collect --property=Type=exec \
+  --property=NetworkNamespacePath=/run/netns/helmr-client-endpoint \
+  "$DNSMASQ_BIN" --keep-in-foreground --no-hosts --no-resolv --bind-interfaces \
+  --listen-address=10.60.1.2 --server=100.111.0.1
+```
+
+Before installing the profile, prove UDP and TCP DNS through `10.60.1.2` resolves
+public names and all seven fixture names, including `denied.network.test`.
+Checking only the host's upstream resolver is insufficient. The existing routed
+forwarding and masquerade rules carry ordinary guest queries and established
+replies; the endpoint resolver reaches its upstream over `hncli-host`, outside
+the allocation interfaces. Preserve the root input/output drops, mandatory denies
+and existing NAT rules without adding exceptions.
+
+Configure these inputs before the approved fresh native profile installation:
 both `CONTROL_PLANE_NETWORK_PRIVATE_BUSINESS_CIDRS` and
 `WORKER_NETWORK_PRIVATE_BUSINESS_CIDRS` must include `10.60.1.2/32`, and
-`WORKER_NETWORK_RESOLVER_IPV4` must select `100.111.0.1`. Preserve all existing
-blocked ranges. The selected-resolver DNS exception already exists; selecting a
-DNS service on the transit interface grants no HTTPS access to that interface.
-Do not hand-edit saved profile/environment files. If the retained profile does not
-already permit these inputs, follow its supported replacement procedure before
-enrollment; `apply-services` is not a Worker configuration update API.
+`WORKER_NETWORK_RESOLVER_IPV4` must select `10.60.1.2`. Preserve all existing
+blocked ranges. Changing a retained profile's resolver requires its supported
+retirement and fresh installation/enrollment, followed by normal setup. Do not
+hand-edit saved profile/environment files; `apply-services` is not a Worker
+configuration update API. Both DNS units remain independent of the Worker for
+the case's drain/restart operation.
 
 Build the endpoint executable from the exact selected source:
 
@@ -199,7 +228,8 @@ owned route/link and namespace:
 
 ```sh
 sudo python3 "$HELMR_RUNTIME_HOST_TOOL" stop
-sudo systemctl stop helmr-client-endpoint.service helmr-client-dns.service
+sudo systemctl stop helmr-client-endpoint.service \
+  helmr-client-endpoint-dns.service helmr-client-dns.service
 sudo ip route del 10.60.1.2/32 via 100.111.0.2 dev hncli-host
 sudo ip link del hncli-host
 sudo ip netns del helmr-client-endpoint
