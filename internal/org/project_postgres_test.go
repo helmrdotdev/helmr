@@ -628,3 +628,65 @@ func TestCreateProjectWaitsBeforeLockingMemberAndRechecksRemoval(t *testing.T) {
 		t.Fatalf("project persisted: %d %v", count, err)
 	}
 }
+
+func TestProjectEnvironmentAuditAtomicity(t *testing.T) {
+	f := newProjectFixture(t, 0, 0)
+	input := ProjectInput{ProjectDetails: ProjectDetails{Slug: "audit", Name: "Audit"}, ExecutionLimits: testExecutionLimits()}
+	broken := f.manager
+	broken.AuditPolicy = auditpolicy.Policy{}
+	if _, _, err := CreateProject(t.Context(), f.pool, broken, input); err == nil {
+		t.Fatal("missing audit policy accepted")
+	}
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM projects WHERE org_id=$1`, f.orgID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("partial project: %d %v", count, err)
+	}
+	project, environments, err := CreateProject(t.Context(), f.pool, f.manager, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID := pgvalue.MustUUIDValue(project.ID)
+	for _, action := range []string{"project.created", "environment.created"} {
+		want := 1
+		if action == "environment.created" {
+			want = len(environments)
+		}
+		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE org_id=$1 AND action=$2 AND actor_user_id=$3 AND authorization_evidence->>'decision'='allowed'`, f.orgID, action, f.manager.UserID).Scan(&count); err != nil || count != want {
+			t.Fatalf("%s receipts: %d want %d: %v", action, count, want, err)
+		}
+	}
+	if _, err := UpdateProject(t.Context(), f.pool, broken, projectID, ProjectDetails{Name: "Changed"}); err == nil {
+		t.Fatal("project update escaped audit failure")
+	}
+	if _, err := UpdateProject(t.Context(), f.pool, f.manager, projectID, ProjectDetails{Name: "Audit"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateProject(t.Context(), f.pool, f.manager, projectID, ProjectDetails{Name: "Changed"}); err != nil {
+		t.Fatal(err)
+	}
+	details := EnvironmentDetails{Slug: "preview", Name: "Preview", ColorHex: "#123456"}
+	if _, err := CreateEnvironment(t.Context(), f.pool, broken, projectID, details, testExecutionLimits()); err == nil {
+		t.Fatal("environment create escaped audit failure")
+	}
+	env, err := CreateEnvironment(t.Context(), f.pool, f.manager, projectID, details, testExecutionLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	envID := pgvalue.MustUUIDValue(env.ID)
+	changed := details
+	changed.Name = "Changed"
+	if _, err := UpdateEnvironment(t.Context(), f.pool, broken, projectID, envID, changed); err == nil {
+		t.Fatal("environment update escaped audit failure")
+	}
+	if _, err := UpdateEnvironment(t.Context(), f.pool, f.manager, projectID, envID, details); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpdateEnvironment(t.Context(), f.pool, f.manager, projectID, envID, changed); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"project.updated", "environment.updated"} {
+		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE org_id=$1 AND action=$2`, f.orgID, action).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("%s no-op/rollback receipts: %d %v", action, count, err)
+		}
+	}
+}

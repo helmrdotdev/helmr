@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -33,22 +34,40 @@ func (o AuditSearchOptions) values() url.Values {
 	}
 	return q
 }
-func (c *Client) ListAuditEvents(ctx context.Context, options AuditSearchOptions) (api.AuditEventsResponse, error) {
+func (c *Client) ListAuditEvents(ctx context.Context, options AuditSearchOptions) (AuditEventsResponse, error) {
 	path := "/v1/audit-events"
 	if c.sessionScopedRoutes {
 		path = "/api/audit-events"
 	}
 	return c.auditEvents(ctx, path, options)
 }
-func (c *Client) ListInstallationAuditEvents(ctx context.Context, options AuditSearchOptions) (api.AuditEventsResponse, error) {
-	return c.auditEvents(ctx, "/admin/api/v1/audit-events", options)
+func (c *Client) ListInstallationAuditEvents(ctx context.Context, options AuditSearchOptions) (api.AdminAuditEventsResponse, error) {
+	var result api.AdminAuditEventsResponse
+	req, err := c.newRequest(ctx, http.MethodGet, "/admin/api/v1/audit-events?"+options.values().Encode(), nil)
+	if err != nil {
+		return result, err
+	}
+	err = c.doJSON(req, &result)
+	return result, err
 }
-func (c *Client) auditEvents(ctx context.Context, path string, options AuditSearchOptions) (api.AuditEventsResponse, error) {
-	var result api.AuditEventsResponse
+func (c *Client) auditEvents(ctx context.Context, path string, options AuditSearchOptions) (AuditEventsResponse, error) {
+	var result AuditEventsResponse
 	req, err := c.newRequest(ctx, http.MethodGet, path+"?"+options.values().Encode(), nil)
 	if err != nil {
 		return result, err
 	}
 	err = c.doJSON(req, &result)
 	return result, err
+}
+
+// AuditEvent is receive-only tenant JSON. Its nested payloads have already passed
+// the server projection; this type is never used for server or Admin output.
+type AuditEvent struct {
+	api.AuditEventMetadata
+	Authorization json.RawMessage `json:"authorization"`
+	Details       json.RawMessage `json:"details"`
+}
+type AuditEventsResponse struct {
+	Events     []AuditEvent     `json:"events"`
+	NextBefore *api.AuditBefore `json:"next_before,omitempty"`
 }

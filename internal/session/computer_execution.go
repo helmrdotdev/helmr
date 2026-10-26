@@ -132,12 +132,12 @@ func ControlComputerExecution(ctx context.Context, auditPolicy auditpolicy.Polic
 			return err
 		}
 		callerAuthentication(&actor, caller)
-		event := audit.Event{Evidence: actor, EnvironmentID: req.EnvironmentID, ComputerID: req.ComputerID, Action: "computer.control_requested", Outcome: "accepted", TargetKind: "computer", TargetID: req.ComputerID, Details: audit.ComputerControlDetails{Kind: req.Kind, RequestID: result.ID}}
+		event := audit.Event{Evidence: actor, EnvironmentID: req.EnvironmentID, ComputerID: req.ComputerID, Action: "computer." + req.Kind + "_requested", Outcome: "accepted", TargetKind: "computer", TargetID: req.ComputerID, Details: audit.ComputerControlDetails{RequestID: result.ID}}
 		if err := audit.Append(ctx, tx, auditPolicy, event); err != nil {
 			return err
 		}
 		if result.Status == "completed" {
-			event.Action, event.Outcome = "computer.control_settled", "succeeded"
+			event.Action, event.Outcome = "computer."+req.Kind+"_settled", "succeeded"
 			return audit.Append(ctx, tx, auditPolicy, event)
 		}
 		return nil

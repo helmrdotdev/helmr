@@ -9,7 +9,7 @@ import { RequireAdmin } from "./components/RequireAdmin";
 import { AdminLayout } from "./components/AdminLayout";
 import { ScopeSelector } from "./components/ScopeSelector";
 import { CommandPalette } from "./components/CommandPalette";
-import { attentionTotal, useAttention } from "./lib/attention";
+import { attentionTotal, useAttentionCounts } from "./lib/attention";
 import { SettingsLayout } from "./components/SettingsLayout";
 import { hasPermission, onboardingRedirectPath, type AuthRequirement } from "./lib/auth";
 import { useMe } from "./lib/me";
@@ -106,7 +106,7 @@ function DrawerAccount(props: { close: () => void }) {
 
 function AppShell(props: { children?: JSX.Element }) {
   const scope = useScope();
-  const attention = useAttention();
+  const attention = useAttentionCounts();
   const me = useMe();
   const canRead = (permission: string) => hasPermission(me.data, permission, { projectID: scope.selectedProjectID(), environmentID: scope.selectedEnvironmentID() });
   const nav = (): NavItem[] => [

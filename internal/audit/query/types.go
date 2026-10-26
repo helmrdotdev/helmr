@@ -2,6 +2,7 @@ package auditquery
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"time"
 	"uuid"
 )
@@ -60,7 +61,17 @@ type Before struct {
 	RecordedAt time.Time `json:"recorded_at"`
 	ID         uuid.UUID `json:"id"`
 }
-type SearchResult struct {
+type InstallationSearchResult struct {
 	Events     []Record `json:"events"`
 	NextBefore *Before  `json:"next_before,omitempty"`
+}
+
+type SearchResult struct {
+	Events     []api.AuditEvent `json:"events"`
+	NextBefore *Before          `json:"next_before,omitempty"`
+}
+type searchResult struct {
+	Events       []Record
+	PublicEvents []api.AuditEvent
+	NextBefore   *Before
 }

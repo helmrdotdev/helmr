@@ -254,7 +254,11 @@ func CompleteRuntimeMessage(ctx context.Context, auditPolicy auditpolicy.Policy,
 		if _, err := tx.Exec(ctx, `UPDATE turn_messages SET status=$3,rejection_reason=NULLIF($4,''),terminal_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, id, status, reason); err != nil {
 			return err
 		}
-		if err := auditActorFact(ctx, tx, auditPolicy, auditWorkerActor(host, e), audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: turn, Action: "message." + status, TargetKind: "message", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
+		var details audit.Details = audit.LifecycleDetails{}
+		if status == "rejected" {
+			details = audit.MessageRejectedDetails{Reason: reason}
+		}
+		if err := auditActorFact(ctx, tx, auditPolicy, auditWorkerActor(host, e), audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: turn, Action: "message." + status, TargetKind: "message", TargetID: id, Details: details}); err != nil {
 			return err
 		}
 		return messageEvent(ctx, tx, e.EnvironmentID, e.SessionID, turn, id, status, reason)
@@ -271,7 +275,7 @@ func rejectTurnMessages(ctx context.Context, auditPolicy auditpolicy.Policy, tx 
 		return err
 	}
 	for _, id := range ids {
-		if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, TurnID: turn, Action: "message.rejected", TargetKind: "message", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
+		if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, TurnID: turn, Action: "message.rejected", TargetKind: "message", TargetID: id, Details: audit.MessageRejectedDetails{Reason: reason}}); err != nil {
 			return err
 		}
 		if err = messageEvent(ctx, tx, env, session, turn, id, "rejected", reason); err != nil {

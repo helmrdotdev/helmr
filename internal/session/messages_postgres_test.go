@@ -91,6 +91,13 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	if _, err := session.RuntimeFinalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), first.TurnID, json.RawMessage(`null`), "joined"); err != nil {
 		t.Fatal(err)
 	}
+	var auditValid bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(outcome='succeeded')
+ AND count(*) FILTER(WHERE target_id=$1 AND details->>'reason'='turn_closed')=1
+ AND count(*) FILTER(WHERE target_id=$2 AND details->>'reason'='message_rejected')=1
+ FROM audit_events WHERE action='message.rejected'`, later.MessageID, admitted.MessageID).Scan(&auditValid); err != nil || !auditValid {
+		t.Fatalf("message rejection reasons missing: %v %v", auditValid, err)
+	}
 	req.IdempotencyKey = "steer"
 	retried, err := session.RouteSlackInput(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
 	if err != nil || retried.MessageID != admitted.MessageID {

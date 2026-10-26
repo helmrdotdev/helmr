@@ -31,6 +31,7 @@ type State = {
   newer: number;
   writes: string[];
   ranges: number[];
+  attentionReads: string[];
 };
 
 const overview = (state: State) => ({
@@ -73,6 +74,7 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
     newer: 0,
     writes: [],
     ranges: [],
+    attentionReads: [],
     ...overrides,
   };
   const environment = { environment: environmentID, project: projectID, name: "Preview", color_hex: "#06B6D4", is_default: true, created_at: ago(0), updated_at: ago(0) };
@@ -87,9 +89,10 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === base) json = environment;
-    else if (path === `${base}/attention`) {
+    else if (path === `${base}/attention` || path === `${base}/attention/counts`) {
+      state.attentionReads.push(path);
       const of = (kind: string) => state.items.filter((item) => item.kind === kind).length;
-      json = { items: state.items, counts: { question: of("question"), hold: of("hold"), failed_turn: 0, slack_reauthorization: of("slack_reauthorization") } };
+      json = { ...(path.endsWith("/counts") ? {} : { items: state.items }), counts: { question: of("question"), hold: of("hold"), failed_turn: 0, slack_reauthorization: of("slack_reauthorization") } };
     } else if (path === `${base}/overview`) {
       if (!state.permissions.includes("sessions.read")) { await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }); return; }
       json = overview(state);
@@ -262,4 +265,24 @@ test("Agent usage shows work, people and long runs over a range the viewer picks
   await expect.poll(() => state.ranges.at(-1)).toBe(7);
   await expect(band).toContainText("vs the 7 days before");
   expect(state.writes).toEqual([]);
+});
+
+test("navigation polls counts and reads attention content only on Overview", async ({ page }) => {
+  const state = await fixture(page, { items: [question, hold] });
+  await page.clock.install();
+  await page.goto(`/agents?project=${projectID}&environment=${environmentID}`);
+  await expect.poll(() => state.attentionReads.filter(path => path.endsWith("/counts")).length).toBeGreaterThan(0);
+  expect(state.attentionReads.filter(path => path.endsWith("/attention"))).toHaveLength(0);
+  const counts = state.attentionReads.length;
+  await page.clock.fastForward(10_001);
+  await expect.poll(() => state.attentionReads.length).toBeGreaterThan(counts);
+  expect(state.attentionReads.filter(path => path.endsWith("/attention"))).toHaveLength(0);
+  await page.locator("header").getByRole("link", { name: /^Overview/ }).click();
+  await expect.poll(() => state.attentionReads.filter(path => path.endsWith("/attention")).length).toBeGreaterThan(0);
+  await page.locator("header").getByRole("link", { name: "Agents", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+  const content = state.attentionReads.filter(path => path.endsWith("/attention")).length;
+  await page.clock.fastForward(10_001);
+  await expect.poll(() => state.attentionReads.filter(path => path.endsWith("/counts")).length).toBeGreaterThan(1);
+  expect(state.attentionReads.filter(path => path.endsWith("/attention"))).toHaveLength(content);
 });

@@ -62,7 +62,7 @@ func TestAuditCommandsRequireDedicatedAuthority(t *testing.T) {
 	}
 	id := uuid.NewV7()
 	if err := db.RunTx(ctx, d.Pool, func(tx pgx.Tx) error {
-		return audit.Append(ctx, tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{ID: id, Evidence: audit.Internal(audit.ControlPlane), Action: "audit.retention_configured", TargetKind: "audit", Details: audit.RetentionObservedDetails{RetentionSeconds: 3600}})
+		return audit.Append(ctx, tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{ID: id, Evidence: audit.Internal(audit.ControlPlane), Action: "audit.retention_observed", TargetKind: "audit", Details: audit.RetentionObservedDetails{RetentionSeconds: 3600}})
 	}); err != nil {
 		t.Fatal(err)
 	}

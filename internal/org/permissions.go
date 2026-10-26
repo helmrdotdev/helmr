@@ -156,7 +156,7 @@ func lockActiveMembers(ctx context.Context, tx pgx.Tx, m ManagingMember, targets
 }
 
 func permissionRoleSnapshot(role PermissionRole) *audit.AccessSnapshot {
-	return &audit.AccessSnapshot{Name: role.Name, Description: role.Description, Permissions: role.Permissions}
+	return &audit.AccessSnapshot{Name: role.Name, Description: role.Description, Permissions: role.Permissions, BuiltinKey: role.BuiltinKey}
 }
 func grantSnapshot(g RoleGrant) *audit.AccessSnapshot {
 	s := &audit.AccessSnapshot{GrantID: g.ID.String(), MemberName: g.MemberName, GroupName: g.GroupName, RoleName: g.RoleName, ProjectName: g.ProjectName, EnvironmentName: g.EnvironmentName, AgentsMode: g.AgentsMode, Revision: g.Revision, Permissions: g.Permissions, SubjectKind: g.SubjectKind, RoleID: g.RoleID.String(), ProjectID: g.ProjectID.String(), EnvironmentID: g.EnvironmentID.String(), TargetKind: g.TargetKind}
@@ -563,7 +563,7 @@ func SeedStandardRoles(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy
 		if tag.RowsAffected() == 0 {
 			continue
 		}
-		if err = accessAudit(ctx, tx, ManagingMember{Actor: actor, OrgID: orgID, AuditPolicy: policy}, "role.standard_created", "role", id, nil, &audit.AccessSnapshot{Name: standard.Name, Description: standard.Description, Permissions: permissions}); err != nil {
+		if err = accessAudit(ctx, tx, ManagingMember{Actor: actor, OrgID: orgID, AuditPolicy: policy}, "role.created", "role", id, nil, &audit.AccessSnapshot{Name: standard.Name, Description: standard.Description, Permissions: permissions, BuiltinKey: &standard.Key}); err != nil {
 			return err
 		}
 	}

@@ -29,7 +29,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 			route := json.RawMessage(`{"channelId":"C1"}`)
 			f.request.bundle.bundle.Program.Metadata.Definitions[0].Agent.Triggers = map[string]definition.CronTrigger{"tick": {Cron: "* * * * *", Timezone: "UTC", Input: []byte(`[]`), Slack: route}}
 			// Registration validates syntax without resolving the live Slack connection.
-			registered, err := register(t.Context(), f.pool, f.request)
+			registered, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,12 +77,12 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 				t.Fatal("promotion lost destination", err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, publication)
-			if receipt, err := register(t.Context(), f.pool, f.request); err != nil || receipt.ID != registered.ID {
+			if receipt, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request); err != nil || receipt.ID != registered.ID {
 				t.Fatal("lost exact registration", receipt, err)
 			}
 			f.request.idempotencyKey = "new-deployment"
 			f.request.bundle.root.Digest = artifacttest.Digest("new-slack-bundle")
-			newer, err := register(t.Context(), f.pool, f.request)
+			newer, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request)
 			if err != nil {
 				t.Fatal("offline registration required live connection", err)
 			}

@@ -58,6 +58,10 @@ func TestTriggerAdmissionConcurrentRetryAndPinnedDeployment(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT session_id FROM trigger_occurrences WHERE environment_id=$1 AND activation_id=$2`, f.env, trigger).Scan(&scheduledSession); err != nil {
 		t.Fatal(err)
 	}
+	var captured bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FILTER (WHERE action='session.created')=1 AND count(*) FILTER (WHERE action='turn.admitted' AND outcome='accepted')=1 AND count(*) FILTER (WHERE action='session.admitted')=0 FROM audit_events WHERE session_id=$1`, scheduledSession).Scan(&captured); err != nil || !captured {
+		t.Fatal("scheduled creation repeated or lost acceptance", captured, err)
+	}
 	view, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, scheduledSession)
 	if err != nil || view.Suspension != "after_turn" {
 		t.Fatalf("scheduled policy ignored deployment pin: %q %v", view.Suspension, err)

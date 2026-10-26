@@ -9,6 +9,7 @@ import (
 
 // FailureDetails never carries an error message, request body or credential.
 type FailureDetails struct {
+	Tool      string `json:"tool,omitempty"`
 	Operation string `json:"operation,omitempty"`
 	Reason    string `json:"reason"`
 }
@@ -42,6 +43,11 @@ type MCPDetails struct {
 
 func (MCPDetails) auditDetails() {}
 
+// KnownMCPTool accepts only the server's supported tool names, never raw request data.
+func KnownMCPTool(tool string) bool {
+	return slices.Contains([]string{"list_agents", "list_computers", "spawn", "start", "inspect_turn", "inspect_session", "list_sessions", "send_turn", "interrupt_turn", "interrupt_session", "resume_session", "close_session", "cancel_session", "enqueue"}, tool)
+}
+
 type ComputerRetentionDetails struct {
 	Before *int64 `json:"before_ms"`
 	After  *int64 `json:"after_ms"`
@@ -51,14 +57,12 @@ func (ComputerRetentionDetails) auditDetails() {}
 
 type ComputerControlDetails struct {
 	Reason    string    `json:"reason,omitempty"`
-	Kind      string    `json:"kind"`
 	RequestID uuid.UUID `json:"request_id"`
 }
 
 func (ComputerControlDetails) auditDetails() {}
 
 type SessionControlDetails struct {
-	Kind      string    `json:"kind"`
 	RequestID uuid.UUID `json:"request_id"`
 	HoldID    uuid.UUID `json:"hold_id,omitzero"`
 }
@@ -76,6 +80,7 @@ type AuthenticationDetails struct {
 func (AuthenticationDetails) auditDetails() {}
 
 type SearchDetails struct {
+	ReadModel              string      `json:"read_model,omitempty"`
 	ActorKind              string      `json:"actor_kind,omitempty"`
 	TargetKind             string      `json:"target_kind,omitempty"`
 	TargetUserID           uuid.UUID   `json:"target_user_id,omitzero"`
@@ -123,7 +128,7 @@ func marshalEventDetails(action, outcome string, details Details) ([]byte, error
 	if _, ok := Lookup(action); !ok {
 		return nil, errors.New("unknown audit action")
 	}
-	if action == "computer.control_settled" {
+	if action == "computer.wake_settled" || action == "computer.hibernate_settled" {
 		d, ok := details.(ComputerControlDetails)
 		if !ok || (outcome == "failed" && !validReason(d.Reason)) || (outcome == "succeeded" && d.Reason != "") {
 			return nil, errors.New("invalid Computer control outcome")
@@ -132,7 +137,7 @@ func marshalEventDetails(action, outcome string, details Details) ([]byte, error
 	}
 	if outcome == "denied" || outcome == "failed" || outcome == "unknown" {
 		failure, ok := details.(FailureDetails)
-		if !ok || !validReason(failure.Reason) || len(failure.Operation) > 512 {
+		if !ok || !validReason(failure.Reason) || len(failure.Operation) > 512 || (failure.Tool != "" && (action != "mcp.refused" || !KnownMCPTool(failure.Tool))) {
 			return nil, errors.New("safe audit failure reason is required")
 		}
 		return boundedJSON(failure, 16384)
@@ -147,3 +152,37 @@ type RegionDetails struct {
 }
 
 func (RegionDetails) auditDetails() {}
+
+// TemplateRefreshDetails identifies the build selected for this accepted request.
+type TemplateRefreshDetails struct {
+	ImageBuildID uuid.UUID `json:"image_build_id"`
+}
+
+func (TemplateRefreshDetails) auditDetails() {}
+
+type SessionHoldDetails struct {
+	Reason     string    `json:"reason"`
+	HoldID     uuid.UUID `json:"hold_id"`
+	Generation int64     `json:"generation,omitempty"`
+}
+
+func (SessionHoldDetails) auditDetails() {}
+
+type CheckpointDetails struct {
+	CheckpointID uuid.UUID `json:"checkpoint_id"`
+	Generation   int64     `json:"generation,omitempty"`
+}
+
+func (CheckpointDetails) auditDetails() {}
+
+type SessionRevokedDetails struct {
+	Reason string `json:"reason"`
+}
+
+func (SessionRevokedDetails) auditDetails() {}
+
+type MessageRejectedDetails struct {
+	Reason string `json:"reason"`
+}
+
+func (MessageRejectedDetails) auditDetails() {}

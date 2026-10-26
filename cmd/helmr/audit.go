@@ -79,49 +79,78 @@ func auditNamespace(installation bool) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		var result api.AuditEventsResponse
+		var rows []auditTableRow
+		var nextBefore *api.AuditBefore
 		if installation {
-			result, err = c.ListInstallationAuditEvents(cmd.Context(), options)
+			result, err := c.ListInstallationAuditEvents(cmd.Context(), options)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			}
+			nextBefore = result.NextBefore
+			for _, event := range result.Events {
+				fallback := "Unidentified"
+				if event.ActorComponent != nil {
+					fallback = *event.ActorComponent
+				}
+				actor := auditActorLabel(event.ActorIdentity, fallback, event.ActorUserID, event.ActorAPIKeyID, event.ActorSessionID, event.ActorWorkerHostID)
+				rows = append(rows, auditTableRow{event.RecordedAt, event.Action, event.Outcome, actor, event.TargetKind, event.TargetID})
+			}
 		} else {
-			result, err = c.ListAuditEvents(cmd.Context(), options)
-		}
-		if err != nil {
-			return err
-		}
-		if jsonOutput {
-			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			result, err := c.ListAuditEvents(cmd.Context(), options)
+			if err != nil {
+				return err
+			}
+			if jsonOutput {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
+			}
+			nextBefore = result.NextBefore
+			for _, event := range result.Events {
+				fallback := "Unidentified"
+				if event.ActorKind == api.AuditActorPlatformService {
+					fallback = "Platform service"
+				}
+				actor := auditActorLabel(event.ActorIdentity, fallback, event.ActorUserID, event.ActorAPIKeyID, event.ActorSessionID)
+				rows = append(rows, auditTableRow{event.RecordedAt, event.Action, event.Outcome, actor, event.TargetKind, event.TargetID})
+			}
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		fmt.Fprintln(w, "RECORDED AT\tACTION\tOUTCOME\tACTOR\tTARGET")
-		for _, event := range result.Events {
-			actor := "Unidentified"
-			if event.ActorIdentity != nil {
-				actor = event.ActorIdentity.DisplayName
-			} else if event.ActorComponent != nil {
-				actor = *event.ActorComponent
-			} else {
-				for _, id := range []*uuid.UUID{event.ActorUserID, event.ActorAPIKeyID, event.ActorSessionID, event.ActorWorkerHostID} {
-					if id != nil {
-						actor = id.String()
-						break
-					}
-				}
+		for _, row := range rows {
+			target := row.targetKind
+			if row.targetID != nil {
+				target += "/" + row.targetID.String()
 			}
-
-			target := event.TargetKind
-			if event.TargetID != nil {
-				target += "/" + event.TargetID.String()
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", event.RecordedAt.Format(time.RFC3339Nano), event.Action, event.Outcome, actor, target)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", row.recordedAt.Format(time.RFC3339Nano), row.action, row.outcome, row.actor, target)
 		}
 		if err = w.Flush(); err != nil {
 			return err
 		}
-		if result.NextBefore != nil {
-			fmt.Fprintf(cmd.OutOrStdout(), "Next page: --before-recorded-at %s --before-id %s\n", result.NextBefore.RecordedAt.Format(time.RFC3339Nano), result.NextBefore.ID)
+		if nextBefore != nil {
+			fmt.Fprintf(cmd.OutOrStdout(), "Next page: --before-recorded-at %s --before-id %s\n", nextBefore.RecordedAt.Format(time.RFC3339Nano), nextBefore.ID)
 		}
 		return nil
 	}
 	cmd.AddCommand(list)
 	return cmd
+}
+
+type auditTableRow struct {
+	recordedAt                         time.Time
+	action, outcome, actor, targetKind string
+	targetID                           *uuid.UUID
+}
+
+func auditActorLabel(identity *api.AuditIdentity, fallback string, ids ...*uuid.UUID) string {
+	if identity != nil && identity.DisplayName != "" {
+		return identity.DisplayName
+	}
+	for _, id := range ids {
+		if id != nil {
+			return id.String()
+		}
+	}
+	return fallback
 }

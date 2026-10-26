@@ -54,6 +54,9 @@ func (s *Server) refuseOperation(w http.ResponseWriter, r *http.Request, reason 
 		actor = audit.FromPrincipal(p)
 		org = p.OrgID
 	}
+	if definition.Scope == audit.InstallationScope {
+		org = uuid.Nil()
+	}
 	if host := workerFromContext(r.Context()); host.HostID != uuid.Nil() {
 		// The authenticated Host does not prove the tenant/runtime IDs in the
 		// rejected body. Keep custody at installation scope.

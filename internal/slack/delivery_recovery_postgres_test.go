@@ -231,6 +231,10 @@ func TestSlackDeliveryHistoryChecksPauseAndExplicitlyResumeWithoutSending(t *tes
 			if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, f.recoveryInput(t, org, post), "check"); err != nil {
 				t.Fatal(err)
 			}
+			var accepted bool
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(outcome='accepted') FROM audit_events WHERE action='session.delivery_check_requested' AND session_id=$1`, f.Session).Scan(&accepted); err != nil || !accepted {
+				t.Fatalf("delivery check was not an accepted request: %v %v", accepted, err)
+			}
 			f.historyDue(t, post)
 			if did, err := ReconcileUnknownPost(t.Context(), f.Pool, client, post); err != nil || !did || calls != want+1 {
 				t.Fatal("explicit check failed", did, calls, err)

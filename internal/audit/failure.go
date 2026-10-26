@@ -21,6 +21,7 @@ func RecordFailure(ctx context.Context, database db.TxBeginner, policy auditpoli
 	detail := FailureDetails{Reason: reason}
 	if supplied, ok := event.Details.(FailureDetails); ok {
 		detail.Operation = supplied.Operation
+		detail.Tool = supplied.Tool
 	}
 	event.Details = detail
 	if event.Outcome == "" {

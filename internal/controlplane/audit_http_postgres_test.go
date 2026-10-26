@@ -62,6 +62,13 @@ func TestAuditHTTPAuthenticationPermissionAndAdminRefusals(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='audit.searched' AND actor_user_id IS NOT NULL AND authorization_evidence->>'decision'='denied' AND authorization_evidence->'checks' @> '[{"type":"user_attribute","attribute":"admin","observed":false,"scope":{"kind":"installation"},"result":"failed"}]'::jsonb AND details->>'reason'='installation_authority_required')`).Scan(&admin); err != nil || !admin {
 		t.Fatal(admin, err)
 	}
+	if r := f.request(t, http.MethodPost, "/admin/api/v1/worker-groups", owner, `{}`); r.Code != http.StatusForbidden {
+		t.Fatal(r.Code, r.Body.String())
+	}
+	var platformScope bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(org_id IS NULL AND outcome='denied') FROM audit_events WHERE action='worker_group.created'`).Scan(&platformScope); err != nil || !platformScope {
+		t.Fatal("platform refusal acquired organization custody", platformScope, err)
+	}
 	dbtest.MustExec(t, t.Context(), f.pool, `ALTER TABLE audit_events ADD CONSTRAINT reject_denials CHECK(outcome<>'denied') NOT VALID`)
 	if r := f.request(t, http.MethodGet, "/api/audit-events", "invalid", ""); r.Code != http.StatusServiceUnavailable {
 		t.Fatal("ordinary denial hid capture failure", r.Code, r.Body.String())
@@ -118,5 +125,63 @@ func TestAuditHTTPTransactionCredentialRefusalsKeepAdmissionIdentity(t *testing.
 				t.Fatal("HTTP refusal discarded observed credential comparison", captured, err)
 			}
 		})
+	}
+}
+
+func TestAuditHTTPControlRefusalActionsAndTargets(t *testing.T) {
+	f := sessiontest.New(t)
+	p := dbtest.SecretManager(t, f.Pool, f.Environment)
+	dbtest.SetAPIKeyRole(t, f.Pool, p.APIKeyID, "agents.read")
+	token := auth.APIKeyPrefix + uuid.NewV7().String()
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET token_hash=$2 WHERE id=$1`, p.APIKeyID, auth.HashAPIKey(token))
+	handler := newPostgresServer(t, f.Pool)
+	turnID := uuid.NewV7()
+	for _, kind := range []string{"close", "cancel", "interrupt", "resume", "turn_interrupt"} {
+		action, targetKind := "session."+kind+"_requested", "session"
+		path := "/v1/sessions/" + f.Session.String() + "/" + kind
+		if kind == "turn_interrupt" {
+			action, targetKind = "turn.interrupt_requested", "turn"
+			path = "/v1/sessions/" + f.Session.String() + "/turns/" + turnID.String() + "/interrupt"
+		}
+		body := `{"idempotency_key":"refused"}`
+		if kind == "resume" {
+			body = `{"idempotency_key":"refused","hold_id":"` + uuid.NewV7().String() + `"}`
+		}
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatal(kind, response.Code, response.Body.String())
+		}
+		var valid bool
+		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(target_kind=$2 AND target_id IS NULL AND target_resolution='unresolved' AND outcome='denied') FROM audit_events WHERE action=$1 AND actor_api_key_id=$3`, action, targetKind, p.APIKeyID).Scan(&valid); err != nil || !valid {
+			t.Fatal(kind, "refusal action/unresolved target", valid, err)
+		}
+	}
+}
+
+func TestAuditHTTPComputerRefusalsIdentifyOperation(t *testing.T) {
+	f := sessiontest.New(t)
+	p := dbtest.SecretManager(t, f.Pool, f.Environment)
+	dbtest.SetAPIKeyRole(t, f.Pool, p.APIKeyID, "agents.read")
+	token := auth.APIKeyPrefix + uuid.NewV7().String()
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET token_hash=$2 WHERE id=$1`, p.APIKeyID, auth.HashAPIKey(token))
+	handler := newPostgresServer(t, f.Pool)
+	for _, kind := range []string{"wake", "hibernate"} {
+		request := httptest.NewRequest(http.MethodPost, "/v1/computers/"+f.Computer.String()+"/"+kind, strings.NewReader(`{"idempotency_key":"refused"}`))
+		request.Header.Set("Authorization", "Bearer "+token)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatal(kind, response.Code, response.Body.String())
+		}
+		var valid bool
+		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(outcome='denied' AND target_kind='computer' AND details->>'reason'='permission_denied')
+ FROM audit_events WHERE action=$1 AND actor_api_key_id=$2`, "computer."+kind+"_requested", p.APIKeyID).Scan(&valid); err != nil || !valid {
+			t.Fatalf("%s refusal: %v %v", kind, valid, err)
+		}
 	}
 }

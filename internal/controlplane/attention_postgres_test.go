@@ -123,8 +123,28 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	}
 	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
 	path := "/api/projects/project/environments/test/attention"
+	auditCount := func() int {
+		t.Helper()
+		var count int
+		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='session.content_read'`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
 	read := func(token string) api.Attention {
 		t.Helper()
+		before := auditCount()
+		counted := h.request(t, http.MethodGet, path+"/counts", token, "")
+		if counted.Code != http.StatusOK {
+			t.Fatalf("counts: %d %s", counted.Code, counted.Body.String())
+		}
+		var countEnvelope map[string]json.RawMessage
+		if err := json.Unmarshal(counted.Body.Bytes(), &countEnvelope); err != nil || len(countEnvelope) != 1 || countEnvelope["counts"] == nil {
+			t.Fatalf("counts exposed content: %s %v", counted.Body.String(), err)
+		}
+		if auditCount() != before {
+			t.Fatal("counts emitted a content receipt")
+		}
 		w := h.request(t, http.MethodGet, path, token, "")
 		if w.Code != http.StatusOK {
 			t.Fatalf("attention: %d %s", w.Code, w.Body.String())
@@ -132,6 +152,19 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 		var result api.Attention
 		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
+		}
+		counts, err := json.Marshal(result.Counts)
+		if err != nil || string(counts) != string(countEnvelope["counts"]) {
+			t.Fatalf("count/full mismatch: %s vs %s %v", counts, countEnvelope["counts"], err)
+		}
+		sessions := map[string]bool{}
+		for _, item := range result.Items {
+			if item.SessionID != nil {
+				sessions[*item.SessionID] = true
+			}
+		}
+		if got := auditCount() - before; got != len(sessions) {
+			t.Fatalf("content receipts %d want %d distinct Sessions", got, len(sessions))
 		}
 		return result
 	}
@@ -163,6 +196,33 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	if item := owner.Items[3]; item.ID != question.String() || *item.TurnID != asked.TurnID.String() || *item.SessionID != f.Session.String() || *item.Prompt != "Ship the release?" {
 		t.Fatalf("Question: %+v", item)
 	}
+
+	t.Run("overlap and complete counts", func(t *testing.T) {
+		// All additional holds share a failed-only Session: full disclosure still
+		// records that Session once, even when it appears under two item kinds.
+		ids := make([]uuid.UUID, 101)
+		for i := range ids {
+			ids[i] = uuid.NewV7()
+		}
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) SELECT $1,id,$2,'local','overlap' FROM unnest($3::uuid[]) AS id`, f.Environment, failing, ids)
+		view := read(h.session(t, f.User, org))
+		if view.Counts.Hold == nil || *view.Counts.Hold != 102 {
+			t.Fatalf("capped count: %+v", view.Counts)
+		}
+		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND reason='overlap'`, f.Environment, failing)
+	})
+	t.Run("disclosure withheld on capture failure", func(t *testing.T) {
+		token := h.session(t, f.User, org)
+		dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_attention_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='session.content_read' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_attention_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_attention_audit()`)
+		w := h.request(t, http.MethodGet, path, token, "")
+		if w.Code == http.StatusOK || strings.Contains(w.Body.String(), "agent_error") || strings.Contains(w.Body.String(), "Ship") {
+			t.Fatalf("disclosed without receipt: %d %s", w.Code, w.Body.String())
+		}
+		if w := h.request(t, http.MethodGet, path+"/counts", token, ""); w.Code != http.StatusOK {
+			t.Fatalf("metadata depends on content capture: %d %s", w.Code, w.Body.String())
+		}
+		dbtest.MustExec(t, t.Context(), f.Pool, `DROP TRIGGER reject_attention_audit ON audit_events`)
+	})
 
 	// Waiting work stays in its Environment: a second Environment of the same
 	// organization lists only its own items, and the first keeps its counts.
@@ -229,6 +289,24 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 			t.Fatalf("%s kinds: %v", role, got)
 		}
 	}
+
+	t.Run("Slack-only and omitted Session counts", func(t *testing.T) {
+		f.SetPermissions(t, "agent_connections.read")
+		view := read(h.session(t, f.User, org))
+		if view.Counts.Question != nil || view.Counts.Hold != nil || view.Counts.FailedTurn != nil || view.Counts.SlackReauthorization == nil {
+			t.Fatalf("Slack-only counts: %+v", view.Counts)
+		}
+		f.SetPermissions(t, "agents.read")
+		token := h.session(t, f.User, org)
+		before := auditCount()
+		w := h.request(t, http.MethodGet, path+"/counts", token, "")
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("unreadable counts: %d %s", w.Code, w.Body.String())
+		}
+		if auditCount() != before {
+			t.Fatal("excluded counts emitted operation denial")
+		}
+	})
 
 	// An owner whose management authority is withdrawn after sign-in no longer
 	// sees the Slack kind.

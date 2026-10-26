@@ -2,7 +2,7 @@ import { A } from "@solidjs/router";
 import { createSignal, For, Show, type JSX } from "solid-js";
 import { computerHref } from "../computers/navigation";
 import { deploymentHref } from "../deployments/navigation";
-import type { AuditEvent } from "../../lib/audit";
+import type { AdminAuditCheck, AnyAuditEvent as AuditEvent, AuditRestrictedSection } from "../../lib/audit";
 import { actionLabel, actorOf, checkFields, checkTitle, signInFields, targetLabel, targetNoun, type AuditField, type AuditNames } from "../../lib/auditText";
 import { sessionConsolePath } from "../../lib/sessions";
 import { formatID } from "../../ui/id";
@@ -33,7 +33,7 @@ function Row(props: { label: string; children: JSX.Element; id?: string | undefi
   return (
     <div class="grid min-h-6.5 grid-cols-[180px_minmax(0,1fr)] items-baseline gap-3 border-b border-console-border-soft px-3 py-1 last:border-b-0 max-sm:grid-cols-1 max-sm:gap-0.5">
       <dt class="text-console-muted">{props.label}</dt>
-      <dd class="m-0 min-w-0 break-words text-console-text">
+      <dd class="m-0 min-w-0 [overflow-wrap:anywhere] text-console-text">
         {props.children}
         <Show when={props.sub}><span class="ml-2 text-console-muted">{props.sub}</span></Show>
         <Show when={props.id}><span class="ml-2 font-mono text-micro text-console-subtle">{props.id}</span></Show>
@@ -77,7 +77,12 @@ export function AuditEventDetails(props: {
   const clipboard = useClipboard({ copied: "Copied", failed: "Could not copy" });
   const e = () => props.event;
   const actor = () => actorOf(e());
-  const checks = () => e().authorization.checks ?? [];
+  const restricted = (section: AuditRestrictedSection) => { const event = e(); return "restricted" in event && event.restricted.includes(section); };
+  const hasRestrictions = () => { const event = e(); return "restricted" in event && event.restricted.length > 0; };
+  const cause = () => { const event = e(); return "cause_event_id" in event ? event.cause_event_id : null; };
+  const runtime = () => { const event = e(); return "runtime_generation" in event && event.runtime_generation ? `Generation ${event.runtime_generation}${event.process_epoch ? `, process ${event.process_epoch}` : ""}` : undefined; };
+  const installationAuthority = () => { const auth = e().authorization; return "installation_authority" in auth && auth.installation_authority; };
+  const checks = (): AdminAuditCheck[] => e().authorization.checks ?? [];
   const failed = () => checks().filter((c) => c.result !== "passed").length;
   const tabsID = () => `audit-${e().id}`;
   const recordedLater = () => Date.parse(e().recorded_at) - Date.parse(e().occurred_at);
@@ -97,8 +102,9 @@ export function AuditEventDetails(props: {
   const details = () => (e().details && typeof e().details === "object" ? Object.entries(e().details as Record<string, unknown>).filter(([, value]) => value !== null && value !== undefined && value !== "") : []);
 
   return (
-    <div class="flex flex-col gap-2.5 border-b border-console-border bg-console-accent-soft/40 py-2.5 pr-6 pl-10 max-sm:pl-3">
+    <div class="flex flex-col gap-2.5 whitespace-normal border-b border-console-border bg-console-accent-soft/40 py-2.5 pr-6 pl-10 max-sm:pl-3">
       <clipboard.LiveRegion />
+      <Show when={hasRestrictions()}><p class="m-0 text-chrome text-console-muted">Some platform details are restricted in this view. Users with Helmr管理者 access can correlate the full record by event ID.</p></Show>
       <div class="flex items-center gap-3 border-b border-console-border">
         <Tabs<Tab> id={tabsID()} label="Event details" class="mb-0! min-w-0 flex-1 border-b-0!" selected={tab()} onSelect={setTab} items={[
           { value: "event", label: "Event" },
@@ -129,10 +135,11 @@ export function AuditEventDetails(props: {
             <Show when={actor().kind === "api_key"}><Row label="API key" id={formatID(actor().id!)}>{actor().name}</Row></Show>
             <Show when={actor().kind === "session"}>
               <Row label="Agent session"><A href={sessionConsolePath(actor().id!)} class={ui.monoLink}>{formatID(actor().id!)}</A></Row>
-              <Show when={e().runtime_generation}><Row label="Runtime">Generation {e().runtime_generation}{e().process_epoch ? `, process ${e().process_epoch}` : ""}</Row></Show>
+              <Show when={runtime() || restricted("runtime")}><Row label="Runtime">{restricted("runtime") ? "Restricted" : runtime()}</Row></Show>
             </Show>
             <Show when={actor().kind === "worker_host"}><Row label="Worker host" id={formatID(actor().id!)}>{actor().name}</Row></Show>
             <Show when={actor().kind === "helmr"}><Row label="Helmr">{actor().detail?.replace(/^./, (c) => c.toUpperCase())}</Row></Show>
+            <Show when={actor().kind === "platform_service"}><Row label="Actor">Platform service</Row></Show>
             <Show when={actor().kind === "unidentified"}><Row label="Actor"><span class="text-console-muted">Not identified</span></Row></Show>
           </Group>
           <Group title="Sign-in"><For each={signInFields(e())}>{(field) => <FieldRow field={field} />}</For></Group>
@@ -159,8 +166,8 @@ export function AuditEventDetails(props: {
             <Row label="Operation" id={formatID(e().operation_id)}>
               <button type="button" class={LINK_BUTTON} onClick={() => props.onSelectOperation()}>Show every event it recorded</button>
             </Row>
-            <Row label="Caused by" id={e().cause_event_id ? formatID(e().cause_event_id!) : undefined}>
-              <Show when={e().cause_event_id} fallback={<span class="text-console-muted">Nothing; it started here</span>}>
+            <Row label="Caused by" id={cause() ? formatID(cause()!) : undefined}>
+              <Show when={cause()} fallback={<span class="text-console-muted">{restricted("correlation") ? "Restricted" : "No cause recorded"}</span>}>
                 <button type="button" class={LINK_BUTTON} onClick={() => props.onSelectCause()}>Open the cause</button>
               </Show>
             </Row>
@@ -173,7 +180,8 @@ export function AuditEventDetails(props: {
         <Fields footer={missing() && missing()!.roles.length ? <span>Roles that include <span class="font-mono">{missing()!.permission}</span> today: <For each={missing()!.roles}>{(role, i) => <>{i() > 0 ? ", " : ""}<A href={roleHref(role.id)} class={cx(ui.monoLink, "font-sans")}>{role.name}</A></>}</For></span> : undefined}>
           <Group title="Decision">
             <Row label="Result"><StatusBadge resource="audit_decision" status={e().authorization.decision} /><Show when={e().authorization.decision === "not_evaluated"}><span class="ml-2 text-console-muted">No authority check applies to this event</span></Show></Row>
-            <Row label="Checks">{checks().length === 0 ? <span class="text-console-muted">None recorded</span> : `${checks().length} recorded${failed() ? `, ${failed()} failed` : ", all passed"}`}</Row>
+            <Show when={installationAuthority()}><Row label="Authority">Helmr管理者</Row></Show>
+            <Row label="Checks">{restricted("authorization") ? <span class="text-console-muted">{checks().length} visible; additional checks restricted</span> : checks().length === 0 ? <span class="text-console-muted">None recorded</span> : `${checks().length} recorded${failed() ? `, ${failed()} failed` : ", all passed"}`}</Row>
           </Group>
           <For each={checks()}>{(check, i) => (
             <Group title={`Check ${i() + 1} · ${checkTitle(check)}`}>

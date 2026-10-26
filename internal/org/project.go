@@ -3,6 +3,7 @@ package org
 import (
 	"context"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"strings"
 	"uuid"
@@ -145,7 +146,18 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, inp
 		}
 		project = db.Project(created)
 		environments, err = ListEnvironments(ctx, q, project)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: orgID, ProjectID: pgvalue.MustUUIDValue(project.ID), Action: "project.created", TargetKind: "project", TargetID: pgvalue.MustUUIDValue(project.ID)}); err != nil {
+			return err
+		}
+		for _, environment := range environments {
+			if err := audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: orgID, ProjectID: pgvalue.MustUUIDValue(project.ID), EnvironmentID: pgvalue.MustUUIDValue(environment.ID), Action: "environment.created", TargetKind: "environment", TargetID: pgvalue.MustUUIDValue(environment.ID)}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return db.Project{}, nil, err
@@ -186,7 +198,17 @@ func UpdateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, pro
 		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionProjectsUpdate); err != nil {
 			return err
 		}
+		var previousName string
+		if err := tx.QueryRow(ctx, `SELECT name FROM projects WHERE org_id=$1 AND id=$2 FOR NO KEY UPDATE`, orgID, projectID).Scan(&previousName); isNoRows(err) {
+			return ErrProjectNotFound
+		} else if err != nil {
+			return err
+		}
 		q := db.New(tx)
+		if previousName == name {
+			project, err = q.GetProject(ctx, db.GetProjectParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(projectID)})
+			return err
+		}
 		project, err = q.UpdateProjectDetails(ctx, db.UpdateProjectDetailsParams{
 			OrgID: pgvalue.UUID(orgID),
 			ID:    pgvalue.UUID(projectID),
@@ -201,7 +223,7 @@ func UpdateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, pro
 		if err != nil {
 			return fmt.Errorf("update project: %w", err)
 		}
-		return nil
+		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: orgID, ProjectID: projectID, Action: "project.updated", TargetKind: "project", TargetID: projectID})
 	})
 	return project, err
 }
@@ -253,7 +275,7 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember,
 		if err != nil {
 			return fmt.Errorf("create environment: %w", err)
 		}
-		return nil
+		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: orgID, ProjectID: projectID, EnvironmentID: pgvalue.MustUUIDValue(environment.ID), Action: "environment.created", TargetKind: "environment", TargetID: pgvalue.MustUUIDValue(environment.ID)})
 	})
 	if err != nil {
 		return db.Environment{}, err
@@ -273,7 +295,17 @@ func UpdateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember,
 		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionEnvironmentsUpdate); err != nil {
 			return err
 		}
+		var previousName, previousColor string
+		if err := tx.QueryRow(ctx, `SELECT name,color_hex FROM environments WHERE org_id=$1 AND project_id=$2 AND id=$3 FOR NO KEY UPDATE`, orgID, projectID, environmentID).Scan(&previousName, &previousColor); isNoRows(err) {
+			return ErrEnvironmentNotFound
+		} else if err != nil {
+			return err
+		}
 		q := db.New(tx)
+		if previousName == name && previousColor == details.ColorHex {
+			environment, err = q.GetEnvironment(ctx, db.GetEnvironmentParams{OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID), ID: pgvalue.UUID(environmentID)})
+			return err
+		}
 		environment, err = q.UpdateEnvironmentDetails(ctx, db.UpdateEnvironmentDetailsParams{OrgID: pgvalue.UUID(orgID), ProjectID: pgvalue.UUID(projectID), ID: pgvalue.UUID(environmentID), Name: name, ColorHex: details.ColorHex})
 		if isNoRows(err) {
 			return ErrEnvironmentNotFound
@@ -284,7 +316,7 @@ func UpdateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember,
 		if err != nil {
 			return fmt.Errorf("update environment: %w", err)
 		}
-		return nil
+		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, Action: "environment.updated", TargetKind: "environment", TargetID: environmentID})
 	})
 	return environment, err
 }

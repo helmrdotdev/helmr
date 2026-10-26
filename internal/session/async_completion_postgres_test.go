@@ -388,6 +388,16 @@ func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.
 					t.Fatalf("attention holds=%d want=%d error=%v", count, want, err)
 				}
 			}
+			if state == "revoked" || state == "integrity" {
+				reason := "execution_lost"
+				if state == "revoked" {
+					reason = "secret_revoked"
+				}
+				var captured bool
+				if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'reason'=$2) FROM audit_events WHERE action='session.hold_created' AND session_id=$1`, f.session, reason).Scan(&captured); err != nil || !captured {
+					t.Fatalf("hold cause %s: %v %v", reason, captured, err)
+				}
+			}
 			// Expiry is still physically unfenced, and capacity may be absent.
 			check()
 			if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{

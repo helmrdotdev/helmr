@@ -263,7 +263,9 @@ func Worker(host uuid.UUID, version int64) Evidence {
 func Unauthenticated(result, kind string) Evidence {
 	return Evidence{Authentication: Authentication{Origin: "request", Result: result, CredentialKind: kind}, Authorization: NotEvaluated()}
 }
-func (e Evidence) validate() error {
+
+// Validate checks captured evidence independently of current authority.
+func (e Evidence) Validate() error {
 	a, n := e.Actor, 0
 	for _, id := range []uuid.UUID{a.UserID, a.APIKeyID, a.SessionID, a.WorkerHostID} {
 		if id != uuid.Nil() {

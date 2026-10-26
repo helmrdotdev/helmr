@@ -114,8 +114,8 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE audit_events SET recorded_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()-interval '1 hour' WHERE id=$1`, eventIDs[0])
 	f.OrgID = org
 	f.Limit = 100
-	if result, err = auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f); err != nil || len(result.Events) != 2 {
-		t.Fatalf("expired admin result: %+v %v", result, err)
+	if adminResult, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f); err != nil || len(adminResult.Events) != 2 {
+		t.Fatalf("expired admin result: %+v %v", adminResult, err)
 	}
 	foreignOrg := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO organizations(id,slug,name) VALUES($1,'foreign-audit','Foreign')`, foreignOrg)
@@ -135,9 +135,9 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), d.Pool, `CREATE FUNCTION reject_audit_search() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='audit.searched' THEN RAISE EXCEPTION 'injected'; END IF; RETURN NEW; END $$`)
 	dbtest.MustExec(t, t.Context(), d.Pool, `CREATE TRIGGER reject_audit_search BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_audit_search()`)
-	result, err = auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f)
-	if err == nil || len(result.Events) != 0 {
-		t.Fatalf("released rows without access receipt: %+v %v", result, err)
+	adminResult, err := auditquery.SearchInstallation(t.Context(), d.Pool, policy, p, f)
+	if err == nil || len(adminResult.Events) != 0 {
+		t.Fatalf("released rows without access receipt: %+v %v", adminResult, err)
 	}
 }
 

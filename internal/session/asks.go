@@ -158,7 +158,7 @@ func cancelAsk(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, a
 	if _, err := tx.Exec(ctx, `UPDATE turn_asks SET status='cancelled',cancelled_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND turn_id=$3 AND id=$4 AND status='pending'`, env, session, turn, id); err != nil {
 		return err
 	}
-	if err := auditActorFact(ctx, tx, auditPolicy, actor, audit.Event{EnvironmentID: env, SessionID: session, TurnID: turn, Action: "input.rejected", TargetKind: "input_request", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
+	if err := auditActorFact(ctx, tx, auditPolicy, actor, audit.Event{EnvironmentID: env, SessionID: session, TurnID: turn, Action: "input.cancelled", TargetKind: "input_request", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
 		return err
 	}
 	data, _ := json.Marshal(map[string]any{"ask_id": id})

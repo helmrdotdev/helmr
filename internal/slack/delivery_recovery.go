@@ -169,11 +169,11 @@ func RecoverDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		}
 		actor.Authorization.Checks = append(actor.Authorization.Checks, audit.PermissionEvidence(p, readDecisions)...)
 		capture := func() error {
-			name := "session.delivery_check_requested"
+			name, outcome := "session.delivery_check_requested", "accepted"
 			if action == "abandon" {
-				name = "session.delivery_abandoned"
+				name, outcome = "session.delivery_abandoned", "succeeded"
 			}
-			return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: environment, SessionID: session, TargetKind: "session", TargetID: session, Action: name, Details: audit.LifecycleDetails{RequestID: input.AttemptID, Generation: input.PublicationRevision}})
+			return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: environment, SessionID: session, TargetKind: "session", TargetID: session, Action: name, Outcome: outcome, Details: audit.LifecycleDetails{RequestID: input.AttemptID, Generation: input.PublicationRevision}})
 		}
 		var installation, thread, participant uuid.UUID
 		var publication string

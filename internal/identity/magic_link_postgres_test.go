@@ -44,7 +44,7 @@ func TestMagicLinkPostgresLoginIsDeliveredAndConsumedOnce(t *testing.T) {
 		t.Fatalf("completed = %+v, err = %v", completed, err)
 	}
 	var proof bool
-	if err := fixture.pool.QueryRow(ctx, `SELECT count(*)=2 AND bool_and(credential_kind='magic_link' AND credential_id=$1 AND authentication_result='verified') FROM audit_events WHERE action IN ('identity.sign_in','identity.session_issued') AND outcome='succeeded'`, newer.ID).Scan(&proof); err != nil || !proof {
+	if err := fixture.pool.QueryRow(ctx, `SELECT count(*)=1 AND bool_and(credential_kind='magic_link' AND credential_id=$1 AND authentication_result='verified') FROM audit_events WHERE action='identity.sign_in' AND outcome='succeeded'`, newer.ID).Scan(&proof); err != nil || !proof {
 		t.Fatal("missing consumed magic-link credential", proof, err)
 	}
 	userID, admin := fixture.userByEmail(t, "admin@example.test")

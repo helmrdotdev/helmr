@@ -183,7 +183,7 @@ func SelectScaleIn(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Po
 		if err != nil {
 			return err
 		}
-		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.draining", TargetKind: "worker_host", TargetID: host}); err != nil {
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_host.drain_started", TargetKind: "worker_host", TargetID: host}); err != nil {
 			return err
 		}
 		if err := dbnotify.Notify(ctx, tx, "dispatch", "capacity"); err != nil {

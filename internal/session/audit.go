@@ -83,12 +83,8 @@ func auditStart(ctx context.Context, tx pgx.Tx, plan StartPlan, result Admission
 	if err := audit.Append(ctx, tx, plan.AuditPolicy, e); err != nil {
 		return err
 	}
-	e.Action, e.Outcome = "session.admitted", "accepted"
-	if err := audit.Append(ctx, tx, plan.AuditPolicy, e); err != nil {
-		return err
-	}
 	if result.TurnID != uuid.Nil() {
-		e.Action, e.TargetKind, e.TargetID = "turn.admitted", "turn", result.TurnID
+		e.Action, e.Outcome, e.TargetKind, e.TargetID = "turn.admitted", "accepted", "turn", result.TurnID
 		return audit.Append(ctx, tx, plan.AuditPolicy, e)
 	}
 	return nil

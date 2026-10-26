@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
@@ -50,7 +51,7 @@ type SearchFilter struct {
 // maxSearchActions bounds the actions one search may list.
 const maxSearchActions = 100
 
-func (f SearchFilter) validate() error {
+func (f SearchFilter) validate(installation bool) error {
 	if f.From.IsZero() || f.To.IsZero() || !f.To.After(f.From) || f.To.Sub(f.From) > 31*24*time.Hour || f.Limit < 1 || f.Limit > 500 {
 		return ErrSearchInput
 	}
@@ -65,7 +66,25 @@ func (f SearchFilter) validate() error {
 			return ErrSearchInput
 		}
 	}
-	if f.ActorKind != "" && !slices.Contains([]string{"user", "api_key", "session", "worker_host", "component", "unidentified"}, f.ActorKind) {
+	kinds := []string{"user", "api_key", "session", "platform_service", "unidentified"}
+	if installation {
+		kinds = []string{"user", "api_key", "session", "worker_host", "component", "unidentified"}
+	}
+	if !installation && f.ActorID != uuid.Nil() && (f.ActorKind == "platform_service" || f.ActorKind == "unidentified") {
+		return ErrSearchInput
+	}
+	if !installation && f.TargetKind != "" && !publicTargetKind(f.TargetKind) {
+		return ErrSearchInput
+	}
+	if !installation {
+		for _, action := range f.Actions {
+			d, _ := audit.Lookup(action)
+			if d.Audience != audit.OrganizationAudience {
+				return ErrSearchInput
+			}
+		}
+	}
+	if f.ActorKind != "" && !slices.Contains(kinds, f.ActorKind) {
 		return ErrSearchInput
 	}
 	if f.Outcome != "" && !slices.Contains([]string{"accepted", "succeeded", "denied", "failed", "cancelled", "unknown"}, f.Outcome) {
@@ -80,17 +99,19 @@ func (f SearchFilter) validate() error {
 // Search authorizes, buffers a bounded selection and commits its access fact
 // before returning any rows. Installation custody is a separate entry point.
 func Search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter) (SearchResult, error) {
-	return search(ctx, database, policy, prior, f, false)
+	result, err := search(ctx, database, policy, prior, f, false)
+	return SearchResult{Events: result.PublicEvents, NextBefore: result.NextBefore}, err
 }
-func SearchInstallation(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter) (SearchResult, error) {
-	return search(ctx, database, policy, prior, f, true)
+func SearchInstallation(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter) (InstallationSearchResult, error) {
+	result, err := search(ctx, database, policy, prior, f, true)
+	return InstallationSearchResult{Events: result.Events, NextBefore: result.NextBefore}, err
 }
-func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter, installation bool) (SearchResult, error) {
-	result := SearchResult{Events: []Record{}}
+func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Policy, prior auth.Principal, f SearchFilter, installation bool) (searchResult, error) {
+	result := searchResult{Events: []Record{}, PublicEvents: []api.AuditEvent{}}
 	if f.Limit == 0 {
 		f.Limit = 100
 	}
-	if err := f.validate(); err != nil {
+	if err := f.validate(installation); err != nil {
 		return result, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -226,11 +247,13 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 			beforeTime = f.Before.RecordedAt
 			beforeID = f.Before.ID
 		}
-		rows, err := tx.Query(ctx, searchSQL, optionalUUID(org), orgWide, environments, optionalUUID(f.EnvironmentID), f.From, f.To, beforeTime, beforeID, f.ActorKind, optionalUUID(f.ActorID), f.Actions, f.TargetKind, optionalUUID(f.TargetID), f.Outcome, optionalUUID(f.TargetUserID), f.SlackTeamID, f.SlackUserID, f.Limit+1, optionalUUID(f.OperationID), optionalUUID(f.EventID))
+		rows, err := tx.Query(ctx, searchSQL, optionalUUID(org), orgWide, environments, optionalUUID(f.EnvironmentID), f.From, f.To, beforeTime, beforeID, f.ActorKind, optionalUUID(f.ActorID), f.Actions, f.TargetKind, optionalUUID(f.TargetID), f.Outcome, optionalUUID(f.TargetUserID), f.SlackTeamID, f.SlackUserID, f.Limit+1, optionalUUID(f.OperationID), optionalUUID(f.EventID), installation, audit.PlatformActions())
 		if err != nil {
 			return err
 		}
 		var last Before
+		count := 0
+		scope := readScope{org: org, organizationWide: orgWide, environments: environments}
 		for rows.Next() {
 			var raw json.RawMessage
 			var key Before
@@ -238,7 +261,7 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 				rows.Close()
 				return err
 			}
-			if len(result.Events) == f.Limit {
+			if count == f.Limit {
 				result.NextBefore = &last
 				break
 			}
@@ -247,7 +270,17 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 				rows.Close()
 				return err
 			}
-			result.Events = append(result.Events, event)
+			if installation {
+				result.Events = append(result.Events, event)
+			} else {
+				public, err := projectRecord(event, scope)
+				if err != nil {
+					rows.Close()
+					return err
+				}
+				result.PublicEvents = append(result.PublicEvents, public)
+			}
+			count++
 			last = key
 		}
 		err = rows.Err()
@@ -255,7 +288,11 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 		if err != nil {
 			return err
 		}
-		detail := audit.SearchDetails{From: f.From, To: f.To, ResultCount: len(result.Events), EnvironmentIDs: environments, Actions: f.Actions, OperationID: f.OperationID, EventID: f.EventID, ActorID: f.ActorID, TargetID: f.TargetID, Outcome: f.Outcome, ActorKind: f.ActorKind, TargetKind: f.TargetKind, TargetUserID: f.TargetUserID, SlackTeamID: f.SlackTeamID, SlackUserID: f.SlackUserID, RequestedEnvironmentID: f.EnvironmentID}
+		readModel := "organization"
+		if installation {
+			readModel = "installation"
+		}
+		detail := audit.SearchDetails{ReadModel: readModel, From: f.From, To: f.To, ResultCount: count, EnvironmentIDs: environments, Actions: f.Actions, OperationID: f.OperationID, EventID: f.EventID, ActorID: f.ActorID, TargetID: f.TargetID, Outcome: f.Outcome, ActorKind: f.ActorKind, TargetKind: f.TargetKind, TargetUserID: f.TargetUserID, SlackTeamID: f.SlackTeamID, SlackUserID: f.SlackUserID, RequestedEnvironmentID: f.EnvironmentID}
 		event := audit.Event{Evidence: actor, OrgID: accessOrg, EnvironmentID: accessEnv, Action: "audit.searched", TargetKind: "audit", Details: detail, Unresolved: unresolved}
 		if unresolved {
 			event.TargetID = org
@@ -263,7 +300,7 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 		return audit.Append(ctx, tx, policy, event)
 	})
 	if err != nil {
-		return SearchResult{}, err
+		return searchResult{}, err
 	}
 	return result, nil
 }
@@ -274,9 +311,10 @@ const searchSQL = `SELECT to_jsonb(e), e.recorded_at,e.id FROM audit_events e
    WHERE (e.org_id=$1::uuid OR ($1::uuid IS NULL AND e.org_id IS NULL)) AND ($2::boolean OR e.environment_id=ANY($3::uuid[]))
    AND ($4::uuid IS NULL OR e.environment_id=$4) AND e.recorded_at >= $5 AND e.recorded_at < $6
    AND e.expires_at>statement_timestamp() AND ($7::timestamptz IS NULL OR (e.recorded_at,e.id)<($7,$8::uuid))
-   AND ($9::text='' OR CASE WHEN e.actor_user_id IS NOT NULL THEN 'user' WHEN e.actor_api_key_id IS NOT NULL THEN 'api_key' WHEN e.actor_session_id IS NOT NULL THEN 'session' WHEN e.actor_worker_host_id IS NOT NULL THEN 'worker_host' WHEN e.actor_component IS NOT NULL THEN 'component' ELSE 'unidentified' END=$9) AND ($10::uuid IS NULL OR COALESCE(e.actor_user_id,e.actor_api_key_id,e.actor_session_id,e.actor_worker_host_id)=$10)
+   AND ($9::text='' OR CASE WHEN e.actor_user_id IS NOT NULL THEN 'user' WHEN e.actor_api_key_id IS NOT NULL THEN 'api_key' WHEN e.actor_session_id IS NOT NULL THEN 'session' WHEN e.actor_worker_host_id IS NOT NULL THEN CASE WHEN $21::boolean THEN 'worker_host' ELSE 'platform_service' END WHEN e.actor_component IS NOT NULL THEN CASE WHEN $21::boolean THEN 'component' ELSE 'platform_service' END ELSE 'unidentified' END=$9) AND ($10::uuid IS NULL OR COALESCE(e.actor_user_id,e.actor_api_key_id,e.actor_session_id,CASE WHEN $21::boolean THEN e.actor_worker_host_id END)=$10)
    AND (COALESCE(cardinality($11::text[]),0)=0 OR e.action=ANY($11::text[])) AND ($12::text='' OR e.target_kind=$12) AND ($13::uuid IS NULL OR e.target_id=$13)
    AND ($14::text='' OR e.outcome=$14) AND ($15::uuid IS NULL OR e.target_user_id=$15)
    AND ($16::text='' OR e.slack_team_id=$16) AND ($17::text='' OR e.slack_user_id=$17)
+   AND ($21::boolean OR NOT(e.action=ANY($22::text[])))
    AND ($19::uuid IS NULL OR e.operation_id=$19) AND ($20::uuid IS NULL OR e.id=$20)
    ORDER BY e.recorded_at DESC,e.id DESC LIMIT $18`

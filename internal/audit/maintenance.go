@@ -16,7 +16,7 @@ func ObservePolicy(ctx context.Context, database db.TxBeginner, policy auditpoli
 		return errors.New("unknown audit process")
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		return Append(ctx, tx, policy, Event{Evidence: Internal(process), Action: "audit.retention_configured", TargetKind: "audit", Details: RetentionObservedDetails{RetentionSeconds: policy.RetentionSeconds}})
+		return Append(ctx, tx, policy, Event{Evidence: Internal(process), Action: "audit.retention_observed", TargetKind: "audit", Details: RetentionObservedDetails{RetentionSeconds: policy.RetentionSeconds}})
 	})
 }
 

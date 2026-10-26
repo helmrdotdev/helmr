@@ -363,7 +363,7 @@ export function Overview() {
   const issues = createMemo(() => overviewIssues({ now: Date.now(), failures: overview.data?.failures, computers: computers.data?.computers, attention: attention.data?.items }));
   const questions = () => {
     const data = attention.data;
-    if (!data) return undefined;
+    if (!data || data.counts.question === undefined) return undefined;
     return { count: data.counts.question, oldest: data.items.find((item) => item.kind === "question")?.at };
   };
   const sessions = () => read(overview);

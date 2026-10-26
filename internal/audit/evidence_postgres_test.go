@@ -32,7 +32,7 @@ func TestEvidencePreservesIdentityAndEvaluatedAdminSnapshot(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE users SET admin=false WHERE id=$1`, user)
 	for _, evidence := range []audit.Evidence{normal, admin} {
 		err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
-			return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: evidence, Action: "secret.created", TargetKind: "secret", TargetID: uuid.NewV7()})
+			return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: evidence, Action: "worker_group.created", TargetKind: "worker_group", TargetID: uuid.NewV7()})
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -71,7 +71,7 @@ func TestEvidenceRejectsConflictingIdentitiesAndInventedAuthority(t *testing.T) 
 	for name, evidence := range cases {
 		t.Run(name, func(t *testing.T) {
 			err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
-				return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: evidence, Action: "secret.created", TargetKind: "secret", TargetID: uuid.NewV7()})
+				return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: evidence, Action: "worker_group.created", TargetKind: "worker_group", TargetID: uuid.NewV7()})
 			})
 			if !errors.Is(err, audit.ErrCapture) {
 				t.Fatal("accepted invalid evidence", err)
@@ -80,7 +80,7 @@ func TestEvidenceRejectsConflictingIdentitiesAndInventedAuthority(t *testing.T) 
 	}
 	// Successful internal execution need not claim a separate authorization check.
 	if err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
-		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: internal, Action: "secret.created", TargetKind: "secret", TargetID: uuid.NewV7()})
+		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: internal, Action: "worker_group.created", TargetKind: "worker_group", TargetID: uuid.NewV7()})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestEvidenceDatabaseRejectsContradictoryCredentialShapes(t *testing.T) {
 	userEvent, runtimeEvent := uuid.NewV7(), uuid.NewV7()
 	for _, event := range []audit.Event{
 		{ID: userEvent, Evidence: audit.VerifiedMagicLink(user, link, "email"), Action: "identity.sign_in", TargetKind: "login_session", Details: audit.AuthenticationDetails{Method: "magic_link", Provider: "email"}},
-		{ID: runtimeEvent, Evidence: audit.RuntimeActor(runtime, 1, 1, host, 1), Action: "mcp.admitted", Outcome: "accepted", TargetKind: "mcp", TargetID: runtime, Details: audit.MCPDetails{Tool: "list_agents"}},
+		{ID: runtimeEvent, OrgID: uuid.NewV7(), Evidence: audit.RuntimeActor(runtime, 1, 1, host, 1), Action: "mcp.admitted", Outcome: "accepted", TargetKind: "mcp", TargetID: runtime, Details: audit.MCPDetails{Tool: "list_agents"}},
 	} {
 		if err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
 			return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, event)

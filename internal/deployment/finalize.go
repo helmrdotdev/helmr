@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"io"
 	"log/slog"
 	"os"
@@ -115,7 +117,7 @@ func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope
 // Finalize verifies all referenced objects before atomically registering the
 // Deployment and its definitions. An operation-specific receipt binds a retry
 // key to the exact bundle; distinct keys for that bundle converge on one record.
-func (f *Finalizer) Finalize(ctx context.Context, database db.TxDB, finalization Finalization, progress func(objectDigest string) error) (Record, error) {
+func (f *Finalizer) Finalize(ctx context.Context, policy auditpolicy.Policy, database db.TxDB, finalization Finalization, progress func(objectDigest string) error) (Record, error) {
 	if err := authorizeCurrent(ctx, database, finalization.principal, finalization.scope, auth.PermissionDeploymentsPublish); err != nil {
 		return Record{}, err
 	}
@@ -128,7 +130,7 @@ func (f *Finalizer) Finalize(ctx context.Context, database db.TxDB, finalization
 			return Record{}, err
 		}
 	}
-	return register(ctx, database, finalization)
+	return register(ctx, policy, database, finalization)
 }
 
 // Only a previously committed registration in this authorized Environment can
@@ -148,7 +150,7 @@ func (f *Finalizer) available(ctx context.Context, database db.DBTX, request Fin
 	return true, nil
 }
 
-func register(ctx context.Context, txb db.TxBeginner, f Finalization) (Record, error) {
+func register(ctx context.Context, policy auditpolicy.Policy, txb db.TxBeginner, f Finalization) (Record, error) {
 	var record Record
 	env, project := pgvalue.MustUUIDValue(f.environmentID), pgvalue.MustUUIDValue(f.projectID)
 	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
@@ -160,7 +162,12 @@ func register(ctx context.Context, txb db.TxBeginner, f Finalization) (Record, e
 		} else if err != nil {
 			return err
 		}
-		if err := authorizeCurrent(ctx, tx, f.principal, f.scope, auth.PermissionDeploymentsPublish); err != nil {
+		current, err := currentPrincipal(ctx, tx, f.principal, f.scope)
+		if err != nil {
+			return err
+		}
+		actor, err := audit.Authorized(current, auth.PermissionDeploymentsPublish, f.scope)
+		if err != nil {
 			return err
 		}
 		request, err := idempotency.NewDeploymentFinalizeRequest(env, project, f.idempotencyKey, idempotency.DeploymentFinalizeFingerprint{BundleDigest: f.bundle.root.Digest})
@@ -181,6 +188,9 @@ func register(ctx context.Context, txb db.TxBeginner, f Finalization) (Record, e
 			err = tx.QueryRow(ctx, `SELECT id FROM deployments WHERE environment_id=$1 AND bundle_digest=$2`, env, f.bundle.root.Digest).Scan(&existing)
 			if errors.Is(err, pgx.ErrNoRows) {
 				record, err = createDeployment(ctx, tx, f)
+				if err == nil {
+					err = audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: f.orgID, ProjectID: project, EnvironmentID: env, DeploymentID: record.ID, Action: "deployment.published", TargetKind: "deployment", TargetID: record.ID})
+				}
 			} else if err == nil {
 				record, err = readRecord(ctx, tx, env, existing)
 			}

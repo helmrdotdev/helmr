@@ -70,7 +70,7 @@ func measureDeploymentRegistration(t *testing.T, computerCount, secretCount int)
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	started := time.Now()
-	record, err := register(t.Context(), counter, f.request)
+	record, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, counter, f.request)
 	elapsed := time.Since(started)
 	runtime.ReadMemStats(&after)
 	if err != nil {

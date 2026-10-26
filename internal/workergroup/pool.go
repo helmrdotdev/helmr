@@ -220,7 +220,11 @@ func transitionPool(ctx context.Context, txb db.TxBeginner, policy auditpolicy.P
 		if err != nil {
 			return fmt.Errorf("transition worker pool lifecycle: %w", err)
 		}
-		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_pool." + target, TargetKind: "worker_pool", TargetID: poolID}); err != nil {
+		verb := target
+		if verb == "draining" {
+			verb = "drain_started"
+		}
+		if err := audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, Action: "worker_pool." + verb, TargetKind: "worker_pool", TargetID: poolID}); err != nil {
 			return err
 		}
 		return nil

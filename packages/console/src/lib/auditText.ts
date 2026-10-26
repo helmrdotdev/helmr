@@ -1,4 +1,4 @@
-import type { AuditCheck, AuditEvent } from "./audit";
+import type { AdminAuditCheck as AuditCheck, AnyAuditEvent as AuditEvent } from "./audit";
 import { formatID as shortID } from "../ui/id";
 
 // Labels for the action categories the server assigns.
@@ -17,7 +17,7 @@ export const CATEGORY_LABELS: Record<string, string> = {
 // Words for the resource an action names, as it reads in a sentence.
 const NOUNS: Record<string, string> = {
   access: "access", member: "member", invitation: "invitation", role: "role", role_grant: "role assignment",
-  permission_group: "group", installation_admin: "installation administrator", organization: "organization",
+  permission_group: "group", platform_admin: "Helmr管理者", organization: "organization",
   identity: "sign-in", agent: "agent", session: "session", turn: "turn", input: "question", message: "message",
   trigger: "trigger", mcp: "tool connection", runtime: "runtime operation", slack_app: "Slack app",
   slack_installation: "Slack workspace", slack_connection: "Slack connection", slack_user: "Slack user link",
@@ -36,23 +36,26 @@ const VERBS: Record<string, string> = {
   answered: "Answered", requested: "Requested", delivered: "Delivered", recovered: "Recovered", refreshed: "Refreshed",
   connected: "Connected", disconnected: "Disconnected", linked: "Linked", unlinked: "Unlinked", searched: "Searched",
   member_added: "Added a member to", member_removed: "Removed a member from", ownership_changed: "Changed ownership of",
-  retention_changed: "Changed retention of", authority_changed: "Changed the authority of", content_read: "Read the content of",
-  output_read: "Read the output of", control_requested: "Requested a control on", control_settled: "Settled a control on",
-  cancel_requested: "Requested cancelling", checkpoint_published: "Saved a checkpoint of", restore_completed: "Restored",
-  exposed: "Made available", standard_created: "Created a standard", sign_in: "Signed in",
+  retention_changed: "Changed retention of", content_read: "Read the content of",
+  output_read: "Read the output of", wake_requested: "Requested waking", hibernate_requested: "Requested hibernating", wake_settled: "Settled a wake request for", hibernate_settled: "Settled a hibernate request for",
+  activated: "Activated", paused: "Paused", drain_started: "Started draining", disabled: "Disabled", marked_lost: "Marked as lost",
+  cancel_requested: "Requested cancelling", close_requested: "Requested closing", interrupt_requested: "Requested interrupting", resume_requested: "Requested resuming", refresh_requested: "Requested refreshing", checkpoint_published: "Saved a checkpoint of", restore_completed: "Restored",
+  exposed: "Made available", sign_in: "Signed in",
 };
 
 // Actions whose generic wording reads badly.
 const OVERRIDES: Record<string, string> = {
+  "platform_admin.granted": "Granted Helmr管理者 access",
+  "session.hold_created": "Placed a hold on a session",
+  "session.hold_released": "Released a hold on a session",
   "identity.sign_in": "Signed in",
-  "identity.session_issued": "Started a sign-in session",
   "identity.session_revoked": "Ended a sign-in session",
   "identity.magic_link_requested": "Asked for a sign-in link",
   "identity.device_started": "Started signing in a device",
   "identity.device_authorized": "Approved a device sign-in",
   "identity.device_denied": "Denied a device sign-in",
   "audit.searched": "Searched audit events",
-  "audit.retention_configured": "Configured audit retention",
+  "audit.retention_observed": "Observed audit retention",
   "audit.purge_completed": "Removed expired audit events",
   "audit.restore_recorded": "Recorded an audit restore",
   "secret.exposed": "Made a secret available to a computer",
@@ -72,7 +75,7 @@ export function actionLabel(action: string): string {
   return word ? `${word} ${noun}` : `${noun} ${verb.replaceAll("_", " ")}`.replace(/^./, (c) => c.toUpperCase());
 }
 
-export type ActorKind = "member" | "api_key" | "session" | "worker_host" | "helmr" | "unidentified";
+export type ActorKind = "member" | "api_key" | "session" | "worker_host" | "helmr" | "platform_service" | "unidentified";
 
 // Who acted: a person, an API key, an agent's session, a worker host or Helmr
 // itself, with the label recorded at the time.
@@ -81,8 +84,9 @@ export function actorOf(event: AuditEvent): { kind: ActorKind; name: string; det
   if (event.actor_user_id) return { kind: "member", name: label || `Member ${shortID(event.actor_user_id)}`, detail: event.actor_identity?.email, id: event.actor_user_id };
   if (event.actor_api_key_id) return { kind: "api_key", name: label || `API key ${shortID(event.actor_api_key_id)}`, detail: "API key", id: event.actor_api_key_id };
   if (event.actor_session_id) return { kind: "session", name: label || `Session ${shortID(event.actor_session_id)}`, detail: "Agent session", id: event.actor_session_id };
-  if (event.actor_worker_host_id) return { kind: "worker_host", name: `Worker host ${shortID(event.actor_worker_host_id)}`, id: event.actor_worker_host_id };
-  if (event.actor_component) return { kind: "helmr", name: "Helmr", detail: event.actor_component.replaceAll("_", " ") };
+  if ("actor_kind" in event && event.actor_kind === "platform_service") return { kind: "platform_service", name: "Platform service" };
+  if ("actor_worker_host_id" in event && event.actor_worker_host_id) return { kind: "worker_host", name: `Worker host ${shortID(event.actor_worker_host_id)}`, id: event.actor_worker_host_id };
+  if ("actor_component" in event && event.actor_component) return { kind: "helmr", name: "Helmr", detail: event.actor_component.replaceAll("_", " ") };
   return { kind: "unidentified", name: "Unidentified" };
 }
 
@@ -93,7 +97,7 @@ export type AuditNames = { get: (id: string) => string | undefined };
 function detailName(event: AuditEvent): string | undefined {
   const details = event.details as Record<string, unknown> | null;
   if (!details || typeof details !== "object") return undefined;
-  for (const key of ["name", "display_name", "new_role"]) if (typeof details[key] === "string" && details[key]) return details[key] as string;
+  for (const key of ["name", "display_name"]) if (typeof details[key] === "string" && details[key]) return details[key] as string;
   const after = details["after"] as Record<string, unknown> | undefined;
   if (after && typeof after["name"] === "string") return after["name"];
   return undefined;
@@ -144,7 +148,7 @@ const REASONS: Record<string, string> = {
 const CHECK_TITLES: Record<string, string> = {
   permission: "Permission",
   membership_attribute: "Organization owner",
-  user_attribute: "Installation administrator",
+  user_attribute: "Helmr管理者",
   runtime_binding: "Current runtime",
   session_origin: "Started by",
   slack_thread: "Slack thread",
@@ -209,8 +213,8 @@ export function checkFields(check: AuditCheck, names: AuditNames, links: { sessi
     case "user_attribute":
       return [
         ...person("User", check.user_id, names, "user"),
-        { label: "Expected", value: check.expected ? "An installation administrator" : "Not an administrator" },
-        { label: "Observed", value: check.observed ? "An installation administrator" : "Not an administrator", sub: check.observation_source ? `checked ${check.observation_source === "transaction" ? "when the change was saved" : "when the request arrived"}` : undefined },
+        { label: "Expected", value: check.expected ? "Helmr管理者" : "Not Helmr管理者" },
+        { label: "Observed", value: check.observed ? "Helmr管理者" : "Not Helmr管理者", sub: check.observation_source ? `checked ${check.observation_source === "transaction" ? "when the change was saved" : "when the request arrived"}` : undefined },
         result(check),
       ];
     case "runtime_binding":
@@ -264,11 +268,17 @@ const VERIFIED: Record<string, string> = { verified: "Verified on this request",
 // How the actor signed in, as labelled values.
 export function signInFields(event: AuditEvent): AuditField[] {
   const a = event.authentication;
-  if (a.origin === "internal") return [{ label: "Credential", value: "None; Helmr acted on its own", muted: true }];
+  const restricted = "restricted" in event ? event.restricted : [];
+  if (a.origin === "internal" && !restricted.includes("authentication")) return [
+    { label: "Credential", value: "None; Helmr acted on its own", muted: true },
+    ...(restricted.includes("transport") ? [{ label: "From", value: "Restricted", muted: true }] : []),
+  ];
   return [
+    ...(restricted.includes("authentication") ? [{ label: "Credential details", value: "Restricted", muted: true }] : []),
+    ...(restricted.includes("transport") ? [{ label: "From", value: "Restricted", muted: true }] : []),
     ...(a.credential_kind ? [{ label: "Credential", value: CREDENTIALS[a.credential_kind] ?? sentence(a.credential_kind), sub: a.credential_version ? `version ${a.credential_version}` : undefined }] : []),
     ...(a.provider ? [{ label: "Provider", value: a.provider }] : []),
-    { label: "Result", value: VERIFIED[a.result] ?? sentence(a.result), tone: a.result === "verified" ? "passed" as const : "failed" as const },
-    ...(event.source_ip ? [{ label: "From", value: event.source_ip, code: true, sub: event.channel ? `over ${event.channel.toUpperCase() === "HTTP" ? "HTTP" : event.channel}` : undefined }] : []),
+    { label: "Result", value: VERIFIED[a.result] ?? sentence(a.result), ...(a.result === "verified" ? { tone: "passed" as const } : a.result === "failed" ? { tone: "failed" as const } : {}) },
+    ...("source_ip" in event && event.source_ip ? [{ label: "From", value: event.source_ip, code: true, sub: event.channel ? `over ${event.channel.toUpperCase() === "HTTP" ? "HTTP" : event.channel}` : undefined }] : []),
   ];
 }

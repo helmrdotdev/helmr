@@ -3,7 +3,7 @@ import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, For, Match, on, Show, Switch, type JSX } from "solid-js";
 import { AuditEventDetails } from "../features/audit/AuditEventDetails";
 import { canReadAudit } from "../features/audit/auditLink";
-import { listAuditActions, searchAuditEvents, type AuditBefore, type AuditEvent, type AuditFilter } from "../lib/audit";
+import { listAuditActions, searchAuditEvents, searchAdminAuditEvents, type AuditBefore, type AnyAuditEvent as AuditEvent, type AuditFilter } from "../lib/audit";
 import { actorOf, CATEGORY_LABELS, eventSummary, type ActorKind, type AuditNames } from "../lib/auditText";
 import { hasPermission } from "../lib/auth";
 import { errorMessage } from "../lib/error";
@@ -12,7 +12,7 @@ import { listMembers } from "../lib/members";
 import { listAccessTargets, listGroups, listRoles, memberHref } from "../lib/permissions";
 import { useScope } from "../lib/scope";
 import { DataTable, LoadMore } from "../ui/DataTable";
-import { Segmented } from "../ui/Field";
+import { Field, Segmented, TextInput } from "../ui/Field";
 import { Icon, type IconName } from "../ui/Icon";
 import { PageHeader } from "../ui/PageHeader";
 import { DeniedState, EmptyState, isDenied } from "../ui/QueryState";
@@ -39,7 +39,7 @@ const OUTCOMES = [
 const ACTOR_ICONS: Partial<Record<ActorKind, IconName>> = { member: "member", api_key: "api-key", session: "terminal" };
 const COLUMNS = [{ label: "Details", srOnly: true }, "When", "Who", "What", "Outcome", "Where"] as const;
 
-type Params = { range?: string; outcome?: string; category?: string; actor?: string; actor_kind?: string; target?: string; target_kind?: string; environment_id?: string; operation?: string; event?: string; focus?: string; at?: string };
+type Params = { organization_id?: string; range?: string; outcome?: string; category?: string; actor?: string; actor_kind?: string; target?: string; target_kind?: string; environment_id?: string; operation?: string; event?: string; focus?: string; at?: string };
 
 const DAY = 86_400_000;
 
@@ -75,16 +75,17 @@ function timeWindow(params: Params): { from: string; to: string } {
 // reproduces the same view.
 export function AuditEvents(props: { installation?: boolean }) {
   const me = useMe();
-  const scope = useScope();
+  const scope = props.installation ? undefined : useScope();
+  const projectID = () => scope?.selectedProjectID() ?? "";
   const [params, setParams] = useSearchParams<Params>();
   const allowed = createMemo(() => (props.installation ? !!me.data?.admin : canReadAudit(me.data)));
   const can = (permission: string) => hasPermission(me.data, permission);
 
-  const actions = createQuery(() => ({ queryKey: ["audit", "actions"], queryFn: listAuditActions, enabled: allowed(), staleTime: Infinity, retry: false }));
+  const actions = createQuery(() => ({ queryKey: ["audit", "actions", props.installation ?? false], queryFn: () => listAuditActions(props.installation), enabled: allowed(), staleTime: Infinity, retry: false }));
   const members = createQuery(() => ({ queryKey: ["members"], queryFn: listMembers, enabled: allowed() && can("members.read"), retry: false }));
   const roles = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() && can("roles.read"), retry: false }));
   const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: allowed() && can("groups.read"), retry: false }));
-  const targets = createQuery(() => ({ queryKey: ["access", "targets", scope.selectedProjectID()], queryFn: () => listAccessTargets(scope.selectedProjectID()), enabled: allowed() && !!scope.selectedProjectID(), retry: false }));
+  const targets = createQuery(() => ({ queryKey: ["access", "targets", projectID()], queryFn: () => listAccessTargets(projectID()), enabled: allowed() && !!projectID(), retry: false }));
 
   // Every name the viewer can already see, by ID.
   const names = createMemo<AuditNames>(() => {
@@ -104,11 +105,12 @@ export function AuditEvents(props: { installation?: boolean }) {
   const inCategory = createMemo(() => (params.category ? (actions.data?.actions ?? []).filter((a) => a.category === params.category).map((a) => a.action) : []));
   // What the search depends on. Opening a row changes only that row, so it
   // keeps the loaded pages and their time window.
-  const searchKey = createMemo(() => JSON.stringify([params.range, params.outcome, inCategory(), params.actor, params.actor_kind, params.target, params.target_kind, params.environment_id, params.operation, params.focus, params.at]));
+  const searchKey = createMemo(() => JSON.stringify([params.organization_id, params.range, params.outcome, inCategory(), params.actor, params.actor_kind, params.target, params.target_kind, params.environment_id, params.operation, params.focus, params.at]));
   const filter = createMemo(on(searchKey, (): AuditFilter => {
     return {
       ...timeWindow(params),
       actions: inCategory(),
+      organization_id: props.installation ? params.organization_id ?? "" : "",
       outcome: params.outcome ?? "",
       actor_id: params.actor ?? "",
       actor_kind: params.actor_kind ?? "",
@@ -123,7 +125,7 @@ export function AuditEvents(props: { installation?: boolean }) {
   const ready = () => allowed() && (!params.category || inCategory().length > 0);
   const events = createInfiniteQuery(() => ({
     queryKey: ["audit", "events", props.installation ?? false, filter()],
-    queryFn: ({ pageParam }) => searchAuditEvents(filter(), pageParam, props.installation),
+    queryFn: async ({ pageParam }): Promise<{ events: AuditEvent[]; next_before?: AuditBefore }> => props.installation ? searchAdminAuditEvents(filter(), pageParam) : searchAuditEvents(filter(), pageParam),
     initialPageParam: undefined as AuditBefore | undefined,
     getNextPageParam: (page) => page.next_before,
     enabled: ready(),
@@ -159,7 +161,8 @@ export function AuditEvents(props: { installation?: boolean }) {
     { value: "kind:user", label: "Any member" },
     { value: "kind:api_key", label: "Any API key" },
     { value: "kind:session", label: "Any agent session" },
-    { value: "kind:component", label: "Helmr" },
+    ...(props.installation ? [{ value: "kind:component", label: "Helmr" }, { value: "kind:worker_host", label: "Worker host" }] : [{ value: "kind:platform_service", label: "Platform service" }]),
+    { value: "kind:unidentified", label: "Unidentified" },
     ...(members.data?.members ?? []).filter((m) => m.status === "active").map((m) => ({ value: m.user_id, label: m.display_name || m.email || m.user_id })),
   ].concat(params.actor && !(members.data?.members ?? []).some((m) => m.user_id === params.actor) ? [{ value: params.actor, label: names().get(params.actor) ?? "Selected actor" }] : []));
   const whoValue = () => (params.actor ? params.actor : params.actor_kind ? `kind:${params.actor_kind}` : "");
@@ -173,6 +176,7 @@ export function AuditEvents(props: { installation?: boolean }) {
     <div class="min-w-0">
         <PageHeader title={props.installation ? "Installation audit" : "Audit events"} subtitle="Who did what, what Helmr allowed or refused, and why. Searches are recorded; conversation content and command output never are." />
         <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read audit events permission for an organization or environment." /></Show>}>
+          <Show when={props.installation}><Field label="Organization ID" hint="Leave blank for installation events. Enter an organization UUID to inspect its full records."><TextInput value={params.organization_id ?? ""} onChange={(event) => setParams({ organization_id: event.currentTarget.value.trim() || undefined, event: undefined, focus: undefined, operation: undefined, at: undefined })} /></Field></Show>
           <div class={ui.toolbar}>
             <div class={ui.toolbarSide}>
               <Select<Range> ariaLabel="Time range" value={(params.range as Range) ?? "24h"} options={RANGES.map(({ value, label }) => ({ value, label }))} onChange={(value) => setParams({ range: value === "24h" ? undefined : value, event: undefined, at: undefined })} />
@@ -218,7 +222,7 @@ export function AuditEvents(props: { installation?: boolean }) {
                         </td>
                         <td class="max-w-0 w-full truncate text-body text-console-text">{summary()}</td>
                         <td><StatusBadge resource="audit_outcome" status={event.outcome as "succeeded" | "denied"} /></td>
-                        <td class="whitespace-nowrap text-chrome text-console-muted">{event.environment_id ? names().get(event.environment_id) ?? "Environment" : "Organization"}</td>
+                        <td class="whitespace-nowrap text-chrome text-console-muted">{event.environment_id ? names().get(event.environment_id) ?? "Environment" : event.org_id ? "Organization" : "Installation"}</td>
                       </tr>
                       <Show when={current()}>
                         <tr id={`audit-row-${event.id}`} class="hover:bg-transparent">
@@ -229,7 +233,7 @@ export function AuditEvents(props: { installation?: boolean }) {
                               memberHref={memberLink}
                               rolesWith={rolesWith}
                               onSelectOperation={() => { refocus = true; setParams({ ...CLEAR_PREDICATES, operation: event.operation_id, at: event.recorded_at, focus: undefined }); }}
-                              onSelectCause={() => { refocus = true; setParams({ ...CLEAR_PREDICATES, event: event.cause_event_id ?? undefined, focus: event.cause_event_id ?? undefined, at: event.recorded_at, operation: undefined }); }}
+                              onSelectCause={() => { refocus = true; setParams({ ...CLEAR_PREDICATES, event: ("cause_event_id" in event ? event.cause_event_id ?? undefined : undefined), focus: ("cause_event_id" in event ? event.cause_event_id ?? undefined : undefined), at: event.recorded_at, operation: undefined }); }}
                               link={link(event)}
                             />
                           </td>

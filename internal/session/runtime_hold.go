@@ -27,6 +27,6 @@ func RuntimeHold(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.Tx
 		if recorded || stopped {
 			return nil
 		}
-		return observeSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, reason)
+		return observeSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, reason, "process_failed")
 	}))
 }

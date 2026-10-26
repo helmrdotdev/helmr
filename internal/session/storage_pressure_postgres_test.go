@@ -113,6 +113,15 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
 	}
 	report(false)
 	report(false)
+	var auditValid bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=4
+ AND count(*) FILTER (WHERE action='session.hold_created')=2
+ AND count(*) FILTER (WHERE action='session.hold_released')=2
+ AND count(DISTINCT details->>'hold_id')=2
+ AND bool_and(details->>'reason'='storage_pressure' AND outcome='succeeded')
+ FROM audit_events WHERE action IN ('session.hold_created','session.hold_released')`).Scan(&auditValid); err != nil || !auditValid {
+		t.Fatalf("hold direction, reason or replay changed: %v %v", auditValid, err)
+	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT
  NOT EXISTS(SELECT 1 FROM session_holds WHERE kind='storage_pressure' AND released_at IS NULL)
  AND (SELECT released_at IS NULL FROM session_holds WHERE id=$1)
