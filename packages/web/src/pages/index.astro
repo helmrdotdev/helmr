@@ -601,12 +601,12 @@ const nav = [
                 </li>
               ))}
             </ul>
-            <svg class="flow-lines" viewBox="0 0 120 240" preserveAspectRatio="none" fill="none" aria-hidden="true">
-              <path d="M2 30 C 60 30, 60 120, 114 120" />
-              <path d="M2 90 C 60 90, 70 120, 114 120" />
-              <path d="M2 150 C 60 150, 70 120, 114 120" />
-              <path d="M2 210 C 60 210, 60 120, 114 120" />
-              <path class="flow-head" d="M106 115 L114 120 L106 125" />
+            <svg class="flow-lines" viewBox="0 0 96 240" fill="none" aria-hidden="true">
+              <path d="M82 116.5 C 50 116.5, 44 39, 4 39" />
+              <path d="M82 119 C 52 119, 46 93, 4 93" />
+              <path d="M82 121 C 52 121, 46 147, 4 147" />
+              <path d="M82 123.5 C 50 123.5, 44 201, 4 201" />
+              <path class="flow-head" d="M84 114.5 L91.5 120 L84 125.5" />
             </svg>
             <div class="card flow-record">
               <img class="peek peek-owl" src={character("owl")} alt="" width="72" height="72" loading="lazy" decoding="async" />
@@ -1640,9 +1640,10 @@ const nav = [
     color: var(--ink-3);
   }
 
+  /* each line is drawn from the arrowhead out and ends just apart, so they meet without tangling */
   .flow-lines { width: 100%; height: 15rem; }
-  .flow-lines path { stroke: var(--ink-2); stroke-width: 1.3; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
-  .flow-lines .flow-head { stroke-dasharray: none; }
+  .flow-lines path { stroke: var(--ink-2); stroke-width: 1.3; stroke-dasharray: 3 4; stroke-linecap: round; }
+  .flow-lines .flow-head { stroke-dasharray: none; stroke-linejoin: round; }
 
   .flow-record { position: relative; margin-top: 0; }
   .flow-record ul { margin: 0; padding: 0.25rem 0; list-style: none; }
