@@ -71,6 +71,10 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 	if err != nil || len(first.Secrets) != 4 || len(first.ProtectedEnv) != 2 {
 		t.Fatalf("first delivery: %+v %v", first, err)
 	}
+	var exposureAudit bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'revocation_generation'='0') FROM audit_events WHERE environment_id=$1 AND target_id=$2 AND action='secret.exposed' AND session_id=$3`, f.env, secretID, e.SessionID).Scan(&exposureAudit); err != nil || !exposureAudit {
+		t.Fatalf("new exposure audit: %v %v", exposureAudit, err)
+	}
 	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, secretID, []byte("v2"), "runtime-rotate"); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +140,7 @@ func TestRuntimeSecretPinsSurviveRetryAndCoexistWithNewPeers(t *testing.T) {
 		t.Fatalf("revoked pin: %v", err)
 	}
 	var retained bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(revocation_generation=0) FROM secret_exposures WHERE environment_id=$1 AND secret_id=$2`, f.env, secretID).Scan(&retained); err != nil || !retained {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)=2 FROM secret_exposures WHERE environment_id=$1 AND secret_id=$2`, f.env, secretID).Scan(&retained); err != nil || !retained {
 		t.Fatalf("exposure history: %v %v", retained, err)
 	}
 	if _, err = session.AuthorizeSessionStart(t.Context(), f.pool, *f.host(), peerExecution, peerAttachment.Sequence); !errors.Is(err, session.ErrNotReady) {

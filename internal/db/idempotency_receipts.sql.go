@@ -13,14 +13,14 @@ import (
 
 const createIdempotencyReceipt = `-- name: CreateIdempotencyReceipt :one
 INSERT INTO idempotency_receipts(environment_id,id,operation,slot_hash,request_fingerprint,
-    scope_secret_name,scope_secret_id,scope_computer_id,scope_command_id,scope_caller_kind,scope_computer_key,
+    scope_secret_name,scope_secret_id,scope_computer_id,scope_command_id,scope_computer_key,
     deployment_id,secret_id,secret_version_id,computer_id,command_id,receipt,
     accepted_at)
 VALUES($1,$2,$3,$4,$5,
-    $6,$7,$8,$9,$10,$11,
-    $12,$13,$14,$15,$16,$17,
+    $6,$7,$8,$9,$10,
+    $11,$12,$13,$14,$15,$16,
     statement_timestamp())
-RETURNING id, environment_id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt, receipt_pruned_at
+RETURNING id, environment_id, operation, slot_hash, request_fingerprint, scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_computer_key, deployment_id, secret_id, secret_version_id, computer_id, command_id, accepted_at, receipt, receipt_pruned_at
 `
 
 type CreateIdempotencyReceiptParams struct {
@@ -33,7 +33,6 @@ type CreateIdempotencyReceiptParams struct {
 	ScopeSecretID      pgtype.UUID `json:"scope_secret_id"`
 	ScopeComputerID    pgtype.UUID `json:"scope_computer_id"`
 	ScopeCommandID     pgtype.UUID `json:"scope_command_id"`
-	ScopeCallerKind    pgtype.Text `json:"scope_caller_kind"`
 	ScopeComputerKey   pgtype.Text `json:"scope_computer_key"`
 	DeploymentID       pgtype.UUID `json:"deployment_id"`
 	SecretID           pgtype.UUID `json:"secret_id"`
@@ -54,7 +53,6 @@ func (q *Queries) CreateIdempotencyReceipt(ctx context.Context, arg CreateIdempo
 		arg.ScopeSecretID,
 		arg.ScopeComputerID,
 		arg.ScopeCommandID,
-		arg.ScopeCallerKind,
 		arg.ScopeComputerKey,
 		arg.DeploymentID,
 		arg.SecretID,
@@ -74,7 +72,6 @@ func (q *Queries) CreateIdempotencyReceipt(ctx context.Context, arg CreateIdempo
 		&i.ScopeSecretID,
 		&i.ScopeComputerID,
 		&i.ScopeCommandID,
-		&i.ScopeCallerKind,
 		&i.ScopeComputerKey,
 		&i.DeploymentID,
 		&i.SecretID,
@@ -89,7 +86,7 @@ func (q *Queries) CreateIdempotencyReceipt(ctx context.Context, arg CreateIdempo
 }
 
 const lockIdempotencyReceipt = `-- name: LockIdempotencyReceipt :one
-SELECT k.id, k.environment_id, k.operation, k.slot_hash, k.request_fingerprint, k.scope_secret_name, k.scope_secret_id, k.scope_computer_id, k.scope_command_id, k.scope_caller_kind, k.scope_computer_key, k.deployment_id, k.secret_id, k.secret_version_id, k.computer_id, k.command_id, k.accepted_at, k.receipt, k.receipt_pruned_at,
+SELECT k.id, k.environment_id, k.operation, k.slot_hash, k.request_fingerprint, k.scope_secret_name, k.scope_secret_id, k.scope_computer_id, k.scope_command_id, k.scope_computer_key, k.deployment_id, k.secret_id, k.secret_version_id, k.computer_id, k.command_id, k.accepted_at, k.receipt, k.receipt_pruned_at,
     k.accepted_at<=clock_timestamp()-interval '720 hours' AND NOT EXISTS (
         SELECT 1 FROM commands c WHERE c.environment_id=k.environment_id AND c.id=k.command_id
         AND (c.terminal_at IS NULL OR (c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL))
@@ -123,7 +120,6 @@ func (q *Queries) LockIdempotencyReceipt(ctx context.Context, arg LockIdempotenc
 		&i.IdempotencyReceipt.ScopeSecretID,
 		&i.IdempotencyReceipt.ScopeComputerID,
 		&i.IdempotencyReceipt.ScopeCommandID,
-		&i.IdempotencyReceipt.ScopeCallerKind,
 		&i.IdempotencyReceipt.ScopeComputerKey,
 		&i.IdempotencyReceipt.DeploymentID,
 		&i.IdempotencyReceipt.SecretID,

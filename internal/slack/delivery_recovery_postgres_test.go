@@ -86,7 +86,7 @@ func TestSlackDeliveryAbandonmentClosesPublicationWithoutReplacingRootOrReplayin
 				}
 			}
 			var exact bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=$3 AND bool_and(delivery_disposed_at IS NOT NULL AND delivery_disposed_by=$2 AND closed_at IS NOT NULL AND suppressed_revision=desired_revision AND status IN ('failed','suppressed')) FROM slack_posts WHERE thread_source_id=$1 AND role=$4`, f.participant, f.User, map[bool]int{false: 2, true: 1}[unbound], map[bool]string{false: "intermediate", true: "opening"}[unbound]).Scan(&exact); err != nil || !exact {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=$3 AND bool_and(delivery_disposed_at IS NOT NULL AND delivery_disposed_by_user_id=$2 AND closed_at IS NOT NULL AND suppressed_revision=desired_revision AND status IN ('failed','suppressed')) FROM slack_posts WHERE thread_source_id=$1 AND role=$4`, f.participant, f.User, map[bool]int{false: 2, true: 1}[unbound], map[bool]string{false: "intermediate", true: "opening"}[unbound]).Scan(&exact); err != nil || !exact {
 				t.Fatal("publication disposition", exact, err)
 			}
 			if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_payload=$2 AND inflight_attempt_id=$3 AND message_ts IS NULL FROM slack_posts WHERE id=$1`, first, claim.Payload, claim.AttemptID).Scan(&exact); err != nil || !exact {

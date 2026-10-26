@@ -891,7 +891,7 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		created := false
 		if id == uuid.Nil() {
 			id = uuid.NewV7()
-			tag, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,group_id,all_members,environment_id,all_agents,created_by,api_key_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, id, m.OrgID, roleID, input.Subject.MemberID, input.Subject.GroupID, input.Subject.Type == "all_members", input.EnvironmentID, input.AgentsMode == "all", m.UserID, input.Subject.APIKeyID)
+			tag, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,group_id,all_members,environment_id,all_agents,created_by_user_id,api_key_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, id, m.OrgID, roleID, input.Subject.MemberID, input.Subject.GroupID, input.Subject.Type == "all_members", input.EnvironmentID, input.AgentsMode == "all", m.UserID, input.Subject.APIKeyID)
 			if err != nil {
 				return err
 			}
@@ -1157,7 +1157,7 @@ func readRoleGrants(ctx context.Context, q db.DBTX, orgID uuid.UUID, filter Gran
  CASE WHEN g.all_members THEN 'all_members' WHEN g.member_id IS NOT NULL THEN 'member' WHEN g.api_key_id IS NOT NULL THEN 'api_key' ELSE 'group' END,
  g.member_id,g.group_id,g.api_key_id,COALESCE(k.name,''),g.role_id,e.project_id,g.environment_id,
  CASE WHEN g.environment_id IS NULL THEN 'organization' ELSE 'environment' END,
- g.revision,r.revision,g.all_agents,ARRAY(SELECT agent_id FROM role_grant_agents WHERE grant_id=g.id ORDER BY agent_id),ARRAY(SELECT a.key FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id ORDER BY ga.agent_id),r.name,COALESCE(p.name,''),COALESCE(e.name,''),COALESCE(p.slug,''),COALESCE(e.slug,''),COALESCE(pg.name,''),COALESCE(m.display_name,u.display_name,''),g.created_at,g.created_by,
+ g.revision,r.revision,g.all_agents,ARRAY(SELECT agent_id FROM role_grant_agents WHERE grant_id=g.id ORDER BY agent_id),ARRAY(SELECT a.key FROM role_grant_agents ga JOIN agents a ON (a.environment_id,a.id)=(ga.environment_id,ga.agent_id) WHERE ga.grant_id=g.id ORDER BY ga.agent_id),r.name,COALESCE(p.name,''),COALESCE(e.name,''),COALESCE(p.slug,''),COALESCE(e.slug,''),COALESCE(pg.name,''),COALESCE(m.display_name,u.display_name,''),g.created_at,g.created_by_user_id,
  r.permissions
  FROM role_grants g JOIN roles r ON (r.org_id,r.id)=(g.org_id,g.role_id)
  LEFT JOIN environments e ON e.id=g.environment_id LEFT JOIN projects p ON p.id=e.project_id

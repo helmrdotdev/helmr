@@ -1,6 +1,7 @@
 package idempotency
 
 import (
+	"fmt"
 	"testing"
 	"uuid"
 )
@@ -44,5 +45,23 @@ func TestSlotHashFramesEveryAuthorityField(t *testing.T) {
 		if idempotencySlotHash(&variant) == want {
 			t.Fatal("retry namespace collision")
 		}
+	}
+}
+
+func TestComputerCreateRetainsExternalScopeHash(t *testing.T) {
+	env := uuid.UUID{0, 0, 0, 0, 0, 0, 0x70, 0, 0x80, 0, 0, 0, 0, 0, 0, 1}
+	request, err := NewExternalComputerCreateRequest(env, "machine", "retry", ComputerCreateFingerprint{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(request.scope) != "external\x00machine" {
+		t.Fatalf("scope: %q", request.scope)
+	}
+	if got := fmt.Sprintf("%x", idempotencySlotHash(request)); got != "bd0806e143a8907c3153e2fc9c1597b1e140440001c9f3d7db5d8aa06cf5dd62" {
+		t.Fatalf("scope hash changed: %s", got)
+	}
+	claim, err := newClaim(request, idempotencySlotHash(request))
+	if err != nil || claim.ScopeComputerKey.String != "machine" {
+		t.Fatal(claim, err)
 	}
 }

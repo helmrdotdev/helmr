@@ -43,7 +43,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 			installation, registration, publication := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(transport,id,org_id,app_id,created_by_user_id) VALUES('http',$1,$2,'app',$3)`, registration, org, f.User)
 			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($1,$6,$2,'app','team','bot','Workspace',1,$3,$4,'{chat:write}',$5)`, installation, org, bytes.Repeat([]byte{1}, 16), bytes.Repeat([]byte{1}, 12), f.User, registration)
-			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($1,$2,$3,$4,$5,$6)`, publication, f.Environment, f.Agent, registration, installation, f.User)
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) VALUES($1,$2,$3,$4,$5,$6,(SELECT org_id FROM slack_app_registrations WHERE id=$4))`, publication, f.Environment, f.Agent, registration, installation, f.User)
 			key, err := rsa.GenerateKey(rand.Reader, 2048)
 			if err != nil {
 				t.Fatal(err)

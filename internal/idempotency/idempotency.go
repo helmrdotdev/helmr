@@ -138,8 +138,8 @@ func Run(ctx context.Context, caller pgx.Tx, input *Request, fn func(pgx.Tx, Res
 			SlotHash: claim.SlotHash, RequestFingerprint: claim.RequestFingerprint,
 			ScopeSecretName: claim.ScopeSecretName, ScopeSecretID: claim.ScopeSecretID,
 			ScopeComputerID: claim.ScopeComputerID, ScopeCommandID: claim.ScopeCommandID,
-			ScopeCallerKind: claim.ScopeCallerKind, ScopeComputerKey: claim.ScopeComputerKey,
-			DeploymentID: optionalUUID(target.DeploymentID), SecretID: optionalUUID(target.SecretID),
+			ScopeComputerKey: claim.ScopeComputerKey,
+			DeploymentID:     optionalUUID(target.DeploymentID), SecretID: optionalUUID(target.SecretID),
 			SecretVersionID: optionalUUID(target.SecretVersionID), ComputerID: optionalUUID(target.ComputerID),
 			CommandID: optionalUUID(target.CommandID), Receipt: bytes.Clone(completion.Receipt),
 		})
@@ -192,7 +192,6 @@ func newClaim(r *Request, slot [sha256.Size]byte) (db.IdempotencyReceipt, error)
 		if !ok || name == "" {
 			return db.IdempotencyReceipt{}, errors.New("invalid external Computer scope")
 		}
-		params.ScopeCallerKind = pgvalue.Text("external")
 		params.ScopeComputerKey = pgvalue.Text(name)
 	}
 	return params, nil

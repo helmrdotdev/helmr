@@ -92,7 +92,7 @@ func PinAdmissionImage(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) 
  JOIN image_builds p ON (p.environment_id,p.id)=(i.environment_id,i.image_build_id)
  JOIN image_specs spec ON (spec.environment_id,spec.id)=(i.environment_id,i.image_spec_id)
  WHERE i.environment_id=$1 AND i.image_spec_id=$2 AND i.root_id IS NOT NULL AND p.status='succeeded'
- AND ($4::uuid IS NULL OR p.id=$4 OR p.successor_of=$4)
+ AND ($4::uuid IS NULL OR p.id=$4 OR p.predecessor_build_id=$4)
  AND ($3::bigint IS NULL OR extract(epoch FROM clock_timestamp()-i.published_at)*1000<=$3)
  AND `+usableImageSecretsSQL+`
  ORDER BY i.seq DESC LIMIT 1`, env, *spec, maxAge, attached).Scan(&image)

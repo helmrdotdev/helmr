@@ -154,7 +154,7 @@ func SelectScaleIn(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Po
  WHERE h.worker_group_id=$1 AND h.worker_pool_id=$2 AND h.status='active'
  AND h.current_epoch IS NOT NULL AND h.admission_paused_reason IS NULL
  AND h.observed_at>=clock_timestamp()-$3::bigint*interval '1 second'
- AND NOT EXISTS(SELECT 1 FROM (`+db.AllocationUsageSQL+`) a WHERE a.worker_host_id=h.id AND a.kind NOT IN ('seed','retained'))
+ AND NOT EXISTS(SELECT 1 FROM allocation_usage a WHERE a.worker_host_id=h.id AND a.kind NOT IN ('seed','retained'))
  AND NOT EXISTS(SELECT 1 FROM session_processes p JOIN computer_leases l
  ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
  WHERE l.worker_host_id=h.id AND p.fenced_at IS NULL

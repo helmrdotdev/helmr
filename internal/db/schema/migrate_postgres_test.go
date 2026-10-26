@@ -292,12 +292,12 @@ func assertDatabaseConstraintBoundaries(
 		t.Fatalf("application-owned PostgreSQL functions = %d, want 0", functionCount)
 	}
 
-	var viewCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m')`).Scan(&viewCount); err != nil {
+	var views []string
+	if err := pool.QueryRow(ctx, `SELECT array_agg(c.relname || ':' || c.relkind::text ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('v','m')`).Scan(&views); err != nil {
 		t.Fatal(err)
 	}
-	if viewCount != 0 {
-		t.Fatalf("application-owned PostgreSQL views = %d, want 0", viewCount)
+	if strings.Join(views, ",") != "allocation_usage:v" {
+		t.Fatalf("application-owned PostgreSQL views = %v, want only allocation_usage", views)
 	}
 	var ruleCount int
 	if err := pool.QueryRow(ctx, `
@@ -457,7 +457,7 @@ func assertWorkerGroupUUIDSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	var columns int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='diagnostic_chunks' AND column_name=ANY($1::text[])`, []string{"session_id", "process_epoch", "image_build_id", "preparation_epoch", "command_id", "source_kind", "source_id", "producer_epoch", "stream"}).Scan(&columns); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='diagnostic_chunks' AND column_name=ANY($1::text[])`, []string{"session_id", "process_epoch", "image_build_id", "image_build_epoch", "command_id", "source_kind", "source_id", "producer_epoch", "stream"}).Scan(&columns); err != nil {
 		t.Fatal(err)
 	}
 	if columns != 9 {

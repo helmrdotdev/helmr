@@ -39,7 +39,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
  SELECT $1,environment_id,session_id,thread_id,id,1,'content','intermediate',$3,$4,$5,'post' FROM slack_thread_sources WHERE session_id=$2`, post, f.session, turn.TurnID, body, digest[:])
 				switch kind {
 				case "abandoned-post", "abandoned-uncertain-stream", "abandoned-open-stream", "abandoned-stopped-stream":
-					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET status='failed',error='delivery_abandoned',closed_at=clock_timestamp(),delivery_disposed_at=clock_timestamp(),delivery_disposed_by=$2,inflight_method='chat.postMessage',inflight_payload=payload,inflight_digest=payload_digest,inflight_revision=1,inflight_attempt_id=$3 WHERE id=$1`, post, f.user, uuid.NewV7())
+					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET status='failed',error='delivery_abandoned',closed_at=clock_timestamp(),delivery_disposed_at=clock_timestamp(),delivery_disposed_by_user_id=$2,inflight_method='chat.postMessage',inflight_payload=payload,inflight_digest=payload_digest,inflight_revision=1,inflight_attempt_id=$3 WHERE id=$1`, post, f.user, uuid.NewV7())
 					if kind != "abandoned-post" {
 						state := "uncertain"
 						if kind == "abandoned-open-stream" {

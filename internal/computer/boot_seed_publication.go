@@ -139,7 +139,7 @@ func (p *BootSeedPublisher) Publish(ctx context.Context, host workergroup.HostPr
 			if _, err := db.New(tx).UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(org), Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO boot_seed_objects(environment_id,build_id,role,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6)`,
+			if _, err := tx.Exec(ctx, `INSERT INTO boot_seed_objects(environment_id,boot_seed_build_id,role,digest,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,$6)`,
 				ref.EnvironmentID, ref.BuildID, object.Role, object.Digest, object.SizeBytes, object.MediaType); err != nil {
 				return err
 			}

@@ -125,9 +125,9 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 		t.Fatalf("revoked rotation: %v", err)
 	}
 	var versions int
-	var generation int64
-	if err = database.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM secret_versions WHERE secret_id=$1),revocation_generation FROM secrets WHERE id=$1`, secretID).Scan(&versions, &generation); err != nil || versions != 3 || generation != 1 {
-		t.Fatalf("versions=%d revocations=%d: %v", versions, generation, err)
+	var revoked bool
+	if err = database.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM secret_versions WHERE secret_id=$1),status='revoked' AND current_version_id IS NULL AND revoked_at IS NOT NULL FROM secrets WHERE id=$1`, secretID).Scan(&versions, &revoked); err != nil || versions != 3 || !revoked {
+		t.Fatalf("versions=%d revoked=%t: %v", versions, revoked, err)
 	}
 }
 

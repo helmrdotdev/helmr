@@ -61,7 +61,7 @@ func TestPromotionRechecksPublishedImageEligibility(t *testing.T) {
 		t.Fatalf("promotion changed original attachment: %v %v", retained, err)
 	}
 	var direct bool
-	if err := p.f.pool.QueryRow(t.Context(), `SELECT successor_of=$3 AND (SELECT count(*) FROM image_builds WHERE environment_id=$1)=2 FROM image_builds WHERE environment_id=$1 AND id=$2`, p.f.env, successor.ID, original.ID).Scan(&direct); err != nil || !direct {
+	if err := p.f.pool.QueryRow(t.Context(), `SELECT predecessor_build_id=$3 AND (SELECT count(*) FROM image_builds WHERE environment_id=$1)=2 FROM image_builds WHERE environment_id=$1 AND id=$2`, p.f.env, successor.ID, original.ID).Scan(&direct); err != nil || !direct {
 		t.Fatalf("promotion did not share the direct successor: %v %v", direct, err)
 	}
 

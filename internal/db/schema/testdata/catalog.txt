@@ -36,24 +36,28 @@ column api_keys.project_id uuid not null
 column api_keys.revoked_at timestamp with time zone
 column api_keys.token_hash bytea not null
 column audit_events.action text not null
-column audit_events.actor_id uuid
+column audit_events.actor_api_key_id uuid
+column audit_events.actor_component text
 column audit_events.actor_identity jsonb
-column audit_events.actor_kind text not null
-column audit_events.actor_member_id uuid
-column audit_events.actor_service text
-column audit_events.authorization_witness jsonb not null
+column audit_events.actor_session_id uuid
+column audit_events.actor_user_id uuid
+column audit_events.actor_worker_host_id uuid
+column audit_events.authentication_origin text not null
+column audit_events.authentication_result text not null
+column audit_events.authorization_evidence jsonb not null
 column audit_events.causality jsonb not null default '{}'::jsonb
 column audit_events.cause_event_id uuid
 column audit_events.channel text not null
 column audit_events.computer_id uuid
 column audit_events.credential_id uuid
-column audit_events.credential_kind text not null
+column audit_events.credential_kind text
 column audit_events.credential_version bigint
 column audit_events.deployment_id uuid
 column audit_events.details jsonb not null default '{}'::jsonb
 column audit_events.environment_id uuid
 column audit_events.expires_at timestamp with time zone not null
 column audit_events.id uuid not null
+column audit_events.identity_provider text
 column audit_events.occurred_at timestamp with time zone not null
 column audit_events.operation_id uuid not null
 column audit_events.org_id uuid
@@ -114,7 +118,7 @@ column boot_seed_builds.vm_vcpu_count integer
 column boot_seed_builds.worker_epoch bigint
 column boot_seed_builds.worker_host_id uuid
 column boot_seed_objects.availability_required boolean generated stored true
-column boot_seed_objects.build_id uuid not null
+column boot_seed_objects.boot_seed_build_id uuid not null
 column boot_seed_objects.digest text not null
 column boot_seed_objects.environment_id uuid not null
 column boot_seed_objects.media_type text not null
@@ -332,7 +336,6 @@ column deployment_events.environment_id uuid not null
 column deployment_events.id bigint not null identity a
 column deployment_events.kind text not null
 column deployment_events.message text not null default ''::text
-column deployment_events.payload jsonb not null default '{}'::jsonb
 column deployment_objects.deployment_id uuid not null
 column deployment_objects.digest text not null
 column deployment_objects.environment_id uuid not null
@@ -365,13 +368,13 @@ column diagnostic_chunks.environment_id uuid not null
 column diagnostic_chunks.export_after timestamp with time zone not null default '-infinity'::timestamp with time zone
 column diagnostic_chunks.export_claim uuid
 column diagnostic_chunks.id bigint not null identity a
+column diagnostic_chunks.image_build_epoch bigint
 column diagnostic_chunks.image_build_id uuid
 column diagnostic_chunks.ingest_size_bytes bigint not null generated stored (octet_length(data))::bigint
 column diagnostic_chunks.kind text not null
 column diagnostic_chunks.observed_at_unix_nano bigint not null
-column diagnostic_chunks.preparation_epoch bigint
 column diagnostic_chunks.process_epoch bigint
-column diagnostic_chunks.producer_epoch bigint not null generated stored COALESCE(process_epoch, preparation_epoch, (1)::bigint)
+column diagnostic_chunks.producer_epoch bigint not null generated stored COALESCE(process_epoch, image_build_epoch, (1)::bigint)
 column diagnostic_chunks.sequence bigint not null
 column diagnostic_chunks.session_id uuid
 column diagnostic_chunks.source_id uuid not null generated stored COALESCE(session_id, image_build_id, command_id)
@@ -474,7 +477,6 @@ column idempotency_receipts.operation text not null
 column idempotency_receipts.receipt jsonb
 column idempotency_receipts.receipt_pruned_at timestamp with time zone
 column idempotency_receipts.request_fingerprint bytea not null
-column idempotency_receipts.scope_caller_kind text
 column idempotency_receipts.scope_command_id uuid
 column idempotency_receipts.scope_computer_id uuid
 column idempotency_receipts.scope_computer_key text
@@ -501,6 +503,7 @@ column image_builds.id uuid not null
 column image_builds.idempotency_key text not null
 column image_builds.image_spec_id uuid not null
 column image_builds.logical_bytes bigint
+column image_builds.predecessor_build_id uuid
 column image_builds.proxy_ca_certificate bytea
 column image_builds.proxy_ca_not_after timestamp with time zone
 column image_builds.proxy_ca_private_key_ciphertext bytea
@@ -528,7 +531,6 @@ column image_builds.stdout_gapped boolean not null default false
 column image_builds.stdout_last_accepted_at timestamp with time zone
 column image_builds.stdout_last_digest bytea
 column image_builds.stdout_last_sequence bigint
-column image_builds.successor_of uuid
 column image_builds.vm_platform_id text
 column image_builds.vm_vcpu_count integer
 column image_builds.worker_epoch bigint
@@ -631,7 +633,7 @@ column role_grants.all_agents boolean not null default false
 column role_grants.all_members boolean not null default false
 column role_grants.api_key_id uuid
 column role_grants.created_at timestamp with time zone not null default now()
-column role_grants.created_by uuid
+column role_grants.created_by_user_id uuid
 column role_grants.environment_id uuid
 column role_grants.group_id uuid
 column role_grants.id uuid not null
@@ -664,7 +666,6 @@ column secret_exposures.exposed_at timestamp with time zone not null default clo
 column secret_exposures.id uuid not null
 column secret_exposures.image_build_id uuid
 column secret_exposures.process_epoch bigint
-column secret_exposures.revocation_generation bigint not null
 column secret_exposures.secret_id uuid not null
 column secret_exposures.session_id uuid
 column secret_exposures.version_id uuid not null
@@ -679,7 +680,6 @@ column secrets.current_version_id uuid
 column secrets.environment_id uuid not null
 column secrets.id uuid not null
 column secrets.name text not null
-column secrets.revocation_generation bigint not null default 0
 column secrets.revoked_at timestamp with time zone
 column secrets.status text not null default 'active'::text
 column secrets.updated_at timestamp with time zone not null default now()
@@ -814,13 +814,14 @@ column slack_connections.created_at timestamp with time zone not null default cl
 column slack_connections.created_by_user_id uuid not null
 column slack_connections.environment_id uuid not null
 column slack_connections.id uuid not null
+column slack_connections.org_id uuid not null
 column slack_connections.revoked_at timestamp with time zone
 column slack_connections.slack_app_registration_id uuid not null
 column slack_connections.slack_installation_id uuid
-column slack_delivery_limits.channel_id text not null
 column slack_delivery_limits.installation_id uuid not null
 column slack_delivery_limits.next_post_at timestamp with time zone not null default '-infinity'::timestamp with time zone
 column slack_delivery_limits.next_status_at timestamp with time zone not null default '-infinity'::timestamp with time zone
+column slack_delivery_limits.slack_channel_id text not null
 column slack_installations.app_id text not null
 column slack_installations.app_registration_id uuid not null
 column slack_installations.authorization_lost_at timestamp with time zone
@@ -849,7 +850,6 @@ column slack_method_limits.method text not null
 column slack_method_limits.retry_after timestamp with time zone not null
 column slack_posts.ask_id uuid
 column slack_posts.attempt_count bigint not null default 0
-column slack_posts.claim_epoch bigint not null default 0
 column slack_posts.claimed_until timestamp with time zone
 column slack_posts.closed_at timestamp with time zone
 column slack_posts.confirmed_at timestamp with time zone
@@ -858,7 +858,7 @@ column slack_posts.confirmed_stream_text text not null default ''::text
 column slack_posts.continuation_ordinal integer not null default 0
 column slack_posts.created_at timestamp with time zone not null default clock_timestamp()
 column slack_posts.delivery_disposed_at timestamp with time zone
-column slack_posts.delivery_disposed_by uuid
+column slack_posts.delivery_disposed_by_user_id uuid
 column slack_posts.desired_revision bigint not null default 1
 column slack_posts.environment_id uuid not null
 column slack_posts.error text
@@ -1239,23 +1239,40 @@ constraint api_keys f FOREIGN KEY (org_id, project_id, environment_id) REFERENCE
 constraint api_keys p PRIMARY KEY (id)
 constraint api_keys u UNIQUE (environment_id, id)
 constraint api_keys u UNIQUE (token_hash)
-constraint audit_events c CHECK ((actor_kind <> ALL (ARRAY['human'::text, 'installation_operator'::text])) OR actor_identity ?& ARRAY['source'::text, 'display_name'::text] AND jsonb_typeof(actor_identity -> 'source'::text) = 'string'::text AND (actor_identity ->> 'source'::text) = 'account'::text AND jsonb_typeof(actor_identity -> 'display_name'::text) = 'string'::text AND octet_length(actor_identity ->> 'display_name'::text) > 0)
-constraint audit_events c CHECK ((actor_kind = ANY (ARRAY['human'::text, 'installation_operator'::text])) AND actor_id IS NOT NULL AND actor_identity IS NOT NULL AND actor_service IS NULL OR (actor_kind = ANY (ARRAY['api_key'::text, 'session'::text])) AND actor_id IS NOT NULL AND actor_identity IS NULL AND actor_service IS NULL OR actor_kind = 'service'::text AND actor_id IS NULL AND actor_identity IS NULL AND actor_service IS NOT NULL AND octet_length(actor_service) >= 1 AND octet_length(actor_service) <= 128 OR actor_kind = 'anonymous'::text AND actor_id IS NULL AND actor_identity IS NULL AND actor_service IS NULL)
-constraint audit_events c CHECK (actor_kind <> 'api_key'::text OR credential_kind = 'api_key'::text AND credential_id IS NOT NULL AND credential_id = actor_id AND credential_version IS NOT NULL)
-constraint audit_events c CHECK (actor_kind <> 'session'::text OR runtime_generation IS NOT NULL)
-constraint audit_events c CHECK (actor_kind = ANY (ARRAY['human'::text, 'api_key'::text, 'session'::text, 'service'::text, 'installation_operator'::text, 'anonymous'::text]))
-constraint audit_events c CHECK (actor_member_id IS NULL OR (actor_kind = ANY (ARRAY['human'::text, 'installation_operator'::text])) AND org_id IS NOT NULL)
+constraint audit_events c CHECK ((actor_user_id IS NOT NULL) = (actor_identity IS NOT NULL))
+constraint audit_events c CHECK ((authentication_origin = 'internal'::text) = (authentication_result = 'not_attempted'::text))
+constraint audit_events c CHECK ((authentication_result <> ALL (ARRAY['failed'::text, 'absent'::text])) OR (authorization_evidence ->> 'decision'::text) = 'not_evaluated'::text)
+constraint audit_events c CHECK ((authentication_result <> ALL (ARRAY['failed'::text, 'absent'::text])) OR (outcome = ANY (ARRAY['denied'::text, 'failed'::text])) OR authentication_result = 'absent'::text AND (action = ANY (ARRAY['identity.device_started'::text, 'identity.magic_link_requested'::text])))
+constraint audit_events c CHECK ((num_nonnulls(actor_user_id, actor_api_key_id, actor_session_id, actor_worker_host_id, actor_component) = 0) = (authentication_result = ANY (ARRAY['failed'::text, 'absent'::text])))
+constraint audit_events c CHECK (actor_api_key_id IS NULL OR credential_kind = 'api_key'::text AND credential_id IS NOT NULL AND credential_id = actor_api_key_id AND credential_version IS NOT NULL)
+constraint audit_events c CHECK (actor_component = ANY (ARRAY['control_plane'::text, 'dispatcher'::text, 'control_plane_cli'::text, 'audit_maintenance'::text, 'development'::text, 'capacity_controller'::text]))
+constraint audit_events c CHECK (actor_component IS NULL OR authentication_result <> 'verified'::text OR actor_component = 'capacity_controller'::text AND credential_kind = 'capacity_token'::text)
+constraint audit_events c CHECK (actor_session_id IS NOT NULL OR runtime_generation IS NULL AND process_epoch IS NULL)
+constraint audit_events c CHECK (actor_session_id IS NULL OR credential_kind = 'worker_host'::text AND credential_id IS NOT NULL AND credential_version IS NOT NULL AND runtime_generation IS NOT NULL)
+constraint audit_events c CHECK (actor_user_id IS NULL OR (credential_kind <> ALL (ARRAY['login_session'::text, 'device_code'::text, 'magic_link'::text])) OR credential_id IS NOT NULL)
+constraint audit_events c CHECK (actor_user_id IS NULL OR (credential_kind = ANY (ARRAY['login_session'::text, 'provider_assertion'::text, 'magic_link'::text, 'device_code'::text])))
+constraint audit_events c CHECK (actor_user_id IS NULL OR actor_identity ?& ARRAY['source'::text, 'display_name'::text] AND jsonb_typeof(actor_identity -> 'source'::text) = 'string'::text AND (actor_identity ->> 'source'::text) = 'account'::text AND jsonb_typeof(actor_identity -> 'display_name'::text) = 'string'::text AND octet_length(actor_identity ->> 'display_name'::text) > 0)
+constraint audit_events c CHECK (actor_user_id IS NULL OR credential_kind <> 'provider_assertion'::text OR identity_provider IS NOT NULL)
+constraint audit_events c CHECK (actor_worker_host_id IS NULL OR credential_kind = 'worker_host'::text AND credential_id IS NOT NULL AND credential_id = actor_worker_host_id AND credential_version IS NOT NULL)
+constraint audit_events c CHECK (authentication_origin <> 'internal'::text OR actor_component IS NOT NULL AND credential_kind IS NULL)
+constraint audit_events c CHECK (authentication_origin = ANY (ARRAY['request'::text, 'internal'::text]))
+constraint audit_events c CHECK (authentication_result <> 'verified'::text OR credential_kind IS NOT NULL)
+constraint audit_events c CHECK (authentication_result = 'verified'::text OR credential_id IS NULL AND credential_version IS NULL AND runtime_generation IS NULL AND process_epoch IS NULL)
+constraint audit_events c CHECK (authentication_result = ANY (ARRAY['verified'::text, 'failed'::text, 'absent'::text, 'not_attempted'::text]))
+constraint audit_events c CHECK (credential_kind = ANY (ARRAY['login_session'::text, 'api_key'::text, 'worker_host'::text, 'capacity_token'::text, 'provider_assertion'::text, 'magic_link'::text, 'device_code'::text]))
 constraint audit_events c CHECK (credential_version > 0)
 constraint audit_events c CHECK (environment_id IS NULL OR project_id IS NOT NULL)
 constraint audit_events c CHECK (expires_at > recorded_at AND expires_at = (recorded_at + retention_seconds::double precision * '00:00:01'::interval))
+constraint audit_events c CHECK (identity_provider IS NULL OR credential_kind IS NOT NULL AND (credential_kind = ANY (ARRAY['provider_assertion'::text, 'magic_link'::text])))
 constraint audit_events c CHECK (isfinite(occurred_at) AND isfinite(recorded_at) AND isfinite(expires_at))
 constraint audit_events c CHECK (jsonb_typeof(actor_identity) = 'object'::text AND pg_column_size(actor_identity) <= 4096)
-constraint audit_events c CHECK (jsonb_typeof(authorization_witness) = 'object'::text AND pg_column_size(authorization_witness) <= 16384)
+constraint audit_events c CHECK (jsonb_typeof(authorization_evidence) = 'object'::text AND pg_column_size(authorization_evidence) <= 16384 AND authorization_evidence ?& ARRAY['decision'::text, 'checks'::text] AND jsonb_typeof(authorization_evidence -> 'decision'::text) = 'string'::text AND ((authorization_evidence ->> 'decision'::text) = ANY (ARRAY['allowed'::text, 'denied'::text, 'not_evaluated'::text])) AND jsonb_typeof(authorization_evidence -> 'checks'::text) = 'array'::text AND ((authorization_evidence ->> 'decision'::text) = 'not_evaluated'::text) = (jsonb_array_length(authorization_evidence -> 'checks'::text) = 0))
 constraint audit_events c CHECK (jsonb_typeof(causality) = 'object'::text AND pg_column_size(causality) <= 4096)
 constraint audit_events c CHECK (jsonb_typeof(details) = 'object'::text AND pg_column_size(details) <= 16384)
+constraint audit_events c CHECK (num_nonnulls(actor_user_id, actor_api_key_id, actor_session_id, actor_worker_host_id, actor_component) <= 1)
 constraint audit_events c CHECK (octet_length(action) >= 1 AND octet_length(action) <= 128)
 constraint audit_events c CHECK (octet_length(channel) >= 1 AND octet_length(channel) <= 64)
-constraint audit_events c CHECK (octet_length(credential_kind) >= 1 AND octet_length(credential_kind) <= 64)
+constraint audit_events c CHECK (octet_length(identity_provider) >= 1 AND octet_length(identity_provider) <= 64)
 constraint audit_events c CHECK (octet_length(slack_team_id) >= 1 AND octet_length(slack_team_id) <= 100)
 constraint audit_events c CHECK (octet_length(slack_user_id) >= 1 AND octet_length(slack_user_id) <= 100)
 constraint audit_events c CHECK (octet_length(target_kind) >= 1 AND octet_length(target_kind) <= 64)
@@ -1310,8 +1327,8 @@ constraint boot_seed_builds u UNIQUE NULLS NOT DISTINCT (environment_id, deploym
 constraint boot_seed_objects c CHECK (role = ANY (ARRAY['vm_state'::text, 'memory'::text, 'scratch_disk'::text]))
 constraint boot_seed_objects c CHECK (size_bytes > 0)
 constraint boot_seed_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
-constraint boot_seed_objects f FOREIGN KEY (environment_id, build_id) REFERENCES boot_seed_builds(environment_id, id)
-constraint boot_seed_objects p PRIMARY KEY (environment_id, build_id, role)
+constraint boot_seed_objects f FOREIGN KEY (environment_id, boot_seed_build_id) REFERENCES boot_seed_builds(environment_id, id)
+constraint boot_seed_objects p PRIMARY KEY (environment_id, boot_seed_build_id, role)
 constraint cas_blobs c CHECK ((retired_at IS NULL) = (next_reclaim_at IS NULL))
 constraint cas_blobs c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint cas_blobs c CHECK (size_bytes >= 0)
@@ -1320,6 +1337,7 @@ constraint cas_blobs u UNIQUE (digest, size_bytes, not_retired)
 constraint cas_objects c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint cas_objects c CHECK (size_bytes >= 0)
 constraint cas_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
+constraint cas_objects f FOREIGN KEY (org_id) REFERENCES organizations(id)
 constraint cas_objects p PRIMARY KEY (org_id, digest)
 constraint cas_objects u UNIQUE (org_id, digest, size_bytes, media_type)
 constraint cas_upload_reclaims c CHECK (upload_id <> ''::text)
@@ -1402,6 +1420,7 @@ constraint computer_controls c CHECK (kind = ANY (ARRAY['hibernate'::text, 'wake
 constraint computer_controls c CHECK (octet_length(idempotency_key) >= 1 AND octet_length(idempotency_key) <= 512)
 constraint computer_controls c CHECK (status = ANY (ARRAY['accepted'::text, 'completed'::text, 'failed'::text]))
 constraint computer_controls f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
+constraint computer_controls f FOREIGN KEY (environment_id, computer_id, checkpoint_id) REFERENCES checkpoints(environment_id, computer_id, id)
 constraint computer_controls p PRIMARY KEY (environment_id, id)
 constraint computer_controls u UNIQUE (environment_id, computer_id, caller_kind, caller_id, kind, idempotency_key)
 constraint computer_leases c CHECK ((base_root_id IS NULL) = (write_key_id IS NULL))
@@ -1494,20 +1513,22 @@ constraint deployments f FOREIGN KEY (environment_id) REFERENCES environments(id
 constraint deployments p PRIMARY KEY (environment_id, id)
 constraint deployments u UNIQUE (environment_id, bundle_digest)
 constraint device_codes c CHECK (poll_interval_seconds > 0)
+constraint device_codes c CHECK (status = 'pending'::text AND org_id IS NULL AND decided_by_member_id IS NULL AND decided_at IS NULL AND consumed_at IS NULL OR (status = ANY (ARRAY['approved'::text, 'denied'::text])) AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NULL OR status = 'consumed'::text AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NOT NULL)
 constraint device_codes c CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'consumed'::text]))
 constraint device_codes f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint device_codes f FOREIGN KEY (org_id, decided_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (decided_by_member_id)
 constraint device_codes p PRIMARY KEY (id)
 constraint device_codes u UNIQUE (device_code_hash)
 constraint device_codes u UNIQUE (user_code_hash)
-constraint diagnostic_chunks c CHECK ((image_build_id IS NULL) = (preparation_epoch IS NULL))
+constraint diagnostic_chunks c CHECK ((image_build_id IS NULL) = (image_build_epoch IS NULL))
 constraint diagnostic_chunks c CHECK ((session_id IS NULL) = (process_epoch IS NULL))
+constraint diagnostic_chunks c CHECK (image_build_epoch > 0)
 constraint diagnostic_chunks c CHECK (num_nonnulls(session_id, image_build_id, command_id) = 1)
 constraint diagnostic_chunks c CHECK (sequence > 0 AND through_sequence >= sequence AND byte_offset >= 0 AND through_byte_offset >= byte_offset AND observed_at_unix_nano > 0 AND dropped_bytes >= 0 AND (kind = 'data'::text AND sequence = through_sequence AND octet_length(data) > 0 AND dropped_bytes = 0 AND NOT complete AND through_byte_offset = (byte_offset + octet_length(data)) OR kind = 'gap'::text AND octet_length(data) = 0 AND dropped_bytes >= (through_sequence - sequence + 1) AND NOT complete AND through_byte_offset = (byte_offset + dropped_bytes) OR kind = 'end'::text AND sequence = through_sequence AND octet_length(data) = 0 AND dropped_bytes = 0 AND through_byte_offset = byte_offset))
 constraint diagnostic_chunks c CHECK (stream = ANY (ARRAY['stdout'::text, 'stderr'::text]))
 constraint diagnostic_chunks f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint diagnostic_chunks f FOREIGN KEY (environment_id, command_id) REFERENCES commands(environment_id, id)
-constraint diagnostic_chunks f FOREIGN KEY (environment_id, image_build_id, preparation_epoch) REFERENCES image_builds(environment_id, id, executor_epoch)
+constraint diagnostic_chunks f FOREIGN KEY (environment_id, image_build_id, image_build_epoch) REFERENCES image_builds(environment_id, id, executor_epoch)
 constraint diagnostic_chunks f FOREIGN KEY (environment_id, session_id, process_epoch) REFERENCES session_processes(environment_id, session_id, epoch)
 constraint diagnostic_chunks p PRIMARY KEY (id)
 constraint disk_encryption_keys c CHECK (octet_length(wrapping_key_id) >= 1 AND octet_length(wrapping_key_id) <= 2048)
@@ -1581,7 +1602,7 @@ constraint environments p PRIMARY KEY (id)
 constraint environments u UNIQUE (org_id, id)
 constraint environments u UNIQUE (org_id, project_id, id)
 constraint environments u UNIQUE (org_id, project_id, slug)
-constraint idempotency_receipts c CHECK (((operation = ANY (ARRAY['deployment.finalize'::text, 'template.refresh'::text])) AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key) = 0 OR operation = 'secret.create'::text AND scope_secret_name IS NOT NULL AND octet_length(scope_secret_name) > 0 AND num_nonnulls(scope_secret_id, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key) = 0 OR (operation = ANY (ARRAY['secret.rotate'::text, 'secret.revoke'::text])) AND scope_secret_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_computer_id, scope_command_id, scope_caller_kind, scope_computer_key) = 0 OR operation = 'computer.create'::text AND scope_caller_kind = 'external'::text AND scope_computer_key IS NOT NULL AND octet_length(scope_computer_key) > 0 AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id) = 0 OR (operation = ANY (ARRAY['computer.delete'::text, 'computer.exec'::text])) AND scope_computer_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_command_id, scope_caller_kind, scope_computer_key) = 0 OR operation = 'command.cancel'::text AND scope_command_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_caller_kind, scope_computer_key) = 0) IS TRUE)
+constraint idempotency_receipts c CHECK (((operation = ANY (ARRAY['deployment.finalize'::text, 'template.refresh'::text])) AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id, scope_computer_key) = 0 OR operation = 'secret.create'::text AND scope_secret_name IS NOT NULL AND octet_length(scope_secret_name) > 0 AND num_nonnulls(scope_secret_id, scope_computer_id, scope_command_id, scope_computer_key) = 0 OR (operation = ANY (ARRAY['secret.rotate'::text, 'secret.revoke'::text])) AND scope_secret_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_computer_id, scope_command_id, scope_computer_key) = 0 OR operation = 'computer.create'::text AND scope_computer_key IS NOT NULL AND octet_length(scope_computer_key) > 0 AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_command_id) = 0 OR (operation = ANY (ARRAY['computer.delete'::text, 'computer.exec'::text])) AND scope_computer_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_command_id, scope_computer_key) = 0 OR operation = 'command.cancel'::text AND scope_command_id IS NOT NULL AND num_nonnulls(scope_secret_name, scope_secret_id, scope_computer_id, scope_computer_key) = 0) IS TRUE)
 constraint idempotency_receipts c CHECK (jsonb_typeof(receipt) = 'object'::text)
 constraint idempotency_receipts c CHECK (octet_length(request_fingerprint) = 32)
 constraint idempotency_receipts c CHECK (octet_length(slot_hash) = 32)
@@ -1610,13 +1631,14 @@ constraint image_builds c CHECK (capture_root IS NULL OR logical_bytes IS NOT NU
 constraint image_builds c CHECK (capture_root ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint image_builds c CHECK (cpu_config_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint image_builds c CHECK (disk_released_at IS NULL OR fenced_at IS NOT NULL AND write_key_id IS NOT NULL)
-constraint image_builds c CHECK (executor_epoch >= 0)
+constraint image_builds c CHECK (executor_epoch = ANY (ARRAY[0::bigint, 1::bigint]))
 constraint image_builds c CHECK (fenced_at IS NULL OR (status = ANY (ARRAY['succeeded'::text, 'failed'::text])))
 constraint image_builds c CHECK (logical_bytes > 0 AND (logical_bytes % 4096::bigint) = 0)
 constraint image_builds c CHECK (num_nonnulls(proxy_ca_certificate, proxy_ca_private_key_nonce, proxy_ca_private_key_ciphertext, proxy_ca_not_after) = ANY (ARRAY[0, 4]))
 constraint image_builds c CHECK (octet_length(capture_evidence) >= 1 AND octet_length(capture_evidence) <= 4096)
 constraint image_builds c CHECK (octet_length(channel_credential_digest) = 32)
 constraint image_builds c CHECK (octet_length(idempotency_key) >= 1 AND octet_length(idempotency_key) <= 512)
+constraint image_builds c CHECK (predecessor_build_id IS NULL OR predecessor_build_id <> id)
 constraint image_builds c CHECK (proxy_ca_certificate IS NULL OR status = 'running'::text AND octet_length(proxy_ca_certificate) >= 1 AND octet_length(proxy_ca_certificate) <= 16384 AND octet_length(proxy_ca_private_key_nonce) = 12 AND octet_length(proxy_ca_private_key_ciphertext) > 0)
 constraint image_builds c CHECK (reserved_memory_bytes > 0)
 constraint image_builds c CHECK (reserved_scratch_bytes > 0)
@@ -1635,7 +1657,6 @@ constraint image_builds c CHECK (stdout_accepted_through >= 0)
 constraint image_builds c CHECK (stdout_byte_offset >= 0)
 constraint image_builds c CHECK (stdout_expired_through >= 0 AND stdout_expired_through <= stdout_accepted_through)
 constraint image_builds c CHECK (stdout_last_digest IS NULL OR octet_length(stdout_last_digest) = 32)
-constraint image_builds c CHECK (successor_of IS NULL OR successor_of <> id)
 constraint image_builds c CHECK (vm_vcpu_count > 0)
 constraint image_builds c CHECK (worker_epoch > 0)
 constraint image_builds c CHECK (worker_host_id IS NULL AND executor_epoch = 0 AND worker_epoch IS NULL AND allocation_id IS NULL AND channel_credential_digest IS NULL AND executor_expires_at IS NULL AND fenced_at IS NULL OR worker_host_id IS NOT NULL AND executor_epoch > 0 AND worker_epoch IS NOT NULL AND allocation_id IS NOT NULL AND channel_credential_digest IS NOT NULL)
@@ -1643,7 +1664,7 @@ constraint image_builds c CHECK (worker_host_id IS NULL AND reserved_memory_byte
 constraint image_builds f FOREIGN KEY (environment_id, id, write_key_id) REFERENCES disk_encryption_keys(environment_id, writer_image_build_id, id)
 constraint image_builds f FOREIGN KEY (environment_id, id, write_key_id, write_key_required) REFERENCES disk_encryption_keys(environment_id, writer_image_build_id, id, available)
 constraint image_builds f FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id)
-constraint image_builds f FOREIGN KEY (environment_id, image_spec_id, successor_of) REFERENCES image_builds(environment_id, image_spec_id, id)
+constraint image_builds f FOREIGN KEY (environment_id, image_spec_id, predecessor_build_id) REFERENCES image_builds(environment_id, image_spec_id, id)
 constraint image_builds f FOREIGN KEY (vm_platform_id) REFERENCES vm_platforms(id)
 constraint image_builds f FOREIGN KEY (worker_host_id) REFERENCES worker_hosts(id)
 constraint image_builds p PRIMARY KEY (environment_id, id)
@@ -1651,7 +1672,7 @@ constraint image_builds u UNIQUE (allocation_id)
 constraint image_builds u UNIQUE (environment_id, id, executor_epoch)
 constraint image_builds u UNIQUE (environment_id, image_spec_id, id)
 constraint image_builds u UNIQUE (environment_id, image_spec_id, idempotency_key)
-constraint image_builds u UNIQUE (environment_id, successor_of)
+constraint image_builds u UNIQUE (environment_id, predecessor_build_id)
 constraint image_specs c CHECK ((refresh_every_ms IS NULL) = (next_refresh_at IS NULL))
 constraint image_specs c CHECK (jsonb_typeof(seed) = 'object'::text)
 constraint image_specs c CHECK (jsonb_typeof(spec) = 'object'::text)
@@ -1674,14 +1695,16 @@ constraint invitations f FOREIGN KEY (org_id, accepted_by_member_id) REFERENCES 
 constraint invitations f FOREIGN KEY (org_id, invited_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (invited_by_member_id)
 constraint invitations f FOREIGN KEY (org_id, revoked_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (revoked_by_member_id)
 constraint invitations p PRIMARY KEY (id)
+constraint invitations u UNIQUE (org_id, id)
 constraint invitations u UNIQUE (token_hash)
 constraint login_sessions f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE SET NULL
 constraint login_sessions f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 constraint login_sessions p PRIMARY KEY (id)
 constraint login_sessions u UNIQUE (token_hash)
+constraint magic_links c CHECK (purpose = 'login'::magic_link_purpose AND org_id IS NULL AND invitation_id IS NULL OR purpose = 'invite_accept'::magic_link_purpose AND org_id IS NOT NULL AND invitation_id IS NOT NULL)
 constraint magic_links f FOREIGN KEY (consumed_by_user_id) REFERENCES users(id) ON DELETE SET NULL
-constraint magic_links f FOREIGN KEY (invitation_id) REFERENCES invitations(id) ON DELETE CASCADE
 constraint magic_links f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
+constraint magic_links f FOREIGN KEY (org_id, invitation_id) REFERENCES invitations(org_id, id) ON DELETE CASCADE
 constraint magic_links p PRIMARY KEY (id)
 constraint magic_links u UNIQUE (token_hash)
 constraint org_members c CHECK (NOT is_owner OR removed_at IS NULL)
@@ -1720,7 +1743,7 @@ constraint role_grants c CHECK (NOT all_agents OR environment_id IS NOT NULL)
 constraint role_grants c CHECK (NOT all_members OR environment_id IS NOT NULL AND NOT all_agents)
 constraint role_grants c CHECK (api_key_id IS NULL OR environment_id IS NOT NULL)
 constraint role_grants c CHECK (revision > 0)
-constraint role_grants f FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+constraint role_grants f FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
 constraint role_grants f FOREIGN KEY (environment_id, api_key_id) REFERENCES api_keys(environment_id, id) ON DELETE RESTRICT
 constraint role_grants f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint role_grants f FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id) ON DELETE CASCADE
@@ -1753,7 +1776,6 @@ constraint secret_bindings u UNIQUE NULLS NOT DISTINCT (environment_id, image_sp
 constraint secret_exposures c CHECK ((session_id IS NULL) = (process_epoch IS NULL))
 constraint secret_exposures c CHECK (num_nonnulls(image_build_id, session_id, command_id) = 1)
 constraint secret_exposures c CHECK (process_epoch > 0)
-constraint secret_exposures c CHECK (revocation_generation >= 0)
 constraint secret_exposures f FOREIGN KEY (environment_id, command_id) REFERENCES commands(environment_id, id)
 constraint secret_exposures f FOREIGN KEY (environment_id, image_build_id) REFERENCES image_builds(environment_id, id)
 constraint secret_exposures f FOREIGN KEY (environment_id, secret_id) REFERENCES secrets(environment_id, id)
@@ -1768,7 +1790,6 @@ constraint secret_versions p PRIMARY KEY (id)
 constraint secret_versions u UNIQUE (secret_id, id)
 constraint secret_versions u UNIQUE (secret_id, version)
 constraint secrets c CHECK (btrim(name) <> ''::text)
-constraint secrets c CHECK (revocation_generation >= 0)
 constraint secrets c CHECK (status = 'active'::text AND current_version_id IS NOT NULL AND revoked_at IS NULL OR status = 'revoked'::text AND current_version_id IS NULL AND revoked_at IS NOT NULL)
 constraint secrets c CHECK (status = ANY (ARRAY['active'::text, 'revoked'::text]))
 constraint secrets f FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT
@@ -1902,7 +1923,8 @@ constraint slack_channels f FOREIGN KEY (installation_id) REFERENCES slack_insta
 constraint slack_channels p PRIMARY KEY (installation_id, slack_channel_id)
 constraint slack_connections f FOREIGN KEY (created_by_user_id) REFERENCES users(id)
 constraint slack_connections f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id)
-constraint slack_connections f FOREIGN KEY (slack_app_registration_id) REFERENCES slack_app_registrations(id)
+constraint slack_connections f FOREIGN KEY (org_id, environment_id) REFERENCES environments(org_id, id)
+constraint slack_connections f FOREIGN KEY (slack_app_registration_id, org_id) REFERENCES slack_app_registrations(id, org_id)
 constraint slack_connections f FOREIGN KEY (slack_installation_id, slack_app_registration_id) REFERENCES slack_installations(id, app_registration_id)
 constraint slack_connections p PRIMARY KEY (environment_id, id)
 constraint slack_connections u UNIQUE (environment_id, agent_id, id)
@@ -1910,7 +1932,7 @@ constraint slack_connections u UNIQUE (id)
 constraint slack_connections u UNIQUE (id, environment_id, slack_installation_id)
 constraint slack_connections u UNIQUE (slack_app_registration_id)
 constraint slack_delivery_limits f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
-constraint slack_delivery_limits p PRIMARY KEY (installation_id, channel_id)
+constraint slack_delivery_limits p PRIMARY KEY (installation_id, slack_channel_id)
 constraint slack_installations c CHECK ((credential_ciphertext IS NULL) = (credential_nonce IS NULL))
 constraint slack_installations c CHECK ((disconnected_at IS NULL) = (credential_ciphertext IS NOT NULL))
 constraint slack_installations c CHECK ((refresh_attempt_id IS NULL) = (refresh_deadline IS NULL))
@@ -1928,7 +1950,7 @@ constraint slack_installations u UNIQUE (id, app_registration_id)
 constraint slack_installations u UNIQUE (id, org_id, team_id)
 constraint slack_method_limits f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
 constraint slack_method_limits p PRIMARY KEY (installation_id, method)
-constraint slack_posts c CHECK ((delivery_disposed_at IS NULL) = (delivery_disposed_by IS NULL))
+constraint slack_posts c CHECK ((delivery_disposed_at IS NULL) = (delivery_disposed_by_user_id IS NULL))
 constraint slack_posts c CHECK ((payload IS NULL) = (payload_expired_at IS NOT NULL))
 constraint slack_posts c CHECK ((recipient_team_id IS NULL) = (recipient_user_id IS NULL))
 constraint slack_posts c CHECK ((role <> ALL (ARRAY['intermediate'::text, 'response'::text, 'question'::text])) OR turn_id IS NOT NULL)
@@ -1938,7 +1960,6 @@ constraint slack_posts c CHECK ((status <> ALL (ARRAY['failed'::text, 'suppresse
 constraint slack_posts c CHECK ((status <> ALL (ARRAY['sending'::text, 'uncertain'::text])) OR inflight_attempt_id IS NOT NULL)
 constraint slack_posts c CHECK ((status = 'sending'::text) = (claimed_until IS NOT NULL))
 constraint slack_posts c CHECK (attempt_count >= 0)
-constraint slack_posts c CHECK (claim_epoch >= 0)
 constraint slack_posts c CHECK (confirmed_revision >= 0 AND confirmed_revision <= desired_revision)
 constraint slack_posts c CHECK (continuation_ordinal >= 0)
 constraint slack_posts c CHECK (delivery_disposed_at IS NULL OR closed_at IS NOT NULL)
@@ -1972,7 +1993,7 @@ constraint slack_posts c CHECK (status <> 'posted'::text OR message_ts IS NOT NU
 constraint slack_posts c CHECK (status = ANY (ARRAY['pending'::text, 'sending'::text, 'posted'::text, 'uncertain'::text, 'failed'::text, 'suppressed'::text]))
 constraint slack_posts c CHECK (stream_status = ANY (ARRAY['none'::text, 'open'::text, 'stopped'::text, 'uncertain'::text]))
 constraint slack_posts c CHECK (suppressed_revision >= 0 AND suppressed_revision <= desired_revision)
-constraint slack_posts f FOREIGN KEY (delivery_disposed_by) REFERENCES users(id)
+constraint slack_posts f FOREIGN KEY (delivery_disposed_by_user_id) REFERENCES users(id)
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, request_id) REFERENCES slack_requests(environment_id, session_id, id)
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, thread_source_id) REFERENCES slack_thread_sources(environment_id, session_id, id)
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
@@ -1980,6 +2001,7 @@ constraint slack_posts f FOREIGN KEY (environment_id, session_id, turn_id, ask_i
 constraint slack_posts f FOREIGN KEY (source_thread_id, environment_id) REFERENCES slack_threads(id, environment_id)
 constraint slack_posts f FOREIGN KEY (thread_id, environment_id, thread_source_id) REFERENCES slack_thread_sources(thread_id, environment_id, id)
 constraint slack_posts p PRIMARY KEY (id)
+constraint slack_posts u UNIQUE (id, thread_id, environment_id)
 constraint slack_posts u UNIQUE (thread_source_id, post_key, continuation_ordinal)
 constraint slack_posts u UNIQUE (thread_source_id, seq)
 constraint slack_requests c CHECK ((environment_id IS NULL) = (session_id IS NULL))
@@ -1995,7 +2017,7 @@ constraint slack_requests c CHECK (slack_user_id <> ''::text)
 constraint slack_requests c CHECK (status <> 'accepted'::text OR user_id IS NOT NULL AND thread_id IS NOT NULL AND thread_source_id IS NOT NULL AND environment_id IS NOT NULL AND session_id IS NOT NULL AND operation IS NOT NULL)
 constraint slack_requests c CHECK (status = 'accepted'::text AND ((operation = ANY (ARRAY['start'::text, 'enqueue'::text])) AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'slack_route'::text AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'answer'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL OR operation = 'native_stop'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL OR (operation = ANY (ARRAY['mute'::text, 'unmute'::text, 'sleep'::text, 'wake'::text, 'close'::text, 'help'::text, 'hibernate'::text, 'confirm_close'::text])) AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL) OR status <> 'accepted'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
 constraint slack_requests c CHECK (status = ANY (ARRAY['received'::text, 'accepted'::text, 'rejected'::text]))
-constraint slack_requests f FOREIGN KEY (environment_id, ask_id) REFERENCES turn_asks(environment_id, id)
+constraint slack_requests f FOREIGN KEY (environment_id, session_id, ask_id) REFERENCES turn_asks(environment_id, session_id, id)
 constraint slack_requests f FOREIGN KEY (environment_id, session_id, control_id) REFERENCES session_controls(environment_id, session_id, id)
 constraint slack_requests f FOREIGN KEY (environment_id, session_id, thread_source_id) REFERENCES slack_thread_sources(environment_id, session_id, id)
 constraint slack_requests f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
@@ -2013,7 +2035,7 @@ constraint slack_socket_connections c CHECK (credential_revision > 0)
 constraint slack_socket_connections c CHECK (reason IS NULL OR (reason = ANY (ARRAY['connection_failed'::text, 'api_rejected'::text, 'endpoint_not_allowed'::text, 'app_mismatch'::text, 'link_disabled'::text, 'protocol_error'::text, 'credential_unavailable'::text])))
 constraint slack_socket_connections c CHECK (status = ANY (ARRAY['connecting'::text, 'connected'::text, 'reconnecting'::text, 'action_required'::text, 'disconnected'::text]))
 constraint slack_socket_connections f FOREIGN KEY (app_registration_id) REFERENCES slack_app_registrations(id) ON DELETE CASCADE
-constraint slack_socket_connections f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
+constraint slack_socket_connections f FOREIGN KEY (installation_id, app_registration_id) REFERENCES slack_installations(id, app_registration_id)
 constraint slack_socket_connections p PRIMARY KEY (app_registration_id)
 constraint slack_thread_sources c CHECK (projected_event_seq >= 0)
 constraint slack_thread_sources f FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id)
@@ -2044,8 +2066,7 @@ constraint slack_user_links f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint slack_user_links p PRIMARY KEY (team_id, slack_user_id)
 constraint slack_user_links u UNIQUE (team_id, user_id)
 constraint slack_work_items f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
-constraint slack_work_items f FOREIGN KEY (post_id) REFERENCES slack_posts(id)
-constraint slack_work_items f FOREIGN KEY (thread_id) REFERENCES slack_threads(id)
+constraint slack_work_items f FOREIGN KEY (post_id, thread_id, environment_id) REFERENCES slack_posts(id, thread_id, environment_id)
 constraint slack_work_items p PRIMARY KEY (thread_id, turn_id)
 constraint template_definitions c CHECK (NOT delete_after_unused_never OR delete_after_unused_ms IS NULL)
 constraint template_definitions c CHECK (cpu_millis > 0)
@@ -2081,13 +2102,14 @@ constraint turn_asks c CHECK (octet_length(question_digest) = 32)
 constraint turn_asks c CHECK (payload_expired_at IS NULL AND question IS NOT NULL AND (status = 'answered'::text) = (answer IS NOT NULL) OR payload_expired_at IS NOT NULL AND status <> 'pending'::text AND question IS NULL AND answer IS NULL)
 constraint turn_asks c CHECK (status = 'answered'::text AND answer_id IS NOT NULL AND answer_digest IS NOT NULL AND num_nonnulls(answered_by_user_id, answered_by_api_key_id) = 1 OR status <> 'answered'::text AND answer_id IS NULL AND answer_digest IS NULL AND answered_by_user_id IS NULL AND answered_by_api_key_id IS NULL)
 constraint turn_asks c CHECK (status = ANY (ARRAY['pending'::text, 'answered'::text, 'cancelled'::text]))
-constraint turn_asks f FOREIGN KEY (answered_by_api_key_id) REFERENCES api_keys(id)
 constraint turn_asks f FOREIGN KEY (answered_by_user_id) REFERENCES users(id)
+constraint turn_asks f FOREIGN KEY (environment_id, answered_by_api_key_id) REFERENCES api_keys(environment_id, id)
 constraint turn_asks f FOREIGN KEY (environment_id, session_id, created_event_seq) REFERENCES session_events(environment_id, session_id, seq)
 constraint turn_asks f FOREIGN KEY (environment_id, session_id, turn_id, process_epoch) REFERENCES turns(environment_id, session_id, id, process_epoch)
 constraint turn_asks p PRIMARY KEY (environment_id, session_id, turn_id, id)
 constraint turn_asks u UNIQUE (environment_id, id)
 constraint turn_asks u UNIQUE (environment_id, session_id, created_event_seq)
+constraint turn_asks u UNIQUE (environment_id, session_id, id)
 constraint turn_messages c CHECK ((message IS NULL) = (payload_expired_at IS NOT NULL))
 constraint turn_messages c CHECK ((status <> ALL (ARRAY['started'::text, 'delivered'::text])) OR started_at IS NOT NULL)
 constraint turn_messages c CHECK ((status = 'rejected'::text) = (rejection_reason IS NOT NULL))
@@ -2225,14 +2247,14 @@ constraint worker_pools c CHECK (capacity_cpu_millis IS NULL OR capacity_cpu_mil
 constraint worker_pools c CHECK (capacity_guest_ephemeral_disk_bytes IS NULL OR capacity_guest_ephemeral_disk_bytes > 0)
 constraint worker_pools c CHECK (capacity_memory_bytes IS NULL OR capacity_memory_bytes > 0)
 constraint worker_pools c CHECK (claim_version > 0)
-constraint worker_pools c CHECK (local_headroom_slots >= 0 AND local_headroom_slots <= '9007199254740991'::bigint)
+constraint worker_pools c CHECK (local_headroom_slots >= 0)
 constraint worker_pools c CHECK (max_vm_slots IS NULL OR max_vm_slots >= 0)
 constraint worker_pools c CHECK (optional_cpu_millis >= 0 AND optional_cpu_millis <= '9007199254740991'::bigint)
 constraint worker_pools c CHECK (optional_disk_bytes >= 0 AND optional_disk_bytes <= '9007199254740991'::bigint)
 constraint worker_pools c CHECK (optional_io_bytes_per_second >= 0 AND optional_io_bytes_per_second <= '9007199254740991'::bigint)
-constraint worker_pools c CHECK (optional_max_tasks >= 0 AND optional_max_tasks <= '9007199254740991'::bigint)
+constraint worker_pools c CHECK (optional_max_tasks >= 0)
 constraint worker_pools c CHECK (optional_memory_bytes >= 0 AND optional_memory_bytes <= '9007199254740991'::bigint)
-constraint worker_pools c CHECK (optional_vm_slots >= 0 AND optional_vm_slots <= '9007199254740991'::bigint)
+constraint worker_pools c CHECK (optional_vm_slots >= 0)
 constraint worker_pools c CHECK (per_vm_cpu_millis IS NULL OR per_vm_cpu_millis > 0)
 constraint worker_pools c CHECK (per_vm_guest_ephemeral_disk_bytes IS NULL OR per_vm_guest_ephemeral_disk_bytes > 0)
 constraint worker_pools c CHECK (per_vm_memory_bytes IS NULL OR per_vm_memory_bytes > 0)
@@ -2256,7 +2278,7 @@ enum magic_link_purpose (login,invite_accept)
 index CREATE INDEX agent_definitions_deployment ON public.agent_definitions USING btree (environment_id, deployment_id, agent_id)
 index CREATE INDEX api_keys_org_active_idx ON public.api_keys USING btree (org_id, created_at DESC) WHERE (revoked_at IS NULL)
 index CREATE INDEX api_keys_scope_created_idx ON public.api_keys USING btree (org_id, project_id, environment_id, created_at DESC, id DESC)
-index CREATE INDEX audit_events_actor ON public.audit_events USING btree (org_id, actor_kind, actor_id, recorded_at DESC, id DESC)
+index CREATE INDEX audit_events_actor ON public.audit_events USING btree (org_id, COALESCE(actor_user_id, actor_api_key_id, actor_session_id, actor_worker_host_id), recorded_at DESC, id DESC)
 index CREATE INDEX audit_events_environment_time ON public.audit_events USING btree (org_id, environment_id, recorded_at DESC, id DESC) WHERE (environment_id IS NOT NULL)
 index CREATE INDEX audit_events_expiry ON public.audit_events USING btree (expires_at, id)
 index CREATE INDEX audit_events_target ON public.audit_events USING btree (org_id, target_kind, target_id, recorded_at DESC, id DESC)
@@ -2376,3 +2398,50 @@ index CREATE UNIQUE INDEX worker_groups_one_active_per_region_idx ON public.work
 index CREATE UNIQUE INDEX worker_host_secrets_one_active_idx ON public.worker_host_secrets USING btree (worker_host_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX worker_hosts_live_resource ON public.worker_hosts USING btree (worker_group_id, resource_id) WHERE (status = ANY (ARRAY['registering'::text, 'active'::text, 'draining'::text]))
 index CREATE UNIQUE INDEX worker_scale_in_operations_one_pending ON public.worker_scale_in_operations USING btree (worker_group_id) WHERE (completed_at IS NULL)
+view allocation_usage options (security_invoker=true)  SELECT
+        CASE
+            WHEN (EXISTS ( SELECT 1
+               FROM checkpoints cp
+              WHERE cp.environment_id = computer_leases.environment_id AND cp.computer_id = computer_leases.computer_id AND cp.source_lease_epoch = computer_leases.epoch AND cp.status = 'ready'::text)) THEN 'retained'::text
+            ELSE 'computer'::text
+        END AS kind,
+    computer_leases.environment_id,
+    computer_leases.computer_id AS owner_id,
+    computer_leases.epoch,
+    computer_leases.allocation_id,
+    computer_leases.worker_host_id,
+    computer_leases.worker_epoch,
+    computer_leases.reserved_cpu_millis,
+    computer_leases.reserved_memory_bytes,
+    computer_leases.reserved_scratch_bytes,
+    computer_leases.initialized_at IS NULL AS starting
+   FROM computer_leases
+  WHERE computer_leases.fenced_at IS NULL
+UNION ALL
+ SELECT 'preparation'::text AS kind,
+    image_builds.environment_id,
+    image_builds.id AS owner_id,
+    image_builds.executor_epoch AS epoch,
+    image_builds.allocation_id,
+    image_builds.worker_host_id,
+    image_builds.worker_epoch,
+    image_builds.reserved_cpu_millis,
+    image_builds.reserved_memory_bytes,
+    image_builds.reserved_scratch_bytes,
+    image_builds.started_at IS NULL AS starting
+   FROM image_builds
+  WHERE image_builds.worker_host_id IS NOT NULL AND image_builds.fenced_at IS NULL
+UNION ALL
+ SELECT 'seed'::text AS kind,
+    boot_seed_builds.environment_id,
+    boot_seed_builds.id AS owner_id,
+    boot_seed_builds.executor_epoch AS epoch,
+    boot_seed_builds.allocation_id,
+    boot_seed_builds.worker_host_id,
+    boot_seed_builds.worker_epoch,
+    boot_seed_builds.reserved_cpu_millis,
+    boot_seed_builds.reserved_memory_bytes,
+    boot_seed_builds.reserved_scratch_bytes,
+    boot_seed_builds.started_at IS NULL AS starting
+   FROM boot_seed_builds
+  WHERE boot_seed_builds.worker_host_id IS NOT NULL AND boot_seed_builds.fenced_at IS NULL;

@@ -18,14 +18,14 @@ func reserveDelivery(ctx context.Context, tx pgx.Tx, installation uuid.UUID, cha
 	if final {
 		return true, nil
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO slack_delivery_limits(installation_id,channel_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, installation, channel); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO slack_delivery_limits(installation_id,slack_channel_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, installation, channel); err != nil {
 		return false, err
 	}
 	if method == "agents.sessions.setStatus" {
-		tag, err := tx.Exec(ctx, `UPDATE slack_delivery_limits SET next_status_at=clock_timestamp()+interval '1 second' WHERE installation_id=$1 AND channel_id=$2 AND next_status_at<=clock_timestamp()`, installation, channel)
+		tag, err := tx.Exec(ctx, `UPDATE slack_delivery_limits SET next_status_at=clock_timestamp()+interval '1 second' WHERE installation_id=$1 AND slack_channel_id=$2 AND next_status_at<=clock_timestamp()`, installation, channel)
 		return tag.RowsAffected() == 1, err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE slack_delivery_limits SET next_post_at=clock_timestamp()+interval '1 second' WHERE installation_id=$1 AND channel_id=$2 AND next_post_at<=clock_timestamp()`, installation, channel)
+	tag, err := tx.Exec(ctx, `UPDATE slack_delivery_limits SET next_post_at=clock_timestamp()+interval '1 second' WHERE installation_id=$1 AND slack_channel_id=$2 AND next_post_at<=clock_timestamp()`, installation, channel)
 	return tag.RowsAffected() == 1, err
 }
 

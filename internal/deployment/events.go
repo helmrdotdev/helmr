@@ -2,7 +2,6 @@ package deployment
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"time"
@@ -30,7 +29,6 @@ type Event struct {
 	ID         int64
 	Kind       string
 	Message    string
-	Payload    json.RawMessage
 	AcceptedAt time.Time
 }
 
@@ -41,7 +39,7 @@ func ListEvents(ctx context.Context, q db.DBTX, principal auth.Principal, scope 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := q.Query(ctx, `SELECT id,kind,message,payload,accepted_at FROM deployment_events WHERE environment_id=$1 AND deployment_id=$2 AND id>$3 ORDER BY id LIMIT $4`, record.EnvironmentID, record.ID, after, limit)
+	rows, err := q.Query(ctx, `SELECT id,kind,message,accepted_at FROM deployment_events WHERE environment_id=$1 AND deployment_id=$2 AND id>$3 ORDER BY id LIMIT $4`, record.EnvironmentID, record.ID, after, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +47,7 @@ func ListEvents(ctx context.Context, q db.DBTX, principal auth.Principal, scope 
 	events := make([]Event, 0)
 	for rows.Next() {
 		var event Event
-		if err := rows.Scan(&event.ID, &event.Kind, &event.Message, &event.Payload, &event.AcceptedAt); err != nil {
+		if err := rows.Scan(&event.ID, &event.Kind, &event.Message, &event.AcceptedAt); err != nil {
 			return nil, err
 		}
 		events = append(events, event)

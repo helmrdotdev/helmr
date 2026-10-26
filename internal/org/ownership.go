@@ -30,7 +30,7 @@ func RecoverOwnAccess(ctx context.Context, database db.TxBeginner, m ManagingMem
 			return err
 		}
 		id := uuid.NewV7()
-		tag, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,created_by) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, id, m.OrgID, role, member, m.UserID)
+		tag, err := tx.Exec(ctx, `INSERT INTO role_grants(id,org_id,role_id,member_id,created_by_user_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, id, m.OrgID, role, member, m.UserID)
 		if err != nil {
 			return err
 		}

@@ -83,8 +83,8 @@ func ResolveChannelBinding(ctx context.Context, tx pgx.Tx, c Connection) (uuid.U
 }
 
 // CreateConnection records a new connection for the Agent's app registration.
-func CreateConnection(ctx context.Context, tx pgx.Tx, id, env, agent, registration, user uuid.UUID) error {
-	_, err := tx.Exec(ctx, `INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) VALUES($1,$2,$3,$4,$5)`, id, env, agent, registration, user)
+func CreateConnection(ctx context.Context, tx pgx.Tx, id, org, env, agent, registration, user uuid.UUID) error {
+	_, err := tx.Exec(ctx, `INSERT INTO slack_connections(id,org_id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) VALUES($1,$2,$3,$4,$5,$6)`, id, org, env, agent, registration, user)
 	return err
 }
 

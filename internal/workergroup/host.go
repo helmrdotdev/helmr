@@ -69,7 +69,7 @@ func EnrollHost(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 		// incarnation of this resource, including lost host rows.
 		var custody bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM worker_hosts h
- WHERE h.worker_group_id=$1 AND h.resource_id=$2 AND EXISTS(SELECT 1 FROM (`+db.AllocationUsageSQL+`) allocation_usage WHERE worker_host_id=h.id))`, group, enrollment.ResourceID).Scan(&custody); err != nil {
+ WHERE h.worker_group_id=$1 AND h.resource_id=$2 AND EXISTS(SELECT 1 FROM allocation_usage WHERE worker_host_id=h.id))`, group, enrollment.ResourceID).Scan(&custody); err != nil {
 			return err
 		}
 		if custody {

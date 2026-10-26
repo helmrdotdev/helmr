@@ -14,7 +14,7 @@ import (
 // Shared by successor creation and fresh attachment under the recipe and Secret
 // owner locks. Fresh demand must not pre-empt an eligible attached chain's one
 // replacement and force two sequential preparations for the same current inputs.
-const imageBuildSuccessorEligibilitySQL = `p.successor_of IS NULL AND p.status='succeeded' AND p.fenced_at IS NOT NULL
+const imageBuildSuccessorEligibilitySQL = `p.predecessor_build_id IS NULL AND p.status='succeeded' AND p.fenced_at IS NOT NULL
  AND EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.image_build_id=p.id)
  AND NOT EXISTS(SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS(
    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
@@ -57,7 +57,7 @@ func EnsureImageBuildSuccessor(ctx context.Context, pool db.TxBeginner, env, pre
 			return err
 		}
 		var existing uuid.UUID
-		err = tx.QueryRow(ctx, `SELECT id FROM image_builds WHERE environment_id=$1 AND successor_of=$2`, env, predecessor).Scan(&existing)
+		err = tx.QueryRow(ctx, `SELECT id FROM image_builds WHERE environment_id=$1 AND predecessor_build_id=$2`, env, predecessor).Scan(&existing)
 		if err == nil {
 			result, err = ReadImageBuild(ctx, tx, env, existing)
 			return err
@@ -97,7 +97,7 @@ func EnsureImageBuildSuccessor(ctx context.Context, pool db.TxBeginner, env, pre
 			return ErrNotReady
 		}
 		id := uuid.NewV7()
-		_, err = tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,image_spec_id,successor_of,idempotency_key,deadline_at)
+		_, err = tx.Exec(ctx, `INSERT INTO image_builds(environment_id,id,image_spec_id,predecessor_build_id,idempotency_key,deadline_at)
  VALUES($1,$2,$3,$4,$5,$6)`, env, id, p.SpecID, predecessor, "successor:"+predecessor.String(), *deadline)
 		if err != nil {
 			return err

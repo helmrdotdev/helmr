@@ -97,7 +97,7 @@ func TestAgentDeleteRestoreHTTP(t *testing.T) {
 	mixed := f.selectedGrant(t, []string{"agents.use", "computers.execute"}, f.agent)
 	multi := f.selectedGrant(t, []string{"sessions.read"}, f.agent, sibling)
 	registration, connection := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id,transport) VALUES($1,$2,$3,'http'); INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) VALUES($4,$5,$6,$1,$3)`, pgx.QueryExecModeSimpleProtocol, registration, f.org, f.user, connection, f.env, f.agent)
+	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id,transport) VALUES($1,$2,$3,'http'); INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id,org_id) VALUES($4,$5,$6,$1,$3,(SELECT org_id FROM slack_app_registrations WHERE id=$1))`, pgx.QueryExecModeSimpleProtocol, registration, f.org, f.user, connection, f.env, f.agent)
 	installation := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `UPDATE slack_app_registrations SET client_id='test-client',app_id='test-app',credential_ciphertext=decode(repeat('11',16),'hex'),credential_nonce=decode(repeat('22',12),'hex'),credential_revision=1 WHERE id=$1; INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) VALUES($2,$1,$3,'test-app','test-team','test-bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),'{}',$4); UPDATE slack_connections SET slack_installation_id=$2 WHERE id=$5`, pgx.QueryExecModeSimpleProtocol, registration, installation, f.org, f.user, connection)
 	activation := uuid.NewV7()
@@ -310,7 +310,7 @@ func TestAgentDeleteRechecksNewDependencies(t *testing.T) {
 				// A connection owner that already holds the admission fence can commit a
 				// newly discovered connection before deletion acquires that fence.
 				registration, connection := uuid.NewV7(), uuid.NewV7()
-				if _, err = tx.Exec(ctx, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id,transport) VALUES($1,$2,$3,'http'); INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id) VALUES($4,$5,$6,$1,$3)`, pgx.QueryExecModeSimpleProtocol, registration, f.org, f.user, connection, f.env, f.agent); err != nil {
+				if _, err = tx.Exec(ctx, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id,transport) VALUES($1,$2,$3,'http'); INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id,org_id) VALUES($4,$5,$6,$1,$3,(SELECT org_id FROM slack_app_registrations WHERE id=$1))`, pgx.QueryExecModeSimpleProtocol, registration, f.org, f.user, connection, f.env, f.agent); err != nil {
 					t.Fatal(err)
 				}
 			}

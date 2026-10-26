@@ -331,7 +331,7 @@ func RecordBootSeedStopped(ctx context.Context, tx pgx.Tx, a Allocation, evidenc
  WHERE environment_id=$1 AND id=$2 AND status='failed' AND error_code='resource_reclaimed'
  AND fenced_at IS NOT NULL AND manifest IS NULL AND payload_retired_at IS NULL
  AND NOT `+obsoleteBootSeed+` AND `+usableBootSeedImageSQL+`
- AND NOT EXISTS(SELECT 1 FROM boot_seed_objects o WHERE o.environment_id=$1 AND o.build_id=$2)`, env, id)
+ AND NOT EXISTS(SELECT 1 FROM boot_seed_objects o WHERE o.environment_id=$1 AND o.boot_seed_build_id=$2)`, env, id)
 	return err
 }
 

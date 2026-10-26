@@ -388,6 +388,10 @@ func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
 	if err != nil || first.Start == nil || len(first.Start.Secrets) != 1 || first.Start.Secrets[0].Version.Version != 2 {
 		t.Fatalf("first delivery %+v %v", first, err)
 	}
+	var exposureAudit bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'revocation_generation'='0') FROM audit_events WHERE environment_id=$1 AND target_id=$2 AND action='secret.exposed' AND details->>'command_id'=$3`, f.Environment, secretID, id.String()).Scan(&exposureAudit); err != nil || !exposureAudit {
+		t.Fatalf("new exposure audit: %v %v", exposureAudit, err)
+	}
 	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, []byte("third"), "rotate-after-delivery"); err != nil {
 		t.Fatal(err)
 	}

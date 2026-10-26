@@ -105,7 +105,7 @@ func RecordSessionStartExposure(ctx context.Context, auditPolicy auditpolicy.Pol
 			return err
 		}
 		for _, exposure := range exposures {
-			if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: runtimeAuditEvidence(Execution{SessionID: e.SessionID, AuthorityGeneration: result.Start.Authority.Generation, ProcessEpoch: e.ProcessEpoch, WorkerHostID: e.WorkerHostID, AuthenticatedHostVersion: e.AuthenticatedHostVersion}), EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, ComputerID: computerID, Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: origin.kind(), InitiatorID: origin.id()}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, RevocationGeneration: exposure.RevocationGeneration}}); err != nil {
+			if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: runtimeAuditEvidence(Execution{SessionID: e.SessionID, AuthorityGeneration: result.Start.Authority.Generation, ProcessEpoch: e.ProcessEpoch, WorkerHostID: e.WorkerHostID, AuthenticatedHostVersion: e.AuthenticatedHostVersion}), EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, ComputerID: computerID, Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: origin.kind(), InitiatorID: origin.id()}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, RevocationGeneration: 0}}); err != nil {
 				return err
 			}
 		}

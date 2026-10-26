@@ -17,7 +17,7 @@ const PendingExecutionClaimsSQL = `WITH candidates AS (
  CASE WHEN p.worker_host_id IS NOT NULL AND p.started_at IS NULL THEN 1 ELSE 0 END build_start,
  COALESCE((d.cpu_millis+999)/1000*1000,0) required_build_cpu,COALESCE(d.memory_bytes,0) required_build_memory,
  row_number() OVER(PARTITION BY c.environment_id,p.id ORDER BY c.id) ordinal
- FROM computers c LEFT JOIN image_builds p ON p.environment_id=c.environment_id AND p.id=COALESCE((SELECT successor.id FROM image_builds successor WHERE successor.environment_id=c.environment_id AND successor.successor_of=c.image_build_id),c.image_build_id)
+ FROM computers c LEFT JOIN image_builds p ON p.environment_id=c.environment_id AND p.id=COALESCE((SELECT successor.id FROM image_builds successor WHERE successor.environment_id=c.environment_id AND successor.predecessor_build_id=c.image_build_id),c.image_build_id)
  AND p.fenced_at IS NULL AND p.status IN ('queued','running','succeeded')
  LEFT JOIN LATERAL (SELECT cpu_millis,memory_bytes FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.image_spec_id=p.image_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
  WHERE c.execution_deadline_at>clock_timestamp() AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
@@ -67,7 +67,7 @@ func ReadExecutionBudgetForComputer(ctx context.Context, q DBTX, env, self uuid.
 	var b ExecutionBudget
 	err := q.QueryRow(ctx, `WITH usage AS (
  SELECT reserved_cpu_millis cpu,reserved_memory_bytes memory,CASE WHEN kind='computer' THEN 1 ELSE 0 END residents
- FROM (`+AllocationUsageSQL+`) a WHERE a.environment_id=$1 AND a.kind NOT IN ('seed','retained')
+ FROM allocation_usage a WHERE a.environment_id=$1 AND a.kind NOT IN ('seed','retained')
  UNION ALL
  SELECT claim_cpu-credit_cpu,claim_memory-credit_memory,1 FROM (`+PendingExecutionClaimsSQL+`) c WHERE c.environment_id=$1 AND c.computer_id<>$2
  ) SELECT e.max_cpu_millis-COALESCE((SELECT sum(cpu) FROM usage),0)::bigint,

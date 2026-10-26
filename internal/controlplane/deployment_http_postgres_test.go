@@ -92,6 +92,9 @@ func TestDeploymentHTTPPostgresSessionRoutes(t *testing.T) {
 	if events.Code != http.StatusOK || len(eventPage.Events) != 1 || eventPage.Events[0].Kind != "deployment.promoted" || eventPage.Events[0].Message != "Deployment promoted" || eventPage.NextCursor != nil || eventPage.Events[0].ID == "" {
 		t.Fatalf("events = %d %s", events.Code, events.Body.String())
 	}
+	if string(eventPage.Events[0].Attributes) != "{}" {
+		t.Fatalf("event attributes must be an empty object: %s", events.Body.String())
+	}
 	if after := fixture.request(t, http.MethodGet, base+"/deployments/"+deploymentID.String()+"/events?cursor="+eventPage.Events[0].ID, viewer, ""); after.Code != http.StatusOK || !strings.Contains(after.Body.String(), `"events":[]`) {
 		t.Fatalf("events after cursor = %d %s", after.Code, after.Body.String())
 	}

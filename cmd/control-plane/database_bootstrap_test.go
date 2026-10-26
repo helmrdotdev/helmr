@@ -225,7 +225,7 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	// version-1 marker from an older initial schema.
 	for _, query := range []string{
 		"SELECT proxy_ca_certificate, proxy_ca_private_key_nonce, proxy_ca_private_key_ciphertext, proxy_ca_not_after FROM computers LIMIT 0",
-		"SELECT current_version_id, revocation_generation FROM secrets LIMIT 0",
+		"SELECT current_version_id FROM secrets LIMIT 0",
 		"SELECT nonce, ciphertext FROM secret_versions LIMIT 0",
 	} {
 		rows, err := applicationPool.Query(ctx, query)

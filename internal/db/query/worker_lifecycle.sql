@@ -32,20 +32,7 @@ UPDATE worker_pools AS target
          SELECT 1 FROM worker_hosts h
          WHERE h.worker_group_id=target.worker_group_id AND h.worker_pool_id=target.id
            AND (h.status IN ('registering','active','draining')
-             OR EXISTS (SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
- worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
- initialized_at IS NULL starting
- FROM computer_leases WHERE fenced_at IS NULL
- UNION ALL
- SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
- worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
- started_at IS NULL
- FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
- UNION ALL
- SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
- worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
- started_at IS NULL
- FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage WHERE worker_host_id=h.id))
+             OR EXISTS (SELECT 1 FROM allocation_usage WHERE worker_host_id=h.id))
        ))
    )
    AND NOT EXISTS (
@@ -111,20 +98,7 @@ WITH transitioned AS (
                       AND worker_hosts.status IN ('registering', 'active', 'draining')
                )
                AND NOT EXISTS (
-                   SELECT 1 FROM (SELECT CASE WHEN EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=computer_leases.environment_id AND cp.computer_id=computer_leases.computer_id AND cp.source_lease_epoch=computer_leases.epoch AND cp.status='ready') THEN 'retained' ELSE 'computer' END::text kind,environment_id,computer_id owner_id,epoch,allocation_id,
- worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
- initialized_at IS NULL starting
- FROM computer_leases WHERE fenced_at IS NULL
- UNION ALL
- SELECT 'preparation',environment_id,id,executor_epoch,allocation_id,
- worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
- started_at IS NULL
- FROM image_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL
- UNION ALL
- SELECT 'seed',environment_id,id,executor_epoch,allocation_id,
- worker_host_id,worker_epoch,reserved_cpu_millis,reserved_memory_bytes,reserved_scratch_bytes,
- started_at IS NULL
- FROM boot_seed_builds WHERE worker_host_id IS NOT NULL AND fenced_at IS NULL) allocation_usage JOIN worker_hosts h ON h.id=allocation_usage.worker_host_id WHERE h.worker_group_id=worker_groups.id
+                   SELECT 1 FROM allocation_usage JOIN worker_hosts h ON h.id=allocation_usage.worker_host_id WHERE h.worker_group_id=worker_groups.id
                )
            )
        )

@@ -201,7 +201,7 @@ func TestBootSeedPublicationAndRetention(t *testing.T) {
 	count := func(want int) {
 		t.Helper()
 		var got int
-		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM boot_seed_objects WHERE environment_id=$1 AND build_id=$2`, f.env, id).Scan(&got); err != nil || got != want {
+		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM boot_seed_objects WHERE environment_id=$1 AND boot_seed_build_id=$2`, f.env, id).Scan(&got); err != nil || got != want {
 			t.Fatalf("objects=%d want=%d err=%v", got, want, err)
 		}
 	}

@@ -112,7 +112,7 @@ func TestSlackPostRateLimitRetriesFrozenRevisionBeforeNewerContent(t *testing.T)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET desired_revision=2,payload=$2,payload_digest=$3,next_attempt_at=clock_timestamp() WHERE id=$1`, post, body, digest[:])
 	f.due(t)
 	retry := f.postClaim(t, post)
-	if retry.Revision != 1 || !bytes.Equal(first.Payload, retry.Payload) || retry.AttemptID == first.AttemptID {
+	if first.AttemptCount != 1 || retry.AttemptCount != 2 || retry.Revision != 1 || !bytes.Equal(first.Payload, retry.Payload) || retry.AttemptID == first.AttemptID {
 		t.Fatal("rate retry changed exact mutation")
 	}
 	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, first, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
@@ -382,5 +382,47 @@ func TestSlackPostNewQuestionAndResponseFollowInitialNarrative(t *testing.T) {
 			f.due(t)
 			f.postClaim(t, next)
 		})
+	}
+}
+
+func TestSlackPostClaimChecksCountUUIDAndPreHTTPExpiry(t *testing.T) {
+	f := newStatusFixture(t)
+	post := f.post(t, 1, "claim-checks", "lifecycle", nil)
+	claim := f.postClaim(t, post)
+	if claim.AttemptCount != 1 {
+		t.Fatalf("first attempt count = %d", claim.AttemptCount)
+	}
+	for _, mismatch := range []string{"count", "uuid"} {
+		t.Run(mismatch, func(t *testing.T) {
+			stale := claim
+			if mismatch == "count" {
+				stale.AttemptCount--
+			} else {
+				stale.AttemptID = uuid.NewV7()
+			}
+			if allowed, err := postClaimAuthorized(t.Context(), f.Pool, stale); err != nil || allowed {
+				t.Fatalf("stale claim authorized: %v %v", allowed, err)
+			}
+			if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, stale, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+				t.Fatal(err)
+			}
+			var unchanged bool
+			if err := f.Pool.QueryRow(t.Context(), `SELECT status='sending' AND attempt_count=$2 AND inflight_attempt_id=$3 AND message_ts IS NULL FROM slack_posts WHERE id=$1`, post, claim.AttemptCount, claim.AttemptID).Scan(&unchanged); err != nil || !unchanged {
+				t.Fatalf("stale completion changed claim: %v %v", unchanged, err)
+			}
+		})
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET claimed_until=clock_timestamp()-interval '1 second' WHERE id=$1`, post)
+	if allowed, err := postClaimAuthorized(t.Context(), f.Pool, claim); err != nil || allowed {
+		t.Fatalf("expired claim authorized before HTTP: %v %v", allowed, err)
+	}
+	// Acknowledged HTTP already issued by the current claim may complete after
+	// expiry. Expiry fences issuance; ownership and status fence completion.
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.789"}); err != nil {
+		t.Fatal(err)
+	}
+	var posted bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='posted' AND message_ts='123.789' AND attempt_count=1 FROM slack_posts WHERE id=$1`, post).Scan(&posted); err != nil || !posted {
+		t.Fatalf("current completion after expiry lost: %v %v", posted, err)
 	}
 }

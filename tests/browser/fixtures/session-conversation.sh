@@ -86,8 +86,8 @@ INSERT INTO session_events(environment_id,session_id,turn_id,seq,kind,data)
 SELECT :'environment_id',:'session_id',:'turn_id',seq,'turn.output',convert_to('[{"type":"text","text":"Second visible progress"}]','UTF8') FROM allocated;
 \endif
 \if :expose_secret
-INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id,revocation_generation)
-SELECT uuidv7(),f.environment_id,f.session_id,t.process_epoch,s.id,s.current_version_id,s.revocation_generation
+INSERT INTO secret_exposures(id,environment_id,session_id,process_epoch,secret_id,version_id)
+SELECT uuidv7(),f.environment_id,f.session_id,t.process_epoch,s.id,s.current_version_id
 FROM fixture f JOIN turns t ON (t.environment_id,t.id)=(f.environment_id,f.turn_id)
 JOIN secrets s ON s.environment_id=f.environment_id AND s.name=:'reference_id' AND s.status='active'
 WHERE t.status='running' RETURNING secret_id AS exposed_secret_id \gset

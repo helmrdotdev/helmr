@@ -35,7 +35,7 @@ type PostClaim struct {
 	PostID, ThreadID, InstallationID, AttemptID uuid.UUID
 	CredentialRevision                          int64
 	Method                                      string
-	Epoch, Revision                             int64
+	AttemptCount, Revision                      int64
 	Payload                                     []byte
 	ExpiresAt, AuthorizedAt                     time.Time
 }
@@ -195,9 +195,9 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		}
 		digest := sha256.Sum256(frozen)
 		c := &PostClaim{TeamID: team, ChannelID: slackChannel, PeerID: peer, PostID: post, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Revision: revision, Method: selected, Payload: frozen}
-		if err = tx.QueryRow(ctx, `UPDATE slack_posts SET status='sending',attempt_count=attempt_count+1,claim_epoch=claim_epoch+1,
+		if err = tx.QueryRow(ctx, `UPDATE slack_posts SET status='sending',attempt_count=attempt_count+1,
  claimed_until=clock_timestamp()+interval '30 seconds',reconciliation_cursor='',reconciliation_pages=0,reconciliation_paused_at=NULL,inflight_method=$2,inflight_payload=$3,inflight_digest=$4,inflight_revision=$5,inflight_attempt_id=$6,inflight_stream_text=$7,error=CASE WHEN $2='chat.stopStream' THEN error ELSE NULL END
- WHERE id=$1 RETURNING claim_epoch,claimed_until`, post, selected, frozen, digest[:], revision, c.AttemptID, streamText).Scan(&c.Epoch, &c.ExpiresAt); err != nil {
+ WHERE id=$1 RETURNING attempt_count,claimed_until`, post, selected, frozen, digest[:], revision, c.AttemptID, streamText).Scan(&c.AttemptCount, &c.ExpiresAt); err != nil {
 			return err
 		}
 		if statusAffectingStream(selected) && !deleted {
@@ -228,7 +228,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, 
 		return err
 	}
 	var matches bool
-	if err := tx.QueryRow(ctx, `SELECT status='sending' AND claim_epoch=$2 AND inflight_attempt_id=$3 FROM slack_posts WHERE id=$1 FOR NO KEY UPDATE`, claim.PostID, claim.Epoch, claim.AttemptID).Scan(&matches); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT status='sending' AND attempt_count=$2 AND inflight_attempt_id=$3 FROM slack_posts WHERE id=$1 FOR NO KEY UPDATE`, claim.PostID, claim.AttemptCount, claim.AttemptID).Scan(&matches); err != nil {
 		return err
 	}
 	if !matches {
@@ -365,11 +365,11 @@ func postClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim PostClai
  JOIN slack_channel_bindings target_channel ON target_channel.id=t.slack_channel_binding_id JOIN slack_connections target_publication ON target_publication.id=target_channel.connection_id
  JOIN slack_installations target_installation ON target_installation.id=target_channel.installation_id
  JOIN slack_app_registrations target_registration ON target_registration.id=target_publication.slack_app_registration_id
- WHERE p.id=$1 AND p.status='sending' AND p.claim_epoch=$2 AND p.inflight_attempt_id=$3 AND p.claimed_until>clock_timestamp()
+ WHERE p.id=$1 AND p.status='sending' AND p.attempt_count=$2 AND p.inflight_attempt_id=$3 AND p.claimed_until>clock_timestamp()
  AND publication.revoked_at IS NULL AND registration.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL
  AND target_publication.revoked_at IS NULL AND target_registration.retired_at IS NULL AND target_installation.disconnected_at IS NULL AND target_installation.authorization_lost_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=t.id AND opening.role='opening' AND (opening.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND opening.status IN ('failed','suppressed'))))
- AND i.id=$4 AND i.authorized_at=$5)`, claim.PostID, claim.Epoch, claim.AttemptID, claim.InstallationID, claim.AuthorizedAt).Scan(&allowed)
+ AND i.id=$4 AND i.authorized_at=$5)`, claim.PostID, claim.AttemptCount, claim.AttemptID, claim.InstallationID, claim.AuthorizedAt).Scan(&allowed)
 	})
 	return allowed, err
 }

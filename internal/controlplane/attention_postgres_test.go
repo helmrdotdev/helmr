@@ -102,7 +102,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	registration, installation, connection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$1,$2,'app','client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$3);
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,workspace_name,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id,authorization_lost_at) VALUES($4,$1,$2,'app','team','bot','Acme',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$3,clock_timestamp()-interval '1 hour');
- INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($5,$6,$7,$1,$4,$3)`, pgx.QueryExecModeSimpleProtocol, registration, org, f.User, installation, connection, f.Environment, f.Agent)
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) VALUES($5,$6,$7,$1,$4,$3,(SELECT org_id FROM slack_app_registrations WHERE id=$1))`, pgx.QueryExecModeSimpleProtocol, registration, org, f.User, installation, connection, f.Environment, f.Agent)
 
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
@@ -239,7 +239,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$8,$7,'local','Second hold');
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$9,$2,'second-app','second-client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$12);
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id,authorization_lost_at) VALUES($10,$9,$2,'second-app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$12,clock_timestamp());
- INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id) VALUES($11,$1,$6,$9,$10,$12)`, pgx.QueryExecModeSimpleProtocol, second, org, project, secondDeployment, "sha256:"+strings.Repeat("2", 64), secondAgent, secondSession, secondHold, secondRegistration, secondInstallation, secondConnection, f.User)
+ INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) VALUES($11,$1,$6,$9,$10,$12,(SELECT org_id FROM slack_app_registrations WHERE id=$9))`, pgx.QueryExecModeSimpleProtocol, second, org, project, secondDeployment, "sha256:"+strings.Repeat("2", 64), secondAgent, secondSession, secondHold, secondRegistration, secondInstallation, secondConnection, f.User)
 	dbtest.GrantMember(t, f.Pool, org, f.User, &second, "sessions.read", "agent_connections.read")
 	ownerToken := h.session(t, f.User, org)
 	other := func(token, path string) api.Attention {

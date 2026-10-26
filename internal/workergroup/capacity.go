@@ -232,7 +232,7 @@ func ConfirmHostProviderAbsent(ctx context.Context, tx pgx.Tx, policy auditpolic
 	var changed bool
 	if err := tx.QueryRow(ctx, `SELECT h.status<>'lost'
  OR EXISTS(SELECT 1 FROM worker_host_secrets k WHERE k.worker_host_id=h.id AND k.revoked_at IS NULL)
- OR EXISTS(SELECT 1 FROM (`+db.AllocationUsageSQL+`) a WHERE a.worker_host_id=h.id)
+ OR EXISTS(SELECT 1 FROM allocation_usage a WHERE a.worker_host_id=h.id)
  FROM worker_hosts h WHERE h.id=$1 FOR UPDATE OF h`, hostID).Scan(&changed); err != nil {
 		return ConfirmedProviderAbsence{}, err
 	}
