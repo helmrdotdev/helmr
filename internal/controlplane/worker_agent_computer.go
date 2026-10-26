@@ -23,6 +23,8 @@ func agentComputerID(value string) (uuid.UUID, error) {
 }
 func (server *Server) writeAgentComputerError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, errNetworkPolicyUnsupported):
+		writeError(w, conflict(codedError{code: "network_policy_unsupported", message: "Worker cannot execute the required network policy"}))
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		writeError(w, unauthorized(errors.New("worker authentication is stale")))
 	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, dispatch.ErrInvalidInput):

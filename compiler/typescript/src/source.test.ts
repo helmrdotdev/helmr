@@ -61,8 +61,8 @@ test("program cannot replay root config through helper, and preserves missing im
 
 test("packed SDK exposes coherent Agent handler and preparation types", async () => {
  const f = await fixture({ "authoring.ts": `
-   import { agent, template, image, triggers, type CronTrigger, type Turn, type AgentContext, type AgentDefinition, type BuildContext, type TemplateDefinition, type InputContent } from '@helmr/sdk';
-   const prepare = async (build: BuildContext): Promise<void> => { await build.exec(['true']); };
+   import { agent, template, image, triggers, type CronTrigger, type Turn, type AgentContext, type AgentDefinition, type PrepareContext, type TemplateDefinition, type InputContent } from '@helmr/sdk';
+   const prepare = async (build: PrepareContext): Promise<void> => { await build.exec(['true']); };
    const machine: TemplateDefinition = template({ id: 'computer', image: image('root').from('ubuntu:24.04'), resources: { cpu: 1, memory: '1GiB' }, prepare });
    const handler = async (turn: Turn<InputContent>, ctx: AgentContext<{ value: number }>): Promise<number> => {
      const { answer } = await turn.ask({ prompt: [{ type: 'text', text: 'continue' }],  type: 'text' });

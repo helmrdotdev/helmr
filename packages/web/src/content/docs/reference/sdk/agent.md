@@ -56,6 +56,7 @@ When `init` is absent, `ctx.initResult` is `undefined`.
 | --- | --- | --- |
 | `id` | yes | Definition ID, matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Used by `client.sessions.create({ agent: id })` and `helmr session create`. |
 | `template` | yes | A `template()` definition. New Sessions run on a Computer created from it unless the start request names an existing Computer. See [Computer](/docs/reference/sdk/computer). |
+| `runtimeMcp` | no | Runtime MCP maximum: `{ allow: [...] }` narrows the Agent's base authority. Omission adds no restriction; `{ allow: [] }` grants no remote business operations. See [Runtime MCP policy](#runtime-mcp-policy). |
 | `init` | no | Runs once per Session process before its first Turn. The returned value is `ctx.initResult`. |
 | `turn` | yes | Handles one Turn. Its return value is validated by `resultSchema` when supplied and becomes the machine `result`. |
 | `inputSchema` | no | Validates incoming JSON before the handler; `turn.input` is the schema output. Without it, input is conversational text content. |
@@ -222,7 +223,7 @@ capture; ordinary idle connection expiry allows capture afterwards.
 
 ```ts
 interface InitContext {
-  readonly mcp: Readonly<{ getConnectionOptions(): Promise<RuntimeMcpConnectionOptions> }>
+  readonly mcp: Readonly<{ getConnectionOptions(policy?: RuntimeMcpPolicy): Promise<RuntimeMcpConnectionOptions> }>
   readonly session: Readonly<{ id: string; key?: string; parent?: Readonly<{ id: string }> }>
   readonly computer: ComputerIdentity              // { id: string }
   readonly deployment: Readonly<{ id: string }>
@@ -242,11 +243,71 @@ interface AgentContext<S> extends InitContext {
 | `deployment.id` | The Deployment the Session is pinned to. |
 | `recovery.kind` | `"initial"` for a new Session process; `"reconstructed"` when the Session was explicitly reconstructed and `init` runs again. `reason` is optional. |
 | `signal` | Aborts on Session process shutdown, including during `init`. |
-| `mcp.getConnectionOptions()` | Returns the Session process’s local MCP URL and headers. Available in `init` and `turn`, including when `init` is omitted. See [Runtime MCP](/docs/reference/sdk/mcp). |
+| `mcp.getConnectionOptions(policy?)` | Returns a scoped local MCP URL and headers. Omission inherits the Agent maximum; a supplied allowlist must be a subset. Available in `init` and `turn`, including when `init` is omitted. See [Runtime MCP](/docs/reference/sdk/mcp). |
 | `initResult` | The value returned by `init` (`AgentContext` only). |
 
 `init` does not rerun when an idle Session resumes from hibernation. See
 [Durability](/docs/concepts/durability).
+
+## Runtime MCP policy
+
+```ts
+export type RuntimeMcpTargetOperation =
+  | "enqueue" | "send_turn" | "inspect_session" | "inspect_turn"
+  | "interrupt_turn" | "interrupt_session" | "resume_session"
+  | "close_session" | "cancel_session"
+
+export type RuntimeMcpRule =
+  | {
+      readonly operation: "start" | "spawn"
+      readonly agents: readonly string[]
+      readonly computer?: "new" | "caller"
+    }
+  | {
+      readonly operation: RuntimeMcpTargetOperation
+      readonly agents: readonly string[]
+      readonly computer?: never
+    }
+  | {
+      readonly operation: "list_computers"
+      readonly agents?: never
+      readonly computer?: never
+    }
+
+export interface RuntimeMcpPolicy {
+  readonly allow: readonly RuntimeMcpRule[]
+}
+```
+
+The optional `agent({ runtimeMcp })` field sets a maximum for the pinned Session.
+An explicit policy requires `allow`; null, booleans, empty objects, unknown fields
+and `blockAll` are invalid. Omission preserves existing base-authorized
+operations and targets, including subsequently supported ones. A finite policy
+grants only its named operations and Agent keys; an empty array grants none.
+Policies never inject an MCP connection automatically.
+
+At most 256 rules are accepted. Agent-targeted rules require 1–256 unique exact
+Agent keys in the same published manifest. Creation rules default to
+`computer: "new"`; `"caller"` permits reuse of the caller's logical Computer.
+Use two rules to permit both. Other targeted operations forbid `computer`;
+`list_computers` forbids both `agents` and `computer`. Overlapping rules union
+their grants, with deterministic normalization. Rule order has no precedence.
+Use the canonical operation names above; observation aliases such as `wait_turn`
+are derived from `inspect_turn` rather than authored as extra grants.
+
+`ctx.mcp.getConnectionOptions()` inherits the maximum, including a finite or
+empty maximum. `getConnectionOptions({ allow: [...] })` obtains a narrower
+descriptor and rejects widening. Getter Agent keys are checked against the
+caller's pinned manifest, even under an unrestricted maximum. Equivalent
+normalized policies reuse the same connection credentials; a Session process
+supports at most 16 distinct scopes, including its maximum, without eviction.
+
+Existing Role, origin, relationship, Environment and lifecycle checks still
+apply. Unrestricted MCP retains eligible existing-Computer placement; finite
+creation rules limit placement to `new` or `caller`. Creation adds no implicit
+inspection or control grant. Native integration, process continuity and security
+boundaries are covered in [Execution policies](/docs/concepts/execution-policies)
+and the [Runtime MCP reference](/docs/reference/sdk/mcp).
 
 ## `MessageRejected`
 
@@ -390,7 +451,10 @@ client.agents.get(id: string, query?: { deploymentId?: string }, options?): Prom
 client.agents.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<AgentPage>
 ```
 
-`AgentInfo` includes `agent`, `template`, `deploymentId` and the input contract.
+`AgentInfo` includes `agent`, `template`, `deploymentId`, the input contract and
+optional `runtimeMcp`. The policy is omitted for unrestricted authority and is
+otherwise a normalized allowlist, preserving `{ allow: [] }`. Creation rules
+include their resolved `computer` placement. List items expose the same policy.
 The `agent` identifier is declared in code and remains stable across Deployments
 within its environment. `inputKind: "text"` identifies conversational input;
 `inputKind: "json"` includes `inputSchema`, which is either an available JSON

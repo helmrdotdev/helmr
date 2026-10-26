@@ -23,7 +23,7 @@ func TestQueuedDemandRespectsRegionHoldsAndProcessState(t *testing.T) {
 	}{
 		{name: "queued", want: true},
 		{name: "live process backlog", change: `UPDATE session_processes SET status='ready',fenced_at=NULL WHERE environment_id=$1 AND session_id=$2`},
-		{name: "exhausted process epoch", change: `UPDATE session_processes SET epoch=9223372036854775807 WHERE environment_id=$1 AND session_id=$2`},
+		{name: "exhausted process epoch", change: `DELETE FROM session_mcp_scopes WHERE environment_id=$1 AND session_id=$2; UPDATE session_processes SET epoch=9223372036854775807 WHERE environment_id=$1 AND session_id=$2`},
 		{name: "local hold", change: `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$3,$2,'local','paused')`},
 		{name: "released hold", change: `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,released_at) VALUES($1,$3,$2,'local','paused',clock_timestamp())`, want: true},
 		{name: "closed", change: `UPDATE sessions SET status='closed' WHERE environment_id=$1 AND id=$2`},

@@ -27,7 +27,7 @@ func TestWorkerAgentSessionDiscovery(t *testing.T) {
 	call := func(method workerapi.AgentOperationMethod, turn string, body any) workerapi.AgentOperationResponse {
 		t.Helper()
 		payload, _ := json.Marshal(body)
-		request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, TurnID: turn, Method: method, Payload: payload}
+		request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, TurnID: turn, Method: method, Payload: payload}
 		var response workerapi.AgentOperationResponse
 		client.post(t, "/worker/v1/sessions/operations", request, 200, &response)
 		return response

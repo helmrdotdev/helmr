@@ -279,6 +279,9 @@ func (relay *agentRelay) handleHostMessage(connection programConnection, sequenc
 		if relay.captureFrozen || relay.expiryFrozen {
 			return errors.New("session physical execution is frozen")
 		}
+		if err := relay.bindMCPScopeLocked(value.Command); err != nil {
+			return err
+		}
 		size := int64(proto.Size(value.Command))
 		full := len(relay.writes) == cap(relay.writes) || relay.writeBytes.Load()+size > 32*1024*1024
 		shutdown := value.Command.GetControl().GetDesired() == "shutdown"

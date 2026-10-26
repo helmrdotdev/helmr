@@ -120,7 +120,7 @@ func TestSessionRuntimeControlsCannotEscapeOwnershipOrReleaseExternalHolds(t *te
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	peer := f.peer(t)
-	caller := session.Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Execution: f.execution(), Host: f.host()}
 	for _, target := range []fixture{f, peer} {
 		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, controlRequest(target, "cancel", "foreign")); !errors.Is(err, session.ErrDenied) {
 			t.Fatalf("non-owned control: %v", err)

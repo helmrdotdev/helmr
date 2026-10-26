@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process"
-import type { BuildContext, TemplateDefinition } from "@helmr/sdk"
+import type { PrepareContext, TemplateDefinition } from "@helmr/sdk"
 
 // The guest owns the enclosing cgroup and joins all descendants before capture.
 // This driver supplies ordinary process execution to the authored prepare hook.
@@ -9,7 +9,7 @@ export async function runComputerPreparation(computer: TemplateDefinition, signa
   const executionSignal = AbortSignal.any([signal, cancellation.signal])
   const pending = new Set<Promise<void>>()
   let closed = false
-  const build: BuildContext = {
+  const build: PrepareContext = {
     signal: executionSignal,
     exec(command, options) {
       if (closed) return Promise.reject(new Error("Computer preparation has finished"))

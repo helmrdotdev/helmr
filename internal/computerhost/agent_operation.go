@@ -31,6 +31,8 @@ func agentOperationMethod(method agentv1.Operation_Method) workerapi.AgentOperat
 		return workerapi.AgentMethodRegisterMessages
 	case agentv1.Operation_METHOD_RESPOND:
 		return workerapi.AgentMethodRespond
+	case agentv1.Operation_METHOD_GET_MCP_CONNECTION:
+		return workerapi.AgentMethodGetMCPConnection
 	case agentv1.Operation_METHOD_RUNTIME_MCP:
 		return workerapi.AgentMethodRuntimeMCP
 	case agentv1.Operation_METHOD_SEND_MESSAGE:

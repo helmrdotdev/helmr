@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/workerpoolname"
 )
 
@@ -83,6 +84,13 @@ func LoadWorker() (Worker, error) {
 	)
 	if err != nil {
 		return cfg, fmt.Errorf("WORKER_NETWORK_BLOCKED_IPV4_CIDRS: %w", err)
+	}
+	cfg.NetworkPrivateBusinessCIDRs, err = parseCanonicalBlockedIPv4Prefixes(env("WORKER_NETWORK_PRIVATE_BUSINESS_CIDRS", "[]"))
+	if err != nil {
+		return cfg, fmt.Errorf("WORKER_NETWORK_PRIVATE_BUSINESS_CIDRS: %w", err)
+	}
+	if err = networkpolicy.ValidateInstallation(networkpolicy.Installation{PrivateBusinessCIDRs: cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs}); err != nil {
+		return cfg, err
 	}
 	if cfg.VMVCPUCount, err = envInt64("VM_VCPUS", cfg.VMVCPUCount); err != nil {
 		return cfg, err

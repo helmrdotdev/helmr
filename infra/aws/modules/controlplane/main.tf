@@ -113,16 +113,18 @@ locals {
   )
 
   controlplane_environment_defaults = merge({
-    AUDIT_RETENTION_SECONDS            = tostring(var.audit_retention_seconds)
-    CONTROL_PLANE_ADDR                 = ":${local.controlplane_port}"
-    DEPLOYMENT_MODE                    = var.deployment_mode
-    CAS_URI                            = "s3://${aws_s3_bucket.cas.bucket}"
-    DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH = "/usr/local/share/helmr/runtime.descriptor.json"
-    PLATFORM_STORE_URI                 = var.platform_store_uri
-    APP_ORIGIN                         = local.controlplane_url
-    SLACK_TRANSPORT                    = var.slack_transport
-    OUTBOUND_PROXY_URL                 = var.outbound_proxy_url
-    GITHUB_OAUTH_CLIENT_ID             = var.github_oauth_client_id
+    AUDIT_RETENTION_SECONDS                      = tostring(var.audit_retention_seconds)
+    CONTROL_PLANE_NETWORK_PRIVATE_BUSINESS_CIDRS = jsonencode(var.network_private_business_cidrs)
+    CONTROL_PLANE_NETWORK_BLOCKED_IPV4_CIDRS     = jsonencode(var.network_blocked_ipv4_cidrs)
+    CONTROL_PLANE_ADDR                           = ":${local.controlplane_port}"
+    DEPLOYMENT_MODE                              = var.deployment_mode
+    CAS_URI                                      = "s3://${aws_s3_bucket.cas.bucket}"
+    DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH           = "/usr/local/share/helmr/runtime.descriptor.json"
+    PLATFORM_STORE_URI                           = var.platform_store_uri
+    APP_ORIGIN                                   = local.controlplane_url
+    SLACK_TRANSPORT                              = var.slack_transport
+    OUTBOUND_PROXY_URL                           = var.outbound_proxy_url
+    GITHUB_OAUTH_CLIENT_ID                       = var.github_oauth_client_id
     }, var.deployment_mode == "managed-cloud" ? {
     COMPUTER_KMS_KEY_ARN = aws_kms_key.helmr.arn
     } : {

@@ -28,6 +28,8 @@ const (
 )
 
 type ControlPlane struct {
+	NetworkPrivateBusinessCIDRs     []netip.Prefix
+	NetworkBlockedIPv4CIDRs         []netip.Prefix
 	AuditPolicy                     auditpolicy.Policy
 	SlackTransport                  string
 	OutboundProxyURL                string
@@ -101,48 +103,49 @@ type ClickHouse struct {
 }
 
 type Worker struct {
-	LogChunkBytes             int64
-	LogBufferBytes            int64
-	LogBufferRecords          int64
-	ComputerDevices           []string
-	ComputerStagingMiB        int64
-	ControlPlaneURL           string
-	WorkerResourceID          string
-	WorkerPoolName            string
-	WorkerEnrollmentTokenFile string
-	CASURI                    string
-	WorkerHostSecretPath      string
-	CheckpointKey             []byte
-	PlatformStoreURI          string
-	WorkDir                   string
-	ImagesDir                 string
-	FirecrackerPath           string
-	CPUTemplateHelperPath     string
-	JailerPath                string
-	MkfsExt4Path              string
-	Mke2fsConfigPath          string
-	JailerUID                 int
-	JailerGID                 int
-	JailerNumaNode            int
-	JailerChrootDir           string
-	CgroupVersion             string
-	NetworkLinkPool           string
-	NetworkTranslationPool    string
-	NetworkResolverIPv4       string
-	NetworkBlockedIPv4CIDRs   []netip.Prefix
-	IPPath                    string
-	NFTPath                   string
-	VMVCPUCount               int64
-	VMMemoryMiB               int64
-	VMScratchDiskMiB          int64
-	WorkerCapacityVCPUs       int64
-	WorkerCapacityMemoryMiB   int64
-	WorkerDiskMiB             int64
-	WorkerDiskReserveMiB      int64
-	WorkerExecutionSlots      int32
-	VMInitTimeout             time.Duration
-	VMHealthTimeout           time.Duration
-	PollEvery                 time.Duration
+	LogChunkBytes               int64
+	LogBufferBytes              int64
+	LogBufferRecords            int64
+	ComputerDevices             []string
+	ComputerStagingMiB          int64
+	ControlPlaneURL             string
+	WorkerResourceID            string
+	WorkerPoolName              string
+	WorkerEnrollmentTokenFile   string
+	CASURI                      string
+	WorkerHostSecretPath        string
+	CheckpointKey               []byte
+	PlatformStoreURI            string
+	WorkDir                     string
+	ImagesDir                   string
+	FirecrackerPath             string
+	CPUTemplateHelperPath       string
+	JailerPath                  string
+	MkfsExt4Path                string
+	Mke2fsConfigPath            string
+	JailerUID                   int
+	JailerGID                   int
+	JailerNumaNode              int
+	JailerChrootDir             string
+	CgroupVersion               string
+	NetworkLinkPool             string
+	NetworkTranslationPool      string
+	NetworkResolverIPv4         string
+	NetworkBlockedIPv4CIDRs     []netip.Prefix
+	NetworkPrivateBusinessCIDRs []netip.Prefix
+	IPPath                      string
+	NFTPath                     string
+	VMVCPUCount                 int64
+	VMMemoryMiB                 int64
+	VMScratchDiskMiB            int64
+	WorkerCapacityVCPUs         int64
+	WorkerCapacityMemoryMiB     int64
+	WorkerDiskMiB               int64
+	WorkerDiskReserveMiB        int64
+	WorkerExecutionSlots        int32
+	VMInitTimeout               time.Duration
+	VMHealthTimeout             time.Duration
+	PollEvery                   time.Duration
 }
 
 type WorkerControlPlane struct {

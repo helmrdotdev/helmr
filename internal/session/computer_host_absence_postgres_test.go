@@ -231,7 +231,7 @@ func TestComputerHostAbsenceOrdersRootsAcrossWorkerGroups(t *testing.T) {
  SELECT environment_id,$2,epoch,$3,worker_epoch,expires_at,$4,channel_credential_digest,status,reserved_memory_bytes,reserved_scratch_bytes,vm_platform_id,vm_vcpu_count,cpu_config_digest,delivered_at,initialized_at FROM computer_leases WHERE computer_id=$1`, pgx.QueryExecModeSimpleProtocol, f.computer, computer, owner, uuid.NewV7())
 	}
 	// Host 1 visits peer-root then root; host 2 visits root then peer-root.
-	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM session_processes WHERE environment_id=$1`, f.env)
+	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM session_mcp_scopes WHERE environment_id=$1; DELETE FROM session_processes WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.env)
 	for sessionID, computer := range map[uuid.UUID]uuid.UUID{peer.session: f.computer, child.session: computers[0], peerChild.session: computers[1], f.session: computers[2]} {
 		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET computer_id=$3 WHERE environment_id=$1 AND id=$2;
  INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) VALUES($1,$2,1,$3,1,'ready')`, pgx.QueryExecModeSimpleProtocol, f.env, sessionID, computer)

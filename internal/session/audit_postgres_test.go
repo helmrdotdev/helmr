@@ -285,7 +285,7 @@ func (tx lostAuditCommitTx) Commit(ctx context.Context) error {
 }
 func TestAuditMCPAmbiguousAdmissionDoesNotRecordRefusal(t *testing.T) {
 	f := newFixture(t)
-	caller := session.Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Execution: f.execution(), Host: f.host()}
 	err := session.AdmitMCP(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, lostAuditCommit{f.pool}, caller, "list_agents")
 	if !db.CommitOutcomeUnknown(err) {
 		t.Fatal(err)
@@ -335,7 +335,7 @@ func TestAuditMCPStaleGenerationRetainsObservedCheck(t *testing.T) {
 	f := newFixture(t)
 	e := f.execution()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.session)
-	caller := session.Caller{Kind: "session", ID: f.session, Execution: e, Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Execution: e, Host: f.host()}
 	err := session.AdmitMCP(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, "list_agents")
 	if !errors.Is(err, session.ErrDenied) {
 		t.Fatal(err)

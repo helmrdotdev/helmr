@@ -199,6 +199,15 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		if err = requireAgentAvailable(ctx, tx, req.EnvironmentID, agentID); err != nil {
 			return err
 		}
+		if caller.Kind == "session" {
+			op := "start"
+			if method == "spawn" {
+				op = "spawn"
+			}
+			if err := requireMCPCreation(ctx, tx, caller, op, req); err != nil {
+				return err
+			}
+		}
 		prior, err := sessionCreationReceipt(ctx, tx, caller, req.EnvironmentID, agentID, method, req.IdempotencyKey, digest)
 		if err != nil {
 			return err

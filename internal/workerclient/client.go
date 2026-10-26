@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 const hostCredentialRequestTimeout = 10 * time.Second
 
 type Client struct {
+	network   *workerapi.NetworkCapabilities
 	transport *httpclient.Transport
 	auth      authentication
 }
@@ -34,6 +36,7 @@ type authentication struct {
 }
 
 type options struct {
+	network      *workerapi.NetworkCapabilities
 	httpClient   *http.Client
 	workerHostID string
 	secret       string
@@ -41,6 +44,12 @@ type options struct {
 }
 
 type Option func(*options)
+
+func WithNetwork(installation networkpolicy.Installation) Option {
+	return func(options *options) {
+		options.network = &workerapi.NetworkCapabilities{Version: workerapi.NetworkPolicyVersion, Installation: installation.Canonical()}
+	}
+}
 
 func WithHTTPClient(httpClient *http.Client) Option {
 	return func(options *options) { options.httpClient = httpClient }
@@ -68,7 +77,7 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{transport: transport, auth: authentication{
+	return &Client{transport: transport, network: config.network, auth: authentication{
 		workerHostID: config.workerHostID,
 		secret:       config.secret,
 		serviceID:    config.serviceID,

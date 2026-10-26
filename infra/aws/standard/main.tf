@@ -21,10 +21,11 @@ locals {
       contract_digest = local.worker_provider_contract_digest
       enable_ssm      = var.worker_enable_ssm
       network = {
-        blocked_ipv4_cidrs = var.worker_network_blocked_ipv4_cidrs
-        link_pool          = var.worker_network_link_pool
-        resolver_ipv4      = coalesce(var.worker_network_resolver_ipv4, cidrhost(var.execution_vpc_cidr, 2))
-        translation_pool   = var.worker_network_translation_pool
+        blocked_ipv4_cidrs     = var.worker_network_blocked_ipv4_cidrs
+        private_business_cidrs = var.worker_network_private_business_cidrs
+        link_pool              = var.worker_network_link_pool
+        resolver_ipv4          = coalesce(var.worker_network_resolver_ipv4, cidrhost(var.execution_vpc_cidr, 2))
+        translation_pool       = var.worker_network_translation_pool
       }
       platform_store = {
         uri         = var.platform_store_uri
@@ -145,6 +146,8 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  network_private_business_cidrs    = var.worker_network_private_business_cidrs
+  network_blocked_ipv4_cidrs        = var.worker_network_blocked_ipv4_cidrs
   audit_retention_seconds           = var.audit_retention_seconds
   audit_purge_interval_minutes      = var.audit_purge_interval_minutes
   audit_maintenance_timeout_seconds = var.audit_maintenance_timeout_seconds
@@ -222,6 +225,7 @@ module "worker_group" {
 
   name                                            = local.worker_generations[each.key].provider_name
   worker_pool_name                                = each.key
+  network_private_business_cidrs                  = local.worker_generations[each.key].generation_inputs.supply.network.private_business_cidrs
   network_blocked_ipv4_cidrs                      = local.worker_generations[each.key].generation_inputs.supply.network.blocked_ipv4_cidrs
   network_link_pool                               = local.worker_generations[each.key].generation_inputs.supply.network.link_pool
   network_translation_pool                        = local.worker_generations[each.key].generation_inputs.supply.network.translation_pool

@@ -147,7 +147,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 	req := f.startRequest("child")
 	req.ComputerID = f.computer
 

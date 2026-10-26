@@ -11,6 +11,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -114,12 +116,16 @@ func GetCurrent(ctx context.Context, q db.DBTX, principal auth.Principal, scope 
 }
 
 type DefinitionRecord struct {
-	ID          string
-	AgentID     *uuid.UUID
-	TemplateID  *string
-	Resources   json.RawMessage
-	InputKind   string
-	InputSchema json.RawMessage
+	Network        json.RawMessage
+	PrepareNetwork json.RawMessage
+	PrepareSecrets json.RawMessage
+	RuntimeMcp     json.RawMessage
+	ID             string
+	AgentID        *uuid.UUID
+	TemplateID     *string
+	Resources      json.RawMessage
+	InputKind      string
+	InputSchema    json.RawMessage
 }
 
 type DefinitionPage struct {
@@ -131,8 +137,8 @@ type DefinitionPage struct {
 // Definition reads select one statement per kind so every statement the
 // package sends is a constant.
 const (
-	agentDefinitionProjection    = "SELECT key, agent_id, template_key, NULL::jsonb, input_kind, input_schema FROM (SELECT d.environment_id,d.deployment_id,d.agent_id,a.key,t.key AS template_key,d.input_kind,d.input_schema FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
-	templateDefinitionProjection = "SELECT key, NULL::uuid, NULL::text, resources, ''::text, NULL::jsonb FROM (SELECT d.environment_id,d.deployment_id,t.key,jsonb_strip_nulls(jsonb_build_object('milliCpu',d.cpu_millis,'memoryMiB',d.memory_bytes/1048576,'diskMiB',d.disk_bytes/1048576)) AS resources FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
+	agentDefinitionProjection    = "SELECT key, agent_id, template_key, NULL::jsonb, input_kind, input_schema, NULL::jsonb, NULL::jsonb, NULL::jsonb, runtime_mcp_policy FROM (SELECT d.environment_id,d.deployment_id,d.agent_id,a.key,t.key AS template_key,d.input_kind,d.input_schema,d.runtime_mcp_policy FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
+	templateDefinitionProjection = "SELECT key, NULL::uuid, NULL::text, resources, ''::text, NULL::jsonb, network_policy, prepare_network_policy, prepare_secrets, NULL::jsonb FROM (SELECT d.environment_id,d.deployment_id,t.key,d.network_policy,d.prepare_network_policy,(SELECT coalesce(jsonb_agg(jsonb_strip_nulls(jsonb_build_object('secret',s.name,'env',CASE WHEN b.placement_kind <> 'env' THEN NULL ELSE jsonb_build_object('name',b.placement_target,'mode',b.mode,'allowedOrigins',CASE WHEN b.mode='protected' THEN to_jsonb(b.allowed_origins) ELSE NULL END) END,'file',CASE WHEN b.placement_kind <> 'file' THEN NULL ELSE jsonb_build_object('path',b.placement_target) END)) ORDER BY b.placement_kind,b.placement_target),'[]'::jsonb) FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id) WHERE b.environment_id=d.environment_id AND b.image_spec_id=d.image_spec_id) AS prepare_secrets,jsonb_strip_nulls(jsonb_build_object('milliCpu',d.cpu_millis,'memoryMiB',d.memory_bytes/1048576,'diskMiB',d.disk_bytes/1048576)) AS resources FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id)) definitions"
 	definitionListClause         = " WHERE environment_id=$1 AND deployment_id=$2 AND ($3::text IS NULL OR key>$3) ORDER BY key LIMIT $4"
 	definitionGetClause          = " WHERE environment_id=$1 AND deployment_id=$2 AND key=$3"
 )
@@ -206,7 +212,10 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 	page := DefinitionPage{DeploymentID: r.ID, Items: []DefinitionRecord{}}
 	for rows.Next() {
 		var item DefinitionRecord
-		if err := rows.Scan(&item.ID, &item.AgentID, &item.TemplateID, &item.Resources, &item.InputKind, &item.InputSchema); err != nil {
+		if err := rows.Scan(&item.ID, &item.AgentID, &item.TemplateID, &item.Resources, &item.InputKind, &item.InputSchema, &item.Network, &item.PrepareNetwork, &item.PrepareSecrets, &item.RuntimeMcp); err != nil {
+			return DefinitionPage{}, err
+		}
+		if err := projectDefinitionPolicies(&item, kind); err != nil {
 			return DefinitionPage{}, err
 		}
 		if item.AgentID != nil {
@@ -252,11 +261,14 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 	} else {
 		row = q.QueryRow(ctx, templateDefinitionProjection+definitionGetClause, r.EnvironmentID, r.ID, id)
 	}
-	err = row.Scan(&found.ID, &found.AgentID, &found.TemplateID, &found.Resources, &found.InputKind, &found.InputSchema)
+	err = row.Scan(&found.ID, &found.AgentID, &found.TemplateID, &found.Resources, &found.InputKind, &found.InputSchema, &found.Network, &found.PrepareNetwork, &found.PrepareSecrets, &found.RuntimeMcp)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r.ID, DefinitionRecord{}, ErrDefinitionNotFound
 	}
 	if err != nil {
+		return uuid.Nil(), DefinitionRecord{}, err
+	}
+	if err := projectDefinitionPolicies(&found, kind); err != nil {
 		return uuid.Nil(), DefinitionRecord{}, err
 	}
 	if found.AgentID != nil {
@@ -316,4 +328,26 @@ func ListRetainedAgents(ctx context.Context, q db.DBTX, principal auth.Principal
 		return nil, err
 	}
 	return items, nil
+}
+
+func projectDefinitionPolicies(item *DefinitionRecord, kind definition.Kind) error {
+	if kind == definition.KindAgent {
+		p, err := mcppolicy.Decode(item.RuntimeMcp)
+		if err != nil {
+			return err
+		}
+		item.RuntimeMcp = p.Public()
+		return nil
+	}
+	p, err := networkpolicy.DecodeStored(item.Network)
+	if err != nil {
+		return err
+	}
+	item.Network = p.Public()
+	p, err = networkpolicy.DecodeStored(item.PrepareNetwork)
+	if err != nil {
+		return err
+	}
+	item.PrepareNetwork = p.Public()
+	return nil
 }

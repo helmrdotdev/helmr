@@ -18,6 +18,7 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -123,7 +124,22 @@ func runtimeKernelArgs(
 }
 
 func (c *Connector) configForMaterializeRequest(request vm.MaterializeRequest) (Config, error) {
-	return c.configForResources(request.Resources, "materialize")
+	if err := request.NetworkPhase.Validate(); err != nil {
+		return Config{}, err
+	}
+	cfg, err := c.configForResources(request.Resources, "materialize")
+	if err != nil {
+		return Config{}, err
+	}
+	child := *c
+	cfg.NetworkPhase = request.NetworkPhase
+	if request.NetworkPhase == networkpolicy.PhaseRuntime && request.Topology.Computer != nil {
+		cfg.NetworkComputerID = request.Topology.Computer.ComputerID
+	} else {
+		cfg.NetworkComputerID = ""
+	}
+	child.cfg = cfg
+	return child.configForNetwork(request.NetworkPolicy, request.NetworkInstallation)
 }
 
 func (c *Connector) configForResources(resources vm.Resources, operation string) (Config, error) {

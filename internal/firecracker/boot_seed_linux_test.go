@@ -4,6 +4,7 @@ package firecracker
 
 import (
 	"bytes"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestBootSeedMatchesContentBeforeStartingAnotherComputer(t *testing.T) {
 	digest := func(s string) string { return "sha256:" + strings.Repeat(s, 64) }
 	c := &Connector{cfg: Config{NetworkResolverIPv4: "1.1.1.1", GuestPort: 5000, HealthPort: 5001}}
 	root := digest("1")
-	original := vm.MaterializeRequest{
+	original := vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseRuntime, NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(),
 		ID:                        "private-builder",
 		Binding:                   vm.WorkloadBinding{VMPlatformID: digest("2")},
 		BaseComputerDiskVersionID: root,

@@ -5,6 +5,7 @@ package firecracker
 import (
 	"context"
 	"encoding/binary"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"os"
 	"path/filepath"
 	"slices"
@@ -127,7 +128,7 @@ func TestMaterializeRequiresActivationProbedCPUShape(t *testing.T) {
 	rootfsDigest := testCanonicalDigest("0")
 	artifacts := testProbeRuntimeArtifacts()
 	artifacts.Rootfs.Digest = rootfsDigest
-	validRequest := vm.MaterializeRequest{
+	validRequest := vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseRuntime, NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(),
 		ID:        computerInstanceID,
 		OwnerKind: vm.OwnerInstance,
 		Binding: vm.WorkloadBinding{
@@ -233,7 +234,7 @@ func TestSessionEntryPointsRejectWorkloadVMPlatformMismatch(t *testing.T) {
 	); err == nil || !strings.Contains(err.Error(), "does not match bound host runtime") {
 		t.Fatalf("prepare machine runtime identity error = %v", err)
 	}
-	if _, err := connector.restore(context.Background(), vm.RestoreRequest{
+	if _, err := connector.restore(context.Background(), vm.RestoreRequest{NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(),
 		ComputerInstanceID: computerInstanceID,
 		OwnerKind:          vm.OwnerInstance,
 		Binding:            binding,
@@ -262,7 +263,7 @@ func TestRuntimeSDKConfigurationUsesDescriptor(t *testing.T) {
 
 func TestConfigForMaterializeRequestUsesRequestedRuntimeResources(t *testing.T) {
 	connector := &Connector{cfg: Config{VCPUCount: 4, MemoryMiB: 4096, ScratchDiskMiB: 32768}}
-	cfg, err := connector.configForMaterializeRequest(vm.MaterializeRequest{
+	cfg, err := connector.configForMaterializeRequest(vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseRuntime, NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(),
 		Resources: vm.Resources{
 			MilliCPU:  1500,
 			MemoryMiB: 1024,
@@ -292,7 +293,7 @@ func TestConfigForMaterializeRequestRejectsOversizedRuntimeResources(t *testing.
 		"disk":   {MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 16384, Slots: 1},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{Resources: resources}); err == nil {
+			if _, err := connector.configForMaterializeRequest(vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseRuntime, NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(), Resources: resources}); err == nil {
 				t.Fatalf("expected oversized %s request to fail", name)
 			}
 		})

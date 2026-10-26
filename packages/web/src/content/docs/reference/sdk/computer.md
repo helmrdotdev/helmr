@@ -22,11 +22,13 @@ interface TemplateDefinition {
   readonly id: string
   readonly image: ImageBuilder
   readonly resources: { readonly cpu: number; readonly memory: string; readonly disk?: string }
-  readonly prepare?: (build: BuildContext) => MaybePromise<void>
+  readonly network?: NetworkPolicy
+  readonly prepareNetwork?: NetworkPolicy
+  readonly prepare?: (prepare: PrepareContext) => MaybePromise<void>
   readonly refresh?: { readonly every: Duration; readonly maxAge?: Duration }
-  readonly deleteAfterUnused?: Duration
+  readonly deleteAfterUnused?: Retention
   readonly secrets?: readonly SecretBinding[]
-  readonly buildSecrets?: readonly SecretBinding[]
+  readonly prepareSecrets?: readonly SecretBinding[]
 }
 ```
 
@@ -40,15 +42,17 @@ Returns a frozen definition with `kind: "template"`. Throws `TypeError` when
 | `resources.cpu` | yes | Positive number of CPUs; must resolve to whole milliCPU (for example `0.5`, `1`, `2`). |
 | `resources.memory` | yes | Positive integer with `MiB` or `GiB`, for example `"4GiB"`. |
 | `resources.disk` | no | Must be `"32GiB"` in this release; omit it to use that size. |
-| `prepare` | no | Preparation function. Runs with a `BuildContext` to set up the Computer's filesystem (for example cloning a repository and installing dependencies) before the Computer is used. |
+| `network` | no | Outbound network maximum for Computers created from this Template. Omission keeps ordinary IPv4 connectivity under installation restrictions. |
+| `prepareNetwork` | no | Replaces the network policy during `prepare`; omission inherits `network`. Requires a callback. |
+| `prepare` | no | Preparation function. Runs with a `PrepareContext` to set up the Computer's filesystem (for example cloning a repository and installing dependencies) before the Computer is used. |
 | `refresh.every` | yes, with `refresh` | Best-effort interval between background preparations after promotion. A usable build already in progress satisfies the interval; missed intervals are coalesced. |
 | `refresh.maxAge` | no | Maximum age of a prepared image a new Computer may start from; an older one is prepared again first. |
 | `deleteAfterUnused` | no | Retention after the Computer becomes unused: a `Duration` or `"never"`. Default `"7d"`. |
 | `secrets` | no | Secret bindings available to processes on the Computer. |
-| `buildSecrets` | no | Secret bindings available to `prepare`. |
+| `prepareSecrets` | no | Secret bindings available to `prepare`. Nonempty bindings require a callback. |
 
 ```ts
-interface BuildContext {
+interface PrepareContext {
   readonly signal: AbortSignal
   exec(command: string | readonly string[], options?: { cwd?: string; env?: Record<string, string> }): Promise<void>
 }
@@ -61,7 +65,7 @@ export const repoComputer = template({
   id: "app",
   image: image("app").from("node:24-bookworm"),
   resources: { cpu: 2, memory: "4GiB" },
-  buildSecrets: [{ secret: "SOURCE_TOKEN", env: { name: "SOURCE_TOKEN", mode: "raw" } }],
+  prepareSecrets: [{ secret: "SOURCE_TOKEN", env: { name: "SOURCE_TOKEN", mode: "raw" } }],
   secrets: [{
     secret: "MODEL_API_KEY",
     env: { name: "MODEL_API_KEY", mode: "protected", allowedOrigins: ["https://api.example.com"] },
@@ -73,6 +77,65 @@ export const repoComputer = template({
   refresh: { every: "1d", maxAge: "7d" },
 })
 ```
+
+## Outbound network policy
+
+```ts
+export type AllowedDomain =
+  | string
+  | { readonly domain: string; readonly ipRanges: readonly string[] }
+
+export type NetworkPolicy =
+  | { readonly blockAll: boolean; readonly allowDomains?: never }
+  | { readonly allowDomains: readonly AllowedDomain[]; readonly blockAll?: never }
+```
+
+| Value | Outbound access |
+| --- | --- |
+| Omitted or `{ blockAll: false }` | Ordinary IPv4 TCP, UDP and ICMP, subject to mandatory denies and the installation's approved private ranges. |
+| `{ blockAll: true }` | No external guest traffic or external DNS. |
+| `{ allowDomains: [...] }` | Matching TLS SNI names on TCP 443, subject to each entry's address bounds. |
+| `{ allowDomains: [] }` | Full blocking; normalized to `{ blockAll: true }`. |
+
+The two branches are exclusive, including `blockAll: false`. Empty objects,
+null, bare booleans and unknown fields are invalid.
+
+`allowDomains` accepts at most 256 unique normalized patterns. Names use ASCII
+DNS A-labels with at least two labels, normalized to lowercase with one final
+dot removed. The maximum length is 253 characters, including a leading `*.`;
+labels contain 1–63 letters, digits or hyphens without leading/trailing hyphens.
+IP literals, numeric-only names, localhost names, Unicode, URLs, ports, paths and
+whitespace are invalid. Use explicit IDNA A-labels for international names.
+
+`*.example.com` matches `api.example.com` and `a.b.example.com`, but excludes
+`example.com`. Exact names grant no subdomains. A wildcard can appear only once,
+at the beginning, before a multi-label suffix; `*` and `*.com` are invalid.
+Overlapping entries are positive grants: any one matching entry must satisfy
+its own address bounds. An exact entry cannot narrow a broader wildcard.
+
+Strings permit public IPv4 destinations only. Objects require 1–64 unique
+canonical IPv4 CIDRs in `ipRanges`; host bits are rejected. Those ranges bound
+all addresses for that entry and grant no direct-IP or non-SNI access. Private
+RFC1918 destinations additionally require containment in the installation's
+approved business ranges, which default to empty. Management, metadata, host,
+peer and other mandatory denies always apply. IPv6 and other non-global address
+classes have no business exception.
+
+With a callback, `prepareNetwork` replaces the entire preparation policy or
+inherits `network` when omitted. Without a callback, preparation is fully
+blocked, and explicit `prepareNetwork` or nonempty `prepareSecrets` is invalid.
+Seed stages always block guest egress. The resolved phase policy contributes
+to preparation cache identity. Image-building host networking and project
+`config.build.secrets` are separate from VM preparation.
+
+Protected Secret origins must match the phase's network policy. Full blocking
+rejects protected bindings. Allowlisted origins require port 443 and a matching
+concrete hostname; their later connections must satisfy the matching entry's
+address bounds. Ordinary connectivity retains explicit HTTPS origin ports.
+Raw and file bindings never grant additional network access.
+
+See [Execution policies](/docs/concepts/execution-policies) for authoring,
+placement, MCP and trust boundaries.
 
 ## Images
 
@@ -139,10 +202,18 @@ client.templates.get(id: string, query?: { deploymentId?: string }, options?): P
 client.templates.list(query?: { deploymentId?: string; cursor?: string; limit?: number }, options?): Promise<TemplatePage>
 ```
 
-`TemplateInfo` is `{ template, deploymentId, resources }`. `TemplatePage` is
-`{ deploymentId, items: { template, resources }[], nextCursor? }`. Omitting `deploymentId` reads
-the current Deployment; a list cursor keeps its original Deployment. `limit` is
-1–100. `resources` contains normalized `milliCpu`, `memoryMiB` and optional `diskMiB`, rather than the authoring input format.
+`TemplateInfo` includes `template`, `deploymentId`, `resources`, normalized
+`network`, resolved `prepareNetwork`, and `prepareSecrets`. List items have the
+same fields except `deploymentId`, which belongs to the page. The preparation
+policy is explicit or inherited when a callback exists, and `{ blockAll: true }`
+otherwise. Omitted runtime network reads as `{ blockAll: false }`.
+
+Omitting `deploymentId` reads the current Deployment; a list cursor keeps its
+original Deployment. `limit` is 1–100. `resources` contains normalized `milliCpu`,
+`memoryMiB` and optional `diskMiB`. These are pinned configuration views, not a
+live acknowledgement of packet enforcement. To inspect an existing Computer,
+select its own `template` and `deploymentId`; see
+[Inspect the pins](/docs/concepts/execution-policies#inspect-the-pins).
 
 ## Client: Computers
 

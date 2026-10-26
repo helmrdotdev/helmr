@@ -2,6 +2,7 @@ package workerapi
 
 import (
 	"github.com/helmrdotdev/helmr/internal/bootseed"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"time"
 )
@@ -66,9 +67,11 @@ type ComputerProcessesResponse struct {
 }
 
 type ComputerAllocationSource struct {
-	BootSeed     *bootseed.Manifest     `json:"boot_seed,omitempty"`
-	BootProgram  *RuntimeProgram        `json:"boot_program,omitempty"`
-	Disk         ComputerSourceMaterial `json:"disk"`
-	ImageConfig  oci.RuntimeConfig      `json:"image_config"`
-	RootfsDigest string                 `json:"rootfs_digest"`
+	NetworkPolicy       networkpolicy.Policy       `json:"network_policy"`
+	NetworkInstallation networkpolicy.Installation `json:"network_installation"`
+	BootSeed            *bootseed.Manifest         `json:"boot_seed,omitempty"`
+	BootProgram         *RuntimeProgram            `json:"boot_program,omitempty"`
+	Disk                ComputerSourceMaterial     `json:"disk"`
+	ImageConfig         oci.RuntimeConfig          `json:"image_config"`
+	RootfsDigest        string                     `json:"rootfs_digest"`
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"os"
@@ -78,7 +79,7 @@ func (o *PreparationAllocationOwner) qualifyPreparation(ctx context.Context, sta
 			runtimeDrives = append(runtimeDrives, drive)
 		}
 	}
-	o.qualification.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{
+	o.qualification.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseQualification, NetworkPolicy: networkpolicy.BlockedPolicy(), NetworkInstallation: start.NetworkInstallation,
 		ID: identity.AllocationID, OwnerKind: vm.OwnerInstance, Purpose: vm.MaterializePreparationQualification,
 		Binding:      vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: identity.AllocationID, Generation: 1, ComputerInstanceID: identity.AllocationID, VMPlatformID: shape.VMPlatformID},
 		RootfsDigest: start.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: version,

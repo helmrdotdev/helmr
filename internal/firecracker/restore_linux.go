@@ -16,6 +16,7 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sync/errgroup"
@@ -26,6 +27,18 @@ func (runtime *QualifiedRuntime) Restore(ctx context.Context, request vm.Restore
 }
 
 func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.CheckpointableMachine, error) {
+	cfg, networkErr := c.configForNetwork(request.NetworkPolicy, request.NetworkInstallation)
+	if networkErr != nil {
+		return nil, networkErr
+	}
+	cfg.NetworkPhase = networkpolicy.PhaseRuntime
+	cfg.NetworkComputerID = ""
+	if request.Topology.Computer != nil {
+		cfg.NetworkComputerID = request.Topology.Computer.ComputerID
+	}
+	networkChild := *c
+	networkChild.cfg = cfg
+	c = &networkChild
 	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.ComputerInstanceID}); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}

@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strconv"
 	"sync"
@@ -31,7 +33,16 @@ func (p *Proxy) serveConn(conn net.Conn) {
 		return
 	}
 	destination := address.AddrPort()
+	if p.config.NetworkPolicy.Kind == networkpolicy.Blocked {
+		p.config.Decisions.record(p.ctx, "tcp", "", destination.Addr(), destination.Port(), false, "block_all")
+		return
+	}
+	if p.config.NetworkPolicy.Kind == networkpolicy.Allowlist {
+		p.serveRestricted(conn, destination)
+		return
+	}
 	if !destination.Addr().Is4() || destination.Port() == 0 || !p.config.AllowedDestination(destination.Addr()) {
+		p.config.Decisions.record(p.ctx, "tcp", "", destination.Addr(), destination.Port(), false, "address_denied")
 		return
 	}
 	// A server-first protocol sharing a protected port must receive its greeting
@@ -98,34 +109,7 @@ func (p *Proxy) serveConn(conn net.Conn) {
 		}
 		return p.dial(ctx, destination.String())
 	}
-	certificate, err := p.config.Certificate(p.ctx, host)
-	if err != nil {
-		return
-	}
-	_ = conn.SetReadDeadline(time.Time{})
-	listener := &connectionListener{conn: replay, done: make(chan struct{})}
-	protocols := new(http.Protocols)
-	protocols.SetHTTP1(true)
-	protocols.SetHTTP2(true)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if p.forward(w, r, target, destination, dialRequest) {
-			listener.Close()
-		}
-	}),
-		// Bound pre-handler H2 streams/headers as well as DATA buffering. A
-		// instance request admission alone cannot bound library-parsed streams.
-		HTTP2:     &http.HTTP2Config{MaxConcurrentStreams: 4, MaxReadFrameSize: 64 << 10, MaxReceiveBufferPerConnection: 256 << 10, MaxReceiveBufferPerStream: 64 << 10},
-		Protocols: protocols, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
-		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: maxHeaderBytes, ErrorLog: discardLogger(),
-		BaseContext: func(net.Listener) context.Context { return p.ctx },
-		ConnState: func(_ net.Conn, state http.ConnState) {
-			if state == http.StateClosed {
-				listener.Close()
-			}
-		},
-	}
-	defer server.Close()
-	_ = server.ServeTLS(listener, "", "")
+	p.serveProtected(conn, replay, host, target, destination, dialRequest)
 }
 
 // helloConn reuses the standard TLS parser, retaining exactly the bytes it read.
@@ -221,3 +205,34 @@ func (l *connectionListener) Close() error {
 	return nil
 }
 func (l *connectionListener) Addr() net.Addr { return l.conn.LocalAddr() }
+
+func (p *Proxy) serveProtected(conn net.Conn, replay net.Conn, host, target string, destination netip.AddrPort, dialRequest func(context.Context) (net.Conn, error)) {
+	certificate, err := p.config.Certificate(p.ctx, host)
+	if err != nil {
+		return
+	}
+	_ = conn.SetReadDeadline(time.Time{})
+	listener := &connectionListener{conn: replay, done: make(chan struct{})}
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetHTTP2(true)
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p.forward(w, r, target, destination, dialRequest) {
+			listener.Close()
+		}
+	}),
+		// Bound pre-handler H2 streams/headers as well as DATA buffering. A
+		// instance request admission alone cannot bound library-parsed streams.
+		HTTP2:     &http.HTTP2Config{MaxConcurrentStreams: 4, MaxReadFrameSize: 64 << 10, MaxReceiveBufferPerConnection: 256 << 10, MaxReceiveBufferPerStream: 64 << 10},
+		Protocols: protocols, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
+		ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: maxHeaderBytes, ErrorLog: discardLogger(),
+		BaseContext: func(net.Listener) context.Context { return p.ctx },
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			if state == http.StateClosed {
+				listener.Close()
+			}
+		},
+	}
+	defer server.Close()
+	_ = server.ServeTLS(listener, "", "")
+}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"os"
 	"path/filepath"
 	"sync"
@@ -45,7 +46,11 @@ func (c *Connector) bootSeedManifest(request vm.MaterializeRequest) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	network := snapshotNetworkConfig(c.cfg)
+	seedCfg, err := c.configForNetwork(networkpolicy.BlockedPolicy(), request.NetworkInstallation)
+	if err != nil {
+		return nil, err
+	}
+	network := snapshotNetworkConfig(seedCfg)
 	if err := validateSnapshotNetwork(network); err != nil {
 		return nil, err
 	}
@@ -99,6 +104,7 @@ func (runtime *QualifiedRuntime) PrepareBootSeed(ctx context.Context, request vm
 		return nil, err
 	}
 	child := *c
+	cfg.NetworkPolicy = networkpolicy.BlockedPolicy()
 	child.cfg = cfg
 	child.kernelArgs = runtimeKernelArgs(request.Topology, request.ReadOnlyDrives, c.cfg.NetworkResolverIPv4)
 	machine, err := child.prepareMachine(ctx, bootSeedBuildLaunch, request.ID, request.OwnerKind, request.Binding,

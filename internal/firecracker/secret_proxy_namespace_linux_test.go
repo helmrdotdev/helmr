@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
@@ -115,7 +116,9 @@ func TestSecretProxyPreparationRequiredExceptQualification(t *testing.T) {
 	calls := 0
 	expected := errors.New("synthetic preparation failure")
 	blocked := []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}
-	c.cfg.PrepareSecretTransport = func(ctx context.Context, id string, prefixes []netip.Prefix) (*secretproxy.Proxy, error) {
+	c.cfg.PrepareSecretTransport = func(ctx context.Context, id string, policy networkpolicy.Policy, installation networkpolicy.Installation, resolver string) (*secretproxy.Proxy, error) {
+		prefixes := installation.BlockedIPv4CIDRs
+		_ = prefixes
 		calls++
 		if id != "assigned-runtime" || !slices.Equal(prefixes, blocked) {
 			t.Fatal("preparation lost runtime or policy")

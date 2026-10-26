@@ -89,7 +89,7 @@ func TestScheduledSessionCanSpawnAfterPromotion(t *testing.T) {
 		t.Fatal(err)
 	}
 	omitScheduledAgent(t, f)
-	caller := session.Caller{Kind: "session", ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
 	req := f.startRequest("scheduled-child")
 	req.ComputerID = f.computer
 	child, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req, "spawn")

@@ -7,8 +7,9 @@ import (
 )
 
 type BootSeedExecutor struct {
-	Identity          AllocationIdentity `json:"identity"`
-	ChannelCredential []byte             `json:"channel_credential"`
+	Network           *NetworkCapabilities `json:"network,omitempty"`
+	Identity          AllocationIdentity   `json:"identity"`
+	ChannelCredential []byte               `json:"channel_credential"`
 }
 
 type BootSeedAllocationDelivery struct {

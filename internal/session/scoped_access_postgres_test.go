@@ -209,7 +209,7 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 	if _, err := dispatchTurnForTest(ctx, f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
 	for _, method := range []string{"create", "spawn"} {
 		result, err := session.AdmitSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("scoped-"+method), method)
 		if err != nil {
@@ -221,7 +221,7 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 		}
 	}
 	helper := uuid.NewV7()
-	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'helper'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, pgx.QueryExecModeSimpleProtocol, f.env, helper, f.agent)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'helper'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, pgx.QueryExecModeSimpleProtocol, f.env, helper, f.agent)
 	req := f.startRequest("helper-denied")
 	req.Agent = "helper"
 	if _, err := session.Spawn(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
@@ -241,7 +241,7 @@ func TestAPIKeySelectedAgentSessionVisibilityAndRevocation(t *testing.T) {
 	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.read")
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE api_key_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE api_key_id=$1`, pgx.QueryExecModeSimpleProtocol, key, f.agent)
 	hidden := f.peer(t)
-	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'hidden'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3; UPDATE sessions SET agent_id=$2 WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, hiddenAgent, f.agent, hidden.session)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'hidden'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3; UPDATE sessions SET agent_id=$2 WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, hiddenAgent, f.agent, hidden.session)
 	caller := session.Caller{Kind: "api_key", ID: key}
 	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session {

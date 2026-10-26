@@ -3,8 +3,11 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -38,7 +41,7 @@ func TestWorkerAgentNativeManagedMCP(t *testing.T) {
 	handler := newPostgresServer(t, f.Pool, func(cfg *ServerConfig) {
 		cfg.WorkerHostCredentialTTL = 35 * time.Second
 	})
-	var exchanges, operations atomic.Int64
+	var exchanges, operations, scopeAcquisitions atomic.Int64
 	var credentialsMu sync.Mutex
 	var firstCredential, lastCredential string
 	var cancelOnCredential atomic.Bool
@@ -55,6 +58,20 @@ func TestWorkerAgentNativeManagedMCP(t *testing.T) {
 			}
 		case "/worker/v1/sessions/operations":
 			operations.Add(1)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var operation workerapi.AgentOperationRequest
+			if err := json.Unmarshal(body, &operation); err != nil {
+				t.Error(err)
+				return
+			}
+			if operation.Method == workerapi.AgentMethodGetMCPConnection {
+				scopeAcquisitions.Add(1)
+			}
 			credentialsMu.Lock()
 			if firstCredential == "" {
 				firstCredential = r.Header.Get("Authorization")
@@ -66,14 +83,21 @@ func TestWorkerAgentNativeManagedMCP(t *testing.T) {
 	}))
 	defer server.Close()
 	secret := seedHostSecret(t, f.Pool, f.Worker)
+	// These independent native clients address one common target. A real
+	// activation gives all participants the Environment origin this requires;
+	// unrelated personal Sessions cannot send work to one another.
+	activation := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input) VALUES($1,$2,$3,'native-mcp','* * * * *','UTC','[{"type":"text","text":"native qualification"}]');
+ INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at) VALUES($1,$4,$2,$3,'native-mcp',clock_timestamp(),clock_timestamp());
+ UPDATE sessions SET origin_user_id=NULL,origin_activation_id=$4 WHERE environment_id=$1 AND id=$5`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Agent, f.Deployment, activation, f.Session)
 	sessions := map[string]string{}
 	for _, provider := range []string{"codex", "claude"} {
 		id := uuid.NewV7()
 		sessions[provider] = id.String()
 		dbtest.MustExec(t, t.Context(), f.Pool, `
-INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
+INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_activation_id) VALUES($1,$2,$3,$4,$5,$2,0,$6);
 INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status)
- VALUES($1,$2,1,$5,1,'ready');`, pgx.QueryExecModeSimpleProtocol, f.Environment, id, f.Agent, f.Deployment, f.Computer)
+ VALUES($1,$2,1,$5,1,'ready');`, pgx.QueryExecModeSimpleProtocol, f.Environment, id, f.Agent, f.Deployment, f.Computer, activation)
 	}
 	endpoint, err := url.Parse(server.URL)
 	if err != nil {
@@ -129,8 +153,8 @@ INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,comput
 	if err := run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if exchanges.Load() < 2 || operations.Load() != 4 {
-		t.Fatalf("credential exchanges=%d MCP operations=%d", exchanges.Load(), operations.Load())
+	if exchanges.Load() < 2 || operations.Load() != 6 || scopeAcquisitions.Load() != 2 {
+		t.Fatalf("credential exchanges=%d scope acquisitions=%d business operations=%d", exchanges.Load(), scopeAcquisitions.Load(), operations.Load()-scopeAcquisitions.Load())
 	}
 	credentialsMu.Lock()
 	changed := firstCredential != "" && lastCredential != "" && firstCredential != lastCredential

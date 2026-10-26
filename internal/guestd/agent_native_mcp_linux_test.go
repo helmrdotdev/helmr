@@ -193,7 +193,11 @@ func TestAgentNativeManagedMCP(t *testing.T) {
 		next := peer.relay.mcp.connection
 		peer.relay.mu.Unlock()
 		if next.URL != descriptors[index].URL || !maps.Equal(next.Headers, descriptors[index].Headers) || peer.renewals.Load() == 0 || peer.mcpCalls.Load() != 2 {
-			t.Fatal("managed descriptor changed or authenticated renewal/MCP was not exercised")
+			failureCode := ""
+			if failure := peer.lastMCPFailure.Load(); failure != nil {
+				failureCode = failure.Code
+			}
+			t.Fatalf("managed descriptor/authority check failed: sameURL=%t sameHeaders=%t renewals=%d businessMCP=%d lastFailure=%s", next.URL == descriptors[index].URL, maps.Equal(next.Headers, descriptors[index].Headers), peer.renewals.Load(), peer.mcpCalls.Load(), failureCode)
 		}
 		t.Logf("Session %s retained native PID=%d setup nonce=%s across internal renewal", peer.connection.CurrentGrant().Identity.SessionId, second.NativePID, second.Nonce)
 	}
@@ -232,19 +236,20 @@ func (machine nativeMCPMachine) OpenStream(context.Context) (vm.Stream, error) {
 }
 
 type nativeManagedMCPPeer struct {
-	client     *workerclient.Client
-	relay      *agentRelay
-	connection *computerhost.AgentSessionConnection
-	ready      chan struct{}
-	readyOnce  sync.Once
-	results    chan json.RawMessage
-	stopped    chan error
-	stop       context.CancelFunc
-	serving    bool
-	mu         sync.Mutex
-	outcome    json.RawMessage
-	renewals   atomic.Int64
-	mcpCalls   atomic.Int64
+	client         *workerclient.Client
+	relay          *agentRelay
+	connection     *computerhost.AgentSessionConnection
+	ready          chan struct{}
+	readyOnce      sync.Once
+	results        chan json.RawMessage
+	stopped        chan error
+	stop           context.CancelFunc
+	serving        bool
+	mu             sync.Mutex
+	outcome        json.RawMessage
+	renewals       atomic.Int64
+	mcpCalls       atomic.Int64
+	lastMCPFailure atomic.Pointer[workerapi.AgentOperationError]
 }
 
 func (peer *nativeManagedMCPPeer) RenewAgentAuthority(ctx context.Context, session workerapi.RuntimeSession) (workerapi.AgentAuthorityResponse, error) {
@@ -255,9 +260,12 @@ func (peer *nativeManagedMCPPeer) RenewAgentAuthority(ctx context.Context, sessi
 	return result, err
 }
 func (peer *nativeManagedMCPPeer) AgentOperation(ctx context.Context, request workerapi.AgentOperationRequest) (workerapi.AgentOperationResponse, error) {
-	if request.Method == workerapi.AgentMethodRuntimeMCP {
+	if request.Method == workerapi.AgentMethodRuntimeMCP || request.Method == workerapi.AgentMethodGetMCPConnection {
 		result, err := peer.client.AgentOperation(ctx, request)
-		if err == nil && result.Error == nil {
+		if err == nil && result.Error != nil && request.Method == workerapi.AgentMethodRuntimeMCP {
+			peer.lastMCPFailure.Store(result.Error)
+		}
+		if err == nil && result.Error == nil && request.Method == workerapi.AgentMethodRuntimeMCP {
 			peer.mcpCalls.Add(1)
 		}
 		return result, err

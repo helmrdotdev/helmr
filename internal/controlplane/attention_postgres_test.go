@@ -232,9 +232,9 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
  INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$4,$5);
  INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$4,$5,'{}','{}');
  INSERT INTO templates(environment_id,id,key) VALUES($1,$4,'fixture-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($1,$4,$4,$4,1000,536870912,NULL);
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) VALUES($1,$4,$4,$4,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}');
  INSERT INTO agents(environment_id,id,key) VALUES($1,$6,'second-agent');
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES($1,$6,$4,$4,false);
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES($1,$6,$4,$4,false,'{"kind":"unrestricted"}');
  INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$7,$6,$4,$7,0,$12);
  INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$8,$7,'local','Second hold');
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$9,$2,'second-app','second-client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$12);

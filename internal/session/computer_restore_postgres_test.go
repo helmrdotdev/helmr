@@ -113,7 +113,7 @@ func TestComputerRestoreInstallsControlBeforeDispatch(t *testing.T) {
 	if _, err := dispatchTurnForTest(ctx, f.f.pool, e); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("acquiring dispatch: %v", err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.f.session, Execution: e, Host: &f.host}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.f.mcpScope, ID: f.f.session, Execution: e, Host: &f.host}
 	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.f.env, SessionID: f.f.session, IdempotencyKey: "acquiring-mutation", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("control authority admitted business mutation: %v", err)
 	}

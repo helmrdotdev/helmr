@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
@@ -34,6 +35,11 @@ var ErrTrustExpired = errors.New("computer Secret transport has expired; create 
 var markerPattern = regexp.MustCompile(`hlmr_protected_[a-f0-9]{64}`)
 
 type Config struct {
+	Decisions     *DecisionLog
+	NetworkPolicy networkpolicy.Policy
+	Installation  networkpolicy.Installation
+	LookupIP      func(context.Context, string, string) ([]netip.Addr, error)
+
 	Origins            []string
 	Certificate        func(context.Context, string) (tls.Certificate, error)
 	Resolve            func(context.Context, string, []string) (map[string][]byte, error)
@@ -59,11 +65,24 @@ type Proxy struct {
 }
 
 func New(config Config) (*Proxy, error) {
-	if config.DialContext == nil || config.AllowedDestination == nil || config.Resolve == nil || config.Certificate == nil {
+	if config.DialContext == nil || config.AllowedDestination == nil || len(config.Origins) > 0 && (config.Resolve == nil || config.Certificate == nil) {
 		return nil, errors.New("egress dependencies are required")
 	}
+	if err := config.NetworkPolicy.Validate(); err != nil {
+		return nil, err
+	}
+	if err := networkpolicy.ValidateInstallation(config.Installation); err != nil {
+		return nil, err
+	}
+	if config.NetworkPolicy.Kind == networkpolicy.Allowlist && config.LookupIP == nil {
+		return nil, errors.New("allowlisted egress requires the installation resolver")
+	}
+
 	config.Origins = slices.Clone(config.Origins)
 	for _, value := range config.Origins {
+		if err := config.NetworkPolicy.ValidateProtectedOrigin(value); err != nil {
+			return nil, err
+		}
 		canonical, err := secretbinding.CanonicalOrigin(value)
 		if err != nil || canonical != value {
 			return nil, errors.New("egress origin is not canonical")
@@ -82,6 +101,9 @@ func New(config Config) (*Proxy, error) {
 // Ports is the exact derived capture set. A shared port conveys no Secret authority.
 func (p *Proxy) Ports() []uint16 {
 	var ports []uint16
+	if p.config.NetworkPolicy.Kind == networkpolicy.Allowlist {
+		ports = append(ports, 443)
+	}
 	for _, o := range p.config.Origins {
 		u, _ := url.Parse(o)
 		port := u.Port()
@@ -179,6 +201,11 @@ func (p *Proxy) release(conn net.Conn) {
 	p.mu.Unlock()
 }
 func (p *Proxy) dial(ctx context.Context, address string) (net.Conn, error) {
+	if p.config.NetworkPolicy.Kind == networkpolicy.Ordinary {
+		if destination, err := netip.ParseAddrPort(address); err == nil {
+			p.config.Decisions.record(ctx, "tcp", "", destination.Addr(), destination.Port(), p.config.AllowedDestination(destination.Addr()), "installation_address")
+		}
+	}
 	conn, err := p.config.DialContext(ctx, "tcp4", address)
 	if err != nil {
 		return nil, err

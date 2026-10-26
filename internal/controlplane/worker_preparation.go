@@ -28,6 +28,10 @@ func (server *Server) workerRenewPreparation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer clear(request.ChannelCredential)
+	if err := server.checkWorkerNetwork(request.Network); err != nil {
+		server.writeAllocationError(w, r, err)
+		return
+	}
 	ref, err := preparationExecutor(request)
 	if err != nil {
 		server.writeAllocationError(w, r, err)
@@ -254,6 +258,10 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer clear(request.ChannelCredential)
+	if err := server.checkWorkerNetwork(request.Network); err != nil {
+		server.writeAllocationError(w, r, err)
+		return
+	}
 	ref, err := preparationExecutor(request)
 	if err != nil {
 		server.writeAllocationError(w, r, err)
@@ -328,5 +336,5 @@ func (server *Server) workerPreparationStart(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, workerapi.PreparationStart{SeedOnly: seedOnly, Program: program, TemplateDefinitionID: start.Spec.TemplateDefinitionID, Seed: computerID.Seed, SeedObject: seedObject, RootfsDigest: start.RootfsDigest})
+	writeJSON(w, http.StatusOK, workerapi.PreparationStart{NetworkPolicy: start.Spec.PrepareNetworkPolicy, NetworkInstallation: server.networkInstallation, SeedOnly: seedOnly, Program: program, TemplateDefinitionID: start.Spec.TemplateDefinitionID, Seed: computerID.Seed, SeedObject: seedObject, RootfsDigest: start.RootfsDigest})
 }

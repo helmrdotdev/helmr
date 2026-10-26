@@ -62,7 +62,7 @@ func measureDeploymentRegistration(t *testing.T, computerCount, secretCount int)
 		declaration.Template = &manifest
 		every := int64(1101)
 		manifest.Refresh = &definition.ComputerRefresh{EveryMs: every}
-		manifest.BuildSecrets = refs
+		manifest.PrepareSecrets = refs
 		metadata.Definitions[agentCount+i] = declaration
 	}
 	counter := &statementCounter{base: f.pool}

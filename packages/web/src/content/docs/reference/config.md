@@ -268,7 +268,7 @@ operations and Computer tools keep their normal access. Helmr does not inject
 | Surface | Fields | Reference |
 | --- | --- | --- |
 | `agent()` | `id`, `computer`, `turn`; optional `init`, `closeAfterIdle` (default `"7d"`, or `"never"`), `maxTurnDuration`, `triggers` | [Agent](/docs/reference/sdk/agent) |
-| `template()` | `id`, `image`, `resources`; optional `prepare`, `refresh`, `deleteAfterUnused` (default `"7d"`, or `"never"`), `secrets`, `buildSecrets` | [Computer](/docs/reference/sdk/computer) |
+| `template()` | `id`, `image`, `resources`; optional `prepare`, `refresh`, `deleteAfterUnused` (default `"7d"`, or `"never"`), `secrets`, `prepareSecrets` | [Computer](/docs/reference/sdk/computer) |
 | `triggers.cron()` | trigger ID, expression, `{ timezone, input, slack? }` | [Triggers](/docs/reference/sdk/triggers) |
 | `image()` | `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, `user` | [Computer](/docs/reference/sdk/computer#images) |
 | `source` | `file(path)`, `directory(path)` | [Computer](/docs/reference/sdk/computer#images) |

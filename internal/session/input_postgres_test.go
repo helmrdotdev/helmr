@@ -96,7 +96,7 @@ func TestStructuredInvocationPreservesJSONAndPinnedContract(t *testing.T) {
 	other := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,'sha256:'||repeat('a',64))`, f.env, other)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO template_definitions SELECT (jsonb_populate_record(NULL::template_definitions,to_jsonb(d)||jsonb_build_object('deployment_id',$2::uuid))).* FROM template_definitions d WHERE environment_id=$1`, f.env, other)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,agent_id,$2,template_id,has_init FROM agent_definitions WHERE environment_id=$1`, f.env, other)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,agent_id,$2,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1`, f.env, other)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.env, other)
 	for _, id := range retained {
 		// The retained Session accepts JSON after the current definition becomes text.

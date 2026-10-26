@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/firecracker/custody"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -59,6 +60,15 @@ func (p *preparedComputer) Adopt(ctx context.Context, request vm.PreparedAdoptio
 		return nil, errors.New("prepared Computer already claimed or closed")
 	}
 	p.attempted = true
+	cfg, networkErr := p.connector.configForNetwork(request.NetworkPolicy, request.NetworkInstallation)
+	if networkErr != nil {
+		return nil, networkErr
+	}
+	cfg.NetworkPhase = networkpolicy.PhaseRuntime
+	cfg.NetworkComputerID = request.ComputerID
+	connector := *p.connector
+	connector.cfg = cfg
+	p.connector = &connector
 	s := p.machine
 	unlock, err := s.lockComputer(ctx)
 	if err != nil {
@@ -98,6 +108,7 @@ func (p *preparedComputer) Adopt(ctx context.Context, request vm.PreparedAdoptio
 	if err := device.AdoptPrepared(ctx, request.Root, request.WriteKeyID, request.Keys, request.Source); err != nil {
 		return nil, err
 	}
+	s.cfg = cfg
 	network := s.networkBinding
 	if network == nil {
 		return nil, errors.New("prepared Computer network is missing")

@@ -19,7 +19,7 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 	peer := f.peer(t)
 	otherAgent, viewer := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'other');
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
  UPDATE sessions SET agent_id=$2 WHERE id=$4;
  INSERT INTO users(id,display_name) VALUES($5,'Session viewer');
  INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$5 FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherAgent, f.agent, peer.session, viewer)

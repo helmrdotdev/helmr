@@ -3,6 +3,7 @@ package artifact_test
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -50,7 +51,7 @@ func TestPreparationSpecBindsMountedProgramAndSelectedComputer(t *testing.T) {
 		t.Fatal(err)
 	}
 	parsed, err := artifact.ParseComputerPreparationSpec(indented.Bytes())
-	if err != nil || parsed != spec {
+	if err != nil || !reflect.DeepEqual(parsed, spec) {
 		t.Fatalf("round trip %v: %v", parsed, err)
 	}
 	got, err := artifact.ComputerPreparationSpecDigest(parsed)

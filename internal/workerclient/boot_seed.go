@@ -8,11 +8,13 @@ import (
 
 func (c *Client) DeliverBootSeedAllocation(ctx context.Context, request workerapi.AllocationIdentity) (workerapi.BootSeedAllocationDelivery, error) {
 	var response workerapi.BootSeedAllocationDelivery
-	err := c.postWorkerJSON(ctx, "/worker/v1/allocations/boot-seed/deliver", request, &response)
+	err := c.postWorkerJSON(ctx, "/worker/v1/allocations/boot-seed/deliver", workerapi.AllocationRequest{AllocationIdentity: request, Network: c.network}, &response)
 	return response, err
 }
 
 func (c *Client) BootSeedStart(ctx context.Context, request workerapi.BootSeedExecutor) (workerapi.ComputerAllocationSource, error) {
+	request.Network = c.network
+
 	var response workerapi.ComputerAllocationSource
 	err := c.postWorkerJSON(ctx, "/worker/v1/allocations/boot-seed/start", request, &response)
 	if err != nil {
@@ -23,6 +25,8 @@ func (c *Client) BootSeedStart(ctx context.Context, request workerapi.BootSeedEx
 }
 
 func (c *Client) RenewBootSeed(ctx context.Context, request workerapi.BootSeedExecutor) (workerapi.PreparationRenewal, error) {
+	request.Network = c.network
+
 	var response workerapi.PreparationRenewal
 	err := c.postWorkerJSON(ctx, "/worker/v1/allocations/boot-seed/renew", request, &response)
 	return response, err

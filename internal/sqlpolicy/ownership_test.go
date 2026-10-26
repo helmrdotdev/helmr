@@ -62,8 +62,9 @@ var tableOwners = map[string]string{
 	"secret_exposures": "internal/computer",
 	// Sessions and Turns
 	"trigger_occurrences": "internal/agent", "session_controls": "internal/session",
-	"session_events": "internal/session", "session_holds": "internal/session", "session_processes": "internal/session",
-	"sessions": "internal/session", "turn_asks": "internal/session", "turn_messages": "internal/session", "turns": "internal/session",
+	"session_events": "internal/session", "session_holds": "internal/session", "session_mcp_scopes": "internal/session",
+	"session_processes": "internal/session",
+	"sessions":          "internal/session", "turn_asks": "internal/session", "turn_messages": "internal/session", "turns": "internal/session",
 	// commands
 	"commands": "internal/command", "idempotency_receipts": "internal/idempotency",
 	// secrets

@@ -25,6 +25,9 @@ func RuntimeGetSession(ctx context.Context, policy auditpolicy.Policy, database 
 		if !allowed {
 			return ErrDenied
 		}
+		if err := requireMCPTarget(ctx, tx, caller, "inspect_session", id); err != nil {
+			return err
+		}
 		var err error
 		result, err = getSession(ctx, tx, caller.Execution.EnvironmentID, id)
 		if err != nil {
@@ -57,6 +60,9 @@ func RuntimeListSessions(ctx context.Context, policy auditpolicy.Policy, databas
 		return result, ErrInvalidInput
 	}
 	err := runtimeSessionRead(ctx, database, caller, func(tx pgx.Tx) error {
+		if err := requireMCPOperation(ctx, tx, caller, "inspect_session"); err != nil {
+			return err
+		}
 		query := SessionListRequest{EnvironmentID: caller.Execution.EnvironmentID, Before: req.Before, Statuses: req.Statuses, Limit: req.Limit}
 		if req.Relation == "owned" {
 			query.ParentSessionID = caller.ID
@@ -80,6 +86,11 @@ func RuntimeListSessions(ctx context.Context, policy auditpolicy.Policy, databas
 			filter.All = false
 			filter.ViewAgents = []uuid.UUID{}
 		}
+		descriptor, err := RuntimeMCPPolicy(ctx, tx, caller)
+		if err != nil {
+			return err
+		}
+		filter.MCPAgentKeys = descriptor.Targets("inspect_session")
 		result, err = listSessions(ctx, tx, query, filter)
 		if err != nil {
 			return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"math"
 	"os"
 	"path/filepath"
@@ -67,7 +68,7 @@ func (p *PreparedMachines) buildPreparedLeaf(leaf *preparedLeaf, envelope worker
 	if err != nil {
 		return err
 	}
-	request := vm.MaterializeRequest{ID: leaf.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: leaf.identity.Epoch, OwnerID: leaf.identity.AllocationID, Generation: 1, ComputerInstanceID: leaf.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: source.Disk.VersionID, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: bootProgramDrives(program, leaf.images), Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: leaf.identity.OwnerID, VersionID: source.Disk.VersionID, SizeBytes: source.Disk.Root.LogicalBytes, Device: leaf.device}}, BootSeed: seed}
+	request := vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseBootSeed, NetworkPolicy: networkpolicy.BlockedPolicy(), NetworkInstallation: source.NetworkInstallation, ID: leaf.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: leaf.identity.Epoch, OwnerID: leaf.identity.AllocationID, Generation: 1, ComputerInstanceID: leaf.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: source.Disk.VersionID, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: bootProgramDrives(program, leaf.images), Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: leaf.identity.OwnerID, VersionID: source.Disk.VersionID, SizeBytes: source.Disk.Root.LogicalBytes, Device: leaf.device}}, BootSeed: seed}
 	leaf.machine, err = p.Backend.(vm.PreparedComputerBackend).PrepareComputer(ctx, request)
 	if err != nil {
 		return err

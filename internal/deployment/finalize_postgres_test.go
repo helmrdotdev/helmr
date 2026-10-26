@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"io"
 	"sync"
 	"testing"
@@ -94,7 +95,7 @@ func TestRegisterPostgresConvergesConcurrentRequests(t *testing.T) {
 func TestRegisterPostgresRollsBackDefinitionsObjectsAndReceipt(t *testing.T) {
 	f := newDeploymentFinalizePostgresFixture(t)
 	// A well-formed but foreign Secret fails inside the registration transaction.
-	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "MISSING_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.PrepareSecrets = []definition.SecretBinding{{Secret: "MISSING_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	if _, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request); err == nil {
 		t.Fatal("foreign Secret accepted")
 	}
@@ -104,7 +105,7 @@ func TestRegisterPostgresRollsBackDefinitionsObjectsAndReceipt(t *testing.T) {
 			t.Fatalf("partial %s=%d: %v", table, count, err)
 		}
 	}
-	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{}
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.PrepareSecrets = []definition.SecretBinding{}
 	if _, err := register(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +158,7 @@ func TestFinalizeReusesRegisteredBundleWithoutReadingObjects(t *testing.T) {
 	for _, object := range f.request.bundle.objects {
 		store.objects[object.Digest] = object
 	}
-	finalizer := NewFinalizer(store, store, bundle.Admission{}, discardLogger())
+	finalizer := NewFinalizer(store, store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{})
 	result, err := finalizer.Finalize(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.request, func(string) error { t.Fatal("replay should not verify"); return nil })
 	if err != nil || result.ID != first.ID {
 		t.Fatalf("replay: %+v %v", result, err)
@@ -207,7 +208,9 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES($1,$2,$3,'other','Other','#112233',1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, secondEnv, f.request.orgID, f.request.projectID)
 	refs := []definition.SecretBinding{{Secret: "API_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Secrets = refs
-	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.BuildSecrets = refs
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.PrepareSecrets = refs
+	f.request.bundle.bundle.Program.Metadata.Definitions[2].Template.Prepare = true
+	f.request.bundle.bundle.Preparations = artifacttest.PreparationOutputs(t, f.request.bundle.bundle.Program)
 	records := make([]Record, 0, 2)
 	for _, env := range []uuid.UUID{firstEnv, secondEnv} {
 		secret := insertRegistrationSecret(t, f.pool, env, "API_TOKEN")

@@ -10,11 +10,16 @@ Each Session process can reach a Session-bound MCP server. Its tools create
 and control other Sessions with the current Session's runtime authority. For
 when to use child or independent work, see [Delegation](/docs/concepts/delegation).
 
-## `ctx.mcp.getConnectionOptions()`
+## `ctx.mcp.getConnectionOptions(policy?)`
 
 ```ts
 // Available on InitContext and AgentContext.
 const options: RuntimeMcpConnectionOptions = await ctx.mcp.getConnectionOptions()
+
+// Request a narrower connection when injecting MCP into a native client.
+const observation = await ctx.mcp.getConnectionOptions({
+  allow: [{ operation: "inspect_turn", agents: ["helper"] }],
+})
 
 interface RuntimeMcpConnectionOptions {
   readonly url: string
@@ -23,15 +28,25 @@ interface RuntimeMcpConnectionOptions {
 ```
 
 Returns the connection for the current Session process: a local
-`http://127.0.0.1:<port>/mcp` URL and a bearer `Authorization` header. Repeated
-calls return the same URL and header values while rechecking admission. The
-server is provisioned lazily on the first call. The accessor is available on
+`http://127.0.0.1:<port>/mcp` URL and a bearer `Authorization` header. Omitting
+`policy` requests the Agent's published `runtimeMcp` maximum. If that Agent field
+is omitted, the maximum adds no restriction to current base authorization.
+A supplied `{ allow: [...] }` must be a subset of the maximum; `{ allow: [] }`
+grants no remote operations. There is no explicit unrestricted argument.
+
+Equivalent policies return the same URL and header values in that process while
+rechecking current authority. Distinct scopes have distinct credentials. A process
+can retain its maximum and at most 15 distinct proper subsets; exceeding that limit
+rejects without replacing existing descriptors. The server is provisioned lazily
+on the first successful call. The accessor is available on
 `ctx.mcp` in both `init` and `turn`, including Agents without `init`; calls
 after process shutdown reject.
 
 Normal hibernation preserves the connection options. Reconstruction starts a
 new process and reruns `init`; obtain options from the new context. The return
-type `RuntimeMcpConnectionOptions` is exported from `@helmr/sdk`.
+types `RuntimeMcpConnectionOptions`, `RuntimeMcpPolicy`, and `RuntimeMcpRule`
+are exported from `@helmr/sdk`. See [Execution policies](/docs/concepts/execution-policies)
+for rule syntax and trust boundaries.
 
 Pass the URL and headers to any MCP client that supports the Streamable HTTP
 transport, for example a model harness running inside the Computer:
@@ -86,7 +101,8 @@ connection. There is no file to install in the harness's working directory.
 Clients decide whether to show server instructions to the model; the `skills`
 tool description also explains how to retrieve the guidance.
 
-The skill is bundled with the MCP server and describes that server's tools.
+The skill is bundled with the MCP server. Its content and the exposed tools reflect
+the connection's scope.
 It explains workflows without granting permissions or replacing the user's
 instructions. Reading it is subject to the same authentication and Session
 admission checks as other MCP requests, including holds and shutdown.
@@ -98,8 +114,24 @@ admission checks as other MCP requests, including holds and shutdown.
 | Any admitted Session, including children | `skills` |
 | Root Sessions only | `list_agents`, `spawn`, `start` |
 | Owned descendants only | `send_turn`, `interrupt_session`, `resume_session`, `close_session`, `cancel_session` |
-| Any Session in this Environment | `enqueue` |
+| Eligible Sessions in this Environment | `enqueue` |
 | Sessions accessible to the caller | `inspect_session`, `inspect_turn`, `wait_turn`, `list_sessions` |
+
+Every remote tool also requires the connection's operation and exact target Agent
+grant. `list_agents` derives its targets from `start` or `spawn`; `list_sessions`
+uses `inspect_session`, and `wait_turn` uses `inspect_turn`. `list_computers` needs
+its own targetless rule. Current Role, origin, relationship, lifecycle and Computer
+checks still apply. Creation grants add no implicit observation or control grants.
+
+The receiver enforces these grants during admission and before returning a retained
+receipt. Retrying creation with omitted `computerId` still requests `new` placement,
+even if its original receipt already identifies an allocated Computer. Admitted
+work retains its fixed target and can continue after the caller process is rebuilt.
+
+A narrower connection scopes requests made with that credential. It does not isolate
+native clients or shell code sharing the same Computer: code able to access the
+Session's runtime channels may obtain the Agent maximum. Use separate Computers
+for separate trust domains.
 
 Child Sessions cannot create work or [ask questions](/docs/reference/sdk/questions);
 they report those needs to their owner.
@@ -139,7 +171,9 @@ runs no Session operation and needs no active Turn or idempotency key.
 }
 ```
 
-`content` contains the entire Markdown document, including its frontmatter.
+`content` contains the connection's Markdown guidance. Unrestricted connections
+receive the complete bundled document; finite connections receive only guidance
+for their granted tools.
 An unknown name returns `isError: true` with an `unknown_skill` error. Names
 are catalog identifiers, not paths or URLs. The catalog currently has one
 skill; listing and reading do not require pagination or additional resources.
@@ -154,7 +188,8 @@ List Agent definitions that `spawn` or `start` can target.
 | `cursor` | string | Optional continuation cursor. |
 
 Result: `{ "deploymentId": string, "agents": [{ "agent": string }], "nextCursor"?: string }`.
-Pages hold up to 50 definitions.
+Pages hold up to 50 definitions, filtered by the connection's creation grants
+before pagination. A denied creation family has no candidates.
 
 ### `list_computers`
 
@@ -167,7 +202,9 @@ List Computers visible to this Session.
 Result: `{ "computers": [Computer], "next_cursor"?: string }`. Each Computer has
 `id`, `key?`, `template`, `deployment_id`, `status`, `residency`, `error?`,
 `delete_after_unused_ms`, `unused_since`, `last_activity_at`, `created_at` and
-`updated_at`. Pass an `id` as `computerId` to `spawn` or `start`.
+`updated_at`. A finite creation rule with `computer: "caller"` permits only the
+caller's own logical Computer ID. An unrestricted connection retains current base
+authorization for other eligible Computers.
 
 ### `spawn`
 
@@ -185,7 +222,7 @@ Session records the caller as its requester but is not owned by it.
 | `agent` | string | Required. Agent name from `list_agents`. |
 | `input` | text-part array | Required. Initial Turn input, delivered unchanged. |
 | `idempotencyKey` | string | Required. |
-| `computerId` | string | Optional. Existing Computer ID. Omit to create a Computer from the target's definition. |
+| `computerId` | string | Optional. Omit for `new` placement. Under a finite scope, an explicit ID must be the caller's Computer and requires a `computer: "caller"` rule. Unrestricted scopes retain ordinary existing-Computer authorization. |
 | `closeAfterIdleMs` | integer or `null` | Optional. Idle retention in positive milliseconds; `null` disables idle closure. Omit to inherit the definition. |
 
 Result: `{ "sessionId", "turnId", "sequence", "closeAfterIdleMs" }`.
@@ -322,6 +359,9 @@ carry one of these codes:
 | Code | Meaning |
 | --- | --- |
 | `invalid_arguments` | Arguments are malformed or reference an invalid identity. |
+| `invalid_runtime_mcp_policy` | The getter policy is malformed or names a key outside the caller's pinned manifest. |
+| `runtime_mcp_denied` | The requested scope exceeds the maximum, or the current descriptor does not authorize the operation, Agent or placement. |
+| `runtime_mcp_scope_limit` | This process already retains its maximum and 15 distinct proper subsets. |
 | `root_session_required` | The operation requires a root Session. |
 | `target_not_published` | The target Agent is not in the selected Deployment. |
 | `idempotency_conflict` | The key was reused with different arguments. |

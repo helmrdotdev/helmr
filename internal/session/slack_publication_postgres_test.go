@@ -29,7 +29,7 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			} else {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, installation)
 			}
-			caller := session.Caller{Kind: "session", ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
+			caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 			req := f.startRequest("independent")
 			req.ComputerID = f.computer
 			if _, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, nil, caller, req); !errors.Is(err, slack.ErrSourceConversationUnavailable) {

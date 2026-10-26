@@ -7,11 +7,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/content"
 	"regexp"
 
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 type AgentManifest struct {
+	RuntimeMcp           json.RawMessage        `json:"runtimeMcp,omitempty"`
 	TemplateDefinitionID string                 `json:"templateDefinitionId"`
 	InputKind            string                 `json:"inputKind"`
 	InputSchema          *InputSchemaDiscovery  `json:"inputSchema,omitempty"`
@@ -40,10 +42,12 @@ type TemplateInputManifest struct {
 	DeleteAfterUnusedNever bool              `json:"deleteAfterUnusedNever,omitempty"`
 	ImageBuild             ImageBuild        `json:"imageBuild"`
 	Resources              ResourcesManifest `json:"resources"`
+	Network                json.RawMessage   `json:"network"`
+	PrepareNetwork         json.RawMessage   `json:"prepareNetwork,omitempty"`
 	Prepare                bool              `json:"prepare"`
 	Refresh                *ComputerRefresh  `json:"refresh,omitempty"`
 	Secrets                []SecretBinding   `json:"secrets"`
-	BuildSecrets           []SecretBinding   `json:"buildSecrets"`
+	PrepareSecrets         []SecretBinding   `json:"prepareSecrets"`
 }
 
 func (m AgentManifest) SuspensionPolicy() string {
@@ -54,6 +58,9 @@ func (m AgentManifest) SuspensionPolicy() string {
 }
 
 func ValidateAgentManifest(m AgentManifest) error {
+	if _, err := mcppolicy.Normalize(m.RuntimeMcp, nil); err != nil {
+		return fmt.Errorf("%w runtimeMcp: %w", ErrInvalidRuntimeMcpPolicy, err)
+	}
 	if m.SuspensionPolicy() != "manual" && m.SuspensionPolicy() != "after_turn" {
 		return errors.New("invalid agent suspension policy")
 	}
@@ -98,7 +105,7 @@ func ValidateAgentManifest(m AgentManifest) error {
 	}
 	return nil
 }
-func validateComputerSettings(resources ResourcesManifest, refresh *ComputerRefresh, secrets, buildSecrets []SecretBinding) error {
+func validateComputerSettings(resources ResourcesManifest, refresh *ComputerRefresh, secrets, prepareSecrets []SecretBinding) error {
 	if err := ValidateResourcesManifest(resources); err != nil {
 		return err
 	}
@@ -110,7 +117,7 @@ func validateComputerSettings(resources ResourcesManifest, refresh *ComputerRefr
 	if err := ValidateSecretBindings(secrets); err != nil {
 		return err
 	}
-	return ValidateSecretBindings(buildSecrets)
+	return ValidateSecretBindings(prepareSecrets)
 }
 
 func ValidateSecretBindings(refs []SecretBinding) error {
@@ -125,10 +132,12 @@ type TemplateManifest struct {
 	DeleteAfterUnusedNever bool                 `json:"deleteAfterUnusedNever,omitempty"`
 	Seed                   ComputerSeedManifest `json:"seed"`
 	Resources              ResourcesManifest    `json:"resources"`
+	Network                json.RawMessage      `json:"network"`
+	PrepareNetwork         json.RawMessage      `json:"prepareNetwork,omitempty"`
 	Prepare                bool                 `json:"prepare"`
 	Refresh                *ComputerRefresh     `json:"refresh,omitempty"`
 	Secrets                []SecretBinding      `json:"secrets"`
-	BuildSecrets           []SecretBinding      `json:"buildSecrets"`
+	PrepareSecrets         []SecretBinding      `json:"prepareSecrets"`
 }
 type ComputerSeedManifest struct {
 	Profile        string            `json:"profile"`
@@ -147,7 +156,10 @@ func ValidateTemplateManifest(m TemplateManifest) error {
 	if !computerSeedDigest.MatchString(m.Seed.ArtifactDigest) {
 		return errors.New("invalid Computer seed digest")
 	}
-	return validateComputerSettings(m.Resources, m.Refresh, m.Secrets, m.BuildSecrets)
+	if _, _, err := ResolveTemplatePolicies(m.Network, m.PrepareNetwork, m.Prepare, m.Secrets, m.PrepareSecrets); err != nil {
+		return err
+	}
+	return validateComputerSettings(m.Resources, m.Refresh, m.Secrets, m.PrepareSecrets)
 }
 
 var computerSeedDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)

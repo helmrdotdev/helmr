@@ -2,6 +2,7 @@ package secretproxy
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"net"
 	"net/netip"
 	"syscall"
@@ -21,7 +22,7 @@ func TestDestinationIsNumericPinnedAndPolicyChecked(t *testing.T) {
 	} {
 		t.Run(tc.address, func(t *testing.T) {
 			called := false
-			d := &Dialer{Blocked: []netip.Prefix{netip.MustParsePrefix("93.184.216.35/32")}, dialer: net.Dialer{Control: func(network, address string, _ syscall.RawConn) error {
+			d := &Dialer{Installation: &networkpolicy.Installation{BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("93.184.216.35/32")}}, dialer: net.Dialer{Control: func(network, address string, _ syscall.RawConn) error {
 				called = true
 				if network != "tcp4" || address != tc.address {
 					t.Errorf("destination changed %s %s", network, address)
@@ -35,5 +36,11 @@ func TestDestinationIsNumericPinnedAndPolicyChecked(t *testing.T) {
 				t.Fatalf("dial=%v want=%v", called, tc.dial)
 			}
 		})
+	}
+}
+
+func TestDialerRequiresExplicitInstallation(t *testing.T) {
+	if (&Dialer{}).Allowed(netip.MustParseAddr("8.8.8.8")) {
+		t.Fatal("missing installation granted connectivity")
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 )
@@ -28,7 +29,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	}
 	specs, err := artifact.BuildComputerPreparationSpecs(output)
 	if err != nil {
-		return fmt.Errorf("%w: %v", computer.ErrInvalidInput, err)
+		return fmt.Errorf("%w: %w", computer.ErrInvalidInput, err)
 	}
 	selected := make(map[string]artifact.ProgramOutput, len(preparations))
 	for _, preparation := range preparations {
@@ -63,7 +64,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 		}
 		manifests[d.DeclaredID] = d.Template
 		refs = append(refs, d.Template.Secrets...)
-		refs = append(refs, d.Template.BuildSecrets...)
+		refs = append(refs, d.Template.PrepareSecrets...)
 	}
 	resolved, err := computer.ResolveSecretReferences(ctx, tx, env, refs)
 	if err != nil {
@@ -71,22 +72,24 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	}
 
 	type input struct {
-		ID           uuid.UUID       `json:"id"`
-		TemplateID   uuid.UUID       `json:"template_id"`
-		Digest       string          `json:"digest"`
-		Definition   string          `json:"definition"`
-		Spec         json.RawMessage `json:"spec"`
-		Seed         json.RawMessage `json:"seed"`
-		Prepare      bool            `json:"prepare"`
-		BuildRefs    json.RawMessage `json:"build_refs"`
-		CPUMillis    int64           `json:"cpu_millis"`
-		MemoryBytes  int64           `json:"memory_bytes"`
-		DiskBytes    *int64          `json:"disk_bytes"`
-		RuntimeRefs  json.RawMessage `json:"runtime_refs"`
-		Every        *int64          `json:"every_ms"`
-		MaxAge       *int64          `json:"max_age_ms"`
-		DeleteUnused *int64          `json:"delete_unused_ms"`
-		DeleteNever  bool            `json:"delete_never"`
+		ID                   uuid.UUID       `json:"id"`
+		TemplateID           uuid.UUID       `json:"template_id"`
+		Digest               string          `json:"digest"`
+		Definition           string          `json:"definition"`
+		Spec                 json.RawMessage `json:"spec"`
+		Seed                 json.RawMessage `json:"seed"`
+		NetworkPolicy        json.RawMessage `json:"network_policy"`
+		PrepareNetworkPolicy json.RawMessage `json:"prepare_network_policy"`
+		Prepare              bool            `json:"prepare"`
+		BuildRefs            json.RawMessage `json:"build_refs"`
+		CPUMillis            int64           `json:"cpu_millis"`
+		MemoryBytes          int64           `json:"memory_bytes"`
+		DiskBytes            *int64          `json:"disk_bytes"`
+		RuntimeRefs          json.RawMessage `json:"runtime_refs"`
+		Every                *int64          `json:"every_ms"`
+		MaxAge               *int64          `json:"max_age_ms"`
+		DeleteUnused         *int64          `json:"delete_unused_ms"`
+		DeleteNever          bool            `json:"delete_never"`
 	}
 	inputs := make([]input, 0, len(specs))
 	digests := make([]string, 0, len(specs))
@@ -100,11 +103,23 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			return err
 		}
 		m := manifests[spec.TemplateDefinitionID]
+		network, prepareNetwork, err := definition.ResolveTemplatePolicies(m.Network, m.PrepareNetwork, m.Prepare, m.Secrets, m.PrepareSecrets)
+		if err != nil {
+			return err
+		}
+		networkRaw, err := json.Marshal(network)
+		if err != nil {
+			return err
+		}
+		prepareNetworkRaw, err := json.Marshal(prepareNetwork)
+		if err != nil {
+			return err
+		}
 		seed, err := json.Marshal(m.Seed)
 		if err != nil {
 			return err
 		}
-		buildBindings, err := secretbinding.CanonicalReferences(m.BuildSecrets)
+		buildBindings, err := secretbinding.CanonicalReferences(m.PrepareSecrets)
 		if err != nil {
 			return err
 		}
@@ -133,7 +148,7 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 			every = &m.Refresh.EveryMs
 			maxAge = m.Refresh.MaxAgeMs
 		}
-		inputs = append(inputs, input{ID: uuid.NewV7(), TemplateID: uuid.NewV7(), Digest: digest, Definition: spec.TemplateDefinitionID, Spec: raw, Seed: seed, Prepare: m.Prepare, BuildRefs: buildRefs, CPUMillis: m.Resources.MilliCPU, MemoryBytes: m.Resources.MemoryMiB * (1 << 20), DiskBytes: diskBytes, RuntimeRefs: runtimeRefs, Every: every, MaxAge: maxAge, DeleteUnused: m.DeleteAfterUnusedMs, DeleteNever: m.DeleteAfterUnusedNever})
+		inputs = append(inputs, input{NetworkPolicy: networkRaw, PrepareNetworkPolicy: prepareNetworkRaw, ID: uuid.NewV7(), TemplateID: uuid.NewV7(), Digest: digest, Definition: spec.TemplateDefinitionID, Spec: raw, Seed: seed, Prepare: m.Prepare, BuildRefs: buildRefs, CPUMillis: m.Resources.MilliCPU, MemoryBytes: m.Resources.MemoryMiB * (1 << 20), DiskBytes: diskBytes, RuntimeRefs: runtimeRefs, Every: every, MaxAge: maxAge, DeleteUnused: m.DeleteAfterUnusedMs, DeleteNever: m.DeleteAfterUnusedNever})
 		digests = append(digests, digest)
 	}
 	if len(inputs) == 0 {
@@ -269,9 +284,9 @@ func registerTemplateDefinitions(ctx context.Context, tx pgx.Tx, env, deployment
 	if count != len(buildBindings) {
 		return computer.ErrConflict
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,prepare,cpu_millis,memory_bytes,disk_bytes,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
- SELECT $1,$2,v.template_id,s.id,v.prepare,v.cpu_millis,v.memory_bytes,v.disk_bytes,v.every_ms,v.max_age_ms,v.delete_unused_ms,v.delete_never
- FROM jsonb_to_recordset($3::jsonb) AS v(template_id uuid,definition text,digest text,prepare boolean,cpu_millis bigint,memory_bytes bigint,disk_bytes bigint,runtime_refs jsonb,every_ms bigint,max_age_ms bigint,delete_unused_ms bigint,delete_never boolean)
+	inserted, err := tx.Exec(ctx, `INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,network_policy,prepare_network_policy,prepare,cpu_millis,memory_bytes,disk_bytes,refresh_every_ms,max_image_age_ms,delete_after_unused_ms,delete_after_unused_never)
+ SELECT $1,$2,v.template_id,s.id,v.network_policy,v.prepare_network_policy,v.prepare,v.cpu_millis,v.memory_bytes,v.disk_bytes,v.every_ms,v.max_age_ms,v.delete_unused_ms,v.delete_never
+ FROM jsonb_to_recordset($3::jsonb) AS v(template_id uuid,definition text,digest text,network_policy jsonb,prepare_network_policy jsonb,prepare boolean,cpu_millis bigint,memory_bytes bigint,disk_bytes bigint,runtime_refs jsonb,every_ms bigint,max_age_ms bigint,delete_unused_ms bigint,delete_never boolean)
  JOIN image_specs s ON s.environment_id=$1 AND s.spec_digest=v.digest`, env, deployment, raw)
 	if err != nil {
 		return err
@@ -293,16 +308,17 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 	}
 
 	type agentInput struct {
-		Suspension  string                           `json:"suspension"`
-		Name        string                           `json:"name"`
-		Computer    string                           `json:"computer"`
-		HasInit     bool                             `json:"has_init"`
-		InputKind   string                           `json:"input_kind"`
-		InputSchema *definition.InputSchemaDiscovery `json:"input_schema"`
-		MaxTurn     *int64                           `json:"max_turn_ms"`
-		CloseIdle   *int64                           `json:"close_idle_ms"`
-		CloseNever  bool                             `json:"close_never"`
-		ID          uuid.UUID                        `json:"id"`
+		RuntimeMcpPolicy json.RawMessage                  `json:"runtime_mcp_policy"`
+		Suspension       string                           `json:"suspension"`
+		Name             string                           `json:"name"`
+		Computer         string                           `json:"computer"`
+		HasInit          bool                             `json:"has_init"`
+		InputKind        string                           `json:"input_kind"`
+		InputSchema      *definition.InputSchemaDiscovery `json:"input_schema"`
+		MaxTurn          *int64                           `json:"max_turn_ms"`
+		CloseIdle        *int64                           `json:"close_idle_ms"`
+		CloseNever       bool                             `json:"close_never"`
+		ID               uuid.UUID                        `json:"id"`
 	}
 	type triggerInput struct {
 		Agent       string  `json:"agent"`
@@ -323,7 +339,12 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 				}
 				triggers = append(triggers, triggerInput{Agent: d.DeclaredID, Key: key, Cron: trigger.Cron, Timezone: trigger.Timezone, Input: trigger.Input, Destination: destination})
 			}
-			inputs = append(inputs, agentInput{Suspension: d.Agent.SuspensionPolicy(), Name: d.DeclaredID, Computer: d.Agent.TemplateDefinitionID, HasInit: d.Agent.HasInit, InputKind: d.Agent.InputKind, InputSchema: d.Agent.InputSchema, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, CloseNever: d.Agent.CloseAfterIdleNever, ID: uuid.NewV7()})
+			policy, err := mcppolicy.Normalize(d.Agent.RuntimeMcp, nil)
+			if err != nil {
+				return err
+			}
+			policyRaw := policy.Bytes()
+			inputs = append(inputs, agentInput{RuntimeMcpPolicy: policyRaw, Suspension: d.Agent.SuspensionPolicy(), Name: d.DeclaredID, Computer: d.Agent.TemplateDefinitionID, HasInit: d.Agent.HasInit, InputKind: d.Agent.InputKind, InputSchema: d.Agent.InputSchema, MaxTurn: d.Agent.MaxTurnDurationMs, CloseIdle: d.Agent.CloseAfterIdleMs, CloseNever: d.Agent.CloseAfterIdleNever, ID: uuid.NewV7()})
 		}
 	}
 	if len(inputs) == 0 {
@@ -338,9 +359,9 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
  ON CONFLICT(environment_id,key) DO NOTHING`, env, raw); err != nil {
 		return err
 	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,input_kind,input_schema,max_turn_duration_ms,close_after_idle_ms,close_after_idle_never,suspension)
- SELECT $1,a.id,$2,t.id,v.has_init,v.input_kind,v.input_schema,v.max_turn_ms,v.close_idle_ms,v.close_never,v.suspension
- FROM jsonb_to_recordset($3::jsonb) AS v(name text,computer text,has_init boolean,input_kind text,input_schema jsonb,max_turn_ms bigint,close_idle_ms bigint,close_never boolean,suspension text)
+	inserted, err := tx.Exec(ctx, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,input_kind,input_schema,max_turn_duration_ms,close_after_idle_ms,close_after_idle_never,suspension,runtime_mcp_policy)
+ SELECT $1,a.id,$2,t.id,v.has_init,v.input_kind,v.input_schema,v.max_turn_ms,v.close_idle_ms,v.close_never,v.suspension,v.runtime_mcp_policy
+ FROM jsonb_to_recordset($3::jsonb) AS v(name text,computer text,has_init boolean,input_kind text,input_schema jsonb,max_turn_ms bigint,close_idle_ms bigint,close_never boolean,suspension text,runtime_mcp_policy jsonb)
  JOIN agents a ON a.environment_id=$1 AND a.key=v.name
  JOIN templates t ON t.environment_id=$1 AND t.key=v.computer`, env, deployment, raw)
 	if err != nil {

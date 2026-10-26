@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"log/slog"
 	"math"
 	"net/http"
@@ -268,7 +269,7 @@ func (o *ComputerAllocationOwner) Run(ctx context.Context) (resultErr error) {
 		if delivery.RestoredFrom != "" && !delivery.DiskOnlyRecovery {
 			err = o.restore(ctx, delivery, source, device)
 		} else {
-			materialize := vm.MaterializeRequest{RecordPhase: func(phase vm.Phase) { o.recordVMPhase("materialize", phase) }, ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: bootProgramDrives(o.bootProgram, images), Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}}
+			materialize := vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseRuntime, NetworkPolicy: source.NetworkPolicy, NetworkInstallation: source.NetworkInstallation, RecordPhase: func(phase vm.Phase) { o.recordVMPhase("materialize", phase) }, ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: delivery.BaseVersion, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: bootProgramDrives(o.bootProgram, images), Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, VersionID: delivery.BaseVersion, SizeBytes: source.Disk.Root.LogicalBytes, Device: device}}}
 			if source.BootSeed != nil && delivery.RestoredFrom == "" && !delivery.DiskOnlyRecovery {
 				matches, matchErr := o.machines.Backend.BootSeedMatches(materialize, source.BootSeed.Config)
 				if matchErr != nil {

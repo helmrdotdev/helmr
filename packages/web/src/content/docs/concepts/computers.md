@@ -31,7 +31,7 @@ export const repo = template({
     await build.exec("npm ci", { cwd: "/workspace/app" })
   },
   refresh: { every: "1d", maxAge: "7d" },
-  buildSecrets: [{ secret: REGISTRY_TOKEN_ID, env: { name: "REGISTRY_TOKEN", mode: "raw" } }],
+  prepareSecrets: [{ secret: REGISTRY_TOKEN_ID, env: { name: "REGISTRY_TOKEN", mode: "raw" } }],
   secrets: [{ secret: GITHUB_TOKEN, env: { name: "GITHUB_TOKEN", mode: "raw" } }],
   deleteAfterUnused: "30d",
 })
@@ -101,22 +101,27 @@ build history remain. A new preparation may produce different bytes if external
 inputs changed. Historical generated image versions are not selectable through
 the API.
 
-## Build and runtime Secrets
+## Preparation and runtime Secrets
 
 A Template definition has two separate sets of [Secret](/docs/concepts/secrets)
 bindings:
 
 | Binding | Available to | Effect of rotation |
 | --- | --- | --- |
-| `buildSecrets` | `prepare` only. | An image prepared with an older Secret version is not used for new Computers; Helmr prepares a new one. Existing Computers are unaffected. |
+| `prepareSecrets` | `prepare` only. | An image prepared with an older Secret version is not used for new Computers; Helmr prepares a new one. Existing Computers are unaffected. |
 | `secrets` | Processes in Computers created from the definition. | Follows the Secret's own delivery rules. See [Secrets](/docs/concepts/secrets). |
 
 Anything `prepare` writes to disk becomes part of the prepared image and is copied
-into every new Computer. Do not write build Secret values to files.
+into every new Computer. Do not write preparation Secret values to files.
 
 Bindings use stable Secret IDs, never values. Runtime bindings are fixed when a
 Computer is created: it takes the definition's `secrets`, or the bindings passed
 explicitly to `client.computers.create`.
+
+Template network policies apply to the actual Computer and have a separate
+resolved preparation phase. Changing a policy changes preparation identity and
+newly selected definitions; existing Computers keep their original pins. See
+[Execution policies](/docs/concepts/execution-policies).
 
 ## Lifecycle
 

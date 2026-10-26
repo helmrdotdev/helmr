@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -24,7 +25,7 @@ func runtimeTestSession(f sessiontest.Fixture) workerapi.RuntimeSession {
 }
 func runtimeEnqueue(f sessiontest.Fixture, key string) workerapi.AgentOperationRequest {
 	payload, _ := json.Marshal(map[string]any{"tool": "enqueue", "arguments": map[string]any{"sessionId": f.Session.String(), "input": json.RawMessage(`[{"type":"text","text":"hello"}]`), "idempotencyKey": key}})
-	return workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.New().String(), AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload}
+	return workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: uuid.New().String(), AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload}
 }
 
 func TestWorkerAgentClientAuthorityAndRetry(t *testing.T) {
@@ -262,4 +263,15 @@ func acknowledgeTestAgentControl(t *testing.T, client *workerclient.Client, sess
 	if err := client.AcknowledgeAgentControl(t.Context(), workerapi.AgentControlReceipt{Session: sessionID, AttachmentSequence: attachment, Sequence: control.Sequence, AuthorityGeneration: control.AuthorityGeneration, Kind: control.Kind}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func fixtureMCPScope(t *testing.T, f sessiontest.Fixture) uuid.UUID {
+	t.Helper()
+	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
+	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
+	scope, err := session.IssueMCPScope(t.Context(), f.Pool, session.Caller{Kind: "session", ID: f.Session, Execution: e, Host: &host}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scope.ID
 }

@@ -440,6 +440,12 @@ func (session *agentSession) admitOperationLocked(operation *agentv1.Operation) 
 	if session.checkpointID != "" {
 		return nil, "", errors.New("session capture has sealed operation admission")
 	}
+	if method == agentv1.Operation_METHOD_GET_MCP_CONNECTION {
+		if operation.GetTurnId() != "" {
+			return nil, "", errors.New("MCP descriptor has no originating Turn")
+		}
+		return nil, "", nil
+	}
 	if method == agentv1.Operation_METHOD_HOLD {
 		session.holdLocked()
 		session.reconstructRequired = true

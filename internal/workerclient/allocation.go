@@ -13,12 +13,12 @@ func (client *Client) ListAllocations(ctx context.Context, after *workerapi.Allo
 }
 func (client *Client) DeliverPreparationAllocation(ctx context.Context, identity workerapi.AllocationIdentity) (workerapi.PreparationAllocationDelivery, error) {
 	var response workerapi.PreparationAllocationDelivery
-	err := client.postWorkerJSON(ctx, "/worker/v1/allocations/image-build/deliver", identity, &response)
+	err := client.postWorkerJSON(ctx, "/worker/v1/allocations/image-build/deliver", workerapi.AllocationRequest{AllocationIdentity: identity, Network: client.network}, &response)
 	return response, err
 }
 func (client *Client) DeliverComputerAllocation(ctx context.Context, identity workerapi.AllocationIdentity) (workerapi.ComputerAllocationDelivery, error) {
 	var response workerapi.ComputerAllocationDelivery
-	err := client.postWorkerJSON(ctx, "/worker/v1/allocations/computer/deliver", identity, &response)
+	err := client.postWorkerJSON(ctx, "/worker/v1/allocations/computer/deliver", workerapi.AllocationRequest{AllocationIdentity: identity, Network: client.network}, &response)
 	return response, err
 }
 func (client *Client) ObserveFreshComputerReady(ctx context.Context, receipt workerapi.ComputerAllocationReady) error {
@@ -36,7 +36,7 @@ func (client *Client) ListComputerProcesses(ctx context.Context, identity worker
 
 func (client *Client) ComputerAllocationSource(ctx context.Context, identity workerapi.AllocationIdentity) (workerapi.ComputerAllocationSource, error) {
 	var response workerapi.ComputerAllocationSource
-	err := client.postWorkerJSON(ctx, "/worker/v1/allocations/computer/source", identity, &response)
+	err := client.postWorkerJSON(ctx, "/worker/v1/allocations/computer/source", workerapi.AllocationRequest{AllocationIdentity: identity, Network: client.network}, &response)
 	if err != nil {
 		response.Disk.Clear()
 		return workerapi.ComputerAllocationSource{}, err

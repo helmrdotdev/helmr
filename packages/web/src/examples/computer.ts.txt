@@ -7,7 +7,7 @@ export const workspace = template({
     .run(["sh", "-c", "apt-get update && apt-get install -y ripgrep"]),
   resources: { cpu: 2, memory: "4GiB" },
 
-  buildSecrets: [{
+  prepareSecrets: [{
     secret: "REGISTRY_TOKEN",
     env: { name: "REGISTRY_TOKEN", mode: "raw" },
   }],

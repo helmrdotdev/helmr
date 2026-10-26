@@ -157,7 +157,7 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}); err != nil {
 		t.Fatal(err)
 	}
-	runtime := session.Caller{Kind: "session", ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
+	runtime := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
 	for _, caller := range []session.Caller{f.caller()} {
 		req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}
 		exact, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, req, first.TurnID)
@@ -200,8 +200,8 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 		}
 		turns[target.session] = admission.TurnID
 	}
-	rootCaller := session.Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
-	childCaller := session.Caller{Kind: "session", ID: child.session, Execution: child.execution(), Host: child.host()}
+	rootCaller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Execution: f.execution(), Host: f.host()}
+	childCaller := session.Caller{Kind: "session", MCPScopeID: child.mcpScope, ID: child.session, Execution: child.execution(), Host: child.host()}
 	for _, test := range []struct {
 		name    string
 		caller  session.Caller

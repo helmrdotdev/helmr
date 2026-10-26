@@ -17,7 +17,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"google.golang.org/protobuf/proto"
+	"uuid"
 )
+
+var testMCPScopeID = uuid.NewV7().String()
 
 func mcpFixture(t *testing.T) (*agentRelay, agentMCPConnection) {
 	t.Helper()
@@ -29,10 +32,28 @@ func mcpFixture(t *testing.T) (*agentRelay, agentMCPConnection) {
 	return relay, descriptor
 }
 func mcpDescriptor(t *testing.T, relay *agentRelay) agentMCPConnection {
+	return mcpScopedDescriptor(t, relay, testMCPScopeID, `{"kind":"unrestricted"}`)
+}
+func mcpScopedDescriptor(t *testing.T, relay *agentRelay, scopeID, policy string) agentMCPConnection {
 	t.Helper()
-	_, reply, err := relay.receiveProgramEvent(&agentv1.ProgramEvent{Identity: relay.session.grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: "descriptor", Method: agentv1.Operation_METHOD_GET_MCP_CONNECTION, PayloadJson: []byte("null")}}})
-	if err != nil || reply.GetOperationResult().GetError() != nil {
-		t.Fatalf("descriptor error: %v %v", err, reply)
+	envelope, reply, err := relay.receiveProgramEvent(&agentv1.ProgramEvent{Identity: relay.session.grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: "descriptor", Method: agentv1.Operation_METHOD_GET_MCP_CONNECTION, PayloadJson: []byte("{}")}}})
+	if err != nil || reply != nil || envelope.GetEvent().GetOperation().GetMethod() != agentv1.Operation_METHOD_GET_MCP_CONNECTION {
+		t.Fatalf("descriptor request error: %v %v", err, reply)
+	}
+	// The test owns the authenticated upstream boundary. No local fallback may
+	// mint a descriptor without this committed scope receipt.
+	reply = &agentv1.GuestCommand{Identity: relay.session.grant.Identity, Command: &agentv1.GuestCommand_OperationResult{OperationResult: &agentv1.OperationResult{RequestId: "descriptor", Outcome: &agentv1.OperationResult_ValueJson{ValueJson: []byte(`{"id":"` + scopeID + `","policy":` + policy + `}`)}}}}
+	relay.mu.Lock()
+	err = relay.bindMCPScopeLocked(reply)
+	relay.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relay.session.mu.Lock()
+	_, err = relay.session.respondLocked(reply)
+	relay.session.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
 	}
 	var connection agentMCPConnection
 	if err := json.Unmarshal(reply.GetOperationResult().GetValueJson(), &connection); err != nil {
@@ -340,9 +361,10 @@ func TestAgentMCPTimeoutReturnsUncertainOutcomeWhileHTTPRemainsAlive(t *testing.
 	relay.mcp = bridge
 	t.Cleanup(func() { _ = bridge.server.Close() })
 	go relay.sendLoop()
+	descriptor := mcpDescriptor(t, relay)
 	host := attachAgentRelay(t, relay, 1, session.grant)
 	response := make(chan mcpHTTPResult, 1)
-	go func() { response <- mcpPost(t.Context(), bridge.connection, mcpSpawnBody) }()
+	go func() { response <- mcpPost(t.Context(), descriptor, mcpSpawnBody) }()
 	event := readMCPEvent(t, host)
 	var cancelled agentv1.GuestSessionMessage
 	if err := frameio.ReadProtoFrameBounded(host, maxAgentTransportFrameBytes, &cancelled); err != nil {
@@ -492,5 +514,42 @@ func TestAgentMCPSkillsUseLocalAdmissionWithoutUpstream(t *testing.T) {
 				t.Fatal("skill reads or rejected calls reached upstream")
 			}
 		})
+	}
+}
+
+func TestAgentMCPScopeCredentialsAndCatalog(t *testing.T) {
+	relay, broad := mcpFixture(t)
+	empty := mcpScopedDescriptor(t, relay, uuid.NewV7().String(), `{"kind":"allow","rules":[]}`)
+	if empty.URL != broad.URL || empty.Headers["Authorization"] == broad.Headers["Authorization"] {
+		t.Fatal("distinct scopes must have distinct local credentials")
+	}
+	again := mcpScopedDescriptor(t, relay, testMCPScopeID, `{"kind":"unrestricted"}`)
+	if again.Headers["Authorization"] != broad.Headers["Authorization"] {
+		t.Fatal("equivalent scope rotated credential")
+	}
+	response := mcpPost(t.Context(), empty, `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
+	if response.err != nil || response.status != 200 || !strings.Contains(response.body, `"name":"skills"`) || strings.Contains(response.body, `"name":"spawn"`) || strings.Contains(response.body, `"name":"list_agents"`) {
+		t.Fatalf("empty catalog %+v", response)
+	}
+	response = mcpPost(t.Context(), empty, mcpSpawnBody)
+	if response.err != nil || strings.Contains(response.body, `"created":true`) {
+		t.Fatalf("ungranted direct call %+v", response)
+	}
+	relay.session.mu.Lock()
+	pending := len(relay.session.pending)
+	relay.session.mu.Unlock()
+	if pending != 0 {
+		t.Fatal("filtered call reached business transport")
+	}
+	host := attachAgentRelay(t, relay, 1, relay.session.grant)
+	received := make(chan mcpHTTPResult, 1)
+	go func() { received <- mcpPost(t.Context(), broad, mcpSpawnBody) }()
+	event := readMCPEvent(t, host)
+	if event.GetOperationMcpScopeId() != testMCPScopeID {
+		t.Fatal("guest arguments replaced authenticated scope reference")
+	}
+	replyMCP(t, host, 1, event)
+	if result := <-received; result.err != nil || !strings.Contains(result.body, `\"created\":true`) {
+		t.Fatalf("broad invocation %+v", result)
 	}
 }

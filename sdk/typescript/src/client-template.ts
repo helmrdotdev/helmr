@@ -1,3 +1,6 @@
+import { normalizeNetwork, type NetworkPolicy } from "./policy"
+import type { SecretBinding } from "./agent"
+import { encodeComputerSecrets } from "./computer"
 import { type ComputerTransport } from "./client-computer"
 import type { CursorPage } from "./contract"
 import { resourceID } from "./internal/id"
@@ -20,6 +23,9 @@ export interface TemplateListQuery extends TemplateGetQuery {
 export interface TemplateListItem {
   readonly template: string
   readonly resources: TemplateResources
+  readonly network: NetworkPolicy
+  readonly prepareNetwork: NetworkPolicy
+  readonly prepareSecrets: readonly SecretBinding[]
 }
 
 export interface TemplateInfo extends TemplateListItem {
@@ -81,6 +87,7 @@ function parseTemplateInfo(value: unknown): TemplateInfo {
   validateDefinitionId(id)
   return Object.freeze({
     template: id,
+    ...parsePolicies(input),
     resources: parseResources(input["resources"]),
     deploymentId: resourceID(input["deployment_id"], "Template response.deployment_id"),
   })
@@ -91,7 +98,7 @@ function parseTemplateListItem(value: unknown): TemplateListItem {
   const id = input["template"]
   if (typeof id !== "string") throw new Error("Template list item.template must be a string")
   validateDefinitionId(id)
-  return Object.freeze({ template: id, resources: parseResources(input["resources"]) })
+  return Object.freeze({ template: id, ...parsePolicies(input), resources: parseResources(input["resources"]) })
 }
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {
@@ -120,4 +127,13 @@ function parseResources(value: unknown): TemplateResources {
     memoryMiB: input["memoryMiB"] as number,
     ...(input["diskMiB"] === undefined ? {} : { diskMiB: input["diskMiB"] as number }),
   })
+}
+
+function parsePolicies(input: Record<string, unknown>) {
+  if (!Array.isArray(input["prepare_secrets"])) throw new Error("Template prepare_secrets must be an array")
+  return {
+    network: normalizeNetwork(input["network"], "network"),
+    prepareNetwork: normalizeNetwork(input["prepare_network"], "prepare_network"),
+    prepareSecrets: encodeComputerSecrets(input["prepare_secrets"] as readonly SecretBinding[]),
+  }
 }

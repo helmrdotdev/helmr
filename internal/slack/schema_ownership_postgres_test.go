@@ -74,9 +74,9 @@ func TestSlackWorkItemRequiresPostThreadAndEnvironment(t *testing.T) {
  INSERT INTO deployments(environment_id,id,bundle_digest) SELECT $2,id,bundle_digest FROM deployments WHERE environment_id=$1;
  INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,id,spec_digest,spec,seed FROM image_specs WHERE environment_id=$1;
  INSERT INTO templates(environment_id,id,key) SELECT $2,id,key FROM templates WHERE environment_id=$1;
- INSERT INTO template_definitions(environment_id,template_id,deployment_id,image_spec_id,cpu_millis,memory_bytes) SELECT $2,template_id,deployment_id,image_spec_id,cpu_millis,memory_bytes FROM template_definitions WHERE environment_id=$1;
+ INSERT INTO template_definitions(environment_id,template_id,deployment_id,image_spec_id,cpu_millis,memory_bytes,network_policy,prepare_network_policy) SELECT $2,template_id,deployment_id,image_spec_id,cpu_millis,memory_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1;
  INSERT INTO agents(environment_id,id,key) SELECT $2,id,key FROM agents WHERE environment_id=$1;
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT $2,agent_id,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT $2,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1;
  INSERT INTO computers(environment_id,id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,initial_root_digest,initial_payload_retired_at,deleted_at)
  SELECT $2,id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,initial_root_digest,clock_timestamp(),clock_timestamp() FROM computers WHERE environment_id=$1;
  INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id)

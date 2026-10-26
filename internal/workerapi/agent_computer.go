@@ -76,10 +76,11 @@ type AgentComputerSourceAbortRequest struct {
 // The worker's authenticated identity supplies host and worker epoch. The
 // physical instance prevents applying a receipt to another allocation.
 type AgentComputerLeaseRequest struct {
-	EnvironmentID string `json:"environment_id"`
-	ComputerID    string `json:"computer_id"`
-	AllocationID  string `json:"allocation_id"`
-	LeaseEpoch    int64  `json:"lease_epoch"`
+	Network       *NetworkCapabilities `json:"network,omitempty"`
+	EnvironmentID string               `json:"environment_id"`
+	ComputerID    string               `json:"computer_id"`
+	AllocationID  string               `json:"allocation_id"`
+	LeaseEpoch    int64                `json:"lease_epoch"`
 }
 
 // InvalidCheckpointID is set only for a positively invalid retained checkpoint,

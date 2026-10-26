@@ -1,3 +1,4 @@
+import type { NetworkPolicy, RuntimeMcpPolicy } from "./policy"
 export type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import { assertUnicodeString } from "./internal/utf8"
@@ -13,7 +14,7 @@ import type { Duration, Retention } from "./duration"
 export type MaybePromise<T> = T | Promise<T>
 
 export interface ComputerIdentity { readonly id: string }
-export interface BuildContext {
+export interface PrepareContext {
   readonly signal: AbortSignal
   exec(command: string | readonly string[], options?: { cwd?: string; env?: Record<string, string> }): Promise<void>
 }
@@ -27,11 +28,14 @@ export interface TemplateDefinition {
   readonly id: string
   readonly image: ImageBuilder
   readonly resources: { readonly cpu: number; readonly memory: string; readonly disk?: string }
-  readonly prepare?: (build: BuildContext) => MaybePromise<void>
+  readonly network?: NetworkPolicy
+  /** Replaces preparation outbound policy; omission inherits network. */
+  readonly prepareNetwork?: NetworkPolicy
+  readonly prepare?: (prepare: PrepareContext) => MaybePromise<void>
   readonly deleteAfterUnused?: Retention
   readonly refresh?: { readonly every: Duration; readonly maxAge?: Duration }
   readonly secrets?: readonly SecretBinding[]
-  readonly buildSecrets?: readonly SecretBinding[]
+  readonly prepareSecrets?: readonly SecretBinding[]
 }
 export function template(config: Omit<TemplateDefinition, "kind">): TemplateDefinition {
   if (!config.id.trim()) throw new TypeError("Computer id is required")
@@ -81,7 +85,7 @@ export interface RuntimeMcpConnectionOptions {
 }
 
 export interface InitContext {
-  readonly mcp: Readonly<{ getConnectionOptions(): Promise<RuntimeMcpConnectionOptions> }>
+  readonly mcp: Readonly<{ getConnectionOptions(policy?: RuntimeMcpPolicy): Promise<RuntimeMcpConnectionOptions> }>
   readonly session: Readonly<{ id: string; key?: string; parent?: Readonly<{ id: string }> }>
   readonly computer: ComputerIdentity
   readonly deployment: Readonly<{ id: string }>
@@ -109,6 +113,7 @@ type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ?
 export type AgentDefinition<I = InputContent, O = JsonValue, S = undefined, ID extends string = string, Wire = I, Returned = O> = JsonCheck<O> & AgentContract<ID, Wire, O> & {
   readonly kind: "agent"
   readonly id: ID
+  readonly runtimeMcp?: RuntimeMcpPolicy
   readonly template: TemplateDefinition
   readonly turn: (turn: Turn<I>, ctx: AgentContext<S>) => MaybePromise<Returned>
   readonly suspension?: SuspensionPolicy
@@ -141,6 +146,7 @@ type JsonCheck<T> = 0 extends (1 & T) ? unknown : [T] extends [string | number |
 type SchemaField<K extends string, S> = [S] extends [undefined] ? { readonly [P in K]?: never } : { readonly [P in K]: S }
 type AgentConfig<ID extends string, SI extends Schema, SO extends Schema, State, O> = {
   readonly id: ID
+  readonly runtimeMcp?: RuntimeMcpPolicy
   readonly template: TemplateDefinition
   readonly turn: (turn: Turn<NoInfer<Parsed<SI>>>, ctx: AgentContext<NoInfer<State>>) => MaybePromise<Returned<SO, O>>
   readonly suspension?: SuspensionPolicy
@@ -150,7 +156,7 @@ type AgentConfig<ID extends string, SI extends Schema, SO extends Schema, State,
 } & SchemaField<"inputSchema", SI> & SchemaField<"resultSchema", SO>
 export function agent<const ID extends string, SI extends Schema = undefined, SO extends Schema = undefined, State = undefined, O = JsonValue>(config: AgentConfig<ID, SI, SO, State, O> & { readonly init: (ctx: InitContext) => MaybePromise<State> } & JsonCheck<Result<NoInfer<SO>, NoInfer<O>>>): AgentDefinition<Parsed<SI>, Result<SO, O>, State, ID, Accepted<SI>, Returned<SO, O>>
 export function agent<const ID extends string, SI extends Schema = undefined, SO extends Schema = undefined, O = JsonValue>(config: AgentConfig<ID, SI, SO, undefined, O> & { readonly init?: never } & JsonCheck<Result<NoInfer<SO>, NoInfer<O>>>): AgentDefinition<Parsed<SI>, Result<SO, O>, undefined, ID, Accepted<SI>, Returned<SO, O>>
-export function agent(config: { readonly id: string; readonly template: TemplateDefinition; readonly turn: unknown; readonly inputSchema?: StandardSchemaV1; readonly resultSchema?: StandardSchemaV1 }): unknown {
+export function agent(config: { readonly id: string; readonly runtimeMcp?: RuntimeMcpPolicy; readonly template: TemplateDefinition; readonly turn: unknown; readonly inputSchema?: StandardSchemaV1; readonly resultSchema?: StandardSchemaV1 }): unknown {
   if (!config.id.trim() || config.template.kind !== "template" || typeof config.turn !== "function") throw new TypeError("Agent id, Template and turn handler are required")
   for (const schema of [config.inputSchema, config.resultSchema]) {
     if (schema !== undefined && (schema["~standard"]?.version !== 1 || typeof schema["~standard"].validate !== "function")) throw new TypeError("A Standard Schema v1 validator is required")

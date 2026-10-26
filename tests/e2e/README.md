@@ -54,6 +54,7 @@ injection into an ordinary behavior case. External agent examples live in
 | `control-plane-outage` | `cases/control-plane-outage` | Live Turn survives CP outage beyond the stale-Host window with Dispatcher continuously active |
 | `drain-renewal` | `cases/drain-renewal` | Resident Turn retains its lease through more than 30 minutes of planned drain |
 | `delay`, `session-cancel` | `cases/delay` | Ordinary JS delay completion and cancellation of active/queued Turns |
+| `execution-policies` | `cases/execution-policies` | Ordinary/finite/blocked networking, distinct preparation policies, actual Computer pin on reuse, scoped MCP/receipt denials, and retained descriptors after explicit Hibernate/Wake |
 | `network-egress` | `cases/network-egress` | Public IPv4 succeeds, no IPv6 default route |
 | `computer-overwrite`, `concurrent-questions`, `invalid-payload`, `expected-error` | `cases/computer-overwrite` | Filesystem overwrite, independent concurrent questions and handler failure contracts |
 | `secret-injection`, `missing-secret` | `cases/secret-injection` | Disposable secret value binding or missing-secret admission failure |
@@ -120,6 +121,30 @@ service updates and edited-initial-migration reset. Reuse a healthy host through
 the repair objective, clean up its test fixtures, then stop compute. Provider
 provisioning, retained storage costs and final retirement belong to deployment
 operations. A previous passing case does not qualify a changed case or artifact.
+
+## Execution policy qualification
+
+Selecting `cases/execution-policies` for deployment runs public HTTPS preparation
+probes against `checkip.amazonaws.com`. The driver additionally requires
+`HELMR_EXECUTION_POLICY_PUBLIC_PROBES=1`, opting in to `checkip.amazonaws.com`
+(HTTPS and HTTP), `example.com` (HTTPS and DNS), and the public DNS resolver
+`1.1.1.1`. The ordinary-connectivity baseline must establish these paths, including
+numeric TLS without SNI, before their denial counts as policy evidence. Each
+probe has a five-second bound. An unavailable public prerequisite fails the case;
+it is not evidence of an enforcement failure or successful containment.
+
+The case needs capacity for two resident Computers after its baseline is deleted,
+Computer Hibernate/Wake and cleanup permissions, and caller-side authority to
+create an owned child on the caller Computer. Its target Agent deliberately has a
+different default Template. The child shares the caller's Computer by design;
+these assertions do not claim hostile-process isolation on that Computer.
+
+The driver records published pins, prepared-file markers, managed admission IDs,
+network decisions and stable Session state across explicit Hibernate/Wake. It
+repeats network and scoped-descriptor probes after continuation. These are native
+socket/API observations; host packet-level, private-service, mandatory-deny and
+cross-host qualification remain separate. Source typechecks and compiler analysis
+do not execute the case or qualify a Worker/guest release.
 
 ## Deployment pins and Program replacement
 

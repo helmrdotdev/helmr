@@ -74,6 +74,7 @@ func (d ProgramDefinition) Clone() ProgramDefinition {
 func cloneProgramDefinition(d ProgramDefinition) ProgramDefinition {
 	if d.Agent != nil {
 		value := *d.Agent
+		value.RuntimeMcp = slices.Clone(value.RuntimeMcp)
 		value.CloseAfterIdleMs = cloneInt64(value.CloseAfterIdleMs)
 		value.MaxTurnDurationMs = cloneInt64(value.MaxTurnDurationMs)
 		value.Triggers = maps.Clone(value.Triggers)
@@ -85,6 +86,8 @@ func cloneProgramDefinition(d ProgramDefinition) ProgramDefinition {
 	}
 	if d.Template != nil {
 		value := *d.Template
+		value.Network = slices.Clone(value.Network)
+		value.PrepareNetwork = slices.Clone(value.PrepareNetwork)
 		value.Seed.Config.Env = slices.Clone(value.Seed.Config.Env)
 		value.Seed.Config.Entrypoint = slices.Clone(value.Seed.Config.Entrypoint)
 		value.Seed.Config.Cmd = slices.Clone(value.Seed.Config.Cmd)
@@ -95,7 +98,7 @@ func cloneProgramDefinition(d ProgramDefinition) ProgramDefinition {
 			value.Refresh = &refresh
 		}
 		value.Secrets = secretbinding.CloneReferences(value.Secrets)
-		value.BuildSecrets = secretbinding.CloneReferences(value.BuildSecrets)
+		value.PrepareSecrets = secretbinding.CloneReferences(value.PrepareSecrets)
 		d.Template = &value
 	}
 	return d
@@ -111,6 +114,9 @@ func decodeClosedDefinition(raw []byte, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
+		if err.Error() == `json: unknown field "buildSecrets"` {
+			return errors.New("template buildSecrets was renamed to prepareSecrets")
+		}
 		return err
 	}
 	return jsoncanon.RequireEOF(decoder, "definition input")

@@ -55,8 +55,9 @@ type Caller struct {
 	ID                uuid.UUID
 	// TurnID is present only for direct Turn-scoped native requests. MCP uses
 	// Session authority without guessing a currently running Turn.
-	TurnID    uuid.UUID
-	Execution Execution
+	MCPScopeID uuid.UUID
+	TurnID     uuid.UUID
+	Execution  Execution
 	// Host is supplied by authenticated worker transport, never request JSON.
 	Host *workergroup.HostPrincipal
 }
@@ -254,6 +255,15 @@ func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 		}
 		if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, req.SessionID, auth.PermissionSessionsSend); err != nil {
 			return err
+		}
+		if caller.Kind == "session" {
+			op := "enqueue"
+			if method == "turn_send" {
+				op = "send_turn"
+			}
+			if err := requireMCPTarget(ctx, tx, caller, op, req.SessionID); err != nil {
+				return err
+			}
 		}
 		if req.IdempotencyKey != "" {
 			var prior []byte

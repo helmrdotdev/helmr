@@ -36,8 +36,8 @@ func TestTriggerAdmissionConcurrentRetryAndPinnedDeployment(t *testing.T) {
 	// promotion. Its root must use its original immutable definition.
 	current := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) SELECT environment_id,$2,'sha256:'||repeat('e',64) FROM deployments WHERE environment_id=$1 AND id=$3;
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$2,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$3;
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension) SELECT environment_id,agent_id,$2,template_id,has_init,'manual' FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$3;
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) SELECT environment_id,$2,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$3;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension,runtime_mcp_policy) SELECT environment_id,agent_id,$2,template_id,has_init,'manual',runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$3;
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1;
  UPDATE trigger_activations SET active_until=$4 WHERE environment_id=$1 AND id=$5;`, pgx.QueryExecModeSimpleProtocol, f.env, current, f.deployment, due.Add(time.Minute), trigger)
 	var wg sync.WaitGroup

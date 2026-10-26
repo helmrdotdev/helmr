@@ -19,6 +19,7 @@ const (
 	AgentMethodOutput           AgentOperationMethod = "output"
 	AgentMethodRegisterMessages AgentOperationMethod = "register_messages"
 	AgentMethodRespond          AgentOperationMethod = "respond"
+	AgentMethodGetMCPConnection AgentOperationMethod = "get_mcp_connection"
 	AgentMethodRuntimeMCP       AgentOperationMethod = "runtime_mcp"
 	AgentMethodSendMessage      AgentOperationMethod = "send_message"
 	AgentMethodSpawn            AgentOperationMethod = "spawn"

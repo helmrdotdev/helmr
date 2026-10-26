@@ -267,6 +267,8 @@ message GuestSessionMessage {
   // Pending mutations retain their original admission generation when replayed.
   int64 operation_authority_generation = 8;
   int64 operation_lease_epoch = 9;
+  // Guest relay supplied scope reference, outside authored arguments.
+  string operation_mcp_scope_id = 13;
 }
 
 // Host-owned coherent capture. Membership is the complete resident process set,

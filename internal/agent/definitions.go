@@ -54,6 +54,13 @@ func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller session.C
 		if err := session.RequireRootCaller(ctx, tx, caller); err != nil {
 			return err
 		}
+		policy, err := session.RuntimeMCPPolicy(ctx, tx, caller)
+		if err != nil {
+			return err
+		}
+		if !policy.Has(operation) {
+			return nil
+		}
 		allAgents, agentIDs, err := session.RuntimeAgentScope(ctx, tx, caller)
 		if err != nil {
 			return err
@@ -69,7 +76,7 @@ func RuntimeListAgents(ctx context.Context, pool db.TxBeginner, caller session.C
 		if expected != uuid.Nil() && expected != *selected {
 			return ErrInvalidInput
 		}
-		rows, err := tx.Query(ctx, `SELECT a.key,d.input_kind,d.input_schema FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key>$3 AND ($4::boolean OR a.id=ANY($5::uuid[])) ORDER BY a.key LIMIT 51`, caller.Execution.EnvironmentID, *selected, after, allAgents, agentIDs)
+		rows, err := tx.Query(ctx, `SELECT a.key,d.input_kind,d.input_schema FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key>$3 AND ($4::boolean OR a.id=ANY($5::uuid[])) AND ($6::boolean OR a.key=ANY($7::text[])) ORDER BY a.key LIMIT 51`, caller.Execution.EnvironmentID, *selected, after, allAgents, agentIDs, policy.Kind == "unrestricted", policy.Targets(operation))
 		if err != nil {
 			return err
 		}

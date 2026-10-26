@@ -251,6 +251,7 @@ func TestPreparationImageRevocationDeniesCaptureReplay(t *testing.T) {
 func TestPreparationImageRevocationPreservesQueueWithoutProcess(t *testing.T) {
 	p := preparationResidentImage(t)
 	admission := p.f.enqueue(t, "queued")
+	dbtest.MustExec(t, t.Context(), p.f.pool, `DELETE FROM session_mcp_scopes WHERE environment_id=$1 AND session_id=$2`, p.f.env, p.f.session)
 	dbtest.MustExec(t, t.Context(), p.f.pool, `DELETE FROM session_processes WHERE environment_id=$1 AND session_id=$2`, p.f.env, p.f.session)
 	if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, "revoke"); err != nil {
 		t.Fatal(err)

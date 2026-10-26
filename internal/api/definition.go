@@ -7,9 +7,12 @@ import (
 )
 
 type TemplateDefinition struct {
-	Resources    json.RawMessage `json:"resources"`
-	ID           string          `json:"template"`
-	DeploymentID string          `json:"deployment_id"`
+	Network        json.RawMessage `json:"network"`
+	PrepareNetwork json.RawMessage `json:"prepare_network"`
+	PrepareSecrets json.RawMessage `json:"prepare_secrets"`
+	Resources      json.RawMessage `json:"resources"`
+	ID             string          `json:"template"`
+	DeploymentID   string          `json:"deployment_id"`
 }
 type ListTemplateDefinitionsResponse struct {
 	DeploymentID        string               `json:"deployment_id"`
@@ -25,6 +28,9 @@ func ValidateDefinitionID(id string) error {
 }
 
 type DefinitionListItem struct {
-	Resources json.RawMessage `json:"resources"`
-	ID        string          `json:"template"`
+	Network        json.RawMessage `json:"network"`
+	PrepareNetwork json.RawMessage `json:"prepare_network"`
+	PrepareSecrets json.RawMessage `json:"prepare_secrets"`
+	Resources      json.RawMessage `json:"resources"`
+	ID             string          `json:"template"`
 }

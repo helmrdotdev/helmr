@@ -91,6 +91,12 @@ descriptor makes CP reject it. Bootstrap enrollment tokens use the native
 a bare random hex string. Blocked IPv4 CIDRs must be unique and sorted by numeric
 network address, then prefix length. The Worker also blocks its host interfaces
 and link pool; include the actual metadata/privileged destinations explicitly.
+The Control Plane's `CONTROL_PLANE_NETWORK_PRIVATE_BUSINESS_CIDRS` and
+`CONTROL_PLANE_NETWORK_BLOCKED_IPV4_CIDRS` describe the same installation boundary.
+Keep Worker private business ranges within that ceiling and its denies at least
+as broad; delivery and renewal reject more permissive Workers. An empty private
+ceiling denies RFC1918 business egress. Explicit private grants also require the
+actual routing and trusted DNS, plus each Template's domain/range policy.
 Set `VM_SCRATCH_DISK_MIB=32768` before first enrollment: ordinary Workspaces
 require 32 GiB of guest ephemeral disk. The Worker default of 8 GiB can become
 ready while remaining ineligible for every ordinary Workspace. The pool seals its

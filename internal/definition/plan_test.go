@@ -23,7 +23,7 @@ func fixtureBuildPlan(t *testing.T) (BuildPlan, []byte) {
 }
 func TestAgentBuildPlanCompilerContract(t *testing.T) {
 	plan, raw := fixtureBuildPlan(t)
-	if len(plan.Definitions) != 2 || plan.Definitions[0].Agent.TemplateDefinitionID != "workspace" || *plan.Definitions[0].Agent.MaxTurnDurationMs != 300000 || plan.Definitions[1].Template.BuildSecrets[0].Secret != "SOURCE_TOKEN" {
+	if len(plan.Definitions) != 2 || plan.Definitions[0].Agent.TemplateDefinitionID != "workspace" || *plan.Definitions[0].Agent.MaxTurnDurationMs != 300000 || plan.Definitions[1].Template.PrepareSecrets[0].Secret != "SOURCE_TOKEN" {
 		t.Fatalf("unexpected compiler projection: %+v", plan)
 	}
 	got, err := CanonicalBuildPlan(plan)
@@ -67,9 +67,9 @@ func TestAgentBuildPlanRejectsMalformedAuthority(t *testing.T) {
 		"invalid disk":             func(p *BuildPlan) { p.Definitions[1].Template.Resources.DiskMiB = new(int64(0)) },
 		"invalid freshness":        func(p *BuildPlan) { p.Definitions[1].Template.Refresh.MaxAgeMs = new(int64(0)) },
 		"missing runtime bindings": func(p *BuildPlan) { p.Definitions[1].Template.Secrets = nil },
-		"missing build bindings":   func(p *BuildPlan) { p.Definitions[1].Template.BuildSecrets = nil },
+		"missing build bindings":   func(p *BuildPlan) { p.Definitions[1].Template.PrepareSecrets = nil },
 		"invalid build Secret": func(p *BuildPlan) {
-			p.Definitions[1].Template.BuildSecrets[0].Secret = "bad name"
+			p.Definitions[1].Template.PrepareSecrets[0].Secret = "bad name"
 		},
 		"invalid runtime Secret": func(p *BuildPlan) {
 			p.Definitions[1].Template.Secrets[0].Secret = ""

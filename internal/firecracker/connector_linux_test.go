@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -71,7 +72,7 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 	if err := connector.hostRuntime.bind(evidence, 1); err != nil {
 		t.Fatal(err)
 	}
-	request := vm.MaterializeRequest{
+	request := vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseRuntime, NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(),
 		ID:        computerInstanceID,
 		OwnerKind: vm.OwnerInstance,
 		Binding: vm.WorkloadBinding{
@@ -131,7 +132,7 @@ func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
 			computerInstanceID := uuid.NewV7().String()
 			var phases []vm.Phase
 
-			_, err = connector.materialize(t.Context(), vm.MaterializeRequest{
+			_, err = connector.materialize(t.Context(), vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseRuntime, NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(),
 				ID:        computerInstanceID,
 				OwnerKind: vm.OwnerInstance,
 				Binding: vm.WorkloadBinding{
@@ -217,7 +218,7 @@ func testRestoreConfig(t *testing.T) Config {
 	if err := os.WriteFile(rootfsPath, []byte("rootfs"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := (Config{
+	cfg := (Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(), NetworkPhase: networkpolicy.PhaseRuntime,
 		KernelPath:          kernelPath,
 		InitramfsPath:       initramfsPath,
 		RootfsPath:          rootfsPath,

@@ -3,6 +3,7 @@ package secretproxy
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"net"
 	"net/netip"
 	"time"
@@ -11,32 +12,12 @@ import (
 // Dialer preserves the connector's effective IPv4 deny set for host-originated IO.
 // Numeric destinations are policy checked and never re-resolved.
 type Dialer struct {
-	Blocked []netip.Prefix
-	dialer  net.Dialer
-}
-
-var nonPublic = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"), netip.MustParsePrefix("10.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("127.0.0.0/8"),
-	netip.MustParsePrefix("169.254.0.0/16"), netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.0.0.0/24"), netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("192.168.0.0/16"), netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"), netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("224.0.0.0/4"), netip.MustParsePrefix("240.0.0.0/4"),
+	Installation *networkpolicy.Installation
+	dialer       net.Dialer
 }
 
 func (d *Dialer) Allowed(ip netip.Addr) bool {
-	if !ip.Is4() || !ip.IsGlobalUnicast() {
-		return false
-	}
-	for _, prefixes := range [][]netip.Prefix{nonPublic, d.Blocked} {
-		for _, prefix := range prefixes {
-			if prefix.Contains(ip) {
-				return false
-			}
-		}
-	}
-	return true
+	return d.Installation != nil && d.Installation.AllowsAddress(ip)
 }
 
 func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {

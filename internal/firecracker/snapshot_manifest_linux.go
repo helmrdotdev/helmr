@@ -119,6 +119,8 @@ type snapshotRuntimeStateManifest struct {
 }
 
 type snapshotNetworkManifest struct {
+	PolicyDigest       string   `json:"policy_digest"`
+	InstallationDigest string   `json:"installation_digest"`
 	GuestIPv4CIDR      string   `json:"guest_ipv4_cidr"`
 	GuestMAC           string   `json:"guest_mac"`
 	GatewayIPv4        string   `json:"gateway_ipv4"`
@@ -195,6 +197,7 @@ func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, cp
 
 func snapshotNetworkConfig(cfg Config) snapshotNetworkManifest {
 	return snapshotNetworkManifest{
+		PolicyDigest: cfg.NetworkPolicy.Digest(), InstallationDigest: cfg.NetworkInstallation.Digest(),
 		GuestIPv4CIDR:      GuestNetworkCIDRV0,
 		GuestMAC:           GuestMACV0,
 		GatewayIPv4:        GuestGatewayIPv4V0,
@@ -206,6 +209,9 @@ func snapshotNetworkConfig(cfg Config) snapshotNetworkManifest {
 }
 
 func validateSnapshotNetwork(network snapshotNetworkManifest) error {
+	if !sha256sum.ValidDigest(network.PolicyDigest) || !sha256sum.ValidDigest(network.InstallationDigest) {
+		return errors.New("checkpoint network authority is incomplete")
+	}
 	guestIP, guestCIDR, err := net.ParseCIDR(network.GuestIPv4CIDR)
 	if err != nil || guestIP.To4() == nil {
 		return errors.New("checkpoint manifest guest_ipv4_cidr must be canonical IPv4 CIDR")
@@ -255,7 +261,7 @@ func validateRestoredNetworkConfig(expected snapshotNetworkManifest, actual snap
 	if err := validateSnapshotNetwork(actual); err != nil {
 		return fmt.Errorf("validate restored checkpoint network: %w", err)
 	}
-	if expected.GuestIPv4CIDR != actual.GuestIPv4CIDR ||
+	if expected.PolicyDigest != actual.PolicyDigest || expected.GuestIPv4CIDR != actual.GuestIPv4CIDR ||
 		expected.GuestMAC != actual.GuestMAC ||
 		expected.GatewayIPv4 != actual.GatewayIPv4 ||
 		expected.GatewayMAC != actual.GatewayMAC ||

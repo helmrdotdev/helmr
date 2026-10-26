@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 )
 
 const (
@@ -119,7 +120,18 @@ func ValidateBuildPlan(plan BuildPlan) error {
 	if imageSteps > maxBuildImageSteps {
 		return errors.New("build plan exceeds 10000 image steps")
 	}
+	agentKeys := []string{}
 	for _, input := range plan.Definitions {
+		if input.Agent != nil {
+			agentKeys = append(agentKeys, input.DeclaredID)
+		}
+	}
+	for _, input := range plan.Definitions {
+		if input.Agent != nil {
+			if _, err := mcppolicy.Normalize(input.Agent.RuntimeMcp, agentKeys); err != nil {
+				return fmt.Errorf("%w %s.runtimeMcp: %w", ErrInvalidRuntimeMcpPolicy, input.DeclaredID, err)
+			}
+		}
 		if input.Agent != nil && !computers[input.Agent.TemplateDefinitionID] {
 			return errors.New("agent references an undeclared Computer")
 		}
@@ -173,6 +185,9 @@ func decodeClosedDefinition(raw []byte, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
+		if err.Error() == `json: unknown field "buildSecrets"` {
+			return errors.New("template buildSecrets was renamed to prepareSecrets")
+		}
 		return err
 	}
 	return jsoncanon.RequireEOF(decoder, "definition input")
@@ -198,7 +213,10 @@ func validateDefinitionInput(input Input) error {
 		if err := ValidateUnusedPolicy(input.Template.DeleteAfterUnusedMs, input.Template.DeleteAfterUnusedNever); err != nil {
 			return err
 		}
-		return validateComputerSettings(input.Template.Resources, input.Template.Refresh, input.Template.Secrets, input.Template.BuildSecrets)
+		if _, _, err := ResolveTemplatePolicies(input.Template.Network, input.Template.PrepareNetwork, input.Template.Prepare, input.Template.Secrets, input.Template.PrepareSecrets); err != nil {
+			return err
+		}
+		return validateComputerSettings(input.Template.Resources, input.Template.Refresh, input.Template.Secrets, input.Template.PrepareSecrets)
 	default:
 		return fmt.Errorf("definition kind %q is unsupported", input.Kind)
 	}

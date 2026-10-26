@@ -42,6 +42,9 @@ func RuntimeObserveTurn(ctx context.Context, auditPolicy auditpolicy.Policy, poo
 		if !allowed {
 			return ErrDenied
 		}
+		if err := requireMCPTarget(ctx, tx, caller, "inspect_turn", session); err != nil {
+			return err
+		}
 		result.TurnView, err = scanTurn(tx.QueryRow(ctx, `SELECT `+turnViewColumns+` FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3`, caller.Execution.EnvironmentID, session, turn))
 		// Input and the target's event history are outside outcome observation.
 		result.Input = nil

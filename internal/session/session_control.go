@@ -138,6 +138,15 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 				return err
 			}
 		}
+		if caller.Kind == "session" {
+			op := req.Kind + "_session"
+			if req.Kind == "turn_interrupt" {
+				op = "interrupt_turn"
+			}
+			if err := requireMCPTarget(ctx, tx, caller, op, req.SessionID); err != nil {
+				return err
+			}
+		}
 		var prior []byte
 		var hold *uuid.UUID
 		err = tx.QueryRow(ctx, `SELECT id,hold_id,request_digest FROM session_controls

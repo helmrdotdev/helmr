@@ -14,7 +14,7 @@ import (
 func TestWorkerAgentSessionControls(t *testing.T) {
 	f, origin, execution := runtimeAdmissionOrigin(t)
 	client := newWorkerHTTPClient(t, newPostgresServer(t, f.Pool), f.Pool, f.Worker)
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "spawn", AuthorityGeneration: 1, TurnID: origin.TurnID.String(), Method: workerapi.AgentMethodSpawn}
+	request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: "spawn", AuthorityGeneration: 1, TurnID: origin.TurnID.String(), Method: workerapi.AgentMethodSpawn}
 	call := func(r workerapi.AgentOperationRequest, body any, code string) map[string]string {
 		t.Helper()
 		raw, _ := json.Marshal(body)

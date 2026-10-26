@@ -213,13 +213,13 @@ func writeDefinitionList(w http.ResponseWriter, kind definition.Kind, deployment
 			if item.TemplateID != nil {
 				templateID = *item.TemplateID
 			}
-			items = append(items, api.AgentDefinitionListItem{InputKind: item.InputKind, InputSchema: item.InputSchema, ID: item.ID, TemplateID: templateID})
+			items = append(items, api.AgentDefinitionListItem{RuntimeMcp: item.RuntimeMcp, InputKind: item.InputKind, InputSchema: item.InputSchema, ID: item.ID, TemplateID: templateID})
 		}
 		writeJSON(w, http.StatusOK, api.ListAgentDefinitionsResponse{DeploymentID: deploymentID, AgentDefinitions: items, NextCursor: nextCursor})
 	case definition.KindTemplate:
 		items := make([]api.DefinitionListItem, 0, len(records))
 		for _, item := range records {
-			items = append(items, api.DefinitionListItem{ID: item.ID, Resources: item.Resources})
+			items = append(items, api.DefinitionListItem{Network: item.Network, PrepareNetwork: item.PrepareNetwork, PrepareSecrets: item.PrepareSecrets, ID: item.ID, Resources: item.Resources})
 		}
 		writeJSON(w, http.StatusOK, api.ListTemplateDefinitionsResponse{DeploymentID: deploymentID, TemplateDefinitions: items, NextCursor: nextCursor})
 	}
@@ -232,9 +232,9 @@ func writeDefinition(w http.ResponseWriter, kind definition.Kind, item deploymen
 		if item.TemplateID != nil {
 			templateID = *item.TemplateID
 		}
-		writeJSON(w, http.StatusOK, api.AgentDefinition{InputKind: item.InputKind, InputSchema: item.InputSchema, ID: item.ID, DeploymentID: deploymentID, TemplateID: templateID})
+		writeJSON(w, http.StatusOK, api.AgentDefinition{RuntimeMcp: item.RuntimeMcp, InputKind: item.InputKind, InputSchema: item.InputSchema, ID: item.ID, DeploymentID: deploymentID, TemplateID: templateID})
 	case definition.KindTemplate:
-		writeJSON(w, http.StatusOK, api.TemplateDefinition{ID: item.ID, DeploymentID: deploymentID, Resources: item.Resources})
+		writeJSON(w, http.StatusOK, api.TemplateDefinition{Network: item.Network, PrepareNetwork: item.PrepareNetwork, PrepareSecrets: item.PrepareSecrets, ID: item.ID, DeploymentID: deploymentID, Resources: item.Resources})
 	}
 }
 

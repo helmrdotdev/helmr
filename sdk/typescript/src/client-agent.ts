@@ -1,3 +1,4 @@
+import { normalizeRuntimeMcp, type RuntimeMcpPolicy } from "./policy"
 import { parseInputContract, type AgentInputContract } from "./schema/input"
 import { type ComputerTransport } from "./client-computer"
 import type { CursorPage } from "./contract"
@@ -20,6 +21,7 @@ export interface AgentListQuery extends AgentGetQuery {
 
 export type AgentListItem = AgentInputContract & Readonly<{
   readonly agent: string
+  readonly runtimeMcp?: RuntimeMcpPolicy
   readonly template: string
 }>
 
@@ -82,7 +84,7 @@ function parseAgentInfo(value: unknown): AgentInfo {
   validateDefinitionId(id)
   return Object.freeze({
     ...parseInputContract({ inputKind: input["input_kind"], ...(Object.hasOwn(input, "input_schema") ? { inputSchema: input["input_schema"] } : {}) }),
-    agent: id,
+    ...parseRuntimeMcp(input), agent: id,
     template: parseTemplate(input["template"]),
     deploymentId: resourceID(input["deployment_id"], "Agent response.deployment_id"),
   })
@@ -93,7 +95,7 @@ function parseAgentListItem(value: unknown): AgentListItem {
   const id = input["agent"]
   if (typeof id !== "string") throw new Error("Agent list item.agent must be a string")
   validateDefinitionId(id)
-  return Object.freeze({ ...parseInputContract({ inputKind: input["input_kind"], ...(Object.hasOwn(input, "input_schema") ? { inputSchema: input["input_schema"] } : {}) }), agent: id, template: parseTemplate(input["template"]) })
+  return Object.freeze({ ...parseInputContract({ inputKind: input["input_kind"], ...(Object.hasOwn(input, "input_schema") ? { inputSchema: input["input_schema"] } : {}) }), ...parseRuntimeMcp(input), agent: id, template: parseTemplate(input["template"]) })
 }
 
 function objectValue(value: unknown, label: string): Record<string, unknown> {
@@ -107,4 +109,10 @@ function parseTemplate(value: unknown): string {
   if (typeof value !== "string") throw new Error("Agent.template must be a string")
   validateDefinitionId(value)
   return value
+}
+
+function parseRuntimeMcp(input: Record<string, unknown>): { runtimeMcp?: RuntimeMcpPolicy } {
+  return Object.hasOwn(input, "runtime_mcp")
+    ? { runtimeMcp: normalizeRuntimeMcp(input["runtime_mcp"], undefined, "runtime_mcp") }
+    : {}
 }

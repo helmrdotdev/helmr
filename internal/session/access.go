@@ -256,6 +256,7 @@ func authorizeRuntimeOrigin(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) e
 }
 
 type sessionReadScope struct {
+	MCPAgentKeys     []string
 	All, AllAgents   bool
 	User, Key        *uuid.UUID
 	Agents           []uuid.UUID

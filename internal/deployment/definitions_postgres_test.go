@@ -76,7 +76,8 @@ func TestTemplateDefinitionRegistrationReusesExactInputsAndSeparatesPolicy(t *te
 func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredInput(t *testing.T) {
 	f := newDefinitionsFixture(t)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "MISSING_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	output.Metadata.Definitions[2].Template.Prepare = true
+	output.Metadata.Definitions[2].Template.PrepareSecrets = []definition.SecretBinding{{Secret: "MISSING_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
 			return err
@@ -86,7 +87,8 @@ func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 	if !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("foreign Secret %v", err)
 	}
-	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{}
+	output.Metadata.Definitions[2].Template.PrepareSecrets = []definition.SecretBinding{}
+	output.Metadata.Definitions[2].Template.Prepare = false
 	specs, err := artifact.BuildComputerPreparationSpecs(output)
 	if err != nil {
 		t.Fatal(err)
@@ -180,11 +182,12 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 			return registerProgramDefinitions(t.Context(), tx, f.env, f.deployment, output, artifacttest.PreparationOutputs(t, output)...)
 		})
 	}
-	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{{Secret: "FOREIGN_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
+	output.Metadata.Definitions[2].Template.Prepare = true
+	output.Metadata.Definitions[2].Template.PrepareSecrets = []definition.SecretBinding{{Secret: "FOREIGN_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "raw"}}}
 	if err := register(); !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("foreign stable reference: %v", err)
 	}
-	output.Metadata.Definitions[2].Template.BuildSecrets = []definition.SecretBinding{
+	output.Metadata.Definitions[2].Template.PrepareSecrets = []definition.SecretBinding{
 		{Secret: "OLD_TOKEN", Env: &definition.SecretBindingEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://API.EXAMPLE.COM:443", "https://api.example.com"}}},
 		{Secret: "OLD_TOKEN", File: &secretbinding.File{Path: "/etc/build/token"}},
 	}
@@ -192,8 +195,8 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 	if err := register(); !errors.Is(err, computer.ErrSecretUnavailable) {
 		t.Fatalf("revoked Secret registered: %v", err)
 	}
-	for i := range output.Metadata.Definitions[2].Template.BuildSecrets {
-		output.Metadata.Definitions[2].Template.BuildSecrets[i].Secret = "TOKEN"
+	for i := range output.Metadata.Definitions[2].Template.PrepareSecrets {
+		output.Metadata.Definitions[2].Template.PrepareSecrets[i].Secret = "TOKEN"
 	}
 	output.Metadata.Definitions[2].Template.Secrets[0].Secret = "TOKEN"
 	if err := register(); err != nil {
@@ -242,4 +245,65 @@ func newDefinitionsFixture(t *testing.T) definitionsFixture {
 	t.Helper()
 	f := sessiontest.New(t)
 	return definitionsFixture{pool: f.Pool, env: f.Environment, deployment: f.Deployment}
+}
+
+func TestDefinitionPoliciesPublishAndReadNormalizedAuthority(t *testing.T) {
+	f := newDefinitionsFixture(t)
+	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("policy-program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
+	m := output.Metadata.Definitions[2].Template
+	m.Prepare = true
+	m.Network = []byte(`{"allowDomains":["API.Example.com."]}`)
+	output.Metadata.Definitions[0].Agent.RuntimeMcp = []byte(`{"allow":[{"operation":"spawn","agents":["chat"]}]}`)
+	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
+			return err
+		}
+		return registerProgramDefinitions(t.Context(), tx, f.env, f.deployment, output, artifacttest.PreparationOutputs(t, output)...)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scan := func(projection, key string, kind definition.Kind) DefinitionRecord {
+		var item DefinitionRecord
+		err := f.pool.QueryRow(t.Context(), projection+definitionGetClause, f.env, f.deployment, key).Scan(&item.ID, &item.AgentID, &item.TemplateID, &item.Resources, &item.InputKind, &item.InputSchema, &item.Network, &item.PrepareNetwork, &item.PrepareSecrets, &item.RuntimeMcp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = projectDefinitionPolicies(&item, kind); err != nil {
+			t.Fatal(err)
+		}
+		return item
+	}
+	template := scan(templateDefinitionProjection, "repo", definition.KindTemplate)
+	if string(template.Network) != `{"allowDomains":["api.example.com"]}` || string(template.PrepareNetwork) != string(template.Network) || string(template.PrepareSecrets) != "[]" {
+		t.Fatalf("Template projection %+v", template)
+	}
+	finite := scan(agentDefinitionProjection, "build", definition.KindAgent)
+	if string(finite.RuntimeMcp) != `{"allow":[{"operation":"spawn","agents":["chat"],"computer":"new"}]}` {
+		t.Fatalf("finite MCP %s", finite.RuntimeMcp)
+	}
+	unrestricted := scan(agentDefinitionProjection, "chat", definition.KindAgent)
+	if len(unrestricted.RuntimeMcp) != 0 {
+		t.Fatalf("unrestricted leaked private tag: %s", unrestricted.RuntimeMcp)
+	}
+	var before string
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.spec_digest FROM template_definitions d JOIN image_specs s ON (s.environment_id,s.id)=(d.environment_id,d.image_spec_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key='repo'`, f.env, f.deployment).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	next := uuid.NewV7()
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$2,$3)`, f.env, next, artifacttest.Digest("policy-change")); err != nil {
+		t.Fatal(err)
+	}
+	m.Network = []byte(`{"blockAll":true}`)
+	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
+			return err
+		}
+		return registerProgramDefinitions(t.Context(), tx, f.env, next, output, artifacttest.PreparationOutputs(t, output)...)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var after string
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.spec_digest FROM template_definitions d JOIN image_specs s ON (s.environment_id,s.id)=(d.environment_id,d.image_spec_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key='repo'`, f.env, next).Scan(&after); err != nil || before == after {
+		t.Fatalf("policy identity %q -> %q: %v", before, after, err)
+	}
 }

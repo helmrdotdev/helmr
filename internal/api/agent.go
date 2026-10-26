@@ -7,6 +7,7 @@ import (
 )
 
 type AgentDefinition struct {
+	RuntimeMcp   json.RawMessage `json:"runtime_mcp,omitempty"`
 	InputKind    string          `json:"input_kind"`
 	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
 	TemplateID   string          `json:"template,omitempty"`
@@ -15,6 +16,7 @@ type AgentDefinition struct {
 }
 
 type AgentDefinitionListItem struct {
+	RuntimeMcp  json.RawMessage `json:"runtime_mcp,omitempty"`
 	InputKind   string          `json:"input_kind"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 	TemplateID  string          `json:"template,omitempty"`

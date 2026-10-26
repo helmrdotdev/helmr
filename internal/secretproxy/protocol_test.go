@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"io"
 	"net"
 	"net/http"
@@ -271,7 +272,7 @@ func TestServerFirstAndTCPHalfClose(t *testing.T) {
 		body, _ := io.ReadAll(conn)
 		io.WriteString(conn, "reply:"+string(body))
 	}()
-	p, err := New(Config{AllowedDestination: func(netip.Addr) bool { return true }, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	p, err := New(Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(), AllowedDestination: func(netip.Addr) bool { return true }, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp4", upstream.Addr().String())
 	}, Certificate: func(context.Context, string) (tls.Certificate, error) {
 		return tls.Certificate{}, errors.New("unexpected")
@@ -467,7 +468,7 @@ func TestH2UncertainStreamIsNotReplayed(t *testing.T) {
 func TestDisallowedOriginalDestinationNeverDialsOrResolves(t *testing.T) {
 	for _, ip := range []string{"127.0.0.1", "10.0.0.1", "169.254.169.254", "8.8.8.8"} {
 		t.Run(ip, func(t *testing.T) {
-			policy := &Dialer{Blocked: []netip.Prefix{netip.MustParsePrefix("8.8.8.8/32")}}
+			policy := &Dialer{Installation: &networkpolicy.Installation{BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("8.8.8.8/32")}}}
 			f := newFixtureProtocols(t, 443, true, nil, func(c *Config) {
 				c.AllowedDestination = policy.Allowed
 				c.DialContext = func(context.Context, string, string) (net.Conn, error) {

@@ -1,8 +1,9 @@
+import { normalizeNetwork, normalizeRuntimeMcp, validatePolicyOrigins } from "./policy"
 import type { LoadedAgentDefinition } from "@helmr/sdk/internal"
 import { describeInput } from "./input-schema"
 import type { InputSchemaDiscovery } from "../../../sdk/typescript/src/schema/input"
 import { durationMilliseconds, normalizeInput, normalizeInvocation, encodeComputerSecrets, inspectImage, canonicalizeJsonValue, type InternalImage, type InternalImageStep, type DefinitionIndex, type RuntimeArchitecture } from "@helmr/sdk/internal"
-import type { TemplateDefinition, SecretBinding, JsonValue } from "@helmr/sdk"
+import type { TemplateDefinition, SecretBinding, JsonValue, NetworkPolicy, RuntimeMcpPolicy } from "@helmr/sdk"
 import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
@@ -12,12 +13,15 @@ export interface TemplateManifest {
   readonly deleteAfterUnusedNever?: boolean
   readonly imageBuild: ImageBuild
   readonly resources: { readonly milliCpu: number; readonly memoryMiB: number; readonly diskMiB?: number }
+  readonly network: NetworkPolicy
+  readonly prepareNetwork?: NetworkPolicy
   readonly prepare: boolean
   readonly refresh?: { readonly everyMs: number; readonly maxAgeMs?: number }
   readonly secrets: readonly SecretBinding[]
-  readonly buildSecrets: readonly SecretBinding[]
+  readonly prepareSecrets: readonly SecretBinding[]
 }
 export interface AgentManifest {
+  readonly runtimeMcp?: RuntimeMcpPolicy
   readonly templateDefinitionId: string
   readonly hasInit: boolean
   readonly inputKind: "text" | "json"
@@ -96,6 +100,7 @@ interface LocatedDefinition { readonly definition: Definition; readonly modulePa
 
 export function analyze(options: AnalyzeOptions): AnalysisResult {
   const located = locateDefinitions(options)
+  const agentKeys = new Set(located.filter(x => x.definition.kind === "agent").map(x => x.definition.id))
   const definitions = located.map(({ definition }): BuildPlanDefinition => {
     if (definition.kind === "agent") {
       const triggers: Record<string, { cron: string; timezone: string; input: JsonValue; slack?: { channelId: string } }> = Object.create(null)
@@ -117,6 +122,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
       if (definition.suspension !== undefined && definition.suspension !== "manual" && definition.suspension !== "after_turn") throw new Error("Agent suspension must be manual or after_turn")
       return { kind: "agent", declaredId: definition.id, manifest: {
         ...describeInput(definition.inputSchema, definition.id),
+        ...(definition.runtimeMcp === undefined ? {} : { runtimeMcp: normalizeRuntimeMcp(definition.runtimeMcp, agentKeys, `${definition.id}.runtimeMcp`) }),
         suspension: definition.suspension ?? "manual",
         templateDefinitionId: definition.template.id, hasInit: definition.init !== undefined, triggers,
         ...(definition.closeAfterIdle === undefined ? {} : definition.closeAfterIdle === "never" ? { closeAfterIdleNever: true } : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
@@ -125,14 +131,21 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     }
     const image = inspectImage(definition.image)
     if (!image) throw new Error("Computer image must be created by image()")
+    const network = definition.network === undefined ? { blockAll: false } as const : normalizeNetwork(definition.network, `${definition.id}.network`)
+    const prepareNetwork = definition.prepareNetwork === undefined ? undefined : normalizeNetwork(definition.prepareNetwork, `${definition.id}.prepareNetwork`)
+    const prepareSecrets = secretBindings(definition.prepareSecrets)
+    if (definition.prepare === undefined && (prepareNetwork !== undefined || prepareSecrets.length > 0)) throw new Error(`invalid_network_policy ${definition.id}.prepareNetwork: preparation policy and Secrets require prepare`)
+    const secrets = secretBindings(definition.secrets)
+    validatePolicyOrigins(network,secrets,`${definition.id}.secrets`)
+    validatePolicyOrigins(definition.prepare === undefined ? {blockAll:true} : prepareNetwork ?? network,prepareSecrets,`${definition.id}.prepareSecrets`)
     const refresh = definition.refresh
     if (refresh !== undefined) assertMembers(refresh, ["every", "maxAge"], "Computer refresh")
     return { kind: "template", declaredId: definition.id, manifest: {
       imageBuild: compileImageBuild(image, options), resources: normalizeComputerResources(definition.resources),
-      prepare: definition.prepare !== undefined,
+      prepare: definition.prepare !== undefined, network, ...(prepareNetwork === undefined ? {} : { prepareNetwork }),
       ...(definition.deleteAfterUnused === undefined ? {} : definition.deleteAfterUnused === "never" ? { deleteAfterUnusedNever: true } : { deleteAfterUnusedMs: duration(definition.deleteAfterUnused, "deleteAfterUnused") }),
       ...(refresh === undefined ? {} : { refresh: { everyMs: duration(refresh.every, "refresh.every"), ...(refresh.maxAge === undefined ? {} : { maxAgeMs: duration(refresh.maxAge, "refresh.maxAge") }) } }),
-      secrets: secretBindings(definition.secrets), buildSecrets: secretBindings(definition.buildSecrets),
+      secrets, prepareSecrets,
     } }
   })
   const buildPlan: BuildPlan = { formatVersion: BUILD_PLAN_FORMAT_VERSION, definitions }
@@ -156,7 +169,7 @@ function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
     const value = item.value as Partial<Definition> | undefined
     if (!value || (value.kind !== "agent" && value.kind !== "template")) continue
     if (value.kind === "agent") {
-      assertMembers(value, ["kind", "id", "template", "init", "turn", "inputSchema", "resultSchema", "suspension", "closeAfterIdle", "maxTurnDuration", "triggers"], "Agent")
+      assertMembers(value, ["kind", "id", "template", "init", "turn", "inputSchema", "resultSchema", "suspension", "closeAfterIdle", "maxTurnDuration", "triggers", "runtimeMcp"], "Agent")
       if (typeof value.turn !== "function" || (value.init !== undefined && typeof value.init !== "function") || value.template?.kind !== "template") throw new Error("Invalid Agent definition")
       add(value as Definition, item, false)
       add(value.template, item, true)
@@ -164,7 +177,8 @@ function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
   }
   for (const { definition } of found.values()) {
     if (definition.kind === "template") {
-      assertMembers(definition, ["kind", "id", "image", "resources", "prepare", "refresh", "secrets", "buildSecrets", "deleteAfterUnused"], "Computer")
+      if (Object.hasOwn(definition,"buildSecrets")) throw new Error("Computer buildSecrets was renamed to prepareSecrets")
+      assertMembers(definition, ["kind", "id", "image", "resources", "prepare", "refresh", "secrets", "prepareSecrets", "network", "prepareNetwork", "deleteAfterUnused"], "Computer")
       if (definition.prepare !== undefined && typeof definition.prepare !== "function") throw new Error("Computer prepare must be a function")
     }
   }

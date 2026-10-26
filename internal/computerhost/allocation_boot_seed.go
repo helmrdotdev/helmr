@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"math"
 	"os"
 	"path/filepath"
@@ -285,7 +286,7 @@ func (o *BootSeedAllocationOwner) prepareVM(ctx context.Context, source workerap
 	if err != nil {
 		return vm.MaterializeRequest{}, err
 	}
-	return vm.MaterializeRequest{ID: identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: identity.AllocationID, Generation: 1, ComputerInstanceID: identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: source.Disk.VersionID, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: drives, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: identity.OwnerID, Device: device, VersionID: source.Disk.VersionID, SizeBytes: source.Disk.Root.LogicalBytes}}}, nil
+	return vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseBootSeed, NetworkPolicy: networkpolicy.BlockedPolicy(), NetworkInstallation: source.NetworkInstallation, ID: identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: identity.AllocationID, Generation: 1, ComputerInstanceID: identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: source.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: source.Disk.VersionID, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: drives, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: identity.OwnerID, Device: device, VersionID: source.Disk.VersionID, SizeBytes: source.Disk.Root.LogicalBytes}}}, nil
 }
 func (o *BootSeedAllocationOwner) stopVM(ctx context.Context) error {
 	if o.active == nil {

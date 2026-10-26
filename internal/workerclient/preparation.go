@@ -11,6 +11,8 @@ import (
 )
 
 func (c *Client) RenewPreparation(ctx context.Context, request workerapi.PreparationExecutor) (workerapi.PreparationRenewal, error) {
+	request.Network = c.network
+
 	var response workerapi.PreparationRenewal
 	err := c.postWorkerJSON(ctx, "/worker/v1/allocations/image-build/renew", request, &response)
 	return response, err
@@ -64,6 +66,8 @@ func (c *Client) PreparationSecrets(ctx context.Context, request workerapi.Prepa
 }
 
 func (c *Client) PreparationStart(ctx context.Context, request workerapi.PreparationExecutor) (workerapi.PreparationStart, error) {
+	request.Network = c.network
+
 	var response workerapi.PreparationStart
 	err := c.postWorkerJSON(ctx, "/worker/v1/allocations/image-build/start", request, &response)
 	return response, err

@@ -31,7 +31,10 @@ func (c *Connector) prepareSecretTransport(ctx context.Context, mode launchMode,
 	if c.cfg.PrepareSecretTransport == nil {
 		return nil, errors.New("computer Secret transport preparation is not configured")
 	}
-	return c.cfg.PrepareSecretTransport(ctx, runtimeID, blocked)
+	installation := c.cfg.NetworkInstallation
+	installation.PrivateBusinessCIDRs = append([]netip.Prefix{}, c.cfg.NetworkPrivateBusinessCIDRs...)
+	installation.BlockedIPv4CIDRs = append(append([]netip.Prefix{}, installation.BlockedIPv4CIDRs...), blocked...)
+	return c.cfg.PrepareSecretTransport(ctx, runtimeID, c.cfg.NetworkPolicy, installation, c.cfg.NetworkResolverIPv4)
 }
 
 func protectedPorts(proxy *secretproxy.Proxy) []uint16 {

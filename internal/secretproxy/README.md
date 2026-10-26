@@ -1,21 +1,41 @@
 # Host mediation ownership
 
-The Firecracker network binding owns one Proxy per runtime. Accepted original
-destination sockets stay in the listener namespace. Outbound sockets originate
-in the host namespace, use the original numeric public IPv4 destination, and
-verify the exact protected service hostname with ordinary TLS. Shared IPs do not
-convey credential authority. Every HTTP request checks its authority and resolves
-header selectors against the immutable live runtime binding and the admitted Command or Session process's pinned Secret version.
+The Firecracker network binding owns one Proxy per runtime, including restricted
+Computers without protected Secrets. Accepted original-destination sockets stay
+in the listener namespace; upstream sockets originate on host threads. The
+immutable resolved phase policy governs every branch. Full blocking creates no
+forwarding or DNS grant. Ordinary IPv4 traffic remains subject to reserved,
+management, host and peer denies and the installation RFC1918 business ceiling.
+
+In domain-list mode, all TCP/443 is captured. The gateway reads at most 64KiB of
+fragmented ClientHello records within ten seconds before any upstream contact.
+It requires one allowed SNI, rejects ECH and malformed, plaintext or absent-SNI
+traffic, and resolves the absolute hostname through the installation resolver.
+Each actual numeric IPv4 dial independently checks one complete matching entry,
+its address bounds, the current host ceiling and mandatory denies. The guest's
+original numeric destination is never upstream authority. Other ports, protocols
+and external DNS cannot bypass capture through guest-root routes or proxy settings.
+Ordinary mode retains existing server-first/opaque handling on protected ports;
+its speculative numeric sockets still pass the same installation address check.
+
+Protected HTTPS additionally verifies exact origin authority and resolves header
+selectors against the immutable allocation and the admitted Command or Session
+process's pinned Secret version. A Secret never grants network connectivity.
+Unprotected domain-list traffic remains end-to-end TLS: connection-time SNI checks
+do not authenticate HTTP Host/path, SaaS accounts or encrypted domain fronting.
+
+The namespace-local selective DNS service accepts one bounded question per query
+and admits at most 64 concurrent operations. It forwards only matching A questions,
+filters addresses through the same policy, returns NODATA for matching AAAA and
+REFUSED for unlisted names/other types, and never forwards the guest's query
+payload. It uses no policy-created alternate resolver or metadata exception.
+DNS sockets and in-flight lookups close with their allocation network owner.
 
 The proxy admits 256 captured workers before starting goroutines or dialing.
-Each worker owns an accepted socket, at most one speculative/opaque upstream,
-ClientHello recording (64KiB), and its read/copy goroutines. Other-port kernel
-forwarding and loopback do not consume this admission. Overflow closes the
-accepted socket without creating a worker or upstream; no user-space queue.
-A speculative socket is handed to at most one protected request transport after
-classification, through its existing peek reader. This avoids a discarded extra
-connection while preserving immediate server-first protocols. No authenticated
-upstream connection is pooled between requests.
+Each worker owns an accepted socket, at most one speculative/opaque upstream in
+ordinary mode, ClientHello recording (64KiB), and its read/copy goroutines.
+Overflow closes the accepted socket without allocating a worker or upstream.
+No authenticated upstream connection is pooled between protected requests.
 
 A separate admission of 256 complete protected requests bounds multiplexed
 forwarding work and transports. Overflow returns a fixed 503 before parsing
@@ -95,3 +115,25 @@ release, runtime isolation, more than64 simultaneous ordinary TLS streams, and
 H1/H2 streaming. Linux namespace tests exercise real rendered TPROXY policy,
 preflight isolation, redirects, drift and stale TCP fencing. Neither test class
 is proof of a Firecracker image boot/restore with actual guest workloads.
+
+The focused native Linux packet fixtures are `TestNetworkGatewayNamespace` and
+`TestNetworkOrdinaryPrivateNamespace`, gated by `HELMR_TEST_NAMESPACE=1` on a
+disposable privileged host. They use root guest namespaces, real nftables/TPROXY,
+synthetic upstream dials, selected DNS and ordinary private/public UDP endpoints.
+They cover bypass rejection and full-block phase installation while gateway/DNS
+services remain alive. They do not execute a VM, adopt a real prepared VM or
+qualify KVM checkpoint restoration. The immutable-policy and adoption data paths
+also require the real VM qualification suite before release.
+
+Gateway and selective-DNS decisions use the existing structured Worker logger.
+Each installed allocation shares separate nonblocking allow and deny diagnostic
+budgets, each at ten records per second with a burst of twenty. Allowed traffic
+cannot consume the denial budget. Saturating counters track suppressed allow and
+deny records; the next admitted record reports and resets both counters without
+a timer, queue or per-destination state. Records contain the immutable policy digest,
+validated execution phase, physical owner, logical allocation and canonical
+hostname/numeric destination with a fixed decision reason. Computer IDs are
+present only for runtime traffic; preparation/seed IDs never stand in for a
+logical Computer, and unknown Session/Turn attribution remains null. These are
+bounded destination diagnostics, not a complete per-packet audit. Payloads,
+credential selectors and raw transport errors are not recorded.

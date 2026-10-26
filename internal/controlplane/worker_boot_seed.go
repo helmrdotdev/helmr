@@ -5,6 +5,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -21,7 +22,7 @@ func bootSeedExecutor(in workerapi.BootSeedExecutor) (computer.BootSeedExecutor,
 }
 
 func (s *Server) workerDeliverBootSeed(w http.ResponseWriter, r *http.Request) {
-	identity, err := decodeAllocationIdentity(r, "seed")
+	identity, err := s.decodeNetworkAllocation(r, "seed")
 	if err != nil {
 		s.writeAllocationError(w, r, err)
 		return
@@ -41,6 +42,10 @@ func (s *Server) workerBootSeedStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer clear(request.ChannelCredential)
+	if err := s.checkWorkerNetwork(request.Network); err != nil {
+		s.writeAllocationError(w, r, err)
+		return
+	}
 	ref, err := bootSeedExecutor(request)
 	if err != nil {
 		s.writeAllocationError(w, r, err)
@@ -72,7 +77,7 @@ func (s *Server) workerBootSeedStart(w http.ResponseWriter, r *http.Request) {
 		s.writeAllocationError(w, r, err)
 		return
 	}
-	response := workerapi.ComputerAllocationSource{BootProgram: &program, RootfsDigest: start.RootfsDigest, ImageConfig: start.ImageConfig,
+	response := workerapi.ComputerAllocationSource{NetworkPolicy: networkpolicy.BlockedPolicy(), NetworkInstallation: s.networkInstallation, BootProgram: &program, RootfsDigest: start.RootfsDigest, ImageConfig: start.ImageConfig,
 		Disk: workerapi.ComputerSourceMaterial{VersionID: source.BaseVersion, Root: source.Root}}
 	for _, key := range source.Keys {
 		response.Disk.Keys = append(response.Disk.Keys, workerapi.ComputerKeyMaterial{Scope: source.Scope, ID: key.ID.String(), Key: key.Key})
@@ -88,6 +93,10 @@ func (s *Server) workerRenewBootSeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer clear(request.ChannelCredential)
+	if err := s.checkWorkerNetwork(request.Network); err != nil {
+		s.writeAllocationError(w, r, err)
+		return
+	}
 	ref, err := bootSeedExecutor(request)
 	if err != nil {
 		s.writeAllocationError(w, r, err)

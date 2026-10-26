@@ -1,6 +1,7 @@
 package firecracker
 
 import (
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"net/netip"
 	"strings"
 	"testing"
@@ -8,12 +9,12 @@ import (
 
 func renderNetworkPolicyForTest(t *testing.T) string {
 	t.Helper()
-	script, err := renderNetworkPolicy(networkPolicyInput{
+	script, err := renderNetworkPolicy(networkPolicyInput{Policy: networkpolicy.OrdinaryPolicy(),
 		Tap: "tap0", Peer: "veth0", Mark: 71,
 		GuestIPv4: "169.254.64.2", TranslationIPv4: "100.96.0.2",
 		BlockedIPv4CIDRs: []netip.Prefix{
-			netip.MustParsePrefix("192.0.2.0/30"),
-			netip.MustParsePrefix("192.0.2.4/32"),
+			netip.MustParsePrefix("8.8.8.0/30"),
+			netip.MustParsePrefix("8.8.8.4/32"),
 		},
 		ResolverIPv4: "10.20.0.2",
 	})
@@ -25,7 +26,7 @@ func renderNetworkPolicyForTest(t *testing.T) string {
 
 func TestNetworkPolicyUsesSuppliedDenySetAndDNSException(t *testing.T) {
 	script := renderNetworkPolicyForTest(t)
-	for _, prefix := range []string{"192.0.2.0/30", "192.0.2.4/32"} {
+	for _, prefix := range []string{"8.8.8.0/30", "8.8.8.4/32"} {
 		if !strings.Contains(script, prefix) {
 			t.Fatalf("script is missing supplied prefix %q:\n%s", prefix, script)
 		}
@@ -63,7 +64,7 @@ func TestRunNetworkPolicyIsClosedAroundBinding(t *testing.T) {
 }
 
 func TestNetworkPolicyRendererRejectsIncompleteBinding(t *testing.T) {
-	valid := networkPolicyInput{
+	valid := networkPolicyInput{Policy: networkpolicy.OrdinaryPolicy(),
 		Tap: "tap0", Peer: "veth0", Mark: 1,
 		GuestIPv4: "169.254.64.2", TranslationIPv4: "100.96.0.2",
 		BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")},
@@ -94,7 +95,7 @@ func TestNetworkPolicyRendererRejectsIncompleteBinding(t *testing.T) {
 }
 
 func TestProtectedCapturePreservesIngressAndPortAuthority(t *testing.T) {
-	script, err := renderNetworkPolicy(networkPolicyInput{Tap: "tap0", Peer: "host0", Mark: 71, GuestIPv4: "192.168.127.2", TranslationIPv4: "100.96.0.2", BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, ResolverIPv4: "10.0.0.2", ProtectedPorts: []uint16{8443, 443, 8443}})
+	script, err := renderNetworkPolicy(networkPolicyInput{Policy: networkpolicy.OrdinaryPolicy(), Tap: "tap0", Peer: "host0", Mark: 71, GuestIPv4: "192.168.127.2", TranslationIPv4: "100.96.0.2", BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, ResolverIPv4: "10.0.0.2", ProtectedPorts: []uint16{8443, 443, 8443}})
 	if err != nil {
 		t.Fatal(err)
 	}

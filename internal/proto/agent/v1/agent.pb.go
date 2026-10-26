@@ -2784,8 +2784,10 @@ type GuestSessionMessage struct {
 	// Pending mutations retain their original admission generation when replayed.
 	OperationAuthorityGeneration int64 `protobuf:"varint,8,opt,name=operation_authority_generation,json=operationAuthorityGeneration,proto3" json:"operation_authority_generation,omitempty"`
 	OperationLeaseEpoch          int64 `protobuf:"varint,9,opt,name=operation_lease_epoch,json=operationLeaseEpoch,proto3" json:"operation_lease_epoch,omitempty"`
-	unknownFields                protoimpl.UnknownFields
-	sizeCache                    protoimpl.SizeCache
+	// Guest relay supplied scope reference, outside authored arguments.
+	OperationMcpScopeId string `protobuf:"bytes,13,opt,name=operation_mcp_scope_id,json=operationMcpScopeId,proto3" json:"operation_mcp_scope_id,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *GuestSessionMessage) Reset() {
@@ -2919,6 +2921,13 @@ func (x *GuestSessionMessage) GetOperationLeaseEpoch() int64 {
 		return x.OperationLeaseEpoch
 	}
 	return 0
+}
+
+func (x *GuestSessionMessage) GetOperationMcpScopeId() string {
+	if x != nil {
+		return x.OperationMcpScopeId
+	}
+	return ""
 }
 
 type isGuestSessionMessage_Message interface {
@@ -3839,7 +3848,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x10KIND_UNSPECIFIED\x10\x00\x12\r\n" +
 	"\tKIND_DATA\x10\x01\x12\f\n" +
 	"\bKIND_GAP\x10\x02\x12\f\n" +
-	"\bKIND_END\x10\x03\"\xc2\x05\n" +
+	"\bKIND_END\x10\x03\"\xf7\x05\n" +
 	"\x13GuestSessionMessage\x12;\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1f.helmr.agent.v1.SessionIdentityR\bidentity\x12/\n" +
 	"\x13attachment_sequence\x18\x02 \x01(\x04R\x12attachmentSequence\x12=\n" +
@@ -3853,7 +3862,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x0edrain_evidence\x18\x06 \x01(\tR\rdrainEvidence\x12%\n" +
 	"\x0eevent_sequence\x18\a \x01(\x04R\reventSequence\x12D\n" +
 	"\x1eoperation_authority_generation\x18\b \x01(\x03R\x1coperationAuthorityGeneration\x122\n" +
-	"\x15operation_lease_epoch\x18\t \x01(\x03R\x13operationLeaseEpochB\t\n" +
+	"\x15operation_lease_epoch\x18\t \x01(\x03R\x13operationLeaseEpoch\x123\n" +
+	"\x16operation_mcp_scope_id\x18\r \x01(\tR\x13operationMcpScopeIdB\t\n" +
 	"\amessage\"\x9e\x02\n" +
 	"\x16ComputerSessionCapture\x12H\n" +
 	"\benvelope\x18\x01 \x01(\v2,.helmr.computer.v0.ComputerOperationEnvelopeR\benvelope\x12#\n" +
