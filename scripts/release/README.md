@@ -91,16 +91,16 @@ set the development series used in preview names; update them when that series
 changes, not for every RC or patch tag.
 
 GitHub generates the release body from repository history when the publisher
-creates its draft. Release notes are maintained in GitHub Releases; no per-version
-Markdown file or changelog update is required in this repository. Generated notes
-are a change listing, not a substitute for reviewing compatibility and installation
-instructions.
+creates its draft. Release notes are maintained in GitHub Releases; no
+per-version Markdown file or changelog update is required in this repository.
+Generated notes are a change listing, not a substitute for reviewing
+compatibility and installation instructions.
 
 After the release workflow completes successfully, an authorized maintainer can
-edit the release body in GitHub Releases to add highlights or compatibility notes.
-This changes the prose without rebuilding artifacts or moving the tag. Do not
-pre-create a release or manually publish the workflow's draft: human-tag admission
-rejects an existing release, and the workflow owns completion after verification.
+edit only the release body in GitHub Releases to add highlights or compatibility
+notes, leaving assets, the tag, and prerelease/latest settings unchanged. Do not
+pre-create a release or manually publish the workflow's draft: the tag workflow
+rejects an existing release, and owns completion after verification.
 The current flow publishes generated notes automatically; it has no manual
 editorial approval step before publication.
 
