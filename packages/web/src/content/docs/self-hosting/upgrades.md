@@ -36,6 +36,26 @@ The standalone CLI evaluates project configuration with Node from the caller's
 host installation separately. The Nix CLI package supplies the Product-pinned
 Node release.
 
+## Network and Runtime MCP policy migration
+
+Migration `000002_network_and_runtime_policies` adds definition policies and
+process-owned MCP scopes. It preserves existing definition rows with ordinary
+network access, ordinary preparation access when a callback exists (blocking
+otherwise), and unrestricted MCP access subject to base authorization.
+
+Before switching to this release, finish existing work and delete its Computers,
+including hibernated Computers. Redeploy applications with the new release before
+starting new work so their preparation specifications bind the phase network
+policy. The database migration does not qualify old preparations or checkpoints:
+the new release rejects their missing policy bindings instead of supplying an
+implicit policy. Reusing an old Deployment can therefore fail preparation even
+after its definition rows have migrated successfully.
+
+Stop policy-governed work before rolling this migration back. Its down migration
+discards definition policies and MCP scopes; an older release cannot enforce those
+restrictions. Qualify the intended rollback and replacement Deployments before
+resuming work.
+
 ## Prepare artifacts, recovery and authentication
 
 Record the exact source and target `helmr_version`, digest-pinned

@@ -1,4 +1,3 @@
-DROP TABLE IF EXISTS session_mcp_scopes;
 DROP TABLE IF EXISTS slack_work_items;
 DROP TABLE IF EXISTS computer_controls;
 DROP TABLE IF EXISTS audit_events;
