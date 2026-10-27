@@ -174,9 +174,11 @@ require_text "COPY zoneinfo/ /usr/share/zoneinfo/" "$controlplane_builder" \
   "Control Plane image omits the pinned timezone rules"
 require_text "COPY tzdb_names.txt /usr/local/share/helmr/tzdb_names.txt" "$controlplane_builder" \
   "Control Plane image omits the canonical timezone manifest"
-require_text 'DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH = "/usr/local/share/helmr/runtime.descriptor.json"' \
-  "$repo_root/infra/aws/modules/controlplane/main.tf" \
-  "Control Plane task does not select the packaged Runtime descriptor"
+rg -q '^ +DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH += +"/usr/local/share/helmr/runtime\.descriptor\.json"$' \
+  "$repo_root/infra/aws/modules/controlplane/main.tf" || {
+  printf 'Control Plane task does not select the packaged Runtime descriptor\n' >&2
+  exit 1
+}
 require_text '"${docker_bin}" create "${image_uri}"' "$repo_root/scripts/verify-controlplane-image-build.sh" \
   "Control Plane image verifier does not inspect the distroless filesystem"
 require_text '"${docker_bin}" cp' "$repo_root/scripts/verify-controlplane-image-build.sh" \

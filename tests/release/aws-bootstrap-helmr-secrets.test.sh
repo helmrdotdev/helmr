@@ -17,7 +17,8 @@ case "$*" in
       auth_key:"arn:auth-key",
       encryption_key:"arn:encryption-key",
       computer_fencing_key:"arn:computer-fencing-key",
-      checkpoint_encryption_key:"arn:checkpoint-encryption-key"
+      checkpoint_encryption_key:"arn:checkpoint-encryption-key",
+      github_oauth_client_secret:"arn:github-oauth-client-secret"
     } + if $setup == "1" then {setup_token:"arn:setup-token",computer_wrapping_key:"arn:computer-wrapping-key"} else {} end'
     ;;
   'output -raw worker_enrollment_secret_arn') printf 'arn:worker-enrollment-token\n' ;;
@@ -38,7 +39,17 @@ case "$1 $2" in
     esac
     ;;
   'secretsmanager put-secret-value')
-    printf '%s\n' "$*" >>"${MOCK_PUT_LOG:?}"
+    [ "$#" = 4 ]
+    [ "$3" = --cli-input-json ]
+    [[ "$4" = file://* ]]
+    request_file="${4#file://}"
+    python3 - "$request_file" <<'PYMODE'
+import os, stat, sys
+assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o600
+PYMODE
+    printf '%s\n' "$request_file" >>"${MOCK_REQUEST_LOG:?}"
+    jq -c . "$request_file" >>"${MOCK_PUT_LOG:?}"
+    [ "${MOCK_WRITE_FAIL:-0}" = 0 ]
     ;;
   *) exit 92 ;;
 esac
@@ -48,6 +59,7 @@ chmod +x "${tmp}/bin/mock-tofu" "${tmp}/bin/aws"
 run_helper() {
   MOCK_SECRET_STATUS="$1" \
     MOCK_PUT_LOG="${tmp}/puts" \
+    MOCK_REQUEST_LOG="${tmp}/requests" \
     TOFU="${tmp}/bin/mock-tofu" \
     PATH="${tmp}/bin:${PATH}" \
     "${script}" >"${tmp}/stdout" 2>"${tmp}/stderr"
@@ -68,12 +80,12 @@ run_helper missing
 }
 
 python3 - "${tmp}/puts" <<'PYTEST'
-import base64, pathlib, shlex, sys
+import base64, json, pathlib, sys
 lines=pathlib.Path(sys.argv[1]).read_text().splitlines()
 values={}
 for line in lines:
-    args=shlex.split(line)
-    values[args[args.index('--secret-id')+1]]=args[args.index('--secret-string')+1]
+    request=json.loads(line)
+    values[request['SecretId']]=request['SecretString']
 assert len(base64.b64decode(values['arn:computer-wrapping-key'],validate=True))==32
 assert values['arn:computer-wrapping-key']!=values['arn:encryption-key']
 PYTEST
@@ -86,6 +98,17 @@ MOCK_SETUP_TOKEN_PRESENT=0 run_helper missing
 }
 
 : >"${tmp}/puts"
+HELMR_GITHUB_OAUTH_CLIENT_SECRET=$'synthetic 秘密 % $ ` \"\r\nwith whitespace\n' run_helper missing
+python3 - "${tmp}/puts" "${tmp}/stdout" "${tmp}/stderr" <<'PYTEST'
+import json, pathlib, sys
+values={item['SecretId']: item['SecretString'] for item in map(json.loads,pathlib.Path(sys.argv[1]).read_text().splitlines())}
+expected='synthetic 秘密 % $ ` "\r\nwith whitespace\n'
+assert values['arn:github-oauth-client-secret']==expected
+for output in sys.argv[2:]:
+    assert expected.encode() not in pathlib.Path(output).read_bytes()
+PYTEST
+
+: >"${tmp}/puts"
 if run_helper denied; then
   printf 'secret read authorization failure was treated as a missing value\n' >&2
   exit 1
@@ -94,5 +117,14 @@ fi
   printf 'a secret was written after authorization failure\n' >&2
   exit 1
 }
+
+if MOCK_WRITE_FAIL=1 run_helper missing; then
+  printf 'secret write failure was ignored\n' >&2
+  exit 1
+fi
+
+while IFS= read -r request_file; do
+  [ ! -e "$request_file" ] || { printf 'secret request file was retained\n' >&2; exit 1; }
+done <"${tmp}/requests"
 
 printf 'ok - AWS secret initialization is create-only\n'
