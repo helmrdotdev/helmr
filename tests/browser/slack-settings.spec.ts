@@ -283,7 +283,8 @@ for (const authorized of [false, true]) {
       manifest: { features: { bot_user: { always_online: true } }, oauth_config: { scopes: { bot: ["im:history", "im:read"] } } },
     } }));
     const panel = await openAgent(page);
-    await expect(panel).toContainText("Organization members, including viewers, can read their input and output");
+    await expect(panel).toContainText("Members assigned View all sessions or Manage all sessions for this agent can access their history.");
+    await expect(panel).toContainText("Sending input, answering questions or resuming another person’s session also requires Use agents.");
     if (authorized) {
       await expect(panel).toContainText("message it directly without a mention");
       await expect(panel.getByText("Direct messages need additional Slack permissions.", { exact: false })).toHaveCount(0);

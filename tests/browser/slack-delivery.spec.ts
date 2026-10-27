@@ -12,7 +12,7 @@ const path = `${base}/sessions/${sessionID}`;
 const pageURL = `/sessions/${sessionID}?project=${projectID}&environment=${environmentID}`;
 const initial = (): SlackDeliveryPost => ({ id: postID, turn_id: null, sequence: 1, role: "intermediate", continuation_ordinal: 0, status: "uncertain", text: "Agent progress that may already be in Slack", payload_expired_at: null, created_at: now, desired_revision: 2, confirmed_revision: 0, publication_revision: 2, method: "chat.postMessage", attempt_id: attemptID, message_ts: null, root_known: true, opening: false, stream_status: "none", check_paused_at: now, disposed_at: null, disposed_by: null, error: "history_no_match" });
 
-async function fixture(page: Page, role = "owner", supplied?: SlackDeliveryPost[]) {
+async function fixture(page: Page, canRecover = true, supplied?: SlackDeliveryPost[]) {
   let posts = supplied ?? [initial()];
   const writes: { path: string; body: unknown }[] = [];
   let conflict = false;
@@ -21,7 +21,7 @@ async function fixture(page: Page, role = "owner", supplied?: SlackDeliveryPost[
     const environment = { environment: environmentID, project: projectID, name: "Development", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
     const project = { project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
     let json: unknown;
-    if (endpoint === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role, permissions: ["sessions.read"], admin: false, organization_required: false, project_required: false };
+    if (endpoint === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", is_owner: false, permissions: [], permission_scopes: [{ project: projectID, environment: environmentID, agent: "support", permissions: ["sessions.read", ...(canRecover ? ["sessions.check_delivery", "sessions.abandon_delivery"] : [])] }], admin: false, organization_required: false, project_required: false };
     else if (endpoint === "/api/projects") json = { projects: [project] };
     else if (endpoint === `/api/projects/${projectID}`) json = project;
     else if (endpoint === base) json = environment;
@@ -90,7 +90,7 @@ test("readers see unknown roots and retained stream evidence without recovery au
   await page.setViewportSize({ width: 390, height: 844 });
   const first = { ...initial(), root_known: false, opening: true, status: "failed", disposed_at: now, disposed_by: "manager" };
   const second = { ...initial(), id: "00000000-0000-7000-8000-000000000796", sequence: 2, stream_status: "uncertain", method: "chat.startStream", status: "failed", disposed_at: now, disposed_by: "manager", text: "Stream evidence still retained" };
-  const { writes } = await fixture(page, "member", [first, second]);
+  const { writes } = await fixture(page, false, [first, second]);
   await expect(page.getByText("Later messages remain blocked", { exact: false })).toBeVisible();
   await expect(page.getByText("Send work from the CLI or Slack.", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Load more delivery issues" }).click();

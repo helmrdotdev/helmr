@@ -4,7 +4,7 @@ import { hasPermission } from "../lib/auth";
 import { APIKeyAccess } from "../features/access/APIKeyAccess";
 import { Notice } from "../ui/Notice";
 import { listMembers } from "../lib/members";
-import { listRoles, listAccessTargets, resourceLabel, type PermissionDefinition, type PermissionRole } from "../lib/permissions";
+import { listRoles, listAccessTargets, resourceLabel, permissionHasScope, type PermissionDefinition, type PermissionRole } from "../lib/permissions";
 import { createQuery, createInfiniteQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { Select, type SelectOption } from "../ui/Select";
@@ -115,7 +115,7 @@ function IssueApiKeyDialog(props: {
   const environment = () => targets.data?.targets.find(t=>t.environment === props.environmentID);
   const role = () => props.roles.find(r=>r.id === roleID());
   const resources = () => [...new Set((role()?.permissions ?? []).map(p=>props.catalog.find(c=>c.id===p)?.resource_type).filter((r):r is string=>!!r))];
-  const hasAgents = () => resources().includes("agents");
+  const hasAgents = () => (role()?.permissions ?? []).some(permission => permissionHasScope(permission, "agent", props.catalog));
   const roleReady = () => !props.rolesLoading && !props.rolesError && !!role() && !!environment() && !targets.error && (!hasAgents() || mode()==="all" || agents().length>0);
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
@@ -178,7 +178,7 @@ function IssueApiKeyDialog(props: {
         <Show when={hasAgents()}><Field label="Agent targets"><Select value={mode()} options={[{value:"selected" as const,label:"Selected agents"},{value:"all" as const,label:"All current and future agents"}]} onChange={value=>{setMode(value);setAgents([]);}} /></Field>
           <Show when={mode()==="selected"}><fieldset class="max-h-44 space-y-2 overflow-y-auto border border-console-border p-3"><legend class="px-1 text-control">Select agents</legend><For each={environment()?.agents} fallback={<p class="text-control text-console-muted">No agents available in this environment.</p>}>{agent=><label class="flex items-center gap-2 text-control"><input type="checkbox" class="accent-console-accent" checked={agents().includes(agent.id)} onChange={e=>setAgents(ids=>e.currentTarget.checked ? [...ids,agent.id] : ids.filter(id=>id!==agent.id))}/>{agent.key}</label>}</For></fieldset></Show>
         </Show>
-        <Show when={role()}><div class="space-y-1 text-control"><p class="font-medium">Access summary</p><For each={resources()}>{resource=><p>{resourceLabel(resource)}: {resource === "agents" ? mode()==="all" ? "All current and future agents" : environment()?.agents.filter(a=>agents().includes(a.id)).map(a=>a.key).join(", ") || "No agents selected" : "Entire environment"} — {role()!.permissions.filter(p=>props.catalog.find(c=>c.id===p)?.resource_type===resource).map(p=>props.catalog.find(c=>c.id===p)?.name ?? p).join(" · ")}</p>}</For></div></Show>
+        <Show when={role()}><div class="space-y-1 text-control"><p class="font-medium">Access summary</p><For each={resources()}>{resource=><p>{resourceLabel(resource)}: {role()!.permissions.some(permission => props.catalog.find(c => c.id === permission)?.resource_type === resource && permissionHasScope(permission, "agent", props.catalog)) ? mode()==="all" ? "All current and future agents" : environment()?.agents.filter(a=>agents().includes(a.id)).map(a=>a.key).join(", ") || "No agents selected" : "Entire environment"} — {role()!.permissions.filter(p=>props.catalog.find(c=>c.id===p)?.resource_type===resource).map(p=>props.catalog.find(c=>c.id===p)?.name ?? p).join(" · ")}</p>}</For></div></Show>
       </Show>
       <p class="text-control text-console-muted">Everyone holding this secret acts as the same identity and shares ownership of its sessions. Role changes apply to future operations.</p>
     </FormDialog>
@@ -257,7 +257,7 @@ export function ApiKeys() {
         title="API keys"
         subtitle="Machine identities with role assignments for one environment."
         actions={
-          <Show when={can("create")}>
+          <Show when={can("create") && !(keys.isSuccess && filter() === "active" && keyItems().length === 0)}>
             <button
               class={ui.button}
               type="button"

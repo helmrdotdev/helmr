@@ -132,7 +132,7 @@ export function TemplateList() {
           error={templatesFailure}
           empty={{
             when: (data) => data.pages.every(page => page.items.length === 0),
-            title: "No templates in the current deployment.",
+            title: definitions.data?.pages[0]?.deployment_id === "" ? "No current deployment." : "No templates in the current deployment.",
             hint: "Add templates in your code and deploy them.",
           }}
         >

@@ -100,13 +100,13 @@ export function AgentList() {
   const [search, setSearch] = createSignal("");
   const agents = createInfiniteQuery(() => ({
     queryKey: ["agents", "catalog", scope().projectID, scope().environmentID, catalogView()],
-    queryFn: async ({ pageParam }): Promise<{ agents: AgentRow[]; next_cursor?: string | undefined }> => {
+    queryFn: async ({ pageParam }): Promise<{ agents: AgentRow[]; deployment_id?: string; next_cursor?: string | undefined }> => {
       if (all()) return listRetainedAgents(scope(), pageParam || undefined, catalogView() === "deleted" ? "deleted" : "all");
       const page = await listAgentDefinitions({ ...scope(), cursor: pageParam || undefined, limit: 100 }).catch(error => {
         if (error instanceof ApiError && error.code === "no_current_deployment") return { agents: [], deployment_id: "", next_cursor: undefined };
         throw error;
       });
-      return { agents: page.agents.map(item => ({ agent: item.agent, template: item.template, defined_in_current: true, deleted_at: null, revision: 0, current_deployment_id: page.deployment_id })), next_cursor: page.next_cursor };
+      return { agents: page.agents.map(item => ({ agent: item.agent, template: item.template, defined_in_current: true, deleted_at: null, revision: 0, current_deployment_id: page.deployment_id })), deployment_id: page.deployment_id, next_cursor: page.next_cursor };
     },
     initialPageParam: "", getNextPageParam: page => page.next_cursor,
     enabled: !!scope().projectID && !!scope().environmentID, retry: false, refetchInterval: 15_000,
@@ -131,7 +131,7 @@ export function AgentList() {
       error={failure}
       empty={{
         when: (data) => data.pages.every(page => page.agents.length === 0),
-        title: catalogView() === "deleted" ? "No deleted agents." : all() ? "No agents registered in this environment." : "No agents in the current deployment.",
+        title: catalogView() === "deleted" ? "No deleted agents." : all() ? "No agents registered in this environment." : agents.data?.pages[0]?.deployment_id === "" ? "No current deployment." : "No agents in the current deployment.",
         hint: all() ? undefined : "Show all agents to manage retained connections and history.",
       }}
     >

@@ -145,7 +145,7 @@ export function Secrets() {
         title="Secrets"
         subtitle="Values are never displayed after saving."
         actions={
-          <Show when={can("create")}>
+          <Show when={can("create") && !(secrets.isSuccess && secrets.data.secrets.length === 0)}>
             <button class={ui.button} type="button" disabled={!edited.environment() || !can("create")} onClick={() => edit(null)}>
               {edited.environment() ? `Set secret in ${edited.environment()!.name}` : "Set secret"}
             </button>
@@ -157,12 +157,12 @@ export function Secrets() {
         <QueryState
           query={secrets}
           pending={<TableSkeleton label="Loading secrets" columns={COLUMNS} minWidth="min-w-160" />}
-          error={(error) => loadError(error, "Could not load secrets.", SECRET_ERROR_MESSAGES)}
+          error={(error) => loadError(error, "Could not load secrets.", { ...SECRET_ERROR_MESSAGES, forbidden: "You do not have permission to view secrets." })}
           empty={{
             when: (data) => data.secrets.length === 0,
             title: `No secrets in ${edited.environment()?.name ?? "this environment"} yet.`,
             hint: "Secrets hold tokens and keys your agents read at run time, such as an OpenAI or Slack token.",
-            action: <button type="button" class={ui.button} disabled={!edited.environment() || !can("create")} onClick={() => edit(null)}>Set secret</button>,
+            action: can("create") ? <button type="button" class={ui.button} disabled={!edited.environment()} onClick={() => edit(null)}>Set secret</button> : undefined,
           }}
         >
           {(data) => (
