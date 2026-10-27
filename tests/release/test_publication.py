@@ -106,6 +106,7 @@ class Publication(unittest.TestCase):
                      patch.object(publish, 'sign', side_effect=fake_sign):
                     release = publish.stage(api, selected, root)
                 self.assertEqual(release['body'], body if with_notes else '')
+                self.assertEqual(release['generate_release_notes'], not with_notes)
                 self.assertTrue(release['draft'])
                 self.assertTrue(release['prerelease'])
                 self.assertEqual(release['make_latest'], 'false')

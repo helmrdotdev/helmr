@@ -192,6 +192,7 @@ def stage(api, selection, directory):
         notes = Path(__file__).with_name('notes') / f'{index["version"]}.md'
         release = api.request('releases', data=dict(tag_name=index['version'], target_commitish=index['sourceCommit'],
                     name=index['version'], body=notes.read_text(encoding='utf-8') if notes.is_file() else '',
+                    generate_release_notes=not notes.is_file(),
                     draft=True, prerelease='-' in index['version'], make_latest='false'))
     bind_release(release, selection)
     require(release['draft'], 'release is already complete; use completed-byte admission')

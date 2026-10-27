@@ -72,14 +72,29 @@ present original parts, and missing never-published parts can build. Ambiguous o
 expired listed artifacts fail. Published bytes are never silently replaced.
 Start a fresh dispatch for a new source or a new build identity.
 
-Stable `v*` tags use the same release-owned build and integration path, require
-successful main source CI, and publish through GitHub Releases. Generated preview
+Version `v*` tags, including release candidates, use the same release-owned build
+and integration path, require successful main source CI, and publish through
+GitHub Releases. Generated preview
 tags are excluded. Human-tag runs remain single-attempt; a partially published tag
 requires a new tag rather than a retry with replacement bytes.
 
-To include release notes at publication, commit `scripts/release/notes/<tag>.md`
-before tagging. The publisher copies that file into the GitHub draft's body;
-tags without a notes file retain an empty body.
+The normal release operation is to select an exact main commit with successful
+source CI, optionally validate a main preview, then push an authorized version
+tag such as `v0.2.0-rc.1` or `v0.2.0`. The tag starts the release workflow;
+no dedicated release PR is required. The workflow builds and verifies the
+artifacts, stages publication, verifies downloaded consumers, and completes the
+release only after those gates pass. Publishing a release does not deploy an
+environment.
+
+The tag supplies the released package version. The SDK/proto source versions
+set the development series used in preview names; update them when that series
+changes, not for every RC or patch tag.
+
+GitHub generates release notes by default. For a release needing curated notes,
+commit `scripts/release/notes/<tag>.md` before tagging. The publisher uses that
+file verbatim as the draft body instead of generated notes. This optional
+override is useful for the first release or a compatibility announcement; a
+notes file is not required for each release.
 
 Tag publishers export immutable signed readback artifacts identified by publisher
 run, attempt, artifact ID and digest. The unprivileged verifier checks native ZIP
