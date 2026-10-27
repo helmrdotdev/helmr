@@ -148,8 +148,9 @@ Before declaring a deployment ready, preserve exact image/source/configuration
 identities and verify:
 
 1. From a company-connected client, HTTPS/CLI/Console/streaming work at the private
-   origin. From an external client, application listeners are unreachable. Check
-   the S3 upload exception separately.
+   origin. From an external client, application listeners are unreachable.
+   Verify deployment uploads use the authenticated private origin and direct
+   quarantine writes from outside the approved S3 endpoint are denied.
 2. GitHub login, Slack app installation and user linking return through the private
    browser callback. No public callback relay or temporary public listener exists.
 3. Real Slack messages, choices, modal opening/submission and duplicate delivery
