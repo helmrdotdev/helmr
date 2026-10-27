@@ -461,6 +461,7 @@ variable "retained_worker_generations" {
         computer = object({
           devices = list(string)
         })
+        environment     = map(string)
         contract_digest = string
         enable_ssm      = bool
         network = object({
@@ -762,6 +763,12 @@ variable "controlplane_environment" {
   default     = {}
 }
 
+variable "dispatcher_environment" {
+  description = "Additional non-secret environment variables for helmr-dispatcher, including explicitly chosen diagnostic export limits. Managed Helmr variables remain owned by the controlplane module."
+  type        = map(string)
+  default     = {}
+}
+
 variable "worker_computer_staging_mib" {
   description = "Per-Instance Computer storage staging budget in MiB. Changing it creates a new Worker generation."
   type        = number
@@ -887,4 +894,10 @@ variable "worker_network_private_business_cidrs" {
     condition     = length(distinct(var.worker_network_private_business_cidrs)) == length(var.worker_network_private_business_cidrs) && alltrue([for cidr in var.worker_network_private_business_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false)])
     error_message = "worker_network_private_business_cidrs must contain unique canonical IPv4 CIDRs; modules additionally require RFC1918 and reject deny overlap."
   }
+}
+
+variable "worker_environment" {
+  description = "Additional non-secret Worker environment, including explicit WORKER_LOG_CHUNK_BYTES, WORKER_LOG_BUFFER_BYTES and WORKER_LOG_BUFFER_RECORDS. Stored in immutable Pool generation inputs; changes create a new generation."
+  type        = map(string)
+  default     = {}
 }

@@ -56,6 +56,11 @@ override_module {
 }
 
 variables {
+  worker_environment = {
+    WORKER_LOG_CHUNK_BYTES    = "65536"
+    WORKER_LOG_BUFFER_BYTES   = "1048576"
+    WORKER_LOG_BUFFER_RECORDS = "256"
+  }
   audit_retention_seconds = 2592000
   controlplane_environment = {
     ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
@@ -67,6 +72,26 @@ variables {
     ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
     ENVIRONMENT_ADMISSION_BURST            = "20"
     ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+    DIAGNOSTIC_CHUNK_BYTES                 = "32768"
+    DIAGNOSTIC_SOURCE_BYTES                = "4194304"
+    DIAGNOSTIC_SOURCE_RECORDS              = "1024"
+    DIAGNOSTIC_ENVIRONMENT_BYTES           = "16777216"
+    DIAGNOSTIC_ENVIRONMENT_RECORDS         = "4096"
+    DIAGNOSTIC_QUEUE_BYTES                 = "67108864"
+    DIAGNOSTIC_QUEUE_RECORDS               = "16384"
+    DIAGNOSTIC_DB_MAX_CONNECTIONS          = "2"
+  }
+  dispatcher_environment = {
+    DIAGNOSTIC_EXPORT_BATCH_BYTES   = "8388608"
+    DIAGNOSTIC_EXPORT_BATCH_RECORDS = "1024"
+    DIAGNOSTIC_CHUNK_BYTES          = "65536"
+    DIAGNOSTIC_SOURCE_BYTES         = "4194304"
+    DIAGNOSTIC_SOURCE_RECORDS       = "1024"
+    DIAGNOSTIC_ENVIRONMENT_BYTES    = "16777216"
+    DIAGNOSTIC_ENVIRONMENT_RECORDS  = "4096"
+    DIAGNOSTIC_QUEUE_BYTES          = "67108864"
+    DIAGNOSTIC_QUEUE_RECORDS        = "16384"
+    DIAGNOSTIC_DB_MAX_CONNECTIONS   = "2"
   }
   worker_computer_devices                  = ["/dev/nbd0", "/dev/nbd1"]
   aws_region                               = "us-east-1"
@@ -389,4 +414,30 @@ run "computer_staging_rotates_and_retains_generation" {
 
 run "slack_no_global_credentials" {
   command = plan
+}
+
+run "diagnostic_environment" {
+  command = plan
+}
+
+run "worker_log_environment_rotates_and_retains_generation" {
+  command = plan
+  variables {
+    create_worker = true
+    worker_count  = 1
+    worker_environment = {
+      WORKER_LOG_CHUNK_BYTES    = "65536"
+      WORKER_LOG_BUFFER_BYTES   = "2097152"
+      WORKER_LOG_BUFFER_RECORDS = "256"
+    }
+    retained_worker_generations = run.export_serving_source.worker_generation_definitions
+  }
+  assert {
+    condition = (
+      local.worker_pool_name != one(keys(var.retained_worker_generations)) &&
+      one(values(var.retained_worker_generations)).generation_inputs.supply.environment.WORKER_LOG_BUFFER_BYTES == "1048576" &&
+      local.worker_generation_inputs.supply.environment.WORKER_LOG_BUFFER_BYTES == "2097152"
+    )
+    error_message = "Log environment changes must rotate the Pool while retaining the source generation's exact environment."
+  }
 }

@@ -144,3 +144,42 @@ for address, value in resources.items():
         for cidr in ('10.90.0.0/16', '10.91.0.0/16', '10.92.0.0/16'):
             assert cidr in script, (address, cidr)
 print('ok - private root: internal ingress, explicit task egress, DNS restriction and guest management denies')
+
+# Inspect planned nested task definitions to prove each preserved root forwards
+# caller-selected diagnostics, including independently chosen CP/exporter values.
+admission_keys = {
+    'DIAGNOSTIC_CHUNK_BYTES', 'DIAGNOSTIC_SOURCE_BYTES', 'DIAGNOSTIC_SOURCE_RECORDS',
+    'DIAGNOSTIC_ENVIRONMENT_BYTES', 'DIAGNOSTIC_ENVIRONMENT_RECORDS',
+    'DIAGNOSTIC_QUEUE_BYTES', 'DIAGNOSTIC_QUEUE_RECORDS', 'DIAGNOSTIC_DB_MAX_CONNECTIONS',
+}
+exporter_keys = admission_keys | {'DIAGNOSTIC_EXPORT_BATCH_BYTES', 'DIAGNOSTIC_EXPORT_BATCH_RECORDS'}
+for filename in (sys.argv[1], sys.argv[2], sys.argv[4]):
+    plans = [event['test_plan'] for line in Path(filename).read_text().splitlines()
+             if (event := json.loads(line)).get('type') == 'test_plan'
+             and event['@testrun'] == 'diagnostic_environment']
+    assert len(plans) == 1, (filename, 'one diagnostic plan is required')
+    plan = plans[0]
+    tasks = {resource['name']: json.loads(resource['change']['after']['container_definitions'])[0]
+             for resource in plan['resource_changes'] if resource['type'] == 'aws_ecs_task_definition'}
+    for process, keys in (('controlplane', admission_keys), ('dispatcher', exporter_keys)):
+        expected = plan['variables'][f'{process}_environment']['value']
+        assert keys <= expected.keys(), (filename, process, 'explicit caller limits missing')
+        actual = {item['name']: item['value'] for item in tasks[process]['environment']}
+        assert all(actual.get(key) == expected[key] for key in keys), (filename, process, actual, expected)
+    print(f'ok - {filename}: actual CP/Dispatcher containers receive all caller-selected diagnostic limits')
+
+for filename in (sys.argv[1], sys.argv[2], sys.argv[4]):
+    plans = [event['test_plan'] for line in Path(filename).read_text().splitlines()
+             if (event := json.loads(line)).get('type') == 'test_plan'
+             and event['@testrun'] == 'worker_log_environment_rotates_and_retains_generation']
+    assert len(plans) == 1, (filename, 'one Worker environment rotation plan is required')
+    templates = [resource for resource in plans[0]['resource_changes'] if resource['type'] == 'aws_launch_template']
+    assert len(templates) == 2, (filename, templates)
+    scripts = [base64.b64decode(resource['change']['after']['user_data']).decode() for resource in templates]
+    for key, value in (('WORKER_LOG_CHUNK_BYTES', '65536'), ('WORKER_LOG_BUFFER_RECORDS', '256')):
+        assert all(f'{key}={value}' in script for script in scripts), (filename, key)
+    for value in ('1048576', '2097152'):
+        assert sum(f'WORKER_LOG_BUFFER_BYTES={value}' in script for script in scripts) == 1, (filename, value)
+    retained = [resource for resource in templates if resource['change']['before'] is not None]
+    assert len(retained) == 1 and retained[0]['change']['actions'] == ['no-op'], (filename, retained)
+    print(f'ok - {filename}: changed log environment reaches only the new Worker generation; retained user-data is unchanged')

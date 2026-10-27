@@ -21,6 +21,7 @@ mock_provider "aws" {
 }
 
 variables {
+  worker_environment         = { WORKER_LOG_CHUNK_BYTES = "65536", WORKER_LOG_BUFFER_BYTES = "1048576", WORKER_LOG_BUFFER_RECORDS = "256" }
   computer_devices           = ["/dev/nbd0", "/dev/nbd1"]
   name                       = "helmr-test-worker"
   worker_pool_name           = "execution-v1"
@@ -204,7 +205,7 @@ run "explicit_disk_must_exceed_reserve" {
 run "generated_environment_key_is_reserved" {
   command = plan
   variables {
-    worker_environment = { AWS_REGION = "us-west-2" }
+    worker_environment = { WORKER_LOG_CHUNK_BYTES = "65536", WORKER_LOG_BUFFER_BYTES = "1048576", WORKER_LOG_BUFFER_RECORDS = "256", AWS_REGION = "us-west-2" }
   }
   expect_failures = [terraform_data.network_preconditions]
 }
@@ -212,7 +213,7 @@ run "generated_environment_key_is_reserved" {
 run "worker_pool_name_is_reserved" {
   command = plan
   variables {
-    worker_environment = { WORKER_POOL_NAME = "other" }
+    worker_environment = { WORKER_LOG_CHUNK_BYTES = "65536", WORKER_LOG_BUFFER_BYTES = "1048576", WORKER_LOG_BUFFER_RECORDS = "256", WORKER_POOL_NAME = "other" }
   }
   expect_failures = [terraform_data.network_preconditions]
 }
@@ -220,7 +221,7 @@ run "worker_pool_name_is_reserved" {
 run "additional_worker_environment_is_rendered" {
   command = plan
   variables {
-    worker_environment = { HELMR_TEST_FLAG = "enabled" }
+    worker_environment = { WORKER_LOG_CHUNK_BYTES = "65536", WORKER_LOG_BUFFER_BYTES = "1048576", WORKER_LOG_BUFFER_RECORDS = "256", HELMR_TEST_FLAG = "enabled" }
   }
   assert {
     condition = (
@@ -367,7 +368,7 @@ run "funded_lifecycle_slots_propagate_staging" {
 
 run "staging_environment_override_is_rejected" {
   command = plan
-  variables { worker_environment = { WORKER_COMPUTER_STAGING_MIB = "1" } }
+  variables { worker_environment = { WORKER_LOG_CHUNK_BYTES = "65536", WORKER_LOG_BUFFER_BYTES = "1048576", WORKER_LOG_BUFFER_RECORDS = "256", WORKER_COMPUTER_STAGING_MIB = "1" } }
   expect_failures = [terraform_data.network_preconditions]
 }
 
@@ -492,5 +493,42 @@ run "private_business_cannot_overlap_management" {
 run "private_business_rejects_global" {
   command = plan
   variables { network_private_business_cidrs = ["8.8.0.0/16"] }
+  expect_failures = [var.network_private_business_cidrs]
+}
+
+run "new_generation_requires_log_limits_even_without_instances" {
+  command = plan
+  variables {
+    worker_environment = {}
+    desired_capacity   = 0
+    max_size           = 0
+  }
+  expect_failures = [var.worker_environment]
+}
+run "worker_log_limits_require_positive_integers" {
+  command = plan
+  variables { worker_environment = { WORKER_LOG_CHUNK_BYTES = "0", WORKER_LOG_BUFFER_BYTES = "1.5", WORKER_LOG_BUFFER_RECORDS = "-1" } }
+  expect_failures = [var.worker_environment]
+}
+run "blocked_prefixes_require_numeric_order" {
+  command = plan
+  variables { network_blocked_ipv4_cidrs = ["10.0.0.0/8", "2.0.0.0/8"] }
+  expect_failures = [var.network_blocked_ipv4_cidrs]
+}
+run "equal_address_prefixes_require_length_order" {
+  command = plan
+  variables { network_blocked_ipv4_cidrs = ["10.0.0.0/16", "10.0.0.0/8"] }
+  expect_failures = [var.network_blocked_ipv4_cidrs]
+}
+run "blocked_prefixes_accept_numeric_not_lexical_order" {
+  command = plan
+  variables { network_blocked_ipv4_cidrs = ["2.0.0.0/8", "10.0.0.0/8", "10.0.0.0/16"] }
+}
+run "private_business_prefixes_require_numeric_order" {
+  command = plan
+  variables {
+    network_blocked_ipv4_cidrs     = ["169.254.0.0/16"]
+    network_private_business_cidrs = ["192.168.0.0/16", "10.0.0.0/8"]
+  }
   expect_failures = [var.network_private_business_cidrs]
 }

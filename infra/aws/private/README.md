@@ -149,3 +149,8 @@ identities and verify:
    record any scheduled KMS/secret deletion windows or retained artifacts.
 
 Local mock and Docker tests are not a substitute for this real-network evidence.
+
+Diagnostic ingestion and export limits must be explicitly supplied through
+`controlplane_environment` and `dispatcher_environment`; see the shared
+[diagnostic process limits](../README.md#diagnostic-process-limits). The example
+values are development starting points and require operator review.

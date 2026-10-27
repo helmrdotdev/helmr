@@ -410,12 +410,26 @@ variable "controlplane_environment" {
     ])
     error_message = "controlplane_environment must explicitly set every ENVIRONMENT execution limit to a positive integer; see the Environment execution policy documentation."
   }
+  validation {
+    condition = !var.create_controlplane_service || var.controlplane_desired_count == 0 || alltrue([for name in ["DIAGNOSTIC_CHUNK_BYTES", "DIAGNOSTIC_SOURCE_BYTES", "DIAGNOSTIC_SOURCE_RECORDS", "DIAGNOSTIC_ENVIRONMENT_BYTES", "DIAGNOSTIC_ENVIRONMENT_RECORDS", "DIAGNOSTIC_QUEUE_BYTES", "DIAGNOSTIC_QUEUE_RECORDS", "DIAGNOSTIC_DB_MAX_CONNECTIONS"] :
+      can(regex("^[0-9]+$", var.controlplane_environment[name])) &&
+      try(tonumber(var.controlplane_environment[name]) > 0 && tonumber(var.controlplane_environment[name]) <= 9223372036854775807, false)
+    ])
+    error_message = "controlplane_environment must explicitly set every required diagnostic limit to a positive integer before starting the service."
+  }
 }
 
 variable "dispatcher_environment" {
   description = "Additional non-secret environment variables for helmr-dispatcher. Managed Helmr variables are owned by this module."
   type        = map(string)
   default     = {}
+  validation {
+    condition = !var.create_controlplane_service || var.dispatcher_desired_count == 0 || alltrue([for name in ["DIAGNOSTIC_EXPORT_BATCH_BYTES", "DIAGNOSTIC_EXPORT_BATCH_RECORDS", "DIAGNOSTIC_CHUNK_BYTES", "DIAGNOSTIC_SOURCE_BYTES", "DIAGNOSTIC_SOURCE_RECORDS", "DIAGNOSTIC_ENVIRONMENT_BYTES", "DIAGNOSTIC_ENVIRONMENT_RECORDS", "DIAGNOSTIC_QUEUE_BYTES", "DIAGNOSTIC_QUEUE_RECORDS", "DIAGNOSTIC_DB_MAX_CONNECTIONS"] :
+      can(regex("^[0-9]+$", var.dispatcher_environment[name])) &&
+      try(tonumber(var.dispatcher_environment[name]) > 0 && tonumber(var.dispatcher_environment[name]) <= 9223372036854775807, false)
+    ])
+    error_message = "dispatcher_environment must explicitly set every required diagnostic limit to a positive integer before starting the service."
+  }
 }
 
 variable "email_provider" {
@@ -692,6 +706,14 @@ variable "network_private_business_cidrs" {
     condition     = alltrue(flatten([for business in var.network_private_business_cidrs : [for blocked in var.network_blocked_ipv4_cidrs : try(cidrhost(format("%s/%s", split("/", business)[0], min(tonumber(split("/", business)[1]), tonumber(split("/", blocked)[1]))), 0) != cidrhost(format("%s/%s", split("/", blocked)[0], min(tonumber(split("/", business)[1]), tonumber(split("/", blocked)[1]))), 0), false)]]))
     error_message = "Private business ranges must not overlap mandatory management denies."
   }
+  validation {
+    # Zero padding compares numeric address first, then prefix length, as the runtime does.
+    condition = try(
+      join(",", [for cidr in var.network_private_business_cidrs : "${join(".", [for octet in split(".", split("/", cidr)[0]) : format("%03d", tonumber(octet))])}/${format("%02d", tonumber(split("/", cidr)[1]))}"]) ==
+      join(",", sort([for cidr in var.network_private_business_cidrs : "${join(".", [for octet in split(".", split("/", cidr)[0]) : format("%03d", tonumber(octet))])}/${format("%02d", tonumber(split("/", cidr)[1]))}"])), false
+    )
+    error_message = "network_private_business_cidrs must be ordered by numeric IPv4 address, then prefix length."
+  }
 }
 
 variable "network_blocked_ipv4_cidrs" {
@@ -701,5 +723,13 @@ variable "network_blocked_ipv4_cidrs" {
   validation {
     condition     = length(distinct(var.network_blocked_ipv4_cidrs)) == length(var.network_blocked_ipv4_cidrs) && alltrue([for cidr in var.network_blocked_ipv4_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false)])
     error_message = "network_blocked_ipv4_cidrs must contain unique canonical IPv4 CIDRs."
+  }
+  validation {
+    # Zero padding compares numeric address first, then prefix length, as the runtime does.
+    condition = try(
+      join(",", [for cidr in var.network_blocked_ipv4_cidrs : "${join(".", [for octet in split(".", split("/", cidr)[0]) : format("%03d", tonumber(octet))])}/${format("%02d", tonumber(split("/", cidr)[1]))}"]) ==
+      join(",", sort([for cidr in var.network_blocked_ipv4_cidrs : "${join(".", [for octet in split(".", split("/", cidr)[0]) : format("%03d", tonumber(octet))])}/${format("%02d", tonumber(split("/", cidr)[1]))}"])), false
+    )
+    error_message = "network_blocked_ipv4_cidrs must be ordered by numeric IPv4 address, then prefix length."
   }
 }

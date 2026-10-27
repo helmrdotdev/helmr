@@ -84,6 +84,26 @@ variables {
     ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
     ENVIRONMENT_ADMISSION_BURST            = "20"
     ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+    DIAGNOSTIC_CHUNK_BYTES                 = "65536"
+    DIAGNOSTIC_SOURCE_BYTES                = "4194304"
+    DIAGNOSTIC_SOURCE_RECORDS              = "1024"
+    DIAGNOSTIC_ENVIRONMENT_BYTES           = "16777216"
+    DIAGNOSTIC_ENVIRONMENT_RECORDS         = "4096"
+    DIAGNOSTIC_QUEUE_BYTES                 = "67108864"
+    DIAGNOSTIC_QUEUE_RECORDS               = "16384"
+    DIAGNOSTIC_DB_MAX_CONNECTIONS          = "2"
+  }
+  dispatcher_environment = {
+    DIAGNOSTIC_EXPORT_BATCH_BYTES   = "4194304"
+    DIAGNOSTIC_EXPORT_BATCH_RECORDS = "1024"
+    DIAGNOSTIC_CHUNK_BYTES          = "65536"
+    DIAGNOSTIC_SOURCE_BYTES         = "4194304"
+    DIAGNOSTIC_SOURCE_RECORDS       = "1024"
+    DIAGNOSTIC_ENVIRONMENT_BYTES    = "16777216"
+    DIAGNOSTIC_ENVIRONMENT_RECORDS  = "4096"
+    DIAGNOSTIC_QUEUE_BYTES          = "67108864"
+    DIAGNOSTIC_QUEUE_RECORDS        = "16384"
+    DIAGNOSTIC_DB_MAX_CONNECTIONS   = "2"
   }
   name                                     = "helmr-test"
   vpc_id                                   = "vpc-0123456789abcdef0"
@@ -544,4 +564,139 @@ run "audit_purge_rejects_deadline_without_setup_margin" {
     audit_purge_max_batches           = 60
   }
   expect_failures = [aws_ecs_task_definition.audit_maintenance]
+}
+
+run "live_controlplane_requires_diagnostic_limits" {
+  command = plan
+  variables {
+    create_controlplane_service = true
+    dispatcher_desired_count    = 0
+    controlplane_environment = {
+      ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
+      ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
+      ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
+      ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
+      ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
+      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
+      ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
+      ENVIRONMENT_ADMISSION_BURST            = "20"
+      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+    }
+  }
+  expect_failures = [var.controlplane_environment]
+}
+run "live_dispatcher_requires_diagnostic_limits" {
+  command = plan
+  variables {
+    create_controlplane_service = true
+    controlplane_desired_count  = 0
+    dispatcher_environment      = {}
+  }
+  expect_failures = [var.dispatcher_environment]
+}
+run "zero_count_services_allow_missing_diagnostic_limits" {
+  command = plan
+  variables {
+    create_controlplane_service = true
+    controlplane_desired_count  = 0
+    dispatcher_desired_count    = 0
+    dispatcher_environment      = {}
+    controlplane_environment = {
+      ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
+      ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
+      ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
+      ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
+      ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
+      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
+      ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
+      ENVIRONMENT_ADMISSION_BURST            = "20"
+      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+    }
+  }
+}
+run "bootstrap_only_allows_missing_diagnostic_limits" {
+  command = plan
+  variables {
+    create_controlplane_service = false
+    dispatcher_environment      = {}
+    controlplane_environment = {
+      ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
+      ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
+      ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
+      ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
+      ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
+      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
+      ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
+      ENVIRONMENT_ADMISSION_BURST            = "20"
+      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+    }
+  }
+}
+run "blocked_prefixes_require_numeric_order" {
+  command = plan
+  variables { network_blocked_ipv4_cidrs = ["10.0.0.0/8", "2.0.0.0/8"] }
+  expect_failures = [var.network_blocked_ipv4_cidrs]
+}
+run "equal_address_prefixes_require_length_order" {
+  command = plan
+  variables { network_blocked_ipv4_cidrs = ["10.0.0.0/16", "10.0.0.0/8"] }
+  expect_failures = [var.network_blocked_ipv4_cidrs]
+}
+run "blocked_prefixes_accept_numeric_not_lexical_order" {
+  command = plan
+  variables { network_blocked_ipv4_cidrs = ["2.0.0.0/8", "10.0.0.0/8", "10.0.0.0/16"] }
+}
+run "private_business_prefixes_require_numeric_order" {
+  command = plan
+  variables { network_private_business_cidrs = ["192.168.0.0/16", "10.0.0.0/8"] }
+  expect_failures = [var.network_private_business_cidrs]
+}
+
+run "live_controlplane_diagnostic_limits_require_positive_integers" {
+  command = plan
+  variables {
+    create_controlplane_service = true
+    dispatcher_desired_count    = 0
+    controlplane_environment = {
+      DIAGNOSTIC_CHUNK_BYTES                 = "0"
+      DIAGNOSTIC_SOURCE_BYTES                = "4194304"
+      DIAGNOSTIC_SOURCE_RECORDS              = "1024"
+      DIAGNOSTIC_ENVIRONMENT_BYTES           = "16777216"
+      DIAGNOSTIC_ENVIRONMENT_RECORDS         = "4096"
+      DIAGNOSTIC_QUEUE_BYTES                 = "67108864"
+      DIAGNOSTIC_QUEUE_RECORDS               = "16384"
+      DIAGNOSTIC_DB_MAX_CONNECTIONS          = "2"
+      ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
+      ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
+      ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
+      ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES = "1099511627776"
+      ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS = "100"
+      ENVIRONMENT_MAX_CAUSAL_DEPTH           = "8"
+      ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
+      ENVIRONMENT_ADMISSION_BURST            = "20"
+      ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+    }
+  }
+  expect_failures = [var.controlplane_environment]
+}
+
+run "live_dispatcher_diagnostic_limits_require_positive_integers" {
+  command = plan
+  variables {
+    create_controlplane_service = true
+    controlplane_desired_count  = 0
+    dispatcher_environment = {
+      DIAGNOSTIC_EXPORT_BATCH_BYTES   = "4194304"
+      DIAGNOSTIC_EXPORT_BATCH_RECORDS = "1.5"
+      DIAGNOSTIC_CHUNK_BYTES          = "65536"
+      DIAGNOSTIC_SOURCE_BYTES         = "4194304"
+      DIAGNOSTIC_SOURCE_RECORDS       = "1024"
+      DIAGNOSTIC_ENVIRONMENT_BYTES    = "16777216"
+      DIAGNOSTIC_ENVIRONMENT_RECORDS  = "4096"
+      DIAGNOSTIC_QUEUE_BYTES          = "67108864"
+      DIAGNOSTIC_QUEUE_RECORDS        = "16384"
+      DIAGNOSTIC_DB_MAX_CONNECTIONS   = "2"
+    }
+  }
+  expect_failures = [var.dispatcher_environment]
 }

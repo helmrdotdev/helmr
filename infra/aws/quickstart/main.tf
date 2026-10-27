@@ -18,6 +18,7 @@ locals {
       computer = {
         devices = var.worker_computer_devices
       }
+      environment     = var.worker_environment
       contract_digest = local.worker_provider_contract_digest
       enable_ssm      = var.worker_enable_ssm
       network = {
@@ -196,6 +197,7 @@ module "controlplane" {
   controlplane_assign_public_ip              = var.controlplane_assign_public_ip
   create_controlplane_service                = var.create_controlplane_service
   controlplane_environment                   = var.controlplane_environment
+  dispatcher_environment                     = var.dispatcher_environment
   email_provider                             = var.email_provider
   email_from                                 = var.email_from
   smtp_addr                                  = var.smtp_addr
@@ -222,8 +224,9 @@ module "controlplane" {
 module "worker_group" {
   for_each = var.create_worker ? toset(keys(local.worker_generation_specs)) : toset([])
 
-  source           = "../modules/worker"
-  computer_devices = local.worker_generations[each.key].generation_inputs.supply.computer.devices
+  source             = "../modules/worker"
+  computer_devices   = local.worker_generations[each.key].generation_inputs.supply.computer.devices
+  worker_environment = local.worker_generations[each.key].generation_inputs.supply.environment
 
   name                                            = local.worker_generations[each.key].provider_name
   worker_pool_name                                = each.key

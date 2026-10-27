@@ -188,3 +188,8 @@ administrator credential and exposes `clickhouse_bootstrap_task_definition_arn`;
 run that task successfully before migrations. The task uses the Control Plane
 network and its existing image. See [ClickHouse access](../clickhouse-access.md)
 for grants, bootstrap behavior and credential rotation.
+
+Diagnostic ingestion and export limits must be explicitly supplied through
+`controlplane_environment` and `dispatcher_environment`; see the shared
+[diagnostic process limits](../README.md#diagnostic-process-limits). The example
+values are development starting points and require operator review.
