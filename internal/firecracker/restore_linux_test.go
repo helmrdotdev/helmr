@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -253,7 +254,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	var mu sync.Mutex
 	var phases []vm.Phase
 
-	request := vm.RestoreRequest{
+	request := vm.RestoreRequest{NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(),
 		Topology: topology, Resources: vm.Resources{MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB},
 		ID:                 "checkpoint-1",
 		ComputerInstanceID: computerInstanceID,
@@ -525,7 +526,7 @@ func TestRestoreRejectsResourceMismatchBeforeUnpack(t *testing.T) {
 	data, identity := testPairedRestoreManifest(t, cfg, "checkpoint", topology)
 	id := uuid.NewV7().String()
 	for _, resources := range []vm.Resources{{MemoryMiB: cfg.MemoryMiB + 1, DiskMiB: cfg.ScratchDiskMiB}, {MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB + 1}} {
-		_, err := connector.restore(t.Context(), vm.RestoreRequest{ID: "checkpoint", ComputerInstanceID: id, OwnerKind: vm.OwnerInstance,
+		_, err := connector.restore(t.Context(), vm.RestoreRequest{NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(), ID: "checkpoint", ComputerInstanceID: id, OwnerKind: vm.OwnerInstance,
 			Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.RuntimeID}, Topology: topology, Resources: resources,
 			Manifest: data, Checkpoint: identity, VMState: "not-read", VMStateMediaType: cas.CheckpointVMStateMediaType, ScratchDisk: "not-read", ScratchDiskMediaType: cas.CheckpointScratchDiskMediaType, MemorySource: testMemorySource{size: cfg.MemoryMiB * (1 << 20)}})
 		if err == nil || !strings.Contains(err.Error(), "does not match runtime reservation") {

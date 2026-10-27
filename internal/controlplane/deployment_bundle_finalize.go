@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"io"
 	"log/slog"
 	"net/http"
@@ -187,6 +188,12 @@ func writeDeploymentFinalizeEvent(w io.Writer, event string, payload any) error 
 // publicDeploymentFinalizeError describes a finalization failure in the
 // stream with a closed code and message.
 func publicDeploymentFinalizeError(err error) api.DeploymentBundleFinalizeError {
+	if errors.Is(err, definition.ErrInvalidNetworkPolicy) {
+		return api.DeploymentBundleFinalizeError{Code: "invalid_network_policy", Message: err.Error()}
+	}
+	if errors.Is(err, definition.ErrInvalidRuntimeMcpPolicy) {
+		return api.DeploymentBundleFinalizeError{Code: "invalid_runtime_mcp_policy", Message: err.Error()}
+	}
 	if _, ok := errors.AsType[idempotency.ExpiredError](err); ok {
 		return api.DeploymentBundleFinalizeError{Code: "operation_expired", Message: "operation receipt has expired"}
 	}

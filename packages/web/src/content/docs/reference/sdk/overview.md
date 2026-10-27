@@ -8,7 +8,9 @@ sidebarLabel: Overview
 
 `@helmr/sdk` declares Agents, Computers, images and triggers, configures the
 build, and provides an explicitly authenticated `HelmrClient`. Agent
-context exposes `ctx.mcp.getConnectionOptions()` for the runtime MCP tools.
+context exposes `ctx.mcp.getConnectionOptions(policy?)` for the runtime MCP tools.
+Template outbound networking and Agent MCP maxima are described in
+[Execution policies](/docs/concepts/execution-policies).
 
 ```ts
 import { agent, template, image, triggers, defineConfig, HelmrClient } from "@helmr/sdk"
@@ -18,7 +20,7 @@ import { agent, template, image, triggers, defineConfig, HelmrClient } from "@he
 
 | Page | Covers |
 | --- | --- |
-| [Agent](/docs/reference/sdk/agent) | `agent()`, `AgentDefinition`, `Turn`, `InitContext`/`AgentContext`, `RuntimeMcpConnectionOptions`, `MessageRejected`, and the client's Session and Turn methods. |
+| [Agent](/docs/reference/sdk/agent) | `agent()`, `AgentDefinition`, `Turn`, `InitContext`/`AgentContext`, `RuntimeMcpConnectionOptions`, `RuntimeMcpPolicy`, `RuntimeMcpRule`, `RuntimeMcpTargetOperation`, `MessageRejected`, and the client's Session and Turn methods. |
 | [Computer](/docs/reference/sdk/computer) | `template()`, `image()`, `source`, Secret bindings, and the client's Computer, Template definition and Command methods. |
 | [Client](/docs/reference/sdk/client) | `HelmrClient` options and properties, Agent and definition reads, Deployments and Secrets. |
 | [Triggers](/docs/reference/sdk/triggers) | `triggers.cron()` and the client's read-only Trigger methods. |
@@ -35,7 +37,7 @@ Values exported from `@helmr/sdk`:
 | Export | Kind | Reference |
 | --- | --- | --- |
 | `agent` | function | [Agent](/docs/reference/sdk/agent) |
-| `computer` | function | [Computer](/docs/reference/sdk/computer) |
+| `template` | function | [Computer](/docs/reference/sdk/computer) |
 | `triggers` | object with `cron()` | [Triggers](/docs/reference/sdk/triggers) |
 | `image`, `source` | function, object | [Computer](/docs/reference/sdk/computer#images) |
 | `builder` | function | [Configuration](/docs/reference/config#build-environment) |
@@ -47,8 +49,8 @@ Types exported from `@helmr/sdk`, grouped by area:
 
 | Area | Types |
 | --- | --- |
-| Definitions | `AgentDefinition`, `TemplateDefinition`, `CronTrigger`, `ComputerIdentity`, `BuildContext`, `SecretBinding`, `Duration`, `JsonValue`, `MaybePromise` |
-| Turn handler | `Turn`, `InitContext`, `AgentContext`, `RuntimeMcpConnectionOptions`, `InputSource`, `Message`, `MessageSource`, `SlackInputSource`, `OutputReceipt`, `TurnOutcome` |
+| Definitions | `AgentDefinition`, `TemplateDefinition`, `CronTrigger`, `ComputerIdentity`, `PrepareContext`, `SecretBinding`, `AllowedDomain`, `NetworkPolicy`, `Duration`, `JsonValue`, `MaybePromise` |
+| Turn handler | `Turn`, `InitContext`, `AgentContext`, `RuntimeMcpConnectionOptions`, `RuntimeMcpPolicy`, `RuntimeMcpRule`, `RuntimeMcpTargetOperation`, `InputSource`, `Message`, `MessageSource`, `SlackInputSource`, `OutputReceipt`, `TurnOutcome` |
 | Content | `ContentPart`, `Content`, `HumanContent`, `InputPart`, `InputContent` |
 | Questions | `ChoiceOption`, `TextQuestion`, `ChoiceQuestion`, `AnswerSubmission`, `Question`, `ChoiceAnswer`, `AnswerFor`, `AskAnswer`, `AskState`, `AskAnswerReceipt`, `AskQuery`, `AskPage`, `TurnAsks` |
 | Client | `HelmrClientOptions`, `RequestOptions`, `CursorPage`, `HelmrError`, `APIError` |

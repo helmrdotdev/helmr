@@ -49,6 +49,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
  UPDATE sessions SET parent_session_id=$2,requester_session_id=$2,root_session_id=$2,causal_depth=1 WHERE environment_id=$1 AND id=$6`, pgx.QueryExecModeSimpleProtocol, f.Environment, parent.Session, f.Agent, f.Deployment, f.Computer, f.Session)
 	sendOp := op
 	sendOp.Session = runtimeTestSession(parent)
+	sendOp.MCPScopeID = fixtureMCPScope(t, parent).String()
 	sendOp.TurnID = ""
 	sendOp.Method, sendOp.RequestID = workerapi.AgentMethodRuntimeMCP, "send"
 	sendOp.Payload, _ = json.Marshal(map[string]any{"tool": "send_turn", "arguments": map[string]any{"sessionId": f.Session.String(), "turnId": a.TurnID.String(), "message": json.RawMessage(`[{"type":"text","text":"steer"}]`), "idempotencyKey": "parent-steer"}})

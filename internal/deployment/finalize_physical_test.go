@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"io"
 	"os"
 	"os/exec"
@@ -40,7 +41,7 @@ func TestFinalizeAdmitsPhysicalProgramBeforeRegisteringDefinitions(t *testing.T)
 	store.objects[runtime.Digest] = cas.Object{Digest: runtime.Digest, SizeBytes: runtime.SizeBytes, MediaType: runtime.MediaType}
 	manifest := bundle.Manifest{Contract: bundle.Contract, Platform: bundle.Platform{Architecture: metadata.Architecture, OS: bundle.TargetOS}, Runtime: bundle.Runtime{Contract: runtime.RuntimeContract, Artifact: bundle.Object{Digest: runtime.Digest, SizeBytes: runtime.SizeBytes, MediaType: runtime.MediaType}}, Program: output, ComputerSeeds: []bundle.ComputerSeed{{DeclaredID: "repo", Artifact: bundle.ComputerSeedArtifact{Profile: definition.ComputerSeedProfile, Config: metadata.Definitions[2].Template.Seed.Config, Architecture: metadata.Architecture, Digest: seedDigest, SizeBytes: int64(len(seed)), MediaType: definition.ComputerSeedMediaType}}}, Objects: []bundle.Object{bundle.Object(output.Artifact), {Digest: seedDigest, SizeBytes: int64(len(seed)), MediaType: definition.ComputerSeedMediaType}}}
 	bundle.SortObjects(manifest.Objects)
-	finalize := NewFinalizer(store, store, bundle.Admission{Runtime: runtime}, discardLogger())
+	finalize := NewFinalizer(store, store, bundle.Admission{Runtime: runtime}, discardLogger(), networkpolicy.Installation{})
 	root := func(m bundle.Manifest) string {
 		t.Helper()
 		var err error

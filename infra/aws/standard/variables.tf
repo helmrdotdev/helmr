@@ -482,10 +482,11 @@ variable "retained_worker_generations" {
         contract_digest = string
         enable_ssm      = bool
         network = object({
-          blocked_ipv4_cidrs = list(string)
-          link_pool          = string
-          resolver_ipv4      = string
-          translation_pool   = string
+          blocked_ipv4_cidrs     = list(string)
+          private_business_cidrs = list(string)
+          link_pool              = string
+          resolver_ipv4          = string
+          translation_pool       = string
         })
         platform_store = object({
           uri         = string
@@ -837,4 +838,14 @@ variable "audit_maintenance_alarm_actions" {
   description = "Existing CloudWatch alarm action ARNs for missing audit purge success."
   type        = list(string)
   default     = []
+}
+
+variable "worker_network_private_business_cidrs" {
+  description = "Installation RFC1918 business ceiling, applied to both control plane and Workers. Routing and TLS trust remain separately configured."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = length(distinct(var.worker_network_private_business_cidrs)) == length(var.worker_network_private_business_cidrs) && alltrue([for cidr in var.worker_network_private_business_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false)])
+    error_message = "worker_network_private_business_cidrs must contain unique canonical IPv4 CIDRs; modules additionally require RFC1918 and reject deny overlap."
+  }
 }

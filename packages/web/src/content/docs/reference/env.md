@@ -246,7 +246,31 @@ Required for every Worker: `CONTROL_PLANE_URL`, `CAS_URI`,
 `WORKER_NETWORK_RESOLVER_IPV4`, and
 `WORKER_NETWORK_BLOCKED_IPV4_CIDRS`. The blocked-prefix value is a canonical,
 ordered JSON array; use `[]` only when the deployment intentionally supplies no
-blocked destinations.
+additional blocked destinations. Built-in reserved-address, metadata, host and
+peer restrictions still apply.
+
+Network installation settings are shared between the Control Plane and Workers:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CONTROL_PLANE_NETWORK_PRIVATE_BUSINESS_CIDRS` | `[]` | Canonical IPv4 RFC1918 prefixes eligible for authored private network grants. |
+| `CONTROL_PLANE_NETWORK_BLOCKED_IPV4_CIDRS` | `[]` | Additional management or privileged prefixes denied by every eligible Worker. |
+| `WORKER_NETWORK_PRIVATE_BUSINESS_CIDRS` | `[]` | The Worker's approved private business ranges. Must be contained in the Control Plane ceiling. |
+| `WORKER_NETWORK_BLOCKED_IPV4_CIDRS` | Required | The Worker's additional denied ranges. Must cover the Control Plane's denied ranges. |
+
+All four values are canonical, ordered JSON arrays of IPv4 CIDRs. Private business
+ranges must not overlap denied ranges. An empty private ceiling denies RFC1918
+egress even when a Template omits `network`. For example, permitting
+`["10.42.0.0/16"]` requires matching installation configuration and actual private
+routing/DNS; a Template domain grant additionally needs an `ipRanges` bound within
+that ceiling. An infrastructure grant alone does not add a Template domain grant.
+
+A Worker may use a stricter ceiling or broader denies. The Control Plane rejects
+allocation delivery and renewal when the Worker is more permissive or cannot
+report the network enforcement contract. Update and qualify Workers before
+admitting policies that depend on this contract, and drain older execution before
+changing installation restrictions. Existing Computers retain their creation
+Template's policy; a Template redeployment does not edit it.
 
 The Worker reads its Worker Group enrollment token from the strict-permission
 token file and presents it as a Bearer credential over TLS. The token selects

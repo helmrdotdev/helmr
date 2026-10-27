@@ -161,8 +161,8 @@ func TestSlackLifecycleDiscoveryTracksStateWithoutPeriodicCardWrites(t *testing.
 	// Promotion must not change the existing front Session's lifecycle policy.
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('e',64));
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension) SELECT environment_id,agent_id,$3,template_id,has_init,'after_turn' FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension,runtime_mcp_policy) SELECT environment_id,agent_id,$3,template_id,has_init,'after_turn',runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, promoted)
 	drain()
 	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_revision FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&after); err != nil || after != before {

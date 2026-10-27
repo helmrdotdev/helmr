@@ -82,7 +82,7 @@ func decodeAllocationIdentity(r *http.Request, kind string) (dispatch.HostAlloca
 	return allocationIdentity(request)
 }
 func (server *Server) workerDeliverPreparationAllocation(w http.ResponseWriter, r *http.Request) {
-	identity, err := decodeAllocationIdentity(r, "preparation")
+	identity, err := server.decodeNetworkAllocation(r, "preparation")
 	if err != nil {
 		server.writeAllocationError(w, r, err)
 		return
@@ -98,7 +98,7 @@ func computerAllocationIdentity(in dispatch.HostAllocation) computer.LeaseIdenti
 	return computer.LeaseIdentity{EnvironmentID: in.EnvironmentID, ComputerID: in.OwnerID, InstanceID: in.InstanceID, Epoch: in.Epoch}
 }
 func (server *Server) workerDeliverComputerAllocation(w http.ResponseWriter, r *http.Request) {
-	identity, err := decodeAllocationIdentity(r, "computer")
+	identity, err := server.decodeNetworkAllocation(r, "computer")
 	if err != nil {
 		server.writeAllocationError(w, r, err)
 		return
@@ -182,7 +182,7 @@ func (server *Server) workerListComputerProcesses(w http.ResponseWriter, r *http
 }
 
 func (server *Server) workerComputerAllocationSource(w http.ResponseWriter, r *http.Request) {
-	identity, err := decodeAllocationIdentity(r, "computer")
+	identity, err := server.decodeNetworkAllocation(r, "computer")
 	if err != nil {
 		server.writeAllocationError(w, r, err)
 		return
@@ -198,7 +198,12 @@ func (server *Server) workerComputerAllocationSource(w http.ResponseWriter, r *h
 		server.writeAllocationError(w, r, err)
 		return
 	}
-	response := workerapi.ComputerAllocationSource{Disk: workerapi.ComputerSourceMaterial{VersionID: source.BaseVersion, Root: source.Root, WriteKeyID: source.WriteKeyID.String(), Keys: make([]workerapi.ComputerKeyMaterial, 0, len(source.Keys))}, ImageConfig: boot.ImageConfig, RootfsDigest: boot.RootfsDigest}
+	policy, err := computer.ReadNetworkPolicy(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity))
+	if err != nil {
+		server.writeAllocationError(w, r, err)
+		return
+	}
+	response := workerapi.ComputerAllocationSource{NetworkPolicy: policy, NetworkInstallation: server.networkInstallation, Disk: workerapi.ComputerSourceMaterial{VersionID: source.BaseVersion, Root: source.Root, WriteKeyID: source.WriteKeyID.String(), Keys: make([]workerapi.ComputerKeyMaterial, 0, len(source.Keys))}, ImageConfig: boot.ImageConfig, RootfsDigest: boot.RootfsDigest}
 
 	selected, err := session.ReadAllocationProgram(r.Context(), server.tx, workerFromContext(r.Context()), computerAllocationIdentity(identity))
 	if err != nil {

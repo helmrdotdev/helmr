@@ -86,7 +86,7 @@ helmr computer get --id COMPUTER_ID --project demo --env staging --json
 
 ## Use Secrets while preparing
 
-`buildSecrets` binds Secrets for the `prepare` step only. Create the Secret in the
+`prepareSecrets` binds Secrets for the `prepare` step only. Create the Secret in the
 Environment you deploy to and use its ID; see
 [Manage secrets](/docs/guides/manage-secrets).
 
@@ -98,7 +98,7 @@ export const repo = template({
   id: "repo",
   image: repoImage,
   resources: { cpu: 2, memory: "4GiB" },
-  buildSecrets: [{ secret: REGISTRY_TOKEN_ID, env: { name: "REGISTRY_TOKEN", mode: "raw" } }],
+  prepareSecrets: [{ secret: REGISTRY_TOKEN_ID, env: { name: "REGISTRY_TOKEN", mode: "raw" } }],
   async prepare(build) {
     await build.exec(["git", "clone", "--depth=1", "https://github.com/acme/app.git", "/workspace/app"])
     await build.exec("npm ci", { cwd: "/workspace/app" })
@@ -109,7 +109,7 @@ export const repo = template({
 The deploy is rejected if a referenced Secret ID is missing or revoked in the target
 Environment. Everything `prepare` writes is copied into every new Computer, so
 never write a build Secret's value to a file. Bindings that Computers need while
-they run go in `secrets`, not `buildSecrets`.
+they run go in `secrets`, not `prepareSecrets`.
 
 ## Limit the prepared image's age
 
@@ -124,7 +124,7 @@ on the `every` interval; see [Computers](/docs/concepts/computers).
 
 ## Roll out a change
 
-1. Edit the image, `prepare`, `buildSecrets` or `refresh`.
+1. Edit the image, `prepare`, `prepareSecrets` or `refresh`.
 2. Deploy:
 
    ```sh
@@ -143,5 +143,5 @@ and existing Sessions stay on the Deployment they started with. To use the chang
 start new Sessions without `--computer`, or create a new Computer as described
 in [Run commands](/docs/guides/run-commands).
 
-Rotating a Secret named in `buildSecrets` also makes the next new Computer
+Rotating a Secret named in `prepareSecrets` also makes the next new Computer
 prepare a fresh image with the new value. Existing Computers are not changed.

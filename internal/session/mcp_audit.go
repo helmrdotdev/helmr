@@ -30,6 +30,9 @@ func AdmitMCP(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner
 		if err := executionReceipt(ctx, tx, caller.Execution, owner); err != nil {
 			return err
 		}
+		if _, err := RuntimeMCPPolicy(ctx, tx, caller); err != nil {
+			return err
+		}
 		origin, err := loadSessionOrigin(ctx, tx, caller.Execution.EnvironmentID, caller.ID)
 		if err != nil {
 			return err

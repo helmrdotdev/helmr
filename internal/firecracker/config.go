@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"net/netip"
 	"os"
@@ -32,41 +33,46 @@ const (
 )
 
 type Config struct {
-	PrepareSecretTransport  func(context.Context, string, []netip.Prefix) (*secretproxy.Proxy, error)
-	FirecrackerPath         string
-	CPUTemplateHelperPath   string
-	CPUTemplateSelector     CPUTemplateSelector
-	CustomCPUTemplatePath   string
-	JailerPath              string
-	JailerUID               int
-	JailerGID               int
-	JailerNumaNode          int
-	JailerChrootBaseDir     string
-	CgroupVersion           string
-	KernelPath              string
-	InitramfsPath           string
-	RootfsPath              string
-	RuntimeArtifactsPath    string
-	StateDir                string
-	TempDir                 string
-	NetworkLinkPool         string
-	NetworkTranslationPool  string
-	NetworkResolverIPv4     string
-	NetworkBlockedIPv4CIDRs []netip.Prefix
-	NetworkCapacity         int
-	IPPath                  string
-	NFTPath                 string
-	MkfsExt4Path            string
-	Mke2fsConfigPath        string
-	KVMPath                 string
-	VCPUCount               int64
-	MemoryMiB               int64
-	ScratchDiskMiB          int64
-	GuestPort               uint32
-	HealthPort              uint32
-	InitTimeout             time.Duration
-	HealthTimeout           time.Duration
-	HealthAttemptTimeout    time.Duration
+	NetworkPhase                networkpolicy.Phase
+	NetworkComputerID           string
+	NetworkPolicy               networkpolicy.Policy
+	NetworkInstallation         networkpolicy.Installation
+	NetworkPrivateBusinessCIDRs []netip.Prefix
+	PrepareSecretTransport      func(context.Context, string, networkpolicy.Policy, networkpolicy.Installation, string) (*secretproxy.Proxy, error)
+	FirecrackerPath             string
+	CPUTemplateHelperPath       string
+	CPUTemplateSelector         CPUTemplateSelector
+	CustomCPUTemplatePath       string
+	JailerPath                  string
+	JailerUID                   int
+	JailerGID                   int
+	JailerNumaNode              int
+	JailerChrootBaseDir         string
+	CgroupVersion               string
+	KernelPath                  string
+	InitramfsPath               string
+	RootfsPath                  string
+	RuntimeArtifactsPath        string
+	StateDir                    string
+	TempDir                     string
+	NetworkLinkPool             string
+	NetworkTranslationPool      string
+	NetworkResolverIPv4         string
+	NetworkBlockedIPv4CIDRs     []netip.Prefix
+	NetworkCapacity             int
+	IPPath                      string
+	NFTPath                     string
+	MkfsExt4Path                string
+	Mke2fsConfigPath            string
+	KVMPath                     string
+	VCPUCount                   int64
+	MemoryMiB                   int64
+	ScratchDiskMiB              int64
+	GuestPort                   uint32
+	HealthPort                  uint32
+	InitTimeout                 time.Duration
+	HealthTimeout               time.Duration
+	HealthAttemptTimeout        time.Duration
 }
 
 // RuntimeCapabilities is content-only boot artifact metadata. A complete v1
@@ -154,6 +160,9 @@ func (cfg Config) WithDefaults() Config {
 
 func (cfg Config) Validate() error {
 	var problems []error
+	if err := networkpolicy.ValidateInstallation(networkpolicy.Installation{PrivateBusinessCIDRs: cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs}); err != nil {
+		problems = append(problems, err)
+	}
 	if strings.TrimSpace(cfg.FirecrackerPath) == "" {
 		problems = append(problems, errors.New("the Firecracker path is required"))
 	} else if cfg.FirecrackerPath != strings.TrimSpace(cfg.FirecrackerPath) {

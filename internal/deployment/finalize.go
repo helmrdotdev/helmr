@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -39,18 +40,19 @@ const objectVerificationTimeout = 10 * time.Minute
 // objects the organization does not own yet, checks the supported Runtime in
 // the platform store and verifies one object at a time.
 type Finalizer struct {
-	uploads       cas.UploadStore
-	platform      cas.Reader
-	admission     bundle.Admission
-	log           *slog.Logger
-	verifierSlots chan struct{}
+	networkInstallation networkpolicy.Installation
+	uploads             cas.UploadStore
+	platform            cas.Reader
+	admission           bundle.Admission
+	log                 *slog.Logger
+	verifierSlots       chan struct{}
 }
 
 // NewFinalizer returns a Finalizer over the upload and platform stores that
 // admits bundles by admission and logs to log.
-func NewFinalizer(uploads cas.UploadStore, platform cas.Reader, admission bundle.Admission, log *slog.Logger) *Finalizer {
+func NewFinalizer(uploads cas.UploadStore, platform cas.Reader, admission bundle.Admission, log *slog.Logger, installation networkpolicy.Installation) *Finalizer {
 	return &Finalizer{
-		uploads: uploads, platform: platform, admission: admission, log: log,
+		uploads: uploads, platform: platform, admission: admission, log: log, networkInstallation: installation.Canonical(),
 		verifierSlots: make(chan struct{}, 1),
 	}
 }
@@ -58,13 +60,14 @@ func NewFinalizer(uploads cas.UploadStore, platform cas.Reader, admission bundle
 // Finalization is an authorized request to finalize one admitted bundle into a
 // Deployment of an environment. Only Prepare creates it.
 type Finalization struct {
-	principal      auth.Principal
-	scope          auth.Scope
-	orgID          uuid.UUID
-	projectID      pgtype.UUID
-	environmentID  pgtype.UUID
-	bundle         preparedBundle
-	idempotencyKey string
+	networkInstallation networkpolicy.Installation
+	principal           auth.Principal
+	scope               auth.Scope
+	orgID               uuid.UUID
+	projectID           pgtype.UUID
+	environmentID       pgtype.UUID
+	bundle              preparedBundle
+	idempotencyKey      string
 }
 
 // BundleDigest is the digest of the bundle root being finalized.
@@ -109,7 +112,7 @@ func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope
 	}
 
 	return Finalization{
-		principal: principal, scope: scope, orgID: principal.OrgID, projectID: projectID, environmentID: environmentID,
+		networkInstallation: f.networkInstallation, principal: principal, scope: scope, orgID: principal.OrgID, projectID: projectID, environmentID: environmentID,
 		bundle: prepared, idempotencyKey: idempotencyKey,
 	}, nil
 }
@@ -130,6 +133,7 @@ func (f *Finalizer) Finalize(ctx context.Context, policy auditpolicy.Policy, dat
 			return Record{}, err
 		}
 	}
+	finalization.networkInstallation = f.networkInstallation
 	return register(ctx, policy, database, finalization)
 }
 
@@ -428,6 +432,9 @@ func verifyStoredProgram(ctx context.Context, source io.Reader, program artifact
 }
 
 func createDeployment(ctx context.Context, tx pgx.Tx, f Finalization) (Record, error) {
+	if err := validatePublicationNetwork(f.bundle.bundle.Program.Metadata, f.networkInstallation); err != nil {
+		return Record{}, err
+	}
 	q := db.New(tx)
 	objects := append([]cas.Descriptor{f.bundle.root}, f.bundle.objects...)
 	for _, object := range objects {
@@ -455,4 +462,29 @@ func createDeployment(ctx context.Context, tx pgx.Tx, f Finalization) (Record, e
 		return Record{}, err
 	}
 	return readRecord(ctx, tx, env, id)
+}
+
+func validatePublicationNetwork(metadata artifact.ProgramMetadata, installation networkpolicy.Installation) error {
+	if err := networkpolicy.ValidateInstallation(installation); err != nil {
+		return err
+	}
+	for _, d := range metadata.Definitions {
+		if d.Template == nil {
+			continue
+		}
+		m := d.Template
+		runtime, prepare, err := definition.ResolveTemplatePolicies(m.Network, m.PrepareNetwork, m.Prepare, m.Secrets, m.PrepareSecrets)
+		if err != nil {
+			return err
+		}
+		for _, phase := range []struct {
+			name string
+			p    networkpolicy.Policy
+		}{{"network", runtime}, {"prepareNetwork", prepare}} {
+			if err := phase.p.ValidateInstallation(installation); err != nil {
+				return fmt.Errorf("%w %s.%s: %w", definition.ErrInvalidNetworkPolicy, d.DeclaredID, phase.name, err)
+			}
+		}
+	}
+	return nil
 }

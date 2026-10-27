@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"net"
 	"net/netip"
 	"os"
@@ -82,9 +83,9 @@ func runComputerRuntimeKVM(t *testing.T, bootSeed bool) {
 	cfg.JailerChrootBaseDir = filepath.Join(input.Arena, "jailer")
 	// No credentials or protected origins are present in this local fixture.
 	// Keep the real transport and fail closed if it is unexpectedly used.
-	cfg.PrepareSecretTransport = func(context.Context, string, []netip.Prefix) (*secretproxy.Proxy, error) {
+	cfg.PrepareSecretTransport = func(context.Context, string, networkpolicy.Policy, networkpolicy.Installation, string) (*secretproxy.Proxy, error) {
 		denied := errors.New("network unavailable in qualification fixture")
-		return secretproxy.New(secretproxy.Config{
+		return secretproxy.New(secretproxy.Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(),
 			Certificate:        func(context.Context, string) (tls.Certificate, error) { return tls.Certificate{}, denied },
 			Resolve:            func(context.Context, string, []string) (map[string][]byte, error) { return nil, denied },
 			AllowedDestination: func(netip.Addr) bool { return false },
@@ -244,7 +245,7 @@ func runComputerRuntimeKVM(t *testing.T, bootSeed bool) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := vm.MaterializeRequest{ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: version, Resources: vm.Resources{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: uuid.NewV7().String(), VersionID: version, SizeBytes: capacity, Device: device}}}
+			request := vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseRuntime, NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(), ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: version, Resources: vm.Resources{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: uuid.NewV7().String(), VersionID: version, SizeBytes: capacity, Device: device}}}
 			if name == "seed-builder" {
 				builder, err := runtime.PrepareBootSeed(t.Context(), request)
 				if err != nil {

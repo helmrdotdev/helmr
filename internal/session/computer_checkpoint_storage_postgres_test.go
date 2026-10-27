@@ -468,7 +468,7 @@ func TestCheckpointRuntimeRechecksLeaseAfterCASWriteWait(t *testing.T) {
 
 func TestStandaloneComputerPublishesAndWakesWithoutSessions(t *testing.T) {
 	base := newFixture(t)
-	dbtest.MustExec(t, t.Context(), base.pool, `DELETE FROM session_processes WHERE environment_id=$1; DELETE FROM sessions WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, base.env)
+	dbtest.MustExec(t, t.Context(), base.pool, `DELETE FROM session_mcp_scopes WHERE environment_id=$1; DELETE FROM session_processes WHERE environment_id=$1; DELETE FROM sessions WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, base.env)
 	f := checkpointStorageWithMembers(t, newSaveStorageFixture(t, base), false)
 	if len(f.manifest.Members) != 0 {
 		t.Fatal("standalone checkpoint acquired Sessions")

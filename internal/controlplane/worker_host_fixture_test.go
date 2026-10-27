@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -106,7 +107,7 @@ func seedHostSecret(t *testing.T, pool *pgxpool.Pool, hostID uuid.UUID) seededHo
 // credentials at baseURL.
 func (c seededHostSecret) client(t *testing.T, baseURL string) *workerclient.Client {
 	t.Helper()
-	client, err := workerclient.New(baseURL, workerclient.WithAuth(c.hostID.String(), c.secret), workerclient.WithService(c.serviceID.String()))
+	client, err := workerclient.New(baseURL, workerclient.WithAuth(c.hostID.String(), c.secret), workerclient.WithService(c.serviceID.String()), workerclient.WithNetwork(networkpolicy.Installation{}))
 	if err != nil {
 		t.Fatal(err)
 	}

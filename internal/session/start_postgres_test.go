@@ -27,7 +27,7 @@ func newAdmissionFixture(t *testing.T) fixture {
 	t.Helper()
 	base := sessiontest.New(t)
 	sessiontest.PrepareAdmission(t, base)
-	return fixtureOf(base)
+	return fixtureOf(t, base)
 }
 func (f fixture) startRequest(key string) session.StartRequest {
 	return session.StartRequest{EnvironmentID: f.env, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"work 1"}]`)}
@@ -128,11 +128,11 @@ func TestRuntimeCreationSelectsCurrentStartAndPinnedSpawn(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: admitted.TurnID, Execution: f.execution(), Host: f.host()}
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('e',64));
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,agent_id,$3,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,agent_id,$3,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, promoted)
 	for _, method := range []string{"create", "spawn"} {
 		req := f.startRequest(method)
@@ -264,7 +264,7 @@ func TestRuntimeCreationRechecksTurnAfterLockWait(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	tx, err := f.pool.Begin(ctx)
@@ -383,7 +383,7 @@ func TestRuntimeStartPreservesCausalLimitAcrossIndependentRoots(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
 	// A caller at the configured ancestry bound cannot create a new independent
 	// root to escape that bound. Its causal requester is retained independently of ownership.
 	peer := f.peer(t)
@@ -422,7 +422,7 @@ func TestRuntimeCreationWithFreshComputer(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
 	for _, method := range []string{"create", "spawn"} {
 		a, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest(method), method)
 		if err != nil {
@@ -444,7 +444,7 @@ func TestOwnedCallerCannotCreateOrDiscoverNewWork(t *testing.T) {
 	}
 	peer := f.peer(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET requester_session_id=$3,parent_session_id=$3,root_session_id=$3,causal_depth=1 WHERE environment_id=$1 AND id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, f.session, peer.session)
-	caller := session.Caller{Kind: "session", ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
 	req := f.startRequest("child")
 	req.ComputerID = f.computer
 	if _, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrRootSessionRequired) {
@@ -500,7 +500,7 @@ func TestMCPStartAndSpawnRetainSessionOriginWithoutInventingTurn(t *testing.T) {
 			if starting {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='starting' WHERE session_id=$1`, f.session)
 			}
-			caller := session.Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
+			caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Execution: f.execution(), Host: f.host()}
 			for _, method := range []string{"create", "spawn"} {
 				req := f.startRequest(method)
 				req.ComputerID = f.computer

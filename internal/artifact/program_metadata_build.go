@@ -34,8 +34,8 @@ func BuildProgramMetadata(plan definition.BuildPlan, runtimeIndex DefinitionInde
 			d.Template = &definition.TemplateManifest{
 				Seed:                definition.ComputerSeedManifest{Profile: image.Profile, Config: image.Config, ArtifactDigest: image.Digest, MediaType: image.MediaType},
 				DeleteAfterUnusedMs: input.Template.DeleteAfterUnusedMs, DeleteAfterUnusedNever: input.Template.DeleteAfterUnusedNever,
-				Resources: input.Template.Resources, Prepare: input.Template.Prepare,
-				Refresh: input.Template.Refresh, Secrets: input.Template.Secrets, BuildSecrets: input.Template.BuildSecrets,
+				Resources: input.Template.Resources, Prepare: input.Template.Prepare, Network: input.Template.Network, PrepareNetwork: input.Template.PrepareNetwork,
+				Refresh: input.Template.Refresh, Secrets: input.Template.Secrets, PrepareSecrets: input.Template.PrepareSecrets,
 			}
 		default:
 			return ProgramMetadata{}, fmt.Errorf("unsupported definition kind %q", input.Kind)

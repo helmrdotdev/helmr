@@ -18,6 +18,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 
 	"github.com/felixge/httpsnoop"
 	"github.com/go-chi/chi/v5"
@@ -60,6 +61,7 @@ type SecretManager interface {
 }
 
 type Server struct {
+	networkInstallation        networkpolicy.Installation
 	auditRouter                chi.Router
 	auditAdmission             *auditAdmission
 	auditPolicy                auditpolicy.Policy
@@ -111,6 +113,7 @@ const (
 )
 
 type ServerConfig struct {
+	NetworkInstallation        networkpolicy.Installation
 	AuditPolicy                auditpolicy.Policy
 	Changes                    *dbnotify.Hub
 	Slack                      *SlackConfig
@@ -156,6 +159,9 @@ type ServerConfig struct {
 }
 
 func NewServer(cfg ServerConfig) (http.Handler, error) {
+	if err := networkpolicy.ValidateInstallation(cfg.NetworkInstallation); err != nil {
+		return nil, fmt.Errorf("network installation: %w", err)
+	}
 	if err := cfg.AuditPolicy.Validate(); err != nil {
 		return nil, err
 	}
@@ -261,6 +267,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		return nil, errors.New("allocation owner is required")
 	}
 	server := &Server{
+		networkInstallation:           cfg.NetworkInstallation.Canonical(),
 		auditAdmission:                newAuditAdmission(),
 		auditPolicy:                   cfg.AuditPolicy,
 		organizationCreationAdminOnly: cfg.OrganizationCreationAdminOnly,
@@ -307,7 +314,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 			DeviceCode:         cfg.DeviceCodeTTL,
 			DevicePollInterval: cfg.DevicePollEvery,
 		}, cfg.AdminEmails, cfg.AuditPolicy),
-		deploymentFinalizer: deployment.NewFinalizer(cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission, log),
+		deploymentFinalizer: deployment.NewFinalizer(cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission, log, cfg.NetworkInstallation),
 	}
 	router := chi.NewRouter()
 	router.Use(auditRequest)

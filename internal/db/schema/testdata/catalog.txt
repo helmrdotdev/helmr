@@ -7,6 +7,7 @@ column agent_definitions.has_init boolean not null
 column agent_definitions.input_kind text not null default 'text'::text
 column agent_definitions.input_schema jsonb
 column agent_definitions.max_turn_duration_ms bigint
+column agent_definitions.runtime_mcp_policy jsonb not null
 column agent_definitions.suspension text not null default 'manual'::text
 column agent_definitions.template_id uuid not null
 column agent_triggers.agent_id uuid not null
@@ -717,6 +718,14 @@ column session_holds.recovery_lease_epoch bigint
 column session_holds.released_at timestamp with time zone
 column session_holds.scope text not null
 column session_holds.session_id uuid not null
+column session_mcp_scopes.created_at timestamp with time zone not null default clock_timestamp()
+column session_mcp_scopes.environment_id uuid not null
+column session_mcp_scopes.id uuid not null
+column session_mcp_scopes.policy jsonb not null
+column session_mcp_scopes.policy_digest bytea not null
+column session_mcp_scopes.process_epoch bigint not null
+column session_mcp_scopes.session_id uuid not null
+column session_mcp_scopes.slot smallint not null
 column session_processes.attachment_sequence bigint not null default 0
 column session_processes.computer_id uuid not null
 column session_processes.computer_lease_epoch bigint not null
@@ -989,7 +998,9 @@ column template_definitions.environment_id uuid not null
 column template_definitions.image_spec_id uuid not null
 column template_definitions.max_image_age_ms bigint
 column template_definitions.memory_bytes bigint not null
+column template_definitions.network_policy jsonb not null
 column template_definitions.prepare boolean not null default false
+column template_definitions.prepare_network_policy jsonb not null
 column template_definitions.refresh_every_ms bigint
 column template_definitions.template_id uuid not null
 column templates.environment_id uuid not null
@@ -1208,6 +1219,7 @@ column worker_scale_in_operations.operation_key uuid not null
 column worker_scale_in_operations.worker_group_id uuid not null
 column worker_scale_in_operations.worker_host_id uuid not null
 column worker_scale_in_operations.worker_pool_id uuid not null
+constraint agent_definitions c CHECK ((runtime_mcp_policy = '{"kind": "unrestricted"}'::jsonb OR jsonb_typeof(runtime_mcp_policy) = 'object'::text AND (runtime_mcp_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(runtime_mcp_policy -> 'rules'::text) = 'array'::text AND (runtime_mcp_policy - ARRAY['kind'::text, 'rules'::text]) = '{}'::jsonb) IS TRUE)
 constraint agent_definitions c CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL)
 constraint agent_definitions c CHECK (close_after_idle_ms > 0)
 constraint agent_definitions c CHECK (input_kind = 'text'::text AND input_schema IS NULL OR input_kind = 'json'::text AND input_schema IS NOT NULL AND jsonb_typeof(input_schema) = 'object'::text)
@@ -1832,6 +1844,13 @@ constraint session_holds f FOREIGN KEY (environment_id, session_id) REFERENCES s
 constraint session_holds f FOREIGN KEY (environment_id, session_id, recovery_computer_id) REFERENCES sessions(environment_id, id, computer_id)
 constraint session_holds p PRIMARY KEY (environment_id, id)
 constraint session_holds u UNIQUE (environment_id, session_id, id)
+constraint session_mcp_scopes c CHECK ((policy = '{"kind": "unrestricted"}'::jsonb OR jsonb_typeof(policy) = 'object'::text AND (policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(policy -> 'rules'::text) = 'array'::text AND (policy - ARRAY['kind'::text, 'rules'::text]) = '{}'::jsonb) IS TRUE)
+constraint session_mcp_scopes c CHECK (octet_length(policy_digest) = 32)
+constraint session_mcp_scopes c CHECK (slot >= 0 AND slot <= 15)
+constraint session_mcp_scopes f FOREIGN KEY (environment_id, session_id, process_epoch) REFERENCES session_processes(environment_id, session_id, epoch)
+constraint session_mcp_scopes p PRIMARY KEY (environment_id, id)
+constraint session_mcp_scopes u UNIQUE (environment_id, session_id, process_epoch, policy_digest)
+constraint session_mcp_scopes u UNIQUE (environment_id, session_id, process_epoch, slot)
 constraint session_processes c CHECK (NOT stderr_end_complete OR stderr_ended)
 constraint session_processes c CHECK (NOT stdout_end_complete OR stdout_ended)
 constraint session_processes c CHECK (attachment_sequence >= 0)
@@ -2068,12 +2087,15 @@ constraint slack_user_links u UNIQUE (team_id, user_id)
 constraint slack_work_items f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint slack_work_items f FOREIGN KEY (post_id, thread_id, environment_id) REFERENCES slack_posts(id, thread_id, environment_id)
 constraint slack_work_items p PRIMARY KEY (thread_id, turn_id)
+constraint template_definitions c CHECK (((network_policy = ANY (ARRAY['{"kind": "ordinary"}'::jsonb, '{"kind": "block"}'::jsonb])) OR jsonb_typeof(network_policy) = 'object'::text AND (network_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(network_policy -> 'domains'::text) = 'array'::text AND (network_policy -> 'domains'::text) <> '[]'::jsonb AND (network_policy - ARRAY['kind'::text, 'domains'::text]) = '{}'::jsonb) IS TRUE)
+constraint template_definitions c CHECK (((prepare_network_policy = ANY (ARRAY['{"kind": "ordinary"}'::jsonb, '{"kind": "block"}'::jsonb])) OR jsonb_typeof(prepare_network_policy) = 'object'::text AND (prepare_network_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(prepare_network_policy -> 'domains'::text) = 'array'::text AND (prepare_network_policy -> 'domains'::text) <> '[]'::jsonb AND (prepare_network_policy - ARRAY['kind'::text, 'domains'::text]) = '{}'::jsonb) IS TRUE)
 constraint template_definitions c CHECK (NOT delete_after_unused_never OR delete_after_unused_ms IS NULL)
 constraint template_definitions c CHECK (cpu_millis > 0)
 constraint template_definitions c CHECK (delete_after_unused_ms > 0)
 constraint template_definitions c CHECK (disk_bytes > 0 AND (disk_bytes % 1048576::bigint) = 0)
 constraint template_definitions c CHECK (max_image_age_ms > 0)
 constraint template_definitions c CHECK (memory_bytes > 0 AND (memory_bytes % 1048576::bigint) = 0)
+constraint template_definitions c CHECK (prepare OR prepare_network_policy = '{"kind": "block"}'::jsonb)
 constraint template_definitions c CHECK (refresh_every_ms > 0)
 constraint template_definitions f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
 constraint template_definitions f FOREIGN KEY (environment_id, image_spec_id) REFERENCES image_specs(environment_id, id)

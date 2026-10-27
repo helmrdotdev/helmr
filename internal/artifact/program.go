@@ -15,6 +15,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 )
 
 const (
@@ -208,8 +209,17 @@ func ValidateProgramMetadata(index ProgramMetadata) error {
 			computers[declaration.DeclaredID] = struct{}{}
 		}
 	}
+	agentKeys := []string{}
+	for _, d := range index.Definitions {
+		if d.Agent != nil {
+			agentKeys = append(agentKeys, d.DeclaredID)
+		}
+	}
 	for _, declaration := range index.Definitions {
 		if declaration.Agent != nil {
+			if _, err := mcppolicy.Normalize(declaration.Agent.RuntimeMcp, agentKeys); err != nil {
+				return fmt.Errorf("%w %s.runtimeMcp: %w", definition.ErrInvalidRuntimeMcpPolicy, declaration.DeclaredID, err)
+			}
 			if _, found := computers[declaration.Agent.TemplateDefinitionID]; !found {
 				return errors.New("agent references an absent Computer")
 			}

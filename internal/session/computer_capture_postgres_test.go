@@ -66,7 +66,7 @@ func TestComputerCaptureSealsAllMembersAndReplaysExactSecretRequest(t *testing.T
 			t.Fatalf("capture blocked control attachment: %v", err)
 		}
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, Execution: f.execution(), Host: f.host()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Execution: f.execution(), Host: f.host()}
 	if _, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "from-sealed-session", Input: []byte(`[]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("sealed guest admitted side effect: %v", err)
 	}

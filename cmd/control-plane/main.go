@@ -40,6 +40,7 @@ import (
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -246,6 +247,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	allocationWake, stopAllocationWake := changes.Subscribe("dispatch")
 	defer stopAllocationWake()
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{AuditPolicy: cfg.AuditPolicy,
+		NetworkInstallation:            networkpolicy.Installation{PrivateBusinessCIDRs: cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs},
 		Changes:                        changes,
 		Slack:                          slackConfig,
 		Allocator:                      allocator,

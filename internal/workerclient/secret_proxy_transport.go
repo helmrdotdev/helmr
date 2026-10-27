@@ -5,24 +5,33 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"net/netip"
 	"sync"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"net"
 )
 
 // PrepareSecretTransport is host-only. The immutable instance locator is closed
 // over by every callback; no guest identity or decrypted value is cached.
-func (c *Client) PrepareSecretTransport(ctx context.Context, instanceID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
+func (c *Client) PrepareSecretTransport(ctx context.Context, instanceID string, policy networkpolicy.Policy, installation networkpolicy.Installation, resolver string) (*secretproxy.Proxy, error) {
 	request := workerapi.SecretProxyRequest{AllocationID: instanceID}
 	prepared, err := c.PrepareSecretProxy(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	defer clear(prepared.PrivateKey)
-	if len(prepared.Origins) == 0 {
+	if err := networkpolicy.ValidateInstallation(installation); err != nil {
+		return nil, err
+	}
+	for _, origin := range prepared.Origins {
+		if err := policy.ValidateProtectedOrigin(origin); err != nil {
+			return nil, err
+		}
+	}
+	if len(prepared.Origins) == 0 && policy.Kind != networkpolicy.Allowlist {
 		return nil, nil
 	}
 	parse := func(value workerapi.SecretProxyPreparation) (tls.Certificate, error) {
@@ -33,13 +42,19 @@ func (c *Client) PrepareSecretTransport(ctx context.Context, instanceID string, 
 		cert.Leaf, e = x509.ParseCertificate(cert.Certificate[0])
 		return cert, e
 	}
-	certificate, err := parse(prepared)
+	var certificate tls.Certificate
+	if len(prepared.Origins) > 0 {
+		certificate, err = parse(prepared)
+	}
 	if err != nil {
 		return nil, err
 	}
 	var mu sync.Mutex
-	dialer := &secretproxy.Dialer{Blocked: append([]netip.Prefix(nil), blocked...)}
-	return secretproxy.New(secretproxy.Config{Origins: prepared.Origins, DialContext: dialer.DialContext, AllowedDestination: dialer.Allowed,
+	dialer := &secretproxy.Dialer{Installation: &installation}
+	trusted := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(resolver, "53"))
+	}}
+	return secretproxy.New(secretproxy.Config{NetworkPolicy: policy, Installation: installation, LookupIP: trusted.LookupNetIP, Origins: prepared.Origins, DialContext: dialer.DialContext, AllowedDestination: dialer.Allowed,
 		Certificate: func(ctx context.Context, host string) (tls.Certificate, error) {
 			mu.Lock()
 			defer mu.Unlock()

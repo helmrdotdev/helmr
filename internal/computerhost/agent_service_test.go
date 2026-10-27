@@ -33,7 +33,7 @@ func TestAgentServiceForwardsOriginalIdentityAndReceipt(t *testing.T) {
 			grant := sessionTransportGrant()
 			observed := make(chan *agentv1.OperationResult, 1)
 			machine := sessionTransportMachine(t, func(stream net.Conn, attach *agentv1.SessionAttach) {
-				event := &agentv1.GuestSessionMessage{Identity: grant.Identity, AttachmentSequence: attach.AttachmentSequence, EventSequence: 8, OperationAuthorityGeneration: 2, OperationLeaseEpoch: 2, Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: "original", Method: agentv1.Operation_METHOD_RUNTIME_MCP, PayloadJson: []byte(`{"tool":"enqueue","arguments":{"idempotencyKey":"stable"}}`)}}}}}
+				event := &agentv1.GuestSessionMessage{Identity: grant.Identity, AttachmentSequence: attach.AttachmentSequence, EventSequence: 8, OperationMcpScopeId: "trusted-scope", OperationAuthorityGeneration: 2, OperationLeaseEpoch: 2, Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: "original", Method: agentv1.Operation_METHOD_RUNTIME_MCP, PayloadJson: []byte(`{"tool":"enqueue","arguments":{"idempotencyKey":"stable"}}`)}}}}}
 				if err := frameio.WriteProtoFrame(stream, event); err != nil {
 					t.Error(err)
 					return
@@ -58,7 +58,7 @@ func TestAgentServiceForwardsOriginalIdentityAndReceipt(t *testing.T) {
 				t.Fatal(err)
 			}
 			client := agentRuntimeTestClient{operation: func(_ context.Context, r workerapi.AgentOperationRequest) (workerapi.AgentOperationResponse, error) {
-				if r.Method != workerapi.AgentMethodRuntimeMCP || r.AuthorityGeneration != 2 || r.Session.ComputerLeaseEpoch != 2 || r.Session.EnvironmentID != "environment" || r.Session.SessionID != "session" || r.Session.ProcessEpoch != 1 || r.TurnID != "" || r.RequestID != "original" {
+				if r.MCPScopeID != "trusted-scope" || r.Method != workerapi.AgentMethodRuntimeMCP || r.AuthorityGeneration != 2 || r.Session.ComputerLeaseEpoch != 2 || r.Session.EnvironmentID != "environment" || r.Session.SessionID != "session" || r.Session.ProcessEpoch != 1 || r.TurnID != "" || r.RequestID != "original" {
 					t.Errorf("identity changed: %+v", r)
 				}
 				if failed {
@@ -392,4 +392,44 @@ func TestAgentServiceDiagnosticDispositionPreservesControl(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestAgentServiceRejectsPendingScopeSwitch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		grant := sessionTransportGrant()
+		entered := make(chan struct{})
+		var calls atomic.Int32
+		machine := sessionTransportMachine(t, func(stream net.Conn, attach *agentv1.SessionAttach) {
+			event := &agentv1.GuestSessionMessage{Identity: grant.Identity, AttachmentSequence: attach.AttachmentSequence, EventSequence: 1, OperationAuthorityGeneration: 3, OperationLeaseEpoch: 2, OperationMcpScopeId: "first-scope", Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: grant.Identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: "same-request", Method: agentv1.Operation_METHOD_RUNTIME_MCP, PayloadJson: []byte(`{"tool":"list_computers","arguments":{}}`)}}}}}
+			if err := frameio.WriteProtoFrame(stream, event); err != nil {
+				t.Error(err)
+				return
+			}
+			<-entered
+			event.EventSequence = 2
+			event.OperationMcpScopeId = "second-scope"
+			if err := frameio.WriteProtoFrame(stream, event); err != nil {
+				t.Error(err)
+				return
+			}
+			var result agentv1.HostSessionMessage
+			if err := frameio.ReadProtoFrameBounded(stream, agentTransportFrameLimit, &result); err == nil {
+				t.Error("switched scope received acknowledgment or result")
+			}
+		})
+		connection, _, err := OpenAgentSession(t.Context(), machine, &agentv1.SessionAttach{Grant: grant, AttachmentSequence: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		client := agentRuntimeTestClient{operation: func(ctx context.Context, _ workerapi.AgentOperationRequest) (workerapi.AgentOperationResponse, error) {
+			calls.Add(1)
+			close(entered)
+			<-ctx.Done()
+			return workerapi.AgentOperationResponse{}, ctx.Err()
+		}}
+		err = serveAgentSessionForTest(t.Context(), connection, "environment", client, func(context.Context, *agentv1.GuestSessionMessage) error { return nil })
+		if err == nil || !strings.Contains(err.Error(), "pending Session request identity changed") || calls.Load() != 1 {
+			t.Fatalf("scope switch err=%v calls=%d", err, calls.Load())
+		}
+	})
 }

@@ -237,7 +237,8 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter
  AND (cardinality($12::text[]) IS NULL OR cardinality($12::text[])=0 OR status=ANY($12))
  AND ($13::uuid IS NULL OR parent_session_id=$13) AND ($14::uuid IS NULL OR requester_session_id=$14)
  AND ($15::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$15))
- ORDER BY id DESC LIMIT $10`, req.EnvironmentID, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent)
+ AND ($16::text[] IS NULL OR agent_id IN (SELECT id FROM agents WHERE environment_id=$1 AND key=ANY($16::text[])))
+ ORDER BY id DESC LIMIT $10`, req.EnvironmentID, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent, filter.MCPAgentKeys)
 	if err != nil {
 		return result, err
 	}

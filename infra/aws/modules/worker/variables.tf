@@ -463,3 +463,21 @@ variable "warm_pool_size" {
     error_message = "warm_pool_size must be a non-negative integer."
   }
 }
+
+variable "network_private_business_cidrs" {
+  description = "Canonical RFC1918 business destination ceiling; excludes management prefixes and defaults to no private connectivity."
+  type        = list(string)
+  default     = []
+  validation {
+    condition = length(distinct(var.network_private_business_cidrs)) == length(var.network_private_business_cidrs) && alltrue([
+      for cidr in var.network_private_business_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false) && anytrue([
+        for private in ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"] : try(tonumber(split("/", cidr)[1]) >= tonumber(split("/", private)[1]) && cidrhost(format("%s/%s", split("/", cidr)[0], split("/", private)[1]), 0) == split("/", private)[0], false)
+      ])
+    ])
+    error_message = "network_private_business_cidrs must contain unique canonical RFC1918 CIDRs."
+  }
+  validation {
+    condition     = alltrue(flatten([for business in var.network_private_business_cidrs : [for blocked in var.network_blocked_ipv4_cidrs : try(cidrhost(format("%s/%s", split("/", business)[0], min(tonumber(split("/", business)[1]), tonumber(split("/", blocked)[1]))), 0) != cidrhost(format("%s/%s", split("/", blocked)[0], min(tonumber(split("/", business)[1]), tonumber(split("/", blocked)[1]))), 0), false)]]))
+    error_message = "Private business ranges must not overlap mandatory management denies."
+  }
+}

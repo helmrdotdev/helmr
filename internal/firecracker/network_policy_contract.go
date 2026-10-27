@@ -3,6 +3,7 @@ package firecracker
 import (
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -15,17 +16,22 @@ const (
 )
 
 type networkPolicyInput struct {
-	ProtectedPorts   []uint16
-	Tap              string
-	Peer             string
-	Mark             uint32
-	GuestIPv4        string
-	TranslationIPv4  string
-	BlockedIPv4CIDRs []netip.Prefix
-	ResolverIPv4     string
+	Policy               networkpolicy.Policy
+	PrivateBusinessCIDRs []netip.Prefix
+	ProtectedPorts       []uint16
+	Tap                  string
+	Peer                 string
+	Mark                 uint32
+	GuestIPv4            string
+	TranslationIPv4      string
+	BlockedIPv4CIDRs     []netip.Prefix
+	ResolverIPv4         string
 }
 
 func renderNetworkPolicy(input networkPolicyInput) (string, error) {
+	if input.Policy.Kind != networkpolicy.Ordinary && input.Policy.Kind != networkpolicy.Blocked && input.Policy.Kind != networkpolicy.Allowlist {
+		return "", errors.New("network policy authority missing")
+	}
 	if input.Mark == 0 {
 		return "", errors.New("network policy binding is invalid")
 	}
@@ -60,6 +66,10 @@ func renderNetworkPolicy(input networkPolicyInput) (string, error) {
 		return "", errors.New("network policy resolver is not specified IPv4")
 	}
 	resolver := address.String()
+	blocked = append(blocked, networkpolicy.ReservedPrefixes()...)
+	if err := networkpolicy.ValidateInstallation(networkpolicy.Installation{PrivateBusinessCIDRs: input.PrivateBusinessCIDRs, BlockedIPv4CIDRs: blocked}); err != nil {
+		return "", err
+	}
 	blockedCIDRs := canonicalIPv4PrefixSet(blocked)
 
 	tap := strconv.Quote(input.Tap)
@@ -69,11 +79,27 @@ func renderNetworkPolicy(input networkPolicyInput) (string, error) {
 	fmt.Fprintf(&script, "add table inet %s\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add counter inet %s %s\n", networkPolicyTableName, runNetworkDeniedCounterName)
 	fmt.Fprintln(&script, runNetworkPolicySet("blocked_ipv4", "ipv4_addr", blockedCIDRs))
+	fmt.Fprintln(&script, runNetworkPolicySet("private_ipv4", "ipv4_addr", canonicalIPv4PrefixSet(append([]netip.Prefix{}, networkpolicy.PrivatePrefixes()...))))
+	fmt.Fprintln(&script, runNetworkPolicySet("private_business", "ipv4_addr", canonicalIPv4PrefixSet(append([]netip.Prefix{}, input.PrivateBusinessCIDRs...))))
 	fmt.Fprintf(&script, "add chain inet %s input { type filter hook input priority 0; policy drop; }\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s output { type filter hook output priority 0; policy drop; }\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s forward { type filter hook forward priority 0; policy drop; }\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s egress\n", networkPolicyTableName)
 	fmt.Fprintf(&script, "add chain inet %s postrouting { type nat hook postrouting priority srcnat; policy accept; }\n", networkPolicyTableName)
+	if input.Policy.Kind == networkpolicy.Allowlist {
+		input.ProtectedPorts = append(slices.Clone(input.ProtectedPorts), 443)
+	}
+	if input.Policy.Kind == networkpolicy.Blocked {
+		input.ProtectedPorts = nil
+	}
+	if input.Policy.Kind == networkpolicy.Allowlist {
+		fmt.Fprintf(&script, "add chain inet %s dns_capture { type nat hook prerouting priority dstnat; policy accept; }\n", networkPolicyTableName)
+		for _, protocol := range []string{"udp", "tcp"} {
+			fmt.Fprintf(&script, "add rule inet %s dns_capture iifname %s meta mark %s ip saddr %s ip daddr %s %s dport 53 redirect to :53\n", networkPolicyTableName, tap, mark, guestIPv4, resolver, protocol)
+			fmt.Fprintf(&script, "add rule inet %s input iifname %s meta mark %s ip saddr %s %s dport 53 ct state new,established accept\n", networkPolicyTableName, tap, mark, guestIPv4, protocol)
+			fmt.Fprintf(&script, "add rule inet %s output oifname %s ip daddr %s %s sport 53 ct state established accept\n", networkPolicyTableName, tap, guestIPv4, protocol)
+		}
+	}
 	if len(input.ProtectedPorts) > 0 {
 		ports := slices.Clone(input.ProtectedPorts)
 		slices.Sort(ports)
@@ -106,12 +132,15 @@ func renderNetworkPolicy(input networkPolicyInput) (string, error) {
 	fmt.Fprintf(&script, "add rule inet %s forward meta nfproto ipv6 counter name %s drop\n", networkPolicyTableName, deniedCounter)
 	fmt.Fprintf(&script, "add rule inet %s forward ct state invalid counter name %s drop\n", networkPolicyTableName, deniedCounter)
 	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark != %s counter name %s drop\n", networkPolicyTableName, tap, peer, mark, deniedCounter)
-	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s ip daddr %s udp dport 53 jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4, resolver)
-	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s ip daddr %s tcp dport 53 jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4, resolver)
-	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s ip daddr @blocked_ipv4 counter name %s drop\n", networkPolicyTableName, tap, peer, mark, guestIPv4, deniedCounter)
-	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s meta l4proto tcp jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4)
-	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s meta l4proto udp jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4)
-	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s ip protocol icmp jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4)
+	if input.Policy.Kind == networkpolicy.Ordinary {
+		fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s ip daddr %s udp dport 53 jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4, resolver)
+		fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s ip daddr %s tcp dport 53 jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4, resolver)
+		fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s ip daddr @blocked_ipv4 counter name %s drop\n", networkPolicyTableName, tap, peer, mark, guestIPv4, deniedCounter)
+		fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s ip daddr @private_ipv4 ip daddr != @private_business counter name %s drop\n", networkPolicyTableName, tap, peer, deniedCounter)
+		fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s meta l4proto tcp jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4)
+		fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s meta l4proto udp jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4)
+		fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s meta mark %s ip saddr %s ip protocol icmp jump egress\n", networkPolicyTableName, tap, peer, mark, guestIPv4)
+	}
 	fmt.Fprintf(&script, "add rule inet %s forward iifname %s oifname %s ip daddr %s ct state established,related accept\n", networkPolicyTableName, peer, tap, guestIPv4)
 	fmt.Fprintf(&script, "add rule inet %s forward counter name %s drop\n", networkPolicyTableName, deniedCounter)
 	fmt.Fprintf(&script, "add rule inet %s egress accept\n", networkPolicyTableName)

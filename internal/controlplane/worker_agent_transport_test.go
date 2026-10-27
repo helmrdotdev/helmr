@@ -66,7 +66,7 @@ func TestWorkerAgentInvalidArgumentsSettleWithoutPoisoningAttachment(t *testing.
 		for index, payload := range [][]byte{[]byte(`{"tool":"enqueue","arguments":{"sessionId":"not-a-uuid","input":1,"idempotencyKey":"bad"}}`), nulInput, invalidCanonical, valid} {
 			id := []string{"bad", "nul", "ambiguous", "good"}[index]
 			event := &agentv1.ProgramEvent{Identity: identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: id, Method: agentv1.Operation_METHOD_RUNTIME_MCP, PayloadJson: payload}}}
-			if err = frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: identity, AttachmentSequence: 1, EventSequence: uint64(index + 1), OperationAuthorityGeneration: 1, OperationLeaseEpoch: 1, Message: &agentv1.GuestSessionMessage_Event{Event: event}}); err != nil {
+			if err = frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: identity, AttachmentSequence: 1, EventSequence: uint64(index + 1), OperationAuthorityGeneration: 1, OperationLeaseEpoch: 1, OperationMcpScopeId: f.MCPScope.String(), Message: &agentv1.GuestSessionMessage_Event{Event: event}}); err != nil {
 				t.Error(err)
 				return
 			}
@@ -242,7 +242,7 @@ func TestWorkerAgentHotCredentialRefreshPreservesAttachment(t *testing.T) {
 					}
 				}
 				event := &agentv1.ProgramEvent{Identity: identity, Event: &agentv1.ProgramEvent_Operation{Operation: &agentv1.Operation{RequestId: key, Method: agentv1.Operation_METHOD_RUNTIME_MCP, PayloadJson: runtimeEnqueue(f, key).Payload}}}
-				if err := frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: identity, AttachmentSequence: 1, EventSequence: uint64(index + 1), OperationAuthorityGeneration: next.AuthorityGeneration, OperationLeaseEpoch: next.ComputerLeaseEpoch, Message: &agentv1.GuestSessionMessage_Event{Event: event}}); err != nil {
+				if err := frameio.WriteProtoFrame(stream, &agentv1.GuestSessionMessage{Identity: identity, AttachmentSequence: 1, EventSequence: uint64(index + 1), OperationAuthorityGeneration: next.AuthorityGeneration, OperationLeaseEpoch: next.ComputerLeaseEpoch, OperationMcpScopeId: f.MCPScope.String(), Message: &agentv1.GuestSessionMessage_Event{Event: event}}); err != nil {
 					return err
 				}
 				var reply, ack agentv1.HostSessionMessage

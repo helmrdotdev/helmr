@@ -4,8 +4,8 @@ package firecracker
 
 import (
 	"context"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"net"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,13 +28,15 @@ func TestRoutedNetworkLifecyclePrivileged(t *testing.T) {
 	}
 	stateDir := t.TempDir()
 	connector := &Connector{
-		cfg: Config{
+		cfg: Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(), NetworkPhase: networkpolicy.PhaseRuntime,
 			StateDir: stateDir, NetworkLinkPool: "198.18.0.0/29",
 			NetworkTranslationPool: "198.19.0.0/30", NetworkResolverIPv4: "1.1.1.1",
 			NetworkCapacity: 2, IPPath: "ip", NFTPath: "nft",
 			JailerUID: 65534, JailerGID: 65534,
 			// This fixture has no protected bindings; production preparation returns nil.
-			PrepareSecretTransport: func(context.Context, string, []netip.Prefix) (*secretproxy.Proxy, error) { return nil, nil },
+			PrepareSecretTransport: func(context.Context, string, networkpolicy.Policy, networkpolicy.Installation, string) (*secretproxy.Proxy, error) {
+				return nil, nil
+			},
 		},
 		datapath: datapath.NewManager(),
 	}

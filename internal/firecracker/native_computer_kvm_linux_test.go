@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"io"
 	"net"
 	"net/http"
@@ -126,10 +127,10 @@ func TestNativeComputerKVM(t *testing.T) {
 	cfg.JailerChrootBaseDir = filepath.Join(input.Arena, "jailer")
 	// The real transparent transport forwards only two synthetic destinations to
 	// host-loopback model servers. No Internet connection or credential is used.
-	cfg.PrepareSecretTransport = func(context.Context, string, []netip.Prefix) (*secretproxy.Proxy, error) {
+	cfg.PrepareSecretTransport = func(context.Context, string, networkpolicy.Policy, networkpolicy.Installation, string) (*secretproxy.Proxy, error) {
 		denied := errors.New("no protected credentials in native fixture")
 		ports := map[string]bool{strconv.Itoa(endpoints.Codex): true, strconv.Itoa(endpoints.Claude): true}
-		return secretproxy.New(secretproxy.Config{
+		return secretproxy.New(secretproxy.Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(),
 			Origins:            []string{fmt.Sprintf("https://fixture.invalid:%d", endpoints.Codex), fmt.Sprintf("https://fixture.invalid:%d", endpoints.Claude)},
 			Certificate:        func(context.Context, string) (tls.Certificate, error) { return tls.Certificate{}, denied },
 			Resolve:            func(context.Context, string, []string) (map[string][]byte, error) { return nil, denied },
@@ -241,14 +242,14 @@ func TestNativeComputerKVM(t *testing.T) {
 			topology := vm.Topology{Computer: &vm.ComputerDisk{ComputerID: computerID, VersionID: versionID, SizeBytes: capacity, Device: device}}
 			var machine vm.CheckpointableMachine
 			if phase == 0 {
-				machine, err = runtime.Materialize(ctx, vm.MaterializeRequest{ID: instance, OwnerKind: owner.Kind, Binding: binding, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", Resources: resources, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: topology})
+				machine, err = runtime.Materialize(ctx, vm.MaterializeRequest{NetworkPhase: networkpolicy.PhaseRuntime, NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(), ID: instance, OwnerKind: owner.Kind, Binding: binding, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", Resources: resources, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: topology})
 			} else {
 				paths := make([]string, len(published))
 				for i, object := range published {
 					paths[i] = filepath.Join(dir, fmt.Sprintf("remote-%d", i))
 					nativeKVMDownload(t, ctx, remote, object, paths[i])
 				}
-				machine, err = runtime.Restore(ctx, vm.RestoreRequest{ID: captureRequest.CheckpointId, ComputerInstanceID: instance, OwnerKind: owner.Kind, Binding: binding, Resources: resources, VMState: paths[0], VMStateMediaType: snapshot.VMState.MediaType, ScratchDisk: paths[1], ScratchDiskMediaType: snapshot.ScratchDisk.MediaType, MemorySource: testMemorySource{path: paths[2], size: resources.MemoryMiB * (1 << 20)}, Manifest: snapshot.Manifest, Checkpoint: vm.CheckpointIdentity{RuntimeBackend: snapshot.RuntimeBackend, RuntimeArch: snapshot.RuntimeArch, VMRuntimeContract: snapshot.VMRuntimeContract, RuntimeID: snapshot.RuntimeID, KernelDigest: snapshot.KernelDigest, InitramfsDigest: snapshot.InitramfsDigest, RootfsDigest: snapshot.RootfsDigest, VMConfigDigest: snapshot.VMConfigDigest, VMVCPUCount: snapshot.VMVCPUCount, CPUConfigDigest: snapshot.CPUConfigDigest}, Topology: topology})
+				machine, err = runtime.Restore(ctx, vm.RestoreRequest{NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(), ID: captureRequest.CheckpointId, ComputerInstanceID: instance, OwnerKind: owner.Kind, Binding: binding, Resources: resources, VMState: paths[0], VMStateMediaType: snapshot.VMState.MediaType, ScratchDisk: paths[1], ScratchDiskMediaType: snapshot.ScratchDisk.MediaType, MemorySource: testMemorySource{path: paths[2], size: resources.MemoryMiB * (1 << 20)}, Manifest: snapshot.Manifest, Checkpoint: vm.CheckpointIdentity{RuntimeBackend: snapshot.RuntimeBackend, RuntimeArch: snapshot.RuntimeArch, VMRuntimeContract: snapshot.VMRuntimeContract, RuntimeID: snapshot.RuntimeID, KernelDigest: snapshot.KernelDigest, InitramfsDigest: snapshot.InitramfsDigest, RootfsDigest: snapshot.RootfsDigest, VMConfigDigest: snapshot.VMConfigDigest, VMVCPUCount: snapshot.VMVCPUCount, CPUConfigDigest: snapshot.CPUConfigDigest}, Topology: topology})
 			}
 			nativeKVMMust(t, err)
 			defer func() {

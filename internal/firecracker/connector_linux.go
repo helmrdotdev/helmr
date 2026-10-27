@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -144,18 +145,7 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("resolve startup probe runtime identity: %w", err)
 	}
-	ownerID := uuid.NewV7().String()
-	machine, err := c.connect(probeCtx, startupProbeLaunch, vm.ConnectRequest{
-		ID:        ownerID,
-		OwnerKind: vm.OwnerInstance,
-		Binding: vm.WorkloadBinding{
-			WorkerEpoch:        1,
-			OwnerID:            ownerID,
-			Generation:         1,
-			ComputerInstanceID: ownerID,
-			VMPlatformID:       identity.ID,
-		},
-	})
+	machine, err := c.connect(probeCtx, startupProbeLaunch, c.startupProbeRequest(identity.ID))
 	if err != nil {
 		return fmt.Errorf("start the Firecracker startup probe Guest: %w", err)
 	}
@@ -165,6 +155,13 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 		return fmt.Errorf("clean the Firecracker startup probe Guest: %w", err)
 	}
 	return nil
+}
+
+// The same explicit blocked request goes through normal launch admission. The
+// startup probe has no Control Plane allocation and uses its own host ceiling.
+func (c *Connector) startupProbeRequest(runtimeID string) vm.ConnectRequest {
+	ownerID := uuid.NewV7().String()
+	return vm.ConnectRequest{NetworkPolicy: networkpolicy.BlockedPolicy(), NetworkInstallation: networkpolicy.Installation{PrivateBusinessCIDRs: c.cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: c.cfg.NetworkBlockedIPv4CIDRs}.Canonical(), ID: ownerID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: ownerID, Generation: 1, ComputerInstanceID: ownerID, VMPlatformID: runtimeID}}
 }
 
 func (c *Connector) connect(ctx context.Context, mode launchMode, request vm.ConnectRequest) (vm.Machine, error) {
@@ -196,7 +193,10 @@ func (c *Connector) connect(ctx context.Context, mode launchMode, request vm.Con
 func (c *Connector) connectorForRequest(
 	request vm.ConnectRequest,
 ) (*Connector, error) {
-	cfg := c.cfg
+	cfg, err := c.configForNetwork(request.NetworkPolicy, request.NetworkInstallation)
+	if err != nil {
+		return nil, err
+	}
 	if request.OwnerKind != vm.OwnerInstance {
 		return nil, errors.New("the Firecracker owner kind is invalid")
 	}
@@ -205,6 +205,11 @@ func (c *Connector) connectorForRequest(
 	}
 	if request.Resources != (vm.Resources{}) {
 		return nil, errors.New("runtime attachment cannot change resources")
+	}
+	cfg.NetworkPhase = networkpolicy.PhaseRuntime
+	cfg.NetworkComputerID = ""
+	if request.Topology.Computer != nil {
+		cfg.NetworkComputerID = request.Topology.Computer.ComputerID
 	}
 	child := *c
 	child.cfg = cfg

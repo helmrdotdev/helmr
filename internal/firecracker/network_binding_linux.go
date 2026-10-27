@@ -33,6 +33,7 @@ const (
 
 type installedNetworkBinding struct {
 	secretProxy                *secretproxy.Proxy
+	dns                        *secretproxy.DNS
 	connector                  *Connector
 	manifest                   networkOwnerManifest
 	packet                     *datapath.Binding
@@ -423,6 +424,9 @@ func (binding *installedNetworkBinding) Failure() <-chan error {
 func (binding *installedNetworkBinding) closeSecretTransport() error {
 	binding.mu.Lock()
 	defer binding.mu.Unlock()
+	if binding.dns != nil {
+		binding.dns.Close()
+	}
 	if binding.secretProxy != nil {
 		return binding.secretProxy.Close()
 	}
@@ -452,6 +456,9 @@ func (binding *installedNetworkBinding) Deactivate() error {
 	fenceErr := binding.fence()
 	if binding.secretProxy != nil {
 		fenceErr = errors.Join(fenceErr, binding.secretProxy.Close())
+	}
+	if binding.dns != nil {
+		fenceErr = errors.Join(fenceErr, binding.dns.Close())
 	}
 	var packetErr error
 	if binding.packet != nil {

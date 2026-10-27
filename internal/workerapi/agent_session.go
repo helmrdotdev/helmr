@@ -58,6 +58,7 @@ type AgentOperationRequest struct {
 	TurnID              string               `json:"turn_id,omitempty"`
 	Method              AgentOperationMethod `json:"method"`
 	Payload             json.RawMessage      `json:"payload"`
+	MCPScopeID          string               `json:"mcp_scope_id,omitempty"`
 	DrainEvidence       string               `json:"drain_evidence,omitempty"`
 }
 type AgentOperationError struct {

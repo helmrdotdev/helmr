@@ -27,32 +27,33 @@ locals {
   )
 
   worker_environment_values = {
-    WORKER_COMPUTER_STAGING_MIB       = tostring(var.computer_staging_mib)
-    WORKER_COMPUTER_DEVICES           = join(" ", var.computer_devices)
-    CONTROL_PLANE_URL                 = var.worker_controlplane_url
-    CAS_URI                           = var.cas_uri
-    PLATFORM_STORE_URI                = var.platform_store_uri
-    FIRECRACKER_PATH                  = "/usr/local/bin/firecracker"
-    CPU_TEMPLATE_HELPER_PATH          = "/usr/local/bin/cpu-template-helper"
-    JAILER_PATH                       = "/usr/local/bin/jailer"
-    MKFS_EXT4_PATH                    = "/usr/local/libexec/helmr/mkfs.ext4"
-    MKE2FS_CONFIG_PATH                = "/usr/share/helmr/mke2fs.conf"
-    JAILER_UID                        = tostring(var.jailer_uid)
-    JAILER_GID                        = tostring(var.jailer_gid)
-    JAILER_CGROUP_VERSION             = "2"
-    WORKER_NETWORK_BLOCKED_IPV4_CIDRS = jsonencode(var.network_blocked_ipv4_cidrs)
-    WORKER_NETWORK_LINK_POOL          = var.network_link_pool
-    WORKER_NETWORK_RESOLVER_IPV4      = local.network_resolver_ipv4
-    WORKER_NETWORK_TRANSLATION_POOL   = var.network_translation_pool
-    WORKER_WORK_DIR                   = "/var/lib/helmr"
-    WORKER_HOST_SECRET_PATH           = "/var/lib/helmr/worker-host-secret.json"
-    WORKER_POOL_NAME                  = var.worker_pool_name
-    WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
-    JAILER_CHROOT_DIR                 = "/var/lib/helmr/jailer"
-    VM_VCPUS                          = tostring(var.vm_vcpus)
-    VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
-    VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
-    VM_INIT_TIMEOUT                   = "30s"
+    WORKER_COMPUTER_STAGING_MIB           = tostring(var.computer_staging_mib)
+    WORKER_COMPUTER_DEVICES               = join(" ", var.computer_devices)
+    CONTROL_PLANE_URL                     = var.worker_controlplane_url
+    CAS_URI                               = var.cas_uri
+    PLATFORM_STORE_URI                    = var.platform_store_uri
+    FIRECRACKER_PATH                      = "/usr/local/bin/firecracker"
+    CPU_TEMPLATE_HELPER_PATH              = "/usr/local/bin/cpu-template-helper"
+    JAILER_PATH                           = "/usr/local/bin/jailer"
+    MKFS_EXT4_PATH                        = "/usr/local/libexec/helmr/mkfs.ext4"
+    MKE2FS_CONFIG_PATH                    = "/usr/share/helmr/mke2fs.conf"
+    JAILER_UID                            = tostring(var.jailer_uid)
+    JAILER_GID                            = tostring(var.jailer_gid)
+    JAILER_CGROUP_VERSION                 = "2"
+    WORKER_NETWORK_PRIVATE_BUSINESS_CIDRS = jsonencode(var.network_private_business_cidrs)
+    WORKER_NETWORK_BLOCKED_IPV4_CIDRS     = jsonencode(var.network_blocked_ipv4_cidrs)
+    WORKER_NETWORK_LINK_POOL              = var.network_link_pool
+    WORKER_NETWORK_RESOLVER_IPV4          = local.network_resolver_ipv4
+    WORKER_NETWORK_TRANSLATION_POOL       = var.network_translation_pool
+    WORKER_WORK_DIR                       = "/var/lib/helmr"
+    WORKER_HOST_SECRET_PATH               = "/var/lib/helmr/worker-host-secret.json"
+    WORKER_POOL_NAME                      = var.worker_pool_name
+    WORKER_IMAGES_DIR                     = "/var/lib/helmr/images"
+    JAILER_CHROOT_DIR                     = "/var/lib/helmr/jailer"
+    VM_VCPUS                              = tostring(var.vm_vcpus)
+    VM_MEMORY_MIB                         = tostring(var.vm_memory_mib)
+    VM_SCRATCH_DISK_MIB                   = tostring(var.vm_scratch_disk_mib)
+    VM_INIT_TIMEOUT                       = "30s"
     # EC2 workers allow extra time for first-boot guest health convergence.
     VM_HEALTH_TIMEOUT          = "300s"
     WORKER_DISK_RESERVE_MIB    = tostring(var.worker_disk_reserve_mib)
@@ -390,10 +391,11 @@ resource "aws_launch_template" "worker" {
 resource "terraform_data" "network_preconditions" {
   input = {
     network_policy = jsonencode({
-      blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
-      link_pool          = var.network_link_pool
-      resolver_ipv4      = local.network_resolver_ipv4
-      translation_pool   = var.network_translation_pool
+      blocked_ipv4_cidrs     = var.network_blocked_ipv4_cidrs
+      private_business_cidrs = var.network_private_business_cidrs
+      link_pool              = var.network_link_pool
+      resolver_ipv4          = local.network_resolver_ipv4
+      translation_pool       = var.network_translation_pool
     })
     reserved_env_conflicts = local.worker_environment_conflicts
     platform_store_uri     = var.platform_store_uri

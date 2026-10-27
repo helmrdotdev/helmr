@@ -16,6 +16,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -79,7 +80,7 @@ type workerHost struct {
 func (f workerHTTPFixture) host(t *testing.T, enrolled workerapi.EnrollmentResponse) workerHost {
 	t.Helper()
 	host := workerHost{enrolled: enrolled, serviceID: uuid.NewV7().String()}
-	client, err := workerclient.New(f.url, workerclient.WithAuth(enrolled.WorkerHostID, enrolled.WorkerHostSecret), workerclient.WithService(host.serviceID))
+	client, err := workerclient.New(f.url, workerclient.WithAuth(enrolled.WorkerHostID, enrolled.WorkerHostSecret), workerclient.WithService(host.serviceID), workerclient.WithNetwork(networkpolicy.Installation{}))
 	if err != nil {
 		t.Fatal(err)
 	}

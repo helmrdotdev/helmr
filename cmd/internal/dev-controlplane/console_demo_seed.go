@@ -53,12 +53,12 @@ VALUES($1::uuid,$2::uuid,$9::text,now()-interval '3 days');
 INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed,created_at)
 VALUES($1::uuid,$3::uuid,$9::text,'{}','{}',now()-interval '3 days');
 INSERT INTO templates(environment_id,id,key) VALUES($1::uuid,$3::uuid,'demo-computer');
-INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes)
-VALUES($1::uuid,$2::uuid,$3::uuid,$3::uuid,1000,536870912);
+INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,network_policy,prepare_network_policy)
+VALUES($1::uuid,$2::uuid,$3::uuid,$3::uuid,1000,536870912,'{"kind":"ordinary"}','{"kind":"block"}');
 INSERT INTO agents(environment_id,id,key) VALUES
 ($1::uuid,$4::uuid,'demo-agent'),($1::uuid,$10::uuid,'demo-triage'),($1::uuid,$11::uuid,'demo-reporter');
-INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES
-($1::uuid,$4::uuid,$2::uuid,$3::uuid,false),($1::uuid,$10::uuid,$2::uuid,$3::uuid,false),($1::uuid,$11::uuid,$2::uuid,$3::uuid,false);
+INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES
+($1::uuid,$4::uuid,$2::uuid,$3::uuid,false,'{"kind":"unrestricted"}'),($1::uuid,$10::uuid,$2::uuid,$3::uuid,false,'{"kind":"unrestricted"}'),($1::uuid,$11::uuid,$2::uuid,$3::uuid,false,'{"kind":"unrestricted"}');
 INSERT INTO agent_triggers(environment_id,agent_id,deployment_id,key,cron,timezone,input)
 VALUES($1::uuid,$4::uuid,$2::uuid,'daily','0 9 * * *','UTC','[{"type":"text","text":"Demo input"}]');
 INSERT INTO trigger_activations(environment_id,id,agent_id,deployment_id,trigger_key,active_from,next_fire_at)

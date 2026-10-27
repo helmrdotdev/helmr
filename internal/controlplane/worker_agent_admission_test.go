@@ -75,7 +75,7 @@ func TestWorkerAgentStartSpawnReconcileLostResponse(t *testing.T) {
 				}
 				tool := strings.ToLower(string(method))
 				body, _ := json.Marshal(map[string]any{"tool": tool, "arguments": payload})
-				request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "retained-request", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: body}
+				request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: "retained-request", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: body}
 				// Spawn remains pinned even when no current Deployment is selected.
 				if method == workerapi.AgentMethodSpawn {
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)
@@ -148,7 +148,7 @@ func TestWorkerAgentStartSpawnRejectCallerAndPayloadSubstitution(t *testing.T) {
 					arguments["idempotencyKey"] = "decision"
 				}
 				body, _ := json.Marshal(map[string]any{"tool": strings.ToLower(string(method)), "arguments": arguments})
-				response, err := client.AgentOperation(t.Context(), workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, TurnID: test.turn, Method: workerapi.AgentMethodRuntimeMCP, Payload: body})
+				response, err := client.AgentOperation(t.Context(), workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, TurnID: test.turn, Method: workerapi.AgentMethodRuntimeMCP, Payload: body})
 				if err != nil || response.Error == nil || response.Error.Code != test.code {
 					t.Fatalf("rejection=%+v err=%v", response, err)
 				}
@@ -173,7 +173,7 @@ func TestWorkerAgentMCPCreationUsesSessionAuthorityAndStableKey(t *testing.T) {
 				b, _ := json.Marshal(map[string]any{"tool": tool, "arguments": arguments})
 				return b
 			}
-			request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "first-rpc", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload()}
+			request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: "first-rpc", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload()}
 			first, err := client.AgentOperation(t.Context(), request)
 			if err != nil || first.Error != nil {
 				t.Fatalf("first %+v %v", first, err)
@@ -236,7 +236,7 @@ func TestWorkerAgentRequiresToolEnvelopeForSessionOperations(t *testing.T) {
 	f, origin, _ := runtimeAdmissionOrigin(t)
 	client := newWorkerHTTPClient(t, newPostgresServer(t, f.Pool), f.Pool, f.Worker)
 	for _, method := range []workerapi.AgentOperationMethod{workerapi.AgentMethodStart, workerapi.AgentMethodSpawn, workerapi.AgentMethodEnqueue, workerapi.AgentMethodSendMessage, workerapi.AgentMethodControlSession, workerapi.AgentMethodWaitTurn, workerapi.AgentMethodInspectSession, workerapi.AgentMethodListSessions} {
-		request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: string(method), AuthorityGeneration: 1, TurnID: origin.TurnID.String(), Method: method, Payload: json.RawMessage(`{}`)}
+		request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: string(method), AuthorityGeneration: 1, TurnID: origin.TurnID.String(), Method: method, Payload: json.RawMessage(`{}`)}
 		var response workerapi.AgentOperationResponse
 		client.post(t, "/worker/v1/sessions/operations", request, 200, &response)
 		if response.Error == nil || response.Error.Code != "unsupported_operation" {
@@ -248,12 +248,12 @@ func TestWorkerAgentRequiresToolEnvelopeForSessionOperations(t *testing.T) {
 func TestWorkerAgentDeletedPinnedSpawnIsTerminalRejection(t *testing.T) {
 	f, _, _ := runtimeAdmissionOrigin(t)
 	target := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key,deleted_at) VALUES($1,$2,'deleted-child',clock_timestamp()); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,false FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, pgx.QueryExecModeSimpleProtocol, f.Environment, target, f.Agent)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key,deleted_at) VALUES($1,$2,'deleted-child',clock_timestamp()); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,false,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, pgx.QueryExecModeSimpleProtocol, f.Environment, target, f.Agent)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	secret := seedHostSecret(t, f.Pool, f.Worker)
 	payload, _ := json.Marshal(map[string]any{"tool": "spawn", "arguments": map[string]any{"agent": "deleted-child", "input": json.RawMessage(`[{"type":"text","text":"work"}]`), "idempotencyKey": "deleted-child"}})
-	response, err := secret.client(t, server.URL).AgentOperation(t.Context(), workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "deleted-target", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload})
+	response, err := secret.client(t, server.URL).AgentOperation(t.Context(), workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: "deleted-target", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: payload})
 	if err != nil || response.Error == nil || response.Error.Code != "agent_deleted" {
 		t.Fatalf("deleted spawn was not a terminal tool rejection: %+v %v", response, err)
 	}

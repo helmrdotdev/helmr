@@ -31,6 +31,7 @@ export const docsNav = [
           "concepts/secrets",
           "concepts/projects",
           "concepts/security",
+          "concepts/execution-policies",
         ],
       },
     ],

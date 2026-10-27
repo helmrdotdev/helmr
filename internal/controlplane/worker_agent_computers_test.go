@@ -25,9 +25,9 @@ func runtimeDiscoveryEnvironment(t *testing.T, original sessiontest.Fixture) ses
       INSERT INTO deployments(environment_id,id,bundle_digest) SELECT $2,$3,bundle_digest FROM deployments WHERE environment_id=$1 AND id=$6;
       INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,$3,spec_digest,spec,seed FROM image_specs WHERE environment_id=$1 AND id=$6;
       INSERT INTO templates(environment_id,id,key) VALUES($2,$3,'fixture-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($2,$3,$3,$3,1000,536870912,NULL);
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) VALUES($2,$3,$3,$3,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}');
       INSERT INTO agents(environment_id,id,key) VALUES($2,$4,'agent');
-      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES($2,$4,$3,$3,false);
+      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES($2,$4,$3,$3,false,'{"kind":"unrestricted"}');
       INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) VALUES($2,$5,$3,clock_timestamp()+interval '1 hour',$3,$3,1000,536870912,NULL,34359738368);
     `, pgx.QueryExecModeSimpleProtocol, original.Environment, f.Environment, f.Deployment, f.Agent, f.Computer, original.Deployment)
 	return f
@@ -43,7 +43,7 @@ func TestWorkerAgentMCPListsEnvironmentComputers(t *testing.T) {
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
+	request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: "list", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
 	call := func(cursor string) workerapi.AgentOperationResponse {
 		t.Helper()
 		request.Payload, _ = json.Marshal(map[string]any{"tool": "list_computers", "arguments": map[string]string{"cursor": cursor}})
@@ -109,8 +109,8 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 		t.Helper()
 		id := uuid.NewV7()
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,$3)`, f.Environment, id, key)
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init)
-            SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, f.Environment, id, f.Agent)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy)
+            SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, f.Environment, id, f.Agent)
 	}
 	for i := range 51 {
 		addDefinition(f, fmt.Sprintf("worker-%02d", i))
@@ -120,16 +120,16 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `
       INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('2',64));
-      INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes)
-        SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
-      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init)
-        SELECT environment_id,agent_id,$3,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2 AND agent_id=$4;
+      INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy)
+        SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
+      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy)
+        SELECT environment_id,agent_id,$3,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2 AND agent_id=$4;
       UPDATE environments SET current_deployment_id=$3 WHERE id=$1;
     `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, promoted, f.Agent)
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "list-agents", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
+	request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: "list-agents", AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP}
 	operation := "spawn"
 	call := func(cursor string) workerapi.AgentOperationResponse {
 		t.Helper()
@@ -165,6 +165,24 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	if len(seen) != 52 || !seen["agent"] {
 		t.Fatalf("Agent set: %d", len(seen))
 	}
+	getter := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: "narrow-discovery", AuthorityGeneration: 1, Method: workerapi.AgentMethodGetMCPConnection, Payload: json.RawMessage(`{"policy":{"allow":[{"operation":"spawn","agents":["worker-50"]}]}}`)}
+	scoped, err := client.AgentOperation(t.Context(), getter)
+	if err != nil || scoped.Error != nil {
+		t.Fatalf("scope %+v %v", scoped, err)
+	}
+	var scope struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(scoped.Value, &scope); err != nil {
+		t.Fatal(err)
+	}
+	request.MCPScopeID = scope.ID
+	only := call("")
+	var narrow agent.RuntimeAgentPage
+	if only.Error != nil || json.Unmarshal(only.Value, &narrow) != nil || len(narrow.Agents) != 1 || narrow.Agents[0].ID != "worker-50" || narrow.NextCursor != "" {
+		t.Fatalf("scope must filter before pagination: %+v %s", only, only.Value)
+	}
+	request.MCPScopeID = f.MCPScope.String()
 	operation = "start"
 	if response := call(cursor); response.Error == nil || response.Error.Code != "invalid_arguments" {
 		t.Fatalf("mixed operation cursor: %+v", response)

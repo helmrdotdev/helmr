@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"io"
 	"net"
 	"net/http"
@@ -28,7 +29,7 @@ import (
 func TestCloseFencesProtectedTrafficWhenCleanupFails(t *testing.T) {
 	for _, scenario := range []string{"canceled-barrier", "checkpoint-discard"} {
 		t.Run(scenario, func(t *testing.T) {
-			proxy, err := secretproxy.New(secretproxy.Config{
+			proxy, err := secretproxy.New(secretproxy.Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(),
 				Certificate:        func(context.Context, string) (tls.Certificate, error) { return tls.Certificate{}, errors.New("unused") },
 				Resolve:            func(context.Context, string, []string) (map[string][]byte, error) { return nil, errors.New("unused") },
 				AllowedDestination: func(netip.Addr) bool { return false },
@@ -110,7 +111,7 @@ func TestCloseDrainsWebSocketBeforeComputerBarrier(t *testing.T) {
 	pool := x509.NewCertPool()
 	pool.AddCert(upstream.Certificate())
 	marker := secretproxy.MarkerPrefix + strings.Repeat("a", 64)
-	proxy, err := secretproxy.New(secretproxy.Config{
+	proxy, err := secretproxy.New(secretproxy.Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(),
 		Origins:     []string{"https://" + authority},
 		Certificate: func(context.Context, string) (tls.Certificate, error) { return upstream.TLS.Certificates[0], nil },
 		Resolve: func(context.Context, string, []string) (map[string][]byte, error) {

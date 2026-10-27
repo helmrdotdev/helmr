@@ -45,7 +45,7 @@ func TestWorkerAgentTurnObservation(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{"tool": "inspect_turn", "arguments": map[string]string{"sessionId": f.Session.String(), "turnId": receipt.TurnID}})
-	request := workerapi.AgentOperationRequest{Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: body}
+	request := workerapi.AgentOperationRequest{MCPScopeID: f.MCPScope.String(), Session: runtimeTestSession(f), RequestID: uuid.NewV7().String(), AuthorityGeneration: 1, Method: workerapi.AgentMethodRuntimeMCP, Payload: body}
 	observed, err := client.AgentOperation(t.Context(), request)
 	if err != nil || observed.Error != nil {
 		t.Fatalf("observe %+v %v", observed, err)

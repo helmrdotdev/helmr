@@ -122,7 +122,7 @@ func TestSharedRuntimeCannotAttachToExistingComputer(t *testing.T) {
 	f := newSlackAdmissionFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET origin_slack_connection_id=$2 WHERE id=$1`, f.Session, f.publication)
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
-	caller := session.Caller{Kind: "session", ID: f.Session, Execution: e, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.MCPScope, ID: f.Session, Execution: e, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
 	for _, method := range []string{"create", "spawn"} {
 		req := session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: f.Computer, IdempotencyKey: method, Input: json.RawMessage(`[]`)}
 		start := session.Start
@@ -246,7 +246,7 @@ func TestSharedRuntimeDiscoveryKeepsRelationshipsAndScheduleIsolation(t *testing
  INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) SELECT $4,environment_id,connection_id,installation_id,org_id,team_id,'C2' FROM slack_channel_bindings WHERE id=$5;
  INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) SELECT $6,environment_id,$3,$4,org_id,team_id,'C2','987.654','other-opening' FROM slack_threads WHERE id=$7`, pgx.QueryExecModeSimpleProtocol, f.Session, f.publication, other, channel, f.channel, thread, f.thread)
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
-	caller := session.Caller{Kind: "session", ID: f.Session, Execution: e, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.MCPScope, ID: f.Session, Execution: e, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
 	for _, relation := range []string{"owned", "requested"} {
 		page, err := session.RuntimeListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.RuntimeSessionListRequest{Relation: relation, Limit: 100})
 		if err != nil || len(page.Sessions) != 0 {

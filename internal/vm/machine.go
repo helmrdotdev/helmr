@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"io"
 	"os"
 	"strings"
@@ -46,12 +47,14 @@ type PreparedComputer interface {
 }
 
 type PreparedAdoption struct {
-	Binding    WorkloadBinding
-	ComputerID string
-	Root       disk.VersionRoot
-	WriteKeyID string
-	Keys       map[string][]byte
-	Source     blockformat.RangeSource
+	NetworkPolicy       networkpolicy.Policy
+	NetworkInstallation networkpolicy.Installation
+	Binding             WorkloadBinding
+	ComputerID          string
+	Root                disk.VersionRoot
+	WriteKeyID          string
+	Keys                map[string][]byte
+	Source              blockformat.RangeSource
 }
 
 type Cleaner interface {
@@ -139,12 +142,14 @@ type ComputerCaptureMachine interface {
 }
 
 type ConnectRequest struct {
-	ID             string
-	OwnerKind      OwnerKind
-	Binding        WorkloadBinding
-	Resources      Resources
-	Topology       Topology
-	ReadOnlyDrives []ReadOnlyDrive
+	NetworkPolicy       networkpolicy.Policy
+	NetworkInstallation networkpolicy.Installation
+	ID                  string
+	OwnerKind           OwnerKind
+	Binding             WorkloadBinding
+	Resources           Resources
+	Topology            Topology
+	ReadOnlyDrives      []ReadOnlyDrive
 }
 
 type ReadOnlyDrive struct {
@@ -251,6 +256,8 @@ type MemorySource interface {
 }
 
 type RestoreRequest struct {
+	NetworkPolicy        networkpolicy.Policy
+	NetworkInstallation  networkpolicy.Installation
 	Resources            Resources
 	ID                   string
 	ComputerInstanceID   string
@@ -280,6 +287,9 @@ const (
 )
 
 type MaterializeRequest struct {
+	NetworkPhase              networkpolicy.Phase
+	NetworkPolicy             networkpolicy.Policy
+	NetworkInstallation       networkpolicy.Installation
 	BootSeed                  *BootSeedRestore
 	Purpose                   MaterializePurpose
 	ID                        string

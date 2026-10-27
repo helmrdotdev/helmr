@@ -18,7 +18,7 @@ func TestProgramMetadataCloneOwnsNestedValues(t *testing.T) {
 	c.Seed.Config.Cmd = []string{"true"}
 	c.Seed.Config.Entrypoint = []string{"sh"}
 	c.Secrets = []definition.SecretBinding{{Secret: "original", Env: &definition.SecretBindingEnv{Name: "KEY", Mode: "raw"}}}
-	c.BuildSecrets = []definition.SecretBinding{{Secret: "original", Env: &definition.SecretBindingEnv{Name: "BUILD", Mode: "raw"}}}
+	c.PrepareSecrets = []definition.SecretBinding{{Secret: "original", Env: &definition.SecretBindingEnv{Name: "BUILD", Mode: "raw"}}}
 	before, _ := json.Marshal(index)
 	clone := index.Clone()
 	*clone.Definitions[0].Agent.MaxTurnDurationMs = 101
@@ -33,7 +33,7 @@ func TestProgramMetadataCloneOwnsNestedValues(t *testing.T) {
 	cc.Seed.Config.Cmd[0] = "changed"
 	cc.Seed.Config.Entrypoint[0] = "changed"
 	cc.Secrets[0].Secret = "changed"
-	cc.BuildSecrets[0].Secret = "changed"
+	cc.PrepareSecrets[0].Secret = "changed"
 	after, _ := json.Marshal(index)
 	if string(before) != string(after) {
 		t.Fatal("clone mutation changed original")

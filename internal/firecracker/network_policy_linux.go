@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"os"
@@ -18,6 +19,8 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
+	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
@@ -28,6 +31,30 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, bi
 
 func (c *Connector) installRoutedPolicyFor(ctx context.Context, mode launchMode, binding *installedNetworkBinding, allocationID string, replace bool) error {
 	m := binding.manifest
+	policy := c.cfg.NetworkPolicy
+	if mode != workloadLaunch {
+		policy = networkpolicy.BlockedPolicy()
+	}
+	if err := policy.Validate(); err != nil {
+		return err
+	}
+	if err := networkpolicy.ValidateInstallation(c.cfg.NetworkInstallation); err != nil {
+		return err
+	}
+	phase := c.cfg.NetworkPhase
+	switch mode {
+	case startupProbeLaunch:
+		phase = networkpolicy.PhaseQualification
+	case preparationQualificationLaunch:
+		phase = networkpolicy.PhaseQualification
+	case bootSeedBuildLaunch:
+		phase = networkpolicy.PhaseBootSeed
+	}
+	if err := phase.Validate(); err != nil {
+		return err
+	}
+	logger := slog.Default().With("control_installation_id", c.cfg.NetworkInstallation.Digest(), "host_installation_id", (networkpolicy.Installation{PrivateBusinessCIDRs: c.cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: c.cfg.NetworkBlockedIPv4CIDRs}).Digest())
+	decisions := secretproxy.NewDecisionLog(logger, c.cfg.NetworkComputerID, allocationID, m.OwnerKind, m.OwnerID, phase, policy)
 	guestIP, _, _ := strings.Cut(GuestNetworkCIDRV0, "/")
 	hostIPv4, err := hostIPv4Prefixes(netip.MustParsePrefix(GuestNetworkCIDRV0).Masked())
 	if err != nil {
@@ -45,8 +72,14 @@ func (c *Connector) installRoutedPolicyFor(ctx context.Context, mode launchMode,
 		if prepareErr != nil {
 			return fmt.Errorf("prepare Computer Secret transport: %w", prepareErr)
 		}
+		if policy.Kind == networkpolicy.Allowlist && proxy == nil {
+			return errors.New("network policy gateway is required")
+		}
 		binding.secretProxy = proxy
 		if proxy != nil {
+			if err := proxy.BindDecisionLog(decisions); err != nil {
+				return err
+			}
 			var listener net.Listener
 			if err := withNetworkNamespace(binding.namespace, func() error {
 				var e error
@@ -69,6 +102,37 @@ func (c *Connector) installRoutedPolicyFor(ctx context.Context, mode launchMode,
 				}
 			}()
 		}
+	}
+
+	if policy.Kind == networkpolicy.Allowlist {
+		var udp net.PacketConn
+		var tcp net.Listener
+		if err := withNetworkNamespace(binding.namespace, func() error {
+			var e error
+			udp, e = net.ListenPacket("udp4", "0.0.0.0:53")
+			if e != nil {
+				return e
+			}
+			tcp, e = net.Listen("tcp4", "0.0.0.0:53")
+			return e
+		}); err != nil {
+			if udp != nil {
+				udp.Close()
+			}
+			return err
+		}
+		installation := networkpolicy.Installation{PrivateBusinessCIDRs: c.cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: blocked}
+		resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(c.cfg.NetworkResolverIPv4, "53"))
+		}}
+		dns, e := secretproxy.NewDNS(policy, installation, resolver.LookupNetIP, udp, tcp, decisions)
+		if e != nil {
+			udp.Close()
+			tcp.Close()
+			return e
+		}
+		binding.dns = dns
+		dns.Serve()
 	}
 	packet := binding.packet
 	if !replace {
@@ -97,7 +161,7 @@ func (c *Connector) installRoutedPolicyFor(ctx context.Context, mode launchMode,
 		}
 	}
 	script, err := renderNetworkPolicy(networkPolicyInput{
-		Tap: m.TapName, Peer: m.NamespaceVethName, Mark: packet.Mark(),
+		Policy: policy, PrivateBusinessCIDRs: c.cfg.NetworkPrivateBusinessCIDRs, Tap: m.TapName, Peer: m.NamespaceVethName, Mark: packet.Mark(),
 		BlockedIPv4CIDRs: blocked,
 		ProtectedPorts:   protectedPorts(binding.secretProxy),
 		ResolverIPv4:     c.cfg.NetworkResolverIPv4,

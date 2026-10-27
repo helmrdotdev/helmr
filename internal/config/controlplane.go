@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"strings"
 )
 
@@ -51,6 +52,17 @@ func LoadControlPlane() (ControlPlane, error) {
 		EmailFrom:                       envText("EMAIL_FROM"),
 		GitHubOAuthClientID:             envText("GITHUB_OAUTH_CLIENT_ID"),
 		GitHubOAuthClientSecret:         envSecret("GITHUB_OAUTH_CLIENT_SECRET"),
+	}
+	cfg.NetworkPrivateBusinessCIDRs, err = parseCanonicalBlockedIPv4Prefixes(env("CONTROL_PLANE_NETWORK_PRIVATE_BUSINESS_CIDRS", "[]"))
+	if err != nil {
+		return cfg, fmt.Errorf("CONTROL_PLANE_NETWORK_PRIVATE_BUSINESS_CIDRS: %w", err)
+	}
+	cfg.NetworkBlockedIPv4CIDRs, err = parseCanonicalBlockedIPv4Prefixes(env("CONTROL_PLANE_NETWORK_BLOCKED_IPV4_CIDRS", "[]"))
+	if err != nil {
+		return cfg, fmt.Errorf("CONTROL_PLANE_NETWORK_BLOCKED_IPV4_CIDRS: %w", err)
+	}
+	if err = networkpolicy.ValidateInstallation(networkpolicy.Installation{PrivateBusinessCIDRs: cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs}); err != nil {
+		return cfg, err
 	}
 	if err := validatePlatformConnections(cfg.SlackTransport, cfg.OutboundProxyURL); err != nil {
 		return cfg, err

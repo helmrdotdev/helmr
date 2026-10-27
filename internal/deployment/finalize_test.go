@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"io"
 	"log/slog"
 	"strings"
@@ -30,7 +31,7 @@ func TestVerificationStopsAfterDisconnectedProgress(t *testing.T) {
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(image))
 	descriptor := cas.Descriptor{Digest: digest, SizeBytes: int64(len(image)), MediaType: definition.ComputerSeedMediaType}
 	store := &finalizeObjectStore{descriptor: descriptor, body: image}
-	finalizer := NewFinalizer(store, store, bundle.Admission{}, discardLogger())
+	finalizer := NewFinalizer(store, store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{})
 	err := finalizer.verifyObjects(t.Context(), finalizePossessionStore{}, uuid.NewV7(), preparedBundle{objects: []cas.Descriptor{descriptor}}, func(string) error { return context.Canceled })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error=%v", err)
@@ -98,7 +99,7 @@ func TestVerifyObjectDisk(t *testing.T) {
 				data = append(data, 0)
 			}
 			store := &finalizeObjectStore{descriptor: object, body: data}
-			err := NewFinalizer(store, store, bundle.Admission{}, discardLogger()).verifyObject(t.Context(), bundle.Manifest{}, object)
+			err := NewFinalizer(store, store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{}).verifyObject(t.Context(), bundle.Manifest{}, object)
 			if kind == "valid" {
 				if err != nil {
 					t.Fatal(err)
@@ -116,7 +117,7 @@ func TestVerifyObjectDiskCancellationIsNotInvalid(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	store := cancellingObjectStore{body: body, cancel: cancel}
-	err := NewFinalizer(store, store, bundle.Admission{}, discardLogger()).verifyObject(ctx, bundle.Manifest{}, descriptor)
+	err := NewFinalizer(store, store, bundle.Admission{}, discardLogger(), networkpolicy.Installation{}).verifyObject(ctx, bundle.Manifest{}, descriptor)
 	var invalid InvalidObjectError
 	if !errors.Is(err, context.Canceled) || errors.As(err, &invalid) {
 		t.Fatalf("cancellation misclassified: %v", err)
@@ -149,7 +150,7 @@ func TestPrepareRejectsInvalidIdempotencyKeysBeforeReadingObjects(t *testing.T) 
 	principal := auth.Principal{OrgID: uuid.NewV7(), Kind: auth.PrincipalKindAPIKey, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
 	principal.Grants = []auth.PermissionGrant{{ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID, Permission: auth.PermissionDeploymentsPublish}}
 	scope := auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID}
-	finalizer := NewFinalizer(nil, nil, bundle.Admission{}, discardLogger())
+	finalizer := NewFinalizer(nil, nil, bundle.Admission{}, discardLogger(), networkpolicy.Installation{})
 	for _, key := range []string{"", " ", "a\x00b", "a\nb", string([]byte{0xff}), strings.Repeat("x", 513)} {
 		_, err := finalizer.Prepare(t.Context(), principal, scope, "unused", key)
 		if _, ok := errors.AsType[InputError](err); !ok {

@@ -5,6 +5,7 @@ package firecracker
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -85,7 +86,7 @@ func TestNetworkBindingStartupPurposePrivileged(t *testing.T) {
 				t.Run(test.name, func(t *testing.T) {
 					blocked := netip.MustParsePrefix("203.0.113.0/24")
 					connector := &Connector{
-						cfg: Config{
+						cfg: Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(), NetworkInstallation: networkpolicy.Installation{}.Canonical(), NetworkPhase: networkpolicy.PhaseRuntime,
 							StateDir:        filepath.Join(t.TempDir(), "vms"),
 							NetworkLinkPool: "198.18.0.0/29", NetworkTranslationPool: "198.19.0.0/30",
 							NetworkCapacity: 2, NetworkResolverIPv4: "1.1.1.1", NetworkBlockedIPv4CIDRs: []netip.Prefix{blocked},
@@ -107,7 +108,9 @@ func TestNetworkBindingStartupPurposePrivileged(t *testing.T) {
 					defer cancelRuntime()
 					calls := 0
 					if !test.absent {
-						connector.cfg.PrepareSecretTransport = func(ctx context.Context, id string, prefixes []netip.Prefix) (*secretproxy.Proxy, error) {
+						connector.cfg.PrepareSecretTransport = func(ctx context.Context, id string, policy networkpolicy.Policy, installation networkpolicy.Installation, resolver string) (*secretproxy.Proxy, error) {
+							prefixes := installation.BlockedIPv4CIDRs
+							_ = prefixes
 							calls++
 							if ctx != runtimeCtx || id != owner.ID || !slices.Contains(prefixes, blocked) || !slices.Contains(prefixes, netip.MustParsePrefix(connector.cfg.NetworkLinkPool)) {
 								t.Error("Secret preparation lost runtime context, identity or blocked destinations")

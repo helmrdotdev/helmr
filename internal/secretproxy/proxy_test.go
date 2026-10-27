@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"io"
 	"math/big"
 	"net"
@@ -115,7 +116,7 @@ func newFixtureProtocols(t *testing.T, port uint16, h2 bool, handler func(http.R
 	upstream.EnableHTTP2 = h2
 	upstream.StartTLS()
 	t.Cleanup(upstream.Close)
-	config := Config{AllowedDestination: func(netip.Addr) bool { return true }, Origins: []string{origin}, Certificate: func(context.Context, string) (tls.Certificate, error) { return cert, nil },
+	config := Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(), AllowedDestination: func(netip.Addr) bool { return true }, Origins: []string{origin}, Certificate: func(context.Context, string) (tls.Certificate, error) { return cert, nil },
 		Resolve: func(_ context.Context, o string, selectors []string) (map[string][]byte, error) {
 			f.resolutions.Add(1)
 			f.mu.Lock()
@@ -246,7 +247,7 @@ func TestH1UncertainSendIsOneWireAttempt(t *testing.T) {
 }
 
 func TestDialPolicyPreservesEffectiveDenyAndIPv4(t *testing.T) {
-	d := &Dialer{Blocked: []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24"), netip.MustParsePrefix("1.1.1.1/32")}}
+	d := &Dialer{Installation: &networkpolicy.Installation{BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("8.8.8.0/24"), netip.MustParsePrefix("1.1.1.1/32")}}}
 	for _, address := range []string{"8.8.8.8", "1.1.1.1", "127.0.0.1", "169.254.169.254", "10.0.0.1", "2606:4700:4700::1111", "::ffff:8.8.4.4"} {
 		if d.Allowed(netip.MustParseAddr(address)) {
 			t.Fatalf("allowed %s", address)

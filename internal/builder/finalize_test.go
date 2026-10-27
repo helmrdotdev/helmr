@@ -443,8 +443,8 @@ func fixtureProgramMetadata(images []bundle.ComputerSeed, configDigest, runtimeD
 	index := artifact.ProgramMetadata{Architecture: definition.ArchitectureX8664, ConfigResultDigest: configDigest, RuntimeContract: definition.RuntimeContract, RuntimeDigest: runtimeDigest,
 		Definitions: []artifact.ProgramDefinition{{Kind: definition.KindAgent, DeclaredID: "hello", Agent: &definition.AgentManifest{InputKind: "text", TemplateDefinitionID: images[0].DeclaredID, Triggers: map[string]definition.CronTrigger{}}}}}
 	for _, image := range images {
-		index.Definitions = append(index.Definitions, artifact.ProgramDefinition{Kind: definition.KindTemplate, DeclaredID: image.DeclaredID, Template: &definition.TemplateManifest{
-			Seed: definition.ComputerSeedManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}, Secrets: []definition.SecretBinding{}, BuildSecrets: []definition.SecretBinding{},
+		index.Definitions = append(index.Definitions, artifact.ProgramDefinition{Kind: definition.KindTemplate, DeclaredID: image.DeclaredID, Template: &definition.TemplateManifest{Network: []byte(`{"blockAll":false}`),
+			Seed: definition.ComputerSeedManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}, Secrets: []definition.SecretBinding{}, PrepareSecrets: []definition.SecretBinding{},
 		}})
 	}
 	sort.Slice(index.Definitions, func(i, j int) bool {

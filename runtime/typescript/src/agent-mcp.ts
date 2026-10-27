@@ -1,13 +1,14 @@
 import type { InitContext, RuntimeMcpConnectionOptions } from "../../../sdk/typescript/src/agent"
+import type { RuntimeMcpPolicy } from "../../../sdk/typescript/src/policy"
 import type { JsonValue } from "../../../sdk/typescript/src/contract"
 import { agentProto } from "@helmr/proto"
 import type { AgentChannel } from "./agent-channel"
 
 export function createAgentMcp(channel: AgentChannel): InitContext["mcp"] {
-  return Object.freeze({ getConnectionOptions: async () => {
+  return Object.freeze({ getConnectionOptions: async (policy?: RuntimeMcpPolicy) => {
     // Repeated calls revalidate local admission and obtain the same
     // descriptor. They never mint or renew upstream authority in user code.
-    const raw = await channel.operation(agentProto.Operation_Method.GET_MCP_CONNECTION, null)
+    const raw = await channel.operation(agentProto.Operation_Method.GET_MCP_CONNECTION, (policy === undefined ? {} : { policy }) as unknown as JsonValue)
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("Invalid runtime MCP connection")
     const value = raw as Record<string, JsonValue>
     if (typeof value['url'] !== "string") throw new Error("Invalid runtime MCP connection")

@@ -83,8 +83,19 @@ A Computer accepts up to 64 Secret bindings, 16 origins per protected binding,
 and 256 origin entries in total. Duplicate origins within a binding count once;
 the same origin in different bindings and different ports count separately.
 
-The proxy connects only to public IPv4 addresses and also applies the Worker's
-blocked destinations. Private-network and IPv6 destinations are not supported.
+Every connection also passes the Computer's phase network policy and mandatory
+installation denies. Public IPv4 destinations remain subject to those checks.
+Private HTTPS requires installation-approved business ranges, routing, DNS and
+TLS trust; allowlist mode additionally requires explicit per-host `ipRanges`.
+IPv6 is unsupported. See [Execution policies](/docs/concepts/execution-policies).
+
+A binding grants no extra network access. Under full blocking, protected bindings
+are rejected. Under allowlist mode, each exact origin must use port 443 and a
+concrete hostname matching an allowed pattern; every later dial must satisfy one
+matching entry's address bounds. Ordinary connectivity retains explicit HTTPS
+origin ports. Runtime `secrets` and `prepareSecrets` are validated against their
+own resolved phases; nonempty `prepareSecrets` requires a `prepare` callback.
+Raw env and file values remain readable by guest code and never widen networking.
 
 Allowed origins control where a Secret can be used, not all Computer network
 access. Requests without credentials can still reach permitted destinations.
@@ -106,7 +117,7 @@ Helmr provides a CA bundle through `SSL_CERT_FILE` and adds the CA for Node thro
 `NODE_EXTRA_CA_CERTS`. Other certificate stores require explicit public-CA trust
 setup. Certificate pinning, mutual TLS, encrypted ClientHello (ECH), TLS without
 SNI, and HTTP/3/QUIC cannot use protected header substitution. Opaque traffic can
-remain permitted by network policy, but carries only the placeholder; Helmr
+remain permitted under ordinary connectivity, but carries only the placeholder; Helmr
 cannot diagnose a protected origin hidden inside encryption. Never disable TLS
 verification to make a client work.
 

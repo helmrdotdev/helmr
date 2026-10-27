@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
@@ -104,7 +105,7 @@ func TestWorkerAgentNewHostStartsThroughNativeProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, err := workerclient.New(server.URL, workerclient.WithAuth(enrolled.WorkerHostID, enrolled.WorkerHostSecret), workerclient.WithService(uuid.NewV7().String()))
+	client, err := workerclient.New(server.URL, workerclient.WithAuth(enrolled.WorkerHostID, enrolled.WorkerHostSecret), workerclient.WithService(uuid.NewV7().String()), workerclient.WithNetwork(networkpolicy.Installation{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +175,7 @@ func TestWorkerAgentEnrollmentRechecksAllocationAfterAuthorityLock(t *testing.T)
 	if err := f.Pool.QueryRow(t.Context(), `SELECT to_jsonb(l) FROM computer_leases l`).Scan(&allocation); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM session_processes; DELETE FROM computer_leases`, pgx.QueryExecModeSimpleProtocol)
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM session_mcp_scopes; DELETE FROM session_processes; DELETE FROM computer_leases`, pgx.QueryExecModeSimpleProtocol)
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

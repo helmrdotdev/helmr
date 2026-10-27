@@ -286,7 +286,7 @@ for (const withInit of [true, false]) {
       if (operation.method === agentProto.Operation_Method.GET_MCP_CONNECTION) {
         calls++
         assert.equal(operation.turnId, undefined)
-        assert.equal(payload, null)
+        assert.deepEqual(payload, {})
         return connection
       }
       if (operation.method === agentProto.Operation_Method.FINALIZE) return { status: "completed", result: payload.result }
@@ -381,4 +381,28 @@ test("framed stop preserves a newer hold while drain waits", async () => {
     await f.command({ case: "control", value: create(agentProto.SessionControlSchema, { desired: "run" }) }, 13n)
     assert.equal(value(await f.dispatch(2)).result, 2)
   } finally { release.resolve(); await f.shutdown() }
+})
+
+test("context MCP forwards an explicit finite scope without changing its grant set", async () => {
+  const policy = { allow: [{ operation: "spawn", agents: ["helper"], computer: "caller" }] } as const
+  const connection = { url: "http://127.0.0.1:31415/mcp", headers: { Authorization: "Bearer finite-scope" } }
+  const seen: JsonValue[] = []
+  const f = fixture({ turn: async (_turn, ctx) => {
+    assert.deepEqual(await ctx.mcp.getConnectionOptions(policy), connection)
+    assert.deepEqual(await ctx.mcp.getConnectionOptions({ allow: [] }), connection)
+    return true
+  } }, async operation => {
+    if (operation.method === agentProto.Operation_Method.GET_MCP_CONNECTION) {
+      assert.equal(operation.turnId, undefined)
+      seen.push(JSON.parse(Buffer.from(operation.payloadJson).toString()))
+      return connection
+    }
+    if (operation.method === agentProto.Operation_Method.FINALIZE) return { status: "completed", result: true }
+    return null
+  })
+  try {
+    await f.ready
+    assert.equal(value(await f.dispatch(1)).result, true)
+    assert.deepEqual(seen, [{ policy }, { policy: { allow: [] } }])
+  } finally { await f.shutdown() }
 })

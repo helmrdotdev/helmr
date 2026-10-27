@@ -11,9 +11,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	"github.com/helmrdotdev/helmr/internal/runtimemcp"
 	"google.golang.org/protobuf/proto"
+	"uuid"
 )
 
 type agentMCPConnection struct {
@@ -21,56 +23,41 @@ type agentMCPConnection struct {
 	Headers map[string]string `json:"headers"`
 }
 type agentMCP struct {
-	server     *http.Server
+	server             *http.Server
+	connection         agentMCPConnection
+	scopes             map[string]*agentMCPScope
+	observationTimeout time.Duration
+}
+type agentMCPScope struct {
+	id         string
 	connection agentMCPConnection
+	handler    http.Handler
 }
 type mcpHTTPContext struct{}
 type mcpAdmission struct {
 	ctx             context.Context
 	grant           *agentv1.SessionGrant
 	controlSequence int64
+	scopeID         string
 }
 
-// Descriptor acquisition is private local work, available during setup. It never
-// exposes the Computer credential or upstream lease to the authored process.
+// Descriptor acquisition uses current Session authority during setup and idle.
+// Authored code receives only the guest-local credential bound to the issued scope.
 func (relay *agentRelay) receiveProgramEvent(event *agentv1.ProgramEvent) (*agentv1.GuestSessionMessage, *agentv1.GuestCommand, error) {
-	operation := event.GetOperation()
-	if operation.GetMethod() != agentv1.Operation_METHOD_GET_MCP_CONNECTION {
-		return relay.session.receive(event)
-	}
-	relay.mu.Lock()
-	defer relay.mu.Unlock()
-	session := relay.session
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	if !proto.Equal(event.GetIdentity(), session.grant.GetIdentity()) || operation.GetRequestId() == "" {
-		return nil, nil, errors.New("invalid local MCP descriptor request")
-	}
-	reject := func(err error) (*agentv1.GuestSessionMessage, *agentv1.GuestCommand, error) {
-		return nil, session.operationError(operation.GetRequestId(), err), nil
-	}
-	if err := session.authorizeLocked(); err != nil {
-		// Expiry joins the relay renewal wait rather than failing authored setup.
-		if errors.Is(err, errSessionGrantExpired) {
-			return nil, nil, err
+	if event.GetOperation().GetMethod() == agentv1.Operation_METHOD_GET_MCP_CONNECTION {
+		relay.mu.Lock()
+		relay.session.mu.Lock()
+		rejected := relay.shuttingDown || relay.session.terminal
+		if rejected {
+			reply := relay.session.operationError(event.GetOperation().GetRequestId(), errors.New("session is shutting down"))
+			relay.session.mu.Unlock()
+			relay.mu.Unlock()
+			return nil, reply, nil
 		}
-		return reject(err)
+		relay.session.mu.Unlock()
+		relay.mu.Unlock()
 	}
-	if operation.GetTurnId() != "" || string(operation.GetPayloadJson()) != "null" {
-		return reject(errors.New("MCP descriptor request has unexpected arguments"))
-	}
-	if relay.mcp == nil {
-		bridge, err := relay.startMCPLocked(45 * time.Second)
-		if err != nil {
-			return reject(err)
-		}
-		relay.mcp = bridge
-	}
-	body, err := json.Marshal(relay.mcp.connection)
-	if err != nil {
-		return reject(err)
-	}
-	return nil, &agentv1.GuestCommand{Identity: proto.Clone(session.grant.GetIdentity()).(*agentv1.SessionIdentity), Command: &agentv1.GuestCommand_OperationResult{OperationResult: &agentv1.OperationResult{RequestId: operation.GetRequestId(), Outcome: &agentv1.OperationResult_ValueJson{ValueJson: body}}}}, nil
+	return relay.session.receive(event)
 }
 
 // Caller holds relay and Session locks. MCP is Session-scoped: setup and idle
@@ -90,23 +77,31 @@ func (relay *agentRelay) startMCPLocked(observationTimeout time.Duration) (*agen
 	if err != nil {
 		return nil, err
 	}
-	token := "Bearer " + rand.Text()
 	address := listener.Addr().String()
-	bridge := &agentMCP{connection: agentMCPConnection{URL: "http://" + address + "/mcp", Headers: map[string]string{"Authorization": token}}}
-	handler := runtimemcp.NewHandler(func(ctx context.Context, tool string, arguments json.RawMessage) (json.RawMessage, error) {
-		return relay.invokeMCP(ctx, tool, arguments, observationTimeout)
-	})
+	bridge := &agentMCP{connection: agentMCPConnection{URL: "http://" + address + "/mcp"}, scopes: map[string]*agentMCPScope{}, observationTimeout: observationTimeout}
 	bridge.server = &http.Server{ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024, Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		// The local token binds an Environment-trusted client to this physical
 		// Session process. It has no meaning on a remote or management endpoint.
-		if request.Host != address || request.URL.Path != "/mcp" || request.URL.RawQuery != "" || request.Header.Get("Origin") != "" || subtle.ConstantTimeCompare([]byte(request.Header.Get("Authorization")), []byte(token)) != 1 {
+		if request.Host != address || request.URL.Path != "/mcp" || request.URL.RawQuery != "" || request.Header.Get("Origin") != "" {
 			http.Error(w, "invalid local MCP connection", http.StatusForbidden)
 			return
 		}
 		relay.mu.Lock()
+		var scope *agentMCPScope
+		for token, candidate := range bridge.scopes {
+			if subtle.ConstantTimeCompare([]byte(request.Header.Get("Authorization")), []byte(token)) == 1 {
+				scope = candidate
+				break
+			}
+		}
+		if scope == nil {
+			relay.mu.Unlock()
+			http.Error(w, "invalid local MCP connection", http.StatusForbidden)
+			return
+		}
 		relay.session.mu.Lock()
 		err := relay.authorizeMCPLocked()
-		admission := mcpAdmission{grant: proto.Clone(relay.session.grant).(*agentv1.SessionGrant), controlSequence: relay.session.controlSequence}
+		admission := mcpAdmission{grant: proto.Clone(relay.session.grant).(*agentv1.SessionGrant), controlSequence: relay.session.controlSequence, scopeID: scope.id}
 		if err == nil && relay.mcpRequests >= 64 {
 			err = errors.New("MCP request capacity exceeded")
 		}
@@ -127,7 +122,7 @@ func (relay *agentRelay) startMCPLocked(observationTimeout time.Duration) (*agen
 		// HTTP lifetime so disconnect only cancels observation, never its mutation.
 		admission.ctx = ctx
 		ctx = context.WithValue(ctx, mcpHTTPContext{}, admission)
-		handler.ServeHTTP(w, request.WithContext(ctx))
+		scope.handler.ServeHTTP(w, request.WithContext(ctx))
 		// net/http otherwise flushes its buffered response after this handler returns.
 		// Keep capture pinned through that write, including a slow or lost client.
 		_ = http.NewResponseController(w).Flush()
@@ -196,7 +191,7 @@ func (relay *agentRelay) invokeMCP(ctx context.Context, tool string, arguments j
 	result := make(chan *agentv1.OperationResult, 1)
 	session.pending[id] = &agentPendingOperation{operation: operation, generation: session.grant.GetAuthorityGeneration(), leaseEpoch: session.grant.GetComputerLeaseEpoch(), mcpResult: result}
 	identity := proto.Clone(session.grant.GetIdentity()).(*agentv1.SessionIdentity)
-	envelope := &agentv1.GuestSessionMessage{Identity: identity, OperationAuthorityGeneration: session.grant.GetAuthorityGeneration(), OperationLeaseEpoch: session.grant.GetComputerLeaseEpoch(), Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: identity, Event: &agentv1.ProgramEvent_Operation{Operation: operation}}}, EventSequence: relay.nextSequence}
+	envelope := &agentv1.GuestSessionMessage{Identity: identity, OperationAuthorityGeneration: session.grant.GetAuthorityGeneration(), OperationLeaseEpoch: session.grant.GetComputerLeaseEpoch(), OperationMcpScopeId: admission.scopeID, Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: identity, Event: &agentv1.ProgramEvent_Operation{Operation: operation}}}, EventSequence: relay.nextSequence}
 	session.mu.Unlock()
 	relay.nextSequence++
 	relay.outbox = append(relay.outbox, envelope)
@@ -229,5 +224,66 @@ func (relay *agentRelay) invokeMCP(ctx context.Context, tool string, arguments j
 // A cancelled observation still needs a host result to reconcile its retained
 // pending entry. Cancellation is never permission to execute a mutation again.
 func (relay *agentRelay) cancelMCPObservation(envelope *agentv1.GuestSessionMessage) {
-	relay.enqueue(&agentv1.GuestSessionMessage{Identity: envelope.Identity, OperationAuthorityGeneration: envelope.OperationAuthorityGeneration, OperationLeaseEpoch: envelope.OperationLeaseEpoch, Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: envelope.Identity, Event: &agentv1.ProgramEvent_CancelOperation{CancelOperation: &agentv1.OperationCancel{RequestId: envelope.GetEvent().GetOperation().GetRequestId()}}}}})
+	relay.enqueue(&agentv1.GuestSessionMessage{Identity: envelope.Identity, OperationAuthorityGeneration: envelope.OperationAuthorityGeneration, OperationLeaseEpoch: envelope.OperationLeaseEpoch, OperationMcpScopeId: envelope.OperationMcpScopeId, Message: &agentv1.GuestSessionMessage_Event{Event: &agentv1.ProgramEvent{Identity: envelope.Identity, Event: &agentv1.ProgramEvent_CancelOperation{CancelOperation: &agentv1.OperationCancel{RequestId: envelope.GetEvent().GetOperation().GetRequestId()}}}}})
+}
+
+// bindMCPScopeLocked consumes only an authenticated upstream receipt. The relay
+// presents a guest-local credential; business authority remains in the receiver.
+func (relay *agentRelay) bindMCPScopeLocked(command *agentv1.GuestCommand) error {
+	result := command.GetOperationResult()
+	if result == nil || result.GetError() != nil {
+		return nil
+	}
+	relay.session.mu.Lock()
+	pending := relay.session.pending[result.GetRequestId()]
+	descriptor := pending != nil && pending.operation.GetMethod() == agentv1.Operation_METHOD_GET_MCP_CONNECTION
+	relay.session.mu.Unlock()
+	if !descriptor {
+		return nil
+	}
+	var scope struct {
+		ID     string          `json:"id"`
+		Policy json.RawMessage `json:"policy"`
+	}
+	if err := decodeAgentJSON(result.GetValueJson(), &scope); err != nil {
+		return err
+	}
+	if id, err := uuid.Parse(scope.ID); err != nil || id == uuid.Nil() {
+		return errors.New("invalid MCP scope receipt")
+	}
+	policy, err := mcppolicy.Decode(scope.Policy)
+	if err != nil {
+		return err
+	}
+	if relay.mcp == nil {
+		bridge, err := relay.startMCPLocked(45 * time.Second)
+		if err != nil {
+			return err
+		}
+		relay.mcp = bridge
+	}
+	var connection agentMCPConnection
+	for _, existing := range relay.mcp.scopes {
+		if existing.id == scope.ID {
+			connection = existing.connection
+			break
+		}
+	}
+	if connection.URL == "" {
+		token := "Bearer " + rand.Text()
+		connection = agentMCPConnection{URL: relay.mcp.connection.URL, Headers: map[string]string{"Authorization": token}}
+		handler := runtimemcp.NewScopedHandler(func(ctx context.Context, tool string, args json.RawMessage) (json.RawMessage, error) {
+			return relay.invokeMCP(ctx, tool, args, relay.mcp.observationTimeout)
+		}, policy)
+		relay.mcp.scopes[token] = &agentMCPScope{id: scope.ID, connection: connection, handler: handler}
+		if relay.mcp.connection.Headers == nil {
+			relay.mcp.connection = connection
+		}
+	}
+	body, err := json.Marshal(connection)
+	if err != nil {
+		return err
+	}
+	result.Outcome = &agentv1.OperationResult_ValueJson{ValueJson: body}
+	return nil
 }

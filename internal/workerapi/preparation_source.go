@@ -6,8 +6,9 @@ import (
 )
 
 type PreparationSourceRequest struct {
-	EnvironmentID string `json:"environment_id"`
-	BuildID       string `json:"build_id"`
+	Network       *NetworkCapabilities `json:"network,omitempty"`
+	EnvironmentID string               `json:"environment_id"`
+	BuildID       string               `json:"build_id"`
 }
 
 type PreparationSource struct {

@@ -11,14 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func decodeAgentComputerLease(r *http.Request) (computer.LeaseIdentity, error) {
-	var request workerapi.AgentComputerLeaseRequest
-	if err := decodeRequestJSON(r, &request); err != nil {
-		return computer.LeaseIdentity{}, session.ErrInvalidInput
-	}
-	return agentComputerLeaseIdentity(request)
-}
-
 func agentComputerLeaseIdentity(request workerapi.AgentComputerLeaseRequest) (computer.LeaseIdentity, error) {
 	env, e1 := agentComputerID(request.EnvironmentID)
 	computerID, e2 := agentComputerID(request.ComputerID)
@@ -29,7 +21,16 @@ func agentComputerLeaseIdentity(request workerapi.AgentComputerLeaseRequest) (co
 	return computer.LeaseIdentity{EnvironmentID: env, ComputerID: computerID, InstanceID: instance, Epoch: request.LeaseEpoch}, nil
 }
 func (server *Server) workerRenewAgentComputerLease(w http.ResponseWriter, r *http.Request) {
-	identity, err := decodeAgentComputerLease(r)
+	var request workerapi.AgentComputerLeaseRequest
+	if err := decodeRequestJSON(r, &request); err != nil {
+		server.writeAgentComputerError(w, r, session.ErrInvalidInput)
+		return
+	}
+	if err := server.checkWorkerNetwork(request.Network); err != nil {
+		server.writeAgentComputerError(w, r, err)
+		return
+	}
+	identity, err := agentComputerLeaseIdentity(request)
 	if err != nil {
 		server.writeAgentComputerError(w, r, err)
 		return

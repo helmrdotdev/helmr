@@ -77,13 +77,23 @@ Console distinguishes installation authorization from observed socket health.
 
 ## Guest boundary and limits
 
-`worker_network_blocked_ipv4_cidrs` must explicitly contain the platform VPC,
-execution VPC and every routed company CIDR before the private route is enabled.
-The same check covers every retained Worker generation; retire incompatible
-generations before adding routes rather than changing their immutable settings.
-Workers install those existing guest destination denies before guest traffic is
-forwarded. A source security group alone cannot distinguish a translated guest
-packet from its host. Test host success and guest denial together.
+`worker_network_blocked_ipv4_cidrs` must cover the control-plane and execution
+VPCs in every current and retained Worker generation. Routed company prefixes
+outside RFC1918 also require absolute coverage. RFC1918 company routes grant no
+connectivity by themselves: private destinations are denied except within
+`worker_network_private_business_cidrs` (default `[]`). Business ranges must not
+overlap management denies. The same installation inputs configure control-plane
+publication checks and authenticated Worker admission and renewal.
+
+Changing these inputs requires an explicit drained rollout. Make old generations
+ineligible for every new allocation, settle in-flight admissions, then verify
+forwarding, proxy connections and conntrack teardown before activating changed
+restrictions. A stricter Worker may reduce reachability during rollout; its
+business ceiling must be a subset of the control-plane ceiling and its absolute
+denies must cover the control-plane denies. No configuration change terminates
+already established traffic by itself. Routing and CA trust remain operator work.
+A source security group alone cannot distinguish a translated guest packet from
+its host. Qualification must test host success and guest denial together.
 
 This reference does not qualify guest/template/model/build egress containment.
 It does not provide an air gap: Slack messages arrive through an established

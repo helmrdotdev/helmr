@@ -76,7 +76,7 @@ export const reviewer = agent({
 })
 ```
 
-Deploy the project. Registration resolves every `secrets` and `buildSecrets`
+Deploy the project. Registration resolves every `secrets` and `prepareSecrets`
 identifier in the target Environment and rejects missing or revoked Secrets.
 The same compiled bundle can deploy to multiple Environments, each with its own
 active `GITHUB_TOKEN` value. Computers created by Agent starts after the Deployment is
@@ -138,7 +138,7 @@ helmr computer exec --key github-review --project demo --env staging \
 ```
 
 To change a binding or its allowed origins, create a new Computer. Secrets used
-only by `prepare` go in `buildSecrets`; see
+only by `prepare` go in `prepareSecrets`; see
 [Prepare a Computer](/docs/guides/prepare-a-computer).
 
 ## Rotate the value
@@ -152,7 +152,7 @@ printf '%s' "$NEW_GITHUB_TOKEN" | helmr secret rotate GITHUB_TOKEN \
 Protected bindings use the new value on their next request; you do not need to
 recreate Computers. Raw and file values are delivered when work starts, so
 processes that are already running keep the old value. A new Computer prepared
-with this Secret in `buildSecrets` gets a freshly prepared image.
+with this Secret in `prepareSecrets` gets a freshly prepared image.
 
 ## Revoke the Secret
 

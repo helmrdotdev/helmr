@@ -273,5 +273,5 @@ func (p *PreparedMachines) adoptPreparedLeaf(ctx context.Context, leaf *prepared
 		}
 		keys[key.ID] = key.Key
 	}
-	return leaf.machine.Adopt(ctx, vm.PreparedAdoption{Binding: vm.WorkloadBinding{WorkerEpoch: hostEpoch, OwnerID: identity.AllocationID, Generation: 1, ComputerInstanceID: identity.AllocationID, VMPlatformID: leaf.shape.VMPlatformID}, ComputerID: identity.OwnerID, Root: source.Disk.Root, WriteKeyID: source.Disk.WriteKeyID, Keys: keys, Source: p.ComputerRanges})
+	return leaf.machine.Adopt(ctx, vm.PreparedAdoption{NetworkPolicy: source.NetworkPolicy, NetworkInstallation: source.NetworkInstallation, Binding: vm.WorkloadBinding{WorkerEpoch: hostEpoch, OwnerID: identity.AllocationID, Generation: 1, ComputerInstanceID: identity.AllocationID, VMPlatformID: leaf.shape.VMPlatformID}, ComputerID: identity.OwnerID, Root: source.Disk.Root, WriteKeyID: source.Disk.WriteKeyID, Keys: keys, Source: p.ComputerRanges})
 }

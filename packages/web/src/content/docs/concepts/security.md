@@ -12,10 +12,11 @@ application data. Native harnesses retain their own permission policies.
 
 Agents and Computer Commands execute inside Linux guests on workers. Computer
 definitions select the image and resources; actual Computers have fixed Secret
-bindings. Sessions sharing a Computer share files and process authority. Agent code
-within an Environment is mutually trusted, including reachable files, native
-histories, credentials and services. Helmr does not promise isolation for mutually
-untrusted code; an Environment label alone does not establish that boundary.
+bindings. Sessions sharing a Computer are mutually trusted, including files, native
+histories, credentials, background processes and reachable relay authority.
+Agents with different trust requirements need separate Computers and
+caller/delegate placement restrictions; an Environment label or descriptor scope alone does not establish
+process isolation. See [Execution policies](/docs/concepts/execution-policies).
 
 The local Linux builder installs dependencies and produces immutable artifacts.
 Package lifecycle scripts are untrusted build input. The isolated installation
@@ -23,6 +24,20 @@ receives only explicitly selected build Secrets, without a host Docker socket or
 unrestricted host filesystem. The Control Plane verifies the completed artifact
 closure rather than running project installation. The host-side Helmr config is
 trusted local code with the invoking user's authority.
+
+## Network and managed-operation limits
+
+Template `network` fixes the Computer's outbound maximum, with a separately
+resolved `prepareNetwork` phase. Agent `runtimeMcp` fixes a Session's optional
+managed-operation maximum; a connection getter can narrow it. Omission retains
+ordinary network or base-authorized MCP behavior. Existing authorization and
+installation denies always apply.
+
+These are distinct boundaries. An authorized delegate retains its own policies,
+and a caller with unrestricted placement may reach other eligible Computers.
+Result/control relays and application data remain channels even with external
+network traffic blocked. See [Execution policies](/docs/concepts/execution-policies)
+for exact scope, native injection and pinned readback.
 
 ## Credentials and questions
 

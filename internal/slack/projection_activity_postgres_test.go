@@ -36,7 +36,7 @@ func activityChildOrigin(t *testing.T, f statusFixture, running, explicitOrigin 
 		parentTurn = uuid.UUID{}
 	}
 	host := activityHost(f)
-	caller := session.Caller{Kind: "session", ID: f.Session, TurnID: parentTurn, Execution: activityExecution(f), Host: &host}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.MCPScope, ID: f.Session, TurnID: parentTurn, Execution: activityExecution(f), Host: &host}
 	receipt, err := session.Spawn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: f.Computer, IdempotencyKey: uuid.NewV7().String(), Input: json.RawMessage(`[{"type":"text","text":"PRIVATE CHILD ASSIGNMENT"}]`)})
 	if err != nil {
 		t.Fatal(err)
@@ -485,7 +485,7 @@ func TestOwnedActivitySessionCallerSuccessorsUseTheirOwnAdmission(t *testing.T) 
 	}
 	write("Second explanation.")
 	host := activityHost(f)
-	second, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "session", ID: f.Session, Execution: activityExecution(f), Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "successor", Input: json.RawMessage(`[]`)})
+	second, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "session", MCPScopeID: f.MCPScope, ID: f.Session, Execution: activityExecution(f), Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "successor", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +510,7 @@ func TestOwnedActivitySessionCallerSuccessorsUseTheirOwnAdmission(t *testing.T) 
 	if err := f.Pool.QueryRow(t.Context(), `SELECT authority_generation FROM sessions WHERE id=$1`, f.Session).Scan(&execution.AuthorityGeneration); err != nil {
 		t.Fatal(err)
 	}
-	later, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "session", ID: f.Session, Execution: execution, Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "inactive-front", Input: json.RawMessage(`[]`)})
+	later, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "session", MCPScopeID: f.MCPScope, ID: f.Session, Execution: execution, Host: &host}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: child.Session, IdempotencyKey: "inactive-front", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +531,7 @@ func TestDirectActivityRechecksEveryRepresentedAgent(t *testing.T) {
 			child, turn := activityChild(t, f, false)
 			otherAgent := uuid.NewV7()
 			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'private-child-agent');
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
  UPDATE sessions SET agent_id=$2 WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.Environment, otherAgent, f.Agent, child.Session)
 			revoke := func() {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET all_agents=false WHERE environment_id=$1;

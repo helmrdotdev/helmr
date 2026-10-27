@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -102,7 +103,7 @@ func TestWorkerComputerAllocationSourceBindsDiskAndBootWithoutProgram(t *testing
 	if _, err := disk.OpenVersion(t.Context(), store, scope, keys, source.Disk.Root, 4096); err != nil {
 		t.Fatal(err)
 	}
-	body, _ := json.Marshal(identity)
+	body, _ := json.Marshal(workerapi.AllocationRequest{AllocationIdentity: identity, Network: &workerapi.NetworkCapabilities{Version: workerapi.NetworkPolicyVersion, Installation: (networkpolicy.Installation{}).Canonical()}})
 	response := postAgentComputerJSON(t, server, auth, "/worker/v1/allocations/computer/source", body)
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK || response.Header.Get("Cache-Control") != "no-store" {

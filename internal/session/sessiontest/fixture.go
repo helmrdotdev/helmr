@@ -6,6 +6,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"strings"
 	"testing"
@@ -23,6 +24,7 @@ const ChannelCredential = "test-computer-channel"
 
 type Fixture struct {
 	Pool                                                                             *pgxpool.Pool
+	MCPScope                                                                         uuid.UUID
 	Environment, Session, Computer, User, Worker, Agent, Deployment, Group, MemberID uuid.UUID
 }
 
@@ -57,9 +59,9 @@ func New(t *testing.T) Fixture {
       UPDATE environments SET current_deployment_id=$5 WHERE id=$4;
       INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($4,$5,$6,'{}','{}');
       INSERT INTO templates(environment_id,id,key) VALUES($4,$5,'fixture-computer');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) VALUES($4,$5,$5,$5,1000,536870912,NULL);
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) VALUES($4,$5,$5,$5,1000,536870912,NULL,'{"kind":"ordinary"}','{"kind":"block"}');
       INSERT INTO agents(environment_id,id,key) VALUES($4,$7,'agent');
-      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) VALUES($4,$7,$5,$5,false);
+      INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES($4,$7,$5,$5,false,'{"kind":"unrestricted"}');
       INSERT INTO disk_encryption_keys(id,environment_id,wrapping_key_id,wrapped_key) VALUES($15,$4,'test',decode('01','hex'));
       INSERT INTO cas_blobs(digest,size_bytes) VALUES($16,$17);
       INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$16,$17,'application/octet-stream');
@@ -81,6 +83,12 @@ func New(t *testing.T) Fixture {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_guest_ephemeral_disk_bytes=1073741824,resource_observation_sequence=1,resource_policy_revision=1,resource_observed_at=clock_timestamp(),local_optional_cpu_millis=0,local_optional_memory_bytes=0,optional_disk_bytes=0,local_optional_vm_slots=0,local_optional_tasks=0,optional_reclaim_pending=false,disk_slots_for_real_work=1,ready_leaf_keys='[]' WHERE id=$1`, f.Worker)
+	// This fixture seeds identity records directly. Keep its default scope pure
+	// so same-package tests of Session dependencies can use it without a cycle.
+	maximum := mcppolicy.Policy{Kind: "unrestricted"}
+	digest := maximum.Digest()
+	f.MCPScope = uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_mcp_scopes(environment_id,session_id,process_epoch,id,slot,policy,policy_digest) VALUES($1,$2,1,$3,0,$4,$5)`, f.Environment, f.Session, f.MCPScope, maximum.Bytes(), digest[:])
 	return f
 }
 

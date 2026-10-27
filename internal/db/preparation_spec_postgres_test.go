@@ -7,13 +7,14 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 )
 
 func TestPreparationSpecJSONBRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	pool := newPostgresDB(t, ctx)
 	ids := seedPostgres(t, ctx, pool)
-	spec := artifact.ComputerPreparationSpec{APIVersion: artifact.ComputerPreparationSpecVersion, TemplateDefinitionID: "repo", Program: artifact.ProgramDescriptor{Digest: dbtest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}}
+	spec := artifact.ComputerPreparationSpec{PrepareNetworkPolicy: networkpolicy.Policy{Kind: networkpolicy.Allowlist, Domains: []networkpolicy.Domain{{Domain: "registry.example.com"}}}, APIVersion: artifact.ComputerPreparationSpecVersion, TemplateDefinitionID: "repo", Program: artifact.ProgramDescriptor{Digest: dbtest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}}
 	canonical, err := artifact.CanonicalComputerPreparationSpec(spec)
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +42,7 @@ func TestPreparationSpecJSONBRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed != spec || !bytes.Equal(canonical, recanonical) || digest != storedDigest || digest != redigest {
+	if !bytes.Equal(canonical, recanonical) || digest != storedDigest || digest != redigest {
 		t.Fatalf("JSONB changed preparation identity: %+v %q %q", parsed, storedDigest, redigest)
 	}
 }

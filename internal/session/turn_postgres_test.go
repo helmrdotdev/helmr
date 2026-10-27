@@ -13,6 +13,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -25,15 +26,19 @@ import (
 
 type fixture struct {
 	pool                                                           *pgxpool.Pool
+	mcpScope                                                       uuid.UUID
 	env, session, computer, user, worker, agent, deployment, group uuid.UUID
 }
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	return fixtureOf(sessiontest.New(t))
+	return fixtureOf(t, sessiontest.New(t))
 }
-func fixtureOf(f sessiontest.Fixture) fixture {
-	return fixture{pool: f.Pool, env: f.Environment, session: f.Session, computer: f.Computer, user: f.User, worker: f.Worker, agent: f.Agent, deployment: f.Deployment, group: f.Group}
+func fixtureOf(t *testing.T, f sessiontest.Fixture) fixture {
+	t.Helper()
+	result := fixture{pool: f.Pool, env: f.Environment, session: f.Session, computer: f.Computer, user: f.User, worker: f.Worker, agent: f.Agent, deployment: f.Deployment, group: f.Group}
+	result.mcpScope = f.MCPScope
+	return result
 }
 func (f fixture) caller() session.Caller {
 	return session.Caller{Kind: "user", ID: f.user, CredentialID: uuid.NewV7()}
@@ -81,6 +86,19 @@ func (f fixture) peer(t *testing.T) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Membership tests deliberately create peers while their Computer cannot
+	// admit business work. Seed the pinned maximum as identity fixture data.
+	var raw []byte
+	if err := f.pool.QueryRow(t.Context(), `SELECT runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, p.env, p.agent, p.deployment).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	maximum, err := mcppolicy.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := maximum.Digest()
+	p.mcpScope = uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), p.pool, `INSERT INTO session_mcp_scopes(environment_id,session_id,process_epoch,id,slot,policy,policy_digest) VALUES($1,$2,1,$3,0,$4,$5)`, p.env, p.session, p.mcpScope, maximum.Bytes(), digest[:])
 	return p
 }
 
@@ -247,7 +265,7 @@ func TestCompletedResultSurvivesLaterDeadline(t *testing.T) {
 func TestRuntimePeerAdmissionRequiresCurrentAuthority(t *testing.T) {
 	f := newFixture(t)
 	peer := f.requestedPeer(t)
-	caller := session.Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)}
 	first, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
 	if err != nil {
@@ -277,7 +295,7 @@ func TestDirectTurnAuthorityNeverBorrowsAnotherTurn(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution(), TurnID: a.TurnID}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution(), TurnID: a.TurnID}
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "peer", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)}
 	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); err != nil {
 		t.Fatal(err)
@@ -302,7 +320,7 @@ func TestDirectTurnAdmissionRechecksDeadlineAfterOwnerLock(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution(), TurnID: a.TurnID}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution(), TurnID: a.TurnID}
 	tx, err := f.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -355,7 +373,7 @@ func TestOldTurnCannotBorrowReplacementProcess(t *testing.T) {
 	}
 	execution := f.execution()
 	execution.ProcessEpoch = 2
-	caller := session.Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: execution, TurnID: a.TurnID}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: execution, TurnID: a.TurnID}
 	_, err = session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "stale-turn", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 	if !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("old Turn under replacement process: %v", err)
@@ -407,7 +425,7 @@ func TestRuntimePeerInputQueuesWithoutReleasingTargetHold(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','human interrupt')`, f.env, uuid.New(), peer.session); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: peer.session, IdempotencyKey: "held-target", Input: json.RawMessage(`[{"type":"text","text":"follow-up"}]`)}
 	admitted, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
 	if err != nil {
@@ -442,15 +460,15 @@ func TestRuntimeInputCannotCrossEnvironment(t *testing.T) {
 	INSERT INTO deployments(environment_id,id,bundle_digest) SELECT $2,id,bundle_digest FROM deployments WHERE environment_id=$1;
 	INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) SELECT $2,id,spec_digest,spec,seed FROM image_specs WHERE environment_id=$1;
 	INSERT INTO templates(environment_id,id,key) SELECT $2,id,key FROM templates WHERE environment_id=$1;
-	INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes) SELECT $2,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes FROM template_definitions WHERE environment_id=$1;
+	INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) SELECT $2,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1;
 	INSERT INTO agents(environment_id,id,key) SELECT $2,id,key FROM agents WHERE environment_id=$1;
-	INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT $2,agent_id,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1;
+	INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT $2,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1;
 	INSERT INTO computers(environment_id,id,image_spec_id,preparation_deadline_at,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT $2,id,$5,clock_timestamp()+interval '5 minutes',origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1;
 	INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT $2,$3,agent_id,deployment_id,computer_id,$3,0,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE environment_id=$1 AND id=$4;`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, otherSession, f.session, f.deployment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}
 	for _, env := range []uuid.UUID{f.env, otherEnv} {
 		got, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: otherSession, Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 		if !errors.Is(err, session.ErrDenied) || got.TurnID != uuid.Nil() {
@@ -473,7 +491,7 @@ func TestRuntimeAdmissionRechecksLeaseAfterLockWait(t *testing.T) {
 	if _, err = blocker.Exec(t.Context(), "SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE", f.env); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution()}
+	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}
 	done := make(chan error, 1)
 	go func() {
 		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "expired-while-waiting", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
@@ -517,7 +535,7 @@ func TestRuntimeBlockedAdmissionDoesNotBlockAuthorityRenewal(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "session", ID: f.session, Host: f.host(), Execution: f.execution()}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "blocked", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+		_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "blocked", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 		done <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)

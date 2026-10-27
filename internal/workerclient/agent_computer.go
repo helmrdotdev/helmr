@@ -66,6 +66,8 @@ func (client *Client) PrepareAgentComputerSourceAbort(ctx context.Context, reque
 }
 
 func (client *Client) RenewAgentComputerLease(ctx context.Context, request workerapi.AgentComputerLeaseRequest) (workerapi.AgentComputerLeaseResponse, error) {
+	request.Network = client.network
+
 	var response workerapi.AgentComputerLeaseResponse
 	err := client.postWorkerJSON(ctx, "/worker/v1/agent-computers/lease/renew", request, &response)
 	return response, err

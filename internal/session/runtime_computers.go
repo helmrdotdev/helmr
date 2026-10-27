@@ -31,6 +31,9 @@ func RuntimeListComputers(ctx context.Context, pool db.TxBeginner, caller Caller
 				return err
 			}
 		}
+		if err := requireMCPOperation(ctx, tx, caller, "list_computers"); err != nil {
+			return err
+		}
 		scope.EnvironmentID = caller.Execution.EnvironmentID
 		if err := tx.QueryRow(ctx, `SELECT org_id,project_id FROM environments WHERE id=$1`, scope.EnvironmentID).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 			return err

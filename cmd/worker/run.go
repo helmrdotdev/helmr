@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/objectcache"
 	agentv1 "github.com/helmrdotdev/helmr/internal/proto/agent/v1"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -63,17 +64,18 @@ func run(log *slog.Logger) error {
 	}
 	cfg.JailerChrootDir = jailerDir
 	networkConfig := firecracker.Config{
-		JailerUID:               cfg.JailerUID,
-		JailerGID:               cfg.JailerGID,
-		StateDir:                filepath.Join(workDir, "vms", "guest"),
-		TempDir:                 filepath.Join(workDir, "tmp"),
-		NetworkLinkPool:         cfg.NetworkLinkPool,
-		NetworkTranslationPool:  cfg.NetworkTranslationPool,
-		NetworkResolverIPv4:     cfg.NetworkResolverIPv4,
-		NetworkBlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs,
-		NetworkCapacity:         int(cfg.WorkerExecutionSlots),
-		IPPath:                  cfg.IPPath,
-		NFTPath:                 cfg.NFTPath,
+		JailerUID:                   cfg.JailerUID,
+		JailerGID:                   cfg.JailerGID,
+		StateDir:                    filepath.Join(workDir, "vms", "guest"),
+		TempDir:                     filepath.Join(workDir, "tmp"),
+		NetworkLinkPool:             cfg.NetworkLinkPool,
+		NetworkTranslationPool:      cfg.NetworkTranslationPool,
+		NetworkResolverIPv4:         cfg.NetworkResolverIPv4,
+		NetworkBlockedIPv4CIDRs:     cfg.NetworkBlockedIPv4CIDRs,
+		NetworkPrivateBusinessCIDRs: cfg.NetworkPrivateBusinessCIDRs,
+		NetworkCapacity:             int(cfg.WorkerExecutionSlots),
+		IPPath:                      cfg.IPPath,
+		NFTPath:                     cfg.NFTPath,
 	}
 	networkReclaimer, err := firecracker.NewNetworkReclaimer(networkConfig)
 	if err != nil {
@@ -113,6 +115,7 @@ func run(log *slog.Logger) error {
 		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
 			workerclient.WithAuth(hostSecret.WorkerHostID, hostSecret.WorkerHostSecret),
 			workerclient.WithService(serviceID),
+			workerclient.WithNetwork(networkpolicy.Installation{PrivateBusinessCIDRs: cfg.NetworkPrivateBusinessCIDRs, BlockedIPv4CIDRs: cfg.NetworkBlockedIPv4CIDRs}),
 		)
 		if candidateErr != nil {
 			return candidateErr

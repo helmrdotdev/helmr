@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -23,6 +24,7 @@ type PreparationRuntime struct {
 // Templates without a callback commit their seed, settings and Runtime, without
 // an executable artifact. Actual Secret versions remain attempt evidence.
 type ComputerPreparationSpec struct {
+	PrepareNetworkPolicy networkpolicy.Policy         `json:"prepareNetworkPolicy"`
 	APIVersion           string                       `json:"apiVersion"`
 	TemplateDefinitionID string                       `json:"templateDefinitionId"`
 	Program              ProgramDescriptor            `json:"program,omitzero"`
@@ -42,11 +44,15 @@ func BuildComputerPreparationSpecs(output ProgramOutput) ([]ComputerPreparationS
 		if d.Kind != definition.KindTemplate {
 			continue
 		}
-		spec := ComputerPreparationSpec{APIVersion: ComputerPreparationSpecVersion, TemplateDefinitionID: d.DeclaredID}
+		_, stage, err := definition.ResolveTemplatePolicies(d.Template.Network, d.Template.PrepareNetwork, d.Template.Prepare, d.Template.Secrets, d.Template.PrepareSecrets)
+		if err != nil {
+			return nil, err
+		}
+		spec := ComputerPreparationSpec{PrepareNetworkPolicy: stage, APIVersion: ComputerPreparationSpecVersion, TemplateDefinitionID: d.DeclaredID}
 		if d.Template.Prepare {
 			spec.Program = output.Artifact
 		} else {
-			spec.Template = d.Template
+			spec.Template = d.Clone().Template
 			spec.Runtime = &PreparationRuntime{Architecture: output.Metadata.Architecture, RuntimeContract: output.Metadata.RuntimeContract, Digest: output.Metadata.RuntimeDigest}
 		}
 		specs = append(specs, spec)
@@ -58,12 +64,18 @@ func CanonicalComputerPreparationSpec(spec ComputerPreparationSpec) ([]byte, err
 	if spec.APIVersion != ComputerPreparationSpecVersion || !definition.ValidDeclaredID(spec.TemplateDefinitionID) {
 		return nil, errors.New("invalid Computer preparation identity")
 	}
+	if _, err := networkpolicy.DecodeStored(mustPolicyJSON(spec.PrepareNetworkPolicy)); err != nil {
+		return nil, err
+	}
 	if spec.Program == (ProgramDescriptor{}) {
 		if spec.Runtime == nil || !validArchitecture(spec.Runtime.Architecture) || spec.Runtime.RuntimeContract != definition.RuntimeContract || !sha256sum.ValidDigest(spec.Runtime.Digest) {
 			return nil, errors.New("seed-only preparation requires its qualifying Runtime")
 		}
 		if spec.Template == nil || spec.Template.Prepare {
 			return nil, errors.New("seed-only preparation requires its Template without a callback")
+		}
+		if spec.PrepareNetworkPolicy.Kind != networkpolicy.Blocked {
+			return nil, errors.New("seed-only preparation requires blocking network policy")
 		}
 		if err := definition.ValidateTemplateManifest(*spec.Template); err != nil {
 			return nil, err
@@ -114,3 +126,5 @@ func ComputerPreparationSpecDigest(spec ComputerPreparationSpec) (string, error)
 	}
 	return sha256sum.DigestBytes(raw), nil
 }
+
+func mustPolicyJSON(p networkpolicy.Policy) []byte { raw, _ := json.Marshal(p); return raw }

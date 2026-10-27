@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"net/http"
 	"strconv"
 	"strings"
@@ -205,6 +206,12 @@ func deploymentResponse(record deployment.Record) api.DeploymentResponse {
 
 // deploymentError maps errors of the deployment owner to HTTP errors.
 func deploymentError(err error) error {
+	if errors.Is(err, definition.ErrInvalidNetworkPolicy) {
+		return badRequest(codedError{code: "invalid_network_policy", message: err.Error()})
+	}
+	if errors.Is(err, definition.ErrInvalidRuntimeMcpPolicy) {
+		return badRequest(codedError{code: "invalid_runtime_mcp_policy", message: err.Error()})
+	}
 	var input deployment.InputError
 	var deleted deployment.DeletedAgentsError
 	var expired idempotency.ExpiredError

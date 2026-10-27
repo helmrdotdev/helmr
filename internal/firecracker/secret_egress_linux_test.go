@@ -13,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"math/big"
 	"net"
 	"net/http"
@@ -96,7 +97,7 @@ func TestProtectedEgressKernelNamespace(t *testing.T) {
 	if err := withNetworkNamespace(handle, func() error { return verifySecretRoute("tap0", 71) }); err != nil {
 		t.Fatal(err)
 	}
-	script, err := renderNetworkPolicy(networkPolicyInput{Tap: "tap0", Peer: "host0", Mark: 71, GuestIPv4: "192.168.127.2", TranslationIPv4: "100.96.0.2", ResolverIPv4: "10.0.0.2", BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("169.254.0.0/16"), netip.MustParsePrefix("192.168.0.0/16")}, ProtectedPorts: []uint16{443, 8443}})
+	script, err := renderNetworkPolicy(networkPolicyInput{Policy: networkpolicy.OrdinaryPolicy(), Tap: "tap0", Peer: "host0", Mark: 71, GuestIPv4: "192.168.127.2", TranslationIPv4: "100.96.0.2", ResolverIPv4: "10.0.0.2", BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("169.254.0.0/16"), netip.MustParsePrefix("192.168.0.0/16")}, ProtectedPorts: []uint16{443, 8443}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestProtectedEgressKernelNamespace(t *testing.T) {
 	upstream.EnableHTTP2 = true
 	upstream.StartTLS()
 	defer upstream.Close()
-	proxyConfig := secretproxy.Config{Origins: []string{"https://api.example:8443"}, AllowedDestination: func(ip netip.Addr) bool { return ip == netip.MustParseAddr("93.184.216.34") }, Certificate: func(context.Context, string) (tls.Certificate, error) { return cert, nil }, Resolve: func(_ context.Context, o string, m []string) (map[string][]byte, error) {
+	proxyConfig := secretproxy.Config{NetworkPolicy: networkpolicy.OrdinaryPolicy(), Origins: []string{"https://api.example:8443"}, AllowedDestination: func(ip netip.Addr) bool { return ip == netip.MustParseAddr("93.184.216.34") }, Certificate: func(context.Context, string) (tls.Certificate, error) { return cert, nil }, Resolve: func(_ context.Context, o string, m []string) (map[string][]byte, error) {
 		resolves.Add(1)
 		if o != "https://api.example:8443" || len(m) != 1 || m[0] != marker {
 			return nil, fmt.Errorf("invalid authority")

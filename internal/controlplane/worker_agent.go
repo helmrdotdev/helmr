@@ -1,9 +1,11 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 	"net/http"
 	"uuid"
 
@@ -91,6 +93,43 @@ func (server *Server) workerAgentOperation(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
+	if method == workerapi.AgentMethodGetMCPConnection {
+		if caller.TurnID != uuid.Nil() || request.MCPScopeID != "" {
+			writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "invalid MCP descriptor request"))
+			return
+		}
+		if body := bytes.TrimSpace(request.Payload); len(body) == 0 || body[0] != '{' {
+			server.writeAgentAdmissionError(w, r, request.RequestID, mcppolicy.ErrInvalid)
+			return
+		}
+		if _, err := canonicalJSON(request.Payload); err != nil {
+			server.writeAgentAdmissionError(w, r, request.RequestID, mcppolicy.ErrInvalid)
+			return
+		}
+		var input struct {
+			Policy json.RawMessage `json:"policy,omitempty"`
+		}
+		if err := decodeAgentPayload(request.Payload, &input); err != nil {
+			server.writeAgentAdmissionError(w, r, request.RequestID, mcppolicy.ErrInvalid)
+			return
+		}
+		raw := input.Policy
+		scope, err := session.IssueMCPScope(r.Context(), server.tx, caller, raw)
+		if err != nil {
+			server.writeAgentAdmissionError(w, r, request.RequestID, err)
+			return
+		}
+		body, _ := json.Marshal(scope)
+		writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: body})
+		return
+	}
+	if request.MCPScopeID != "" {
+		caller.MCPScopeID, err = uuid.Parse(request.MCPScopeID)
+		if err != nil || caller.MCPScopeID == uuid.Nil() {
+			server.writeAgentAdmissionError(w, r, request.RequestID, session.ErrRuntimeMCPDenied)
+			return
+		}
+	}
 	if method == workerapi.AgentMethodRuntimeMCP {
 		server.workerAgentMCP(w, r, request, caller)
 		return
@@ -116,6 +155,12 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, r *http.Re
 
 	code := ""
 	switch {
+	case errors.Is(err, mcppolicy.ErrInvalid):
+		code = "invalid_runtime_mcp_policy"
+	case errors.Is(err, session.ErrRuntimeMCPScopeLimit):
+		code = "runtime_mcp_scope_limit"
+	case errors.Is(err, session.ErrRuntimeMCPDenied):
+		code = "runtime_mcp_denied"
 	case errors.Is(err, slack.ErrSourceConversationPending):
 		code = "source_conversation_pending"
 	case errors.Is(err, slack.ErrSourceConversationUnavailable):
@@ -163,7 +208,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, r *http.Re
 		}
 	}
 	message := "Operation was not newly admitted; preserve the original arguments and idempotency key when reconciling an uncertain outcome"
-	if errors.Is(err, session.ErrAgentDeleted) || errors.Is(err, slack.ErrSourceConversationPending) || errors.Is(err, slack.ErrSourceConversationUnavailable) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slack.ErrTargetWorkspaceMismatch) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slack.ErrStartMessageTooLarge) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, session.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, session.ErrResponseAlreadyStaged) {
+	if errors.Is(err, mcppolicy.ErrInvalid) || errors.Is(err, session.ErrRuntimeMCPDenied) || errors.Is(err, session.ErrRuntimeMCPScopeLimit) || errors.Is(err, session.ErrAgentDeleted) || errors.Is(err, slack.ErrSourceConversationPending) || errors.Is(err, slack.ErrSourceConversationUnavailable) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slack.ErrTargetWorkspaceMismatch) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slack.ErrStartMessageTooLarge) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, session.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, session.ErrResponseAlreadyStaged) {
 		message = err.Error()
 	}
 	writeJSON(w, http.StatusOK, agentOperationFailure(id, code, message))

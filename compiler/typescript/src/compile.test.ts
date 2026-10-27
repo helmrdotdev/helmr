@@ -17,7 +17,7 @@ describe("Agent declaration analysis", () => {
     if (declaration.kind !== "template") throw new Error("Computer missing")
     expect(declaration.manifest.resources).toEqual({ milliCpu: 2000, memoryMiB: 4096, diskMiB: 16384 })
     expect(declaration.manifest.refresh).toEqual({ everyMs: 3600000, maxAgeMs: 86400000 })
-    expect(declaration.manifest.buildSecrets).toEqual([])
+    expect(declaration.manifest.prepareSecrets).toEqual([])
     expect(JSON.parse(new TextDecoder().decode(result.definitionIndexBytes)).templates).toEqual([{ id: "machine", modulePath: "helmr/app/entry-0.mjs", exportName: "worker", throughAgent: true }])
     const frame = successfulVerificationResult(result)
     expect(Object.keys(frame).sort()).toEqual(["files", "formatVersion", "outcome"])
@@ -41,7 +41,7 @@ describe("Agent declaration analysis", () => {
     expect(() => compile(entry(worker, "x", "../escape.mjs"))).toThrow()
     for (const maxTurnDuration of [0, -1, NaN, Infinity, 0.5, "0s", "1.5s", "01s"]) expect(() => compile(entry({ ...worker, maxTurnDuration }))).toThrow()
     expect(() => compile(entry({ ...machine(), secrets: [{ secret: "bad name", env: { name: "TOKEN", mode: "raw" } }] }))).toThrow("Secret name")
-    expect(() => compile(entry({ ...machine(), buildSecrets: [{ secret: "API_TOKEN", env: { name: "TOKEN", mode: "raw" }, value: "secret" }] }))).toThrow("unknown member")
+    expect(() => compile(entry({ ...machine(), prepareSecrets: [{ secret: "API_TOKEN", env: { name: "TOKEN", mode: "raw" }, value: "secret" }] }))).toThrow("unknown member")
     expect(() => compile(entry({ ...worker, triggers: [{ id: "tick", cron: "* * * * *", timezone: "UTC", input: undefined }] }))).toThrow()
     expect(() => compile(entry({ kind: "task", id: "old" }))).toThrow("definitions")
   })
@@ -57,7 +57,7 @@ describe("Agent declaration analysis", () => {
     expect(compile(entry(sharedId)).buildPlan.definitions.map(item => item.kind)).toEqual(["agent", "template"])
   })
   test("rejects empty Secret identifiers for both runtime and preparation", () => {
-    for (const field of ["secrets", "buildSecrets"] as const) {
+    for (const field of ["secrets", "prepareSecrets"] as const) {
       expect(() => compile(entry(template({ ...machine(), [field]: [{ secret: "", env: { name: "TOKEN", mode: "raw" } }] })))).toThrow("Secret")
     }
   })
@@ -68,7 +68,7 @@ describe("Agent declaration analysis", () => {
       { secret, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["https://API.EXAMPLE.COM:443", "https://api.example.com"] } },
       { secret, env: { name: "RAW_TOKEN", mode: "raw" } },
     ]
-    const result = compile(entry({ ...machine(), secrets: bindings, buildSecrets: bindings.toReversed() }))
+    const result = compile(entry({ ...machine(), prepare: async () => {}, secrets: bindings, prepareSecrets: bindings.toReversed() }))
     const declaration = result.buildPlan.definitions[0]!
     if (declaration.kind !== "template") throw new Error("Computer missing")
     expect(declaration.manifest.secrets).toEqual([
@@ -76,7 +76,7 @@ describe("Agent declaration analysis", () => {
       { secret, env: { name: "TOKEN", mode: "protected", allowedOrigins: ["https://api.example.com"] } },
       { secret, file: { path: "/etc/service/token" } },
     ])
-    expect(declaration.manifest.buildSecrets).toEqual(declaration.manifest.secrets)
+    expect(declaration.manifest.prepareSecrets).toEqual(declaration.manifest.secrets)
     for (const invalid of [
       {},
       [{ secret }],
@@ -90,7 +90,7 @@ describe("Agent declaration analysis", () => {
       [{ secret, file: { path: "/etc/token" } }, { secret, file: { path: "/etc/token/child" } }],
       [bindings[1], bindings[1]],
     ]) {
-      for (const field of ["secrets", "buildSecrets"]) expect(() => compile(entry({ ...machine(), [field]: invalid }))).toThrow()
+      for (const field of ["secrets", "prepareSecrets"]) expect(() => compile(entry({ ...machine(), [field]: invalid }))).toThrow()
     }
   })
   test("preserves image source copies and rejects unknown step members", () => {

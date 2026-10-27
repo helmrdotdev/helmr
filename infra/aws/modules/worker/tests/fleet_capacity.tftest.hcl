@@ -472,3 +472,25 @@ run "caller_can_provision_multiple_standby_instances" {
     error_message = "the generic module must provision caller capacity without a Managed Cloud policy"
   }
 }
+
+run "private_business_ceiling_is_explicit" {
+  command = plan
+  variables {
+    network_blocked_ipv4_cidrs     = ["10.90.0.0/16", "169.254.0.0/16"]
+    network_private_business_cidrs = ["10.60.0.0/16"]
+  }
+  assert {
+    condition     = local.worker_environment_values.WORKER_NETWORK_PRIVATE_BUSINESS_CIDRS == jsonencode(["10.60.0.0/16"])
+    error_message = "The immutable Worker environment must carry its explicit installation ceiling."
+  }
+}
+run "private_business_cannot_overlap_management" {
+  command = plan
+  variables { network_private_business_cidrs = ["10.60.0.0/16"] }
+  expect_failures = [var.network_private_business_cidrs]
+}
+run "private_business_rejects_global" {
+  command = plan
+  variables { network_private_business_cidrs = ["8.8.0.0/16"] }
+  expect_failures = [var.network_private_business_cidrs]
+}

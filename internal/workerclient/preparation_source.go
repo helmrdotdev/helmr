@@ -6,6 +6,7 @@ import (
 )
 
 func (c *Client) PreparationSource(ctx context.Context, request workerapi.PreparationSourceRequest) (workerapi.PreparationSource, error) {
+	request.Network = c.network
 	var result workerapi.PreparationSource
 	err := c.postWorkerJSON(ctx, "/worker/v1/preparation-sources", request, &result)
 	if err != nil {

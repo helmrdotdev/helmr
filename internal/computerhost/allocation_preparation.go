@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"math"
 	"math/rand/v2"
 	"net/http"
@@ -178,7 +179,7 @@ func (o *PreparationAllocationOwner) Run(ctx context.Context) (resultErr error) 
 		return err
 	}
 	if !start.SeedOnly {
-		o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: start.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: start.Seed.ArtifactDigest, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: o.stage.drives, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, File: o.stage.disk, VersionID: start.Seed.ArtifactDigest, SizeBytes: disk.SeedCapacity}}})
+		o.machine, err = o.machines.Backend.Materialize(ctx, vm.MaterializeRequest{NetworkPhase: networkpolicy.PhasePreparation, NetworkPolicy: start.NetworkPolicy, NetworkInstallation: start.NetworkInstallation, ID: o.identity.AllocationID, OwnerKind: vm.OwnerInstance, Binding: vm.WorkloadBinding{WorkerEpoch: o.hostEpoch, OwnerID: o.identity.AllocationID, Generation: 1, ComputerInstanceID: o.identity.AllocationID, VMPlatformID: shape.VMPlatformID}, RootfsDigest: start.RootfsDigest, ComputerMountPath: "/workspace", BaseComputerDiskVersionID: start.Seed.ArtifactDigest, Resources: vm.Resources{MilliCPU: shape.CPUMillis, MemoryMiB: shape.MemoryBytes / mebibyte, DiskMiB: shape.ScratchBytes / mebibyte, Slots: 1}, VMVCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest, ReadOnlyDrives: o.stage.drives, Topology: vm.Topology{Computer: &vm.ComputerDisk{ComputerID: o.identity.OwnerID, File: o.stage.disk, VersionID: start.Seed.ArtifactDigest, SizeBytes: disk.SeedCapacity}}})
 		if err != nil {
 			return err
 		}

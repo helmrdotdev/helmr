@@ -60,7 +60,7 @@ type ownedAgentSession struct {
 }
 
 func NewAgentComputerOwner(lifetime context.Context, machine vm.GuestControlMachine, client AgentComputerClient, environment string, installation *agentv1.ComputerSessionInstallation, observe func(context.Context, *agentv1.GuestSessionMessage) error) (*AgentComputerOwner, error) {
-	if lifetime == nil || machine == nil || client == nil || environment == "" || installation.GetCapture() == nil || installation.GetEnvelope() == nil || len(installation.GetGrants()) == 0 || observe == nil {
+	if lifetime == nil || machine == nil || client == nil || environment == "" || installation.GetCapture() == nil || installation.GetEnvelope() == nil || observe == nil {
 		return nil, errors.New("computer owner requires its lifetime, installation, machine, client and observer")
 	}
 	if err := lifetime.Err(); err != nil {

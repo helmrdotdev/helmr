@@ -32,7 +32,7 @@ func (connection *AgentSessionConnection) runtimeSession(environmentID string, l
 }
 func (connection *AgentSessionConnection) forwardOperation(ctx context.Context, environmentID string, client AgentRuntimeClient, event *agentv1.GuestSessionMessage) error {
 	operation := event.GetEvent().GetOperation()
-	request := workerapi.AgentOperationRequest{Session: connection.runtimeSession(environmentID, event.GetOperationLeaseEpoch()), RequestID: operation.GetRequestId(), AuthorityGeneration: event.GetOperationAuthorityGeneration(), TurnID: operation.GetTurnId(), Method: agentOperationMethod(operation.GetMethod()), Payload: append(json.RawMessage(nil), operation.GetPayloadJson()...), DrainEvidence: event.GetDrainEvidence()}
+	request := workerapi.AgentOperationRequest{Session: connection.runtimeSession(environmentID, event.GetOperationLeaseEpoch()), RequestID: operation.GetRequestId(), AuthorityGeneration: event.GetOperationAuthorityGeneration(), TurnID: operation.GetTurnId(), Method: agentOperationMethod(operation.GetMethod()), Payload: append(json.RawMessage(nil), operation.GetPayloadJson()...), MCPScopeID: event.GetOperationMcpScopeId(), DrainEvidence: event.GetDrainEvidence()}
 	var response workerapi.AgentOperationResponse
 	if len(request.RequestID) > 512 || !json.Valid(request.Payload) {
 		// Invalid authored bytes cannot enter HTTP JSON encoding. Settle this exact
@@ -209,7 +209,7 @@ func ServeAgentSession(ctx context.Context, connection *AgentSessionConnection, 
 			}
 			mu.Unlock()
 			if original != nil {
-				if !proto.Equal(original.GetEvent(), event.GetEvent()) || original.GetOperationAuthorityGeneration() != event.GetOperationAuthorityGeneration() || original.GetOperationLeaseEpoch() != event.GetOperationLeaseEpoch() {
+				if !proto.Equal(original.GetEvent(), event.GetEvent()) || original.GetOperationAuthorityGeneration() != event.GetOperationAuthorityGeneration() || original.GetOperationLeaseEpoch() != event.GetOperationLeaseEpoch() || original.GetOperationMcpScopeId() != event.GetOperationMcpScopeId() {
 					return errors.New("pending Session request identity changed")
 				}
 				if err := connection.Acknowledge(ctx, event.GetEventSequence()); err != nil {

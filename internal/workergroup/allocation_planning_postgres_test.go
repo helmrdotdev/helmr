@@ -32,7 +32,7 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	incompatibleSpec, incompatible := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_specs(environment_id,id,spec_digest,spec,seed) VALUES($1,$2,'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee','{}','{}')`, f.Environment, incompatibleSpec)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO templates(environment_id,id,key) VALUES($1,$3,'incompatible');
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes) VALUES($1,$2,$3,$3,2000,536870912)`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, incompatibleSpec)
+ INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,network_policy,prepare_network_policy) VALUES($1,$2,$3,$3,2000,536870912,'{"kind":"ordinary"}','{"kind":"block"}')`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, incompatibleSpec)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at) VALUES($1,$2,$3,'incompatible','queued',clock_timestamp()+interval '10 minutes')`, f.Environment, incompatible, incompatibleSpec)
 	preparation := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO image_builds(environment_id,id,image_spec_id,idempotency_key,status,deadline_at) VALUES($1,$2,$3,'queued','queued',clock_timestamp()+interval '10 minutes')`, f.Environment, preparation, f.Deployment)

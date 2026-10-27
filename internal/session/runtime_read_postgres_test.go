@@ -19,7 +19,7 @@ func runtimeReadCaller(t *testing.T, f fixture) session.Caller {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
 		t.Fatal(err)
 	}
-	return session.Caller{Kind: "session", ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
+	return session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: a.TurnID, Execution: f.execution(), Host: f.host()}
 }
 
 func TestRuntimeTurnObservationScope(t *testing.T) {

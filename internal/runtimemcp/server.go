@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/lifetime"
+	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -82,29 +83,32 @@ type waitInput struct {
 // The transport does not own Helmr Session lifetime. In particular HTTP DELETE,
 // idle clients and MCP connection loss never close or cancel a Helmr Session.
 func NewHandler(invoke Invoke) http.Handler {
+	return NewScopedHandler(invoke, mcppolicy.Policy{Kind: "unrestricted"})
+}
+func NewScopedHandler(invoke Invoke, policy mcppolicy.Policy) http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{Name: "helmr-runtime", Version: "1"}, &mcp.ServerOptions{
-		Instructions: skillInstructions(),
+		Instructions: scopedInstructions(policy),
 		// This catalog is fixed for the lifetime of the Session process. Advertising
 		// changes makes clients retain notification streams for work that never occurs.
 		//lint:ignore SA1019 Preserve the SDK default logging capability during its supported deprecation window.
 		Capabilities: &mcp.ServerCapabilities{Tools: &mcp.ToolCapabilities{}, Logging: &mcp.LoggingCapabilities{}},
 	})
-	addSkills(server)
-	add[agentsInput](server, invoke, "list_agents", "List Agent targets for spawn or start. Only root Sessions can create work.")
-	add[listInput](server, invoke, "list_computers", "List Computers visible to this Session.")
-	add[createInput](server, invoke, "spawn", "Create owned child work and return its Session and Turn admission receipt.")
-	add[createInput](server, invoke, "start", "Create independent work and return its Session and Turn admission receipt.")
-	add[enqueueInput](server, invoke, "enqueue", "Admit another Turn in an exact Session in this Environment. Existing holds remain in force.")
-	add[messageInput](server, invoke, "send_turn", "Send text to an owned descendant's exact active Turn. A receipt confirms admission, not native delivery.")
-	add[turnControlInput](server, invoke, "interrupt_turn", "Interrupt an owned descendant's exact running Turn without holding its Session or stopping its children. Acceptance does not prove cessation; a non-running Turn returns turn_not_interruptible with its status and reason.")
-	add[controlInput](server, invoke, "interrupt_session", "Request interruption of an owned descendant and its subtree. A receipt is not proof that execution has stopped.")
-	add[resumeInput](server, invoke, "resume_session", "Release only the exact hold this Session placed on an owned descendant. This does not replay input.")
-	add[controlInput](server, invoke, "close_session", "Close admission to an owned descendant while draining its accepted work.")
-	add[controlInput](server, invoke, "cancel_session", "Cancel pending work and request cessation of active work in an owned descendant's subtree.")
-	add[sessionInput](server, invoke, "inspect_session", "Inspect an accessible Session without expanding history access.")
-	add[sessionsInput](server, invoke, "list_sessions", "Recover owned or requested Sessions and their initial Turn identities, including terminal work.")
-	add[turnInput](server, invoke, "inspect_turn", "Inspect an exact accessible Turn.")
-	add[waitInput](server, func(ctx context.Context, _ string, body json.RawMessage) (json.RawMessage, error) {
+	addScopedSkills(server, policy)
+	addScoped[agentsInput](server, policy, invoke, "list_agents", "List Agent targets for spawn or start. Only root Sessions can create work.")
+	addScoped[listInput](server, policy, invoke, "list_computers", "List Computers visible to this Session.")
+	addScoped[createInput](server, policy, invoke, "spawn", "Create owned child work and return its Session and Turn admission receipt.")
+	addScoped[createInput](server, policy, invoke, "start", "Create independent work and return its Session and Turn admission receipt.")
+	addScoped[enqueueInput](server, policy, invoke, "enqueue", "Admit another Turn in an exact Session in this Environment. Existing holds remain in force.")
+	addScoped[messageInput](server, policy, invoke, "send_turn", "Send text to an owned descendant's exact active Turn. A receipt confirms admission, not native delivery.")
+	addScoped[turnControlInput](server, policy, invoke, "interrupt_turn", "Interrupt an owned descendant's exact running Turn without holding its Session or stopping its children. Acceptance does not prove cessation; a non-running Turn returns turn_not_interruptible with its status and reason.")
+	addScoped[controlInput](server, policy, invoke, "interrupt_session", "Request interruption of an owned descendant and its subtree. A receipt is not proof that execution has stopped.")
+	addScoped[resumeInput](server, policy, invoke, "resume_session", "Release only the exact hold this Session placed on an owned descendant. This does not replay input.")
+	addScoped[controlInput](server, policy, invoke, "close_session", "Close admission to an owned descendant while draining its accepted work.")
+	addScoped[controlInput](server, policy, invoke, "cancel_session", "Cancel pending work and request cessation of active work in an owned descendant's subtree.")
+	addScoped[sessionInput](server, policy, invoke, "inspect_session", "Inspect an accessible Session without expanding history access.")
+	addScoped[sessionsInput](server, policy, invoke, "list_sessions", "Recover owned or requested Sessions and their initial Turn identities, including terminal work.")
+	addScoped[turnInput](server, policy, invoke, "inspect_turn", "Inspect an exact accessible Turn.")
+	addScoped[waitInput](server, policy, func(ctx context.Context, _ string, body json.RawMessage) (json.RawMessage, error) {
 		var input waitInput
 		if err := json.Unmarshal(body, &input); err != nil {
 			return nil, err
@@ -113,7 +117,22 @@ func NewHandler(invoke Invoke) http.Handler {
 	}, "wait_turn", "Wait for an exact Turn outcome for a bounded time. This observation is repeatable.")
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, MaxRequestBodyBytes: 1024 * 1024, PropagateRequestCancellation: true})
 }
-func add[I any](server *mcp.Server, invoke Invoke, name, description string) {
+func addScoped[I any](server *mcp.Server, policy mcppolicy.Policy, invoke Invoke, name, description string) {
+	operation := name
+	switch operation {
+	case "wait_turn":
+		operation = "inspect_turn"
+	case "list_sessions":
+		operation = "inspect_session"
+	case "list_agents":
+		if !policy.Has("start") && !policy.Has("spawn") {
+			return
+		}
+		operation = ""
+	}
+	if operation != "" && !policy.Has(operation) {
+		return
+	}
 	schema, err := jsonschema.For[I](nil)
 	if err != nil {
 		panic(err)

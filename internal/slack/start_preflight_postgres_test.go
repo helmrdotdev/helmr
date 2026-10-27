@@ -32,7 +32,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 			}
 			target, registration, installation, publication := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'target');
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init) SELECT environment_id,$2,deployment_id,template_id,has_init FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) SELECT 'http',$4,org_id,'target-app','target-client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$7 FROM environments WHERE id=$1;
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) SELECT $5,$4,org_id,'target-app','team','target-bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['app_mentions:read','channels:read','channels:history','groups:read','groups:history','chat:write','assistant:write'],$7 FROM environments WHERE id=$1;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) VALUES($6,$1,$2,$4,$5,$7,(SELECT org_id FROM slack_app_registrations WHERE id=$4))`, pgx.QueryExecModeSimpleProtocol, f.Environment, target, f.Agent, registration, installation, publication, f.User)
@@ -86,7 +86,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 			if kind == "too-large" {
 				input, _ = json.Marshal([]map[string]string{{"type": "text", "text": strings.Repeat("x", contentCharacters+1)}})
 			}
-			caller := session.Caller{Kind: "session", ID: f.Session, TurnID: turn, Execution: session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
+			caller := session.Caller{Kind: "session", MCPScopeID: f.MCPScope, ID: f.Session, TurnID: turn, Execution: session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
 			result, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", ComputerID: f.Computer, IdempotencyKey: "cross-app", Input: input})
 			accepted := kind == "valid" || kind == "source-stopped" || kind == "target-stopped" || kind == "unknown-opening" || kind == "source-revoked-after-issued" || kind == "source-disconnected-before-root-recognition"
 			if !accepted {
