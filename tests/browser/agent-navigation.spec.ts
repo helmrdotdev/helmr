@@ -8,7 +8,7 @@ const base = `/api/projects/${project}/environments/${environment}`;
 const scope = `project=${project}&environment=${environment}`;
 const now = "2026-10-12T00:00:00Z";
 
-async function catalog(page: Page, options: { current?: boolean; defined?: boolean; role?: string } = {}) {
+async function catalog(page: Page, options: { current?: boolean; defined?: boolean; manageConnection?: boolean } = {}) {
   const current = options.current ?? true;
   const defined = options.defined ?? true;
   const record = { agent: "support", current_deployment_id: current ? deployment : null, defined_in_current: defined && current };
@@ -20,12 +20,13 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
     let json: unknown;
     const env = { environment: environment, project: project, name: "Development", is_default: true, created_at: now, updated_at: now };
     const proj = { project: project, name: "Test", is_default: true, environments: [env], created_at: now, updated_at: now };
-    if (path === "/api/me") json = { user_id: "user", display_name: "User", org_id: "org", role: options.role ?? "owner", permissions: ["sessions.read", "deployments.write"], organization_required: false, project_required: false };
+    if (path === "/api/me") json = { user_id: "user", display_name: "User", org_id: "org", is_owner: false, permissions: [], permission_scopes: [{ project, environment, permissions: ["sessions.read", "agents.read", "agents.use", "deployments.read", "templates.read", "computers.read", ...(options.manageConnection === false ? [] : ["agent_connections.read", "agent_connections.create"])] }], organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [proj] };
     else if (path === `/api/projects/${project}`) json = proj;
     else if (path === base) json = env;
     else if (path === `${base}/deployments/current` && !current) { await route.fulfill({ status: 404, json: { error: { code: "no_current_deployment", message: "No current deployment" } } }); return; }
     else if (path.startsWith(`${base}/deployments/`)) json = { id: path.endsWith("current") ? deployment : path.split("/").at(-1), version: "version", bundle_digest: `sha256:${"a".repeat(64)}`, created_at: now };
+    else if (path === `${base}/agents` && !current && url.searchParams.get("view") !== "all" && !url.searchParams.has("deployment_id")) { await route.fulfill({ status: 404, json: { error: { code: "no_current_deployment", message: "No current deployment" } } }); return; }
     else if (path === `${base}/agents`) json = url.searchParams.get("view") === "all" ? { agents: [record] } : { deployment_id: url.searchParams.get("deployment_id") ?? deployment, agents: defined ? [{ agent: "support", template: "browser" }] : [] };
     else if (path === `${base}/agents/support/status`) json = record;
     else if (path === `${base}/agents/support`) json = { agent: "support", template: "browser", deployment_id: url.searchParams.get("deployment_id") ?? deployment };
@@ -61,7 +62,9 @@ test("current Agent navigation opens the Agent with its Template and its Session
   await expect(page.getByText("Defined in deployment", { exact: false })).toBeVisible();
   await expect(page.getByText("Template browser", { exact: true })).toBeVisible();
   expect(paths.some(path => path.endsWith(`/agents/support?deployment_id=${deployment}`))).toBe(true);
-  await expect(page.getByRole("button", { name: "Copy link" })).toBeVisible();
+  await page.getByRole("button", { name: "Agent actions", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Copy link", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
   const tabs = page.getByRole("tablist", { name: "Agent" });
   await expect(tabs.getByRole("tab")).toHaveText(["Sessions", "Triggers", "Slack"]);
   await expect(tabs.getByRole("tab", { name: "Sessions", exact: true })).toHaveAttribute("aria-selected", "true");
@@ -129,10 +132,10 @@ for (const current of [true, false]) {
 }
 
 test("viewer sees who manages an Agent's Slack connection without reading it", async ({ page }) => {
-  const paths = await catalog(page, { current: false, defined: false, role: "member" });
+  const paths = await catalog(page, { current: false, defined: false, manageConnection: false });
   await page.goto(`/agents/support/slack?${scope}`);
   await expect(page.getByRole("heading", { name: "support", exact: true })).toBeVisible();
-  await expect(page.getByText("Organization owners and admins manage this connection.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Members with Agent connection permissions manage this connection.", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: /Connect Slack|Disconnect|Discard setup|Reauthorize/ })).toHaveCount(0);
   expect(paths.some(path => path.endsWith("/slack"))).toBe(false);
 });
@@ -167,7 +170,7 @@ test("the Templates page lists the current Deployment's Templates without links"
   await expect(row).toContainText("1 vCPU · 512 MiB RAM · Default disk");
   await expect(row.getByRole("link")).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "Sections" }).locator("[aria-current=page]")).toHaveText(["Computers"]);
-  expect(paths.some(path => path.endsWith(`/templates?deployment_id=${deployment}&limit=100`))).toBe(true);
+  expect(paths.some(path => path.endsWith(`/templates?limit=100`))).toBe(true);
 });
 
 test("trigger history separates ended activations and shows occurrence outcomes", async ({ page }, testInfo) => {

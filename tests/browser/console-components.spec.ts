@@ -37,7 +37,7 @@ async function fixture(page: Page, accessAdmin = false): Promise<Fixture> {
     const path = url.pathname;
     const method = route.request().method();
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: [...(accessAdmin ? ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"] : []), "projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update", "api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke", "secrets.read", "secrets.create", "secrets.revoke", "deployments.read"], admin: false, organization_required: false, project_required: false, email_delivery: true };
+    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: [...(accessAdmin ? ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"] : []), "projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke", "secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke", "deployments.read"] }], admin: false, organization_required: false, project_required: false, email_delivery: true };
     else if (path === "/api/groups") json = { groups: [] };
     else if (path === "/api/role-grants") json = { grants: [] };
     else if (path === "/api/roles") json = { roles: [{id:"viewer",name:"Session viewer",permissions:["sessions.read"],assignment_levels:["environment"],api_key_assignable:true,revision:7}], catalog:[{id:"sessions.read",name:"View all sessions",resource_type:"sessions",scope_types: ["agent"], assignment_levels: ["environment"],api_key_assignable:true}] };
@@ -467,11 +467,12 @@ test("a failed first load says what failed, offers Retry and folds the server me
   await expect(page.getByText("Showing 2 sessions", { exact: true })).toBeVisible();
 });
 
-test("a denied read is a neutral notice without Retry", async ({ page }) => {
+test("a denied read without create permission is a neutral notice without Retry", async ({ page }) => {
   await fixture(page);
+  await page.route("**/api/me", route => route.fulfill({ json: { user_id: "local", org_id: "org", permissions: [], organization_required: false, project_required: false } }));
   await page.route(`**${base}/secrets`, route => route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }));
   await page.goto(`/settings/secrets?${scope}`);
-  await expect(page.getByRole("status").filter({ hasText: "You do not have permission to manage secrets." })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "You do not have permission to view secrets." })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Set secret/ })).toHaveCount(0);
@@ -531,9 +532,8 @@ test("revoking an API key confirms with the key and its Environment", async ({ p
 test("ownership alone does not expose member-management actions", async ({ page }) => {
   await fixture(page);
   await page.goto(`/settings/members?${scope}`);
-  await expect(page.getByText("You need Manage access permission to see and manage members.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("table").getByRole("row")).toHaveCount(4);
-  await expect(page.getByRole("table").getByRole("row").filter({ hasText: "Second Member" })).toBeVisible();
+  await expect(page.getByText("You need Read members permission to view members.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("table")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Invite members", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Actions for / })).toHaveCount(0);
 });
@@ -791,3 +791,34 @@ for (const withRole of [false, true]) {
     expect(state.apiKeyRequests).toEqual([{name:"Automation",expires_in_days:null,...(withRole ? {role:{role_id:"viewer",expected_role_revision:7,agents_mode:"selected",agent_ids:["agent-1"]}} : {})}]);
   });
 }
+
+test("secret read permission alone offers no creation action in an empty environment", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/api/me", route => route.fulfill({ json: {
+    user_id: "local", org_id: "org", permissions: [], organization_required: false, project_required: false,
+    permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["secrets.read"] }],
+  } }));
+  await page.route(`**${base}/secrets`, route => route.fulfill({ json: { secrets: [] } }));
+  await page.goto(`/settings/secrets?${scope}`);
+  await expect(page.getByText("No secrets in Production yet.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Set secret/ })).toHaveCount(0);
+});
+
+test("secret create permission remains usable when reading secrets is denied", async ({ page }) => {
+  const state = await fixture(page);
+  await page.route("**/api/me", route => route.fulfill({ json: {
+    user_id: "local", org_id: "org", permissions: [], organization_required: false, project_required: false,
+    permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["secrets.create"] }],
+  } }));
+  await page.route(`**${base}/secrets`, route => route.request().method() === "GET"
+    ? route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }) : route.fallback());
+  await page.goto(`/settings/secrets?${scope}`);
+  await expect(page.getByRole("status").filter({ hasText: "You do not have permission to view secrets." })).toBeVisible();
+  await page.getByRole("button", { name: "Set secret in Production", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Set secret" });
+  await dialog.getByLabel("Secret ID", { exact: true }).fill("WRITE_ONLY");
+  await dialog.getByLabel("Value", { exact: true }).fill("synthetic-value");
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(state.secretWrites).toEqual([{ path: `${base}/secrets`, body: { secret: "WRITE_ONLY", value: "synthetic-value", idempotency_key: expect.any(String) } }]);
+});

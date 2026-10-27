@@ -8,17 +8,31 @@ test("Console IDs remain usable through API operations and display-name edits", 
   expect(created.ok(), await created.text()).toBeTruthy();
   const body = await created.json();
   expect(body.project).toBe(project);
-  expect(body).not.toHaveProperty("id");
+  expect(body.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   expect(body).not.toHaveProperty("slug");
   const base = `/api/projects/${project}`;
   const scope = `project=${project}&environment=production`;
+  // Project creation grants no workload permissions. Assign only the secret
+  // actions this test uses, against the stable environment identity.
+  const me = await (await page.request.get("/api/me")).json();
+  const targets = await (await page.request.get(`${base}/access-targets`)).json();
+  const roleResponse = await page.request.post("/api/roles", { data: { name: `Secrets ${project}`, permissions: ["secrets.read", "secrets.create"] } });
+  expect(roleResponse.ok(), await roleResponse.text()).toBeTruthy();
+  const role = await roleResponse.json();
+  for (const target of targets.targets) {
+    const grant = await page.request.post("/api/role-grants", { data: {
+      role_id: role.id, expected_role_revision: role.revision, subject: { type: "member", member_id: me.membership_id },
+      project_id: body.id, environment_id: target.environment_id, agents_mode: "none", agent_ids: [],
+    } });
+    expect(grant.ok(), await grant.text()).toBeTruthy();
+  }
   await page.goto(`/settings/project?${scope}`);
   await page.getByRole("button", { name: `Copy ${project}`, exact: true }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(project);
   await page.getByLabel("Name", { exact: true }).fill("Renamed project");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("button", { name: "Save changes" })).toHaveCount(0);
-  expect((await (await page.request.get(base)).json()).project).toBe(project);
+  expect(await (await page.request.get(base)).json()).toMatchObject({ project, id: body.id });
   expect((await page.request.patch(base, { data: { name: "Renamed", project: "replacement" } })).status()).toBe(400);
   await page.goto(`/settings/environments?${scope}`);
   const row = page.getByRole("row").filter({ has: page.getByTitle("production", { exact: true }) });

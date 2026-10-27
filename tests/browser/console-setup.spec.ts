@@ -18,7 +18,7 @@ async function secrets(page: Page, initial: SecretState, options: { manage?: boo
   await page.route("**/api/projects/*/environments/*/secrets**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
-    // Like the server, only people who manage secrets can list them.
+    // Simulate a principal without secret read or create permissions.
     if (options.manage === false) {
       await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "secrets.create is required" } } });
       return;
@@ -37,8 +37,9 @@ async function secrets(page: Page, initial: SecretState, options: { manage?: boo
   if (options.manage === false) {
     await page.route("**/api/me", async (route) => {
       const response = await route.fetch();
-      const me = await response.json() as { permissions: string[] };
-      await route.fulfill({ response, json: { ...me, role: "member", permissions: me.permissions.filter((permission) => permission !== "secrets.create") } });
+      const me = await response.json() as import("../../packages/console/src/lib/auth").Me;
+      const withoutSecrets = (permissions: string[]) => permissions.filter(permission => !["secrets.read", "secrets.create"].includes(permission));
+      await route.fulfill({ response, json: { ...me, is_owner: false, permissions: withoutSecrets(me.permissions), permission_scopes: me.permission_scopes?.map(scope => ({ ...scope, permissions: withoutSecrets(scope.permissions) })) } });
     });
   }
   return writes;
@@ -109,7 +110,7 @@ test("someone who cannot manage secrets is told who adds the key and can still c
   await secrets(page, "missing", { manage: false });
   await login(page);
   const setup = panel(page);
-  await expect(setup.getByText("An owner or admin adds", { exact: false })).toBeVisible();
+  await expect(setup.getByText("A member with Manage secrets adds", { exact: false })).toBeVisible();
   await expect(setup.getByRole("link", { name: "Secrets" })).toHaveAttribute("href", "/settings/secrets?project=console-demo&environment=production");
   await expect(setup.getByRole("button", { name: "Save key" })).toHaveCount(0);
   await expect(setup.getByRole("button", { name: "Copy" })).toBeVisible();

@@ -11,7 +11,7 @@ const environments = [environment("production", "Production", "#315FCE", true), 
 const project = { project: projectID, name: "Settings Demo", default_region_id: "amsterdam", is_default: true, environments, created_at: now, updated_at: now };
 const secretsByEnvironment: Record<string, string> = { production: "PROD_TOKEN", staging: "STAGING_TOKEN" };
 
-const apiKey = (environmentID: string) => ({ id: `key-${environmentID}`, name: `Key ${environmentID}`, key_prefix: "hk_test", project: projectID, environment: environmentID, permissions: [{ scopes: ["sessions:read"] }], status: "active", created_at: now, last_used_at: null, expires_at: null, revoked_at: null });
+const apiKey = (environmentID: string) => ({ id: `key-${environmentID}`, name: `Key ${environmentID}`, key_prefix: "hk_test", project: projectID, environment: environmentID, role_names: ["Session viewer"], status: "active", created_at: now, last_used_at: null, expires_at: null, revoked_at: null });
 
 // Records every Environment-scoped request as `<method> <environment><rest of path>`.
 async function fixture(page: Page, options: { signedOut?: boolean } = {}) {
@@ -26,7 +26,7 @@ async function fixture(page: Page, options: { signedOut?: boolean } = {}) {
     const apiKeys = path.match(/^\/api\/projects\/settings-demo\/environments\/([^/]+)\/api-keys$/);
     let json: unknown;
     if (path === "/api/me" && options.signedOut) { await route.fulfill({ status: 401, json: { error: { code: "unauthorized", message: "sign in" } } }); return; }
-    else if (path === "/api/me") json = { user_id: "user-1", display_name: "Dana Example", org_id: "org", org_name: "Research Org", role: "owner", permissions: ["projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], admin: false, organization_required: false, project_required: false };
+    else if (path === "/api/me") json = { user_id: "user-1", display_name: "Dana Example", org_id: "org", org_name: "Research Org", is_owner: true, permission_scopes: environments.map(e => ({ project: projectID, environment: e.environment, permissions: ["secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke", "api_keys.read", "api_keys.create", "api_keys.revoke"] })), permissions: ["projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], admin: false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === `/api/projects/${projectID}/settings`) json = { history_retention: "30d" };
@@ -97,7 +97,7 @@ test("settings navigation groups pages by Account, Project and Organization", as
   await expect(projectGroup).not.toContainText("Settings Demo");
   await expect(projectGroup.getByRole("link")).toHaveText(["General", "Environments", "Secrets", "API keys"]);
   await expect(organization).not.toContainText("Research Org");
-  await expect(organization.getByRole("link")).toHaveText(["Members"]);
+  await expect(organization.getByRole("link")).toHaveText(["Members", "Groups", "Roles", "Audit events"]);
   await expect(projectGroup.getByRole("link", { name: "General", exact: true })).toHaveAttribute("aria-current", "page");
 
   const settings = page.locator("header").getByRole("link", { name: "Settings" });
