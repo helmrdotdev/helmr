@@ -191,7 +191,7 @@ func (f *networkClientFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.observed["deniedOriginContacts"] = f.observed["deniedOriginContacts"].(int) + 1
 		f.mu.Unlock()
-		http.Error(w, "forbidden fixture origin", 403)
+		http.Error(w, "forbidden fixture origin", http.StatusForbidden)
 		return
 	}
 	switch host {
@@ -229,7 +229,7 @@ func (f *networkClientFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		if len(f.streams) >= 16 || f.streams[probe] != nil {
 			f.mu.Unlock()
-			http.Error(w, "stream probe limit", 503)
+			http.Error(w, "stream probe limit", http.StatusServiceUnavailable)
 			return
 		}
 		gate := make(chan struct{})
@@ -258,7 +258,7 @@ func (f *networkClientFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case networkClientHosts["git"]:
 		if r.Header.Get("Authorization") != "" {
 			f.credentialLeak()
-			http.Error(w, "unexpected fixture credential", 403)
+			http.Error(w, "unexpected fixture credential", http.StatusForbidden)
 			return
 		}
 		f.mark("gitRead")
@@ -272,17 +272,17 @@ func (f *networkClientFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.Header.Get("Authorization") != "Bearer "+networkClientToken {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="fixture"`)
-			http.Error(w, "synthetic registry token required", 401)
+			http.Error(w, "synthetic registry token required", http.StatusUnauthorized)
 			return
 		}
 		f.mark("registryAuthenticated")
 		if r.URL.Path == "/tarball" {
-			http.Redirect(w, r, "https://"+networkClientHosts["auth"]+"/authorize", 302)
+			http.Redirect(w, r, "https://"+networkClientHosts["auth"]+"/authorize", http.StatusFound)
 			return
 		}
 		if r.URL.Path == "/denied-tarball" {
 			f.mark("deniedRedirect")
-			http.Redirect(w, r, "https://denied.network.test/package.tgz", 302)
+			http.Redirect(w, r, "https://denied.network.test/package.tgz", http.StatusFound)
 			return
 		}
 		name := "@helmr/network-client-fixture"
@@ -298,15 +298,15 @@ func (f *networkClientFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case networkClientHosts["auth"]:
 		if r.Header.Get("Authorization") != "" {
 			f.credentialLeak()
-			http.Error(w, "cross-origin fixture credential", 403)
+			http.Error(w, "cross-origin fixture credential", http.StatusForbidden)
 			return
 		}
 		f.mark("authRedirect")
-		http.Redirect(w, r, "https://"+networkClientHosts["cdn"]+"/package.tgz", 302)
+		http.Redirect(w, r, "https://"+networkClientHosts["cdn"]+"/package.tgz", http.StatusFound)
 	case networkClientHosts["cdn"]:
 		if r.Header.Get("Authorization") != "" {
 			f.credentialLeak()
-			http.Error(w, "cross-origin fixture credential", 403)
+			http.Error(w, "cross-origin fixture credential", http.StatusForbidden)
 			return
 		}
 		f.mark("cdnRead")
