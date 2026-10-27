@@ -5,10 +5,11 @@ locals {
   partition  = data.aws_partition.current.partition
   dns_suffix = data.aws_partition.current.dns_suffix
   # ECR layer downloads are a separate, read-only bootstrap dependency.
+  # CAS publication tags objects; reclamation enumerates and deletes exact versions.
   platform_s3_endpoint_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      { Effect = "Allow", Principal = "*", Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation", "s3:AbortMultipartUpload", "s3:ListBucketMultipartUploads", "s3:ListMultipartUploadParts"], Resource = [module.controlplane.cas_bucket_arn, "${module.controlplane.cas_bucket_arn}/*", var.platform_store_bucket_arn, "${var.platform_store_bucket_arn}/*"] },
+      { Effect = "Allow", Principal = "*", Action = ["s3:GetObject", "s3:PutObject", "s3:PutObjectTagging", "s3:DeleteObject", "s3:ListBucketVersions", "s3:DeleteObjectVersion", "s3:ListBucket", "s3:GetBucketLocation", "s3:AbortMultipartUpload", "s3:ListBucketMultipartUploads", "s3:ListMultipartUploadParts"], Resource = [module.controlplane.cas_bucket_arn, "${module.controlplane.cas_bucket_arn}/*", var.platform_store_bucket_arn, "${var.platform_store_bucket_arn}/*"] },
       { Effect = "Allow", Principal = "*", Action = ["s3:GetObject"], Resource = ["arn:${local.partition}:s3:::prod-${var.aws_region}-starport-layer-bucket/*"] }
     ]
   })

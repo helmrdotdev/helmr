@@ -183,3 +183,25 @@ for filename in (sys.argv[1], sys.argv[2], sys.argv[4]):
     retained = [resource for resource in templates if resource['change']['before'] is not None]
     assert len(retained) == 1 and retained[0]['change']['actions'] == ['no-op'], (filename, retained)
     print(f'ok - {filename}: changed log environment reaches only the new Worker generation; retained user-data is unchanged')
+
+# Tagged quarantine/immutable publication and exact version reclamation must pass
+# both task IAM and the actual private VPC gateway endpoint policy.
+cas_bucket = resources['module.controlplane.aws_s3_bucket.cas']['arn']
+private_inputs = next(event['test_plan']['variables'] for event in private_events
+                      if event.get('type') == 'test_plan' and event['@testrun'] == 'diagnostic_environment')
+endpoint = json.loads(resources['module.controlplane_network.aws_vpc_endpoint.s3[0]']['policy'])
+task_policy = json.loads(resources['module.controlplane.aws_iam_role_policy.controlplane_task']['policy'])
+required = {'s3:PutObject', 's3:PutObjectTagging', 's3:GetObject', 's3:ListBucketVersions', 's3:DeleteObjectVersion'}
+endpoint_cas = [statement for statement in endpoint['Statement'] if cas_bucket in statement['Resource']]
+task_cas = [statement for statement in task_policy['Statement'] if cas_bucket in statement['Resource']]
+assert len(endpoint_cas) == len(task_cas) == 1
+assert required <= set(task_cas[0]['Action']), ('Control Plane CAS role lacks required publication/reclamation actions', required - set(task_cas[0]['Action']))
+assert required <= set(endpoint_cas[0]['Action']), ('Private CAS endpoint lacks required publication/reclamation actions', required - set(endpoint_cas[0]['Action']))
+assert set(task_cas[0]['Action']) <= set(endpoint_cas[0]['Action']), ('Private CAS endpoint lacks task CAS actions', set(task_cas[0]['Action']) - set(endpoint_cas[0]['Action']))
+assert set(endpoint_cas[0]['Resource']) == {cas_bucket, f'{cas_bucket}/*',
+    private_inputs['platform_store_bucket_arn']['value'],
+    private_inputs['platform_store_bucket_arn']['value'] + '/*'}
+layer_statements = [statement for statement in endpoint['Statement'] if statement not in endpoint_cas]
+assert len(layer_statements) == 1 and layer_statements[0]['Action'] == ['s3:GetObject']
+assert layer_statements[0]['Resource'] == [f"arn:{cas_bucket.split(':')[1]}:s3:::prod-{private_inputs['aws_region']['value']}-starport-layer-bucket/*"]
+print('ok - private S3 endpoint permits tagged CAS publication and exact version reclamation while ECR layers remain read-only')
