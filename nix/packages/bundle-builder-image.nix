@@ -35,7 +35,7 @@ let
     mkdir -p "$out/opt/helmr/empty" "$TMPDIR/npm-node"
     tar -xJf ${nodeArchive} --strip-components=1 --directory "$TMPDIR/npm-node"
     cp -a "$TMPDIR/npm-node/lib/node_modules/npm" "$out/opt/helmr/npm"
-    grep -q '"version": "11.19.0"' "$out/opt/helmr/npm/package.json"
+    grep -q '"version": "11.19.1"' "$out/opt/helmr/npm/package.json"
     ln -s ${squashfsTools}/bin/mksquashfs "$out/opt/helmr/bin/mksquashfs"
     ln -s /workspace/project "$out/opt/helmr/program"
   '';
