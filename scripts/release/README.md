@@ -77,6 +77,10 @@ successful main source CI, and publish through GitHub Releases. Generated previe
 tags are excluded. Human-tag runs remain single-attempt; a partially published tag
 requires a new tag rather than a retry with replacement bytes.
 
+To include release notes at publication, commit `scripts/release/notes/<tag>.md`
+before tagging. The publisher copies that file into the GitHub draft's body;
+tags without a notes file retain an empty body.
+
 Tag publishers export immutable signed readback artifacts identified by publisher
 run, attempt, artifact ID and digest. The unprivileged verifier checks native ZIP
 identity, exact file coverage, signatures and all asset hashes before running the
