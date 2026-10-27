@@ -189,10 +189,8 @@ def stage(api, selection, directory):
     if release is not None:
         require(index['build']['mode'] != 'tag', 'human tag release already exists')
     if release is None:
-        notes = Path(__file__).with_name('notes') / f'{index["version"]}.md'
         release = api.request('releases', data=dict(tag_name=index['version'], target_commitish=index['sourceCommit'],
-                    name=index['version'], body=notes.read_text(encoding='utf-8') if notes.is_file() else '',
-                    generate_release_notes=not notes.is_file(),
+                    name=index['version'], generate_release_notes=True,
                     draft=True, prerelease='-' in index['version'], make_latest='false'))
     bind_release(release, selection)
     require(release['draft'], 'release is already complete; use completed-byte admission')

@@ -74,9 +74,9 @@ Start a fresh dispatch for a new source or a new build identity.
 
 Version `v*` tags, including release candidates, use the same release-owned build
 and integration path, require successful main source CI, and publish through
-GitHub Releases. Generated preview
-tags are excluded. Human-tag runs remain single-attempt; a partially published tag
-requires a new tag rather than a retry with replacement bytes.
+GitHub Releases. Generated preview tags are excluded. Human-tag runs remain
+single-attempt; a partially published tag requires a new tag rather than a retry
+with replacement bytes.
 
 The normal release operation is to select an exact main commit with successful
 source CI, optionally validate a main preview, then push an authorized version
@@ -90,11 +90,19 @@ The tag supplies the released package version. The SDK/proto source versions
 set the development series used in preview names; update them when that series
 changes, not for every RC or patch tag.
 
-GitHub generates release notes by default. For a release needing curated notes,
-commit `scripts/release/notes/<tag>.md` before tagging. The publisher uses that
-file verbatim as the draft body instead of generated notes. This optional
-override is useful for the first release or a compatibility announcement; a
-notes file is not required for each release.
+GitHub generates the release body from repository history when the publisher
+creates its draft. Release notes are maintained in GitHub Releases; no per-version
+Markdown file or changelog update is required in this repository. Generated notes
+are a change listing, not a substitute for reviewing compatibility and installation
+instructions.
+
+After the release workflow completes successfully, an authorized maintainer can
+edit the release body in GitHub Releases to add highlights or compatibility notes.
+This changes the prose without rebuilding artifacts or moving the tag. Do not
+pre-create a release or manually publish the workflow's draft: human-tag admission
+rejects an existing release, and the workflow owns completion after verification.
+The current flow publishes generated notes automatically; it has no manual
+editorial approval step before publication.
 
 Tag publishers export immutable signed readback artifacts identified by publisher
 run, attempt, artifact ID and digest. The unprivileged verifier checks native ZIP
