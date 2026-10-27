@@ -8,7 +8,7 @@ test("a Session-only API key role selects Agent targets and enforces its access"
   const createdRole = await page.request.post("/api/roles", { data: { name: roleName, permissions: ["sessions.read"] } });
   expect(createdRole.ok(), await createdRole.text()).toBeTruthy();
   const role = await createdRole.json();
-  const started = await page.request.post("/v1/sessions", { data: { agent: "browser-agent", idempotency_key: crypto.randomUUID() } });
+  const started = await page.request.post(`${base}/sessions`, { data: { agent: "browser-agent", idempotency_key: crypto.randomUUID() } });
   expect(started.ok(), await started.text()).toBeTruthy();
   const session = await started.json();
   const other = await createAgentCatalog(page);
