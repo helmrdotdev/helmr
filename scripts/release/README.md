@@ -78,6 +78,30 @@ GitHub Releases. Generated preview tags are excluded. Human-tag runs remain
 single-attempt; a partially published tag requires a new tag rather than a retry
 with replacement bytes.
 
+A repository administrator may recreate a tag after a failure before publication
+started. First establish that all runs for the old tag are terminal, every
+publication job was skipped, an authenticated paginated release listing contains
+no GitHub Release (including a draft) for the tag, and no package or image was
+published for the version. If publication started or its state is uncertain,
+investigate before proceeding; do not delete a draft or replace published bytes
+to reuse a version. Record the old tag object and source, then select an exact
+main commit with successful source CI. Recreate the local annotated tag at that
+commit and update only its remote ref with an explicit
+`--force-with-lease=refs/tags/VERSION:EXPECTED_TAG_OBJECT` lease. Never push all
+tags. Verify the remote object and source, and exactly one fresh attempt-1 run.
+Record the administrator-bypass rule-suite event. Do not rerun the old Actions
+run or retarget a tag while its run is active. After `complete-tag` succeeds,
+edit only the release body to record the old and new source commits and recovery
+reason, then verify the saved body. Users may have fetched the old tag.
+
+Administrators must verify these recovery conditions; the tag-rule bypass does
+not evaluate publication state. Repository tag rules restrict updates and
+deletions to administrators. GitHub release immutability locks future published
+tags and assets; existing releases from before that setting retain separate tag
+protection. Publishing credentials remain behind the release Environment
+approval gate. This recovery procedure does not bypass source CI, release
+integration checks, or publication approval.
+
 The normal release operation is to select an exact main commit with successful
 source CI, optionally validate a main preview, then push an authorized version
 tag such as `v0.2.0-rc.1` or `v0.2.0`. The tag starts the release workflow;
