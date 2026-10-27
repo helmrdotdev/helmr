@@ -22,6 +22,7 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/platformhttp"
 	"golang.org/x/sync/errgroup"
@@ -51,17 +52,12 @@ type s3Client interface {
 	AbortMultipartUpload(context.Context, *awss3.AbortMultipartUploadInput, ...func(*awss3.Options)) (*awss3.AbortMultipartUploadOutput, error)
 }
 
-type s3Presigner interface {
-	PresignPutObject(context.Context, *awss3.PutObjectInput, ...func(*awss3.PresignOptions)) (*awsv4.PresignedHTTPRequest, error)
-}
-
 type Store struct {
 	client     s3Client
 	bucket     string
 	prefix     string
 	tempDir    string
 	sharded    bool
-	presigner  s3Presigner
 	httpClient aws.HTTPClient
 
 	multipartThresholdBytes int64
@@ -119,20 +115,7 @@ func New(ctx context.Context, rawURI string, opts ...Option) (*Store, error) {
 		}
 	})
 	store.client = client
-	store.presigner = newQuarantinePresigner(client)
 	return store, nil
-}
-
-func newQuarantinePresigner(client *awss3.Client) s3Presigner {
-	options := client.Options()
-	return awss3.NewPresignClient(client, func(presign *awss3.PresignOptions) {
-		presign.Presigner = awsv4.NewSigner(func(signer *awsv4.SignerOptions) {
-			signer.Logger = options.Logger
-			signer.LogSigning = options.ClientLogMode.IsSigning()
-			signer.DisableURIPathEscaping = true
-			signer.DisableHeaderHoisting = true
-		})
-	})
 }
 
 func (c *Store) PutQuarantine(
@@ -185,111 +168,53 @@ func (c *Store) PutQuarantine(
 	return nil
 }
 
-func (c *Store) PresignQuarantine(
-	ctx context.Context,
-	owner string,
-	expected cas.Descriptor,
-	expires time.Duration,
-) (cas.PresignedUpload, error) {
+// StreamQuarantine relies on S3's checksum validation and atomic conditional PUT.
+// The incoming reader cannot be rewound; callers reconcile a lost response by
+// checking quarantine and then resending the complete object if needed.
+func (c *Store) StreamQuarantine(ctx context.Context, owner string, expected cas.Descriptor, body io.Reader) error {
 	if err := cas.ValidateDescriptor(expected); err != nil {
-		return cas.PresignedUpload{}, err
-	}
-	if expires <= 0 || expires > 15*time.Minute {
-		return cas.PresignedUpload{}, errors.New("quarantine upload expiry must be in (0,15m]")
-	}
-	if c.presigner == nil {
-		return cas.PresignedUpload{}, errors.New("S3 quarantine presigner is not configured")
+		return err
 	}
 	key, err := c.quarantineKey(owner, expected.Digest)
 	if err != nil {
-		return cas.PresignedUpload{}, err
+		return err
 	}
-	checksum, err := descriptorChecksum(expected.Digest)
-	if err != nil {
-		return cas.PresignedUpload{}, err
-	}
-	request, err := c.presigner.PresignPutObject(ctx, &awss3.PutObjectInput{
-		Bucket:            aws.String(c.bucket),
-		Key:               aws.String(key),
-		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
-		ChecksumSHA256:    aws.String(checksum),
-		ContentLength:     aws.Int64(expected.SizeBytes),
-		ContentType:       aws.String(expected.MediaType),
-		IfNoneMatch:       aws.String("*"),
-		Tagging:           aws.String(objectTagging()),
-	}, func(options *awss3.PresignOptions) {
-		options.Expires = expires
-	})
-	if err != nil {
-		return cas.PresignedUpload{}, err
-	}
-	if err := validatePresignedQuarantine(request, expected); err != nil {
-		return cas.PresignedUpload{}, err
-	}
-	headers := make(map[string]string, len(request.SignedHeader))
-	for key, values := range request.SignedHeader {
-		if len(values) != 1 {
-			return cas.PresignedUpload{}, fmt.Errorf("presigned header %q is not singular", key)
-		}
-		headers[key] = values[0]
-	}
-	return cas.PresignedUpload{Method: request.Method, URL: request.URL, Headers: headers}, nil
-}
-
-func validatePresignedQuarantine(request *awsv4.PresignedHTTPRequest, expected cas.Descriptor) error {
-	if request == nil {
-		return errors.New("presigned quarantine request is missing")
-	}
-	if request.Method != http.MethodPut {
-		return errors.New("presigned quarantine request method is not PUT")
-	}
-	parsed, err := url.Parse(request.URL)
-	if err != nil {
-		return errors.New("presigned quarantine URL is invalid")
-	}
-	query := parsed.Query()
-	for key := range query {
-		lower := strings.ToLower(key)
-		if strings.HasPrefix(lower, "x-amz-checksum-") || lower == "x-amz-sdk-checksum-algorithm" {
-			return errors.New("presigned quarantine checksum must remain a signed request header")
-		}
-	}
-	signedNames := make(map[string]struct{})
-	var signedHeaderValues []string
-	for key, values := range query {
-		if strings.EqualFold(key, "X-Amz-SignedHeaders") {
-			signedHeaderValues = append(signedHeaderValues, values...)
-		}
-	}
-	if len(signedHeaderValues) != 1 {
-		return errors.New("presigned quarantine signed-header declaration is invalid")
-	}
-	for name := range strings.SplitSeq(signedHeaderValues[0], ";") {
-		signedNames[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
-	}
-
 	checksum, err := descriptorChecksum(expected.Digest)
 	if err != nil {
 		return err
 	}
-	required := map[string]string{
-		"Content-Length":               fmt.Sprintf("%d", expected.SizeBytes),
-		"Content-Type":                 expected.MediaType,
-		"If-None-Match":                "*",
-		"X-Amz-Checksum-Sha256":        checksum,
-		"X-Amz-Sdk-Checksum-Algorithm": string(types.ChecksumAlgorithmSha256),
+	_, err = c.client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String(c.bucket), Key: aws.String(key), Body: body,
+		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+		ChecksumSHA256:    aws.String(checksum), ContentLength: aws.Int64(expected.SizeBytes),
+		ContentType: aws.String(expected.MediaType), IfNoneMatch: aws.String("*"),
+		Tagging: aws.String(objectTagging()),
+	}, func(options *awss3.Options) {
+		options.RetryMaxAttempts = 1
+		// The admitted digest already supplies the signing hash. Reuse it on
+		// both HTTPS and local HTTP stores without seeking the incoming body.
+		options.APIOptions = append(options.APIOptions, func(stack *middleware.Stack) error {
+			return stack.Finalize.Insert(middleware.FinalizeMiddlewareFunc("QuarantinePayloadHash", func(
+				ctx context.Context, input middleware.FinalizeInput, next middleware.FinalizeHandler,
+			) (middleware.FinalizeOutput, middleware.Metadata, error) {
+				return next.HandleFinalize(awsv4.SetPayloadHash(ctx, strings.TrimPrefix(expected.Digest, "sha256:")), input)
+			}), "ComputePayloadHash", middleware.Before)
+		})
+	})
+	switch conditionalWriteError(err) {
+	case conditionalWriteExists:
+		return c.verifyKey(ctx, key, expected)
+	case conditionalWriteConflict:
+		return errors.Join(cas.ErrUploadConflict, err)
 	}
-	required["X-Amz-Tagging"] = objectTagging()
-	for name, value := range required {
-		values := request.SignedHeader.Values(name)
-		if len(values) != 1 || values[0] != value {
-			return fmt.Errorf("presigned quarantine header %q is not exact", name)
-		}
-		if _, ok := signedNames[strings.ToLower(name)]; !ok {
-			return fmt.Errorf("presigned quarantine header %q is not signed", name)
+	var apiError smithy.APIError
+	if errors.As(err, &apiError) {
+		switch apiError.ErrorCode() {
+		case "BadDigest", "InvalidDigest", "XAmzContentSHA256Mismatch", "IncompleteBody":
+			return errors.Join(cas.ErrDigestMismatch, err)
 		}
 	}
-	return nil
+	return err
 }
 
 func (c *Store) HasExactQuarantine(

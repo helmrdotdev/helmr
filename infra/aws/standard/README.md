@@ -193,3 +193,8 @@ Diagnostic ingestion and export limits must be explicitly supplied through
 `controlplane_environment` and `dispatcher_environment`; see the shared
 [diagnostic process limits](../README.md#diagnostic-process-limits). The example
 values are development starting points and require operator review.
+
+
+Upload capacities and deadlines are explicit common Product settings; see
+[deployment upload capacity](../README.md#deployment-upload-capacity) before
+choosing values for the selected task size and ingress.

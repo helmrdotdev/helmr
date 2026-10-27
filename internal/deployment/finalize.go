@@ -92,6 +92,28 @@ type Record struct {
 	CreatedAt        time.Time
 }
 
+// ResolveUploadDescriptor re-admits a canonical bundle and resolves one member
+// for an authorized quarantine write. It grants no ownership or publication
+// authority; Finalize checks current authority and the completed objects again.
+func (f *Finalizer) ResolveUploadDescriptor(ctx context.Context, principal auth.Principal, scope auth.Scope, bundleDigest, objectDigest string) (cas.Descriptor, error) {
+	if err := authorizeDeploy(principal, scope); err != nil {
+		return cas.Descriptor{}, err
+	}
+	if _, _, err := scopeIDs(scope); err != nil {
+		return cas.Descriptor{}, invalidInput(err)
+	}
+	prepared, err := f.prepareBundle(ctx, bundleDigest)
+	if err != nil {
+		return cas.Descriptor{}, err
+	}
+	for _, object := range prepared.objects {
+		if object.Digest == objectDigest {
+			return object, nil
+		}
+	}
+	return cas.Descriptor{}, invalidInput(errors.New("deployment object is not in the bundle"))
+}
+
 // Prepare authorizes the principal to deploy into the environment, admits the
 // uploaded bundle root and binds the idempotency key. It reads the root but no
 // bundle object.
@@ -108,7 +130,7 @@ func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope
 	}
 	prepared, err := f.prepareBundle(ctx, bundleDigest)
 	if err != nil {
-		return Finalization{}, invalidInput(err)
+		return Finalization{}, err
 	}
 
 	return Finalization{
@@ -230,16 +252,25 @@ func (e objectSourceError) Error() string { return e.err.Error() }
 func (e objectSourceError) Unwrap() error { return e.err }
 
 func (f *Finalizer) prepareBundle(ctx context.Context, bundleDigest string) (preparedBundle, error) {
+	if _, err := artifact.RuntimeDigestBytes(bundleDigest); err != nil {
+		return preparedBundle{}, invalidInput(errors.New("deployment bundle digest is invalid"))
+	}
 	rootObject, err := f.uploads.Stat(ctx, bundleDigest)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return preparedBundle{}, invalidInput(errors.New("deployment bundle root is missing"))
+		}
 		return preparedBundle{}, fmt.Errorf("resolve deployment bundle root: %w", err)
 	}
 	if rootObject.MediaType != bundle.MediaType ||
 		rootObject.SizeBytes < 1 || rootObject.SizeBytes > bundle.MaxBytes {
-		return preparedBundle{}, errors.New("deployment bundle root descriptor is invalid")
+		return preparedBundle{}, invalidInput(errors.New("deployment bundle root descriptor is invalid"))
 	}
 	rootReader, err := f.uploads.Get(ctx, bundleDigest)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return preparedBundle{}, invalidInput(errors.New("deployment bundle root is missing"))
+		}
 		return preparedBundle{}, fmt.Errorf("read deployment bundle root: %w", err)
 	}
 	raw, readErr := io.ReadAll(io.LimitReader(rootReader, bundle.MaxBytes+1))
@@ -249,14 +280,14 @@ func (f *Finalizer) prepareBundle(ctx context.Context, bundleDigest string) (pre
 	}
 	actualDigest, err := bundle.Digest(raw)
 	if err != nil || actualDigest != bundleDigest || int64(len(raw)) != rootObject.SizeBytes {
-		return preparedBundle{}, errors.New("deployment bundle root bytes do not match the request")
+		return preparedBundle{}, invalidInput(errors.New("deployment bundle root bytes do not match the request"))
 	}
 	manifest, err := bundle.Parse(raw)
 	if err != nil {
-		return preparedBundle{}, err
+		return preparedBundle{}, invalidInput(err)
 	}
 	if err := f.admission.Admit(manifest); err != nil {
-		return preparedBundle{}, err
+		return preparedBundle{}, invalidInput(err)
 	}
 	if err := requireSupportedRuntime(ctx, f.platform, manifest.Runtime.Artifact); err != nil {
 		return preparedBundle{}, err
@@ -276,12 +307,15 @@ func (f *Finalizer) prepareBundle(ctx context.Context, bundleDigest string) (pre
 func requireSupportedRuntime(ctx context.Context, store cas.Reader, runtime bundle.Object) error {
 	object, err := store.Stat(ctx, runtime.Digest)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return invalidInput(errors.New("deployment Runtime is unsupported"))
+		}
 		return fmt.Errorf("resolve supported Runtime object: %w", err)
 	}
 	if err := cas.RequireExact(object, cas.Descriptor{
 		Digest: runtime.Digest, SizeBytes: runtime.SizeBytes, MediaType: runtime.MediaType,
 	}); err != nil {
-		return fmt.Errorf("supported Runtime object: %w", err)
+		return invalidInput(fmt.Errorf("supported Runtime object: %w", err))
 	}
 	return nil
 }

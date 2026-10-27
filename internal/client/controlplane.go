@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secretname"
 )
@@ -27,10 +30,25 @@ var (
 	ErrDeploymentObjectUploadNoProgress   = errors.New("deployment object upload made no progress")
 )
 
-const (
-	deploymentObjectUploadProgressInterval  = 10 * time.Second
-	deploymentObjectUploadNoProgressTimeout = 2 * time.Minute
-)
+const deploymentObjectUploadProgressInterval = 10 * time.Second
+
+// DeploymentUploadOptions are caller-side bounds, independent of the server's
+// per-admitted-request limits. Timeout includes waiting for upload capacity.
+type DeploymentUploadOptions struct {
+	Timeout     time.Duration
+	IdleTimeout time.Duration
+}
+
+func DefaultDeploymentUploadOptions() DeploymentUploadOptions {
+	return DeploymentUploadOptions{Timeout: 3 * time.Hour, IdleTimeout: 2 * time.Minute}
+}
+
+func (o DeploymentUploadOptions) Validate() error {
+	if o.IdleTimeout < time.Millisecond || o.Timeout < o.IdleTimeout {
+		return errors.New("client upload durations must be at least 1ms with idle timeout no greater than total timeout")
+	}
+	return nil
+}
 
 type ListProjectsOptions struct {
 	Cursor string
@@ -167,30 +185,66 @@ func (c *Client) PlanDeploymentBundleUploads(
 
 func (c *Client) UploadDeploymentBundleObject(
 	ctx context.Context,
+	bundleDigest string,
+	scope EnvironmentScopeOptions,
 	upload api.DeploymentBundleUpload,
 	objectPath string,
 	progress func(bytesRead int64, totalBytes int64) error,
 ) error {
-	return c.uploadDeploymentBundleObject(
-		ctx,
-		upload,
-		objectPath,
-		progress,
-		deploymentObjectUploadProgressInterval,
-		deploymentObjectUploadNoProgressTimeout,
-	)
+	timeout := c.deploymentUploads.Timeout
+	deadline := fmt.Errorf("client object-upload deadline %s exceeded (including capacity retries): %w", timeout, context.DeadlineExceeded)
+	ctx, cancel := context.WithTimeoutCause(ctx, timeout, deadline)
+	defer cancel()
+	for {
+		err := c.uploadDeploymentBundleObject(ctx, bundleDigest, scope, upload, objectPath, progress,
+			min(deploymentObjectUploadProgressInterval, c.deploymentUploads.IdleTimeout/4), c.deploymentUploads.IdleTimeout)
+		if ctx.Err() != nil {
+			return context.Cause(ctx)
+		}
+		var rejection *httpclient.Error
+		if !errors.As(err, &rejection) || rejection.StatusCode != http.StatusTooManyRequests {
+			return err
+		}
+		delay := time.Second
+		if seconds, parseErr := strconv.ParseInt(rejection.RetryAfter, 10, 64); parseErr == nil && seconds > 0 {
+			if seconds > int64(timeout/time.Second) {
+				delay = timeout
+			} else {
+				delay = time.Duration(seconds) * time.Second
+			}
+		} else if when, parseErr := http.ParseTime(rejection.RetryAfter); parseErr == nil && time.Until(when) > 0 {
+			delay = min(time.Until(when), timeout)
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return context.Cause(ctx)
+		case <-timer.C:
+		}
+	}
 }
 
 func (c *Client) uploadDeploymentBundleObject(
 	ctx context.Context,
+	bundleDigest string,
+	scope EnvironmentScopeOptions,
 	upload api.DeploymentBundleUpload,
 	objectPath string,
 	progress func(bytesRead int64, totalBytes int64) error,
 	progressInterval time.Duration,
 	noProgressTimeout time.Duration,
 ) error {
-	if upload.Method != http.MethodPut || strings.TrimSpace(upload.URL) == "" {
-		return fmt.Errorf("%w: deployment object upload plan is invalid", ErrDeploymentObjectUploadNotAttempted)
+	if _, err := artifact.RuntimeDigestBytes(bundleDigest); err != nil {
+		return fmt.Errorf("%w: deployment bundle digest is invalid", ErrDeploymentObjectUploadNotAttempted)
+	}
+	if err := cas.ValidateDescriptor(cas.Descriptor{Digest: upload.Digest, SizeBytes: upload.SizeBytes, MediaType: upload.MediaType}); err != nil {
+		return fmt.Errorf("%w: deployment object descriptor is invalid", ErrDeploymentObjectUploadNotAttempted)
+	}
+	path, err := c.environmentScopedPath(scope.ProjectID, scope.EnvironmentID,
+		"/deployment-bundles/"+url.PathEscape(bundleDigest)+"/objects/"+url.PathEscape(upload.Digest))
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrDeploymentObjectUploadNotAttempted, err)
 	}
 	file, err := os.Open(objectPath)
 	if err != nil {
@@ -201,38 +255,19 @@ func (c *Client) uploadDeploymentBundleObject(
 	if err != nil {
 		return fmt.Errorf("%w: stat deployment object: %w", ErrDeploymentObjectUploadNotAttempted, err)
 	}
+	if info.Size() != upload.SizeBytes {
+		return fmt.Errorf("%w: deployment object size differs from the upload plan", ErrDeploymentObjectUploadNotAttempted)
+	}
 	uploadCtx, cancelUpload := context.WithCancel(ctx)
 	defer cancelUpload()
 	trackedBody := &deploymentObjectUploadReader{reader: file}
-	req, err := http.NewRequestWithContext(uploadCtx, upload.Method, upload.URL, trackedBody)
+	req, err := c.newRequest(uploadCtx, http.MethodPut, path, trackedBody)
 	if err != nil {
 		return fmt.Errorf("%w: construct deployment object upload", ErrDeploymentObjectUploadNotAttempted)
 	}
-	contentLengthSet := false
-	for name, value := range upload.Headers {
-		if strings.EqualFold(name, "authorization") {
-			return fmt.Errorf("%w: deployment object upload plan contains a credential header", ErrDeploymentObjectUploadNotAttempted)
-		}
-		if strings.EqualFold(name, "content-length") {
-			if contentLengthSet {
-				return fmt.Errorf("%w: deployment object upload plan contains duplicate content length headers", ErrDeploymentObjectUploadNotAttempted)
-			}
-			contentLength, parseErr := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-			if parseErr != nil || contentLength < 0 {
-				return fmt.Errorf("%w: deployment object upload plan contains an invalid content length", ErrDeploymentObjectUploadNotAttempted)
-			}
-			if contentLength != info.Size() {
-				return fmt.Errorf("%w: deployment object size differs from the upload plan", ErrDeploymentObjectUploadNotAttempted)
-			}
-			req.ContentLength = contentLength
-			contentLengthSet = true
-			continue
-		}
-		req.Header.Set(name, value)
-	}
-	if !contentLengthSet {
-		return fmt.Errorf("%w: deployment object upload plan is missing content length", ErrDeploymentObjectUploadNotAttempted)
-	}
+	req.ContentLength = upload.SizeBytes
+	req.Header.Set("Content-Type", upload.MediaType)
+	req.Header.Set("Expect", "100-continue")
 	monitorDone := make(chan struct{})
 	monitorResult := make(chan error, 1)
 	go monitorDeploymentObjectUpload(
@@ -246,7 +281,7 @@ func (c *Client) uploadDeploymentBundleObject(
 		progressInterval,
 		noProgressTimeout,
 	)
-	response, err := c.transport.Do(req)
+	response, err := c.transport.DoWithoutRedirects(req)
 	var responseErr error
 	if err == nil {
 		defer response.Body.Close()

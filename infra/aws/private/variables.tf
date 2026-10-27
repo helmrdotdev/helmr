@@ -901,3 +901,13 @@ variable "worker_environment" {
   type        = map(string)
   default     = {}
 }
+
+variable "controlplane_idle_timeout_seconds" {
+  description = "ALB connection idle timeout; keep it above client/server upload inactivity limits. Backend HTTP keepalive is configured 30 seconds longer."
+  type        = number
+  default     = 180
+  validation {
+    condition     = var.controlplane_idle_timeout_seconds >= 1 && var.controlplane_idle_timeout_seconds <= 4000 && floor(var.controlplane_idle_timeout_seconds) == var.controlplane_idle_timeout_seconds
+    error_message = "controlplane_idle_timeout_seconds must be an integer from 1 through 4000."
+  }
+}

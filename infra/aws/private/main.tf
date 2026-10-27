@@ -148,6 +148,7 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  controlplane_idle_timeout_seconds = var.controlplane_idle_timeout_seconds
   network_private_business_cidrs    = var.worker_network_private_business_cidrs
   network_blocked_ipv4_cidrs        = var.worker_network_blocked_ipv4_cidrs
   audit_retention_seconds           = var.audit_retention_seconds
@@ -156,6 +157,7 @@ module "controlplane" {
   audit_purge_max_batches           = var.audit_purge_max_batches
   audit_maintenance_alarm_actions   = var.audit_maintenance_alarm_actions
   ingress_mode                      = "private"
+  quarantine_upload_vpc_endpoint_id = module.controlplane_network.s3_gateway_endpoint_id
   restrict_platform_egress          = true
   private_client_ipv4_cidrs         = var.company_client_ipv4_cidrs
   private_client_security_group_ids = merge({ platform = module.controlplane.controlplane_security_group_id }, { for name, worker in module.worker_group : name => worker.security_group_id })

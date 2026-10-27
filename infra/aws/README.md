@@ -36,6 +36,13 @@ are not the operator path for consuming already published bundles. The Control P
 Product release artifact. The Control Plane and bundle-builder GHCR packages
 are public and should be consumed by immutable digest.
 
+Before applying service settings, run `control-plane check-config` with the exact
+image and intended service environment. Terraform checks that upload durations are
+present; the Product configuration loader owns Go duration syntax, positive
+durations and the idle/maximum relationship. Keep the ALB idle timeout above the
+configured upload idle timeout. A Terraform plan alone does not validate these
+duration values or ingress compatibility.
+
 Before enabling or updating Control Plane services, run the database migration task
 for the exact image. Keep `/healthz` for process health and use `/readyz` for
 traffic readiness after the schema is current.
@@ -151,3 +158,39 @@ ASG starts at zero capacity; the launch definition must be ready for activation.
 Retained sealed user-data remains authoritative. Shared modules also reject guest
 network CIDRs that are not ordered by numeric IPv4 address and prefix length,
 matching the runtime configuration contract.
+
+
+## Deployment upload capacity
+
+Quickstart, standard and private use the same authenticated Control Plane upload
+implementation. Set `DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY`,
+`DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY`, `DEPLOYMENT_UPLOAD_IDLE_TIMEOUT` and
+`DEPLOYMENT_UPLOAD_MAX_DURATION` in `controlplane_environment`. The application
+requires positive capacities, organization capacity no greater than process
+capacity, and positive finite durations with idle no greater than maximum.
+The example values are development starting points. Measure CPU, peak memory,
+transfer throughput and ordinary API/containment responsiveness at the chosen
+ECS task size before selecting operating values. Include parallel deployments,
+maximum objects/manifests, slow transfers, storage stalls and cancellation.
+
+Both capacities are per process. Set organization capacity equal to process
+capacity when one organization may use all available slots. Lower values limit
+occupancy in shared installations; they do not provide reserved capacity,
+starvation-freedom or a distributed quota. Saturation returns 429 for the client
+to retry. Established transfers release ordinary API admission slots, while
+shared resource pressure remains a deployment concern.
+
+`controlplane_idle_timeout_seconds` configures the ALB connection idle timer
+(default 180 seconds, range 1–4000). Set it above the supported upload inactivity
+interval. The module configures backend `CONTROL_PLANE_HTTP_IDLE_TIMEOUT` to
+30 seconds longer than the ALB timer, avoiding reuse of already-expired backend
+connections. Backend keepalive between requests is distinct from body inactivity.
+Other ingress layers, including CloudFront origin response/completion timeouts,
+can impose tighter limits and require their own end-to-end qualification.
+CloudFront's response timeout is not the upload's total-duration setting.
+
+The CLI defaults to a three-hour deadline per object, including 429 waiting,
+and a two-minute no-progress timeout. Operators can supply compatible client
+settings through `HELMR_UPLOAD_TIMEOUT`/`HELMR_UPLOAD_IDLE_TIMEOUT` or the deploy
+flags `--upload-timeout`/`--upload-idle-timeout`. Leave client retry headroom beyond
+the server's admitted-transfer duration; there is no automatic policy discovery.

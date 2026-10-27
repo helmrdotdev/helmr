@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -36,8 +35,8 @@ func TestDeploymentObjectUploadReportsSlowProgressWithoutTimingOut(t *testing.T)
 	var mu sync.Mutex
 	var observed []int64
 	err := client.uploadDeploymentBundleObject(
-		t.Context(),
-		deploymentUploadTestPlan("https://upload.example/object", 6),
+		t.Context(), testUploadBundleDigest, EnvironmentScopeOptions{},
+		deploymentUploadTestPlan(6),
 		objectPath,
 		func(bytesRead int64, totalBytes int64) error {
 			if totalBytes != 6 {
@@ -68,7 +67,6 @@ func TestDeploymentObjectUploadReportsSlowProgressWithoutTimingOut(t *testing.T)
 }
 
 func TestDeploymentObjectUploadCancelsWhenRequestBodyMakesNoProgress(t *testing.T) {
-	const secret = "presigned-secret-sentinel"
 	objectPath := writeDeploymentUploadTestObject(t, "abcdef")
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		<-request.Context().Done()
@@ -77,8 +75,8 @@ func TestDeploymentObjectUploadCancelsWhenRequestBodyMakesNoProgress(t *testing.
 	client := newDeploymentUploadTestClient(t, transport)
 	started := time.Now()
 	err := client.uploadDeploymentBundleObject(
-		t.Context(),
-		deploymentUploadTestPlan("https://upload.example/object?X-Amz-Signature="+secret, 6),
+		t.Context(), testUploadBundleDigest, EnvironmentScopeOptions{},
+		deploymentUploadTestPlan(6),
 		objectPath,
 		nil,
 		5*time.Millisecond,
@@ -87,9 +85,7 @@ func TestDeploymentObjectUploadCancelsWhenRequestBodyMakesNoProgress(t *testing.
 	if !errors.Is(err, ErrDeploymentObjectUploadNoProgress) {
 		t.Fatalf("error = %v", err)
 	}
-	if strings.Contains(err.Error(), secret) {
-		t.Fatalf("error exposed presigned credential: %v", err)
-	}
+
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("no-progress cancellation took %s", elapsed)
 	}
@@ -106,8 +102,8 @@ func TestDeploymentObjectUploadBoundsResponseWaitAfterBodyWasRead(t *testing.T) 
 	})
 	client := newDeploymentUploadTestClient(t, transport)
 	err := client.uploadDeploymentBundleObject(
-		t.Context(),
-		deploymentUploadTestPlan("https://upload.example/object", 6),
+		t.Context(), testUploadBundleDigest, EnvironmentScopeOptions{},
+		deploymentUploadTestPlan(6),
 		objectPath,
 		nil,
 		5*time.Millisecond,
@@ -128,8 +124,8 @@ func TestDeploymentObjectUploadPreservesParentCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	time.AfterFunc(20*time.Millisecond, cancel)
 	err := client.uploadDeploymentBundleObject(
-		ctx,
-		deploymentUploadTestPlan("https://upload.example/object", 6),
+		ctx, testUploadBundleDigest, EnvironmentScopeOptions{},
+		deploymentUploadTestPlan(6),
 		objectPath,
 		nil,
 		5*time.Millisecond,
@@ -167,14 +163,10 @@ func writeDeploymentUploadTestObject(t *testing.T, body string) string {
 	return path
 }
 
-func deploymentUploadTestPlan(url string, size int64) api.DeploymentBundleUpload {
-	return api.DeploymentBundleUpload{
-		Method: http.MethodPut,
-		URL:    url,
-		Headers: map[string]string{
-			"Content-Length": strconv.FormatInt(size, 10),
-		},
-	}
+const testUploadBundleDigest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func deploymentUploadTestPlan(size int64) api.DeploymentBundleUpload {
+	return api.DeploymentBundleUpload{Digest: "sha256:" + strings.Repeat("b", 64), SizeBytes: size, MediaType: "application/octet-stream"}
 }
 
 func deploymentUploadTestResponse(request *http.Request) *http.Response {

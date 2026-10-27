@@ -16,7 +16,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-// This file owns reading and decoding client request bodies. Handlers read a
+// This file owns reading and decoding JSON request bodies. Binary deployment
+// bodies use request_stream.go. Handlers read a
 // body only through these helpers, so every decoding failure is classified
 // (400, or 413 once the body limit is exceeded) and described in API terms:
 // JSON field paths, JSON types and unknown member names, never server type or

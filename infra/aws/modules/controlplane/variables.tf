@@ -417,6 +417,16 @@ variable "controlplane_environment" {
     ])
     error_message = "controlplane_environment must explicitly set every required diagnostic limit to a positive integer before starting the service."
   }
+  validation {
+    condition = !var.create_controlplane_service || var.controlplane_desired_count == 0 || (
+      alltrue([for name in ["DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY", "DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY"] :
+        can(regex("^[0-9]+$", var.controlplane_environment[name])) && try(tonumber(var.controlplane_environment[name]) > 0 && tonumber(var.controlplane_environment[name]) <= 2147483647, false)
+      ]) &&
+      try(tonumber(var.controlplane_environment["DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY"]) <= tonumber(var.controlplane_environment["DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY"]), false) &&
+      alltrue([for name in ["DEPLOYMENT_UPLOAD_IDLE_TIMEOUT", "DEPLOYMENT_UPLOAD_MAX_DURATION"] : try(trimspace(var.controlplane_environment[name]) != "", false)])
+    )
+    error_message = "controlplane_environment must set positive per-process upload capacities (organization <= process) and explicit upload idle/maximum durations before starting the service."
+  }
 }
 
 variable "dispatcher_environment" {
@@ -624,6 +634,16 @@ variable "private_client_security_group_ids" {
   default     = {}
 }
 
+variable "quarantine_upload_vpc_endpoint_id" {
+  description = "Control Plane S3 gateway endpoint required for authored-input quarantine writes with private ingress."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.quarantine_upload_vpc_endpoint_id == null || can(regex("^vpce-[a-z0-9]+$", var.quarantine_upload_vpc_endpoint_id))
+    error_message = "quarantine_upload_vpc_endpoint_id must be an S3 VPC endpoint ID."
+  }
+}
+
 variable "restrict_platform_egress" {
   description = "Omit general task egress. Caller must attach exact service/proxy rules to the exported task security group."
   type        = bool
@@ -731,5 +751,15 @@ variable "network_blocked_ipv4_cidrs" {
       join(",", sort([for cidr in var.network_blocked_ipv4_cidrs : "${join(".", [for octet in split(".", split("/", cidr)[0]) : format("%03d", tonumber(octet))])}/${format("%02d", tonumber(split("/", cidr)[1]))}"])), false
     )
     error_message = "network_blocked_ipv4_cidrs must be ordered by numeric IPv4 address, then prefix length."
+  }
+}
+
+variable "controlplane_idle_timeout_seconds" {
+  description = "ALB connection idle timeout; keep it above client/server upload inactivity limits. Backend HTTP keepalive is configured 30 seconds longer."
+  type        = number
+  default     = 180
+  validation {
+    condition     = var.controlplane_idle_timeout_seconds >= 1 && var.controlplane_idle_timeout_seconds <= 4000 && floor(var.controlplane_idle_timeout_seconds) == var.controlplane_idle_timeout_seconds
+    error_message = "controlplane_idle_timeout_seconds must be an integer from 1 through 4000."
   }
 }

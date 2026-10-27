@@ -17,9 +17,10 @@ import (
 
 const (
 	controlPlaneImportPath = internalImportPrefix + "controlplane"
-	// requestBodyOwner is the control plane file that reads and decodes client
-	// request bodies, so every failure is classified and described in API terms.
-	requestBodyOwner = "request_json.go"
+	// JSON request bodies and binary deployment streams have separate owners.
+	// Both classify failures in API terms; handlers never read bodies directly.
+	requestBodyOwner   = "request_json.go"
+	requestStreamOwner = "request_stream.go"
 )
 
 // requestBodyAccess is the *http.Request surface that reads client input.
@@ -272,7 +273,7 @@ func (c *requestBodyChecker) check(path string, files []*ast.File, allow map[str
 		if !requestBodyAccess[selection.Obj().Name()] || !isHTTPRequest(selectedFrom(selection)) {
 			continue
 		}
-		if name, outside := locate(selector.Sel.Pos()); outside {
+		if name, outside := locate(selector.Sel.Pos()); outside && filepath.Base(c.fset.Position(selector.Sel.Pos()).Filename) != requestStreamOwner {
 			violations = append(violations, fmt.Sprintf("%s: %s reads net/http.Request.%s outside %s", c.fset.Position(selector.Sel.Pos()), name, selection.Obj().Name(), requestBodyOwner))
 		}
 	}

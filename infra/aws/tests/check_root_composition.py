@@ -85,6 +85,14 @@ for filename in sys.argv[1:3]:
         if run == 'fixed_capacity_plan':
             tasks = {r['name']: json.loads(r['change']['after']['container_definitions'])
                      for r in resources if r['type'] == 'aws_ecs_task_definition'}
+            upload_env = {item['name']: item['value'] for item in tasks['controlplane'][0]['environment']}
+            assert upload_env['DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY'] == '24', filename
+            assert upload_env['DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY'] == '18', filename
+            assert upload_env['DEPLOYMENT_UPLOAD_IDLE_TIMEOUT'] == '2m', filename
+            assert upload_env['DEPLOYMENT_UPLOAD_MAX_DURATION'] == '2h', filename
+            assert upload_env['CONTROL_PLANE_HTTP_IDLE_TIMEOUT'] == '270s', filename
+            alb = next(r['change']['after'] for r in resources if r['type'] == 'aws_lb')
+            assert alb['idle_timeout'] == 240, filename
             expected = plans[run]['variables']['capacity_token_secret_arn']['value']
             assert any(env['name'] == 'ADMIN_EMAILS' and env['value'] == 'operator@example.test'
                        for container in tasks['controlplane'] for env in container.get('environment', [])), filename
@@ -125,6 +133,13 @@ for service in ('controlplane', 'dispatcher'):
     assert env['APP_ORIGIN'] == 'https://helmr.example.test'
     assert env['SLACK_TRANSPORT'] == 'socket'
     assert env['OUTBOUND_PROXY_URL'].startswith('http://proxy.')
+    if service == 'controlplane':
+        assert env['DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY'] == '24'
+        assert env['DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY'] == '18'
+        assert env['DEPLOYMENT_UPLOAD_IDLE_TIMEOUT'] == '2m'
+        assert env['DEPLOYMENT_UPLOAD_MAX_DURATION'] == '2h'
+        assert env['CONTROL_PLANE_HTTP_IDLE_TIMEOUT'] == '270s'
+        assert resources['module.controlplane.aws_lb.controlplane']['idle_timeout'] == 240
     if service == 'dispatcher':
         assert env['CONTROL_PLANE_URL'] == env['APP_ORIGIN']
     network = resources[f'module.controlplane.aws_ecs_service.{service}[0]']['network_configuration'][0]

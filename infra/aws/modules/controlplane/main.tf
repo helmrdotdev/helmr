@@ -116,6 +116,7 @@ locals {
     AUDIT_RETENTION_SECONDS                      = tostring(var.audit_retention_seconds)
     CONTROL_PLANE_NETWORK_PRIVATE_BUSINESS_CIDRS = jsonencode(var.network_private_business_cidrs)
     CONTROL_PLANE_NETWORK_BLOCKED_IPV4_CIDRS     = jsonencode(var.network_blocked_ipv4_cidrs)
+    CONTROL_PLANE_HTTP_IDLE_TIMEOUT              = "${var.controlplane_idle_timeout_seconds + 30}s"
     CONTROL_PLANE_ADDR                           = ":${local.controlplane_port}"
     DEPLOYMENT_MODE                              = var.deployment_mode
     CAS_URI                                      = "s3://${aws_s3_bucket.cas.bucket}"
@@ -319,35 +320,68 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cas" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "cas" {
-  count = var.cas_object_expiration_days == null && var.cas_noncurrent_version_expiration_days == null ? 0 : 1
-
+  # Preserve the existing indexed resource address for installations that
+  # already use the optional development expiration policy.
+  count  = 1
   bucket = aws_s3_bucket.cas.id
 
+  # Quarantine contains only uncommitted inputs. Promotion copies verified bytes
+  # to the immutable namespace; checkpoints and published objects are excluded.
   rule {
-    id     = "expire-dev-cas-objects"
+    id     = "expire-quarantine"
     status = "Enabled"
+    filter { prefix = "quarantine/" }
+    expiration { days = 1 }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+  rule {
+    id     = "remove-quarantine-delete-markers"
+    status = "Enabled"
+    filter { prefix = "quarantine/" }
+    expiration { expired_object_delete_marker = true }
+  }
 
-    filter {
-      tag {
-        key   = "helmr-expirable"
-        value = "true"
+  dynamic "rule" {
+    for_each = var.cas_object_expiration_days == null && var.cas_noncurrent_version_expiration_days == null ? [] : [true]
+    content {
+      id     = "expire-dev-cas-objects"
+      status = "Enabled"
+      filter {
+        tag {
+          key   = "helmr-expirable"
+          value = "true"
+        }
+      }
+      dynamic "expiration" {
+        for_each = var.cas_object_expiration_days == null ? [] : [var.cas_object_expiration_days]
+        content { days = expiration.value }
+      }
+      dynamic "noncurrent_version_expiration" {
+        for_each = var.cas_noncurrent_version_expiration_days == null ? [] : [var.cas_noncurrent_version_expiration_days]
+        content { noncurrent_days = noncurrent_version_expiration.value }
       }
     }
+  }
+}
 
-    dynamic "expiration" {
-      for_each = var.cas_object_expiration_days == null ? [] : [var.cas_object_expiration_days]
-
-      content {
-        days = expiration.value
-      }
-    }
-
-    dynamic "noncurrent_version_expiration" {
-      for_each = var.cas_noncurrent_version_expiration_days == null ? [] : [var.cas_noncurrent_version_expiration_days]
-
-      content {
-        noncurrent_days = noncurrent_version_expiration.value
-      }
+resource "aws_s3_bucket_policy" "quarantine" {
+  count  = var.ingress_mode == "private" ? 1 : 0
+  bucket = aws_s3_bucket.cas.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "RequirePrivateQuarantineUpload"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:PutObject"
+      Resource  = "${aws_s3_bucket.cas.arn}/quarantine/*"
+      Condition = { StringNotEquals = { "aws:SourceVpce" = var.quarantine_upload_vpc_endpoint_id } }
+    }]
+  })
+  lifecycle {
+    precondition {
+      condition     = var.quarantine_upload_vpc_endpoint_id != null
+      error_message = "Private ingress requires the Control Plane S3 gateway endpoint for quarantine uploads."
     }
   }
 }
@@ -498,6 +532,7 @@ resource "aws_vpc_security_group_egress_rule" "controlplane" {
 }
 
 resource "aws_lb" "controlplane" {
+  idle_timeout       = var.controlplane_idle_timeout_seconds
   name               = "${local.name}-controlplane"
   load_balancer_type = "application"
   internal           = var.ingress_mode == "private"

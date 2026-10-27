@@ -21,6 +21,7 @@ type Error struct {
 	Message    string
 	Code       string
 	Details    json.RawMessage
+	RetryAfter string
 	cause      error
 }
 
@@ -122,6 +123,16 @@ func (t *Transport) DoWithStatus(req *http.Request) (*http.Response, error) {
 	return t.do(req, true)
 }
 
+// DoWithoutRedirects keeps an authenticated object body on its original route.
+// Retain rejection status even when the server closes a rejected request early.
+func (t *Transport) DoWithoutRedirects(req *http.Request) (*http.Response, error) {
+	client := *t.httpClient
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	transport := *t
+	transport.httpClient = &client
+	return transport.DoWithStatus(req)
+}
+
 func (t *Transport) do(req *http.Request, retainStatus bool) (*http.Response, error) {
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
@@ -212,7 +223,7 @@ func decodeError(resp *http.Response, retainStatus bool) error {
 	if err != nil {
 		cause := fmt.Errorf("read error response: %w", err)
 		if retainStatus {
-			return &Error{StatusCode: resp.StatusCode, Status: resp.Status, cause: cause}
+			return &Error{StatusCode: resp.StatusCode, Status: resp.Status, RetryAfter: resp.Header.Get("Retry-After"), cause: cause}
 		}
 		return cause
 	}
@@ -232,9 +243,10 @@ func decodeError(resp *http.Response, retainStatus bool) error {
 			Message:    payload.Error.Message,
 			Code:       payload.Error.Code,
 			Details:    payload.Error.Details,
+			RetryAfter: resp.Header.Get("Retry-After"),
 		}
 	}
-	return &Error{StatusCode: resp.StatusCode, Status: resp.Status}
+	return &Error{StatusCode: resp.StatusCode, Status: resp.Status, RetryAfter: resp.Header.Get("Retry-After")}
 }
 
 func joinPath(basePath string, path string) string {

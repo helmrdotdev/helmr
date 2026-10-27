@@ -147,6 +147,7 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  controlplane_idle_timeout_seconds = var.controlplane_idle_timeout_seconds
   network_private_business_cidrs    = var.worker_network_private_business_cidrs
   network_blocked_ipv4_cidrs        = var.worker_network_blocked_ipv4_cidrs
   audit_retention_seconds           = var.audit_retention_seconds

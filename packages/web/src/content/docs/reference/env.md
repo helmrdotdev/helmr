@@ -34,6 +34,8 @@ entirely by the guest image, tests, or development tooling remain internal.
 | `HELMR_PROJECT` | Project ID for `status` and `doctor` when `--project` is absent. |
 | `HELMR_ENV` | Environment ID for `status` and `doctor` when `--env` is absent. |
 | `HELMR_CONFIG_DIR` | CLI state directory override. |
+| `HELMR_UPLOAD_TIMEOUT` | `helmr deploy`: per-object deadline including capacity retries; defaults to `3h`. `--upload-timeout` takes precedence. |
+| `HELMR_UPLOAD_IDLE_TIMEOUT` | `helmr deploy`: maximum time without object-upload progress; defaults to `2m`. `--upload-idle-timeout` takes precedence. |
 
 `HelmrClient` does not read these variables automatically. Pass the URL and API
 key from your application's configuration to its constructor.
@@ -45,6 +47,33 @@ Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`,
 `WORKER_HOST_CREDENTIAL_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
 `COMPUTER_FENCING_KEY`,
 `GITHUB_OAUTH_CLIENT_ID`, and `GITHUB_OAUTH_CLIENT_SECRET`.
+
+Deployment uploads require the same explicit process configuration in Managed
+Cloud and self-hosted installations. There are no server-side capacity defaults:
+
+| Variable | Purpose |
+| --- | --- |
+| `DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY` | Positive maximum active object uploads, including preflight, in one Control Plane process. |
+| `DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY` | Positive maximum for one organization in that process, no greater than the process maximum. Set them equal when one organization may use all capacity. |
+| `DEPLOYMENT_UPLOAD_IDLE_TIMEOUT` | Maximum interval without body progress, including blocked storage; a duration such as `2m`, at least `1ms`. |
+| `DEPLOYMENT_UPLOAD_MAX_DURATION` | Absolute duration of one admitted body transfer, at least the idle timeout; a duration such as `2h`. |
+| `CONTROL_PLANE_HTTP_IDLE_TIMEOUT` | HTTP keepalive idle time **between requests**, distinct from upload progress; defaults to `2m`. Set it longer than the reverse proxy's pooled-connection idle time. |
+
+Upload capacity is per process, not a cluster-wide quota or reserved tenant share.
+When full, the server returns a retryable 429 with `Retry-After`. Organization
+caps do not guarantee fairness or prevent one actor using multiple organizations.
+Preflight is bounded to 30 seconds. After authorization, descriptor validation
+and storage preflight, transfers release ordinary API concurrency but retain
+upload capacity until transfer work and input cleanup complete. CPU, memory,
+database and network resources are still shared; measure headroom under ordinary
+traffic when choosing capacity.
+
+The server duration bounds one admitted transfer. The CLI deadline includes
+capacity waiting and transfer, so allow retry headroom rather than setting both
+deadlines equal. A shorter caller, ingress or storage limit can terminate an
+operation first. Coordinate upload inactivity limits with ingress timeouts;
+HTTP keepalive is a separate setting. Runtime examples are starting points for
+measurement, not production capacity recommendations.
 
 Execution policy for newly created Environments must also be configured explicitly.
 These values are copied into each Environment when it is created; changing process
@@ -88,8 +117,8 @@ record limits. These ceilings do not reserve capacity for a producer or Environm
 A busy or full queue asks producers to retry; diagnostic pool exhaustion leaves
 the ordinary pool available for lifecycle requests.
 
-Missing, invalid or inconsistent diagnostic settings prevent the control plane or
-dispatcher from starting. Before a rollout, load each service's intended environment
+Missing, invalid or inconsistent diagnostic or deployment-upload settings prevent
+the relevant service from starting. Before a rollout, load each service's intended environment
 and run its binary with `check-config`:
 
 ```sh

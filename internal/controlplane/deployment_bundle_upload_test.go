@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
@@ -42,23 +41,22 @@ func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.
 	if len(store.quarantined) != 1 || store.quarantined[0].MediaType != bundle.MediaType {
 		t.Fatalf("quarantined = %+v", store.quarantined)
 	}
-	if store.presigned[0].Digest != manifest.Objects[0].Digest {
-		t.Fatalf("presigned = %+v", store.presigned)
+	if response.Uploads[0].Digest != manifest.Objects[0].Digest {
+		t.Fatalf("uploads = %+v", response.Uploads)
 	}
 
 	store.quarantine = make(map[string]cas.Descriptor)
 	for _, object := range manifest.Objects {
 		store.quarantine[object.Digest] = cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 	}
-	store.presigned = nil
 	response, err = planDeploymentBundleUploads(
 		t.Context(), store, ownership, store, "0190-owner", orgID, raw, manifest,
 	)
 	if err != nil {
 		t.Fatalf("planDeploymentBundleUploads quarantine replay: %v", err)
 	}
-	if len(response.Uploads) != 0 || len(store.presigned) != 0 {
-		t.Fatalf("quarantine response = %+v, presigned = %+v", response, store.presigned)
+	if len(response.Uploads) != 0 {
+		t.Fatalf("quarantine response = %+v", response)
 	}
 
 	store.quarantine = nil
@@ -66,15 +64,14 @@ func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.
 		ownership.rows[object.Digest] = db.CasObject{OrgID: orgID, Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 		store.objects[object.Digest] = cas.Object{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 	}
-	store.presigned = nil
 	response, err = planDeploymentBundleUploads(
 		t.Context(), store, ownership, store, "0190-owner", orgID, raw, manifest,
 	)
 	if err != nil {
 		t.Fatalf("planDeploymentBundleUploads owned replay: %v", err)
 	}
-	if len(response.Uploads) != 0 || len(store.presigned) != 0 {
-		t.Fatalf("owned response = %+v, presigned = %+v", response, store.presigned)
+	if len(response.Uploads) != 0 {
+		t.Fatalf("owned response = %+v", response)
 	}
 }
 
@@ -124,7 +121,6 @@ type bundleUploadStoreFixture struct {
 	objects     map[string]cas.Object
 	quarantine  map[string]cas.Descriptor
 	quarantined []cas.Descriptor
-	presigned   []cas.Descriptor
 }
 
 func (store *bundleUploadStoreFixture) Stat(_ context.Context, digest string) (cas.Object, error) {
@@ -162,17 +158,8 @@ func (store *bundleUploadStoreFixture) HasExactQuarantine(
 	return true, nil
 }
 
-func (store *bundleUploadStoreFixture) PresignQuarantine(
-	_ context.Context, _ string, expected cas.Descriptor, expires time.Duration,
-) (cas.PresignedUpload, error) {
-	if expires != deploymentBundleUploadExpiry {
-		return cas.PresignedUpload{}, io.ErrUnexpectedEOF
-	}
-	store.presigned = append(store.presigned, expected)
-	return cas.PresignedUpload{
-		Method: "PUT", URL: "https://upload.invalid/" + expected.Digest,
-		Headers: map[string]string{"Content-Type": expected.MediaType},
-	}, nil
+func (store *bundleUploadStoreFixture) StreamQuarantine(ctx context.Context, owner string, expected cas.Descriptor, body io.Reader) error {
+	return store.PutQuarantine(ctx, owner, expected, body)
 }
 
 func (store *bundleUploadStoreFixture) PromoteQuarantine(

@@ -20,6 +20,12 @@ controlplane_assign_public_ip = true
 # Set verified operator emails before their first login for Pool retirement.
 # Diagnostic values below are explicit development examples, not production defaults.
 controlplane_environment = {
+  # Example starting values; measure capacity for the selected task size.
+  DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY = "8"
+  DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+  DEPLOYMENT_UPLOAD_IDLE_TIMEOUT = "2m"
+  DEPLOYMENT_UPLOAD_MAX_DURATION = "2h"
+
   # ADMIN_EMAILS = "operator@example.com"
   DIAGNOSTIC_CHUNK_BYTES = "65536"
   DIAGNOSTIC_SOURCE_BYTES = "4194304"

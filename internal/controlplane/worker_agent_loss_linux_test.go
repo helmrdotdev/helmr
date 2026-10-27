@@ -519,7 +519,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 		if !ok {
 			t.Fatal("upload escaped closed bundle")
 		}
-		if err := apiClient.UploadDeploymentBundleObject(ctx, upload, path, nil); err != nil {
+		if err := apiClient.UploadDeploymentBundleObject(ctx, plan.BundleDigest, client.EnvironmentScopeOptions{}, upload, path, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

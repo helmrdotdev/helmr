@@ -365,8 +365,10 @@ PUT /api/groups/{id}/members/{memberID}
 PUT /api/members/{memberID}/ownership
 PUT /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}/credentials
 PUT /api/projects/{project}/environments/{environment}/api-keys/{id}
+PUT /api/projects/{project}/environments/{environment}/deployment-bundles/{bundleDigest}/objects/{objectDigest}
 PUT /capacity/v1/worker-groups/{workerGroupID}/pools/{workerPoolID}/resource-policy
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pool
+PUT /v1/deployment-bundles/{bundleDigest}/objects/{objectDigest}
 `), "\n")
 	if !slices.IsSorted(want) {
 		t.Fatal("Control Plane route snapshot must stay sorted")

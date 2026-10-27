@@ -56,6 +56,7 @@ override_module {
 }
 
 variables {
+  controlplane_idle_timeout_seconds = 240
   worker_environment = {
     WORKER_LOG_CHUNK_BYTES    = "65536"
     WORKER_LOG_BUFFER_BYTES   = "1048576"
@@ -63,6 +64,11 @@ variables {
   }
   audit_retention_seconds = 2592000
   controlplane_environment = {
+    DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "24"
+    DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "18"
+    DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+    DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
     ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
     ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
     ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
@@ -293,6 +299,11 @@ run "fixed_capacity_plan" {
     worker_count              = 2
     capacity_token_secret_arn = "arn:aws:secretsmanager:us-east-1:111122223333:secret:capacity-token"
     controlplane_environment = {
+      DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "24"
+      DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "18"
+      DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+      DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
       ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
       ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"

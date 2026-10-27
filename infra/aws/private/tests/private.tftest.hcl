@@ -1,4 +1,5 @@
 mock_provider "aws" {
+  mock_resource "aws_vpc_endpoint" { defaults = { id = "vpce-0123456789abcdef0" } }
   mock_resource "aws_cloudwatch_event_rule" { defaults = { arn = "arn:aws:events:us-east-1:000000000000:rule/mock" } }
   mock_data "aws_availability_zones" { defaults = { names = ["us-east-1a", "us-east-1b"] } }
   mock_resource "aws_ecs_cluster" { defaults = { arn = "arn:aws:ecs:us-east-1:111122223333:cluster/test" } }
@@ -40,6 +41,7 @@ mock_provider "http" {
 mock_provider "random" {}
 
 variables {
+  controlplane_idle_timeout_seconds = 240
   worker_environment = {
     WORKER_LOG_CHUNK_BYTES    = "65536"
     WORKER_LOG_BUFFER_BYTES   = "1048576"
@@ -47,6 +49,11 @@ variables {
   }
   audit_retention_seconds = 2592000
   controlplane_environment = {
+    DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "24"
+    DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "18"
+    DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+    DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
     ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
     ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
     ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"

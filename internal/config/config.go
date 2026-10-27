@@ -34,8 +34,10 @@ type ControlPlane struct {
 	SlackTransport                  string
 	OutboundProxyURL                string
 	DiagnosticAdmission             DiagnosticAdmission
+	DeploymentUploadLimits          DeploymentUploadLimits
 	EnvironmentExecutionLimits      EnvironmentExecutionLimits
 	Addr                            string
+	HTTPIdleTimeout                 time.Duration
 	DeploymentMode                  string
 	OrganizationCreationAdminOnly   bool
 	DatabaseURL                     string

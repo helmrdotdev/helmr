@@ -73,8 +73,14 @@ override_resource {
 }
 
 variables {
-  audit_retention_seconds = 2592000
+  quarantine_upload_vpc_endpoint_id = "vpce-0123456789abcdef0"
+  audit_retention_seconds           = 2592000
   controlplane_environment = {
+    DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "8"
+    DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+    DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+    DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
     ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
     ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
     ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
@@ -250,6 +256,11 @@ run "capacity_api_credential_rejects_plaintext_environment" {
   command = plan
   variables {
     controlplane_environment = {
+      DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "8"
+      DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+      DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+      DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
       ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
       ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
@@ -432,6 +443,11 @@ run "managed_computer_root_is_context_bound_kms" {
 run "reject_computer_root_override" {
   command = plan
   variables { controlplane_environment = {
+    DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "8"
+    DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+    DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+    DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
     ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
     ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
     ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
@@ -468,7 +484,12 @@ run "dispatcher_observes_cloudfront_viewer_endpoint" {
 
 run "environment_execution_policy_is_required" {
   command = plan
-  variables { controlplane_environment = {} }
+  variables { controlplane_environment = {
+    DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "8"
+    DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+    DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+    DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+  } }
   expect_failures = [var.controlplane_environment]
 }
 run "environment_execution_policy_reaches_container" {
@@ -572,6 +593,11 @@ run "live_controlplane_requires_diagnostic_limits" {
     create_controlplane_service = true
     dispatcher_desired_count    = 0
     controlplane_environment = {
+      DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "8"
+      DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+      DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+      DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
       ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
       ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
@@ -602,6 +628,11 @@ run "zero_count_services_allow_missing_diagnostic_limits" {
     dispatcher_desired_count    = 0
     dispatcher_environment      = {}
     controlplane_environment = {
+      DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "8"
+      DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+      DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+      DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
       ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
       ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
@@ -620,6 +651,11 @@ run "bootstrap_only_allows_missing_diagnostic_limits" {
     create_controlplane_service = false
     dispatcher_environment      = {}
     controlplane_environment = {
+      DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "8"
+      DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+      DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+      DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
       ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
       ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
       ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
@@ -658,6 +694,11 @@ run "live_controlplane_diagnostic_limits_require_positive_integers" {
     create_controlplane_service = true
     dispatcher_desired_count    = 0
     controlplane_environment = {
+      DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "8"
+      DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+      DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+      DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
       DIAGNOSTIC_CHUNK_BYTES                 = "0"
       DIAGNOSTIC_SOURCE_BYTES                = "4194304"
       DIAGNOSTIC_SOURCE_RECORDS              = "1024"
@@ -699,4 +740,52 @@ run "live_dispatcher_diagnostic_limits_require_positive_integers" {
     }
   }
   expect_failures = [var.dispatcher_environment]
+}
+
+run "quarantine_retention_is_always_bounded" {
+  command = apply
+  assert {
+    condition     = length(aws_s3_bucket_lifecycle_configuration.cas) == 1 && length(aws_s3_bucket_lifecycle_configuration.cas[0].rule) == 2
+    error_message = "Quarantine retention must be present without enabling expiration of published CAS objects."
+  }
+  assert {
+    condition     = alltrue([for rule in aws_s3_bucket_lifecycle_configuration.cas[0].rule : rule.filter[0].prefix == "quarantine/" && rule.status == "Enabled"])
+    error_message = "Mandatory retention must cover only the canonical quarantine prefix."
+  }
+  assert {
+    condition     = one([for rule in aws_s3_bucket_lifecycle_configuration.cas[0].rule : rule if rule.id == "expire-quarantine"]).expiration[0].days == 1 && one([for rule in aws_s3_bucket_lifecycle_configuration.cas[0].rule : rule if rule.id == "expire-quarantine"]).noncurrent_version_expiration[0].noncurrent_days == 1 && one([for rule in aws_s3_bucket_lifecycle_configuration.cas[0].rule : rule if rule.id == "remove-quarantine-delete-markers"]).expiration[0].expired_object_delete_marker
+    error_message = "Quarantine current versions, noncurrent versions and delete markers must all expire."
+  }
+  assert {
+    condition     = length(aws_s3_bucket_policy.quarantine) == 0
+    error_message = "Public installations must not require private storage connectivity."
+  }
+}
+
+run "private_quarantine_rejects_outside_endpoint" {
+  command = apply
+  variables {
+    ingress_mode              = "private"
+    private_client_ipv4_cidrs = ["10.20.0.0/16"]
+    allow_insecure_http       = false
+    app_origin                = "https://helmr.internal"
+    certificate_arn           = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+  }
+  assert {
+    condition     = jsondecode(aws_s3_bucket_policy.quarantine[0].policy).Statement == [{ Sid = "RequirePrivateQuarantineUpload", Effect = "Deny", Principal = "*", Action = "s3:PutObject", Resource = "${aws_s3_bucket.cas.arn}/quarantine/*", Condition = { StringNotEquals = { "aws:SourceVpce" = var.quarantine_upload_vpc_endpoint_id } } }]
+    error_message = "Private quarantine writes must require the Control Plane endpoint without principal bypasses or a whole-CAS deny."
+  }
+}
+
+run "private_quarantine_requires_endpoint" {
+  command = plan
+  variables {
+    ingress_mode                      = "private"
+    private_client_ipv4_cidrs         = ["10.20.0.0/16"]
+    quarantine_upload_vpc_endpoint_id = null
+    allow_insecure_http               = false
+    app_origin                        = "https://helmr.internal"
+    certificate_arn                   = "arn:aws:acm:us-east-1:000000000000:certificate/00000000-0000-0000-0000-000000000000"
+  }
+  expect_failures = [aws_s3_bucket_policy.quarantine]
 }
