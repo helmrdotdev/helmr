@@ -541,7 +541,7 @@ run "audit_purge_rejects_deadline_without_setup_margin" {
   command = plan
   variables {
     audit_maintenance_timeout_seconds = 300
-    audit_purge_max_batches = 60
+    audit_purge_max_batches           = 60
   }
   expect_failures = [aws_ecs_task_definition.audit_maintenance]
 }

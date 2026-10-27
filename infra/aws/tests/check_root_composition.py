@@ -136,7 +136,7 @@ for address, value in resources.items():
         assert value['from_port'] == value['to_port']
 assert resources['aws_route53_resolver_firewall_config.platform']['firewall_fail_open'] == 'DISABLED'
 assert resources['aws_route53_resolver_firewall_rule.block']['action'] == 'BLOCK'
-assert resources['aws_route53_resolver_firewall_domain_list.all']['domains'] == ['*']
+assert resources['aws_route53_resolver_firewall_domain_list.all']['domains'] == ['*.']
 assert resources['aws_route.execution_to_platform']['destination_cidr_block'] == '10.90.0.0/16'
 for address, value in resources.items():
     if value.get('user_data') and 'aws_launch_template.' in address:

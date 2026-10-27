@@ -2,6 +2,10 @@ aws_region = "us-east-1"
 name       = "helmr-private"
 app_hostname = "helmr.example.com"
 company_client_ipv4_cidrs = ["10.92.0.0/16"]
+# Existing company VPCs in this region that need application DNS resolution.
+# This composition owns these zone associations. DNS grants no network ingress;
+# configure company connectivity separately, or use company DNS forwarding.
+additional_application_vpc_ids = []
 slack_transport = "socket"
 region_id  = "us-east-1"
 

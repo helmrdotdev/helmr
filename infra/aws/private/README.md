@@ -27,11 +27,21 @@ host/port, method, status and sizes, never URL paths, query strings or credentia
 The root creates separate platform and execution VPCs, VPC peering, an application
 private DNS zone associated with both, an internal ALB, private tasks/RDS, AWS
 endpoints, a two-replica CONNECT proxy and a fail-closed Resolver firewall.
+Supply existing company VPC IDs in `additional_application_vpc_ids` to associate
+them with the application zone in this region. This composition owns all of the
+zone's inline VPC associations; do not manage additional associations separately.
+Alternatively, configure company DNS forwarding to the VPC resolver.
+DNS association enables name resolution and grants no network ingress.
 Company connectivity, DNS forwarding and ClickHouse routing are not provisioned.
 Use the emitted VPC, private route table, zone and task security group IDs to
 complete those existing network relationships. ClickHouse's owner must allow
 only the emitted task group at `clickhouse_port`. Do not attach extra permissive
 security groups to tasks.
+
+Private services in the execution VPC can consume `execution_private_subnet_ids`
+and `execution_private_route_table_id` directly. These outputs depend on the
+execution network, so service or Worker activation does not require rediscovering
+that network through data sources that depend on the whole composition.
 
 Copy `terraform.tfvars.example`, replace placeholders and explicitly choose all
 Environment limits. Keep `create_controlplane_service=false` and

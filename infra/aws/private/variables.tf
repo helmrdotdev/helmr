@@ -783,11 +783,23 @@ variable "slack_transport" {
 }
 
 variable "app_hostname" {
-  description = "Canonical private DNS hostname covered by certificate_arn. Company DNS must forward this zone to the VPC resolver."
+  description = "Canonical private DNS hostname covered by certificate_arn. Company clients resolve it through additional_application_vpc_ids or DNS forwarding to the VPC resolver."
   type        = string
   validation {
     condition     = can(regex("^[a-z0-9][a-z0-9.-]+\\.[a-z]{2,}$", var.app_hostname))
     error_message = "app_hostname must be a DNS name without scheme, port or path."
+  }
+}
+
+variable "additional_application_vpc_ids" {
+  description = "Existing company VPC IDs to associate with the application private DNS zone in this region. This composition owns the associations; DNS resolution grants no network ingress."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for id in var.additional_application_vpc_ids : can(regex("^vpc-([0-9a-f]{8}|[0-9a-f]{17})$", id))])
+    error_message = "additional_application_vpc_ids must contain normalized VPC IDs."
   }
 }
 

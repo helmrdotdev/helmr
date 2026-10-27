@@ -47,6 +47,10 @@ resource "aws_route53_zone" "application" {
   name = var.app_hostname
   vpc { vpc_id = module.controlplane_network.vpc_id }
   vpc { vpc_id = module.execution_network.vpc_id }
+  dynamic "vpc" {
+    for_each = toset(var.additional_application_vpc_ids)
+    content { vpc_id = vpc.value }
+  }
   tags = local.tags
 }
 resource "aws_route53_record" "application" {
@@ -133,7 +137,7 @@ resource "aws_vpc_security_group_egress_rule" "platform_clickhouse" {
 # resolver policy prevents arbitrary queries from becoming an alternate exit.
 resource "aws_route53_resolver_firewall_domain_list" "allowed" {
   name = "${var.name}-platform-allowed"
-  domains = concat(local.external_domains, [
+  domains = [for domain in concat(local.external_domains, [
     var.app_hostname, aws_service_discovery_private_dns_namespace.proxy.name,
     "*.${aws_service_discovery_private_dns_namespace.proxy.name}",
     module.controlplane.postgres_hostname,
@@ -148,11 +152,11 @@ resource "aws_route53_resolver_firewall_domain_list" "allowed" {
     "${module.controlplane.cas_bucket_name}.s3.${var.aws_region}.${local.dns_suffix}",
     "${trimprefix(var.platform_store_bucket_arn, "arn:${local.partition}:s3:::")}.s3.${var.aws_region}.${local.dns_suffix}",
     "prod-${var.aws_region}-starport-layer-bucket.s3.${var.aws_region}.${local.dns_suffix}"
-  ])
+  ]) : "${trimsuffix(domain, ".")}."]
 }
 resource "aws_route53_resolver_firewall_domain_list" "all" {
   name    = "${var.name}-platform-all"
-  domains = ["*"]
+  domains = ["*."]
 }
 resource "aws_route53_resolver_firewall_rule_group" "platform" {
   name = "${var.name}-platform"

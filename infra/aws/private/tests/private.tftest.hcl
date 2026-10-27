@@ -97,6 +97,18 @@ variables {
 }
 
 
+run "private_network_bootstrap" {
+  command = apply
+  assert {
+    condition     = toset([for association in aws_route53_zone.application.vpc : association.vpc_id]) == toset([output.controlplane_vpc_id, output.execution_vpc_id])
+    error_message = "The application zone must initially associate exactly the Control Plane and execution VPCs."
+  }
+  assert {
+    condition     = length(output.execution_private_subnet_ids) == 2
+    error_message = "Execution bootstrap must expose both private subnets."
+  }
+}
+
 run "private_baseline" {
   command = apply
   variables {
@@ -115,6 +127,49 @@ run "private_baseline" {
     condition     = !aws_ecs_service.proxy[0].network_configuration[0].assign_public_ip && length(local.external_domains) == 6
     error_message = "Proxy must use private addresses and only configured integration destinations."
   }
+  assert {
+    condition = (
+      aws_route53_resolver_firewall_domain_list.all.domains == toset(["*."]) &&
+      alltrue([for domain in aws_route53_resolver_firewall_domain_list.allowed.domains : endswith(domain, ".")])
+    )
+    error_message = "DNS firewall domains must use the fully qualified names returned by the resolver API."
+  }
+  assert {
+    condition     = aws_service_discovery_service.proxy.health_check_custom_config[0].failure_threshold == 1
+    error_message = "Proxy discovery must explicitly enable the custom health checks managed by ECS."
+  }
+  assert {
+    condition = (
+      jsondecode(aws_ecs_task_definition.proxy.container_definitions)[0].linuxParameters.capabilities.add == [] &&
+      jsondecode(aws_ecs_task_definition.proxy.container_definitions)[0].linuxParameters.capabilities.drop == ["ALL"]
+    )
+    error_message = "The proxy must explicitly add no capabilities while dropping every default capability."
+  }
+}
+
+run "company_application_dns" {
+  command = plan
+  variables {
+    additional_application_vpc_ids = ["vpc-0123456789abcdef0", "vpc-12345678"]
+  }
+  assert {
+    condition = toset([for association in aws_route53_zone.application.vpc : association.vpc_id]) == toset(concat(
+      [output.controlplane_vpc_id, output.execution_vpc_id], var.additional_application_vpc_ids
+    ))
+    error_message = "The application zone must associate exactly its two platform VPCs and the supplied company VPCs."
+  }
+}
+
+run "application_dns_rejects_invalid_vpc_id" {
+  command = plan
+  variables { additional_application_vpc_ids = ["subnet-0123456789abcdef0"] }
+  expect_failures = [var.additional_application_vpc_ids]
+}
+
+run "application_dns_rejects_unnormalized_vpc_id" {
+  command = plan
+  variables { additional_application_vpc_ids = [" vpc-0123456789abcdef0 "] }
+  expect_failures = [var.additional_application_vpc_ids]
 }
 
 run "disabled_slack_omits_destinations" {
