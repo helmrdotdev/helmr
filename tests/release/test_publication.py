@@ -87,6 +87,24 @@ def fake_verify(path,signature,version):
     if Path(signature).read_text()!=digest(path):raise ValueError('bad fixture signature')
 
 class Publication(unittest.TestCase):
+    def test_tag_releases_request_generated_notes_while_still_drafts(self):
+        for version, prerelease in (('v0.2.0-rc.1', True), ('v0.2.0', False)):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                selected = selection('tag')
+                selected['version'] = version
+                selected['sourceRef'] = selected['build']['workflowRef'] = 'refs/tags/' + version
+                assets(root, selected)
+                api = Releases()
+                with patch.object(publish, 'publish_images'), patch.object(publish, 'npm_publish'), \
+                     patch.object(publish, 'sign', side_effect=fake_sign):
+                    release = publish.stage(api, selected, root)
+                self.assertTrue(release['generate_release_notes'])
+                self.assertEqual(release['name'], version)
+                self.assertTrue(release['draft'])
+                self.assertEqual(release['prerelease'], prerelease)
+                self.assertEqual(release['make_latest'], 'false')
+
     def test_flat_product_image_publication_and_foreign_destination_rejection(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

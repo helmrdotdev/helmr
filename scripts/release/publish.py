@@ -190,7 +190,8 @@ def stage(api, selection, directory):
         require(index['build']['mode'] != 'tag', 'human tag release already exists')
     if release is None:
         release = api.request('releases', data=dict(tag_name=index['version'], target_commitish=index['sourceCommit'],
-                    name=index['version'], draft=True, prerelease='-' in index['version'], make_latest='false'))
+                    name=index['version'], generate_release_notes=True,
+                    draft=True, prerelease='-' in index['version'], make_latest='false'))
     bind_release(release, selection)
     require(release['draft'], 'release is already complete; use completed-byte admission')
     # Frozen index bytes from an earlier publishing attempt are reused, not re-signed.

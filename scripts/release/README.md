@@ -72,10 +72,37 @@ present original parts, and missing never-published parts can build. Ambiguous o
 expired listed artifacts fail. Published bytes are never silently replaced.
 Start a fresh dispatch for a new source or a new build identity.
 
-Stable `v*` tags use the same release-owned build and integration path, require
-successful main source CI, and publish through GitHub Releases. Generated preview
-tags are excluded. Human-tag runs remain single-attempt; a partially published tag
-requires a new tag rather than a retry with replacement bytes.
+Version `v*` tags, including release candidates, use the same release-owned build
+and integration path, require successful main source CI, and publish through
+GitHub Releases. Generated preview tags are excluded. Human-tag runs remain
+single-attempt; a partially published tag requires a new tag rather than a retry
+with replacement bytes.
+
+The normal release operation is to select an exact main commit with successful
+source CI, optionally validate a main preview, then push an authorized version
+tag such as `v0.2.0-rc.1` or `v0.2.0`. The tag starts the release workflow;
+no dedicated release PR is required. The workflow builds and verifies the
+artifacts, stages publication, verifies downloaded consumers, and completes the
+release only after those gates pass. Publishing a release does not deploy an
+environment.
+
+The tag supplies the released package version. The SDK/proto source versions
+set the development series used in preview names; update them when that series
+changes, not for every RC or patch tag.
+
+GitHub generates the release body from repository history when the publisher
+creates its draft. Release notes are maintained in GitHub Releases; no
+per-version Markdown file or changelog update is required in this repository.
+Generated notes are a change listing, not a substitute for reviewing
+compatibility and installation instructions.
+
+After the release workflow completes successfully, an authorized maintainer can
+edit only the release body in GitHub Releases to add highlights or compatibility
+notes, leaving assets, the tag, and prerelease/latest settings unchanged. Do not
+pre-create a release or manually publish the workflow's draft: the tag workflow
+rejects an existing release, and owns completion after verification.
+The current flow publishes generated notes automatically; it has no manual
+editorial approval step before publication.
 
 Tag publishers export immutable signed readback artifacts identified by publisher
 run, attempt, artifact ID and digest. The unprivileged verifier checks native ZIP
