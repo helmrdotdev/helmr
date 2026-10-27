@@ -102,6 +102,10 @@ restrictions. A stricter Worker may reduce reachability during rollout; its
 business ceiling must be a subset of the control-plane ceiling and its absolute
 denies must cover the control-plane denies. No configuration change terminates
 already established traffic by itself. Routing and CA trust remain operator work.
+Follow the [full-stop maintenance procedure](../../../packages/web/src/content/docs/self-hosting/upgrades.md)
+when replacing Worker generations, including fresh Host readiness and
+claim-fenced primary-pool selection before admitting new work. Creating a new
+generation does not switch an existing Worker Group's primary pool.
 A source security group alone cannot distinguish a translated guest packet from
 its host. Qualification must test host success and guest denial together.
 
