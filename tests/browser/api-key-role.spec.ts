@@ -43,5 +43,5 @@ test("a Session-only API key role selects Agent targets and enforces its access"
   expect(history.ok(), await history.text()).toBeTruthy();
   expect((await history.json()).id).toBe(session.session_id);
   expect((await request.post("/v1/sessions", { headers, data: { agent: "browser-agent", idempotency_key: crypto.randomUUID() } })).status()).toBe(403);
-  expect((await request.get(`/v1/sessions/${otherSession.session_id}`, { headers })).status()).toBe(404);
+  expect((await request.get(`/v1/sessions/${otherSession.session_id}`, { headers })).status()).toBe(403);
 });
