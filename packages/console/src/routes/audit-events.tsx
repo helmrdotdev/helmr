@@ -3,6 +3,7 @@ import { createInfiniteQuery, createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, For, Match, on, Show, Switch, type JSX } from "solid-js";
 import { AuditEventDetails } from "../features/audit/AuditEventDetails";
 import { canReadAudit } from "../features/audit/auditLink";
+import { listAdminWorkerGroups } from "../lib/admin";
 import { listAuditActions, searchAuditEvents, searchAdminAuditEvents, type AuditBefore, type AnyAuditEvent as AuditEvent, type AuditFilter } from "../lib/audit";
 import { actorOf, CATEGORY_LABELS, eventSummary, type ActorKind, type AuditNames } from "../lib/auditText";
 import { hasPermission } from "../lib/auth";
@@ -12,7 +13,7 @@ import { listMembers } from "../lib/members";
 import { listAccessTargets, listGroups, listRoles, memberHref } from "../lib/permissions";
 import { useScope } from "../lib/scope";
 import { DataTable, LoadMore } from "../ui/DataTable";
-import { Field, Segmented, TextInput } from "../ui/Field";
+import { Segmented, TextInput } from "../ui/Field";
 import { Icon, type IconName } from "../ui/Icon";
 import { PageHeader } from "../ui/PageHeader";
 import { DeniedState, EmptyState, isDenied } from "../ui/QueryState";
@@ -86,6 +87,7 @@ export function AuditEvents(props: { adminView?: boolean }) {
   const roles = createQuery(() => ({ queryKey: ["access", "roles"], queryFn: listRoles, enabled: allowed() && can("roles.read"), retry: false }));
   const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: allowed() && can("groups.read"), retry: false }));
   const targets = createQuery(() => ({ queryKey: ["access", "targets", projectID()], queryFn: () => listAccessTargets(projectID()), enabled: allowed() && !!projectID(), retry: false }));
+  const workerGroups = createQuery(() => ({ queryKey: ["admin", "worker-groups", ""], queryFn: () => listAdminWorkerGroups(), enabled: allowed() && !!props.adminView, retry: false }));
 
   // Every name the viewer can already see, by ID.
   const names = createMemo<AuditNames>(() => {
@@ -94,6 +96,7 @@ export function AuditEvents(props: { adminView?: boolean }) {
     for (const r of roles.data?.roles ?? []) map.set(r.id, r.name);
     for (const g of groups.data?.groups ?? []) map.set(g.id, g.name);
     for (const t of targets.data?.targets ?? []) { map.set(t.environment_id, t.name); for (const a of t.agents) map.set(a.id, a.key); }
+    for (const g of workerGroups.data?.worker_groups ?? []) map.set(g.id, g.name);
     return { get: (id) => map.get(id) };
   });
   const memberLink = (userID: string) => {
@@ -174,15 +177,23 @@ export function AuditEvents(props: { adminView?: boolean }) {
 
   return (
     <div class="min-w-0">
-        <PageHeader title={props.adminView ? "Admin audit events" : "Audit events"} subtitle="Who did what, what Helmr allowed or refused, and why. Searches are recorded; conversation content and command output never are." />
+        <PageHeader title="Audit events" subtitle="Who did what, what Helmr allowed or refused, and why. Searches are recorded; conversation content and command output never are." />
         <Show when={allowed()} fallback={<Show when={!me.isPending}><DeniedState message="You need Read audit events permission for an organization or environment." /></Show>}>
-          <Show when={props.adminView}><Field label="Organization ID" hint="Leave blank for platform records that do not belong to an organization. Enter an organization UUID to inspect its full records."><TextInput value={params.organization_id ?? ""} onChange={(event) => setParams({ organization_id: event.currentTarget.value.trim() || undefined, event: undefined, focus: undefined, operation: undefined, at: undefined })} /></Field></Show>
           <div class={ui.toolbar}>
             <div class={ui.toolbarSide}>
               <Select<Range> ariaLabel="Time range" value={(params.range as Range) ?? "24h"} options={RANGES.map(({ value, label }) => ({ value, label }))} onChange={(value) => setParams({ range: value === "24h" ? undefined : value, event: undefined, at: undefined })} />
               <Segmented label="Outcome" value={params.outcome ?? ""} options={OUTCOMES} onChange={(value) => setParams({ outcome: value || undefined, event: undefined, at: undefined })} />
               <Select<string> ariaLabel="Action" value={params.category ?? ""} options={categories()} onChange={(value) => setParams({ category: value || undefined, event: undefined, at: undefined })} />
               <Select<string> ariaLabel="Who" value={whoValue()} options={who()} onChange={(value) => setParams(value.startsWith("kind:") ? { actor_kind: value.slice(5), actor: undefined, event: undefined, at: undefined } : { actor: value || undefined, actor_kind: undefined, event: undefined, at: undefined })} />
+              <Show when={props.adminView}>
+                <TextInput
+                  class="w-72! max-w-full font-mono"
+                  aria-label="Organization ID"
+                  placeholder="Organization ID (blank: platform)"
+                  value={params.organization_id ?? ""}
+                  onChange={(event) => setParams({ organization_id: event.currentTarget.value.trim() || undefined, event: undefined, focus: undefined, operation: undefined, at: undefined })}
+                />
+              </Show>
               <Show when={!props.adminView && environments().length > 1}>
                 <Select<string> ariaLabel="Environment" value={params.environment_id ?? ""} options={environments()} onChange={(value) => setParams({ environment_id: value || undefined, event: undefined, at: undefined })} />
               </Show>

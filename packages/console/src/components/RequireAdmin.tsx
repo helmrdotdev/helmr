@@ -1,7 +1,7 @@
 import { A } from "@solidjs/router";
 import { Show, type JSX } from "solid-js";
 import { useMe } from "../lib/me";
-import { AuthError, AuthWindow } from "../ui/AuthWindow";
+import { AuthMissing, AuthWindow } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 import { RequireAuth } from "./RequireAuth";
 
@@ -15,11 +15,9 @@ export function RequireAdmin(props: { children: JSX.Element }) {
           when={me.data?.admin}
           fallback={
             <AuthWindow>
-              <AuthError
-                title="Administrator access required"
-                message="Your account cannot open the admin area. Sign in with an administrator account."
-                action={<A href="/" class={ui.secondaryButton}>Back to the console</A>}
-              />
+              <AuthMissing title="Administrator access required" action={<A href="/" class={ui.secondaryButton}>Back to the console</A>}>
+                The admin area is for Helmr administrators. Sign in with an administrator account to open it.
+              </AuthMissing>
             </AuthWindow>
           }
         >
