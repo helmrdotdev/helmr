@@ -131,7 +131,8 @@ Panel.
 - **SectionLayout** (`components/`). A section whose pages are sub-tabs: one
   `PageHeader` and `LinkTabs` that stay mounted (a layout route) while the selected
   page renders in the tab panel. It shows the no-scope state for every page.
-- **BrandMark.** The product name, optionally naming the area ("Helmr Admin").
+- **BrandMark.** The product name, optionally naming the area ("Helmr Admin");
+  `bar` sets it at 15px to sit level with an `AppBar`.
 - **ScopeSelector** (`components/`). The tab's scope as two segments,
   `<Project> / <Environment>` (with its dot), each opening its
   own picker: a titled `Popover`, a `CommandList` of the Projects or

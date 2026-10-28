@@ -11,6 +11,7 @@ import {
   type AdminRegion,
   type AdminWorkerGroup,
 } from "../lib/admin";
+import { adminAuditItem } from "../features/audit/auditLink";
 import { errorMessage, loadError } from "../lib/error";
 import { DataTable, RowActions, RowError } from "../ui/DataTable";
 import type { ActionMenuItem } from "../ui/ActionMenu";
@@ -26,7 +27,7 @@ import { Select } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { ui } from "../ui/styles";
 
-const COLUMNS = ["Worker group", "Status", "ID", "Region", "Version", { label: "Actions", srOnly: true }] as const;
+const COLUMNS = ["Worker group", "Status", "ID", "Region", "Claim version", { label: "Actions", srOnly: true }] as const;
 
 type Transition = "pause" | "activate" | "drain" | "disable";
 
@@ -125,6 +126,7 @@ export function AdminWorkerGroups() {
     retry: false,
   }));
   const regionList = createMemo(() => regions.data?.regions ?? []);
+  const regionName = (id: string) => regionList().find((region) => region.id === id)?.display_name;
   const [creating, setCreating] = createSignal(false);
   const [editing, setEditing] = createSignal<AdminWorkerGroup | null>(null);
   const [enrollmentToken, setEnrollmentToken] = createSignal<string | null>(null);
@@ -151,6 +153,7 @@ export function AdminWorkerGroups() {
     if (group.status === "paused") items.push({ label: "Activate", disabled: busy, onSelect: () => transition(group, "activate") });
     if (group.status === "active" || group.status === "paused") items.push({ label: "Drain", disabled: busy, onSelect: () => transition(group, "drain") });
     items.push({ label: "Rotate token", disabled: busy, onSelect: () => rotateToken(group) });
+    items.push(adminAuditItem({ target: group.id, target_kind: "worker_group" }));
     if (group.status === "draining") items.push({ label: "Disable", disabled: busy, tone: "danger", onSelect: () => transition(group, "disable") });
     return items;
   };
@@ -196,8 +199,8 @@ export function AdminWorkerGroups() {
                     <td><strong class="font-medium text-console-text">{group.name}</strong></td>
                     <td><StatusBadge resource="worker_group" status={group.status} /></td>
                     <td><IDText value={group.id} /></td>
-                    <td><code>{group.region_id}</code></td>
-                    <td>{group.claim_version}</td>
+                    <td><Show when={regionName(group.region_id)} fallback={<code>{group.region_id}</code>}>{(name) => <span title={group.region_id}>{name()}</span>}</Show></td>
+                    <td class="font-mono text-chrome">{group.claim_version}</td>
                     <RowActions label={`Actions for ${group.name}`} items={actions(group)} />
                   </tr>
                   <RowError columns={COLUMNS.length} message={rows.error(group.id)} />

@@ -206,10 +206,10 @@ test("organization details mark restricted evidence without presenting it as abs
 test("Admin can select an organization's full audit records", async ({ page }) => {
   const { searches } = await fixture(page, { adminView: true });
   await page.goto("/admin/audit-events");
-  await expect(page.getByRole("heading", { name: "Admin audit events" })).toBeVisible();
-  await expect(page.getByText("Leave blank for platform records that do not belong to an organization. Enter an organization UUID to inspect its full records.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Audit events" })).toBeVisible();
   const organization = "00000000-0000-7000-8000-000000000201";
   const input = page.getByRole("textbox", { name: "Organization ID" });
+  await expect(input).toHaveAttribute("placeholder", "Organization ID (blank: platform)");
   await input.fill(organization);
   await input.press("Tab");
   await expect.poll(() => searches.at(-1)?.get("organization_id")).toBe(organization);
@@ -217,6 +217,20 @@ test("Admin can select an organization's full audit records", async ({ page }) =
   await input.fill("");
   await input.press("Tab");
   await expect.poll(() => searches.at(-1)?.get("organization_id")).toBeNull();
+});
+
+test("Admin audit names worker groups from the platform list", async ({ page }) => {
+  await fixture(page, { adminView: true });
+  const groupID = "00000000-0000-7000-8000-0000000051aa";
+  const event = { ...granted, org_id: null, action: "worker_group.created", target_kind: "worker_group", target_id: groupID, restricted: [], details: {}, authorization: null };
+  await page.route("**/admin/api/v1/worker-groups", (route) => route.fulfill({ json: { worker_groups: [{ id: groupID, region_id: "local", name: "default", description: "", status: "active", claim_version: 1 }] } }));
+  await page.route("**/admin/api/v1/audit-events**", async (route) => {
+    const actions = [{ action: "worker_group.created", target_kind: "worker_group", outcomes: ["succeeded"], category: "platform" }];
+    await route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/actions") ? { actions } : { events: [event] } });
+  });
+  await page.goto(`/admin/audit-events?target=${groupID}&target_kind=worker_group`);
+  await expect(page.getByText("About default")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Show details: .*default/ })).toBeVisible();
 });
 
 test("Admin sees the Helmr administrator grant and its basis", async ({ page }) => {

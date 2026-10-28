@@ -1,13 +1,15 @@
 import { A } from "@solidjs/router";
 import { Show } from "solid-js";
+import { cx } from "./styles";
 
 // The Helmr mark and wordmark, set as on the website: the name in Instrument Sans
-// at 19px, the mark 1.5em wide and 0.35em from it. `area` names a part of the
-// product after it ("Admin"); with `href` it links home.
-export function BrandMark(props: { area?: string; href?: string }) {
+// at 19px, the mark 1.5em wide and 0.35em from it. In the header bar (`bar`) it
+// is set at 15px to sit level with the bar's other controls. `area` names a part
+// of the product after it ("Admin"); with `href` it links home.
+export function BrandMark(props: { area?: string; href?: string; bar?: boolean }) {
   const content = () => (
     <>
-      <span class="inline-flex items-center gap-[0.35em] text-[19px]">
+      <span class={cx("inline-flex items-center gap-[0.35em]", props.bar ? "text-[15px]" : "text-[19px]")}>
         <img src="/brand/helmr-mark.svg" alt="" width="29" height="17" class="h-auto w-[1.5em] shrink-0" />
         <span class="font-console-brand font-[550] leading-6 tracking-[-0.025em] text-console-text">Helmr</span>
       </span>
