@@ -31,6 +31,7 @@ mock_provider "aws" {
 }
 
 variables {
+  worker_environment         = { WORKER_LOG_CHUNK_BYTES = "65536", WORKER_LOG_BUFFER_BYTES = "1048576", WORKER_LOG_BUFFER_RECORDS = "256" }
   computer_devices           = ["/dev/nbd0", "/dev/nbd1"]
   name                       = "helmr-test-worker"
   worker_pool_name           = "execution-v1"
@@ -185,4 +186,16 @@ run "external_boundary_rejects_foreign_partition" {
   command = plan
   variables { permissions_boundary_arn = "arn:aws-us-gov:iam::111122223333:policy/workload" }
   expect_failures = [aws_iam_role.worker]
+}
+
+run "sealed_generation_keeps_authoritative_log_environment" {
+  command = plan
+  variables {
+    worker_environment         = {}
+    sealed_provider_definition = run.default_export.sealed_provider_definition
+  }
+  assert {
+    condition     = aws_launch_template.worker.user_data == var.sealed_provider_definition.user_data_base64
+    error_message = "Retained sealed user-data must remain authoritative when the current additional environment is empty."
+  }
 }

@@ -5,11 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"mime"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -20,8 +18,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-const deploymentBundleUploadExpiry = 15 * time.Minute
 
 type deploymentBundleOwnershipStore interface {
 	GetCasObject(context.Context, db.GetCasObjectParams) (db.CasObject, error)
@@ -152,20 +148,9 @@ func planDeploymentBundleUploads(
 		if hasExactQuarantine {
 			continue
 		}
-		presigned, err := uploads.PresignQuarantine(ctx, owner, descriptor, deploymentBundleUploadExpiry)
-		if err != nil {
-			return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("plan deployment object upload: %w", err)
-		}
 		response.Uploads = append(response.Uploads, api.DeploymentBundleUpload{
-			Digest: descriptor.Digest, Method: presigned.Method, URL: presigned.URL,
-			Headers: cloneStringMap(presigned.Headers),
+			Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
 		})
 	}
 	return response, nil
-}
-
-func cloneStringMap(source map[string]string) map[string]string {
-	cloned := make(map[string]string, len(source))
-	maps.Copy(cloned, source)
-	return cloned
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/networkpolicy"
 	"strings"
+	"time"
 )
 
 func LoadControlPlane() (ControlPlane, error) {
@@ -21,6 +22,10 @@ func LoadControlPlane() (ControlPlane, error) {
 	if err != nil {
 		return ControlPlane{}, err
 	}
+	httpIdleTimeout, err := LoadControlPlaneHTTPIdleTimeout()
+	if err != nil {
+		return ControlPlane{}, err
+	}
 	magicLinkDebugURLs, err := envBool("MAGIC_LINK_DEBUG_URLS", false)
 	if err != nil {
 		return ControlPlane{}, err
@@ -30,6 +35,7 @@ func LoadControlPlane() (ControlPlane, error) {
 		SlackTransport:                  env("SLACK_TRANSPORT", "http"),
 		OutboundProxyURL:                envText("OUTBOUND_PROXY_URL"),
 		Addr:                            env("CONTROL_PLANE_ADDR", ":8080"),
+		HTTPIdleTimeout:                 httpIdleTimeout,
 		DeploymentMode:                  env("DEPLOYMENT_MODE", DeploymentModeSelfHosted),
 		DatabaseURL:                     envText("DATABASE_URL"),
 		ClickHouseURL:                   envText("CLICKHOUSE_URL"),
@@ -146,6 +152,10 @@ func LoadControlPlane() (ControlPlane, error) {
 		return cfg, err
 	}
 
+	cfg.DeploymentUploadLimits, err = LoadDeploymentUploadLimits()
+	if err != nil {
+		return cfg, err
+	}
 	cfg.DiagnosticAdmission, err = LoadDiagnosticAdmission()
 	if err != nil {
 		return cfg, err
@@ -245,4 +255,17 @@ func validateControlPlaneEmailConfig(cfg *ControlPlane) error {
 		return errors.New("EMAIL_PROVIDER must be none, log, smtp, or resend")
 	}
 	return nil
+}
+
+// HTTP keepalive is distinct from body progress and admitted-upload lifetime.
+// Reverse proxies should close idle pooled connections before their backend.
+func LoadControlPlaneHTTPIdleTimeout() (time.Duration, error) {
+	duration, err := envDuration("CONTROL_PLANE_HTTP_IDLE_TIMEOUT", 2*time.Minute)
+	if err != nil {
+		return 0, err
+	}
+	if duration < time.Millisecond {
+		return 0, errors.New("CONTROL_PLANE_HTTP_IDLE_TIMEOUT must be at least 1ms")
+	}
+	return duration, nil
 }

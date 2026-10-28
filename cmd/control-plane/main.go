@@ -253,6 +253,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		Allocator:                      allocator,
 		DiagnosticDB:                   diagnosticPool,
 		DiagnosticBounds:               cfg.DiagnosticAdmission.Bounds,
+		DeploymentUploadLimits:         controlplane.DeploymentUploadLimits(cfg.DeploymentUploadLimits),
 		EnvironmentExecutionLimits:     org.ExecutionLimits(cfg.EnvironmentExecutionLimits),
 		ComputerKeys:                   computerKeys,
 		Log:                            log,
@@ -288,7 +289,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		IdleTimeout:       cfg.HTTPIdleTimeout,
 	}
 	casReclaimer, err := computer.NewCASReclaimer(pool, casStore, log)
 	if err != nil {

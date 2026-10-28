@@ -85,6 +85,14 @@ for filename in sys.argv[1:3]:
         if run == 'fixed_capacity_plan':
             tasks = {r['name']: json.loads(r['change']['after']['container_definitions'])
                      for r in resources if r['type'] == 'aws_ecs_task_definition'}
+            upload_env = {item['name']: item['value'] for item in tasks['controlplane'][0]['environment']}
+            assert upload_env['DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY'] == '24', filename
+            assert upload_env['DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY'] == '18', filename
+            assert upload_env['DEPLOYMENT_UPLOAD_IDLE_TIMEOUT'] == '2m', filename
+            assert upload_env['DEPLOYMENT_UPLOAD_MAX_DURATION'] == '2h', filename
+            assert upload_env['CONTROL_PLANE_HTTP_IDLE_TIMEOUT'] == '270s', filename
+            alb = next(r['change']['after'] for r in resources if r['type'] == 'aws_lb')
+            assert alb['idle_timeout'] == 240, filename
             expected = plans[run]['variables']['capacity_token_secret_arn']['value']
             assert any(env['name'] == 'ADMIN_EMAILS' and env['value'] == 'operator@example.test'
                        for container in tasks['controlplane'] for env in container.get('environment', [])), filename
@@ -125,6 +133,13 @@ for service in ('controlplane', 'dispatcher'):
     assert env['APP_ORIGIN'] == 'https://helmr.example.test'
     assert env['SLACK_TRANSPORT'] == 'socket'
     assert env['OUTBOUND_PROXY_URL'].startswith('http://proxy.')
+    if service == 'controlplane':
+        assert env['DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY'] == '24'
+        assert env['DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY'] == '18'
+        assert env['DEPLOYMENT_UPLOAD_IDLE_TIMEOUT'] == '2m'
+        assert env['DEPLOYMENT_UPLOAD_MAX_DURATION'] == '2h'
+        assert env['CONTROL_PLANE_HTTP_IDLE_TIMEOUT'] == '270s'
+        assert resources['module.controlplane.aws_lb.controlplane']['idle_timeout'] == 240
     if service == 'dispatcher':
         assert env['CONTROL_PLANE_URL'] == env['APP_ORIGIN']
     network = resources[f'module.controlplane.aws_ecs_service.{service}[0]']['network_configuration'][0]
@@ -136,7 +151,7 @@ for address, value in resources.items():
         assert value['from_port'] == value['to_port']
 assert resources['aws_route53_resolver_firewall_config.platform']['firewall_fail_open'] == 'DISABLED'
 assert resources['aws_route53_resolver_firewall_rule.block']['action'] == 'BLOCK'
-assert resources['aws_route53_resolver_firewall_domain_list.all']['domains'] == ['*']
+assert resources['aws_route53_resolver_firewall_domain_list.all']['domains'] == ['*.']
 assert resources['aws_route.execution_to_platform']['destination_cidr_block'] == '10.90.0.0/16'
 for address, value in resources.items():
     if value.get('user_data') and 'aws_launch_template.' in address:
@@ -144,3 +159,64 @@ for address, value in resources.items():
         for cidr in ('10.90.0.0/16', '10.91.0.0/16', '10.92.0.0/16'):
             assert cidr in script, (address, cidr)
 print('ok - private root: internal ingress, explicit task egress, DNS restriction and guest management denies')
+
+# Inspect planned nested task definitions to prove each preserved root forwards
+# caller-selected diagnostics, including independently chosen CP/exporter values.
+admission_keys = {
+    'DIAGNOSTIC_CHUNK_BYTES', 'DIAGNOSTIC_SOURCE_BYTES', 'DIAGNOSTIC_SOURCE_RECORDS',
+    'DIAGNOSTIC_ENVIRONMENT_BYTES', 'DIAGNOSTIC_ENVIRONMENT_RECORDS',
+    'DIAGNOSTIC_QUEUE_BYTES', 'DIAGNOSTIC_QUEUE_RECORDS', 'DIAGNOSTIC_DB_MAX_CONNECTIONS',
+}
+exporter_keys = admission_keys | {'DIAGNOSTIC_EXPORT_BATCH_BYTES', 'DIAGNOSTIC_EXPORT_BATCH_RECORDS'}
+for filename in (sys.argv[1], sys.argv[2], sys.argv[4]):
+    plans = [event['test_plan'] for line in Path(filename).read_text().splitlines()
+             if (event := json.loads(line)).get('type') == 'test_plan'
+             and event['@testrun'] == 'diagnostic_environment']
+    assert len(plans) == 1, (filename, 'one diagnostic plan is required')
+    plan = plans[0]
+    tasks = {resource['name']: json.loads(resource['change']['after']['container_definitions'])[0]
+             for resource in plan['resource_changes'] if resource['type'] == 'aws_ecs_task_definition'}
+    for process, keys in (('controlplane', admission_keys), ('dispatcher', exporter_keys)):
+        expected = plan['variables'][f'{process}_environment']['value']
+        assert keys <= expected.keys(), (filename, process, 'explicit caller limits missing')
+        actual = {item['name']: item['value'] for item in tasks[process]['environment']}
+        assert all(actual.get(key) == expected[key] for key in keys), (filename, process, actual, expected)
+    print(f'ok - {filename}: actual CP/Dispatcher containers receive all caller-selected diagnostic limits')
+
+for filename in (sys.argv[1], sys.argv[2], sys.argv[4]):
+    plans = [event['test_plan'] for line in Path(filename).read_text().splitlines()
+             if (event := json.loads(line)).get('type') == 'test_plan'
+             and event['@testrun'] == 'worker_log_environment_rotates_and_retains_generation']
+    assert len(plans) == 1, (filename, 'one Worker environment rotation plan is required')
+    templates = [resource for resource in plans[0]['resource_changes'] if resource['type'] == 'aws_launch_template']
+    assert len(templates) == 2, (filename, templates)
+    scripts = [base64.b64decode(resource['change']['after']['user_data']).decode() for resource in templates]
+    for key, value in (('WORKER_LOG_CHUNK_BYTES', '65536'), ('WORKER_LOG_BUFFER_RECORDS', '256')):
+        assert all(f'{key}={value}' in script for script in scripts), (filename, key)
+    for value in ('1048576', '2097152'):
+        assert sum(f'WORKER_LOG_BUFFER_BYTES={value}' in script for script in scripts) == 1, (filename, value)
+    retained = [resource for resource in templates if resource['change']['before'] is not None]
+    assert len(retained) == 1 and retained[0]['change']['actions'] == ['no-op'], (filename, retained)
+    print(f'ok - {filename}: changed log environment reaches only the new Worker generation; retained user-data is unchanged')
+
+# Tagged quarantine/immutable publication and exact version reclamation must pass
+# both task IAM and the actual private VPC gateway endpoint policy.
+cas_bucket = resources['module.controlplane.aws_s3_bucket.cas']['arn']
+private_inputs = next(event['test_plan']['variables'] for event in private_events
+                      if event.get('type') == 'test_plan' and event['@testrun'] == 'diagnostic_environment')
+endpoint = json.loads(resources['module.controlplane_network.aws_vpc_endpoint.s3[0]']['policy'])
+task_policy = json.loads(resources['module.controlplane.aws_iam_role_policy.controlplane_task']['policy'])
+required = {'s3:PutObject', 's3:PutObjectTagging', 's3:GetObject', 's3:ListBucketVersions', 's3:DeleteObjectVersion'}
+endpoint_cas = [statement for statement in endpoint['Statement'] if cas_bucket in statement['Resource']]
+task_cas = [statement for statement in task_policy['Statement'] if cas_bucket in statement['Resource']]
+assert len(endpoint_cas) == len(task_cas) == 1
+assert required <= set(task_cas[0]['Action']), ('Control Plane CAS role lacks required publication/reclamation actions', required - set(task_cas[0]['Action']))
+assert required <= set(endpoint_cas[0]['Action']), ('Private CAS endpoint lacks required publication/reclamation actions', required - set(endpoint_cas[0]['Action']))
+assert set(task_cas[0]['Action']) <= set(endpoint_cas[0]['Action']), ('Private CAS endpoint lacks task CAS actions', set(task_cas[0]['Action']) - set(endpoint_cas[0]['Action']))
+assert set(endpoint_cas[0]['Resource']) == {cas_bucket, f'{cas_bucket}/*',
+    private_inputs['platform_store_bucket_arn']['value'],
+    private_inputs['platform_store_bucket_arn']['value'] + '/*'}
+layer_statements = [statement for statement in endpoint['Statement'] if statement not in endpoint_cas]
+assert len(layer_statements) == 1 and layer_statements[0]['Action'] == ['s3:GetObject']
+assert layer_statements[0]['Resource'] == [f"arn:{cas_bucket.split(':')[1]}:s3:::prod-{private_inputs['aws_region']['value']}-starport-layer-bucket/*"]
+print('ok - private S3 endpoint permits tagged CAS publication and exact version reclamation while ECR layers remain read-only')

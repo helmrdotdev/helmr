@@ -28,12 +28,20 @@ the real-network acceptance procedure. Its local tests check source composition
 and proxy/Socket behavior. Qualify the exact deployment in your own network before
 using it for customer work.
 
-This is private application ingress, not an air gap. Slack still sends inputs
-through the outbound connection. Existing short-lived presigned S3 uploads are
-client-direct and may use public S3 endpoints. Guest/template/model/build egress
-is outside this reference's guarantee. Keep the existing guest management-network
-denies in place before adding private routes, and verify host access and guest
-denial together.
+Bundle uploads use the private Helmr origin, with current permissions and content
+checks on each upload. The Control Plane writes through its S3 gateway endpoint;
+the bucket denies quarantine writes from other paths. Clients need no separate
+S3 route. Configure and measure the common [upload capacity and timeouts](/docs/reference/env#control-plane) for the selected server size and ingress. Published object and checkpoint access retain their platform storage
+policies; the quarantine rule does not restrict the entire bucket.
+
+Guest downloads follow the declared preparation/runtime network policy and the
+installation's mandatory restrictions. Verify allowed business access, host access
+and guest management-network denial during preparation, execution, wake and host
+replacement. Worker checkpoint publication and restore use platform paths.
+Image pulls and host/CLI builds have their own operator-controlled paths.
+
+This is not an air gap. Slack sends inputs through its outbound connection, and
+allowed integrations can carry application data.
 
 External capacity automation must reach the authenticated private capacity API.
 Drain and wait for the exact current `termination_ready` claim before terminating

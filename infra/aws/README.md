@@ -36,6 +36,13 @@ are not the operator path for consuming already published bundles. The Control P
 Product release artifact. The Control Plane and bundle-builder GHCR packages
 are public and should be consumed by immutable digest.
 
+Before applying service settings, run `control-plane check-config` with the exact
+image and intended service environment. Terraform checks that upload durations are
+present; the Product configuration loader owns Go duration syntax, positive
+durations and the idle/maximum relationship. Keep the ALB idle timeout above the
+configured upload idle timeout. A Terraform plan alone does not validate these
+duration values or ingress compatibility.
+
 Before enabling or updating Control Plane services, run the database migration task
 for the exact image. Keep `/healthz` for process health and use `/readyz` for
 traffic readiness after the schema is current.
@@ -115,3 +122,75 @@ allocation. The default is false; set both flags false for final allocation
 retirement. This switch does not stop services, drain work or make a private
 workload usable without outbound connectivity. Coordinate workload closure and
 restoration before changing NAT lifetime.
+
+## Diagnostic process limits
+
+All three self-host roots forward `controlplane_environment` and
+`dispatcher_environment` as non-secret maps to the actual ECS containers.
+Both processes require explicit diagnostic admission limits:
+`DIAGNOSTIC_CHUNK_BYTES`, `DIAGNOSTIC_SOURCE_BYTES`, `DIAGNOSTIC_SOURCE_RECORDS`,
+`DIAGNOSTIC_ENVIRONMENT_BYTES`, `DIAGNOSTIC_ENVIRONMENT_RECORDS`,
+`DIAGNOSTIC_QUEUE_BYTES`, `DIAGNOSTIC_QUEUE_RECORDS`, and
+`DIAGNOSTIC_DB_MAX_CONNECTIONS`. Dispatcher additionally requires
+`DIAGNOSTIC_EXPORT_BATCH_BYTES` and `DIAGNOSTIC_EXPORT_BATCH_RECORDS`.
+
+Each root's `terraform.tfvars.example` lists explicit values from
+[`dev/runtime/config.example.json`](../../dev/runtime/config.example.json).
+These are development examples, not production defaults. Choose values for the
+actual workload, retained queue/storage budget and database connection budget;
+keep chunk/source/environment/queue bounds ordered, and ensure export batches
+fit at least one chunk. The roots infer no diagnostic values and provide no
+fallback. Missing or non-positive limits fail planning before a nonzero service starts. Bootstrap-only and zero-count services can remain inert without diagnostic limits. The process validates relationships between configured bounds at startup.
+Do not place secrets in either environment map; use the module's explicit secret
+inputs for managed credentials.
+
+Worker startup also requires explicit `WORKER_LOG_CHUNK_BYTES`,
+`WORKER_LOG_BUFFER_BYTES` and `WORKER_LOG_BUFFER_RECORDS` in the root's
+`worker_environment` map. Each root example uses the development fixture's
+65536-byte chunks, 1048576-byte buffer and 256-record buffer; choose actual values
+for the Worker budget. This map belongs to immutable Pool generation inputs.
+Changing it creates a new Pool identity. Retained generations keep their own map
+and exact sealed user-data; the current map is never applied globally to them.
+
+New Worker launch definitions require explicit positive log limits even when the
+ASG starts at zero capacity; the launch definition must be ready for activation.
+`create_worker = false` roots remain inert without instantiating that module.
+Retained sealed user-data remains authoritative. Shared modules also reject guest
+network CIDRs that are not ordered by numeric IPv4 address and prefix length,
+matching the runtime configuration contract.
+
+
+## Deployment upload capacity
+
+Quickstart, standard and private use the same authenticated Control Plane upload
+implementation. Set `DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY`,
+`DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY`, `DEPLOYMENT_UPLOAD_IDLE_TIMEOUT` and
+`DEPLOYMENT_UPLOAD_MAX_DURATION` in `controlplane_environment`. The application
+requires positive capacities, organization capacity no greater than process
+capacity, and positive finite durations with idle no greater than maximum.
+The example values are development starting points. Measure CPU, peak memory,
+transfer throughput and ordinary API/containment responsiveness at the chosen
+ECS task size before selecting operating values. Include parallel deployments,
+maximum objects/manifests, slow transfers, storage stalls and cancellation.
+
+Both capacities are per process. Set organization capacity equal to process
+capacity when one organization may use all available slots. Lower values limit
+occupancy in shared installations; they do not provide reserved capacity,
+starvation-freedom or a distributed quota. Saturation returns 429 for the client
+to retry. Established transfers release ordinary API admission slots, while
+shared resource pressure remains a deployment concern.
+
+`controlplane_idle_timeout_seconds` configures the ALB connection idle timer
+(default 180 seconds, range 1–4000). Set it above the supported upload inactivity
+interval. The module configures backend `CONTROL_PLANE_HTTP_IDLE_TIMEOUT` to
+30 seconds longer than the ALB timer, avoiding reuse of already-expired backend
+connections. Backend keepalive between requests is distinct from body inactivity.
+Other ingress layers, including CloudFront origin response/completion timeouts,
+can impose tighter limits and require their own end-to-end qualification.
+CloudFront's response timeout is not the upload's total-duration setting.
+
+The CLI defaults to a three-hour deadline per object, including 429 waiting,
+and a two-minute no-progress timeout. Operators can supply compatible client
+settings through `HELMR_UPLOAD_TIMEOUT`/`HELMR_UPLOAD_IDLE_TIMEOUT` or the deploy
+flags `--upload-timeout`/`--upload-idle-timeout`. Leave client retry headroom beyond
+the server's admitted-transfer duration; there is no automatic policy discovery.

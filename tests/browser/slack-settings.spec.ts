@@ -94,6 +94,51 @@ test("Agent Slack setup walks the steps on the page and authorizes only its exac
   ]);
 });
 
+test("Slack polling preserves credential drafts only for the same connection", async ({ page }) => {
+  await page.clock.install();
+  let generation = "A", reads = 0;
+  const writes: { path: string; body: unknown }[] = [];
+  await page.route(`**${endpoint}**`, async route => {
+    if (route.request().method() !== "GET") {
+      writes.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() });
+      await route.fulfill({ status: 204 }); return;
+    }
+    reads++;
+    await route.fulfill({ json: { transport: "socket", connection: {
+      ...connection("setup_incomplete", false), transport: "socket", id: `connection-${generation}`,
+      registration_id: `registration-${generation}`,
+      socket: { status: reads === 1 ? "connecting" : "connected", reason: null, last_connected_at: now, last_received_at: `${reads}` },
+    }, manifest: {}, create_app_url: "https://api.slack.com/apps?new_app=1" } });
+  });
+  const panel = await openAgent(page);
+  await panel.getByRole("button", { name: "I created the app" }).click();
+  await panel.getByLabel("Client ID", { exact: true }).fill("draft-client-A");
+  await panel.getByLabel("Client secret", { exact: true }).fill("synthetic-secret-A");
+  await panel.getByLabel("App-level token", { exact: true }).fill("synthetic-token-A");
+  const firstReads = reads;
+  await page.clock.fastForward(15_001);
+  await expect.poll(() => reads).toBeGreaterThan(firstReads);
+  await expect(panel).toContainText("Slack setup 2 of 4");
+  await expect(panel.getByLabel("Client ID", { exact: true })).toHaveValue("draft-client-A");
+  await expect(panel.getByLabel("Client secret", { exact: true })).toHaveValue("synthetic-secret-A");
+  await expect(panel.getByLabel("App-level token", { exact: true })).toHaveValue("synthetic-token-A");
+  await expect(panel.getByLabel("App-level token", { exact: true })).toBeFocused();
+  generation = "B";
+  const beforeReplacement = reads;
+  await page.clock.fastForward(15_001);
+  await expect.poll(() => reads).toBeGreaterThan(beforeReplacement);
+  await expect(panel).toContainText("Slack setup 1 of 4");
+  await panel.getByRole("button", { name: "I created the app" }).click();
+  await expect(panel.getByLabel("Client ID", { exact: true })).toHaveValue("");
+  await expect(panel.getByLabel("Client secret", { exact: true })).toHaveValue("");
+  await expect(panel.getByLabel("App-level token", { exact: true })).toHaveValue("");
+  await panel.getByLabel("Client ID", { exact: true }).fill("client-B");
+  await panel.getByLabel("Client secret", { exact: true }).fill("synthetic-secret-B");
+  await panel.getByLabel("App-level token", { exact: true }).fill("synthetic-token-B");
+  await panel.getByRole("button", { name: "Save app credentials" }).click();
+  await expect.poll(() => writes).toEqual([{ path: `${endpoint}/connection-B/credentials`, body: { client_id: "client-B", client_secret: "synthetic-secret-B", app_token: "synthetic-token-B" } }]);
+});
+
 test("Agent Slack setup can be discarded only after confirming", async ({ page }) => {
   let current: ReturnType<typeof connection> | null = connection("setup_incomplete");
   const deletions: string[] = [];

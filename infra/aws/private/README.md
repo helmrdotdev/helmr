@@ -27,11 +27,21 @@ host/port, method, status and sizes, never URL paths, query strings or credentia
 The root creates separate platform and execution VPCs, VPC peering, an application
 private DNS zone associated with both, an internal ALB, private tasks/RDS, AWS
 endpoints, a two-replica CONNECT proxy and a fail-closed Resolver firewall.
+Supply existing company VPC IDs in `additional_application_vpc_ids` to associate
+them with the application zone in this region. This composition owns all of the
+zone's inline VPC associations; do not manage additional associations separately.
+Alternatively, configure company DNS forwarding to the VPC resolver.
+DNS association enables name resolution and grants no network ingress.
 Company connectivity, DNS forwarding and ClickHouse routing are not provisioned.
 Use the emitted VPC, private route table, zone and task security group IDs to
 complete those existing network relationships. ClickHouse's owner must allow
 only the emitted task group at `clickhouse_port`. Do not attach extra permissive
 security groups to tasks.
+
+Private services in the execution VPC can consume `execution_private_subnet_ids`
+and `execution_private_route_table_id` directly. These outputs depend on the
+execution network, so service or Worker activation does not require rediscovering
+that network through data sources that depend on the whole composition.
 
 Copy `terraform.tfvars.example`, replace placeholders and explicitly choose all
 Environment limits. Keep `create_controlplane_service=false` and
@@ -92,15 +102,34 @@ restrictions. A stricter Worker may reduce reachability during rollout; its
 business ceiling must be a subset of the control-plane ceiling and its absolute
 denies must cover the control-plane denies. No configuration change terminates
 already established traffic by itself. Routing and CA trust remain operator work.
+Follow the [full-stop maintenance procedure](../../../packages/web/src/content/docs/self-hosting/upgrades.md)
+when replacing Worker generations, including fresh Host readiness and
+claim-fenced primary-pool selection before admitting new work. Creating a new
+generation does not switch an existing Worker Group's primary pool.
 A source security group alone cannot distinguish a translated guest packet from
 its host. Qualification must test host success and guest denial together.
 
-This reference does not qualify guest/template/model/build egress containment.
-It does not provide an air gap: Slack messages arrive through an established
-outbound socket, and users' browsers contact Slack/GitHub. Client-direct
-short-lived presigned S3 uploads remain an explicit service-endpoint exception;
-a valid upload URL may work over the public S3 endpoint. Private application
-ingress does not promise private-only object transfers.
+Authored bundles upload through the private Helmr HTTPS origin. The Control Plane
+checks current permissions and admitted object descriptors, then streams bytes to
+S3 through its gateway endpoint. A bucket policy denies `PutObject` to
+`quarantine/*` from every other path, including otherwise valid signed requests.
+There is no direct-client S3 upload or automatic transport fallback. Quarantine
+has a one-day current/noncurrent version lifecycle; published CAS and checkpoints
+are outside that prefix. S3 expiration is asynchronous, so it is not an exact
+24-hour deletion guarantee.
+
+Worker checkpoint publication and restore use the execution VPC's platform storage
+path. Guest downloads follow `prepareNetwork` or `network`, intersected with the
+installation denies and business-network ceiling described above. Qualify those
+boundaries during preparation, execution, wake and replacement with allowed
+business and host-reachability controls. Normal private storage routing does not
+prove that outside requests to published CAS/checkpoints are denied: this bucket
+restriction covers quarantine writes only. Image pulls and host/CLI builds have
+separate operator-controlled network paths.
+
+This deployment does not provide an air gap: Slack messages arrive through an
+established outbound socket, and users' browsers contact Slack/GitHub. Allowed
+integrations can carry application data.
 
 An external scaler must reach the private capacity API with its own credential.
 Use demand for scale-out and drain plus the exact current `termination_ready`
@@ -119,8 +148,9 @@ Before declaring a deployment ready, preserve exact image/source/configuration
 identities and verify:
 
 1. From a company-connected client, HTTPS/CLI/Console/streaming work at the private
-   origin. From an external client, application listeners are unreachable. Check
-   the S3 upload exception separately.
+   origin. From an external client, application listeners are unreachable.
+   Verify deployment uploads use the authenticated private origin and direct
+   quarantine writes from outside the approved S3 endpoint are denied.
 2. GitHub login, Slack app installation and user linking return through the private
    browser callback. No public callback relay or temporary public listener exists.
 3. Real Slack messages, choices, modal opening/submission and duplicate delivery
@@ -139,3 +169,13 @@ identities and verify:
    record any scheduled KMS/secret deletion windows or retained artifacts.
 
 Local mock and Docker tests are not a substitute for this real-network evidence.
+
+Diagnostic ingestion and export limits must be explicitly supplied through
+`controlplane_environment` and `dispatcher_environment`; see the shared
+[diagnostic process limits](../README.md#diagnostic-process-limits). The example
+values are development starting points and require operator review.
+
+
+Upload capacities and deadlines are explicit common Product settings; see
+[deployment upload capacity](../README.md#deployment-upload-capacity) before
+choosing values for the selected task size and ingress.

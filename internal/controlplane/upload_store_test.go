@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"testing"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
@@ -35,8 +34,8 @@ func (testUploadStore) HasExactQuarantine(context.Context, string, cas.Descripto
 	return false, errTestQuarantine
 }
 
-func (testUploadStore) PresignQuarantine(context.Context, string, cas.Descriptor, time.Duration) (cas.PresignedUpload, error) {
-	return cas.PresignedUpload{}, errTestQuarantine
+func (testUploadStore) StreamQuarantine(context.Context, string, cas.Descriptor, io.Reader) error {
+	return errTestQuarantine
 }
 
 func (testUploadStore) PromoteQuarantine(context.Context, string, cas.Descriptor) (cas.Object, error) {

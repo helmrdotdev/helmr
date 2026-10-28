@@ -55,7 +55,12 @@ put_secret_arn() {
       return 1
       ;;
   esac
-  aws secretsmanager put-secret-value --secret-id "$arn" --secret-string "$value" >/dev/null
+  (
+    request_file="$(mktemp)"
+    trap 'rm -f "$request_file"' EXIT
+    printf '%s' "$value" | jq -aRs --arg arn "$arn" '{SecretId: $arn, SecretString: .}' >"$request_file"
+    aws secretsmanager put-secret-value --cli-input-json "file://$request_file" >/dev/null
+  )
   printf 'populated %s\n' "$label" >&2
 }
 

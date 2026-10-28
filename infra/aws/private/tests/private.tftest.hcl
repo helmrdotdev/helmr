@@ -1,4 +1,5 @@
 mock_provider "aws" {
+  mock_resource "aws_vpc_endpoint" { defaults = { id = "vpce-0123456789abcdef0" } }
   mock_resource "aws_cloudwatch_event_rule" { defaults = { arn = "arn:aws:events:us-east-1:000000000000:rule/mock" } }
   mock_data "aws_availability_zones" { defaults = { names = ["us-east-1a", "us-east-1b"] } }
   mock_resource "aws_ecs_cluster" { defaults = { arn = "arn:aws:ecs:us-east-1:111122223333:cluster/test" } }
@@ -40,8 +41,19 @@ mock_provider "http" {
 mock_provider "random" {}
 
 variables {
+  controlplane_idle_timeout_seconds = 240
+  worker_environment = {
+    WORKER_LOG_CHUNK_BYTES    = "65536"
+    WORKER_LOG_BUFFER_BYTES   = "1048576"
+    WORKER_LOG_BUFFER_RECORDS = "256"
+  }
   audit_retention_seconds = 2592000
   controlplane_environment = {
+    DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY      = "24"
+    DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "18"
+    DEPLOYMENT_UPLOAD_IDLE_TIMEOUT             = "2m"
+    DEPLOYMENT_UPLOAD_MAX_DURATION             = "2h"
+
     ENVIRONMENT_MAX_RESIDENT_COMPUTERS     = "10"
     ENVIRONMENT_MAX_CPU_MILLIS             = "16000"
     ENVIRONMENT_MAX_MEMORY_BYTES           = "68719476736"
@@ -51,6 +63,26 @@ variables {
     ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
     ENVIRONMENT_ADMISSION_BURST            = "20"
     ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
+    DIAGNOSTIC_CHUNK_BYTES                 = "32768"
+    DIAGNOSTIC_SOURCE_BYTES                = "4194304"
+    DIAGNOSTIC_SOURCE_RECORDS              = "1024"
+    DIAGNOSTIC_ENVIRONMENT_BYTES           = "16777216"
+    DIAGNOSTIC_ENVIRONMENT_RECORDS         = "4096"
+    DIAGNOSTIC_QUEUE_BYTES                 = "67108864"
+    DIAGNOSTIC_QUEUE_RECORDS               = "16384"
+    DIAGNOSTIC_DB_MAX_CONNECTIONS          = "2"
+  }
+  dispatcher_environment = {
+    DIAGNOSTIC_EXPORT_BATCH_BYTES   = "8388608"
+    DIAGNOSTIC_EXPORT_BATCH_RECORDS = "1024"
+    DIAGNOSTIC_CHUNK_BYTES          = "65536"
+    DIAGNOSTIC_SOURCE_BYTES         = "4194304"
+    DIAGNOSTIC_SOURCE_RECORDS       = "1024"
+    DIAGNOSTIC_ENVIRONMENT_BYTES    = "16777216"
+    DIAGNOSTIC_ENVIRONMENT_RECORDS  = "4096"
+    DIAGNOSTIC_QUEUE_BYTES          = "67108864"
+    DIAGNOSTIC_QUEUE_RECORDS        = "16384"
+    DIAGNOSTIC_DB_MAX_CONNECTIONS   = "2"
   }
   worker_computer_devices                  = ["/dev/nbd0", "/dev/nbd1"]
   aws_region                               = "us-east-1"
@@ -97,6 +129,18 @@ variables {
 }
 
 
+run "private_network_bootstrap" {
+  command = apply
+  assert {
+    condition     = toset([for association in aws_route53_zone.application.vpc : association.vpc_id]) == toset([output.controlplane_vpc_id, output.execution_vpc_id])
+    error_message = "The application zone must initially associate exactly the Control Plane and execution VPCs."
+  }
+  assert {
+    condition     = length(output.execution_private_subnet_ids) == 2
+    error_message = "Execution bootstrap must expose both private subnets."
+  }
+}
+
 run "private_baseline" {
   command = apply
   variables {
@@ -115,6 +159,49 @@ run "private_baseline" {
     condition     = !aws_ecs_service.proxy[0].network_configuration[0].assign_public_ip && length(local.external_domains) == 6
     error_message = "Proxy must use private addresses and only configured integration destinations."
   }
+  assert {
+    condition = (
+      aws_route53_resolver_firewall_domain_list.all.domains == toset(["*."]) &&
+      alltrue([for domain in aws_route53_resolver_firewall_domain_list.allowed.domains : endswith(domain, ".")])
+    )
+    error_message = "DNS firewall domains must use the fully qualified names returned by the resolver API."
+  }
+  assert {
+    condition     = aws_service_discovery_service.proxy.health_check_custom_config[0].failure_threshold == 1
+    error_message = "Proxy discovery must explicitly enable the custom health checks managed by ECS."
+  }
+  assert {
+    condition = (
+      jsondecode(aws_ecs_task_definition.proxy.container_definitions)[0].linuxParameters.capabilities.add == [] &&
+      jsondecode(aws_ecs_task_definition.proxy.container_definitions)[0].linuxParameters.capabilities.drop == ["ALL"]
+    )
+    error_message = "The proxy must explicitly add no capabilities while dropping every default capability."
+  }
+}
+
+run "company_application_dns" {
+  command = plan
+  variables {
+    additional_application_vpc_ids = ["vpc-0123456789abcdef0", "vpc-12345678"]
+  }
+  assert {
+    condition = toset([for association in aws_route53_zone.application.vpc : association.vpc_id]) == toset(concat(
+      [output.controlplane_vpc_id, output.execution_vpc_id], var.additional_application_vpc_ids
+    ))
+    error_message = "The application zone must associate exactly its two platform VPCs and the supplied company VPCs."
+  }
+}
+
+run "application_dns_rejects_invalid_vpc_id" {
+  command = plan
+  variables { additional_application_vpc_ids = ["subnet-0123456789abcdef0"] }
+  expect_failures = [var.additional_application_vpc_ids]
+}
+
+run "application_dns_rejects_unnormalized_vpc_id" {
+  command = plan
+  variables { additional_application_vpc_ids = [" vpc-0123456789abcdef0 "] }
+  expect_failures = [var.additional_application_vpc_ids]
 }
 
 run "disabled_slack_omits_destinations" {
@@ -143,8 +230,42 @@ run "retained_generation_requires_new_company_denies" {
   variables {
     create_worker                     = true
     company_client_ipv4_cidrs         = ["10.92.0.0/16", "8.8.0.0/16"]
-    worker_network_blocked_ipv4_cidrs = ["10.90.0.0/16", "10.91.0.0/16", "10.92.0.0/16", "8.8.0.0/16", "169.254.0.0/16"]
+    worker_network_blocked_ipv4_cidrs = ["8.8.0.0/16", "10.90.0.0/16", "10.91.0.0/16", "10.92.0.0/16", "169.254.0.0/16"]
     retained_worker_generations       = run.private_baseline.worker_generation_definitions
   }
   expect_failures = [terraform_data.private_contract, terraform_data.network_installation_contract]
+}
+
+run "diagnostic_environment" {
+  command = plan
+}
+
+run "export_worker_log_source" {
+  command = apply
+  variables {
+    create_worker = true
+    worker_count  = 1
+  }
+}
+
+run "worker_log_environment_rotates_and_retains_generation" {
+  command = plan
+  variables {
+    create_worker = true
+    worker_count  = 1
+    worker_environment = {
+      WORKER_LOG_CHUNK_BYTES    = "65536"
+      WORKER_LOG_BUFFER_BYTES   = "2097152"
+      WORKER_LOG_BUFFER_RECORDS = "256"
+    }
+    retained_worker_generations = run.export_worker_log_source.worker_generation_definitions
+  }
+  assert {
+    condition = (
+      local.worker_pool_name != one(keys(var.retained_worker_generations)) &&
+      one(values(var.retained_worker_generations)).generation_inputs.supply.environment.WORKER_LOG_BUFFER_BYTES == "1048576" &&
+      local.worker_generation_inputs.supply.environment.WORKER_LOG_BUFFER_BYTES == "2097152"
+    )
+    error_message = "Log environment changes must rotate the Pool while retaining the source generation's exact environment."
+  }
 }

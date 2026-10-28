@@ -64,6 +64,7 @@ type Server struct {
 	networkInstallation        networkpolicy.Installation
 	auditRouter                chi.Router
 	auditAdmission             *auditAdmission
+	deploymentUploads          deploymentUploadAdmission
 	auditPolicy                auditpolicy.Policy
 	changes                    *dbnotify.Hub
 	slackConfig                *SlackConfig
@@ -113,6 +114,7 @@ const (
 )
 
 type ServerConfig struct {
+	DeploymentUploadLimits     DeploymentUploadLimits
 	NetworkInstallation        networkpolicy.Installation
 	AuditPolicy                auditpolicy.Policy
 	Changes                    *dbnotify.Hub
@@ -159,6 +161,9 @@ type ServerConfig struct {
 }
 
 func NewServer(cfg ServerConfig) (http.Handler, error) {
+	if err := cfg.DeploymentUploadLimits.Validate(); err != nil {
+		return nil, err
+	}
 	if err := networkpolicy.ValidateInstallation(cfg.NetworkInstallation); err != nil {
 		return nil, fmt.Errorf("network installation: %w", err)
 	}
@@ -269,6 +274,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	server := &Server{
 		networkInstallation:           cfg.NetworkInstallation.Canonical(),
 		auditAdmission:                newAuditAdmission(),
+		deploymentUploads:             deploymentUploadAdmission{limits: cfg.DeploymentUploadLimits},
 		auditPolicy:                   cfg.AuditPolicy,
 		organizationCreationAdminOnly: cfg.OrganizationCreationAdminOnly,
 
@@ -317,6 +323,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		deploymentFinalizer: deployment.NewFinalizer(cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission, log, cfg.NetworkInstallation),
 	}
 	router := chi.NewRouter()
+	router.Use(deploymentUploadTransport(cfg.DeploymentUploadLimits.IdleTimeout))
 	router.Use(auditRequest)
 	router.Use(server.limitSecurityAdmission)
 	router.Use(server.recoverPanics)
@@ -455,6 +462,9 @@ func (s *Server) mountManagementRoutes(r chi.Router) {
 func limitAPIRequestBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit := apiRequestBodyLimit
+		if isDeploymentObjectUpload(r) {
+			limit = bundle.MaxObjectBytes
+		}
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/deployments") {
 			limit = deploymentRequestBodyLimit
 		}
@@ -533,6 +543,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{project}/environments/{environment}", s.getEnvironment)
 		r.With(limitRequestBody(bundle.MaxBytes)).
 			Post("/projects/{project}/environments/{environment}/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
+		r.Put("/projects/{project}/environments/{environment}/deployment-bundles/{bundleDigest}/objects/{objectDigest}", s.uploadDeploymentBundleObject)
 		r.Post("/projects/{project}/environments/{environment}/deployment-bundles/finalize", s.finalizeDeploymentBundle)
 		r.Get("/projects/{project}/environments/{environment}/deployments", s.listDeployments)
 		r.Get("/projects/{project}/environments/{environment}/deployments/current", s.getCurrentDeployment)
@@ -625,6 +636,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/deployments/{deploymentID}/events", s.getDeploymentEvents)
 		r.With(limitRequestBody(bundle.MaxBytes)).Post("/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
+		r.Put("/deployment-bundles/{bundleDigest}/objects/{objectDigest}", s.uploadDeploymentBundleObject)
 		r.Post("/deployment-bundles/finalize", s.finalizeDeploymentBundle)
 		r.Post("/deployments/{deploymentID}/promote", s.promoteDeployment)
 		r.Get("/agents", s.listAgentDefinitions)

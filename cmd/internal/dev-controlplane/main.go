@@ -201,11 +201,16 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	changes := dbnotify.New()
 	allocationWake, stopAllocationWake := changes.Subscribe("dispatch")
 	defer stopAllocationWake()
+	uploadLimits, err := config.LoadDeploymentUploadLimits()
+	if err != nil {
+		return fmt.Errorf("configure deployment uploads: %w", err)
+	}
 	app, err := controlplane.NewServer(controlplane.ServerConfig{AuditPolicy: cfg.auditPolicy,
 		Changes:                        changes,
 		Allocator:                      allocator,
 		DiagnosticDB:                   diagnosticPool,
 		DiagnosticBounds:               diagnosticAdmission.Bounds,
+		DeploymentUploadLimits:         controlplane.DeploymentUploadLimits(uploadLimits),
 		EnvironmentExecutionLimits:     cfg.environmentExecutionLimits,
 		ComputerKeys:                   computerKeys,
 		Log:                            log,
@@ -238,12 +243,16 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		}
 		app.ServeHTTP(w, r)
 	})
+	httpIdleTimeout, err := config.LoadControlPlaneHTTPIdleTimeout()
+	if err != nil {
+		return err
+	}
 	httpServer := &http.Server{
 		Addr:              cfg.addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		IdleTimeout:       httpIdleTimeout,
 	}
 	loops := []backgroundLoop{
 		{name: "database notifications", run: func(ctx context.Context) error { return changes.Run(ctx, pool.Config().ConnConfig, log) }},

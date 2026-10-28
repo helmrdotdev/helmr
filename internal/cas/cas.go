@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 )
 
 const CheckpointVMStateMediaType = "application/vnd.helmr.firecracker.vm-state.v0"
@@ -39,8 +38,10 @@ type Store interface {
 type UploadStore interface {
 	Store
 	PutQuarantine(ctx context.Context, owner string, expected Descriptor, body io.Reader) error
+	// StreamQuarantine accepts a non-replayable body whose descriptor is already
+	// admitted. Storage verifies the supplied checksum before committing bytes.
+	StreamQuarantine(ctx context.Context, owner string, expected Descriptor, body io.Reader) error
 	HasExactQuarantine(ctx context.Context, owner string, expected Descriptor) (bool, error)
-	PresignQuarantine(ctx context.Context, owner string, expected Descriptor, expires time.Duration) (PresignedUpload, error)
 	PromoteQuarantine(ctx context.Context, owner string, expected Descriptor) (Object, error)
 }
 
@@ -69,14 +70,9 @@ type Descriptor struct {
 	MediaType string
 }
 
-type PresignedUpload struct {
-	Method  string
-	URL     string
-	Headers map[string]string
-}
-
 var (
 	ErrDigestMismatch = errors.New("cas object digest mismatch")
+	ErrUploadConflict = errors.New("object upload conflicted with another write")
 	// ErrRemoteIntegrity distinguishes rejected stored bytes from corrupt local
 	// upload input. Callers must retain their local copy until reconciliation.
 	ErrRemoteIntegrity = errors.New("stored object integrity check failed")

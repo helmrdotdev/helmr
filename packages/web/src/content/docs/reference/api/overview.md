@@ -52,6 +52,7 @@ shared by the Console and CLI and do not accept workload API keys.
 | `POST` | `/v1/computers/{computerID}/exec` |
 | `POST` | `/v1/deployment-bundles/finalize` |
 | `POST` | `/v1/deployment-bundles/upload-plan` |
+| `PUT` | `/v1/deployment-bundles/{bundleDigest}/objects/{objectDigest}` |
 | `POST` | `/v1/deployments/{deploymentID}/promote` |
 | `POST` | `/v1/secrets` |
 | `POST` | `/v1/secrets/{secret}/revoke` |
@@ -162,3 +163,25 @@ Human-session equivalents are available under
 `/api/projects/{project}/environments/{environment}/triggers`.
 Agent Delete, Restore and retained status use separate human management routes;
 see [Agent lifecycle](/docs/reference/api/agents).
+
+### Deployment uploads
+
+Upload planning returns the bundle digest and missing object descriptors
+(`digest`, `size_bytes`, `media_type`). Send each object's bytes to the authenticated
+PUT route on the same Helmr origin, with the descriptor's exact `Content-Length`
+and `Content-Type`, then finalize the bundle. Each PUT checks current Environment
+publish permission and membership in an admitted bundle. A `204` acknowledges
+quarantine storage; finalization separately verifies and publishes the deployment.
+No direct object-store URL or redirect is part of this protocol.
+
+Objects and their total bundle remain limited to 4 GiB, with at most 513 objects.
+Per-process and per-organization upload capacity, inactivity and maximum transfer
+duration are explicit [operator settings](/docs/reference/env#control-plane).
+They apply equally to Managed Cloud and self-hosted installations. The CLI waits
+on `429` according to `Retry-After`, within its configurable per-object deadline,
+and reconciles a lost success response through upload planning. Other interrupted
+uploads can be rerun with the same bundle. Client and ingress limits can end a
+transfer before its server deadline; configure and qualify the complete path.
+Quarantined inputs expire under the AWS recipe's one-day lifecycle
+(and noncurrent versions after one day); S3 applies expiration asynchronously.
+Rerun upload planning if an unfinalized input has expired.

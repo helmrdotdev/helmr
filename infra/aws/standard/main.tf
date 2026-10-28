@@ -18,6 +18,7 @@ locals {
       computer = {
         devices = var.worker_computer_devices
       }
+      environment     = var.worker_environment
       contract_digest = local.worker_provider_contract_digest
       enable_ssm      = var.worker_enable_ssm
       network = {
@@ -146,6 +147,7 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  controlplane_idle_timeout_seconds = var.controlplane_idle_timeout_seconds
   network_private_business_cidrs    = var.worker_network_private_business_cidrs
   network_blocked_ipv4_cidrs        = var.worker_network_blocked_ipv4_cidrs
   audit_retention_seconds           = var.audit_retention_seconds
@@ -156,6 +158,7 @@ module "controlplane" {
   ingress_mode                      = "public"
   slack_transport                   = var.slack_transport
   controlplane_environment          = var.controlplane_environment
+  dispatcher_environment            = var.dispatcher_environment
   capacity_token_secret_arn         = var.capacity_token_secret_arn
   capacity_token_kms_key_arn        = var.capacity_token_kms_key_arn
   enable_deployment_rollback        = var.enable_deployment_rollback
@@ -220,8 +223,9 @@ module "controlplane" {
 module "worker_group" {
   for_each = var.create_worker ? toset(keys(local.worker_generation_specs)) : toset([])
 
-  source           = "../modules/worker"
-  computer_devices = local.worker_generations[each.key].generation_inputs.supply.computer.devices
+  source             = "../modules/worker"
+  computer_devices   = local.worker_generations[each.key].generation_inputs.supply.computer.devices
+  worker_environment = local.worker_generations[each.key].generation_inputs.supply.environment
 
   name                                            = local.worker_generations[each.key].provider_name
   worker_pool_name                                = each.key

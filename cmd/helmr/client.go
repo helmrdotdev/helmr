@@ -30,7 +30,7 @@ var newCLIStateStore = func() (cliState, error) {
 	return clistate.New()
 }
 
-func controlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
+func controlPlaneClient(cmd *cobra.Command, additional ...client.Option) (*client.Client, error) {
 	rawURL := cliControlPlaneURL(cmd)
 	bearer := os.Getenv(helmrAPIKeyEnv)
 	if strings.TrimSpace(bearer) != bearer {
@@ -80,7 +80,7 @@ func controlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 	if sessionScopedRoutes {
 		opts = append(opts, client.WithSessionScopedRoutes())
 	}
-	return client.New(baseURL, opts...)
+	return client.New(baseURL, append(opts, additional...)...)
 }
 
 func sessionControlPlaneClient(cmd *cobra.Command) (*client.Client, error) {

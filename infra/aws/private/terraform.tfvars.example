@@ -2,6 +2,10 @@ aws_region = "us-east-1"
 name       = "helmr-private"
 app_hostname = "helmr.example.com"
 company_client_ipv4_cidrs = ["10.92.0.0/16"]
+# Existing company VPCs in this region that need application DNS resolution.
+# This composition owns these zone associations. DNS grants no network ingress;
+# configure company connectivity separately, or use company DNS forwarding.
+additional_application_vpc_ids = []
 slack_transport = "socket"
 region_id  = "us-east-1"
 
@@ -14,8 +18,38 @@ helmr_version = "replace-with-helmr-release-version"
 certificate_arn = "<acm-certificate-arn>"
 
 # Set verified operator emails before their first login for Pool retirement.
+# Diagnostic values below are explicit development examples, not production defaults.
 controlplane_environment = {
+  # Example starting values; measure capacity for the selected task size.
+  DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY = "8"
+  DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
+  DEPLOYMENT_UPLOAD_IDLE_TIMEOUT = "2m"
+  DEPLOYMENT_UPLOAD_MAX_DURATION = "2h"
+
   # ADMIN_EMAILS = "operator@example.com"
+  DIAGNOSTIC_CHUNK_BYTES = "65536"
+  DIAGNOSTIC_SOURCE_BYTES = "4194304"
+  DIAGNOSTIC_SOURCE_RECORDS = "1024"
+  DIAGNOSTIC_ENVIRONMENT_BYTES = "16777216"
+  DIAGNOSTIC_ENVIRONMENT_RECORDS = "4096"
+  DIAGNOSTIC_QUEUE_BYTES = "67108864"
+  DIAGNOSTIC_QUEUE_RECORDS = "16384"
+  DIAGNOSTIC_DB_MAX_CONNECTIONS = "2"
+}
+
+# Required explicit limits. These are development examples, not production defaults.
+# Review workload and database budgets before deployment; see ../README.md.
+dispatcher_environment = {
+  DIAGNOSTIC_EXPORT_BATCH_BYTES = "4194304"
+  DIAGNOSTIC_EXPORT_BATCH_RECORDS = "1024"
+  DIAGNOSTIC_CHUNK_BYTES = "65536"
+  DIAGNOSTIC_SOURCE_BYTES = "4194304"
+  DIAGNOSTIC_SOURCE_RECORDS = "1024"
+  DIAGNOSTIC_ENVIRONMENT_BYTES = "16777216"
+  DIAGNOSTIC_ENVIRONMENT_RECORDS = "4096"
+  DIAGNOSTIC_QUEUE_BYTES = "67108864"
+  DIAGNOSTIC_QUEUE_RECORDS = "16384"
+  DIAGNOSTIC_DB_MAX_CONNECTIONS = "2"
 }
 # capacity_token_secret_arn = "<existing-deployment-capacity-secret-arn>"
 
@@ -103,3 +137,11 @@ worker_computer_devices = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
 
 # Choose finite audit retention explicitly before deployment.
 audit_retention_seconds = 7776000
+
+# Explicit development examples; choose bounded log buffers for the actual Worker.
+# Changing this map creates a new Pool generation and preserves retained maps.
+worker_environment = {
+  WORKER_LOG_CHUNK_BYTES    = "65536"
+  WORKER_LOG_BUFFER_BYTES   = "1048576"
+  WORKER_LOG_BUFFER_RECORDS = "256"
+}

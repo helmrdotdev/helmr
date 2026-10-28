@@ -163,7 +163,6 @@ resource "aws_iam_role_policy_attachment" "image_builder" {
   for_each = toset([
     "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
     "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder",
-    "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilderECRContainerBuilds",
   ])
 
   role       = aws_iam_role.image_builder.name

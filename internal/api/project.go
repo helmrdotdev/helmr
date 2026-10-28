@@ -70,10 +70,9 @@ func NormalizeEnvironmentColorHex(colorHex string) (string, error) {
 }
 
 type DeploymentBundleUpload struct {
-	Digest  string            `json:"digest"`
-	Method  string            `json:"method"`
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers"`
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"size_bytes"`
+	MediaType string `json:"media_type"`
 }
 
 type DeploymentBundleUploadPlanResponse struct {

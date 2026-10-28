@@ -27,7 +27,7 @@ const (
 	MaxBytes         = 16 << 20
 	MaxComputerSeeds = 256
 	maxObjects       = 513
-	maxObjectBytes   = int64(4 << 30)
+	MaxObjectBytes   = int64(4 << 30)
 	maxTotalBytes    = int64(4 << 30)
 )
 
@@ -244,7 +244,7 @@ func validateBundleRuntime(runtime Runtime) error {
 			definition.RuntimeContract,
 		)
 	}
-	if err := validateBundleObject(runtime.Artifact, "runtime"); err != nil {
+	if err := ValidateObject(runtime.Artifact, "runtime"); err != nil {
 		return err
 	}
 	if runtime.Artifact.MediaType != artifact.RuntimeArtifactMediaType {
@@ -304,7 +304,7 @@ func validateBundleComputerSeeds(bundle Manifest) error {
 		object := Object{
 			Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
 		}
-		if err := validateBundleObject(object, fmt.Sprintf("computerSeeds[%d]", index)); err != nil {
+		if err := ValidateObject(object, fmt.Sprintf("computerSeeds[%d]", index)); err != nil {
 			return err
 		}
 		if artifact.Profile != definition.ComputerSeedProfile {
@@ -365,7 +365,7 @@ func validateBundleObjectClosure(bundle Manifest) error {
 
 	var total int64
 	for index, object := range bundle.Objects {
-		if err := validateBundleObject(object, fmt.Sprintf("objects[%d]", index)); err != nil {
+		if err := ValidateObject(object, fmt.Sprintf("objects[%d]", index)); err != nil {
 			return err
 		}
 		if index > 0 && object.Digest <= bundle.Objects[index-1].Digest {
@@ -389,15 +389,16 @@ func validateBundleObjectClosure(bundle Manifest) error {
 	return nil
 }
 
-func validateBundleObject(object Object, name string) error {
+// ValidateObject checks a supported descriptor; manifest membership is separate.
+func ValidateObject(object Object, name string) error {
 	if !sha256sum.ValidDigest(object.Digest) {
 		return fmt.Errorf("deployment bundle %s digest is not a lowercase SHA-256 digest", name)
 	}
-	if object.SizeBytes < 1 || object.SizeBytes > maxObjectBytes {
+	if object.SizeBytes < 1 || object.SizeBytes > MaxObjectBytes {
 		return fmt.Errorf(
 			"deployment bundle %s sizeBytes is outside [1,%d]",
 			name,
-			maxObjectBytes,
+			MaxObjectBytes,
 		)
 	}
 	if object.MediaType != artifact.ProgramArtifactMediaType &&

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -35,15 +36,12 @@ func parallelUploadFixture(t testing.TB, count int) (bundle.Directory, []string)
 			t.Fatal(err)
 		}
 		directory.Objects[digests[i]] = path
+		directory.Bundle.Objects = append(directory.Bundle.Objects, bundle.Object{Digest: digests[i], SizeBytes: int64(len(body)), MediaType: artifact.ProgramArtifactMediaType})
 	}
 	return directory, digests
 }
 
-func fixtureUpload(url, digest string) api.DeploymentBundleUpload {
-	upload := deployTestUpload(url, digest)
-	upload.URL = url + "/upload/" + digest
-	return upload
-}
+func fixtureUpload(digest string) api.DeploymentBundleUpload { return deployTestUpload(digest) }
 
 func TestDeploymentUploadsOverlapWithinBoundAndSerializeReports(t *testing.T) {
 	directory, digests := parallelUploadFixture(t, 5)
@@ -52,12 +50,11 @@ func TestDeploymentUploadsOverlapWithinBoundAndSerializeReports(t *testing.T) {
 	entered := make(chan struct{}, 5)
 	release := make(chan struct{})
 	var active, peak atomic.Int32
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/deployment-bundles/upload-plan" {
 			uploads := make([]api.DeploymentBundleUpload, 0, 5)
 			for _, digest := range digests {
-				uploads = append(uploads, fixtureUpload(server.URL, digest))
+				uploads = append(uploads, fixtureUpload(digest))
 			}
 			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{BundleDigest: directory.Digest, Uploads: uploads})
 			return
@@ -123,8 +120,7 @@ func TestParallelDeploymentUploadsReconcileAfterBatchJoins(t *testing.T) {
 		t.Run(fmt.Sprintf("missing=%v", missing), func(t *testing.T) {
 			directory, digests := parallelUploadFixture(t, 3)
 			var plans, uploads, active atomic.Int32
-			var server *httptest.Server
-			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/v1/deployment-bundles/upload-plan" {
 					if active.Load() != 0 {
 						t.Error("reconciled before batch joined")
@@ -138,7 +134,7 @@ func TestParallelDeploymentUploadsReconcileAfterBatchJoins(t *testing.T) {
 					}
 					response := api.DeploymentBundleUploadPlanResponse{BundleDigest: directory.Digest}
 					for _, digest := range wanted {
-						response.Uploads = append(response.Uploads, fixtureUpload(server.URL, digest))
+						response.Uploads = append(response.Uploads, fixtureUpload(digest))
 					}
 					_ = json.NewEncoder(w).Encode(response)
 					return
@@ -186,10 +182,9 @@ func (r failedUploadReporter) DeploymentObjectUploadStarted(string, int, int) er
 func TestParallelDeploymentUploadsDoNotReconcileOutputFailure(t *testing.T) {
 	directory, digests := parallelUploadFixture(t, 2)
 	var requests atomic.Int32
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{BundleDigest: directory.Digest, Uploads: []api.DeploymentBundleUpload{fixtureUpload(server.URL, digests[0]), fixtureUpload(server.URL, digests[1])}})
+		_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{BundleDigest: directory.Digest, Uploads: []api.DeploymentBundleUpload{fixtureUpload(digests[0]), fixtureUpload(digests[1])}})
 	}))
 	defer server.Close()
 	controlPlane, err := client.New(server.URL)
@@ -210,11 +205,10 @@ func TestParallelDeploymentUploadsJoinOnCancellation(t *testing.T) {
 	entered := make(chan struct{}, 2)
 	exited := make(chan struct{}, 2)
 	var plans atomic.Int32
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/deployment-bundles/upload-plan" {
 			plans.Add(1)
-			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{BundleDigest: directory.Digest, Uploads: []api.DeploymentBundleUpload{fixtureUpload(server.URL, digests[0]), fixtureUpload(server.URL, digests[1])}})
+			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{BundleDigest: directory.Digest, Uploads: []api.DeploymentBundleUpload{fixtureUpload(digests[0]), fixtureUpload(digests[1])}})
 			return
 		}
 		_, _ = io.Copy(io.Discard, r.Body)
@@ -276,6 +270,7 @@ func BenchmarkDeploymentUploadConnectionLimited(b *testing.B) {
 			directory, digests := parallelUploadFixture(b, 2)
 			sizes := []int{117 * 1024, 69 * 1024}
 			for i, digest := range digests {
+				directory.Bundle.Objects[i].SizeBytes = int64(sizes[i])
 				if err := os.WriteFile(directory.Objects[digest], bytes.Repeat([]byte{byte(i)}, sizes[i]), 0600); err != nil {
 					b.Fatal(err)
 				}
@@ -301,8 +296,8 @@ func BenchmarkDeploymentUploadConnectionLimited(b *testing.B) {
 			}))
 			defer server.Close()
 			for i, digest := range digests {
-				upload := fixtureUpload(server.URL, digest)
-				upload.Headers["Content-Length"] = fmt.Sprint(sizes[i])
+				upload := fixtureUpload(digest)
+				upload.SizeBytes = int64(sizes[i])
 				uploads = append(uploads, upload)
 			}
 			controlPlane, err := client.New(server.URL)
@@ -321,7 +316,7 @@ func BenchmarkDeploymentUploadConnectionLimited(b *testing.B) {
 					plan, err = planDeploymentBundleObjectUploads(b.Context(), controlPlane, directory, client.EnvironmentScopeOptions{}, false)
 					if err == nil {
 						for _, upload := range plan {
-							err = controlPlane.UploadDeploymentBundleObject(b.Context(), upload, directory.Objects[upload.Digest], nil)
+							err = controlPlane.UploadDeploymentBundleObject(b.Context(), directory.Digest, client.EnvironmentScopeOptions{}, upload, directory.Objects[upload.Digest], nil)
 							if err != nil {
 								break
 							}

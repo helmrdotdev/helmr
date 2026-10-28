@@ -50,6 +50,14 @@ run "image_installs_verified_worker_artifacts" {
   command = plan
 
   assert {
+    condition = toset([for attachment in aws_iam_role_policy_attachment.image_builder : attachment.policy_arn]) == toset([
+      "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+      "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder",
+    ])
+    error_message = "The AMI builder role must retain SSM and Image Builder support without ECR container publishing authority."
+  }
+
+  assert {
     condition = (
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/worker") &&
       strcontains(aws_imagebuilder_component.worker.data, "/usr/local/bin/cpu-template-helper") &&

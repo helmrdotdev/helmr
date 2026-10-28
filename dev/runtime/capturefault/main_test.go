@@ -1,8 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -23,45 +27,45 @@ func TestDedicatedBucketRootOperations(t *testing.T) {
 	}
 }
 
-func TestPresignedQuarantineIsSignedOnceForUpstream(t *testing.T) {
+func TestQuarantineIsSignedOnceForUpstream(t *testing.T) {
 	t.Setenv("AWS_ACCESS_KEY_ID", "test-original")
 	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-original-secret")
 	t.Setenv("AWS_SESSION_TOKEN", "test-original-token")
 	t.Setenv("AWS_REGION", "us-east-1")
 	t.Setenv("AWS_CONFIG_FILE", "/dev/null")
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", "/dev/null")
-	store, err := casS3.New(t.Context(), "s3://bucket?endpoint=http%3A%2F%2F127.0.0.1%3A58089")
-	if err != nil {
-		t.Fatal(err)
-	}
-	request, err := store.PresignQuarantine(t.Context(), "verification", cas.Descriptor{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1, MediaType: "application/octet-stream"}, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := httptest.NewRequest(request.Method, request.URL, strings.NewReader("x"))
-	for k, v := range request.Headers {
-		r.Header.Set(k, v)
-	}
-	if !r.URL.Query().Has("X-Amz-Signature") {
-		t.Fatal("expected actual presigned request")
-	}
-	r.URL.Scheme = "https"
-	r.URL.Host = "s3.us-east-1.amazonaws.com"
-	r.Host = r.URL.Host
-	transport := signedTransport{credentials.NewStaticCredentialsProvider("test-upstream", "test-upstream-secret", "test-upstream-token"), "us-east-1"}
-	if err := transport.sign(r); err != nil {
-		t.Fatal(err)
-	}
-	for key := range r.URL.Query() {
-		if strings.HasPrefix(strings.ToLower(key), "x-amz-") {
-			t.Fatalf("presigned authentication retained: %s", key)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Authorization"), "Credential=test-original/") {
+			t.Error("missing original signing identity")
 		}
+		r.URL.Scheme = "https"
+		r.URL.Host = "s3.us-east-1.amazonaws.com"
+		r.Host = r.URL.Host
+		transport := signedTransport{credentials.NewStaticCredentialsProvider("test-upstream", "test-upstream-secret", "test-upstream-token"), "us-east-1"}
+		if err := transport.sign(r); err != nil {
+			t.Error(err)
+			w.WriteHeader(500)
+			return
+		}
+		if !strings.Contains(r.Header.Get("Authorization"), "Credential=test-upstream/") || r.Header.Get("X-Amz-Security-Token") != "test-upstream-token" || r.Header.Get("X-Amz-Content-Sha256") != fmt.Sprintf("%x", sha256.Sum256([]byte("x"))) {
+			t.Error("missing upstream signing identity/hash")
+		}
+		if r.Header.Get("X-Amz-Checksum-Sha256") == "" || r.Header.Get("If-None-Match") != "*" {
+			t.Error("upload checks lost")
+		}
+		if body, err := io.ReadAll(r.Body); err != nil || string(body) != "x" {
+			t.Errorf("body=%q err=%v", body, err)
+		}
+		w.WriteHeader(200)
+	}))
+	defer upstream.Close()
+	store, err := casS3.New(t.Context(), "s3://bucket?endpoint="+url.QueryEscape(upstream.URL))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(r.Header.Get("Authorization"), "Credential=test-upstream/") || r.Header.Get("X-Amz-Security-Token") != "test-upstream-token" || r.Header.Get("X-Amz-Content-Sha256") != "UNSIGNED-PAYLOAD" {
-		t.Fatal("missing upstream signing identity/hash")
-	}
-	if r.Header.Get("X-Amz-Checksum-Sha256") == "" || r.Header.Get("If-None-Match") != "*" {
-		t.Fatal("upload checks lost")
+	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("x"))), SizeBytes: 1, MediaType: "application/octet-stream"}
+	if err := store.StreamQuarantine(t.Context(), "verification", descriptor, strings.NewReader("x")); err != nil {
+		t.Fatal(err)
 	}
 }
 

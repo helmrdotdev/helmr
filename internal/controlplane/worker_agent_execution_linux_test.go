@@ -465,7 +465,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 		if !ok {
 			t.Fatal("upload requested an object outside the bundle")
 		}
-		if err := deploymentClient.UploadDeploymentBundleObject(ctx, upload, path, nil); err != nil {
+		if err := deploymentClient.UploadDeploymentBundleObject(ctx, plan.BundleDigest, client.EnvironmentScopeOptions{}, upload, path, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

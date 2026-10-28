@@ -18,6 +18,7 @@ locals {
       computer = {
         devices = var.worker_computer_devices
       }
+      environment     = var.worker_environment
       contract_digest = local.worker_provider_contract_digest
       enable_ssm      = var.worker_enable_ssm
       network = {
@@ -147,6 +148,7 @@ module "release_artifacts" {
 }
 
 module "controlplane" {
+  controlplane_idle_timeout_seconds = var.controlplane_idle_timeout_seconds
   network_private_business_cidrs    = var.worker_network_private_business_cidrs
   network_blocked_ipv4_cidrs        = var.worker_network_blocked_ipv4_cidrs
   audit_retention_seconds           = var.audit_retention_seconds
@@ -155,12 +157,14 @@ module "controlplane" {
   audit_purge_max_batches           = var.audit_purge_max_batches
   audit_maintenance_alarm_actions   = var.audit_maintenance_alarm_actions
   ingress_mode                      = "private"
+  quarantine_upload_vpc_endpoint_id = module.controlplane_network.s3_gateway_endpoint_id
   restrict_platform_egress          = true
   private_client_ipv4_cidrs         = var.company_client_ipv4_cidrs
   private_client_security_group_ids = merge({ platform = module.controlplane.controlplane_security_group_id }, { for name, worker in module.worker_group : name => worker.security_group_id })
   outbound_proxy_url                = "http://${aws_service_discovery_service.proxy.name}.${aws_service_discovery_private_dns_namespace.proxy.name}:3128"
   slack_transport                   = var.slack_transport
   controlplane_environment          = var.controlplane_environment
+  dispatcher_environment            = var.dispatcher_environment
   capacity_token_secret_arn         = var.capacity_token_secret_arn
   capacity_token_kms_key_arn        = var.capacity_token_kms_key_arn
   enable_deployment_rollback        = var.enable_deployment_rollback
@@ -225,8 +229,9 @@ module "controlplane" {
 module "worker_group" {
   for_each = var.create_worker ? toset(keys(local.worker_generation_specs)) : toset([])
 
-  source           = "../modules/worker"
-  computer_devices = local.worker_generations[each.key].generation_inputs.supply.computer.devices
+  source             = "../modules/worker"
+  computer_devices   = local.worker_generations[each.key].generation_inputs.supply.computer.devices
+  worker_environment = local.worker_generations[each.key].generation_inputs.supply.environment
 
   name                                            = local.worker_generations[each.key].provider_name
   worker_pool_name                                = each.key

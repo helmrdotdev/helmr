@@ -461,6 +461,7 @@ variable "retained_worker_generations" {
         computer = object({
           devices = list(string)
         })
+        environment     = map(string)
         contract_digest = string
         enable_ssm      = bool
         network = object({
@@ -762,6 +763,12 @@ variable "controlplane_environment" {
   default     = {}
 }
 
+variable "dispatcher_environment" {
+  description = "Additional non-secret environment variables for helmr-dispatcher, including explicitly chosen diagnostic export limits. Managed Helmr variables remain owned by the controlplane module."
+  type        = map(string)
+  default     = {}
+}
+
 variable "worker_computer_staging_mib" {
   description = "Per-Instance Computer storage staging budget in MiB. Changing it creates a new Worker generation."
   type        = number
@@ -783,11 +790,23 @@ variable "slack_transport" {
 }
 
 variable "app_hostname" {
-  description = "Canonical private DNS hostname covered by certificate_arn. Company DNS must forward this zone to the VPC resolver."
+  description = "Canonical private DNS hostname covered by certificate_arn. Company clients resolve it through additional_application_vpc_ids or DNS forwarding to the VPC resolver."
   type        = string
   validation {
     condition     = can(regex("^[a-z0-9][a-z0-9.-]+\\.[a-z]{2,}$", var.app_hostname))
     error_message = "app_hostname must be a DNS name without scheme, port or path."
+  }
+}
+
+variable "additional_application_vpc_ids" {
+  description = "Existing company VPC IDs to associate with the application private DNS zone in this region. This composition owns the associations; DNS resolution grants no network ingress."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for id in var.additional_application_vpc_ids : can(regex("^vpc-([0-9a-f]{8}|[0-9a-f]{17})$", id))])
+    error_message = "additional_application_vpc_ids must contain normalized VPC IDs."
   }
 }
 
@@ -874,5 +893,21 @@ variable "worker_network_private_business_cidrs" {
   validation {
     condition     = length(distinct(var.worker_network_private_business_cidrs)) == length(var.worker_network_private_business_cidrs) && alltrue([for cidr in var.worker_network_private_business_cidrs : can(cidrnetmask(cidr)) && try(cidrhost(cidr, 0) == split("/", cidr)[0], false)])
     error_message = "worker_network_private_business_cidrs must contain unique canonical IPv4 CIDRs; modules additionally require RFC1918 and reject deny overlap."
+  }
+}
+
+variable "worker_environment" {
+  description = "Additional non-secret Worker environment, including explicit WORKER_LOG_CHUNK_BYTES, WORKER_LOG_BUFFER_BYTES and WORKER_LOG_BUFFER_RECORDS. Stored in immutable Pool generation inputs; changes create a new generation."
+  type        = map(string)
+  default     = {}
+}
+
+variable "controlplane_idle_timeout_seconds" {
+  description = "ALB connection idle timeout; keep it above client/server upload inactivity limits. Backend HTTP keepalive is configured 30 seconds longer."
+  type        = number
+  default     = 180
+  validation {
+    condition     = var.controlplane_idle_timeout_seconds >= 1 && var.controlplane_idle_timeout_seconds <= 4000 && floor(var.controlplane_idle_timeout_seconds) == var.controlplane_idle_timeout_seconds
+    error_message = "controlplane_idle_timeout_seconds must be an integer from 1 through 4000."
   }
 }

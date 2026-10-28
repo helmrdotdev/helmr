@@ -43,7 +43,7 @@ resource "aws_service_discovery_service" "proxy" {
     }
     routing_policy = "MULTIVALUE"
   }
-  health_check_custom_config {}
+  health_check_custom_config { failure_threshold = 1 }
 }
 resource "aws_cloudwatch_log_group" "proxy" {
   name              = "/helmr/${var.name}/platform-proxy"
@@ -81,7 +81,7 @@ resource "aws_ecs_task_definition" "proxy" {
     environment      = [{ name = "SQUID_CONFIG", value = base64encode(local.proxy_config) }],
     mountPoints      = [{ sourceVolume = "scratch", containerPath = "/var/spool/squid", readOnly = false }],
     portMappings     = [{ containerPort = 3128, protocol = "tcp" }],
-    linuxParameters  = { capabilities = { drop = ["ALL"] } },
+    linuxParameters  = { capabilities = { add = [], drop = ["ALL"] } },
     logConfiguration = { logDriver = "awslogs", options = { awslogs-group = aws_cloudwatch_log_group.proxy.name, awslogs-region = var.aws_region, awslogs-stream-prefix = "proxy" } },
     healthCheck      = { command = ["CMD-SHELL", "/usr/sbin/squid -k check -f /var/spool/squid/squid.conf"], interval = 30, timeout = 5, retries = 3, startPeriod = 20 }
   }])

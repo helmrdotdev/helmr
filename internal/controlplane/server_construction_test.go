@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -43,6 +44,7 @@ func completeServerConfig(t *testing.T) ServerConfig {
 	}
 	return ServerConfig{
 		Changes:                        dbnotify.New(),
+		DeploymentUploadLimits:         DeploymentUploadLimits{ProcessConcurrency: 4, OrganizationConcurrency: 2, IdleTimeout: 2 * time.Minute, MaxDuration: 2 * time.Hour},
 		Allocator:                      allocator,
 		EnvironmentExecutionLimits:     org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000},
 		ComputerKeys:                   constructionKeys{},

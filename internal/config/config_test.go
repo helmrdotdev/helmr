@@ -97,6 +97,7 @@ func TestLoadDispatcherRejectsInvalidComputerFencingKey(t *testing.T) {
 func setDispatcherFencing(t *testing.T) {
 	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
 	setDiagnosticAdmissionEnv(t)
+	setDeploymentUploadEnv(t)
 	t.Setenv("DIAGNOSTIC_EXPORT_BATCH_RECORDS", "16")
 	t.Setenv("DIAGNOSTIC_EXPORT_BATCH_BYTES", "4096")
 	t.Helper()
@@ -491,6 +492,7 @@ func setControlPlaneRequiredEnv(t *testing.T) {
 func setControlPlaneExecutionEnv(t *testing.T) {
 	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
 	setDiagnosticAdmissionEnv(t)
+	setDeploymentUploadEnv(t)
 	setEnvironmentExecutionLimits(t)
 	t.Setenv("COMPUTER_WRAPPING_KEY_ID", "test-computer-root")
 	t.Setenv("COMPUTER_WRAPPING_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")

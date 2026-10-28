@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -19,111 +18,54 @@ import (
 
 func TestUploadDeploymentBundleObjectRejectsNonSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut {
-			t.Fatalf("method = %s", r.Method)
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/deployment-bundles/"+testUploadBundleDigest+"/objects/"+deploymentUploadTestPlan(6).Digest {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		if r.ContentLength != 6 {
-			t.Fatalf("content length = %d", r.ContentLength)
+		if r.ContentLength != 6 || r.Header.Get("Content-Type") != "application/octet-stream" || r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Error("upload descriptor or authorization missing")
 		}
-		for name, want := range map[string]string{
-			"Content-Type":                 "application/vnd.helmr.deployment-program.v0+squashfs",
-			"If-None-Match":                "*",
-			"X-Amz-Checksum-Sha256":        "checksum",
-			"X-Amz-Sdk-Checksum-Algorithm": "SHA256",
-			"X-Amz-Tagging":                "helmr-expirable=true",
-		} {
-			if got := r.Header.Get(name); got != want {
-				t.Fatalf("header %s = %q, want %q", name, got, want)
-			}
-		}
+		w.Header().Set("Connection", "close")
 		http.Error(w, "rejected", http.StatusForbidden)
 	}))
 	defer server.Close()
-	object := t.TempDir() + "/object"
-	if err := os.WriteFile(object, []byte("object"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	client, err := New("http://localhost", WithHTTPClient(server.Client()))
+	object := writeDeploymentUploadTestObject(t, "object")
+	client, err := New(server.URL, WithBearerToken("test-token"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
-		Method: http.MethodPut, URL: server.URL,
-		Headers: map[string]string{
-			"Content-Length":               "6",
-			"Content-Type":                 "application/vnd.helmr.deployment-program.v0+squashfs",
-			"If-None-Match":                "*",
-			"X-Amz-Checksum-Sha256":        "checksum",
-			"X-Amz-Sdk-Checksum-Algorithm": "SHA256",
-			"X-Amz-Tagging":                "helmr-expirable=true",
-		},
-	}, object, nil)
+	err = client.UploadDeploymentBundleObject(t.Context(), testUploadBundleDigest, EnvironmentScopeOptions{}, deploymentUploadTestPlan(6), object, nil)
 	if err == nil || !strings.Contains(err.Error(), "403 Forbidden") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestUploadDeploymentBundleObjectRequiresExactContentLength(t *testing.T) {
-	object := t.TempDir() + "/object"
-	if err := os.WriteFile(object, []byte("object"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	transportCalls := 0
-	client := newDeploymentUploadTestClient(t, roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		transportCalls++
-		if _, err := io.Copy(io.Discard, request.Body); err != nil {
-			return nil, err
-		}
-		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
+func TestUploadDeploymentBundleObjectRequiresExactDescriptor(t *testing.T) {
+	object := writeDeploymentUploadTestObject(t, "object")
+	calls := 0
+	client := newDeploymentUploadTestClient(t, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		_, err := io.Copy(io.Discard, r.Body)
+		return deploymentUploadTestResponse(r), err
 	}))
-	valid := deploymentUploadTestPlan("https://upload.example/object", 6)
-	if err := client.UploadDeploymentBundleObject(t.Context(), valid, object, nil); err != nil || transportCalls != 1 {
-		t.Fatalf("valid upload: transport calls=%d err=%v", transportCalls, err)
+	if err := client.UploadDeploymentBundleObject(t.Context(), testUploadBundleDigest, EnvironmentScopeOptions{}, deploymentUploadTestPlan(6), object, nil); err != nil || calls != 1 {
+		t.Fatalf("calls=%d err=%v", calls, err)
 	}
-	for name, tc := range map[string]struct {
-		headers   map[string]string
-		wantError string
-	}{
-		"missing":   {nil, "missing content length"},
-		"invalid":   {map[string]string{"Content-Length": "invalid"}, "invalid content length"},
-		"mismatch":  {map[string]string{"Content-Length": "7"}, "size differs from the upload plan"},
-		"duplicate": {map[string]string{"Content-Length": "6", "content-length": "6"}, "duplicate content length"},
+	for name, mutate := range map[string]func(*api.DeploymentBundleUpload){
+		"missing length":     func(u *api.DeploymentBundleUpload) { u.SizeBytes = 0 },
+		"negative length":    func(u *api.DeploymentBundleUpload) { u.SizeBytes = -1 },
+		"different length":   func(u *api.DeploymentBundleUpload) { u.SizeBytes = 7 },
+		"invalid digest":     func(u *api.DeploymentBundleUpload) { u.Digest = "invalid" },
+		"missing media type": func(u *api.DeploymentBundleUpload) { u.MediaType = "" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			transportCalls = 0
-			err := client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
-				Method:  http.MethodPut,
-				URL:     valid.URL,
-				Headers: tc.headers,
-			}, object, nil)
-			if !errors.Is(err, ErrDeploymentObjectUploadNotAttempted) || !strings.Contains(err.Error(), tc.wantError) || transportCalls != 0 {
-				t.Fatalf("want preflight error %q and no transport, got calls=%d err=%v", tc.wantError, transportCalls, err)
+			upload := deploymentUploadTestPlan(6)
+			mutate(&upload)
+			calls = 0
+			err := client.UploadDeploymentBundleObject(t.Context(), testUploadBundleDigest, EnvironmentScopeOptions{}, upload, object, nil)
+			if !errors.Is(err, ErrDeploymentObjectUploadNotAttempted) || calls != 0 {
+				t.Fatalf("calls=%d err=%v", calls, err)
 			}
 		})
-	}
-}
-
-func TestUploadDeploymentBundleObjectScrubsMalformedPresignedURL(t *testing.T) {
-	const secret = "presigned-secret-sentinel"
-	object := t.TempDir() + "/object"
-	if err := os.WriteFile(object, []byte("object"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	client, err := New("http://localhost")
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = client.UploadDeploymentBundleObject(t.Context(), api.DeploymentBundleUpload{
-		Method: http.MethodPut,
-		URL:    "http://localhost/%zz?X-Amz-Signature=" + secret,
-		Headers: map[string]string{
-			"Content-Length": "6",
-		},
-	}, object, nil)
-	if err == nil ||
-		!errors.Is(err, ErrDeploymentObjectUploadNotAttempted) ||
-		strings.Contains(err.Error(), secret) {
-		t.Fatalf("error = %v", err)
 	}
 }
 

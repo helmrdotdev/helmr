@@ -34,11 +34,13 @@ func writeSessionScopeProject(t *testing.T, w http.ResponseWriter, projectSlug, 
 }
 
 func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
+	// Explicit flags win over environment defaults, including malformed defaults.
+	t.Setenv("HELMR_UPLOAD_TIMEOUT", "invalid")
+	t.Setenv("HELMR_UPLOAD_IDLE_TIMEOUT", "invalid")
 	directory, raw, digest, objectDigest := writeDeployTestBundle(t)
 	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 	requests := make([]string, 0, 4)
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		switch r.URL.Path {
 		case "/v1/deployment-bundles/upload-plan":
@@ -55,16 +57,12 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
 				BundleDigest: digest,
 				Uploads: []api.DeploymentBundleUpload{{
-					Digest: objectDigest, Method: http.MethodPut, URL: server.URL + "/upload",
-					Headers: map[string]string{
-						"Content-Length": "7",
-						"Content-Type":   artifact.ProgramArtifactMediaType,
-					},
+					Digest: objectDigest, SizeBytes: 7, MediaType: artifact.ProgramArtifactMediaType,
 				}},
 			})
-		case "/upload":
-			if r.Header.Get("Authorization") != "" {
-				t.Fatal("Control Plane credential leaked to object upload")
+		case "/v1/deployment-bundles/" + digest + "/objects/" + objectDigest:
+			if r.Header.Get("Authorization") != "Bearer test-key" {
+				t.Fatal("Control Plane upload authorization missing")
 			}
 			if r.ContentLength != 7 {
 				t.Fatalf("upload content length = %d", r.ContentLength)
@@ -101,7 +99,7 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", "--bundle", directory, "--idempotency-key", "deploy-test"})
+	cmd.SetArgs([]string{"deploy", "--bundle", directory, "--idempotency-key", "deploy-test", "--upload-timeout", "5h", "--upload-idle-timeout", "3m"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +108,7 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 	}
 	want := []string{
 		"POST /v1/deployment-bundles/upload-plan",
-		"PUT /upload",
+		"PUT /v1/deployment-bundles/" + digest + "/objects/" + objectDigest,
 		"POST /v1/deployment-bundles/finalize",
 		"POST /v1/deployments/" + deploymentID + "/promote",
 	}
@@ -179,15 +177,14 @@ func TestDeployJSONEmitsPromotedDeploymentResult(t *testing.T) {
 	directory, _, digest, objectDigest := writeDeployTestBundle(t)
 	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 	createdAt := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/deployment-bundles/upload-plan":
 			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
 				BundleDigest: digest,
-				Uploads:      []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)},
+				Uploads:      []api.DeploymentBundleUpload{deployTestUpload(objectDigest)},
 			})
-		case "/upload":
+		case "/v1/deployment-bundles/" + digest + "/objects/" + objectDigest:
 			_, _ = io.Copy(io.Discard, r.Body)
 			w.WriteHeader(http.StatusNoContent)
 		case "/v1/deployment-bundles/finalize":
@@ -234,16 +231,15 @@ func TestDeploySkipPromotionDoesNotPromote(t *testing.T) {
 	directory, _, digest, objectDigest := writeDeployTestBundle(t)
 	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 	requests := make([]string, 0, 3)
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		switch r.URL.Path {
 		case "/v1/deployment-bundles/upload-plan":
 			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
 				BundleDigest: digest,
-				Uploads:      []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)},
+				Uploads:      []api.DeploymentBundleUpload{deployTestUpload(objectDigest)},
 			})
-		case "/upload":
+		case "/v1/deployment-bundles/" + digest + "/objects/" + objectDigest:
 			_, _ = io.Copy(io.Discard, r.Body)
 			w.WriteHeader(http.StatusNoContent)
 		case "/v1/deployment-bundles/finalize":
@@ -270,7 +266,7 @@ func TestDeploySkipPromotionDoesNotPromote(t *testing.T) {
 	}
 	want := []string{
 		"POST /v1/deployment-bundles/upload-plan",
-		"PUT /upload",
+		"PUT /v1/deployment-bundles/" + digest + "/objects/" + objectDigest,
 		"POST /v1/deployment-bundles/finalize",
 	}
 	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
@@ -324,17 +320,16 @@ func TestDeployBundleReconcilesAcceptedUploadWithLostResponse(t *testing.T) {
 	planRequests := 0
 	uploadRequests := 0
 	finalizeRequests := 0
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/deployment-bundles/upload-plan":
 			planRequests++
 			response := api.DeploymentBundleUploadPlanResponse{BundleDigest: digest}
 			if planRequests == 1 {
-				response.Uploads = []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)}
+				response.Uploads = []api.DeploymentBundleUpload{deployTestUpload(objectDigest)}
 			}
 			_ = json.NewEncoder(w).Encode(response)
-		case "/upload":
+		case "/v1/deployment-bundles/" + digest + "/objects/" + objectDigest:
 			uploadRequests++
 			body, err := io.ReadAll(r.Body)
 			if err != nil || string(body) != "program" {
@@ -381,16 +376,15 @@ func TestDeployBundlePreservesUploadFailureWhenObjectRemainsMissing(t *testing.T
 	directory, _, digest, objectDigest := writeDeployTestBundle(t)
 	planRequests := 0
 	uploadRequests := 0
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/deployment-bundles/upload-plan":
 			planRequests++
 			_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
 				BundleDigest: digest,
-				Uploads:      []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)},
+				Uploads:      []api.DeploymentBundleUpload{deployTestUpload(objectDigest)},
 			})
-		case "/upload":
+		case "/v1/deployment-bundles/" + digest + "/objects/" + objectDigest:
 			uploadRequests++
 			_, _ = io.Copy(io.Discard, r.Body)
 			connection, _, err := w.(http.Hijacker).Hijack()
@@ -427,7 +421,7 @@ func TestDeployBundleDoesNotReconcileUnattemptedUpload(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
 			BundleDigest: digest,
 			Uploads: []api.DeploymentBundleUpload{{
-				Digest: objectDigest, Method: http.MethodGet, URL: "https://upload.invalid/object",
+				Digest: objectDigest, SizeBytes: 8, MediaType: artifact.ProgramArtifactMediaType,
 			}},
 		})
 	}))
@@ -440,7 +434,7 @@ func TestDeployBundleDoesNotReconcileUnattemptedUpload(t *testing.T) {
 	cmd.SetErr(io.Discard)
 	cmd.SetArgs([]string{"deploy", "--bundle", directory})
 	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "upload was not attempted") {
+	if err == nil || !strings.Contains(err.Error(), "descriptor differs from the bundle") {
 		t.Fatalf("error = %v", err)
 	}
 	if planRequests != 1 {
@@ -452,19 +446,18 @@ func TestDeployBundleRejectsInvalidReconciliationPlan(t *testing.T) {
 	directory, _, digest, objectDigest := writeDeployTestBundle(t)
 	planRequests := 0
 	uploadRequests := 0
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/deployment-bundles/upload-plan":
 			planRequests++
 			response := api.DeploymentBundleUploadPlanResponse{BundleDigest: digest}
 			if planRequests == 1 {
-				response.Uploads = []api.DeploymentBundleUpload{deployTestUpload(server.URL, objectDigest)}
+				response.Uploads = []api.DeploymentBundleUpload{deployTestUpload(objectDigest)}
 			} else {
 				response.BundleDigest = "sha256:" + strings.Repeat("a", 64)
 			}
 			_ = json.NewEncoder(w).Encode(response)
-		case "/upload":
+		case "/v1/deployment-bundles/" + digest + "/objects/" + objectDigest:
 			uploadRequests++
 			_, _ = io.Copy(io.Discard, r.Body)
 			connection, _, err := w.(http.Hijacker).Hijack()
@@ -495,14 +488,8 @@ func TestDeployBundleRejectsInvalidReconciliationPlan(t *testing.T) {
 	}
 }
 
-func deployTestUpload(serverURL string, objectDigest string) api.DeploymentBundleUpload {
-	return api.DeploymentBundleUpload{
-		Digest: objectDigest, Method: http.MethodPut, URL: serverURL + "/upload",
-		Headers: map[string]string{
-			"Content-Length": "7",
-			"Content-Type":   artifact.ProgramArtifactMediaType,
-		},
-	}
+func deployTestUpload(objectDigest string) api.DeploymentBundleUpload {
+	return api.DeploymentBundleUpload{Digest: objectDigest, SizeBytes: 7, MediaType: artifact.ProgramArtifactMediaType}
 }
 
 func writeDeploymentFinalizeTestStream(
@@ -540,8 +527,7 @@ func TestDeployBundleRejectsUploadOutsideClosure(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.DeploymentBundleUploadPlanResponse{
 			BundleDigest: digest,
 			Uploads: []api.DeploymentBundleUpload{{
-				Digest: "sha256:" + strings.Repeat("e", 64), Method: http.MethodPut,
-				URL: "https://upload.invalid/object",
+				Digest: "sha256:" + strings.Repeat("e", 64), SizeBytes: 7, MediaType: artifact.ProgramArtifactMediaType,
 			}},
 		})
 	}))

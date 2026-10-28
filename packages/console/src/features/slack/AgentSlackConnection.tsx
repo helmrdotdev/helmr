@@ -1,5 +1,5 @@
 import { createQuery } from "@tanstack/solid-query";
-import { createEffect, createSignal, on, onCleanup, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, on, onCleanup, Show, type JSX } from "solid-js";
 import type { Failure } from "../../lib/error";
 import { usePermission } from "../../lib/me";
 import { useScope } from "../../lib/scope";
@@ -128,7 +128,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
         }>
           <Show when={error()}>{(failure) => <SlackFailureNotice failure={failure()} />}</Show>
           <Show
-            when={data().connection}
+            when={data().connection?.id}
             keyed
             fallback={
               <SetupPanel status="Not connected" step={1}>
@@ -141,22 +141,22 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
               </SetupPanel>
             }
           >
-            {(connection) => (
-              <Show when={connection.status === "setup_incomplete"} fallback={
+            {(_connectionID) => <Show when={data().connection}>{(connection) => (
+              <Show when={connection().status === "setup_incomplete"} fallback={
                 <InstalledConnection
                   manifest={data().manifest}
-                  connection={connection}
+                  connection={connection()}
                   agentName={props.agentName}
                   iconSeed={iconSeed()}
                   busy={busy()}
                   canAuthorize={can("authorize")}
                   canCredentials={can("update_credentials")}
-                  authorize={() => authorize(connection)}
-                  save={(credentials) => saveCredentials(connection, credentials)}
+                  authorize={() => authorize(connection())}
+                  save={(credentials) => saveCredentials(connection(), credentials)}
                 />
               }>
                 <Setup
-                  connection={connection}
+                  connection={connection()}
                   manifest={data().manifest}
                   createAppURL={data().create_app_url}
                   agentName={props.agentName}
@@ -164,11 +164,11 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                   busy={busy()}
                   canAuthorize={can("authorize")}
                   canCredentials={can("update_credentials")}
-                  authorize={() => authorize(connection)}
-                  save={(credentials) => saveCredentials(connection, credentials)}
+                  authorize={() => authorize(connection())}
+                  save={(credentials) => saveCredentials(connection(), credentials)}
                 />
               </Show>
-            )}
+            )}</Show>}
           </Show>
           <Show when={removing()}>
             {(connection) => (
@@ -234,7 +234,7 @@ function Setup(props: {
   // Whether the app exists in Slack is not known here, so the admin says so; saved
   // credentials prove it.
   const [created, setCreated] = createSignal(false);
-  const step = () => props.connection.credentials_configured ? 3 : created() ? 2 : 1;
+  const step = createMemo(() => props.connection.credentials_configured ? 3 : created() ? 2 : 1);
   const createContent = () => (
     <div class={ui.blockStack}>
       <Show when={props.createAppURL}>{(url) => <div><a class={ui.button} href={url()} target="_blank" rel="noopener noreferrer">Create app in Slack</a></div>}</Show>

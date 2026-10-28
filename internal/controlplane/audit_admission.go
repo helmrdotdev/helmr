@@ -23,7 +23,10 @@ type auditPrincipalBucket struct {
 	active  int
 }
 type auditAdmissionContextKey struct{}
-type auditAdmissionLease struct{ releases []func() }
+type auditAdmissionLease struct {
+	releases []func()
+	release  func()
+}
 
 type auditAdmission struct {
 	global                *rate.Limiter
@@ -109,6 +112,7 @@ func (s *Server) limitSecurityAdmission(next http.Handler) http.Handler {
 				<-active
 			})
 		}
+		lease.release = release
 		defer release()
 		if _, ok := w.(http.Flusher); ok {
 			w = &auditAdmissionWriter{ResponseWriter: w, release: release}
@@ -117,6 +121,16 @@ func (s *Server) limitSecurityAdmission(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// The handler may release ordinary concurrency after validated preflight when
+// another bounded owner takes responsibility for the remaining request lifetime.
+// Request-rate admission is not refunded. The outer defer remains idempotent.
+func releaseSecurityAdmission(r *http.Request) {
+	if lease, ok := r.Context().Value(auditAdmissionContextKey{}).(*auditAdmissionLease); ok && lease.release != nil {
+		lease.release()
+	}
+}
+
 func (s *Server) admitPrincipal(w http.ResponseWriter, r *http.Request, p auth.Principal) bool {
 	route, _, ok := s.requestAuditRoute(r)
 	key := string(p.Kind) + ":" + p.UserID.String() + ":" + p.APIKeyID.String() + ":" + p.OrgID.String()

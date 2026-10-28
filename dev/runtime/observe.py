@@ -40,6 +40,7 @@ INPUTS = {
     'worker-state': {'resource_ids': resources},
     'computer-state': {'computer_id': identifier},
     'computer-path': {'computer_id': identifier},
+    'preparation-path': {'environment_id': identifier, 'image_build_id': identifier},
     'session-state': {'session_id': identifier},
     'session-path': {'session_id': identifier},
     'slack-delivery': {'session_id': identifier},

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 )
 
@@ -74,6 +75,9 @@ func TestVerificationObservations(t *testing.T) {
 		t.Fatalf("computer=%v", computer)
 	}
 	path := observe(t, f.Pool, "computer-path", map[string]any{"computer_id": f.Computer.String()}).(map[string]any)
+	if _, err := time.Parse(time.RFC3339Nano, path["observed_at"].(string)); err != nil {
+		t.Fatalf("path observation time=%v: %v", path, err)
+	}
 	if len(path["leases"].([]any)) != 1 || path["computer"].(map[string]any)["initial_root_digest"] == nil {
 		t.Fatalf("path=%v", path)
 	}

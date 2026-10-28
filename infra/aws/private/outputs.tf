@@ -157,7 +157,7 @@ output "clickhouse_bootstrap_task_definition_arn" {
 }
 
 output "application_private_zone_id" {
-  description = "Associate or forward the application DNS zone from company-connected clients."
+  description = "Application DNS zone owned by this composition; use additional_application_vpc_ids or company DNS forwarding for client resolution."
   value       = aws_route53_zone.application.zone_id
 }
 output "controlplane_vpc_id" {
@@ -167,6 +167,16 @@ output "controlplane_vpc_id" {
 output "execution_vpc_id" {
   description = "VPC whose hosts can reach the private platform origin."
   value       = module.execution_network.vpc_id
+}
+
+output "execution_private_subnet_ids" {
+  description = "Execution private subnet IDs for connected private services."
+  value       = module.execution_network.private_subnet_ids
+}
+
+output "execution_private_route_table_id" {
+  description = "Execution private route table for explicitly routed private connectivity."
+  value       = module.execution_network.private_route_table_id
 }
 
 output "controlplane_private_route_table_id" {
