@@ -1,0 +1,9 @@
+[Unit]
+Description=Purge expired Helmr audit records
+Requisite=helmr.service
+After=helmr.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker compose -f /run/helmr/compose.json run --rm audit-purge
+TimeoutStartSec=360

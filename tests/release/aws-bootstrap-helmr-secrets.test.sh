@@ -12,14 +12,14 @@ cat >"${tmp}/bin/mock-tofu" <<'EOF'
 set -euo pipefail
 case "$*" in
   'output -json secret_arns')
-    jq -n --arg setup "${MOCK_SETUP_TOKEN_PRESENT:-1}" '{
+    jq -n --arg setup "${MOCK_SETUP_TOKEN_PRESENT:-1}" --arg capacity "${MOCK_CAPACITY_TOKEN_PRESENT:-0}" '{
       worker_host_credential_signing_key:"arn:worker-host-credential-signing-key",
       auth_key:"arn:auth-key",
       encryption_key:"arn:encryption-key",
       computer_fencing_key:"arn:computer-fencing-key",
       checkpoint_encryption_key:"arn:checkpoint-encryption-key",
       github_oauth_client_secret:"arn:github-oauth-client-secret"
-    } + if $setup == "1" then {setup_token:"arn:setup-token",computer_wrapping_key:"arn:computer-wrapping-key"} else {} end'
+    } + (if $setup == "1" then {setup_token:"arn:setup-token",computer_wrapping_key:"arn:computer-wrapping-key"} else {} end) + (if $capacity == "1" then {capacity_token:"arn:capacity-token"} else {} end)'
     ;;
   'output -raw worker_enrollment_secret_arn') printf 'arn:worker-enrollment-token\n' ;;
   *) exit 90 ;;
@@ -89,6 +89,18 @@ for line in lines:
 assert len(base64.b64decode(values['arn:computer-wrapping-key'],validate=True))==32
 assert values['arn:computer-wrapping-key']!=values['arn:encryption-key']
 PYTEST
+
+: >"${tmp}/puts"
+MOCK_CAPACITY_TOKEN_PRESENT=1 run_helper missing
+python3 - "${tmp}/puts" <<'PYTEST'
+import base64, json, pathlib, sys
+values={item['SecretId']: item['SecretString'] for item in map(json.loads,pathlib.Path(sys.argv[1]).read_text().splitlines())}
+token=values['arn:capacity-token']
+assert len(token)==43 and len(base64.urlsafe_b64decode(token+'='))==32
+PYTEST
+: >"${tmp}/puts"
+MOCK_CAPACITY_TOKEN_PRESENT=1 run_helper present
+[ ! -s "${tmp}/puts" ]
 
 : >"${tmp}/puts"
 MOCK_SETUP_TOKEN_PRESENT=0 run_helper missing

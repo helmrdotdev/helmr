@@ -8,6 +8,13 @@ sidebarLabel: Secrets and data
 
 The AWS compositions create empty Secrets Manager containers. They do not generate application secret values in Terraform or place those values in state.
 
+Quickstart includes local PostgreSQL and ClickHouse. Its host startup creates
+local database credentials and separate runtime, migration and audit roles.
+Use the [Quickstart procedure](/docs/self-hosting/evaluation); do not supply
+external database URLs or ClickHouse secrets for that profile. Its helper also
+initializes the deployment Capacity token. The external data-service setup below
+applies to Standard and Private.
+
 ## PostgreSQL
 
 RDS creates a managed master credential. Use it only for the one-off database bootstrap task. Control Plane, dispatcher, and migrations use a static, non-administrative application URL stored in `secret_arns.database_url`:
@@ -33,7 +40,7 @@ tofu output -json secret_arns
 tofu output -raw worker_enrollment_secret_arn
 ```
 
-From the selected profile directory, run:
+For Standard or Private, from the selected profile directory, run:
 
 ```sh
 export HELMR_DATABASE_URL='postgres://helmr_app:...@.../helmr?sslmode=require'

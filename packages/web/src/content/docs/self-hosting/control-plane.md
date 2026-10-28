@@ -5,7 +5,8 @@ description: Bootstrap the database, run migrations, start Control Plane and dis
 
 # Control Plane
 
-The AWS compositions create task definitions before they create long-running services. This keeps workloads that require secrets and a current schema from starting during the first apply.
+For compact Quickstart, use the [host startup procedure](/docs/self-hosting/evaluation).
+The rest of this page covers Standard and Private. These compositions create task definitions before they create long-running services. This keeps workloads that require secrets and a current schema from starting during the first apply.
 
 ## Bootstrap the database
 
@@ -52,15 +53,11 @@ create_controlplane_service = true
 ```
 
 Apply the change with the same variable-file selection used for the first
-apply. The quickstart profile automatically loads `terraform.tfvars`; the
-standard profile in this guide uses `standard.tfvars`. The composition starts
+apply. The standard profile in this guide uses `standard.tfvars`. The composition starts
 separate `helmr-controlplane` and `helmr-dispatcher` ECS services using
 `controlplane_desired_count` and `dispatcher_desired_count`.
 
 ```sh
-# infra/aws/quickstart
-tofu apply
-
 # infra/aws/standard
 tofu apply -var-file=standard.tfvars
 

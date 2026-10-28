@@ -13,6 +13,13 @@ to zero, follows the full-stop procedure below. Expect an interruption until the
 configured replacement count is ready. There is no automatic instance refresh,
 capacity controller, maintenance timeout, or automatic rollback.
 
+Quickstart control-host replacement deletes its local database and telemetry; it
+has no backups or in-place control-host upgrade flow. To recreate it, first drain
+and remove Workers while the current Control Plane is available, then rebuild
+and redeploy your agents. The Worker-only procedure below still applies when
+Quickstart's Control Plane inputs remain unchanged. Recovery-point and database
+restore instructions below concern data-preserving deployments such as Standard.
+
 Use a release pair qualified for this procedure: the same worker API revision
 and compatible restore profiles for every resident and parked dependency. These
 instructions describe the required gates; a local Terraform test does not qualify
@@ -77,7 +84,8 @@ users or change existing grants; an organization owner is not automatically a
 deployment administrator. Keep this login session separate from the Capacity token.
 
 Use the deployment [Capacity API](/docs/self-hosting/capacity) credential
-through an authorized operator session. In Standard or Quickstart, configure
+through an authorized operator session. Quickstart initializes this secret with
+its helper and emits `capacity_token_secret_arn`. In Standard, configure
 `capacity_token_secret_arn` with a Secrets Manager secret containing the token;
 set `capacity_token_kms_key_arn` as well when that secret uses a customer KMS key.
 The Control Plane receives the value at startup. Terraform receives only ARNs.

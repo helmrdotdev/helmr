@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Check native self-host and image root plans, without test-only outputs."""
 import base64
+import gzip
 import json
 import sys
 from pathlib import Path
 
 assert len(sys.argv) == 5, "quickstart, standard, worker-image and private plans are required"
 
-for filename in sys.argv[1:3]:
+for filename in (sys.argv[2],):
     found = set()
     for line in Path(filename).read_text().splitlines():
         event = json.loads(line)
@@ -46,13 +47,14 @@ for filename in sys.argv[1:3]:
     plans = {event['@testrun']: event['test_plan']
              for line in Path(filename).read_text().splitlines()
              if (event := json.loads(line)).get('type') == 'test_plan'}
-    slack_tasks = {r['name']: json.loads(r['change']['after']['container_definitions'])[0]
-                   for r in plans['slack_no_global_credentials']['resource_changes']
-                   if r['type'] == 'aws_ecs_task_definition'}
-    for name in ('controlplane', 'dispatcher'):
-        assert all(not item['name'].startswith('SLACK_') or item['name'] == 'SLACK_TRANSPORT'
-                   for item in slack_tasks[name]['environment'] + slack_tasks[name]['secrets']), (filename, name)
-    print(f'ok - {filename}: dedicated Slack credentials are absent from process configuration')
+    if filename == sys.argv[2]:
+        slack_tasks = {r['name']: json.loads(r['change']['after']['container_definitions'])[0]
+                       for r in plans['slack_no_global_credentials']['resource_changes']
+                       if r['type'] == 'aws_ecs_task_definition'}
+        for name in ('controlplane', 'dispatcher'):
+            assert all(not item['name'].startswith('SLACK_') or item['name'] == 'SLACK_TRANSPORT'
+                       for item in slack_tasks[name]['environment'] + slack_tasks[name]['secrets']), (filename, name)
+        print(f'ok - {filename}: dedicated Slack credentials are absent from process configuration')
     baseline = next(event['test_state']['values']['outputs']['worker_generation_definitions']['value']
                     for line in Path(filename).read_text().splitlines()
                     if (event := json.loads(line)).get('type') == 'test_state'
@@ -82,7 +84,7 @@ for filename in sys.argv[1:3]:
             assert source_resources and all(r['change']['actions'] == ['no-op'] for r in source_resources), (filename, run, source_resources)
             for key in ('name', 'min_size', 'desired_capacity', 'max_size', 'launch_template'):
                 assert before[key] == source['change']['after'][key], (filename, key, source)
-        if run == 'fixed_capacity_plan':
+        if run == 'fixed_capacity_plan' and filename == sys.argv[2]:
             tasks = {r['name']: json.loads(r['change']['after']['container_definitions'])
                      for r in resources if r['type'] == 'aws_ecs_task_definition'}
             upload_env = {item['name']: item['value'] for item in tasks['controlplane'][0]['environment']}
@@ -168,7 +170,7 @@ admission_keys = {
     'DIAGNOSTIC_QUEUE_BYTES', 'DIAGNOSTIC_QUEUE_RECORDS', 'DIAGNOSTIC_DB_MAX_CONNECTIONS',
 }
 exporter_keys = admission_keys | {'DIAGNOSTIC_EXPORT_BATCH_BYTES', 'DIAGNOSTIC_EXPORT_BATCH_RECORDS'}
-for filename in (sys.argv[1], sys.argv[2], sys.argv[4]):
+for filename in (sys.argv[2], sys.argv[4]):
     plans = [event['test_plan'] for line in Path(filename).read_text().splitlines()
              if (event := json.loads(line)).get('type') == 'test_plan'
              and event['@testrun'] == 'diagnostic_environment']
@@ -220,3 +222,41 @@ layer_statements = [statement for statement in endpoint['Statement'] if statemen
 assert len(layer_statements) == 1 and layer_statements[0]['Action'] == ['s3:GetObject']
 assert layer_statements[0]['Resource'] == [f"arn:{cas_bucket.split(':')[1]}:s3:::prod-{private_inputs['aws_region']['value']}-starport-layer-bucket/*"]
 print('ok - private S3 endpoint permits tagged CAS publication and exact version reclamation while ECR layers remain read-only')
+
+# Quickstart's actual host plan replaces Fargate/RDS/ALB with local services.
+quick_events = [json.loads(line) for line in Path(sys.argv[1]).read_text().splitlines()]
+quick_state = next(event['test_state'] for event in quick_events
+                   if event.get('type') == 'test_state' and event['@testrun'] == 'compact_baseline')
+quick_resources = list(flatten(quick_state['values']['root_module']))
+quick = {r['address']: r['values'] for r in quick_resources}
+assert not ({r['type'] for r in quick_resources} & {
+    'aws_lb', 'aws_db_instance', 'aws_ecs_service', 'aws_nat_gateway', 'aws_cloudfront_distribution'
+})
+host = quick['aws_instance.control']
+cloud_config = json.loads(gzip.decompress(base64.b64decode(host['user_data_base64'])).decode().split('\n', 1)[1])
+files = {item['path']: item for item in cloud_config['write_files']}
+config = json.loads(files['/etc/helmr/quickstart.json']['content'])
+assert config['cas_uri'].startswith('s3://')
+assert config['blocked_ipv4_cidrs'] == ['3.112.1.2/32', '10.80.0.0/16', '169.254.0.0/16']
+assert all(value.startswith('arn:aws:secretsmanager:') for value in config['secret_arns'].values())
+assert 'checkpoint_encryption_key' not in config['secret_arns']
+assert 'database-bootstrap' in files['/usr/local/sbin/helmr-quickstart-start']['content']
+assert 'migrate' in files['/usr/local/sbin/helmr-quickstart-start']['content']
+assert 'reverse_proxy 127.0.0.1:8080' in files['/etc/helmr/Caddyfile']['content']
+assert '<listen_host replace="replace">127.0.0.1</listen_host>' in files['/etc/helmr/clickhouse.xml']['content']
+ingress = quick['aws_security_group.control']['ingress']
+assert {(item['from_port'], item['to_port'], item['protocol']) for item in ingress} == {(80, 80, 'tcp'), (443, 443, 'tcp')}
+statements = json.loads(quick['aws_iam_role_policy.control']['policy'])['Statement']
+secret_statements = [item for item in statements if 'secretsmanager:GetSecretValue' in item['Action']]
+assert len(secret_statements) == 1
+assert sorted(secret_statements[0]['Resource']) == sorted(config['secret_arns'].values())
+assert len(secret_statements[0]['Resource']) == sum(r['type'] == 'aws_secretsmanager_secret' for r in quick_resources) - 1
+assert all(not action.startswith(('ec2:', 'autoscaling:')) for item in statements for action in item['Action'])
+assert not any(r['type'] == 'aws_secretsmanager_secret_version' for r in quick_resources)
+quick_plan = next(event['test_plan'] for event in quick_events
+                  if event.get('type') == 'test_plan' and event['@testrun'] == 'compact_worker')
+worker_groups = [r['change']['after'] for r in quick_plan['resource_changes'] if r['type'] == 'aws_autoscaling_group']
+assert len(worker_groups) == 1
+assert worker_groups[0]['vpc_zone_identifier'] == [quick['aws_subnet.public']['id']]
+assert worker_groups[0]['desired_capacity'] == worker_groups[0]['max_size'] == 1
+print('ok - compact Quickstart: local services, public-subnet Worker, management denies, scoped role and secret references')

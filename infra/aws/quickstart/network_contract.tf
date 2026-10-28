@@ -5,7 +5,7 @@ locals {
       first = sum([for index, octet in split(".", cidrhost(cidr, 0)) : tonumber(octet) * pow(256, 3 - index)])
       last  = sum([for index, octet in split(".", cidrhost(cidr, -1)) : tonumber(octet) * pow(256, 3 - index)])
     }]
-    blocked = [for cidr in var.worker_network_blocked_ipv4_cidrs : {
+    blocked = [for cidr in local.worker_network_blocked_ipv4_cidrs : {
       first = sum([for index, octet in split(".", cidrhost(cidr, 0)) : tonumber(octet) * pow(256, 3 - index)])
       last  = sum([for index, octet in split(".", cidrhost(cidr, -1)) : tonumber(octet) * pow(256, 3 - index)])
     }]

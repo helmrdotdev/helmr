@@ -15,7 +15,7 @@ Create the OAuth app before the first Terraform/OpenTofu apply and set its non-s
 github_oauth_client_id = "your-client-id"
 ```
 
-After the load balancer and public URL exist, set the OAuth callback URL to:
+After the application endpoint and public URL exist, set the OAuth callback URL to:
 
 ```text
 <controlplane_url>/auth/github/callback

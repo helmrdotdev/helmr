@@ -93,6 +93,11 @@ if [ -n "$setup_token_secret_arn" ]; then
   put_secret_arn setup_token "$setup_token_secret_arn" "$(openssl rand -hex 32)"
 fi
 
+capacity_token_secret_arn="$(secret_arn_optional capacity_token)"
+if [ -n "$capacity_token_secret_arn" ]; then
+  put_secret_arn capacity_token "$capacity_token_secret_arn" "$(random_base64url_32)"
+fi
+
 if [ -n "$worker_enrollment_secret_arn" ]; then
   put_secret_arn "worker_enrollment_token" "$worker_enrollment_secret_arn" "hlmr_wgt_$(random_base64url_32)"
 fi

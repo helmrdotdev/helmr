@@ -16,22 +16,27 @@ The runtime has three main parts:
 | Dispatcher | Reconciles runnable and scheduled work from PostgreSQL authority. |
 | Workers | Execute verified Deployment bundles in Firecracker guests. |
 
-The AWS examples compose RDS PostgreSQL, S3, KMS, Secrets Manager, ECS Fargate, an HTTPS load balancer, and optional EC2 Auto Scaling worker groups. A separate bootstrap foundation supplies the immutable Platform Artifact store. ClickHouse is an external, operator-provisioned dependency.
-
 ## Choose a deployment path
 
-Use [AWS evaluation](/docs/self-hosting/evaluation) for a disposable evaluation or proof of concept. Its defaults deliberately trade resilience and retention for lower cost.
+| Composition | Use |
+| --- | --- |
+| [Quickstart](/docs/self-hosting/evaluation) | A compact installation: one host for control services, PostgreSQL and ClickHouse, plus separate Workers. Suitable for trying Helmr or continuing to use it without backups. |
+| [Standard](/docs/self-hosting/production) | Separate Fargate services, RDS with backup defaults, HTTPS load balancing and operator-owned ClickHouse. |
+| [Private](/docs/self-hosting/private) | Private application ingress and restricted platform egress for an existing company network. |
 
-Use [AWS production](/docs/self-hosting/production) as the starting baseline for a customer environment. It strengthens the defaults, but it is not a complete production operating model: remote state, ClickHouse provisioning and networking, credentials, capacity policy, monitoring, backup testing, drift management, and multi-region design remain yours.
+All three consume released Product artifacts and a separately prepared Platform
+Artifact store and matching Worker AMI. The operator owns the deployment and its
+credentials. Quickstart provides direct host HTTPS; Standard and Private compose
+managed AWS services. Network and data protection requirements determine which
+composition fits your installation.
 
-Use [private deployments](/docs/self-hosting/private) when Console/API ingress must stay on your company network. Its restricted platform exit is separate from guest/build networking.
-
-Do not promote an evaluation stack in place. Build a production environment from the production baseline and migrate deliberately.
+Follow the Quickstart page for its host-based startup. The sequence below applies
+to Standard and Private.
 
 ## Deployment sequence
 
 1. Satisfy the [requirements](/docs/self-hosting/requirements), including bootstrap outputs and external ClickHouse.
-2. Configure and apply either the evaluation or production AWS composition with `create_controlplane_service = false`.
+2. Configure and apply the Standard or Private AWS composition with `create_controlplane_service = false`.
 3. Check out the exact Product release tag, download its signed v0 index, `platform-release.tar`, and provenance, then publish the signed Runtime before enabling Control:
 
    ```sh

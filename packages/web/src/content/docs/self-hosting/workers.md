@@ -33,44 +33,19 @@ that every observation can commit. Existing ownership expiry and actual provider
 loss remain separate; an outage does not extend execution leases indefinitely.
 All Dispatcher replicas must run this behavior before relying on the protection.
 
-## Evaluation worker
+## Quickstart Worker
 
-The evaluation profile has workers and NAT disabled by default. For a bounded end-to-end smoke test:
+Quickstart initially leaves Workers disabled while the control host is configured.
+Once the application is ready, set `create_worker=true`. Its defaults provide one
+`c8i.large` with a 320-GiB root disk and one 1-vCPU/2-GiB execution slot. The host
+has a public outbound IPv4 address; no NAT gateway or inbound Worker port is
+required. Guest management denies include the VPC and control host's public IP.
 
-```hcl
-enable_nat_gateway                    = true
-create_worker                         = true
-worker_host_type                      = "c8i.xlarge"
-worker_enable_nested_virtualization   = true
-worker_count                          = 1
-worker_capacity_vcpus                 = 3
-worker_capacity_memory_mib            = 6144
-worker_execution_slots                = 2
-worker_root_volume_size_gb            = 512
-worker_root_volume_iops               = 3000
-worker_root_volume_throughput         = 125
-worker_disk_mib                       = 491520
-worker_disk_reserve_mib               = 8192
-worker_vm_vcpus                       = 1
-worker_vm_memory_mib                  = 2048
-worker_vm_scratch_disk_mib            = 32768
-worker_computer_staging_mib           = 65536
-worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
-```
-
-This profile was qualified with sequential smoke workloads; concurrent capture
-and restore on both slots remain a separate runtime qualification. The explicit
-480-GiB disk ceiling leaves 472 GiB after the 8-GiB reserve. Each slot needs
-just over 232 GiB for its full lifecycle: scratch, Computer projection and staging,
-runtime and deployment bundle files, retained restored memory/state and prepared
-RAM ciphertext, and simultaneous checkpoint intermediates. Both slots fit the
-configured supply. Optional cache uses only surplus after all slots are funded,
-up to 4 GiB and within the pool resource policy.
-The Worker also checks fresh available filesystem space before activation; existing
-files can make an otherwise sufficient configured disk fail startup. Keep the
-ceiling below actual filesystem capacity and fund every configured slot.
-
-Use only an EC2 family that supports nested virtualization. Keep NAT enabled while a private worker is running or draining.
+Choose an Agent Template that fits the configured slot, or adjust the Worker
+inputs. The default disk budget includes staging and checkpoint overhead; the
+entire EBS volume is not guest disk space. Larger or concurrent workloads need
+appropriate host resources. Standard and Private Workers retain their own
+private-subnet egress configuration.
 
 ## Production capacity
 
