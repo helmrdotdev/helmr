@@ -99,7 +99,17 @@ delivered, Helmr posts a notice in the thread.
 
 Helmr ignores message edits and messages from bots, and rejects messages with
 file attachments. A message that Helmr cannot accept within five minutes of
-when it was sent is rejected and must be sent again.
+when it was sent is rejected. If current Worker capacity cannot be confirmed,
+Helmr retries within this window and checks permissions again before accepting
+the request. If the problem persists, the request expires without acceptance;
+ask an administrator to check service health and Worker pool configuration before
+repeatedly resending it. A confirmed capacity limit or an incompatible workload
+is rejected.
+
+After acceptance, work may remain queued while execution starts. This uses the
+Environment's configured preparation timeout, not the message's five-minute
+acceptance window. You can stop queued work with Slack's Stop control or cancel
+the Session in Console.
 
 ### Explicit input controls
 

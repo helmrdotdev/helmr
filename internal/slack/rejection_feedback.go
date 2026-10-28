@@ -146,8 +146,6 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			text = "Cannot hibernate while foreground work or another control is active. Wait for it to settle or use the existing Stop control, then try again."
 		case "execution_settling":
 			text = "The previous execution timed out and is still settling. Try again shortly."
-		case "execution_capacity_unavailable":
-			text = "Worker capacity could not be confirmed. No new work was accepted. Try again after Worker capacity becomes available."
 		case "execution_capacity_incompatible":
 			text = "No active Worker pool supports this Computer. Ask an administrator to configure a compatible Worker pool, then try again."
 		case "execution_capacity_exhausted":
@@ -182,7 +180,12 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			text = "This question was withdrawn and no longer accepts answers."
 		case "answer_invalid":
 			text = "That answer does not match the question. Use the current question controls or inspect it in Console."
-		case "gesture_expired", "stale_gesture":
+		case "gesture_expired":
+			text = "This action was not accepted before its deadline. Use a new message or the latest controls if it is still needed. If this keeps happening, ask an administrator to check service health."
+			if direct {
+				text = "This action was not accepted before its deadline. Send a new message outside this thread or use the latest controls if it is still needed. If this keeps happening, ask an administrator to check service health."
+			}
+		case "stale_gesture":
 			text = "This action is out of date. Send a new message or use the latest question controls to try again."
 			if direct {
 				text = "This action is out of date. Send a new message outside this thread or use the latest question controls to try again."

@@ -150,7 +150,8 @@ func EvaluateTrigger(ctx context.Context, auditPolicy auditpolicy.Policy, pool d
 			}
 			if !exists {
 				// Terminal admission rejection rolls back fresh work but records a
-				// disposition. Temporary shortages leave the whole occurrence retryable.
+				// disposition. Missing capacity observations and other temporary
+				// failures roll back this occurrence for retry within its lateness window.
 				admissionTX, err := tx.Begin(ctx)
 				if err != nil {
 					return err
@@ -170,8 +171,6 @@ func EvaluateTrigger(ctx context.Context, auditPolicy auditpolicy.Policy, pool d
 						reason = "execution_capacity_incompatible"
 					case errors.Is(admissionErr, workergroup.ErrCapacityExhausted):
 						reason = "execution_capacity_exhausted"
-					case errors.Is(admissionErr, workergroup.ErrCapacityUnavailable):
-						reason = "execution_capacity_unavailable"
 					case errors.Is(admissionErr, slackroute.ErrChannelUnavailable):
 						reason = "slack_channel_unavailable"
 					case errors.Is(admissionErr, session.ErrAgentDeleted):

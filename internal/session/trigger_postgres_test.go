@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
@@ -133,13 +134,15 @@ func TestTriggerLoopRecoversLatestOnly(t *testing.T) {
 }
 
 func TestTriggerTemporaryAdmissionShortageRetriesWithinGrace(t *testing.T) {
-	for _, shortage := range []string{"tokens", "outstanding", "storage"} {
+	for _, shortage := range []string{"tokens", "outstanding", "storage", "capacity-observation"} {
 		t.Run(shortage, func(t *testing.T) {
 			f := newAdmissionFixture(t)
 			due := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
 			trigger := seedTrigger(t, f, due)
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET active_until=$3 WHERE environment_id=$1 AND id=$2`, f.env, trigger, due.Add(time.Second))
 			switch shortage {
+			case "capacity-observation":
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, f.group)
 			case "tokens":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=0,admission_refilled_at=clock_timestamp()+interval '1 day' WHERE id=$1`, f.env)
 			case "outstanding":
@@ -154,6 +157,9 @@ func TestTriggerTemporaryAdmissionShortageRetriesWithinGrace(t *testing.T) {
 			if shortage == "storage" {
 				want = computer.ErrNotReady
 			}
+			if shortage == "capacity-observation" {
+				want = workergroup.ErrCapacityUnavailable
+			}
 			if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, trigger); !errors.Is(err, want) {
 				t.Fatalf("temporary shortage: %v", err)
 			}
@@ -162,6 +168,7 @@ func TestTriggerTemporaryAdmissionShortageRetriesWithinGrace(t *testing.T) {
 				t.Fatalf("shortage committed: %v %v", unchanged, err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET admission_tokens=100,max_outstanding_admissions=100,max_reserved_storage_bytes=1099511627776 WHERE id=$1`, f.env)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp() WHERE id=$1`, f.group)
 			for range 2 {
 				if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, trigger); err != nil {
 					t.Fatal(err)
@@ -233,6 +240,53 @@ func TestTriggerSlackGenerationAdmissionAndRevocation(t *testing.T) {
 			}
 			if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, trigger); err != nil {
 				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestTriggerUnavailableCapacityExpiresWithoutLateAdmission(t *testing.T) {
+	f := newAdmissionFixture(t)
+	due := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
+	trigger := seedTrigger(t, f, due)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET active_until=$3 WHERE environment_id=$1 AND id=$2`, f.env, trigger, due.Add(time.Second))
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, f.group)
+	if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, trigger); !errors.Is(err, workergroup.ErrCapacityUnavailable) {
+		t.Fatalf("unavailable capacity: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET active_from=active_from-interval '10 minutes',next_fire_at=next_fire_at-interval '10 minutes',active_until=active_until-interval '10 minutes' WHERE environment_id=$1 AND id=$2`, f.env, trigger)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp() WHERE id=$1`, f.group)
+	for range 2 {
+		if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, trigger); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var missed bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(disposition='missed' AND reason='lateness_exceeded' AND session_id IS NULL AND turn_id IS NULL) AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1) FROM trigger_occurrences WHERE environment_id=$1 AND activation_id=$2`, f.env, trigger).Scan(&missed); err != nil || !missed {
+		t.Fatalf("expired occurrence admitted: %v %v", missed, err)
+	}
+}
+
+func TestTriggerRejectsConfirmedCapacityLimits(t *testing.T) {
+	for _, reason := range []string{"execution_capacity_exhausted", "execution_capacity_incompatible"} {
+		t.Run(reason, func(t *testing.T) {
+			f := newAdmissionFixture(t)
+			due := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
+			trigger := seedTrigger(t, f, due)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE trigger_activations SET active_until=$3 WHERE environment_id=$1 AND id=$2`, f.env, trigger, due.Add(time.Second))
+			if reason == "execution_capacity_exhausted" {
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_groups SET capacity_pools=jsonb_set(capacity_pools,'{0,max_additional_workers}','0') WHERE id=$1`, f.group)
+			} else {
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE template_definitions SET cpu_millis=4000 WHERE environment_id=$1`, f.env)
+			}
+			for range 2 {
+				if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, trigger); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var rejected bool
+			if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(disposition='rejected' AND reason=$3 AND session_id IS NULL AND turn_id IS NULL) FROM trigger_occurrences WHERE environment_id=$1 AND activation_id=$2`, f.env, trigger, reason).Scan(&rejected); err != nil || !rejected {
+				t.Fatalf("capacity limit not terminal: %v %v", rejected, err)
 			}
 		})
 	}

@@ -9,12 +9,15 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -168,5 +171,76 @@ func TestSlackRequestRunnerDeliversPrivateRejectionAfterReceiptCommit(t *testing
 	}
 	if n, err := ReconcileRejectedFeedback(t.Context(), f.Pool, client, testProjectionConfig(), 4); err != nil || n != 0 {
 		t.Fatalf("runner notification replayed: %d %v", n, err)
+	}
+}
+
+func TestSlackRequestRetriesUnavailableCapacityWithinReceiptExpiry(t *testing.T) {
+	for _, outcome := range []string{"recovered", "expired", "permission-revoked"} {
+		t.Run(outcome, func(t *testing.T) {
+			f := newSlackAdmissionFixture(t)
+			f.link(t)
+			id := f.newMessage(t, "capacity-wait", "")
+			client := f.admissionClient(t)
+			policy := auditpolicy.Policy{RetentionSeconds: 3600}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET capacity_observed_at=clock_timestamp()-interval '1 minute' WHERE id=$1`, f.Group)
+			if count, err := ReconcileRequests(t.Context(), policy, f.Pool, nil, testProjectionConfig(), client, 4); count != 1 || !errors.Is(err, workergroup.ErrCapacityUnavailable) {
+				t.Fatalf("unavailable observation: count=%d err=%v", count, err)
+			}
+			var unchanged bool
+			if err := f.Pool.QueryRow(t.Context(), `SELECT status='received' AND error IS NULL AND finished_at IS NULL AND session_id IS NULL AND turn_id IS NULL AND next_attempt_at>clock_timestamp()
+    AND (SELECT count(*) FROM sessions WHERE environment_id=$2)=1
+    AND (SELECT count(*) FROM computers WHERE environment_id=$2)=1
+    AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$2)
+    FROM slack_requests WHERE id=$1`, id, f.Environment).Scan(&unchanged); err != nil || !unchanged {
+				t.Fatalf("retry committed work or terminal receipt: %v %v", unchanged, err)
+			}
+			if count, err := ReconcileRequests(t.Context(), policy, f.Pool, nil, testProjectionConfig(), client, 4); count != 0 || err != nil {
+				t.Fatalf("retry ignored scan reservation: count=%d err=%v", count, err)
+			}
+			switch outcome {
+			case "expired":
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, id)
+			case "permission-revoked":
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
+			}
+			sessiontest.ObserveProvisioning(t, f.Fixture)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET next_attempt_at=clock_timestamp() WHERE id=$1`, id)
+			if count, err := ReconcileRequests(t.Context(), policy, f.Pool, nil, testProjectionConfig(), client, 4); count != 1 || err != nil {
+				t.Fatalf("retry: count=%d err=%v", count, err)
+			}
+			for range 2 {
+				if err := ReconcileRequest(t.Context(), policy, f.Pool, nil, testProjectionConfig(), client, id); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var status string
+			var reason *string
+			var turns int
+			if err := f.Pool.QueryRow(t.Context(), `SELECT status,error,(SELECT count(*) FROM turns WHERE environment_id=$2) FROM slack_requests WHERE id=$1`, id, f.Environment).Scan(&status, &reason, &turns); err != nil {
+				t.Fatal(err)
+			}
+			if outcome == "recovered" {
+				if status != "accepted" || turns != 1 {
+					t.Fatalf("recovered receipt=%s turns=%d", status, turns)
+				}
+			} else {
+				want := "gesture_expired"
+				if outcome == "permission-revoked" {
+					want = "permission_denied"
+				}
+				if status != "rejected" || turns != 0 || reason == nil || *reason != want {
+					t.Fatalf("late or unauthorized work: receipt=%s turns=%d reason=%v want=%s", status, turns, reason, want)
+				}
+				if outcome == "expired" {
+					feedback, found, err := takeRejectedFeedback(t.Context(), f.Pool, testProjectionConfig())
+					if err != nil || !found || feedback == nil {
+						t.Fatalf("expiry feedback: %v %v", found, err)
+					}
+					if !strings.Contains(string(feedback.payload), "not accepted before its deadline") || !strings.Contains(string(feedback.payload), "service health") {
+						t.Fatalf("misleading expiry feedback: %s", feedback.payload)
+					}
+				}
+			}
+		})
 	}
 }
