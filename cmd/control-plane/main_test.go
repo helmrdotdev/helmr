@@ -264,6 +264,10 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
 	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
+	t.Setenv("DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY", "2")
+	t.Setenv("DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY", "1")
+	t.Setenv("DEPLOYMENT_UPLOAD_IDLE_TIMEOUT", "2m")
+	t.Setenv("DEPLOYMENT_UPLOAD_MAX_DURATION", "3h")
 	addr := freeSmokeAddr(t)
 	runtimeDescriptor, err := artifact.CanonicalRuntimeDescriptor(smokeRuntimeDescriptor())
 	if err != nil {
