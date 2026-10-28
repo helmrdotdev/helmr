@@ -79,8 +79,16 @@ Helmr does not backfill missed occurrences:
   trigger are never run.
 - An occurrence that cannot be admitted, for example because its Slack
   channel is no longer available, is recorded as rejected and is not retried.
-  A temporary shortage, such as capacity, does not reject it; Helmr keeps
-  trying while the occurrence is within that five-minute window.
+  When current Worker capacity cannot be confirmed, Helmr retries within that
+  five-minute window. If it remains unavailable, the occurrence is missed; it
+  does not run later when capacity returns. Persistent failures can require
+  an administrator to repair the service or Worker pool configuration.
+  A confirmed capacity limit or an incompatible workload is rejected rather
+  than queued without a bound.
+
+The five-minute window governs admission. Once accepted, execution can wait
+for a Worker within the Environment's configured preparation timeout; acceptance
+does not mean the scheduled work has started.
 
 ## Slack delivery
 

@@ -278,8 +278,6 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 				return rejectMessage(ctx, tx, id, "permission_denied")
 			case errors.Is(err, computer.ErrExecutionSettling):
 				return rejectMessage(ctx, tx, id, "execution_settling")
-			case errors.Is(err, workergroup.ErrCapacityUnavailable):
-				return rejectMessage(ctx, tx, id, "execution_capacity_unavailable")
 			case errors.Is(err, workergroup.ErrCapacityIncompatible):
 				return rejectMessage(ctx, tx, id, "execution_capacity_incompatible")
 			case errors.Is(err, workergroup.ErrCapacityExhausted):

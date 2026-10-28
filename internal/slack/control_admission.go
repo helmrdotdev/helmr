@@ -173,8 +173,6 @@ func admitControl(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 				return reject("computer_busy")
 			case errors.Is(err, computer.ErrExecutionSettling):
 				return reject("execution_settling")
-			case errors.Is(err, workergroup.ErrCapacityUnavailable):
-				return reject("execution_capacity_unavailable")
 			case errors.Is(err, workergroup.ErrCapacityIncompatible):
 				return reject("execution_capacity_incompatible")
 			case errors.Is(err, workergroup.ErrCapacityExhausted):
