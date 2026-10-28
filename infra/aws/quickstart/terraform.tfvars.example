@@ -1,135 +1,36 @@
-aws_region = "us-east-1"
+aws_region = "ap-northeast-1"
 name       = "helmr-quickstart"
-region_id  = "us-east-1"
+region_id  = "ap-northeast-1"
 
-platform_store_uri         = "s3://replace-with-bootstrap-platform-store/objects"
-platform_store_bucket_arn  = "arn:aws:s3:::replace-with-bootstrap-platform-store"
-platform_store_kms_key_arn = "arn:aws:kms:us-east-1:123456789012:key/replace-me"
+# Ubuntu 24.04 LTS amd64 AMI with cloud-init and SSM Agent in this Region.
+control_ami_id = "ami-replace-with-regional-ubuntu-ami"
+app_origin    = "https://helmr.example.com"
 
-helmr_version = "replace-with-helmr-release-version"
+# Released Product image; use a Worker AMI built from the same release bundles.
+helmr_version      = "v0.2.2"
+controlplane_image = "ghcr.io/helmrdotdev/control-plane@sha256:a6f1121a6665a18a8be0fe1d7f15f0a3ccb01461d51045f9060136f981ce55d9"
+worker_ami_id      = "ami-replace-with-release-worker-ami"
 
-# Direct ALB quickstart. To enable CloudFront, also set
-# cloudfront_origin_domain_name to a DNS name that resolves to the public ALB.
-enable_cloudfront = false
-app_origin        = "https://helmr.example.com"
-certificate_arn   = "arn:aws:acm:us-east-1:123456789012:certificate/replace-me"
-
-enable_nat_gateway       = false
-controlplane_assign_public_ip = true
-
-# Set verified operator emails before their first login for Pool retirement.
-# Diagnostic values below are explicit development examples, not production defaults.
-controlplane_environment = {
-  # Example starting values; measure capacity for the selected task size.
-  DEPLOYMENT_UPLOAD_PROCESS_CONCURRENCY = "8"
-  DEPLOYMENT_UPLOAD_ORGANIZATION_CONCURRENCY = "8"
-  DEPLOYMENT_UPLOAD_IDLE_TIMEOUT = "2m"
-  DEPLOYMENT_UPLOAD_MAX_DURATION = "2h"
-
-  # ADMIN_EMAILS = "operator@example.com"
-  DIAGNOSTIC_CHUNK_BYTES = "65536"
-  DIAGNOSTIC_SOURCE_BYTES = "4194304"
-  DIAGNOSTIC_SOURCE_RECORDS = "1024"
-  DIAGNOSTIC_ENVIRONMENT_BYTES = "16777216"
-  DIAGNOSTIC_ENVIRONMENT_RECORDS = "4096"
-  DIAGNOSTIC_QUEUE_BYTES = "67108864"
-  DIAGNOSTIC_QUEUE_RECORDS = "16384"
-  DIAGNOSTIC_DB_MAX_CONNECTIONS = "2"
-}
-
-# Required explicit limits. These are development examples, not production defaults.
-# Review workload and database budgets before deployment; see ../README.md.
-dispatcher_environment = {
-  DIAGNOSTIC_EXPORT_BATCH_BYTES = "4194304"
-  DIAGNOSTIC_EXPORT_BATCH_RECORDS = "1024"
-  DIAGNOSTIC_CHUNK_BYTES = "65536"
-  DIAGNOSTIC_SOURCE_BYTES = "4194304"
-  DIAGNOSTIC_SOURCE_RECORDS = "1024"
-  DIAGNOSTIC_ENVIRONMENT_BYTES = "16777216"
-  DIAGNOSTIC_ENVIRONMENT_RECORDS = "4096"
-  DIAGNOSTIC_QUEUE_BYTES = "67108864"
-  DIAGNOSTIC_QUEUE_RECORDS = "16384"
-  DIAGNOSTIC_DB_MAX_CONNECTIONS = "2"
-}
-# capacity_token_secret_arn = "<existing-deployment-capacity-secret-arn>"
+# Existing immutable Platform Artifact store with the signed Runtime published.
+platform_store_uri         = "s3://replace-with-platform-store/objects"
+platform_store_bucket_arn  = "arn:aws:s3:::replace-with-platform-store"
+platform_store_kms_key_arn = "arn:aws:kms:ap-northeast-1:123456789012:key/replace-me"
 
 github_oauth_client_id = "replace-with-github-oauth-client-id"
 
-clickhouse_url  = "https://replace-me.clickhouse.cloud:8443"
-clickhouse_access_mode = "external"
-clickhouse_reader_user = "helmr_telemetry_reader"
-clickhouse_reader_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:telemetry-reader"
-clickhouse_ingester_user = "helmr_telemetry_ingester"
-clickhouse_ingester_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:telemetry-ingester"
-clickhouse_migration_user = "helmr_telemetry_migration"
-clickhouse_migration_password_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:telemetry-migration"
-# When the ClickHouse password secret uses a customer-managed key outside this
-# stack, allow the control and dispatcher execution roles to decrypt it.
-# clickhouse_reader_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
-# clickhouse_ingester_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
-# clickhouse_migration_password_kms_key_arns = ["<clickhouse-password-kms-key-arn>"]
-# When using the ClickHouse Cloud PrivateLink module, attach its client security
-# group to control, dispatcher, and migration tasks.
-# additional_controlplane_security_group_ids = ["<clickhouse-client-security-group-id>"]
+# Start the control services and complete setup before enabling the Worker.
+create_worker = false
+worker_count  = 1
 
-create_controlplane_service = false
-controlplane_desired_count    = 1
-dispatcher_desired_count = 1
+# One small execution slot on a separate c8i.large; no automatic scaling.
+worker_host_type           = "c8i.large"
+worker_root_volume_size_gb = 320
+worker_execution_slots    = 1
+worker_vm_vcpus            = 1
+worker_vm_memory_mib       = 2048
 
-# Email delivery is disabled by default. For Resend, uncomment these values,
-# apply, then populate the emitted secret_arns.resend_api_key secret.
-# email_provider = "resend"
-# email_from     = "Helmr <noreply@example.com>"
-
-# Dispatch queue. Quickstart uses a single node for lower cost.
-
-# Supply the digest-pinned image from the verified common release index and
-# an AMI prepared from its exact host/runtime bundles before enabling workers.
-# Common releases do not publish the resolver's default AWS manifest.
-controlplane_image = null
-worker_ami_id = null
-worker_network_blocked_ipv4_cidrs = [
-  "10.0.0.0/8",
-  "169.254.0.0/16",
-]
-
-# Optional smoke worker using the explicitly prepared worker_ami_id.
-# NAT Gateway is required because workers run in private subnets.
-create_worker                       = false
-# Copy prior entries from `tofu output -json worker_generation_definitions`
-# here unchanged, including count, before an immutable generation change.
-# Reduce source count only after the full-stop gate; delete only after Pool disable.
-retained_worker_generations         = {}
-worker_host_type                = "c8i.xlarge"
-worker_enable_nested_virtualization = true
-worker_count            = 1
-worker_root_volume_size_gb          = 120
-worker_root_volume_iops             = 3000
-worker_root_volume_throughput       = 125
-worker_disk_mib                     = null
-worker_vm_vcpus                     = 2
-worker_vm_memory_mib                = 4096
-worker_vm_scratch_disk_mib          = 32768
-
-# Initial evaluation values; tune using workload measurements.
-worker_computer_devices = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]
-
-# Required: set the following keys in controlplane_environment to operator-approved
-# positive integers. No production quota values are inferred by the module.
-# ENVIRONMENT_MAX_RESIDENT_COMPUTERS
-# ENVIRONMENT_MAX_CPU_MILLIS
-# ENVIRONMENT_MAX_MEMORY_BYTES
-# ENVIRONMENT_MAX_RESERVED_STORAGE_BYTES
-# ENVIRONMENT_MAX_OUTSTANDING_ADMISSIONS
-# ENVIRONMENT_MAX_CAUSAL_DEPTH
-# ENVIRONMENT_ADMISSION_RATE_PER_SECOND
-# ENVIRONMENT_ADMISSION_BURST
-# ENVIRONMENT_PREPARATION_TIMEOUT_MS
-
-# Explicit development examples; choose bounded log buffers for the actual Worker.
-# Changing this map creates a new Pool generation and preserves retained maps.
-worker_environment = {
-  WORKER_LOG_CHUNK_BYTES    = "65536"
-  WORKER_LOG_BUFFER_BYTES   = "1048576"
-  WORKER_LOG_BUFFER_RECORDS = "256"
+slack_transport = "socket"
+controlplane_environment = {
+  # Set verified operator emails before their first login when needed.
+  # ADMIN_EMAILS = "operator@example.com"
 }

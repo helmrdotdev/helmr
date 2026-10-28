@@ -5,7 +5,7 @@ description: Prepare the accounts, tools, release inputs, data services, and net
 
 # Requirements
 
-Prepare these inputs before applying either AWS composition.
+Prepare these inputs before applying the selected AWS composition.
 
 ## Accounts and tools
 
@@ -13,7 +13,7 @@ Prepare these inputs before applying either AWS composition.
 - AWS credentials allowed to create the VPC, load balancer, ECS, RDS, ElastiCache, S3, KMS, Secrets Manager, IAM, EC2, Auto Scaling, and optional CloudFront resources in the composition you select.
 - OpenTofu or Terraform, plus the AWS CLI, `jq`, OpenSSL, and curl. The repository's Nix development shell provides the pinned project toolchain.
 - A GitHub OAuth app for browser login.
-- A customer-owned ClickHouse service reachable from Control Plane, dispatcher, and migration tasks over HTTPS.
+- For Standard and Private, a customer-owned ClickHouse service reachable from Control Plane, Dispatcher and migration tasks over HTTPS. Quickstart includes local ClickHouse.
 
 ## Required deployment inputs
 
@@ -28,11 +28,14 @@ Both `infra/aws/quickstart` and `infra/aws/standard` require:
 | `platform_store_uri` | Points to immutable Platform Artifact objects. |
 | `platform_store_bucket_arn` | Authorizes access to the Platform Artifact bucket. |
 | `platform_store_kms_key_arn` | Authorizes decryption of Platform Artifacts. |
-| `clickhouse_url` | HTTPS endpoint for historical telemetry. |
 | `github_oauth_client_id` | Non-secret OAuth application client ID. |
-| `worker_network_blocked_ipv4_cidrs` | Deployment-owned deny set that must wholly cover the execution VPC prefix. |
+| `worker_network_blocked_ipv4_cidrs` | Additional guest egress denies. Quickstart automatically includes its VPC, metadata and public application address; other roots require the execution VPC deny explicitly. |
 
 The Platform Artifact values come from `infra/aws/modules/release-storage` as a child module under an operator-owned root and backend, or from an equivalent deployment. The example compositions do not create that foundation for you. Compose `infra/aws/modules/release-publisher` separately when you need a publisher role, passing the exact storage outputs and your trusted IAM principals.
+
+Quickstart additionally takes a regional Ubuntu 24.04 amd64 `control_ami_id` and
+a public `app_origin`. Standard and Private take external ClickHouse configuration
+and their own certificate/network inputs.
 
 ## Release artifacts
 
@@ -52,8 +55,8 @@ also an explicit preparation input; it is not a Product publication fallback.
 
 Workers additionally need:
 
-- Private-subnet outbound access to the Control Plane, S3, ECR, AWS APIs, registries, and any external services your agents call.
-- KVM-capable EC2 capacity. The evaluation profile supports explicitly enabled nested virtualization on supported families; the production profile defaults to a metal instance.
+- Outbound access to the Control Plane, S3, ECR, AWS APIs, registries, and any external services your agents call.
+- KVM-capable EC2 capacity. Quickstart enables nested virtualization on a supported instance family; the production profile defaults to a metal instance.
 - A worker AMI containing `worker`, Firecracker, jailer, `ip`, `nft`, AWS CLI v2, curl, the systemd unit, and certified guest boot artifacts.
 - Explicit host, VM, cache, disk, and execution-slot capacity sized for the workload.
 - SSM access for maintenance unless you supply an alternative. The module does not open SSH by default.

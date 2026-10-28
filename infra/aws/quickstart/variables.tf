@@ -1,10 +1,3 @@
-variable "enable_deployment_rollback" {
-  description = "Allow ECS to restore the previous task definition on deployment failure. Disable before migrations incompatible with predecessor code; this does not restore the database."
-  type        = bool
-  default     = true
-  nullable    = false
-}
-
 variable "aws_region" {
   description = "AWS region for the quickstart deployment."
   type        = string
@@ -33,89 +26,12 @@ variable "tags" {
   default     = {}
 }
 
-variable "controlplane_vpc_cidr" {
-  description = "CIDR block for the unrouted Control Plane VPC."
-  type        = string
-  default     = "10.80.0.0/16"
-}
-
-variable "execution_vpc_cidr" {
-  description = "CIDR block for the unrouted Execution VPC. The exact prefix must appear in the deployment-supplied Worker deny set."
-  type        = string
-  default     = "10.81.0.0/16"
-
-  validation {
-    condition     = can(cidrnetmask(var.execution_vpc_cidr)) && contains(var.worker_network_blocked_ipv4_cidrs, var.execution_vpc_cidr)
-    error_message = "execution_vpc_cidr must appear exactly in worker_network_blocked_ipv4_cidrs."
-  }
-}
-
-variable "availability_zone_count" {
-  description = "Number of availability zones for public and private subnets."
-  type        = number
-  default     = 2
-
-  validation {
-    condition     = var.availability_zone_count >= 2
-    error_message = "availability_zone_count must be at least 2."
-  }
-}
-
-variable "enable_nat_gateway" {
-  description = "Create a NAT Gateway for private subnet egress. The default no-NAT mode uses public IPs for controlplane and migration Fargate tasks."
-  type        = bool
-  default     = false
-}
-
-variable "bucket_name_prefix" {
-  description = "Globally unique S3 bucket name prefix. Defaults to name-account-region inside the controlplane module."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "enable_cloudfront" {
-  description = "Create a CloudFront distribution using the default cloudfront.net viewer domain in front of an HTTPS ALB origin."
-  type        = bool
-  default     = false
-}
-
 variable "app_origin" {
-  description = "External control-plane URL when enable_cloudfront is false. Ignored when enable_cloudfront is true."
+  description = "Public HTTPS origin. Point its DNS A record directly at controlplane_public_ip."
   type        = string
-  default     = null
-  nullable    = true
-}
-
-
-variable "deployment_mode" {
-  description = "Helmr deployment mode passed to control-plane tasks."
-  type        = string
-  default     = "self-hosted"
-}
-
-variable "worker_group_name" {
-  description = "Name of the initial Worker Group."
-  type        = string
-
   validation {
-    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$", var.worker_group_name))
-    error_message = "worker_group_name must be a lowercase URL-safe identifier of 1-128 characters."
-  }
-}
-
-variable "region_id" {
-  description = "Explicit Helmr region primitive for this stack."
-  type        = string
-
-  validation {
-    condition = (
-      var.region_id != "" &&
-      var.region_id == trimspace(var.region_id) &&
-      length(base64encode(var.region_id)) <= 340 &&
-      length(regexall("[[:cntrl:]]", var.region_id)) == 0
-    )
-    error_message = "region_id must be normalized control-free UTF-8 of 1-255 bytes."
+    condition     = can(regex("^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?$", var.app_origin))
+    error_message = "app_origin must be a public DNS HTTPS origin without a path or custom port."
   }
 }
 
@@ -132,173 +48,6 @@ variable "platform_store_bucket_arn" {
 variable "platform_store_kms_key_arn" {
   description = "Platform Artifact store KMS key ARN exported by the bootstrap module."
   type        = string
-}
-
-variable "clickhouse_url" {
-  description = "ClickHouse HTTP endpoint for historical telemetry."
-  type        = string
-
-  validation {
-    condition     = can(regex("^https://[^<>[:space:]]+(:[0-9]+)?/?$", trimspace(var.clickhouse_url)))
-    error_message = "clickhouse_url must be an https URL without placeholder characters."
-  }
-}
-
-variable "clickhouse_access_mode" {
-  description = "Use bootstrap to provision dedicated ClickHouse users, or external for users provisioned separately."
-  type        = string
-  validation {
-    condition     = contains(["bootstrap", "external"], var.clickhouse_access_mode)
-    error_message = "clickhouse_access_mode must be bootstrap or external."
-  }
-}
-
-variable "clickhouse_reader_user" {
-  description = "Explicit ClickHouse reader username."
-  type        = string
-  nullable    = false
-  validation {
-    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_reader_user))
-    error_message = "clickhouse_reader_user must be a simple non-empty SQL identifier."
-  }
-}
-
-variable "clickhouse_reader_password_secret_arn" {
-  description = "Secrets Manager ARN containing the ClickHouse reader password."
-  type        = string
-  nullable    = false
-  validation {
-    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_reader_password_secret_arn))
-    error_message = "clickhouse_reader_password_secret_arn must be a Secrets Manager secret ARN."
-  }
-}
-
-variable "clickhouse_reader_password_kms_key_arns" {
-  description = "Optional customer-managed KMS key ARNs for the ClickHouse reader secret."
-  type        = list(string)
-  default     = []
-  validation {
-    condition     = alltrue([for arn in var.clickhouse_reader_password_kms_key_arns : trimspace(arn) != ""])
-    error_message = "clickhouse_reader_password_kms_key_arns entries must be non-empty."
-  }
-}
-
-variable "clickhouse_ingester_user" {
-  description = "Explicit ClickHouse ingester username."
-  type        = string
-  nullable    = false
-  validation {
-    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_ingester_user))
-    error_message = "clickhouse_ingester_user must be a simple non-empty SQL identifier."
-  }
-}
-
-variable "clickhouse_ingester_password_secret_arn" {
-  description = "Secrets Manager ARN containing the ClickHouse ingester password."
-  type        = string
-  nullable    = false
-  validation {
-    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_ingester_password_secret_arn))
-    error_message = "clickhouse_ingester_password_secret_arn must be a Secrets Manager secret ARN."
-  }
-}
-
-variable "clickhouse_ingester_password_kms_key_arns" {
-  description = "Optional customer-managed KMS key ARNs for the ClickHouse ingester secret."
-  type        = list(string)
-  default     = []
-  validation {
-    condition     = alltrue([for arn in var.clickhouse_ingester_password_kms_key_arns : trimspace(arn) != ""])
-    error_message = "clickhouse_ingester_password_kms_key_arns entries must be non-empty."
-  }
-}
-
-variable "clickhouse_migration_user" {
-  description = "Explicit ClickHouse migration username."
-  type        = string
-  nullable    = false
-  validation {
-    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_migration_user))
-    error_message = "clickhouse_migration_user must be a simple non-empty SQL identifier."
-  }
-}
-
-variable "clickhouse_migration_password_secret_arn" {
-  description = "Secrets Manager ARN containing the ClickHouse migration password."
-  type        = string
-  nullable    = false
-  validation {
-    condition     = can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_migration_password_secret_arn))
-    error_message = "clickhouse_migration_password_secret_arn must be a Secrets Manager secret ARN."
-  }
-}
-
-variable "clickhouse_migration_password_kms_key_arns" {
-  description = "Optional customer-managed KMS key ARNs for the ClickHouse migration secret."
-  type        = list(string)
-  default     = []
-  validation {
-    condition     = alltrue([for arn in var.clickhouse_migration_password_kms_key_arns : trimspace(arn) != ""])
-    error_message = "clickhouse_migration_password_kms_key_arns entries must be non-empty."
-  }
-}
-
-variable "clickhouse_bootstrap_user" {
-  description = "Explicit ClickHouse bootstrap username."
-  type        = string
-  default     = null
-  nullable    = true
-  validation {
-    condition     = var.clickhouse_bootstrap_user == null || can(regex("^[A-Za-z_][A-Za-z0-9_]{0,63}$", var.clickhouse_bootstrap_user))
-    error_message = "clickhouse_bootstrap_user must be a simple non-empty SQL identifier."
-  }
-}
-
-variable "clickhouse_bootstrap_password_secret_arn" {
-  description = "Secrets Manager ARN containing the ClickHouse bootstrap password."
-  type        = string
-  default     = null
-  nullable    = true
-  validation {
-    condition     = var.clickhouse_bootstrap_password_secret_arn == null || can(regex("^arn:aws[a-zA-Z-]*:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", var.clickhouse_bootstrap_password_secret_arn))
-    error_message = "clickhouse_bootstrap_password_secret_arn must be a Secrets Manager secret ARN."
-  }
-}
-
-variable "clickhouse_bootstrap_password_kms_key_arns" {
-  description = "Optional customer-managed KMS key ARNs for the ClickHouse bootstrap secret."
-  type        = list(string)
-  default     = []
-  validation {
-    condition     = alltrue([for arn in var.clickhouse_bootstrap_password_kms_key_arns : trimspace(arn) != ""])
-    error_message = "clickhouse_bootstrap_password_kms_key_arns entries must be non-empty."
-  }
-}
-
-variable "additional_controlplane_security_group_ids" {
-  description = "Additional security groups attached to controlplane, dispatcher, and migration tasks."
-  type        = list(string)
-  default     = []
-}
-
-variable "cloudfront_origin_domain_name" {
-  description = "DNS name CloudFront uses for the HTTPS ALB origin when enable_cloudfront is true. This name must resolve to the public ALB and be covered by certificate_arn."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "certificate_arn" {
-  description = "ACM certificate ARN for the HTTPS ALB listener."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "allow_insecure_http" {
-  description = "Allow a public plaintext HTTP forwarding listener. Keep false unless this is an isolated evaluation environment."
-  type        = bool
-  default     = false
 }
 
 variable "helmr_version" {
@@ -329,163 +78,6 @@ variable "controlplane_image" {
   description = "Optional digest-pinned controlplane image URI override for custom builds. When null, the release artifact manifest is used."
   type        = string
   default     = null
-  nullable    = true
-}
-
-variable "controlplane_image_repository_arn" {
-  description = "Exact private ECR repository ARN needed by the ECS execution roles. Leave null for public or non-ECR images."
-  type        = string
-  default     = null
-  nullable    = true
-
-  validation {
-    condition = (
-      var.controlplane_image_repository_arn == null ||
-      can(regex("^arn:[^:]+:ecr:[a-z0-9-]+:[0-9]{12}:repository/[a-z0-9._/-]+$", var.controlplane_image_repository_arn))
-    )
-    error_message = "controlplane_image_repository_arn must be null or an ECR repository ARN."
-  }
-}
-
-variable "create_controlplane_service" {
-  description = "Create the ECS service. Keep false for the first apply until image and secret values are ready."
-  type        = bool
-  default     = false
-}
-
-variable "controlplane_desired_count" {
-  description = "Desired ECS task count for the controlplane service."
-  type        = number
-  default     = 1
-}
-
-variable "dispatcher_desired_count" {
-  description = "Desired ECS task count for helmr-dispatcher."
-  type        = number
-  default     = 1
-}
-
-variable "controlplane_assign_public_ip" {
-  description = "Run controlplane and migration Fargate tasks in public subnets with public IPs so the quickstart can avoid NAT Gateway."
-  type        = bool
-  default     = true
-}
-
-variable "controlplane_environment" {
-  description = "Additional non-secret environment variables for helmr-controlplane."
-  type        = map(string)
-  default     = {}
-}
-
-variable "dispatcher_environment" {
-  description = "Additional non-secret environment variables for helmr-dispatcher, including explicitly chosen diagnostic export limits. Managed Helmr variables remain owned by the controlplane module."
-  type        = map(string)
-  default     = {}
-}
-
-variable "email_provider" {
-  description = "Email delivery provider for magic links and run wait notifications."
-  type        = string
-  default     = "none"
-}
-
-variable "email_from" {
-  description = "Sender address for email delivery."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "smtp_addr" {
-  description = "SMTP host:port when email_provider is smtp."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "smtp_username" {
-  description = "SMTP username when email_provider is smtp."
-  type        = string
-  default     = null
-  nullable    = true
-}
-
-variable "smtp_password_enabled" {
-  description = "Create and inject an SMTP password secret when email_provider is smtp."
-  type        = bool
-  default     = false
-}
-
-variable "github_oauth_client_id" {
-  description = "GitHub OAuth application client ID."
-  type        = string
-}
-
-variable "database_instance_class" {
-  description = "RDS Postgres instance class."
-  type        = string
-  default     = "db.t4g.micro"
-}
-
-variable "database_allocated_storage_gb" {
-  description = "RDS allocated storage in GiB."
-  type        = number
-  default     = 20
-}
-
-variable "database_backup_retention_days" {
-  description = "RDS automated backup retention in days."
-  type        = number
-  default     = 1
-}
-
-variable "database_performance_insights_enabled" {
-  description = "Enable RDS Performance Insights when supported by the chosen instance class."
-  type        = bool
-  default     = false
-}
-
-variable "database_deletion_protection" {
-  description = "Protect the RDS instance from accidental deletion."
-  type        = bool
-  default     = false
-}
-
-variable "database_skip_final_snapshot" {
-  description = "Skip the final RDS snapshot on destroy."
-  type        = bool
-  default     = true
-}
-
-variable "controlplane_log_retention_days" {
-  description = "CloudWatch Logs retention in days for controlplane and migration tasks."
-  type        = number
-  default     = 7
-}
-
-variable "kms_deletion_window_in_days" {
-  description = "KMS key deletion window in days."
-  type        = number
-  default     = 7
-}
-
-variable "secret_recovery_window_in_days" {
-  description = "Secrets Manager recovery window in days."
-  type        = number
-  default     = 7
-}
-
-variable "cas_object_expiration_days" {
-  description = "Days before current CAS objects expire."
-  type        = number
-  default     = 7
-  nullable    = true
-}
-
-variable "cas_noncurrent_version_expiration_days" {
-  description = "Days before noncurrent CAS object versions expire."
-  type        = number
-  default     = 1
   nullable    = true
 }
 
@@ -657,7 +249,7 @@ variable "worker_ami_id" {
 variable "worker_host_type" {
   description = "EC2 instance type for the smoke worker."
   type        = string
-  default     = "c8i.xlarge"
+  default     = "c8i.large"
 }
 
 variable "worker_enable_nested_virtualization" {
@@ -673,6 +265,7 @@ variable "worker_enable_ssm" {
 }
 
 variable "worker_network_blocked_ipv4_cidrs" {
+  default     = []
   description = "Canonical ordered IPv4 CIDRs blocked for all guest egress. Supply [] only when the deployment intentionally has no additional destination deny."
   type        = list(string)
 
@@ -706,7 +299,7 @@ variable "worker_network_resolver_ipv4" {
 variable "worker_count" {
   description = "Explicit fixed count for the current Worker generation; required when create_worker is true. Use zero to prepare an inert target or deliberately stop capacity after draining."
   type        = number
-  default     = null
+  default     = 1
   validation {
     condition     = var.worker_count == null ? !var.create_worker : var.worker_count >= 0 && floor(var.worker_count) == var.worker_count
     error_message = "Set worker_count to a non-negative whole number when creating Worker resources."
@@ -715,17 +308,17 @@ variable "worker_count" {
 
 variable "worker_capacity_vcpus" {
   type     = number
-  default  = null
+  default  = 1
   nullable = true
 }
 variable "worker_capacity_memory_mib" {
   type     = number
-  default  = null
+  default  = 2560
   nullable = true
 }
 variable "worker_execution_slots" {
   type     = number
-  default  = null
+  default  = 1
   nullable = true
 }
 
@@ -733,7 +326,7 @@ variable "worker_execution_slots" {
 variable "worker_root_volume_size_gb" {
   description = "Smoke worker root EBS volume size in GiB."
   type        = number
-  default     = 120
+  default     = 320
 }
 
 variable "worker_root_volume_iops" {
@@ -751,14 +344,14 @@ variable "worker_root_volume_throughput" {
 variable "worker_disk_mib" {
   description = "Optional filesystem capacity ceiling in MiB before the worker reserve is withheld. Leave null to auto-detect."
   type        = number
-  default     = null
+  default     = 311296
   nullable    = true
 }
 
 variable "worker_disk_reserve_mib" {
   description = "Filesystem capacity in MiB withheld from advertised worker capacity."
   type        = number
-  default     = 1024
+  default     = 8192
 
   validation {
     condition     = var.worker_disk_reserve_mib > 0
@@ -769,13 +362,13 @@ variable "worker_disk_reserve_mib" {
 variable "worker_vm_vcpus" {
   description = "vCPU count assigned to each worker Firecracker task VM."
   type        = number
-  default     = 2
+  default     = 1
 }
 
 variable "worker_vm_memory_mib" {
   description = "Memory in MiB assigned to each worker Firecracker task VM."
   type        = number
-  default     = 4096
+  default     = 2048
 }
 
 variable "worker_vm_scratch_disk_mib" {
@@ -785,39 +378,9 @@ variable "worker_vm_scratch_disk_mib" {
 }
 
 variable "worker_computer_devices" {
+  default     = ["/dev/nbd0"]
   description = "Exclusive Worker NBD device allowlist."
   type        = list(string)
-}
-
-variable "computer_wrapping_key_id" {
-  description = "Stable self-hosted Computer root key identity. Preserve with the root key value and database backups."
-  type        = string
-  default     = "computer-root-v1"
-  nullable    = false
-}
-
-variable "capacity_token_secret_arn" {
-  description = "Optional externally owned Secrets Manager ARN containing the provider-neutral capacity credential."
-  type        = string
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.capacity_token_secret_arn == null || can(regex("^arn:[^:]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.capacity_token_secret_arn))
-    error_message = "capacity_token_secret_arn must be a Secrets Manager secret ARN."
-  }
-}
-
-variable "capacity_token_kms_key_arn" {
-  description = "Optional KMS key ARN required to decrypt capacity_token_secret_arn."
-  type        = string
-  default     = null
-  nullable    = true
-
-  validation {
-    condition     = var.capacity_token_kms_key_arn == null || can(regex("^arn:[^:]+:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9a-f-]+$", var.capacity_token_kms_key_arn))
-    error_message = "capacity_token_kms_key_arn must be a KMS key ARN."
-  }
 }
 
 variable "worker_computer_staging_mib" {
@@ -828,56 +391,6 @@ variable "worker_computer_staging_mib" {
     condition     = var.worker_computer_staging_mib > 0 && floor(var.worker_computer_staging_mib) == var.worker_computer_staging_mib && var.worker_computer_staging_mib <= 8796093022207
     error_message = "worker_computer_staging_mib must be positive whole MiB representable in int64 bytes."
   }
-}
-
-variable "slack_transport" {
-  description = "Slack delivery mode; HTTP is the public deployment default."
-  type        = string
-  default     = "http"
-  validation {
-    condition     = contains(["disabled", "http", "socket"], var.slack_transport)
-    error_message = "slack_transport must be disabled, http or socket."
-  }
-}
-
-variable "audit_retention_seconds" {
-  description = "Explicit positive security audit retention policy in seconds."
-  type        = number
-  validation {
-    condition     = var.audit_retention_seconds > 0 && floor(var.audit_retention_seconds) == var.audit_retention_seconds
-    error_message = "audit_retention_seconds must be a positive integer."
-  }
-}
-
-variable "audit_purge_interval_minutes" {
-  description = "Interval for bounded audit purge; size with retention volume and replica count."
-  type        = number
-  default     = 15
-  validation {
-    condition     = var.audit_purge_interval_minutes >= 2 && var.audit_purge_interval_minutes <= 720 && floor(var.audit_purge_interval_minutes) == var.audit_purge_interval_minutes
-    error_message = "audit_purge_interval_minutes must be an integer between 2 and 720."
-  }
-}
-variable "audit_maintenance_timeout_seconds" {
-  type    = number
-  default = 300
-  validation {
-    condition     = var.audit_maintenance_timeout_seconds >= 1 && var.audit_maintenance_timeout_seconds <= 3600 && floor(var.audit_maintenance_timeout_seconds) == var.audit_maintenance_timeout_seconds
-    error_message = "audit_maintenance_timeout_seconds must be an integer between 1 and 3600."
-  }
-}
-variable "audit_purge_max_batches" {
-  type    = number
-  default = 50
-  validation {
-    condition     = var.audit_purge_max_batches >= 1 && var.audit_purge_max_batches <= 1000 && floor(var.audit_purge_max_batches) == var.audit_purge_max_batches
-    error_message = "audit_purge_max_batches must be an integer between 1 and 1000."
-  }
-}
-variable "audit_maintenance_alarm_actions" {
-  description = "Existing CloudWatch alarm action ARNs for missing audit purge success."
-  type        = list(string)
-  default     = []
 }
 
 variable "worker_network_private_business_cidrs" {
@@ -893,15 +406,96 @@ variable "worker_network_private_business_cidrs" {
 variable "worker_environment" {
   description = "Additional non-secret Worker environment, including explicit WORKER_LOG_CHUNK_BYTES, WORKER_LOG_BUFFER_BYTES and WORKER_LOG_BUFFER_RECORDS. Stored in immutable Pool generation inputs; changes create a new generation."
   type        = map(string)
+  default = {
+    WORKER_LOG_CHUNK_BYTES    = "65536"
+    WORKER_LOG_BUFFER_BYTES   = "1048576"
+    WORKER_LOG_BUFFER_RECORDS = "256"
+  }
+}
+
+variable "vpc_cidr" {
+  description = "Quickstart VPC range; its first /24 is the public host subnet."
+  type        = string
+  default     = "10.80.0.0/16"
+  validation {
+    condition     = can(cidrnetmask(var.vpc_cidr)) && try(split("/", var.vpc_cidr)[1] == "16" && cidrhost(var.vpc_cidr, 0) == split("/", var.vpc_cidr)[0], false)
+    error_message = "vpc_cidr must be a canonical IPv4 /16 network."
+  }
+}
+
+variable "control_ami_id" {
+  description = "Ubuntu 24.04 LTS amd64 AMI with cloud-init and SSM Agent, in aws_region."
+  type        = string
+  validation {
+    condition     = can(regex("^ami-[0-9a-f]{8,}$", var.control_ami_id))
+    error_message = "Supply a regional Ubuntu 24.04 amd64 AMI ID."
+  }
+}
+
+variable "control_instance_type" {
+  description = "Control host instance type."
+  type        = string
+  default     = "t3.large"
+}
+
+variable "control_disk_gb" {
+  description = "Control host disk for PostgreSQL, telemetry and TLS state. No backup; deleted on termination."
+  type        = number
+  default     = 60
+}
+
+variable "github_oauth_client_id" {
+  description = "GitHub OAuth application client ID."
+  type        = string
+}
+
+variable "region_id" {
+  description = "Logical Helmr Region ID."
+  type        = string
+}
+
+variable "worker_group_name" {
+  description = "Initial logical Worker Group."
+  type        = string
+  default     = "default"
+}
+
+variable "slack_transport" {
+  description = "Slack transport: socket, http, or disabled."
+  type        = string
+  default     = "socket"
+  validation {
+    condition     = contains(["socket", "http", "disabled"], var.slack_transport)
+    error_message = "slack_transport must be socket, http or disabled."
+  }
+}
+
+variable "controlplane_environment" {
+  description = "Additional non-secret Control Plane configuration."
+  type        = map(string)
   default     = {}
 }
 
-variable "controlplane_idle_timeout_seconds" {
-  description = "ALB connection idle timeout; keep it above client/server upload inactivity limits. Backend HTTP keepalive is configured 30 seconds longer."
-  type        = number
-  default     = 180
-  validation {
-    condition     = var.controlplane_idle_timeout_seconds >= 1 && var.controlplane_idle_timeout_seconds <= 4000 && floor(var.controlplane_idle_timeout_seconds) == var.controlplane_idle_timeout_seconds
-    error_message = "controlplane_idle_timeout_seconds must be an integer from 1 through 4000."
-  }
+variable "dispatcher_environment" {
+  description = "Additional non-secret Dispatcher configuration."
+  type        = map(string)
+  default     = {}
+}
+
+variable "postgres_image" {
+  description = "PostgreSQL 18 container image. Pin a digest for reproducible deployment."
+  type        = string
+  default     = "postgres:18-bookworm@sha256:5c4783a8cc3f0074912164f94dfa1be4e043438f0f707cf968d7af9a0d31a2c8"
+}
+
+variable "clickhouse_image" {
+  description = "ClickHouse server image matching the supported telemetry schema."
+  type        = string
+  default     = "clickhouse/clickhouse-server:26.7.5.10@sha256:800e82865530eb2f1c4bc1b960e43b435fd9b2d83b4bd04a2564a5cfd88fdb6e"
+}
+
+variable "caddy_image" {
+  description = "Caddy image for direct HTTPS and automatic certificate renewal."
+  type        = string
+  default     = "caddy:2@sha256:5e5286cb37d44086d651a5363f05f43a692ce4d649d88fb1bd844579f45fa9e8"
 }

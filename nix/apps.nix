@@ -226,6 +226,9 @@ let
           for stack in quickstart stacks/release-build stacks/worker-image standard private; do
             (
               cd "infra/aws/$stack"
+              if [ "$stack" = quickstart ]; then
+                python3 tests/test_host_config.py
+              fi
               tofu init -backend=false -input=false
               tofu fmt -check -recursive
               case "$stack" in

@@ -1,0 +1,18 @@
+[Unit]
+Description=Helmr Quickstart
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+UMask=0077
+ExecStartPre=/usr/local/sbin/helmr-quickstart-configure
+ExecStart=/usr/local/sbin/helmr-quickstart-start
+ExecStop=/usr/bin/docker compose -f /run/helmr/compose.json down
+TimeoutStartSec=900
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

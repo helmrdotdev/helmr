@@ -1,57 +1,75 @@
 ---
-title: AWS evaluation
-description: Deploy the low-cost quickstart profile for evaluation and proof-of-concept use.
-sidebarLabel: AWS evaluation
+title: AWS Quickstart
+description: Run a compact self-hosted Helmr installation with local PostgreSQL and ClickHouse.
+sidebarLabel: AWS Quickstart
 ---
 
-# AWS evaluation
+# AWS Quickstart
 
-`infra/aws/quickstart` is a low-cost evaluation and proof-of-concept composition. It is not the production baseline.
+`infra/aws/quickstart` provides a small installation for evaluation or ongoing
+use. One EC2 host runs Control Plane, Dispatcher, PostgreSQL, ClickHouse and
+HTTPS; a separate Worker runs agents. It uses released images and existing
+Platform Artifact storage. There is no ALB, NAT gateway, RDS or Fargate.
 
-Its defaults include one Control Plane task, one dispatcher task, a small RDS instance, short retention windows, no database deletion protection, no final snapshot, and no workers. NAT is disabled, while Control Plane and one-off Fargate tasks receive public IPs; their inbound traffic is still restricted to the load balancer security group.
+**There are no backups.** Database and telemetry data survive ordinary restarts
+but are deleted when the control host is replaced or terminated.
 
-## Configure the profile
-
-From a deployment copy of the profile:
+## Configure
 
 ```sh
 cd infra/aws/quickstart
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-Fill every required value described in [requirements](/docs/self-hosting/requirements). Keep secret values out of tfvars and state. For a direct HTTPS endpoint, configure:
+Set your Region, hostname, GitHub OAuth client ID, regional Ubuntu 24.04 amd64
+control AMI, released Control Plane image digest, matching Worker AMI, and the
+existing Platform Artifact store inputs. The selected signed Runtime must already
+be published in that store; see [requirements](/docs/self-hosting/requirements).
+Keep secret values out of tfvars. ClickHouse is included and Caddy manages TLS,
+so this profile does not require external ClickHouse or an ACM certificate.
 
-```hcl
-enable_cloudfront = false
-app_origin        = "https://helmr.example.com"
-certificate_arn   = "arn:aws:acm:us-east-1:123456789012:certificate/example"
-```
-
-The ACM certificate must be in the ALB's region. If you enable CloudFront, give `cloudfront_origin_domain_name` a separate DNS name that resolves to the ALB and is covered by that certificate; do not reuse the CloudFront viewer hostname as its origin.
-
-Keep services and workers off for the first apply:
-
-```hcl
-create_controlplane_service = false
-create_worker               = false
-```
-
-Then initialize and apply:
+Keep `create_worker=false` for the first apply:
 
 ```sh
 tofu init
 tofu apply
 ```
 
-The example intentionally has no backend block. Add and operate a remote-state backend in your deployment repository if the evaluation needs shared state.
+Point the application's DNS A record directly at `controlplane_public_ip`.
+Provide `HELMR_GITHUB_OAUTH_CLIENT_SECRET` through your normal secret input, then:
 
-## Continue setup
+```sh
+../../../scripts/aws-bootstrap-helmr-secrets.sh
+aws ssm start-session --target "$(tofu output -raw control_instance_id)"
+```
 
-After the first apply:
+On the host:
 
-1. Record `controlplane_url`, `controlplane_load_balancer_dns_name`, `controlplane_cluster_name`, and `secret_arns`.
-2. Complete [authentication](/docs/self-hosting/authentication) and [secrets and data](/docs/self-hosting/platform-secrets).
-3. Bootstrap the database, run migrations, and enable the [Control Plane](/docs/self-hosting/control-plane).
-4. To test code execution, enable NAT and add one supported nested-virtualization worker as described in [workers](/docs/self-hosting/workers).
+```sh
+sudo cloud-init status --wait
+sudo systemctl enable --now helmr.service
+sudo systemctl enable --now helmr-audit.timer
+```
 
-Evaluation defaults are intentionally easy to destroy and provide limited recovery. Do not rely on them for customer data or convert the stack incrementally into production.
+Startup checks configuration, initializes PostgreSQL/ClickHouse roles and runs
+migrations before starting Helmr. Check `https://your-host/readyz`, sign in and
+complete [first-organization setup](/docs/self-hosting/authentication) with the
+setup token. Then set `create_worker=true` and apply again. The default Worker
+has one 1-vCPU/2-GiB execution slot; use an Agent Template that fits it.
+
+## Operate
+
+Use `sudo systemctl restart helmr.service` to restart with existing data and
+reload secrets. Inspect `sudo journalctl -u helmr.service` or
+`sudo docker compose -f /run/helmr/compose.json ps` on the host.
+The rendered Compose file contains secrets and must remain root-only.
+
+Changes to control-host bootstrap inputs replace the host and delete local data;
+this is not an in-place upgrade. Drain and remove Workers while the old Control
+Plane is available before recreating the installation. Worker-only maintenance
+uses the [full-stop procedure](/docs/self-hosting/upgrades) without changing
+Control Plane inputs. For removal, drain and remove Workers first, then use
+`tofu destroy` for the remaining stack. Its CAS data is deleted too.
+
+The profile has no backend block; use your normal backend when needed.
+The checked-in `infra/aws/quickstart/README.md` describes the inputs and commands.

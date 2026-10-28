@@ -1,0 +1,9 @@
+[Unit]
+Description=Helmr audit retention
+
+[Timer]
+OnActiveSec=10min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target

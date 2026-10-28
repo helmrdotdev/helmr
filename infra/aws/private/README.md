@@ -1,7 +1,7 @@
 # Private application ingress with restricted platform egress
 
-This reference composes the same Control Plane and Worker modules as quickstart
-and standard. It keeps Console/API ingress on an internal HTTPS ALB and uses
+This reference composes the same Control Plane and Worker modules as Standard. Quickstart shares the Worker
+module but runs control services on one host. It keeps Console/API ingress on an internal HTTPS ALB and uses
 Socket Mode for Slack. It is a starting point for an experienced network operator;
 run the qualification below before using it for customer work.
 
@@ -76,8 +76,7 @@ PostgreSQL, configured ClickHouse and internal readiness calls use direct servic
 paths. No direct fallback or ambient `HTTP_PROXY` bypass is used. This reference
 supports no email or Resend; a private SMTP path needs separate operator design.
 
-The application uses one `APP_ORIGIN`; it has no private-mode branch. Public
-quickstart/standard select HTTP Slack by default; private permits Socket or
+The application uses one `APP_ORIGIN`; it has no private-mode branch. Standard selects HTTP Slack by default; Quickstart defaults to Socket. Private permits Socket or
 disabled. Socket setup needs an app-level token with `connections:write` from the
 same dedicated Slack app. Its hello app ID must match the OAuth-bound app before
 any receipt. Each Dispatcher owns at most 32 apps, with one live PostgreSQL lease

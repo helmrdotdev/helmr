@@ -7,7 +7,7 @@ sidebarLabel: Private deployment
 # Private deployments
 
 The `infra/aws/private` reference uses the same Product image as public
-quickstart/standard. Console, CLI and API use an internal HTTPS load balancer and
+standard. Console, CLI and API use an internal HTTPS load balancer and
 a canonical `APP_ORIGIN` reachable from your company network. Your platform team
 owns private connectivity, DNS/TLS, service endpoints, egress and capacity policy.
 

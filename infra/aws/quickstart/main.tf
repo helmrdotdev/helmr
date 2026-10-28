@@ -1,7 +1,14 @@
 locals {
-  name                    = lower(var.name)
-  worker_controlplane_url = module.controlplane.controlplane_url
-  worker_ami_id           = coalesce(var.worker_ami_id, module.release_artifacts.worker_ami_id, "ami-unconfigured")
+  name = lower(var.name)
+  blocked_cidrs_by_order = {
+    for cidr in distinct(concat(
+      [var.vpc_cidr, "169.254.0.0/16", "${aws_eip.control.public_ip}/32"],
+      var.worker_network_blocked_ipv4_cidrs
+    )) : "${join(".", [for octet in split(".", split("/", cidr)[0]) : format("%03d", tonumber(octet))])}/${format("%02d", tonumber(split("/", cidr)[1]))}" => cidr
+  }
+  worker_network_blocked_ipv4_cidrs = [for key in sort(keys(local.blocked_cidrs_by_order)) : local.blocked_cidrs_by_order[key]]
+  worker_controlplane_url           = var.app_origin
+  worker_ami_id                     = coalesce(var.worker_ami_id, module.release_artifacts.worker_ami_id, "ami-unconfigured")
   worker_provider_contract_digest = sha256(jsonencode({
     module   = filesha256("${path.module}/../modules/worker/main.tf")
     inputs   = filesha256("${path.module}/../modules/worker/variables.tf")
@@ -22,10 +29,10 @@ locals {
       contract_digest = local.worker_provider_contract_digest
       enable_ssm      = var.worker_enable_ssm
       network = {
-        blocked_ipv4_cidrs     = var.worker_network_blocked_ipv4_cidrs
+        blocked_ipv4_cidrs     = local.worker_network_blocked_ipv4_cidrs
         private_business_cidrs = var.worker_network_private_business_cidrs
         link_pool              = var.worker_network_link_pool
-        resolver_ipv4          = coalesce(var.worker_network_resolver_ipv4, cidrhost(var.execution_vpc_cidr, 2))
+        resolver_ipv4          = coalesce(var.worker_network_resolver_ipv4, cidrhost(var.vpc_cidr, 2))
         translation_pool       = var.worker_network_translation_pool
       }
       platform_store = {
@@ -114,26 +121,6 @@ locals {
   }, var.tags)
 }
 
-module "controlplane_network" {
-  source = "../modules/network"
-
-  name                    = "${local.name}-controlplane"
-  vpc_cidr                = var.controlplane_vpc_cidr
-  availability_zone_count = var.availability_zone_count
-  enable_nat_gateway      = var.enable_nat_gateway
-  tags                    = local.tags
-}
-
-module "execution_network" {
-  source = "../modules/network"
-
-  name                    = "${local.name}-execution"
-  vpc_cidr                = var.execution_vpc_cidr
-  availability_zone_count = var.availability_zone_count
-  enable_nat_gateway      = var.enable_nat_gateway
-  tags                    = local.tags
-}
-
 module "release_artifacts" {
   source = "../modules/release-artifacts"
 
@@ -144,82 +131,6 @@ module "release_artifacts" {
   controlplane_image_override = var.controlplane_image
   worker_ami_id_override      = var.worker_ami_id
   resolve_worker_ami          = var.create_worker
-}
-
-module "controlplane" {
-  controlplane_idle_timeout_seconds = var.controlplane_idle_timeout_seconds
-  network_private_business_cidrs    = var.worker_network_private_business_cidrs
-  network_blocked_ipv4_cidrs        = var.worker_network_blocked_ipv4_cidrs
-  audit_retention_seconds           = var.audit_retention_seconds
-  audit_purge_interval_minutes      = var.audit_purge_interval_minutes
-  audit_maintenance_timeout_seconds = var.audit_maintenance_timeout_seconds
-  audit_purge_max_batches           = var.audit_purge_max_batches
-  audit_maintenance_alarm_actions   = var.audit_maintenance_alarm_actions
-  ingress_mode                      = "public"
-  slack_transport                   = var.slack_transport
-  capacity_token_secret_arn         = var.capacity_token_secret_arn
-  capacity_token_kms_key_arn        = var.capacity_token_kms_key_arn
-  enable_deployment_rollback        = var.enable_deployment_rollback
-  source                            = "../modules/controlplane"
-
-  name                                       = local.name
-  bucket_name_prefix                         = var.bucket_name_prefix
-  vpc_id                                     = module.controlplane_network.vpc_id
-  public_subnet_ids                          = module.controlplane_network.public_subnet_ids
-  private_subnet_ids                         = module.controlplane_network.private_subnet_ids
-  app_origin                                 = var.app_origin
-  deployment_mode                            = var.deployment_mode
-  computer_wrapping_key_id                   = var.computer_wrapping_key_id
-  bootstrap_worker_group_name                = var.worker_group_name
-  bootstrap_region_id                        = var.region_id
-  clickhouse_url                             = var.clickhouse_url
-  clickhouse_access_mode                     = var.clickhouse_access_mode
-  clickhouse_reader_user                     = var.clickhouse_reader_user
-  clickhouse_reader_password_secret_arn      = var.clickhouse_reader_password_secret_arn
-  clickhouse_reader_password_kms_key_arns    = var.clickhouse_reader_password_kms_key_arns
-  clickhouse_ingester_user                   = var.clickhouse_ingester_user
-  clickhouse_ingester_password_secret_arn    = var.clickhouse_ingester_password_secret_arn
-  clickhouse_ingester_password_kms_key_arns  = var.clickhouse_ingester_password_kms_key_arns
-  clickhouse_migration_user                  = var.clickhouse_migration_user
-  clickhouse_migration_password_secret_arn   = var.clickhouse_migration_password_secret_arn
-  clickhouse_migration_password_kms_key_arns = var.clickhouse_migration_password_kms_key_arns
-  clickhouse_bootstrap_user                  = var.clickhouse_bootstrap_user
-  clickhouse_bootstrap_password_secret_arn   = var.clickhouse_bootstrap_password_secret_arn
-  clickhouse_bootstrap_password_kms_key_arns = var.clickhouse_bootstrap_password_kms_key_arns
-  additional_controlplane_security_group_ids = var.additional_controlplane_security_group_ids
-  cloudfront_origin_domain_name              = var.cloudfront_origin_domain_name
-  controlplane_image                         = module.release_artifacts.controlplane_image
-  controlplane_image_repository_arn          = var.controlplane_image_repository_arn
-  platform_store_uri                         = var.platform_store_uri
-  platform_store_bucket_arn                  = var.platform_store_bucket_arn
-  platform_store_kms_key_arn                 = var.platform_store_kms_key_arn
-  controlplane_desired_count                 = var.controlplane_desired_count
-  dispatcher_desired_count                   = var.dispatcher_desired_count
-  controlplane_assign_public_ip              = var.controlplane_assign_public_ip
-  create_controlplane_service                = var.create_controlplane_service
-  controlplane_environment                   = var.controlplane_environment
-  dispatcher_environment                     = var.dispatcher_environment
-  email_provider                             = var.email_provider
-  email_from                                 = var.email_from
-  smtp_addr                                  = var.smtp_addr
-  smtp_username                              = var.smtp_username
-  smtp_password_enabled                      = var.smtp_password_enabled
-  certificate_arn                            = var.certificate_arn
-  allow_insecure_http                        = var.allow_insecure_http
-  enable_cloudfront                          = var.enable_cloudfront
-  github_oauth_client_id                     = var.github_oauth_client_id
-  database_instance_class                    = var.database_instance_class
-  database_allocated_storage_gb              = var.database_allocated_storage_gb
-  database_backup_retention_days             = var.database_backup_retention_days
-  database_performance_insights_enabled      = var.database_performance_insights_enabled
-  database_deletion_protection               = var.database_deletion_protection
-  database_skip_final_snapshot               = var.database_skip_final_snapshot
-  controlplane_log_retention_days            = var.controlplane_log_retention_days
-  kms_deletion_window_in_days                = var.kms_deletion_window_in_days
-  secret_recovery_window_in_days             = var.secret_recovery_window_in_days
-  cas_object_expiration_days                 = var.cas_object_expiration_days
-  cas_noncurrent_version_expiration_days     = var.cas_noncurrent_version_expiration_days
-  tags                                       = local.tags
 }
 
 module "worker_group" {
@@ -236,8 +147,8 @@ module "worker_group" {
   network_link_pool                               = local.worker_generations[each.key].generation_inputs.supply.network.link_pool
   network_translation_pool                        = local.worker_generations[each.key].generation_inputs.supply.network.translation_pool
   network_resolver_ipv4                           = local.worker_generations[each.key].generation_inputs.supply.network.resolver_ipv4
-  vpc_id                                          = module.execution_network.vpc_id
-  subnet_ids                                      = module.execution_network.private_subnet_ids
+  vpc_id                                          = aws_vpc.quickstart.id
+  subnet_ids                                      = [aws_subnet.public.id]
   ami_id                                          = local.worker_generations[each.key].ami_id
   instance_type                                   = local.worker_generations[each.key].instance_type
   enable_nested_virtualization                    = local.worker_generations[each.key].enable_nested_virtualization
@@ -264,69 +175,26 @@ module "worker_group" {
   worker_execution_slots                          = local.worker_generations[each.key].worker_execution_slots
   computer_staging_mib                            = local.worker_generations[each.key].computer_staging_mib
   worker_controlplane_url                         = local.worker_controlplane_url
-  cas_uri                                         = module.controlplane.cas_uri
-  cas_bucket_arn                                  = module.controlplane.cas_bucket_arn
-  kms_key_arn                                     = module.controlplane.kms_key_arn
+  cas_uri                                         = "s3://${aws_s3_bucket.cas.bucket}"
+  cas_bucket_arn                                  = aws_s3_bucket.cas.arn
+  kms_key_arn                                     = aws_kms_key.helmr.arn
   platform_store_uri                              = local.worker_generations[each.key].generation_inputs.supply.platform_store.uri
   platform_store_bucket_arn                       = local.worker_generations[each.key].generation_inputs.supply.platform_store.bucket_arn
   platform_store_kms_key_arn                      = local.worker_generations[each.key].generation_inputs.supply.platform_store.kms_key_arn
 
   secret_arns = {
-    checkpoint_encryption_key = module.controlplane.secret_arns.checkpoint_encryption_key
-    worker_enrollment_token   = module.controlplane.worker_enrollment_secret_arn
+    checkpoint_encryption_key = aws_secretsmanager_secret.helmr["checkpoint_encryption_key"].arn
+    worker_enrollment_token   = aws_secretsmanager_secret.helmr["worker_enrollment_token"].arn
   }
 
   tags = local.tags
 }
 
 resource "terraform_data" "quickstart_preconditions" {
-  input = {
-    controlplane_assign_public_ip = var.controlplane_assign_public_ip
-    create_worker                 = var.create_worker
-    cloudfront_origin             = var.cloudfront_origin_domain_name
-    enable_cloudfront             = var.enable_cloudfront
-    enable_nat_gateway            = var.enable_nat_gateway
-    app_origin                    = var.app_origin
-    worker_ami_id                 = module.release_artifacts.worker_ami_id
-    worker_count                  = var.worker_count
-  }
-
   lifecycle {
     precondition {
       condition     = !contains(keys(var.retained_worker_generations), local.worker_pool_name)
-      error_message = "A retained generation must differ from the current generation. Keep the source unchanged and choose a distinct target before setting target capacity to zero."
+      error_message = "A retained generation must differ from the current generation. Keep the source unchanged while preparing a new target."
     }
-
-    precondition {
-      condition     = var.enable_cloudfront || var.app_origin != null
-      error_message = "app_origin is required when enable_cloudfront is false."
-    }
-
-    precondition {
-      condition     = !var.enable_cloudfront || (var.cloudfront_origin_domain_name != null && var.certificate_arn != null)
-      error_message = "enable_cloudfront requires cloudfront_origin_domain_name and certificate_arn because CloudFront uses a TLS ALB origin."
-    }
-
-    precondition {
-      condition     = var.controlplane_assign_public_ip || var.enable_nat_gateway
-      error_message = "enable_nat_gateway must be true when controlplane_assign_public_ip is false because controlplane and migration tasks need outbound access."
-    }
-
-    precondition {
-      condition     = !var.create_worker || var.enable_nat_gateway
-      error_message = "enable_nat_gateway must be true when create_worker is true because workers run in private subnets."
-    }
-
-    precondition {
-      condition = !var.create_worker || (
-        var.worker_disk_mib != null &&
-        coalesce(var.worker_disk_mib, 0) > var.worker_disk_reserve_mib &&
-        coalesce(var.worker_capacity_vcpus, 0) > 0 &&
-        coalesce(var.worker_capacity_memory_mib, 0) > 0 &&
-        coalesce(var.worker_execution_slots, 0) > 0
-      )
-      error_message = "worker groups require configured CPU, memory, disk, and execution-slot capacity."
-    }
-
   }
 }

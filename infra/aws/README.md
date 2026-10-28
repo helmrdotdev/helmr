@@ -13,12 +13,14 @@ tooling for Helmr.
 - `modules/release-artifacts` resolves public Control Plane images and Worker AMIs.
 - `modules/worker` creates a generic Firecracker Worker host group.
 - `modules/worker-image` defines the public Worker AMI build.
-- `quickstart` and `standard` are public self-hosted compositions.
+- `quickstart` runs control services, PostgreSQL, ClickHouse and HTTPS on one host, with separate Workers and no backups.
+- `standard` composes separate Fargate services, RDS and an HTTPS load balancer.
 - [`private`](private/README.md) is a private-ingress deployment reference with restricted platform egress.
 - `stacks/release-build` is the standalone OSS release artifact foundation.
 - `stacks/worker-image` is the public Worker AMI build pipeline.
 
-Self-hosting operators own their surrounding network, ClickHouse service,
+Self-hosting operators own their surrounding network, external ClickHouse service
+when required by Standard/Private,
 capacity policy, credentials, backups, upgrades, recovery, and drift
 management. Pin one exact Helmr release cohort; availability of an older
 release does not guarantee a safe downgrade of runtime or persisted data.
@@ -50,7 +52,7 @@ traffic readiness after the schema is current.
 ## Optional Slack integration
 
 The deployment operator sets `slack_transport` (`http`, `socket` or `disabled`).
-Quickstart and standard default to HTTP; the private reference uses Socket Mode.
+Standard defaults to HTTP; Quickstart and the private reference use Socket Mode.
 The same Product image supports all modes. Organization owners/admins create a
 dedicated app per Agent/Environment and save credentials through Console; app
 secrets and installation tokens are encrypted in PostgreSQL, not Terraform.
@@ -81,8 +83,8 @@ Worker retains its generated ceiling when the input is null; see its
 [module contract](modules/worker/README.md).
 
 Control Plane and dispatcher ECS circuit breakers remain enabled. The generic
-`enable_deployment_rollback` input defaults to `true` and is forwarded by quickstart
-and standard. This allows recovery to the preceding task definition when its code
+`enable_deployment_rollback` input defaults to `true` and is forwarded by Standard and Private. Quickstart runs local containers
+and does not use ECS rollback. This allows recovery to the preceding task definition when its code
 is compatible with the current data. Automatic rollback does not restore a database
 or establish schema compatibility. Operators must apply `false` before incompatible
 migrations or resets, then use roll-forward recovery. Run migrations from the exact
@@ -126,7 +128,7 @@ restoration before changing NAT lifetime.
 ## Diagnostic process limits
 
 All three self-host roots forward `controlplane_environment` and
-`dispatcher_environment` as non-secret maps to the actual ECS containers.
+`dispatcher_environment` as non-secret maps to their containers.
 Both processes require explicit diagnostic admission limits:
 `DIAGNOSTIC_CHUNK_BYTES`, `DIAGNOSTIC_SOURCE_BYTES`, `DIAGNOSTIC_SOURCE_RECORDS`,
 `DIAGNOSTIC_ENVIRONMENT_BYTES`, `DIAGNOSTIC_ENVIRONMENT_RECORDS`,
@@ -134,12 +136,13 @@ Both processes require explicit diagnostic admission limits:
 `DIAGNOSTIC_DB_MAX_CONNECTIONS`. Dispatcher additionally requires
 `DIAGNOSTIC_EXPORT_BATCH_BYTES` and `DIAGNOSTIC_EXPORT_BATCH_RECORDS`.
 
-Each root's `terraform.tfvars.example` lists explicit values from
+Standard and Private's `terraform.tfvars.example` list explicit values from
 [`dev/runtime/config.example.json`](../../dev/runtime/config.example.json).
 These are development examples, not production defaults. Choose values for the
 actual workload, retained queue/storage budget and database connection budget;
 keep chunk/source/environment/queue bounds ordered, and ensure export batches
-fit at least one chunk. The roots infer no diagnostic values and provide no
+fit at least one chunk. Quickstart supplies small initial limits in its host configuration, which these
+maps can override. Standard and Private infer no diagnostic values and provide no
 fallback. Missing or non-positive limits fail planning before a nonzero service starts. Bootstrap-only and zero-count services can remain inert without diagnostic limits. The process validates relationships between configured bounds at startup.
 Do not place secrets in either environment map; use the module's explicit secret
 inputs for managed credentials.
@@ -170,7 +173,7 @@ requires positive capacities, organization capacity no greater than process
 capacity, and positive finite durations with idle no greater than maximum.
 The example values are development starting points. Measure CPU, peak memory,
 transfer throughput and ordinary API/containment responsiveness at the chosen
-ECS task size before selecting operating values. Include parallel deployments,
+host or ECS task size before selecting operating values. Include parallel deployments,
 maximum objects/manifests, slow transfers, storage stalls and cancellation.
 
 Both capacities are per process. Set organization capacity equal to process
@@ -180,7 +183,7 @@ starvation-freedom or a distributed quota. Saturation returns 429 for the client
 to retry. Established transfers release ordinary API admission slots, while
 shared resource pressure remains a deployment concern.
 
-`controlplane_idle_timeout_seconds` configures the ALB connection idle timer
+In Standard and Private, `controlplane_idle_timeout_seconds` configures the ALB connection idle timer
 (default 180 seconds, range 1–4000). Set it above the supported upload inactivity
 interval. The module configures backend `CONTROL_PLANE_HTTP_IDLE_TIMEOUT` to
 30 seconds longer than the ALB timer, avoiding reuse of already-expired backend
