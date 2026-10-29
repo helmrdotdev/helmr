@@ -186,7 +186,7 @@ func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, a
 				UserID:     pgvalue.UUID(approver.UserID),
 				IdentityID: optionalUUID(approver.IdentityID), PasskeyID: optionalUUID(approver.PasskeyID),
 				AuthenticatedAt:  pgvalue.Timestamptz(approver.AuthenticatedAt),
-				UserAccessEpoch:  pgtype.Int8{Int64: approver.AccessEpoch, Valid: true},
+				AccessEpoch:  pgtype.Int8{Int64: approver.AccessEpoch, Valid: true},
 				BrowserSessionID: pgvalue.UUID(approver.SessionID),
 				OrgID:            pgvalue.UUID(approver.OrgID),
 				MemberID:         pgvalue.UUID(approver.MemberID),
@@ -262,7 +262,7 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		if err != nil {
 			return fmt.Errorf("consume device code: %w", err)
 		}
-		prior := auth.Principal{Kind: auth.PrincipalKindSession, Channel: "browser", UserID: pgvalue.MustUUIDValue(consumed.UserID), OrgID: pgvalue.MustUUIDValue(consumed.OrgID), MemberID: pgvalue.MustUUIDValue(consumed.DecidedByMemberID), SessionID: pgvalue.MustUUIDValue(consumed.BrowserSessionID), IdentityID: nullableUUID(consumed.IdentityID), PasskeyID: nullableUUID(consumed.PasskeyID), AccessEpoch: consumed.UserAccessEpoch.Int64, AuthenticatedAt: consumed.AuthenticatedAt.Time}
+		prior := auth.Principal{Kind: auth.PrincipalKindSession, Channel: "browser", UserID: pgvalue.MustUUIDValue(consumed.UserID), OrgID: pgvalue.MustUUIDValue(consumed.OrgID), MemberID: pgvalue.MustUUIDValue(consumed.DecidedByMemberID), SessionID: pgvalue.MustUUIDValue(consumed.BrowserSessionID), IdentityID: nullableUUID(consumed.IdentityID), PasskeyID: nullableUUID(consumed.PasskeyID), AccessEpoch: consumed.AccessEpoch.Int64, AuthenticatedAt: consumed.AuthenticatedAt.Time}
 		current, err := access.CurrentHuman(ctx, tx, prior)
 		if err != nil {
 			return ErrInvalidDeviceCode
@@ -322,7 +322,7 @@ func issueCLISession(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principa
 		}
 	}
 	id := uuid.NewV7()
-	_, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,user_access_epoch,cli_identity_id,cli_passkey_id,cli_authenticated_at,expires_at)
+	_, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,access_epoch,identity_id,passkey_id,authenticated_at,expires_at)
  VALUES($1,$2,'cli',$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+interval '30 days')`, id, p.UserID, p.OrgID, p.MemberID, hash, p.AccessEpoch, optionalUUID(p.IdentityID), optionalUUID(p.PasskeyID), p.AuthenticatedAt)
 	if err != nil {
 		return "", err

@@ -639,11 +639,10 @@ ON CONFLICT (id) DO UPDATE
 		if _, err := tx.Exec(ctx, `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'local-development',$1::uuid::text,clock_timestamp())`, source, userID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,user_access_epoch,token_hash,expires_at) SELECT $1,id,'browser',access_epoch,$3,clock_timestamp()+interval '30 days' FROM users WHERE id=$2`, session, userID, hash); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,access_epoch,token_hash,identity_id,authenticated_at,expires_at) SELECT $1,id,'browser',access_epoch,$3,$4,clock_timestamp(),clock_timestamp()+interval '30 days' FROM users WHERE id=$2`, session, userID, hash, source); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,authenticated_at) VALUES($1,$2,$3,$4,clock_timestamp())`, uuid.NewV7(), session, userID, source)
-		return err
+		return nil
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

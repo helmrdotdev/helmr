@@ -479,8 +479,8 @@ func TestAPIKeyRoleIssuanceIsAtomicAndRequiresAccessManagement(t *testing.T) {
 func TestAPIKeyExpiryUpdateRequiresCurrentRecentProof(t *testing.T) {
 	f := newAPIKeyFixture(t)
 	key := f.issue(t, "bounded", auth.PermissionSessionsRead)
-	f.exec(t, `UPDATE browser_account_proofs SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE session_id=$1`, f.owner.SessionID)
-	if err := f.pool.QueryRow(t.Context(), `SELECT authenticated_at FROM browser_account_proofs WHERE session_id=$1`, f.owner.SessionID).Scan(&f.owner.AuthenticatedAt); err != nil {
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, f.owner.SessionID)
+	if err := f.pool.QueryRow(t.Context(), `SELECT authenticated_at FROM login_sessions WHERE id=$1`, f.owner.SessionID).Scan(&f.owner.AuthenticatedAt); err != nil {
 		t.Fatal(err)
 	}
 	// The retained source is current, but its proof is too old to widen authority.

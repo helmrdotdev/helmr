@@ -202,8 +202,6 @@ PATCH /api/role-grants/{id}
 PATCH /api/roles/{id}
 PATCH /v1/computers/{computerID}
 POST /admin/api/v1/account-repairs/redeem
-POST /admin/api/v1/account-repairs/{id}/assert/options
-POST /admin/api/v1/account-repairs/{id}/assert/verify
 POST /admin/api/v1/account-repairs/{id}/complete
 POST /admin/api/v1/account-repairs/{id}/options
 POST /admin/api/v1/auth/logout

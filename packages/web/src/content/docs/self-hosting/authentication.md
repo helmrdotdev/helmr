@@ -48,8 +48,25 @@ one organization. An existing organization's owner is not promoted to operator.
 To replace an operator's lost keys, use the same deployment command with `repair`
 and `--operator-id`. For self-hosted ordinary account repair, use `repair-account`
 with `--operator-id`, `--user-id` and a new protected `--output-file`; the operation
-requires explicit `DEPLOYMENT_MODE=self-hosted`. The repair must complete verified
-key registration before existing access is retired. It is not an email reset.
+requires explicit `DEPLOYMENT_MODE=self-hosted`. Ordinary account repair completes
+when the account holder registers a new key. Existing sessions and accepted work
+lose access, while existing sign-in methods remain for the holder to review.
+Operator key replacement additionally verifies an assertion with the new key
+before retiring old keys. Neither operation is an email reset.
+
+Ordinary logout, session expiry and CLI session renewal do not cancel accepted
+background work, including tool calls and child work performed by an already
+accepted agent under its original authority. New human requests and streams
+require live authentication. Cancel
+work explicitly to stop it; revoke all account access for incident containment.
+Accepted work still checks its original credential, exact organization membership,
+current permissions and account revocation generation. Removing its credential or
+revoking its membership prevents further authorized execution. A valid anonymous
+sign-in can establish new access after revoke-all; revoke compromised credentials
+as well when responding to compromise.
+
+Each browser session retains one current authentication source. Before removing
+that source, confirm with a sign-in method you will keep.
 
 ## Operator API authentication
 

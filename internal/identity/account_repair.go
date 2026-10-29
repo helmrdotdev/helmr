@@ -1,10 +1,8 @@
 package identity
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -36,7 +34,7 @@ func IssueAccountRepair(ctx context.Context, database db.TxBeginner, user, opera
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE account_repair_enrollments SET revoked_at=clock_timestamp(),provisional_credential=NULL WHERE user_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL`, user); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE account_repair_enrollments SET revoked_at=clock_timestamp() WHERE user_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL`, user); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `INSERT INTO account_repair_enrollments(id,user_id,operator_id,capability_hash,expected_access_epoch,expires_at) VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, user, operator, hash[:], epoch).Scan(&result.ExpiresAt)
@@ -87,10 +85,9 @@ func RedeemAccountRepair(ctx context.Context, database db.TxBeginner, p auth.Pri
 }
 
 type accountRepair struct {
-	id, user    uuid.UUID
-	epoch       int64
-	provisional []byte
-	expires     time.Time
+	id, user uuid.UUID
+	epoch    int64
+	expires  time.Time
 }
 
 func lockAccountRepair(ctx context.Context, tx pgx.Tx, p auth.Principal, id uuid.UUID, binding []byte) (accountRepair, passkeyUser, error) {
@@ -106,7 +103,7 @@ func lockAccountRepair(ctx context.Context, tx pgx.Tx, p auth.Principal, id uuid
 	if err != nil {
 		return result, user, err
 	}
-	err = tx.QueryRow(ctx, `SELECT expected_access_epoch,provisional_credential,expires_at FROM account_repair_enrollments WHERE id=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE`, id).Scan(&result.epoch, &result.provisional, &result.expires)
+	err = tx.QueryRow(ctx, `SELECT expected_access_epoch,expires_at FROM account_repair_enrollments WHERE id=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE`, id).Scan(&result.epoch, &result.expires)
 	if isNoRows(err) {
 		return result, user, ErrInvalidToken
 	}
@@ -125,9 +122,6 @@ func BeginAccountRepairRegistration(ctx context.Context, database db.TxBeginner,
 		if err != nil {
 			return err
 		}
-		if len(repair.provisional) > 0 {
-			return ErrEnrollmentConflict
-		}
 		options, state, err := wa.BeginRegistration(user)
 		if err != nil {
 			return err
@@ -141,7 +135,7 @@ func BeginAccountRepairRegistration(ctx context.Context, database db.TxBeginner,
 	})
 	return result, err
 }
-func CompleteAccountRepairRegistration(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, p auth.Principal, id, challenge uuid.UUID, binding, response []byte) error {
+func CompleteAccountRepairRegistration(ctx context.Context, database db.TxBeginner, cfg Config, wa *webauthn.WebAuthn, p auth.Principal, id, challenge uuid.UUID, binding, response []byte, label string) error {
 	parsed, err := protocol.ParseCredentialCreationResponseBytes(response)
 	if err != nil {
 		return ErrInvalidToken
@@ -150,9 +144,6 @@ func CompleteAccountRepairRegistration(ctx context.Context, database db.TxBeginn
 		repair, user, err := lockAccountRepair(ctx, tx, p, id, binding)
 		if err != nil {
 			return err
-		}
-		if len(repair.provisional) > 0 {
-			return ErrEnrollmentConflict
 		}
 		state, target, err := loadCeremony(ctx, tx, challenge, binding, "register")
 		if err != nil {
@@ -165,77 +156,6 @@ func CompleteAccountRepairRegistration(ctx context.Context, database db.TxBeginn
 		if err != nil {
 			return ErrInvalidToken
 		}
-		data, err := json.Marshal(key)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.Exec(ctx, `UPDATE account_repair_enrollments SET provisional_credential=$2 WHERE id=$1 AND provisional_credential IS NULL`, id, data); err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `UPDATE webauthn_challenges SET consumed_at=clock_timestamp() WHERE id=$1`, challenge)
-		return err
-	})
-}
-func BeginAccountRepairAssertion(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, p auth.Principal, id uuid.UUID, binding []byte) (AssertionOptions, error) {
-	var result AssertionOptions
-	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		repair, user, err := lockAccountRepair(ctx, tx, p, id, binding)
-		if err != nil {
-			return err
-		}
-		if len(repair.provisional) == 0 {
-			return ErrEnrollmentConflict
-		}
-		var key webauthn.Credential
-		if err = json.Unmarshal(repair.provisional, &key); err != nil {
-			return err
-		}
-		user.credentials = []webauthn.Credential{key}
-		options, state, err := wa.BeginLogin(user, webauthn.WithUserVerification(protocol.VerificationRequired))
-		if err != nil {
-			return err
-		}
-		if state.Expires.After(repair.expires) {
-			state.Expires = repair.expires
-		}
-		challenge, err := storeCeremony(ctx, tx, state, "assert", keyTarget{user: repair.user, repair: id, epoch: repair.epoch, purpose: "repair"}, binding)
-		result = AssertionOptions{ChallengeID: challenge, PublicKey: options.Response}
-		return err
-	})
-	return result, err
-}
-func VerifyAccountRepair(ctx context.Context, database db.TxBeginner, cfg Config, wa *webauthn.WebAuthn, p auth.Principal, id, challenge uuid.UUID, binding, response []byte, label string) error {
-	parsed, err := protocol.ParseCredentialRequestResponseBytes(response)
-	if err != nil {
-		return ErrInvalidToken
-	}
-	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		repair, user, err := lockAccountRepair(ctx, tx, p, id, binding)
-		if err != nil {
-			return err
-		}
-		if len(repair.provisional) == 0 {
-			return ErrEnrollmentConflict
-		}
-		var staged webauthn.Credential
-		if err = json.Unmarshal(repair.provisional, &staged); err != nil {
-			return err
-		}
-		user.credentials = []webauthn.Credential{staged}
-		state, target, err := loadCeremony(ctx, tx, challenge, binding, "assert")
-		if err != nil {
-			return err
-		}
-		if target.purpose != "repair" || target.repair != id || target.user != repair.user || target.epoch != repair.epoch {
-			return ErrInvalidToken
-		}
-		key, err := wa.ValidateLogin(user, state, parsed)
-		if err != nil {
-			return ErrInvalidToken
-		}
-		if !bytes.Equal(key.ID, staged.ID) || !bytes.Equal(key.PublicKey, staged.PublicKey) {
-			return ErrInvalidToken
-		}
 		keyID, err := insertKey(ctx, tx, repair.user, uuid.Nil(), label, key)
 		if err != nil {
 			return err
@@ -243,7 +163,7 @@ func VerifyAccountRepair(ctx context.Context, database db.TxBeginner, cfg Config
 		if err = invalidateAccount(ctx, tx, repair.user); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE account_repair_enrollments SET consumed_at=CASE WHEN id=$2 THEN clock_timestamp() ELSE consumed_at END,revoked_at=CASE WHEN id<>$2 THEN clock_timestamp() ELSE revoked_at END,provisional_credential=NULL WHERE user_id=$1 AND consumed_at IS NULL`, repair.user, id); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE account_repair_enrollments SET consumed_at=CASE WHEN id=$2 THEN clock_timestamp() ELSE consumed_at END,revoked_at=CASE WHEN id<>$2 THEN clock_timestamp() ELSE revoked_at END WHERE user_id=$1 AND consumed_at IS NULL`, repair.user, id); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE webauthn_challenges SET consumed_at=clock_timestamp() WHERE id=$1`, challenge)

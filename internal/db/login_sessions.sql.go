@@ -12,7 +12,7 @@ import (
 )
 
 const getLoginSession = `-- name: GetLoginSession :one
-SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, user_access_epoch, member_id, cli_identity_id, cli_passkey_id, cli_authenticated_at, privileged_key_id, privileged_epoch, privileged_login_at, privileged_confirmed_at FROM login_sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, access_epoch, member_id, identity_id, passkey_id, authenticated_at FROM login_sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
 `
 
 func (q *Queries) GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSession, error) {
@@ -29,21 +29,17 @@ func (q *Queries) GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSes
 		&i.RevokedAt,
 		&i.OperatorID,
 		&i.Channel,
-		&i.UserAccessEpoch,
+		&i.AccessEpoch,
 		&i.MemberID,
-		&i.CliIdentityID,
-		&i.CliPasskeyID,
-		&i.CliAuthenticatedAt,
-		&i.PrivilegedKeyID,
-		&i.PrivilegedEpoch,
-		&i.PrivilegedLoginAt,
-		&i.PrivilegedConfirmedAt,
+		&i.IdentityID,
+		&i.PasskeyID,
+		&i.AuthenticatedAt,
 	)
 	return i, err
 }
 
 const getLoginSessionByTokenHash = `-- name: GetLoginSessionByTokenHash :one
-SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, user_access_epoch, member_id, cli_identity_id, cli_passkey_id, cli_authenticated_at, privileged_key_id, privileged_epoch, privileged_login_at, privileged_confirmed_at FROM login_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, access_epoch, member_id, identity_id, passkey_id, authenticated_at FROM login_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
 `
 
 func (q *Queries) GetLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (LoginSession, error) {
@@ -60,15 +56,11 @@ func (q *Queries) GetLoginSessionByTokenHash(ctx context.Context, tokenHash []by
 		&i.RevokedAt,
 		&i.OperatorID,
 		&i.Channel,
-		&i.UserAccessEpoch,
+		&i.AccessEpoch,
 		&i.MemberID,
-		&i.CliIdentityID,
-		&i.CliPasskeyID,
-		&i.CliAuthenticatedAt,
-		&i.PrivilegedKeyID,
-		&i.PrivilegedEpoch,
-		&i.PrivilegedLoginAt,
-		&i.PrivilegedConfirmedAt,
+		&i.IdentityID,
+		&i.PasskeyID,
+		&i.AuthenticatedAt,
 	)
 	return i, err
 }

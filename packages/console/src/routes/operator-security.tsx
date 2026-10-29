@@ -12,7 +12,7 @@ export function OperatorSecurity(){
  const [keys,{refetch}]=createResource(()=>request<{credentials:Credential[]}>("/admin/api/v1/credentials",{redirectOnUnauthorized:false}));const [config]=createResource(getAuthConfig);
  const [busy,setBusy]=createSignal(false);const [error,setError]=createSignal("");const [notice,setNotice]=createSignal("");const [remove,setRemove]=createSignal<Credential>();
  const [label,setLabel]=createSignal("Operator key");const [enrollment,setEnrollment]=createSignal("");const [staged,setStaged]=createSignal(false);
- const [capability,setCapability]=createSignal("");const [repair,setRepair]=createSignal("");const [repairStaged,setRepairStaged]=createSignal(false);const [target,setTarget]=createSignal("");
+ const [capability,setCapability]=createSignal("");const [repair,setRepair]=createSignal("");const [target,setTarget]=createSignal("");
  async function run(fn:()=>Promise<void>){setBusy(true);setError("");setNotice("");try{await fn();await refetch();await refreshOperator();}catch(e){setError(e instanceof Error?e.message:"Unable to continue.");}finally{setBusy(false);}}
  return <div class={ui.sectionStack}><PageHeader title="Operator security"/><Show when={error()}><p role="alert">{error()}</p></Show><Show when={notice()}><p role="status">{notice()}</p></Show>
  <Panel title="Operator session"><p>{operator()?.id}</p><p>Expires {operator()?new Date(operator()!.expires_at).toLocaleString():"…"}. Confirmation does not extend this deadline.</p>
@@ -29,8 +29,7 @@ export function OperatorSecurity(){
  <Show when={config()?.deployment_mode==="self-hosted"}><Panel title="Supervised account repair"><p>Use a deployment-issued capability for the selected ordinary account. The account holder must use their own authenticator while you supervise. This restores access; existing sign-in methods remain for the holder to review. It grants no organization membership or operator rights.</p>
  <Show when={repair()} fallback={<form onSubmit={e=>{e.preventDefault();void run(async()=>{const result=await postJson<{capability:string},{enrollment_id:string;target:string}>("/admin/api/v1/account-repairs/redeem",{capability:capability().trim()});setCapability("");setRepair(result.enrollment_id);setTarget(result.target);});}}><Field label="Account repair capability"><SecretInput value={capability()} onInput={e=>setCapability(e.currentTarget.value)} autocomplete="off"/></Field><button class={ui.button} disabled={busy()||!capability()}>Review repair target</button></form>}>
  <p>Repair target: <strong>{target()}</strong></p>
- <Show when={!repairStaged()} fallback={<button class={ui.button} disabled={busy()} onClick={()=>void run(async()=>{await assertPasskey(`/admin/api/v1/account-repairs/${repair()}/assert/options`,`/admin/api/v1/account-repairs/${repair()}/assert/verify`,{label:"Restored account key"});setRepair("");setRepairStaged(false);setNotice("Account access restored. Existing access is revoked. The account holder can now sign in normally with their key.");})}>Account holder: verify your key and complete repair</button>}>
- <button class={ui.button} disabled={busy()} onClick={()=>void run(async()=>{await registerPasskey(`/admin/api/v1/account-repairs/${repair()}/options`,`/admin/api/v1/account-repairs/${repair()}/complete`,"Restored account key");setRepairStaged(true);})}>Account holder: register your replacement key</button>
- </Show></Show>
+ <button class={ui.button} disabled={busy()} onClick={()=>void run(async()=>{await registerPasskey(`/admin/api/v1/account-repairs/${repair()}/options`,`/admin/api/v1/account-repairs/${repair()}/complete`,"Restored account key");setRepair("");setNotice("Account access restored. Existing access is revoked. The account holder can now sign in normally with their key.");})}>Account holder: register your key and complete repair</button>
+ </Show>
  </Panel></Show></div>;
 }

@@ -44,7 +44,9 @@ var (
 // Caller is transport-authenticated identity. Runtime requests carry the stable
 // Session and its current authority generation; a transport request ID is not identity.
 type Caller struct {
-	Human auth.Principal
+	// admitted is set only when loading accepted work, never by transports.
+	admitted bool
+	Human    auth.Principal
 	// Credential provenance is supplied by the authenticated transport.
 	CredentialID      uuid.UUID
 	CredentialKind    string

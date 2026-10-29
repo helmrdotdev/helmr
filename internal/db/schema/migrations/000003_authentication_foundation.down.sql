@@ -51,14 +51,12 @@ DROP TABLE webauthn_challenges;
 DROP TABLE account_repair_enrollments;
 DROP TABLE credential_enrollments;
 DROP TABLE email_challenges;
-DROP TABLE browser_account_proofs;
 ALTER TABLE device_codes DROP COLUMN user_id, DROP COLUMN identity_id, DROP COLUMN passkey_id,
- DROP COLUMN authenticated_at, DROP COLUMN user_access_epoch, DROP COLUMN browser_session_id, DROP COLUMN replaces_session_id;
+ DROP COLUMN authenticated_at, DROP COLUMN access_epoch, DROP COLUMN browser_session_id, DROP COLUMN replaces_session_id;
 DELETE FROM login_sessions WHERE user_id IS NULL;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_shape, DROP CONSTRAINT login_sessions_owner;
-ALTER TABLE login_sessions DROP COLUMN operator_id, DROP COLUMN channel, DROP COLUMN user_access_epoch,
- DROP COLUMN member_id, DROP COLUMN cli_identity_id, DROP COLUMN cli_passkey_id, DROP COLUMN cli_authenticated_at,
- DROP COLUMN privileged_key_id, DROP COLUMN privileged_epoch, DROP COLUMN privileged_login_at, DROP COLUMN privileged_confirmed_at;
+ALTER TABLE login_sessions DROP COLUMN operator_id, DROP COLUMN channel, DROP COLUMN access_epoch,
+ DROP COLUMN member_id, DROP COLUMN identity_id, DROP COLUMN passkey_id, DROP COLUMN authenticated_at;
 ALTER TABLE login_sessions RENAME COLUMN issued_at TO created_at;
 ALTER TABLE login_sessions RENAME COLUMN last_human_activity_at TO last_seen_at;
 ALTER TABLE login_sessions ALTER COLUMN user_id SET NOT NULL;
@@ -68,14 +66,14 @@ ALTER TABLE login_sessions ADD FOREIGN KEY (user_id) REFERENCES users(id) ON DEL
 -- Revoked old links convey no usable authorization in the previous application.
 DELETE FROM slack_user_links;
 ALTER TABLE slack_user_links DROP COLUMN id, DROP COLUMN installation_id, DROP COLUMN org_id, DROP COLUMN member_id,
- DROP COLUMN user_access_epoch, DROP COLUMN identity_id, DROP COLUMN passkey_id, DROP COLUMN authenticated_at, DROP COLUMN revoked_at;
+ DROP COLUMN access_epoch, DROP COLUMN identity_id, DROP COLUMN passkey_id, DROP COLUMN authenticated_at, DROP COLUMN revoked_at;
 ALTER TABLE slack_user_links ADD PRIMARY KEY (team_id,slack_user_id);
 ALTER TABLE slack_user_links ADD UNIQUE (team_id,user_id);
 DROP TABLE passkey_credentials;
 DROP TABLE platform_operators;
 ALTER TABLE org_members DROP COLUMN suspended_at, DROP COLUMN reauthenticate_after;
 ALTER TABLE org_members DROP CONSTRAINT org_members_org_id_id_user_id_key;
-ALTER TABLE users DROP COLUMN access_epoch, DROP COLUMN reauthenticate_after, DROP COLUMN webauthn_user_handle;
+ALTER TABLE users DROP COLUMN access_epoch, DROP COLUMN webauthn_user_handle;
 ALTER TABLE users ADD COLUMN admin boolean NOT NULL DEFAULT false;
 -- Multiple retired lifetimes cannot be represented by the former schema.
 DO $$ BEGIN

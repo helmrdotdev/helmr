@@ -6,7 +6,6 @@ column account_repair_enrollments.expected_access_epoch bigint not null
 column account_repair_enrollments.expires_at timestamp with time zone not null
 column account_repair_enrollments.id uuid not null
 column account_repair_enrollments.operator_id uuid not null
-column account_repair_enrollments.provisional_credential jsonb
 column account_repair_enrollments.revoked_at timestamp with time zone
 column account_repair_enrollments.user_id uuid not null
 column account_security_notifications.attempts integer not null default 0
@@ -17,7 +16,7 @@ column account_security_notifications.event text not null
 column account_security_notifications.id uuid not null
 column account_security_notifications.lease_until timestamp with time zone
 column account_security_notifications.next_attempt_at timestamp with time zone not null default clock_timestamp()
-column account_security_notifications.recipient text
+column account_security_notifications.recipient text not null
 column account_security_notifications.status text not null
 column account_security_notifications.user_id uuid not null
 column agent_definitions.agent_id uuid not null
@@ -149,14 +148,6 @@ column boot_seed_objects.environment_id uuid not null
 column boot_seed_objects.media_type text not null
 column boot_seed_objects.role text not null
 column boot_seed_objects.size_bytes bigint not null
-column browser_account_proofs.authenticated_at timestamp with time zone not null
-column browser_account_proofs.id uuid not null
-column browser_account_proofs.identity_id uuid
-column browser_account_proofs.passkey_id uuid
-column browser_account_proofs.revoked_at timestamp with time zone
-column browser_account_proofs.session_channel text not null default 'browser'::text
-column browser_account_proofs.session_id uuid not null
-column browser_account_proofs.user_id uuid not null
 column cas_blobs.digest text not null
 column cas_blobs.last_reclaim_error text
 column cas_blobs.next_reclaim_at timestamp with time zone
@@ -401,6 +392,7 @@ column deployments.bundle_digest text not null
 column deployments.created_at timestamp with time zone not null default clock_timestamp()
 column deployments.environment_id uuid not null
 column deployments.id uuid not null
+column device_codes.access_epoch bigint
 column device_codes.authenticated_at timestamp with time zone
 column device_codes.browser_session_id uuid
 column device_codes.consumed_at timestamp with time zone
@@ -416,7 +408,6 @@ column device_codes.passkey_id uuid
 column device_codes.poll_interval_seconds integer not null
 column device_codes.replaces_session_id uuid
 column device_codes.status text not null default 'pending'::text
-column device_codes.user_access_epoch bigint
 column device_codes.user_code_hash bytea not null
 column device_codes.user_id uuid
 column diagnostic_chunks.accepted_at timestamp with time zone not null default clock_timestamp()
@@ -649,24 +640,20 @@ column invitations.org_id uuid not null
 column invitations.revoked_at timestamp with time zone
 column invitations.revoked_by_member_id uuid
 column invitations.token_hash bytea not null
+column login_sessions.access_epoch bigint
+column login_sessions.authenticated_at timestamp with time zone
 column login_sessions.channel text not null
-column login_sessions.cli_authenticated_at timestamp with time zone
-column login_sessions.cli_identity_id uuid
-column login_sessions.cli_passkey_id uuid
 column login_sessions.expires_at timestamp with time zone not null
 column login_sessions.id uuid not null
+column login_sessions.identity_id uuid
 column login_sessions.issued_at timestamp with time zone not null default now()
 column login_sessions.last_human_activity_at timestamp with time zone not null default now()
 column login_sessions.member_id uuid
 column login_sessions.operator_id uuid
 column login_sessions.org_id uuid
-column login_sessions.privileged_confirmed_at timestamp with time zone
-column login_sessions.privileged_epoch bigint
-column login_sessions.privileged_key_id uuid
-column login_sessions.privileged_login_at timestamp with time zone
+column login_sessions.passkey_id uuid
 column login_sessions.revoked_at timestamp with time zone
 column login_sessions.token_hash bytea not null
-column login_sessions.user_access_epoch bigint
 column login_sessions.user_id uuid
 column org_members.created_at timestamp with time zone not null default now()
 column org_members.display_name text
@@ -683,9 +670,6 @@ column organizations.id uuid not null
 column organizations.name text not null
 column organizations.slug text not null
 column organizations.updated_at timestamp with time zone not null default now()
-column passkey_credentials.aaguid uuid
-column passkey_credentials.backup_eligible boolean not null
-column passkey_credentials.backup_state boolean not null
 column passkey_credentials.created_at timestamp with time zone not null default clock_timestamp()
 column passkey_credentials.credential_data jsonb not null
 column passkey_credentials.credential_id bytea not null
@@ -693,10 +677,7 @@ column passkey_credentials.id uuid not null
 column passkey_credentials.label text not null
 column passkey_credentials.last_used_at timestamp with time zone
 column passkey_credentials.operator_id uuid
-column passkey_credentials.public_key bytea not null
 column passkey_credentials.revoked_at timestamp with time zone
-column passkey_credentials.sign_count bigint not null
-column passkey_credentials.transports text[] not null default '{}'::text[]
 column passkey_credentials.user_id uuid
 column permission_group_members.group_id uuid not null
 column permission_group_members.member_id uuid not null
@@ -708,7 +689,6 @@ column permission_groups.revision bigint not null default 1
 column permission_groups.updated_at timestamp with time zone not null default now()
 column platform_operators.access_epoch bigint not null default 0
 column platform_operators.created_at timestamp with time zone not null default clock_timestamp()
-column platform_operators.disabled_at timestamp with time zone
 column platform_operators.id uuid not null
 column platform_operators.label text not null
 column platform_operators.updated_at timestamp with time zone not null default clock_timestamp()
@@ -963,6 +943,7 @@ column slack_installations.refresh_error text
 column slack_installations.refresh_next_at timestamp with time zone not null default clock_timestamp()
 column slack_installations.team_id text not null
 column slack_installations.workspace_name text
+column slack_link_requests.access_epoch bigint not null
 column slack_link_requests.authenticated_at timestamp with time zone not null
 column slack_link_requests.browser_hash bytea not null
 column slack_link_requests.browser_session_id uuid
@@ -978,7 +959,6 @@ column slack_link_requests.passkey_id uuid
 column slack_link_requests.revoked_at timestamp with time zone
 column slack_link_requests.slack_user_id text not null
 column slack_link_requests.team_id text not null
-column slack_link_requests.user_access_epoch bigint not null
 column slack_link_requests.user_id uuid not null
 column slack_method_limits.installation_id uuid not null
 column slack_method_limits.method text not null
@@ -1105,6 +1085,7 @@ column slack_threads.status_confirmation text not null default 'unknown'::text
 column slack_threads.stream_status_repair boolean not null default false
 column slack_threads.team_id text not null
 column slack_threads.thread_ts text
+column slack_user_links.access_epoch bigint
 column slack_user_links.authenticated_at timestamp with time zone
 column slack_user_links.id uuid not null
 column slack_user_links.identity_id uuid
@@ -1116,7 +1097,6 @@ column slack_user_links.passkey_id uuid
 column slack_user_links.revoked_at timestamp with time zone
 column slack_user_links.slack_user_id text not null
 column slack_user_links.team_id text not null
-column slack_user_links.user_access_epoch bigint
 column slack_user_links.user_id uuid not null
 column slack_work_items.environment_id uuid not null
 column slack_work_items.omitted boolean not null default false
@@ -1258,7 +1238,6 @@ column users.display_name text not null
 column users.id uuid not null
 column users.primary_email text
 column users.profile_image_url text
-column users.reauthenticate_after timestamp with time zone
 column users.updated_at timestamp with time zone not null default now()
 column users.webauthn_user_handle bytea not null default uuid_send(gen_random_uuid())
 column vm_platforms.cpu_template_digest text
@@ -1398,10 +1377,9 @@ constraint account_repair_enrollments p PRIMARY KEY (id)
 constraint account_repair_enrollments u UNIQUE (capability_hash)
 constraint account_security_notifications c CHECK ((claim_id IS NULL) = (lease_until IS NULL))
 constraint account_security_notifications c CHECK ((status = 'delivered'::text) = (delivered_at IS NOT NULL))
-constraint account_security_notifications c CHECK ((status = 'unavailable'::text) = (recipient IS NULL))
 constraint account_security_notifications c CHECK (attempts >= 0)
 constraint account_security_notifications c CHECK (event = ANY (ARRAY['identity.email_changed'::text, 'identity.credential_added'::text, 'identity.credential_removed'::text, 'identity.access_revoked'::text, 'identity.account_repaired'::text]))
-constraint account_security_notifications c CHECK (status = ANY (ARRAY['pending'::text, 'delivered'::text, 'unavailable'::text]))
+constraint account_security_notifications c CHECK (status = ANY (ARRAY['pending'::text, 'delivered'::text]))
 constraint account_security_notifications p PRIMARY KEY (id)
 constraint agent_definitions c CHECK ((runtime_mcp_policy = '{"kind": "unrestricted"}'::jsonb OR jsonb_typeof(runtime_mcp_policy) = 'object'::text AND (runtime_mcp_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(runtime_mcp_policy -> 'rules'::text) = 'array'::text AND (runtime_mcp_policy - ARRAY['kind'::text, 'rules'::text]) = '{}'::jsonb) IS TRUE)
 constraint agent_definitions c CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL)
@@ -1526,12 +1504,6 @@ constraint boot_seed_objects c CHECK (size_bytes > 0)
 constraint boot_seed_objects f FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, not_retired)
 constraint boot_seed_objects f FOREIGN KEY (environment_id, boot_seed_build_id) REFERENCES boot_seed_builds(environment_id, id)
 constraint boot_seed_objects p PRIMARY KEY (environment_id, boot_seed_build_id, role)
-constraint browser_account_proofs c CHECK (num_nonnulls(identity_id, passkey_id) = 1)
-constraint browser_account_proofs c CHECK (session_channel = 'browser'::text)
-constraint browser_account_proofs f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
-constraint browser_account_proofs f FOREIGN KEY (passkey_id, user_id) REFERENCES passkey_credentials(id, user_id)
-constraint browser_account_proofs f FOREIGN KEY (session_id, user_id, session_channel) REFERENCES login_sessions(id, user_id, channel)
-constraint browser_account_proofs p PRIMARY KEY (id)
 constraint cas_blobs c CHECK ((retired_at IS NULL) = (next_reclaim_at IS NULL))
 constraint cas_blobs c CHECK (digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint cas_blobs c CHECK (size_bytes >= 0)
@@ -1728,11 +1700,11 @@ constraint deployments c CHECK (bundle_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint deployments f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint deployments p PRIMARY KEY (environment_id, id)
 constraint deployments u UNIQUE (environment_id, bundle_digest)
-constraint device_codes c CHECK ((status <> ALL (ARRAY['approved'::text, 'consumed'::text])) OR user_id IS NOT NULL AND authenticated_at IS NOT NULL AND user_access_epoch IS NOT NULL AND browser_session_id IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1)
+constraint device_codes c CHECK ((status <> ALL (ARRAY['approved'::text, 'consumed'::text])) OR user_id IS NOT NULL AND authenticated_at IS NOT NULL AND access_epoch IS NOT NULL AND browser_session_id IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1)
+constraint device_codes c CHECK (access_epoch >= 0)
 constraint device_codes c CHECK (poll_interval_seconds > 0)
 constraint device_codes c CHECK (status = 'pending'::text AND org_id IS NULL AND decided_by_member_id IS NULL AND decided_at IS NULL AND consumed_at IS NULL OR (status = ANY (ARRAY['approved'::text, 'denied'::text])) AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NULL OR status = 'consumed'::text AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NOT NULL)
 constraint device_codes c CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'consumed'::text]))
-constraint device_codes c CHECK (user_access_epoch >= 0)
 constraint device_codes f FOREIGN KEY (browser_session_id) REFERENCES login_sessions(id)
 constraint device_codes f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint device_codes f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
@@ -1929,19 +1901,17 @@ constraint invitations f FOREIGN KEY (org_id, invited_by_member_id) REFERENCES o
 constraint invitations f FOREIGN KEY (org_id, revoked_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (revoked_by_member_id)
 constraint invitations p PRIMARY KEY (id)
 constraint invitations u UNIQUE (token_hash)
+constraint login_sessions c CHECK (access_epoch >= 0)
 constraint login_sessions c CHECK (channel = ANY (ARRAY['browser'::text, 'cli'::text, 'operator'::text]))
-constraint login_sessions c CHECK (privileged_epoch >= 0)
-constraint login_sessions c CHECK (user_access_epoch >= 0)
 constraint login_sessions c login_sessions_owner CHECK (num_nonnulls(user_id, operator_id) = 1)
-constraint login_sessions c login_sessions_shape CHECK (channel = 'browser'::text AND user_id IS NOT NULL AND user_access_epoch IS NOT NULL AND num_nonnulls(org_id, member_id, cli_identity_id, cli_passkey_id, cli_authenticated_at, privileged_key_id, privileged_epoch, privileged_login_at, privileged_confirmed_at) = 0 OR channel = 'cli'::text AND user_id IS NOT NULL AND user_access_epoch IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND cli_authenticated_at IS NOT NULL AND num_nonnulls(cli_identity_id, cli_passkey_id) = 1 AND num_nonnulls(privileged_key_id, privileged_epoch, privileged_login_at, privileged_confirmed_at) = 0 OR channel = 'operator'::text AND operator_id IS NOT NULL AND privileged_key_id IS NOT NULL AND privileged_epoch IS NOT NULL AND privileged_login_at IS NOT NULL AND privileged_confirmed_at IS NOT NULL AND num_nonnulls(user_access_epoch, org_id, member_id, cli_identity_id, cli_passkey_id, cli_authenticated_at) = 0 AND expires_at <= (privileged_login_at + '12:00:00'::interval) AND privileged_confirmed_at >= privileged_login_at AND privileged_confirmed_at <= expires_at)
-constraint login_sessions f FOREIGN KEY (cli_identity_id, user_id) REFERENCES auth_identities(id, user_id)
-constraint login_sessions f FOREIGN KEY (cli_passkey_id, user_id) REFERENCES passkey_credentials(id, user_id)
+constraint login_sessions c login_sessions_shape CHECK (channel = 'browser'::text AND user_id IS NOT NULL AND access_epoch IS NOT NULL AND org_id IS NULL AND member_id IS NULL AND (revoked_at IS NOT NULL OR num_nonnulls(identity_id, passkey_id) = 1 AND authenticated_at IS NOT NULL) OR channel = 'cli'::text AND user_id IS NOT NULL AND access_epoch IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1 OR channel = 'operator'::text AND operator_id IS NOT NULL AND passkey_id IS NOT NULL AND access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(org_id, member_id, identity_id) = 0 AND expires_at <= (issued_at + '12:00:00'::interval) AND authenticated_at >= issued_at AND authenticated_at <= expires_at)
+constraint login_sessions f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint login_sessions f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
 constraint login_sessions f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
-constraint login_sessions f FOREIGN KEY (privileged_key_id, operator_id) REFERENCES passkey_credentials(id, operator_id)
+constraint login_sessions f FOREIGN KEY (passkey_id, operator_id) REFERENCES passkey_credentials(id, operator_id)
+constraint login_sessions f FOREIGN KEY (passkey_id, user_id) REFERENCES passkey_credentials(id, user_id)
 constraint login_sessions f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint login_sessions p PRIMARY KEY (id)
-constraint login_sessions u UNIQUE (id, user_id, channel)
 constraint login_sessions u UNIQUE (token_hash)
 constraint org_members c CHECK (NOT is_owner OR removed_at IS NULL)
 constraint org_members f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
@@ -1955,7 +1925,6 @@ constraint organizations p PRIMARY KEY (id)
 constraint organizations u UNIQUE (slug)
 constraint passkey_credentials c CHECK (btrim(label) <> ''::text)
 constraint passkey_credentials c CHECK (num_nonnulls(user_id, operator_id) = 1)
-constraint passkey_credentials c CHECK (sign_count >= 0)
 constraint passkey_credentials f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
 constraint passkey_credentials f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint passkey_credentials p PRIMARY KEY (id)
@@ -2212,8 +2181,8 @@ constraint slack_installations f FOREIGN KEY (org_id) REFERENCES organizations(i
 constraint slack_installations p PRIMARY KEY (id)
 constraint slack_installations u UNIQUE (id, app_registration_id)
 constraint slack_installations u UNIQUE (id, org_id, team_id)
+constraint slack_link_requests c CHECK (access_epoch >= 0)
 constraint slack_link_requests c CHECK (num_nonnulls(identity_id, passkey_id) = 1)
-constraint slack_link_requests c CHECK (user_access_epoch >= 0)
 constraint slack_link_requests f FOREIGN KEY (browser_session_id) REFERENCES login_sessions(id)
 constraint slack_link_requests f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint slack_link_requests f FOREIGN KEY (installation_id, org_id, team_id) REFERENCES slack_installations(id, org_id, team_id)
@@ -2333,10 +2302,10 @@ constraint slack_threads u UNIQUE (environment_id, front_session_id)
 constraint slack_threads u UNIQUE (id, environment_id)
 constraint slack_threads u UNIQUE (org_id, team_id, slack_channel_id, thread_ts)
 constraint slack_threads u UNIQUE (slack_channel_binding_id, opening_post_key)
-constraint slack_user_links c CHECK (revoked_at IS NOT NULL OR installation_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND user_access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1)
+constraint slack_user_links c CHECK (access_epoch >= 0)
+constraint slack_user_links c CHECK (revoked_at IS NOT NULL OR installation_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1)
 constraint slack_user_links c CHECK (slack_user_id <> ''::text)
 constraint slack_user_links c CHECK (team_id <> ''::text)
-constraint slack_user_links c CHECK (user_access_epoch >= 0)
 constraint slack_user_links f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint slack_user_links f FOREIGN KEY (installation_id, org_id, team_id) REFERENCES slack_installations(id, org_id, team_id)
 constraint slack_user_links f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
@@ -2473,7 +2442,7 @@ constraint vm_platforms c CHECK (snapshot_format_version ~ '^[0-9]+\.[0-9]+\.[0-
 constraint vm_platforms p PRIMARY KEY (id)
 constraint webauthn_challenges c CHECK (ceremony = ANY (ARRAY['register'::text, 'assert'::text]))
 constraint webauthn_challenges c CHECK (num_nonnulls(user_id, operator_id) <= 1)
-constraint webauthn_challenges c CHECK (purpose = 'login'::text AND ceremony = 'assert'::text AND num_nonnulls(user_id, operator_id, session_id, credential_enrollment_id, account_repair_enrollment_id, security_version) = 0 OR (purpose = ANY (ARRAY['confirm'::text, 'renew'::text, 'register'::text])) AND session_id IS NOT NULL AND security_version IS NOT NULL AND num_nonnulls(user_id, operator_id) = 1 AND num_nonnulls(credential_enrollment_id, account_repair_enrollment_id) = 0 OR purpose = 'enroll'::text AND operator_scope AND operator_id IS NOT NULL AND credential_enrollment_id IS NOT NULL AND account_repair_enrollment_id IS NULL AND security_version IS NOT NULL OR purpose = 'repair'::text AND NOT operator_scope AND user_id IS NOT NULL AND account_repair_enrollment_id IS NOT NULL AND credential_enrollment_id IS NULL AND security_version IS NOT NULL)
+constraint webauthn_challenges c CHECK (purpose = 'login'::text AND ceremony = 'assert'::text AND num_nonnulls(user_id, operator_id, session_id, credential_enrollment_id, account_repair_enrollment_id, security_version) = 0 OR (purpose = ANY (ARRAY['confirm'::text, 'renew'::text, 'register'::text])) AND session_id IS NOT NULL AND security_version IS NOT NULL AND num_nonnulls(user_id, operator_id) = 1 AND num_nonnulls(credential_enrollment_id, account_repair_enrollment_id) = 0 OR purpose = 'enroll'::text AND operator_scope AND operator_id IS NOT NULL AND credential_enrollment_id IS NOT NULL AND account_repair_enrollment_id IS NULL AND security_version IS NOT NULL OR purpose = 'repair'::text AND ceremony = 'register'::text AND NOT operator_scope AND user_id IS NOT NULL AND account_repair_enrollment_id IS NOT NULL AND credential_enrollment_id IS NULL AND security_version IS NOT NULL)
 constraint webauthn_challenges c CHECK (purpose = ANY (ARRAY['login'::text, 'confirm'::text, 'renew'::text, 'register'::text, 'enroll'::text, 'repair'::text]))
 constraint webauthn_challenges c CHECK (security_version >= 0)
 constraint webauthn_challenges f FOREIGN KEY (account_repair_enrollment_id) REFERENCES account_repair_enrollments(id)
@@ -2672,8 +2641,6 @@ index CREATE INDEX worker_hosts_resource ON public.worker_hosts USING btree (wor
 index CREATE INDEX worker_pools_active_dispatch_idx ON public.worker_pools USING btree (worker_group_id, id) WHERE (status = 'active'::text)
 index CREATE UNIQUE INDEX api_keys_scope_active_name_idx ON public.api_keys USING btree (org_id, project_id, environment_id, name) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX auth_identities_live_subject ON public.auth_identities USING btree (provider, subject) WHERE (revoked_at IS NULL)
-index CREATE UNIQUE INDEX browser_account_proofs_identity ON public.browser_account_proofs USING btree (session_id, identity_id) WHERE (revoked_at IS NULL)
-index CREATE UNIQUE INDEX browser_account_proofs_passkey ON public.browser_account_proofs USING btree (session_id, passkey_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX checkpoints_one_pending ON public.checkpoints USING btree (environment_id, computer_id) WHERE (status = ANY (ARRAY['capturing'::text, 'sealed'::text, 'ready'::text, 'restoring'::text, 'aborting'::text]))
 index CREATE UNIQUE INDEX computer_controls_pending ON public.computer_controls USING btree (environment_id, computer_id) WHERE (status = 'accepted'::text)
 index CREATE UNIQUE INDEX computer_leases_one_writer ON public.computer_leases USING btree (environment_id, computer_id) WHERE (fenced_at IS NULL)

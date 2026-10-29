@@ -122,8 +122,8 @@ func (f httpPostgresFixture) operatorSession(t *testing.T) string {
 		args []any
 	}{
 		{`INSERT INTO platform_operators(id,label,webauthn_user_handle) VALUES($1,'Operator',uuid_send($1::uuid))`, []any{op}},
-		{`INSERT INTO passkey_credentials(id,operator_id,credential_id,public_key,label,sign_count,backup_eligible,backup_state,credential_data) VALUES($1,$2,uuid_send($1::uuid),'key','Security key',0,false,false,'{}')`, []any{key, op}},
-		{`INSERT INTO login_sessions(id,operator_id,channel,privileged_key_id,privileged_epoch,privileged_login_at,privileged_confirmed_at,token_hash,expires_at) VALUES($1,$2,'operator',$3,0,now(),now(),$4,now()+interval '12 hours')`, []any{session, op, key, hash}},
+		{`INSERT INTO passkey_credentials(id,operator_id,credential_id,label,credential_data) VALUES($1,$2,uuid_send($1::uuid),'Security key','{}')`, []any{key, op}},
+		{`INSERT INTO login_sessions(id,operator_id,channel,passkey_id,access_epoch,issued_at,authenticated_at,token_hash,expires_at) VALUES($1,$2,'operator',$3,0,now(),now(),$4,now()+interval '12 hours')`, []any{session, op, key, hash}},
 	} {
 		if _, err := f.pool.Exec(t.Context(), q.sql, q.args...); err != nil {
 			t.Fatal(err)

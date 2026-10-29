@@ -136,7 +136,7 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 				return &audit.Refusal{Authorization: actor.Authorization, Cause: ErrSearchDenied}
 			}
 			var active bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.privileged_key_id AND k.operator_id=o.id WHERE s.id=$1 AND s.operator_id=$2 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND o.disabled_at IS NULL AND o.access_epoch=s.privileged_epoch AND o.access_epoch=$3 AND k.revoked_at IS NULL)`, prior.SessionID, prior.OperatorID, prior.AccessEpoch).Scan(&active); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.passkey_id AND k.operator_id=o.id WHERE s.id=$1 AND s.operator_id=$2 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND o.access_epoch=s.access_epoch AND o.access_epoch=$3 AND k.revoked_at IS NULL)`, prior.SessionID, prior.OperatorID, prior.AccessEpoch).Scan(&active); err != nil {
 				return err
 			}
 			check := audit.OperatorCheck{Type: "platform_operator", OperatorID: prior.OperatorID, SessionID: prior.SessionID, AccessEpoch: prior.AccessEpoch, ObservationSource: "transaction", Result: "passed"}

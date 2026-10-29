@@ -264,3 +264,29 @@ func TestAPIKeySelectedAgentSessionVisibilityAndRevocation(t *testing.T) {
 		t.Fatal("removed assignment still authorizes", err)
 	}
 }
+
+func TestAcceptedRuntimeCanContinueChildrenAfterLogoutButNotIncident(t *testing.T) {
+	for _, method := range []string{"create", "spawn"} {
+		t.Run(method, func(t *testing.T) {
+			f := newAdmissionFixture(t)
+			caller := runtimeReadCaller(t, f)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.user)
+			result, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("after-logout"), method)
+			if err != nil {
+				t.Fatal("logout blocked the accepted runtime", err)
+			}
+			var inherited bool
+			if err = f.pool.QueryRow(t.Context(), `SELECT child.computer_id<>parent.computer_id AND child.human_user_id=parent.human_user_id AND child.human_member_id=parent.human_member_id AND child.human_access_epoch=parent.human_access_epoch AND child.human_identity_id IS NOT DISTINCT FROM parent.human_identity_id AND child.human_passkey_id IS NOT DISTINCT FROM parent.human_passkey_id FROM sessions child JOIN sessions parent ON parent.environment_id=child.environment_id WHERE child.environment_id=$1 AND child.id=$2 AND parent.id=$3`, f.env, result.SessionID, f.session).Scan(&inherited); err != nil || !inherited {
+				t.Fatal(inherited, err)
+			}
+			// New human requests do not inherit the runtime's continuing authority.
+			if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("new-human")); !errors.Is(err, session.ErrDenied) {
+				t.Fatal("logged-out human started new work", err)
+			}
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.user)
+			if _, err = session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("after-incident"), method); !errors.Is(err, session.ErrDenied) {
+				t.Fatal("incident runtime continued children", err)
+			}
+		})
+	}
+}

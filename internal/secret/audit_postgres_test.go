@@ -142,7 +142,7 @@ func TestSecretMutationRechecksExactHumanSource(t *testing.T) {
 				dbtest.GrantMember(t, d.Pool, org, user, &env, "secrets.create", "secrets.rotate", "secrets.revoke")
 			case "old-proof":
 				p.AuthenticatedAt = p.AuthenticatedAt.Add(-2 * time.Hour)
-				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE browser_account_proofs SET authenticated_at=$2 WHERE session_id=$1`, p.SessionID, p.AuthenticatedAt)
+				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
 			}
 			_, createErr := store.Create(t.Context(), p, env, "DENIED", []byte("new"), "denied")
 			_, rotateErr := store.Rotate(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), []byte("new"), "rotate")

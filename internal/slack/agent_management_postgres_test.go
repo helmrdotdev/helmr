@@ -79,8 +79,7 @@ func TestConnectionGrantCannotAdoptReplacementAuthority(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, prior.IdentityID)
 			case "proof":
 				fresh := f.Principal(t)
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE browser_account_proofs SET revoked_at=clock_timestamp() WHERE session_id=$1`, prior.SessionID)
-				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,authenticated_at) VALUES($1,$2,$3,$4,clock_timestamp())`, uuid.NewV7(), prior.SessionID, f.User, fresh.IdentityID)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET identity_id=$2,authenticated_at=clock_timestamp() WHERE id=$1`, prior.SessionID, fresh.IdentityID)
 			case "membership":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=clock_timestamp(),is_owner=false WHERE id=$1`, prior.MemberID)
 				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO org_members(id,org_id,user_id,is_owner) VALUES($1,$2,$3,true)`, uuid.NewV7(), prior.OrgID, f.User)

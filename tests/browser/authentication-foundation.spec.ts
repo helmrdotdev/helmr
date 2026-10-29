@@ -86,11 +86,11 @@ test("deployment-local operator enrollment requires registration and a working a
     await expect(page).toHaveURL(/\/setup$/);
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(200);
     await expect(page.getByRole("heading", { name: "Setup is complete" })).toBeVisible();
-    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET privileged_login_at=clock_timestamp()-interval '2 hours',privileged_confirmed_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()+interval '9 hours' WHERE channel='operator'"], { stdio: "pipe" });
+    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()+interval '9 hours' WHERE channel='operator'"], { stdio: "pipe" });
     await page.goto("/admin/security");
     await page.getByRole("button", { name: "Reauthenticate and renew session", exact: true }).click();
     await expect(page.getByText("New 12-hour operator session started.", { exact: true })).toBeVisible();
-    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET privileged_login_at=clock_timestamp()-interval '2 hours',privileged_confirmed_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()-interval '1 second' WHERE channel='operator'"], {
+    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()-interval '1 second' WHERE channel='operator'"], {
       env: { ...process.env, PGDATABASE: `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable` }, stdio: "pipe",
     });
     await page.goto("/admin/security");
@@ -104,6 +104,39 @@ test("deployment-local operator enrollment requires registration and a working a
     await expect(page.getByRole("alert")).toBeVisible();
     expect((await page.request.get("/api/me")).status()).toBe(403);
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(200);
+
+    // Supervised ordinary recovery installs the key at registration, with no
+    // second assertion. Its old access is retired; its existing methods remain.
+    const operator = await (await page.request.get("/admin/api/v1/me")).json();
+    await page.goto("/dev/login");
+    const account = await (await page.request.get("/api/me")).json();
+    const priorKeys = await (await page.request.get("/api/account/credentials")).json();
+    const repairFile = join(directory, "account-repair.json");
+    execFileSync("go", ["run", "./cmd/control-plane", "operator", "repair-account", "--operator-id", operator.id, "--user-id", account.user_id, "--output-file", repairFile], {
+      env: { ...process.env, DEPLOYMENT_MODE: "self-hosted", DATABASE_URL: `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable` },
+      stdio: "pipe", timeout: 60_000,
+    });
+    // The account holder uses their authenticator; the already authenticated
+    // operator continues supervising through the independent operator cookie.
+    await cdp.send("WebAuthn.clearCredentials", { authenticatorId });
+    await page.goto("/admin/security");
+    await page.getByLabel("Account repair capability", { exact: true }).fill(JSON.parse(readFileSync(repairFile, "utf8")).capability);
+    await page.getByRole("button", { name: "Review repair target", exact: true }).click();
+    let completion: { url: string; body: unknown } | undefined;
+    page.on("request", request => {
+      if (/\/account-repairs\/[^/]+\/complete$/.test(new URL(request.url()).pathname)) completion = { url: request.url(), body: request.postDataJSON() };
+    });
+    await page.getByRole("button", { name: "Account holder: register your key and complete repair", exact: true }).click();
+    await expect(page.getByText("Account access restored. Existing access is revoked. The account holder can now sign in normally with their key.", { exact: true })).toBeVisible();
+    expect((await page.request.get("/api/me")).status()).toBe(403);
+    expect(completion).toBeTruthy();
+    expect((await page.request.post(completion!.url, { data: completion!.body })).ok()).toBe(false);
+    await page.goto("/login?next=%2Fsettings%2Faccount");
+    await page.getByRole("button", { name: "Continue with a passkey", exact: true }).click();
+    await expect(page).toHaveURL(/\/settings\/account$/);
+    expect((await (await page.request.get("/api/me")).json()).user_id).toBe(account.user_id);
+    const restoredKeys = await (await page.request.get("/api/account/credentials")).json();
+    expect(restoredKeys.credentials.length).toBe(priorKeys.credentials.length + 1);
   } finally {
     rmSync(directory, { recursive: true, force: true });
     await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });

@@ -251,7 +251,7 @@ func TestDeviceConfirmationReplacesOnlyExactLiveCLI(t *testing.T) {
 				t.Fatal(err)
 			}
 			if change == "stale-proof" {
-				f.exec(t, `UPDATE browser_account_proofs SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE session_id=$1`, fresh.SessionID)
+				f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, fresh.SessionID)
 				fresh, err = access.SessionPrincipal(ctx, f.pool, fresh.SessionID, org)
 				if err != nil {
 					t.Fatal(err)

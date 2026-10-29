@@ -21,7 +21,7 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 		return "", ErrInvalidToken
 	}
 	var matches bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions WHERE id=$1 AND user_id=$2 AND token_hash=$3 AND user_access_epoch=$4 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND channel='browser')`, session, user, hash, epoch.Int64).Scan(&matches); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions WHERE id=$1 AND user_id=$2 AND token_hash=$3 AND access_epoch=$4 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND channel='browser')`, session, user, hash, epoch.Int64).Scan(&matches); err != nil {
 		return "", err
 	}
 	if !matches {
@@ -65,9 +65,6 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 		}
 	}
 	if _, err = tx.Exec(ctx, `UPDATE auth_identities SET revoked_at=clock_timestamp(),updated_at=clock_timestamp() WHERE user_id=$1 AND provider='email' AND revoked_at IS NULL`, user); err != nil {
-		return "", err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE browser_account_proofs p SET revoked_at=clock_timestamp() FROM auth_identities i WHERE p.identity_id=i.id AND i.user_id=$1 AND i.provider='email' AND p.revoked_at IS NULL`, user); err != nil {
 		return "", err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE users SET primary_email=$2,updated_at=clock_timestamp() WHERE id=$1`, user, email); err != nil {

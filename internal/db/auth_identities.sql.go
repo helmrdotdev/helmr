@@ -13,7 +13,7 @@ import (
 
 const createAccount = `-- name: CreateAccount :one
 INSERT INTO users(id,primary_email,display_name,profile_image_url,webauthn_user_handle)
-VALUES ($1,$2,$3,$4,$5) RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, reauthenticate_after, webauthn_user_handle
+VALUES ($1,$2,$3,$4,$5) RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, webauthn_user_handle
 `
 
 type CreateAccountParams struct {
@@ -41,7 +41,6 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (U
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessEpoch,
-		&i.ReauthenticateAfter,
 		&i.WebauthnUserHandle,
 	)
 	return i, err
@@ -84,7 +83,7 @@ func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentity
 }
 
 const getAccount = `-- name: GetAccount :one
-SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, reauthenticate_after, webauthn_user_handle FROM users WHERE id=$1
+SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, webauthn_user_handle FROM users WHERE id=$1
 `
 
 func (q *Queries) GetAccount(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -98,14 +97,13 @@ func (q *Queries) GetAccount(ctx context.Context, id pgtype.UUID) (User, error) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessEpoch,
-		&i.ReauthenticateAfter,
 		&i.WebauthnUserHandle,
 	)
 	return i, err
 }
 
 const getAccountByEmail = `-- name: GetAccountByEmail :one
-SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, reauthenticate_after, webauthn_user_handle FROM users WHERE lower(primary_email)=lower($1)
+SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, webauthn_user_handle FROM users WHERE lower(primary_email)=lower($1)
 `
 
 func (q *Queries) GetAccountByEmail(ctx context.Context, lower string) (User, error) {
@@ -119,7 +117,6 @@ func (q *Queries) GetAccountByEmail(ctx context.Context, lower string) (User, er
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.AccessEpoch,
-		&i.ReauthenticateAfter,
 		&i.WebauthnUserHandle,
 	)
 	return i, err

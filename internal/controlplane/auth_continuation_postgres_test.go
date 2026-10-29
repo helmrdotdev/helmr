@@ -286,3 +286,81 @@ func TestDeviceConsentKeepsDisplayedAccountAndBrowser(t *testing.T) {
 		t.Fatalf("original page denied: %d %s", w.Code, w.Body)
 	}
 }
+
+func TestProviderConfirmationCannotBecomeAnonymousAfterRevokeAll(t *testing.T) {
+	for _, mode := range []string{"bound", "anonymous", "stale-cookie"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newHTTPPostgresFixture(t, func(cfg *ServerConfig) { cfg.AuthProvider = continuationAuthProvider{} })
+			serve := func(path string, body any, token string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+				t.Helper()
+				data, _ := json.Marshal(body)
+				r := httptest.NewRequest(http.MethodPost, f.origin+path, bytes.NewReader(data))
+				r.Header.Set("Origin", f.origin)
+				if token != "" {
+					r.AddCookie(&http.Cookie{Name: sessionCookieName(r), Value: token})
+				}
+				for _, cookie := range cookies {
+					r.AddCookie(cookie)
+				}
+				w := httptest.NewRecorder()
+				f.handler.ServeHTTP(w, r)
+				return w
+			}
+			start := func(token string) ([]*http.Cookie, string) {
+				t.Helper()
+				w := serve("/api/auth/github/start", api.GitHubAuthStartRequest{}, token, nil)
+				var result api.GitHubAuthStartResponse
+				if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &result) != nil {
+					t.Fatal(w.Code, w.Body)
+				}
+				u, err := url.Parse(result.RedirectURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return w.Result().Cookies(), u.Query().Get("state")
+			}
+			finish := func(token string, cookies []*http.Cookie, state string) *httptest.ResponseRecorder {
+				return serve("/api/auth/github/finish", api.GitHubAuthFinishRequest{State: state, Code: "fixture"}, token, cookies)
+			}
+			cookies, state := start("")
+			initial := finish("", cookies, state)
+			if initial.Code != 200 {
+				t.Fatal(initial.Code, initial.Body)
+			}
+			token := ""
+			for _, cookie := range initial.Result().Cookies() {
+				if cookie.Name == sessionCookieName(httptest.NewRequest("GET", f.origin, nil)) {
+					token = cookie.Value
+				}
+			}
+			if token == "" {
+				t.Fatal("missing login cookie")
+			}
+			callbackToken := token
+			if mode == "anonymous" {
+				callbackToken = ""
+			}
+			if mode != "stale-cookie" {
+				cookies, state = start(callbackToken)
+			}
+			if revoked := serve("/api/account/access/revoke-all", map[string]any{}, token, nil); revoked.Code != 204 {
+				t.Fatal(revoked.Code, revoked.Body)
+			}
+			if mode == "stale-cookie" {
+				cookies, state = start(callbackToken)
+			}
+			completed := finish(callbackToken, cookies, state)
+			if mode == "bound" {
+				if completed.Code != 400 {
+					t.Fatal("retired bound confirmation became a fresh login", completed.Code, completed.Body)
+				}
+				var active int
+				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM login_sessions WHERE revoked_at IS NULL`).Scan(&active); err != nil || active != 0 {
+					t.Fatal(active, err)
+				}
+			} else if completed.Code != 200 {
+				t.Fatal("anonymous sign-in denied", completed.Code, completed.Body)
+			}
+		})
+	}
+}

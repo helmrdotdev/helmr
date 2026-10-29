@@ -228,10 +228,7 @@ func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedIn
 		return "", err
 	}
 	id := uuid.NewV7()
-	if _, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,token_hash,user_access_epoch,expires_at) VALUES($1,$2,'browser',$3,$4,clock_timestamp()+interval '30 days')`, id, user.id, hash, user.accessEpoch); err != nil {
-		return "", err
-	}
-	if _, err = tx.Exec(ctx, `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,passkey_id,authenticated_at) VALUES($1,$2,$3,$4,$5,$6)`, uuid.NewV7(), id, user.id, optionalUUID(user.identityID), optionalUUID(user.passkeyID), user.authenticatedAt); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,token_hash,access_epoch,identity_id,passkey_id,authenticated_at,expires_at) VALUES($1,$2,'browser',$3,$4,$5,$6,$7,clock_timestamp()+interval '30 days')`, id, user.id, hash, user.accessEpoch, optionalUUID(user.identityID), optionalUUID(user.passkeyID), user.authenticatedAt); err != nil {
 		return "", err
 	}
 	if err = appendSessionLifecycle(ctx, tx, cfg, user.actor, pgtype.UUID{}, "identity.sign_in", id, user.authentication); err != nil {
@@ -339,25 +336,21 @@ func RevokeLoginSession(ctx context.Context, database db.TxBeginner, cfg Config,
 }
 
 // SignInBrowserProvider preserves an existing account envelope on confirmation.
-func SignInBrowserProvider(ctx context.Context, database db.TxBeginner, cfg Config, external ExternalIdentity, raw string, started time.Time) (string, error) {
+func SignInBrowserProvider(ctx context.Context, database db.TxBeginner, cfg Config, external ExternalIdentity, raw string, sessionBound bool) (string, error) {
 	var result string
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		user, err := upsertExternalIdentity(ctx, tx, cfg, external)
 		if err != nil {
 			return err
 		}
-		var cutoff pgtype.Timestamptz
-		if err = tx.QueryRow(ctx, `SELECT reauthenticate_after FROM users WHERE id=$1`, user.id).Scan(&cutoff); err != nil {
-			return err
-		}
-		if started.IsZero() || cutoff.Valid && !started.After(cutoff.Time) {
-			return ErrInvalidToken
-		}
 		existing, err := liveBrowserSession(ctx, tx, cfg, raw)
 		if err != nil {
 			return err
 		}
 		if existing.SessionID == uuid.Nil() {
+			if sessionBound {
+				return ErrInvalidToken
+			}
 			result, err = issueLoginSession(ctx, tx, cfg, user, pgtype.UUID{})
 			return err
 		}

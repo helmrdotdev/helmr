@@ -42,7 +42,7 @@ func IssueOperatorEnrollment(ctx context.Context, database db.TxBeginner, label 
 			if _, err = tx.Exec(ctx, `INSERT INTO platform_operators(id,label,webauthn_user_handle) VALUES($1,$2,$3)`, operatorID, label, handle); err != nil {
 				return err
 			}
-		} else if err = tx.QueryRow(ctx, `SELECT access_epoch FROM platform_operators WHERE id=$1 AND disabled_at IS NULL FOR UPDATE`, operatorID).Scan(&epoch); err != nil {
+		} else if err = tx.QueryRow(ctx, `SELECT access_epoch FROM platform_operators WHERE id=$1 FOR UPDATE`, operatorID).Scan(&epoch); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE credential_enrollments SET revoked_at=clock_timestamp(),provisional_credential=NULL WHERE operator_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL`, operatorID); err != nil {
@@ -59,7 +59,7 @@ func RedeemOperatorEnrollment(ctx context.Context, database db.TxBeginner, raw s
 	hash := sha256.Sum256([]byte(raw))
 	var result OperatorEnrollment
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `UPDATE credential_enrollments e SET capability_hash=NULL,browser_hash=$2 WHERE capability_hash=$1 AND browser_hash IS NULL AND e.consumed_at IS NULL AND e.revoked_at IS NULL AND e.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM platform_operators o WHERE o.id=e.operator_id AND o.disabled_at IS NULL AND o.access_epoch=e.expected_epoch) RETURNING e.id,e.expires_at`, hash[:], binding).Scan(&result.ID, &result.ExpiresAt)
+		err := tx.QueryRow(ctx, `UPDATE credential_enrollments e SET capability_hash=NULL,browser_hash=$2 WHERE capability_hash=$1 AND browser_hash IS NULL AND e.consumed_at IS NULL AND e.revoked_at IS NULL AND e.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM platform_operators o WHERE o.id=e.operator_id AND o.access_epoch=e.expected_epoch) RETURNING e.id,e.expires_at`, hash[:], binding).Scan(&result.ID, &result.ExpiresAt)
 		if isNoRows(err) {
 			return ErrInvalidToken
 		}
@@ -77,7 +77,7 @@ func issueOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, operator, 
 		return "", err
 	}
 	id := uuid.NewV7()
-	_, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,operator_id,channel,token_hash,privileged_epoch,privileged_key_id,privileged_login_at,privileged_confirmed_at,expires_at) VALUES($1,$2,'operator',$3,$4,$5,$6::timestamptz,$6::timestamptz,$6::timestamptz+interval '12 hours')`, id, operator, hash, epoch, key, at)
+	_, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,operator_id,channel,token_hash,access_epoch,passkey_id,issued_at,authenticated_at,expires_at) VALUES($1,$2,'operator',$3,$4,$5,$6::timestamptz,$6::timestamptz,$6::timestamptz+interval '12 hours')`, id, operator, hash, epoch, key, at)
 	if err != nil {
 		return "", err
 	}
@@ -97,7 +97,7 @@ func confirmOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, id uuid.
 	if err != nil {
 		return "", err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE login_sessions SET token_hash=$3,privileged_confirmed_at=$4,privileged_key_id=$5 WHERE id=$1 AND token_hash=$2 AND operator_id=$6 AND privileged_epoch=$7 AND channel='operator' AND revoked_at IS NULL AND expires_at>$4`, id, oldHash, hash, at, key, operator, epoch)
+	tag, err := tx.Exec(ctx, `UPDATE login_sessions SET token_hash=$3,authenticated_at=$4,passkey_id=$5 WHERE id=$1 AND token_hash=$2 AND operator_id=$6 AND access_epoch=$7 AND channel='operator' AND revoked_at IS NULL AND expires_at>$4`, id, oldHash, hash, at, key, operator, epoch)
 	if err != nil {
 		return "", err
 	}
@@ -113,11 +113,11 @@ func AuthenticateOperator(ctx context.Context, database db.DBTX, cfg Config, raw
 	}
 	p := auth.Principal{Kind: auth.PrincipalKindOperator, Channel: "operator"}
 	var expiry time.Time
-	err = database.QueryRow(ctx, `SELECT s.id,s.operator_id,s.privileged_key_id,s.privileged_epoch,s.privileged_confirmed_at,s.expires_at
+	err = database.QueryRow(ctx, `SELECT s.id,s.operator_id,s.passkey_id,s.access_epoch,s.authenticated_at,s.expires_at
  FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id
- JOIN passkey_credentials k ON k.id=s.privileged_key_id AND k.operator_id=o.id
+ JOIN passkey_credentials k ON k.id=s.passkey_id AND k.operator_id=o.id
  WHERE s.token_hash=$1 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp()
- AND o.disabled_at IS NULL AND o.access_epoch=s.privileged_epoch AND k.revoked_at IS NULL`, hash).Scan(&p.SessionID, &p.OperatorID, &p.PasskeyID, &p.AccessEpoch, &p.AuthenticatedAt, &expiry)
+ AND o.access_epoch=s.access_epoch AND k.revoked_at IS NULL`, hash).Scan(&p.SessionID, &p.OperatorID, &p.PasskeyID, &p.AccessEpoch, &p.AuthenticatedAt, &expiry)
 	if isNoRows(err) {
 		return p, expiry, auth.ErrUnauthenticated
 	}
@@ -134,7 +134,7 @@ func renewOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, old auth.P
 
 func operatorFromSession(ctx context.Context, tx pgx.Tx, id uuid.UUID) (auth.Principal, error) {
 	p := auth.Principal{Kind: auth.PrincipalKindOperator, Channel: "operator", SessionID: id}
-	err := tx.QueryRow(ctx, `SELECT s.operator_id,s.privileged_key_id,s.privileged_epoch,s.privileged_confirmed_at FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.privileged_key_id AND k.operator_id=o.id WHERE s.id=$1 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND o.disabled_at IS NULL AND s.privileged_epoch=o.access_epoch AND k.revoked_at IS NULL FOR SHARE OF o,s,k`, id).Scan(&p.OperatorID, &p.PasskeyID, &p.AccessEpoch, &p.AuthenticatedAt)
+	err := tx.QueryRow(ctx, `SELECT s.operator_id,s.passkey_id,s.access_epoch,s.authenticated_at FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.passkey_id AND k.operator_id=o.id WHERE s.id=$1 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND s.access_epoch=o.access_epoch AND k.revoked_at IS NULL FOR SHARE OF o,s,k`, id).Scan(&p.OperatorID, &p.PasskeyID, &p.AccessEpoch, &p.AuthenticatedAt)
 	if isNoRows(err) {
 		return p, ErrInvalidToken
 	}
@@ -157,7 +157,7 @@ func RevokeOperatorSession(ctx context.Context, database db.TxBeginner, cfg Conf
 		if _, err := tx.Exec(ctx, `SELECT id FROM platform_operators WHERE id=$1 FOR UPDATE`, p.OperatorID); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE token_hash=$1 AND channel='operator' AND revoked_at IS NULL RETURNING id,operator_id,privileged_key_id`, hash).Scan(&p.SessionID, &p.OperatorID, &p.PasskeyID)
+		err := tx.QueryRow(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE token_hash=$1 AND channel='operator' AND revoked_at IS NULL RETURNING id,operator_id,passkey_id`, hash).Scan(&p.SessionID, &p.OperatorID, &p.PasskeyID)
 		if isNoRows(err) {
 			return nil
 		}

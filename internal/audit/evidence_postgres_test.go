@@ -42,7 +42,7 @@ func TestEvidencePreservesIndependentOperatorAndAccountIdentity(t *testing.T) {
 		t.Fatal(valid, err)
 	}
 	dbtest.MustExec(t, t.Context(), d.Pool, `DELETE FROM users WHERE id=$1`, user)
-	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE platform_operators SET disabled_at=clock_timestamp() WHERE id=$1`, operator.OperatorID)
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, operator.SessionID)
 	if err := d.Pool.QueryRow(t.Context(), `SELECT count(*)=2 AND count(*) FILTER(WHERE actor_user_id=$1 AND actor_identity->>'display_name'='Account name')=1 FROM audit_events`, user).Scan(&valid); err != nil || !valid {
 		t.Fatal("history lost", valid, err)
 	}
@@ -50,7 +50,7 @@ func TestEvidencePreservesIndependentOperatorAndAccountIdentity(t *testing.T) {
 		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: admin, Action: "worker_group.created", TargetKind: "worker_group", TargetID: uuid.NewV7()})
 	})
 	if err == nil {
-		t.Fatal("disabled operator committed mutation")
+		t.Fatal("retired operator session committed mutation")
 	}
 }
 

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
@@ -53,5 +54,32 @@ func TestAdmittedCommandRetainsDispatchReceiptAfterRevocation(t *testing.T) {
 	}
 	if err := CheckStart(t.Context(), f.Pool, f.host(), *replay.Start); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestQueuedCommandSurvivesLogoutButNotAccountRevocation(t *testing.T) {
+	for _, incident := range []bool{false, true} {
+		t.Run(fmt.Sprint(incident), func(t *testing.T) {
+			f := commandFixture(t)
+			c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("auth-lifetime"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
+			if incident {
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.User)
+			}
+			claimed, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), f.claim())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if incident {
+				if claimed.Start != nil || f.get(t, uuid.UUID(c.ID.Bytes)).Status != "failed" {
+					t.Fatal("incident work dispatched", claimed)
+				}
+			} else if claimed.Start == nil {
+				t.Fatal("logout cancelled accepted work")
+			}
+		})
 	}
 }

@@ -274,7 +274,7 @@ func TestAdminHTTPWorkerPools(t *testing.T) {
 func TestAdminMutationRequiresRecentOperatorProof(t *testing.T) {
 	f := newSupplyHTTPFixture(t)
 	token := f.adminSession(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET privileged_confirmed_at=statement_timestamp()-interval '2 hours',privileged_login_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()+interval '10 hours' WHERE channel='operator'`)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET authenticated_at=statement_timestamp()-interval '2 hours',issued_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()+interval '10 hours' WHERE channel='operator'`)
 	if got := f.request(t, http.MethodGet, "/admin/api/v1/regions", token, ""); got.Code != http.StatusOK {
 		t.Fatal(got.Code, got.Body)
 	}
@@ -286,7 +286,7 @@ func TestAdminMutationRequiresRecentOperatorProof(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM regions WHERE id='fresh-required')`).Scan(&exists); err != nil || exists {
 		t.Fatal(exists, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET privileged_confirmed_at=clock_timestamp() WHERE channel='operator'`)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET authenticated_at=clock_timestamp() WHERE channel='operator'`)
 	if got := f.request(t, http.MethodPost, "/admin/api/v1/regions", token, `{"id":"fresh-required","display_name":"Fresh"}`); got.Code != http.StatusCreated {
 		t.Fatal(got.Code, got.Body)
 	}
@@ -300,7 +300,7 @@ func TestOperatorProofExpiryAtCommitReturnsConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Admission occurred while fresh; the operation reaches commit after expiry.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET privileged_login_at=statement_timestamp()-interval '2 hours',privileged_confirmed_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()+interval '10 hours' WHERE id=$1`, p.SessionID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET issued_at=statement_timestamp()-interval '2 hours',authenticated_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()+interval '10 hours' WHERE id=$1`, p.SessionID)
 	err = db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(t.Context(), `INSERT INTO regions(id,display_name) VALUES('late-commit','Late')`); err != nil {
 			return err

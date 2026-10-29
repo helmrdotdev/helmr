@@ -33,7 +33,7 @@ func (f statusFixture) linkActor(t *testing.T, user uuid.UUID, actor string) uui
 	t.Helper()
 	p := (sessiontest.Fixture{Pool: f.Pool, Environment: f.Environment, User: user}).Principal(t)
 	link := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_user_links(id,installation_id,org_id,member_id,user_id,team_id,slack_user_id,user_access_epoch,identity_id,authenticated_at) VALUES($1,$2,$3,$4,$5,'team',$6,$7,$8,$9)`, link, f.installation, p.OrgID, p.MemberID, user, actor, p.AccessEpoch, p.IdentityID, p.AuthenticatedAt)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_user_links(id,installation_id,org_id,member_id,user_id,team_id,slack_user_id,access_epoch,identity_id,authenticated_at) VALUES($1,$2,$3,$4,$5,'team',$6,$7,$8,$9)`, link, f.installation, p.OrgID, p.MemberID, user, actor, p.AccessEpoch, p.IdentityID, p.AuthenticatedAt)
 	return link
 }
 

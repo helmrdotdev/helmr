@@ -115,7 +115,7 @@ type DeviceCode struct {
 	IdentityID          pgtype.UUID        `json:"identity_id"`
 	PasskeyID           pgtype.UUID        `json:"passkey_id"`
 	AuthenticatedAt     pgtype.Timestamptz `json:"authenticated_at"`
-	UserAccessEpoch     pgtype.Int8        `json:"user_access_epoch"`
+	AccessEpoch         pgtype.Int8        `json:"access_epoch"`
 	BrowserSessionID    pgtype.UUID        `json:"browser_session_id"`
 	ReplacesSessionID   pgtype.UUID        `json:"replaces_session_id"`
 }
@@ -196,25 +196,21 @@ type Invitation struct {
 }
 
 type LoginSession struct {
-	ID                    pgtype.UUID        `json:"id"`
-	OrgID                 pgtype.UUID        `json:"org_id"`
-	UserID                pgtype.UUID        `json:"user_id"`
-	TokenHash             []byte             `json:"token_hash"`
-	IssuedAt              pgtype.Timestamptz `json:"issued_at"`
-	LastHumanActivityAt   pgtype.Timestamptz `json:"last_human_activity_at"`
-	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
-	RevokedAt             pgtype.Timestamptz `json:"revoked_at"`
-	OperatorID            pgtype.UUID        `json:"operator_id"`
-	Channel               string             `json:"channel"`
-	UserAccessEpoch       pgtype.Int8        `json:"user_access_epoch"`
-	MemberID              pgtype.UUID        `json:"member_id"`
-	CliIdentityID         pgtype.UUID        `json:"cli_identity_id"`
-	CliPasskeyID          pgtype.UUID        `json:"cli_passkey_id"`
-	CliAuthenticatedAt    pgtype.Timestamptz `json:"cli_authenticated_at"`
-	PrivilegedKeyID       pgtype.UUID        `json:"privileged_key_id"`
-	PrivilegedEpoch       pgtype.Int8        `json:"privileged_epoch"`
-	PrivilegedLoginAt     pgtype.Timestamptz `json:"privileged_login_at"`
-	PrivilegedConfirmedAt pgtype.Timestamptz `json:"privileged_confirmed_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	TokenHash           []byte             `json:"token_hash"`
+	IssuedAt            pgtype.Timestamptz `json:"issued_at"`
+	LastHumanActivityAt pgtype.Timestamptz `json:"last_human_activity_at"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt           pgtype.Timestamptz `json:"revoked_at"`
+	OperatorID          pgtype.UUID        `json:"operator_id"`
+	Channel             string             `json:"channel"`
+	AccessEpoch         pgtype.Int8        `json:"access_epoch"`
+	MemberID            pgtype.UUID        `json:"member_id"`
+	IdentityID          pgtype.UUID        `json:"identity_id"`
+	PasskeyID           pgtype.UUID        `json:"passkey_id"`
+	AuthenticatedAt     pgtype.Timestamptz `json:"authenticated_at"`
 }
 
 type OrgMember struct {
@@ -279,15 +275,14 @@ type SecretVersion struct {
 }
 
 type User struct {
-	ID                  pgtype.UUID        `json:"id"`
-	DisplayName         string             `json:"display_name"`
-	ProfileImageURL     pgtype.Text        `json:"profile_image_url"`
-	PrimaryEmail        pgtype.Text        `json:"primary_email"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-	AccessEpoch         int64              `json:"access_epoch"`
-	ReauthenticateAfter pgtype.Timestamptz `json:"reauthenticate_after"`
-	WebauthnUserHandle  []byte             `json:"webauthn_user_handle"`
+	ID                 pgtype.UUID        `json:"id"`
+	DisplayName        string             `json:"display_name"`
+	ProfileImageURL    pgtype.Text        `json:"profile_image_url"`
+	PrimaryEmail       pgtype.Text        `json:"primary_email"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	AccessEpoch        int64              `json:"access_epoch"`
+	WebauthnUserHandle []byte             `json:"webauthn_user_handle"`
 }
 
 type VMPlatform struct {

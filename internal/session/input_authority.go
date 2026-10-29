@@ -78,7 +78,7 @@ func checkInputConversation(ctx context.Context, pool db.TxBeginner, host worker
 			err = authorizeRuntimeOrigin(ctx, tx, e.EnvironmentID, e.SessionID)
 		}
 		if err == nil {
-			err = authorizeTarget(ctx, tx, func() Caller { c := UserCaller(human); c.SlackThreadID = thread; return c }(), e.EnvironmentID, e.SessionID, auth.PermissionSessionsSend)
+			err = authorizeTarget(ctx, tx, func() Caller { c := UserCaller(human); c.SlackThreadID = thread; c.admitted = true; return c }(), e.EnvironmentID, e.SessionID, auth.PermissionSessionsSend)
 		}
 		if errors.Is(err, ErrDenied) {
 			revoked = true
@@ -106,22 +106,39 @@ func checkInputConversation(ctx context.Context, pool db.TxBeginner, host worker
 }
 
 // A retained request is attributable to its exact linked Slack actor, not only
-// its Helmr user. Hold the live link through admission so unlink cannot race it.
+// its Helmr user. Unlink does not cancel already accepted input.
 func authorizeSlackInputActor(ctx context.Context, tx pgx.Tx, request uuid.UUID) error {
 	_, err := slackInputPrincipal(ctx, tx, request)
 	return err
 }
 func slackInputPrincipal(ctx context.Context, tx pgx.Tx, request uuid.UUID) (auth.Principal, error) {
-	var link uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT l.id FROM slack_requests r
+	var env, turn uuid.UUID
+	var message *uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT r.environment_id,r.turn_id,r.message_id FROM slack_requests r
  JOIN turns t ON t.environment_id=r.environment_id AND t.id=r.turn_id
  LEFT JOIN turn_messages m ON m.environment_id=r.environment_id AND m.id=r.message_id
  JOIN slack_user_links l ON l.id=CASE WHEN r.message_id IS NULL THEN t.human_slack_link_id ELSE m.human_slack_link_id END
  WHERE r.id=$1 AND l.installation_id=r.installation_id AND l.slack_user_id=r.slack_user_id AND l.user_id=r.user_id
- AND l.linked_at<=r.source_occurred_at AND l.revoked_at IS NULL`, request).Scan(&link)
+ AND l.linked_at<=r.source_occurred_at`, request).Scan(&env, &turn, &message)
 	if err != nil {
 		return auth.Principal{}, accessError(err)
 	}
-	p, err := access.SlackPrincipal(ctx, tx, link)
+	var p auth.Principal
+	if message == nil {
+		p, err = access.ReadHuman(tx.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM turns WHERE environment_id=$1 AND id=$2`, env, turn))
+	} else {
+		p, err = access.ReadHuman(tx.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM turn_messages WHERE environment_id=$1 AND id=$2`, env, *message))
+	}
+	if err != nil {
+		return p, accessError(err)
+	}
+	p, err = access.CurrentWork(ctx, tx, p)
+	if err != nil {
+		return p, accessError(err)
+	}
+	// Owner/member locks precede installation locks. Retain this current-state
+	// check through dispatch so disconnect cannot commit before admission.
+	var installation uuid.UUID
+	err = tx.QueryRow(ctx, `SELECT i.id FROM slack_installations i JOIN slack_requests r ON r.installation_id=i.id WHERE r.id=$1 AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL FOR SHARE OF i`, request).Scan(&installation)
 	return p, accessError(err)
 }

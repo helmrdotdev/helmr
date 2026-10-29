@@ -8,7 +8,10 @@ import (
 )
 
 func enqueueSecurityNotification(ctx context.Context, q db.DBTX, user uuid.UUID, event, recipient string) error {
-	_, err := q.Exec(ctx, `INSERT INTO account_security_notifications(id,user_id,event,recipient,status) VALUES($1,$2,$3,NULLIF($4,''),CASE WHEN $4='' THEN 'unavailable' ELSE 'pending' END)`, uuid.NewV7(), user, event, recipient)
+	if recipient == "" {
+		return nil
+	}
+	_, err := q.Exec(ctx, `INSERT INTO account_security_notifications(id,user_id,event,recipient,status) VALUES($1,$2,$3,$4,'pending')`, uuid.NewV7(), user, event, recipient)
 	return err
 }
 

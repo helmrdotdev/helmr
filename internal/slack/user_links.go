@@ -138,7 +138,7 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy
 		err = tx.QueryRow(ctx, `UPDATE slack_link_requests SET consumed_at=clock_timestamp()
  WHERE id=$1 AND browser_hash=$2 AND browser_session_id=$3 AND installation_id=$4
  AND org_id=$5 AND member_id=$6 AND user_id=$7 AND team_id=$8 AND slack_user_id=$9
- AND user_access_epoch=$10 AND identity_id IS NOT DISTINCT FROM $11
+ AND access_epoch=$10 AND identity_id IS NOT DISTINCT FROM $11
  AND passkey_id IS NOT DISTINCT FROM $12 AND authenticated_at=$13
  AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() RETURNING id`,
 			consent.ID, consent.BrowserHash, current.SessionID, installation, org, member, user, identity.TeamID, identity.SlackUserID,
@@ -156,7 +156,7 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy
 		if !active {
 			return ErrUserLinkDenied
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO slack_user_links(id,team_id,slack_user_id,user_id,installation_id,org_id,member_id,user_access_epoch,identity_id,passkey_id,authenticated_at)
+		tag, err := tx.Exec(ctx, `INSERT INTO slack_user_links(id,team_id,slack_user_id,user_id,installation_id,org_id,member_id,access_epoch,identity_id,passkey_id,authenticated_at)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`, uuid.NewV7(), identity.TeamID, identity.SlackUserID, user, installation, org, member, current.AccessEpoch, optionalLinkID(current.IdentityID), optionalLinkID(current.PasskeyID), current.AuthenticatedAt)
 		if err != nil {
 			return err
@@ -247,7 +247,7 @@ func PrepareUserLink(ctx context.Context, pool db.TxBeginner, actor audit.Eviden
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `INSERT INTO slack_link_requests(id,installation_id,org_id,team_id,slack_user_id,browser_hash,browser_session_id,user_id,member_id,user_access_epoch,identity_id,passkey_id,authenticated_at,expires_at)
+		_, err = tx.Exec(ctx, `INSERT INTO slack_link_requests(id,installation_id,org_id,team_id,slack_user_id,browser_hash,browser_session_id,user_id,member_id,access_epoch,identity_id,passkey_id,authenticated_at,expires_at)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,clock_timestamp()+interval '10 minutes')`, id, installation, org, identity.TeamID, identity.SlackUserID, binding, p.SessionID, user, p.MemberID, p.AccessEpoch, optionalLinkID(p.IdentityID), optionalLinkID(p.PasskeyID), p.AuthenticatedAt)
 		return err
 	})

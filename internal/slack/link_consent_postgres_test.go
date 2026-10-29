@@ -83,8 +83,7 @@ func TestSlackConsentCannotReplaceItsSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	replacement := f.Principal(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE browser_account_proofs SET revoked_at=clock_timestamp() WHERE session_id=$1`, p.SessionID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,authenticated_at) VALUES($1,$2,$3,$4,clock_timestamp())`, uuid.NewV7(), p.SessionID, f.User, replacement.IdentityID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET identity_id=$2,authenticated_at=clock_timestamp() WHERE id=$1`, p.SessionID, replacement.IdentityID)
 	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); !errors.Is(err, ErrUserLinkDenied) {
 		t.Fatal("consent adopted replacement source", err)
 	}

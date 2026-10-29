@@ -162,7 +162,6 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 		var generation int64
 		var attempts int
 		var mac []byte
-		var created time.Time
 		var userID, sessionID pgtype.UUID
 		var epoch pgtype.Int8
 		// Resolve immutable email first, then lock account before protocol state. This
@@ -180,8 +179,8 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE lower(primary_email)=$1 OR id=(SELECT user_id FROM email_challenges WHERE id=$2) ORDER BY id FOR UPDATE`, ownerEmail, id); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT email,safe_next,generation,failed_attempts,code_mac,created_at,user_id,session_id,access_epoch FROM email_challenges
-   WHERE id=$1 AND browser_hash=$2 AND purpose=$3 AND consumed_at IS NULL AND revoked_at IS NULL AND sent_at IS NOT NULL AND expires_at>clock_timestamp() FOR UPDATE`, id, binding, purpose).Scan(&email, &next, &generation, &attempts, &mac, &created, &userID, &sessionID, &epoch)
+		err := tx.QueryRow(ctx, `SELECT email,safe_next,generation,failed_attempts,code_mac,user_id,session_id,access_epoch FROM email_challenges
+   WHERE id=$1 AND browser_hash=$2 AND purpose=$3 AND consumed_at IS NULL AND revoked_at IS NULL AND sent_at IS NOT NULL AND expires_at>clock_timestamp() FOR UPDATE`, id, binding, purpose).Scan(&email, &next, &generation, &attempts, &mac, &userID, &sessionID, &epoch)
 		if isNoRows(err) {
 			return ErrInvalidToken
 		}
@@ -207,7 +206,7 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 			result.Next = "/settings/account"
 			return nil
 		}
-		user, err := emailUser(ctx, tx, email, created)
+		user, err := emailUser(ctx, tx, email)
 		if err != nil {
 			return err
 		}
@@ -259,7 +258,7 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 	return result, nil
 }
 
-func emailUser(ctx context.Context, tx pgx.Tx, email string, started time.Time) (signedInUser, error) {
+func emailUser(ctx context.Context, tx pgx.Tx, email string) (signedInUser, error) {
 	q := db.New(tx)
 	user, err := q.GetAccountByEmail(ctx, email)
 	if isNoRows(err) {
@@ -272,11 +271,8 @@ func emailUser(ctx context.Context, tx pgx.Tx, email string, started time.Time) 
 	if err != nil {
 		return signedInUser{}, err
 	}
-	if err = tx.QueryRow(ctx, `SELECT access_epoch,reauthenticate_after FROM users WHERE id=$1 FOR UPDATE`, user.ID).Scan(&user.AccessEpoch, &user.ReauthenticateAfter); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT access_epoch FROM users WHERE id=$1 FOR UPDATE`, user.ID).Scan(&user.AccessEpoch); err != nil {
 		return signedInUser{}, err
-	}
-	if user.ReauthenticateAfter.Valid && !started.After(user.ReauthenticateAfter.Time) {
-		return signedInUser{}, ErrInvalidToken
 	}
 	identity, err := q.GetAuthIdentity(ctx, db.GetAuthIdentityParams{Provider: "email", Subject: pgvalue.MustUUIDValue(user.ID).String()})
 	if isNoRows(err) || err == nil && identity.RevokedAt.Valid {
@@ -301,19 +297,12 @@ func confirmBrowserProof(ctx context.Context, tx pgx.Tx, cfg Config, id uuid.UUI
 	if err != nil {
 		return "", err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE login_sessions SET token_hash=$3,last_human_activity_at=clock_timestamp(),expires_at=clock_timestamp()+interval '30 days' WHERE id=$1 AND token_hash=$2 AND user_id=$4 AND channel='browser' AND revoked_at IS NULL AND expires_at>clock_timestamp() AND user_access_epoch=$5`, id, oldHash, hash, user.id, user.accessEpoch)
+	tag, err := tx.Exec(ctx, `UPDATE login_sessions SET token_hash=$3,identity_id=$6,passkey_id=$7,authenticated_at=$8,last_human_activity_at=clock_timestamp(),expires_at=clock_timestamp()+interval '30 days' WHERE id=$1 AND token_hash=$2 AND user_id=$4 AND channel='browser' AND revoked_at IS NULL AND expires_at>clock_timestamp() AND access_epoch=$5`, id, oldHash, hash, user.id, user.accessEpoch, optionalUUID(user.identityID), optionalUUID(user.passkeyID), user.authenticatedAt)
 	if err != nil {
 		return "", err
 	}
 	if tag.RowsAffected() != 1 {
 		return "", ErrInvalidToken
-	}
-	// Retire only this method's previous proof; other independently proved methods survive.
-	if _, err = tx.Exec(ctx, `UPDATE browser_account_proofs SET revoked_at=clock_timestamp() WHERE session_id=$1 AND revoked_at IS NULL AND identity_id IS NOT DISTINCT FROM $2 AND passkey_id IS NOT DISTINCT FROM $3`, id, optionalUUID(user.identityID), optionalUUID(user.passkeyID)); err != nil {
-		return "", err
-	}
-	if _, err = tx.Exec(ctx, `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,passkey_id,authenticated_at) VALUES($1,$2,$3,$4,$5,$6)`, uuid.NewV7(), id, user.id, optionalUUID(user.identityID), optionalUUID(user.passkeyID), user.authenticatedAt); err != nil {
-		return "", err
 	}
 	return raw, nil
 }

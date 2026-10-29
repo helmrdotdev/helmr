@@ -16,8 +16,6 @@ func (s *Server) mountAccountRepairRoutes(r chi.Router) {
 		r.Post("/account-repairs/redeem", s.redeemAccountRepair)
 		r.Post("/account-repairs/{id}/options", s.accountRepairRegisterOptions)
 		r.Post("/account-repairs/{id}/complete", s.accountRepairRegisterComplete)
-		r.Post("/account-repairs/{id}/assert/options", s.accountRepairAssertOptions)
-		r.Post("/account-repairs/{id}/assert/verify", s.accountRepairAssertVerify)
 	})
 }
 func (s *Server) redeemAccountRepair(w http.ResponseWriter, r *http.Request) {
@@ -74,42 +72,7 @@ func (s *Server) accountRepairRegisterComplete(w http.ResponseWriter, r *http.Re
 		writeError(w, badRequest(err))
 		return
 	}
-	if err = identity.CompleteAccountRepairRegistration(r.Context(), s.tx, s.webauthn, principalFromContext(r.Context()), id, challenge, binding, input.Credential); err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"enrollment_id": id, "next": "assert"})
-}
-func (s *Server) accountRepairAssertOptions(w http.ResponseWriter, r *http.Request) {
-	id, binding, err := enrollmentRequest(w, r)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	result, err := identity.BeginAccountRepairAssertion(r.Context(), s.tx, s.webauthn, principalFromContext(r.Context()), id, binding)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-func (s *Server) accountRepairAssertVerify(w http.ResponseWriter, r *http.Request) {
-	id, binding, err := enrollmentRequest(w, r)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	var input keyResponse
-	if err = decodeRequestJSON(r, &input); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	challenge, err := uuid.Parse(input.ChallengeID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if err = identity.VerifyAccountRepair(r.Context(), s.tx, s.identity, s.webauthn, principalFromContext(r.Context()), id, challenge, binding, input.Credential, input.Label); err != nil {
+	if err = identity.CompleteAccountRepairRegistration(r.Context(), s.tx, s.identity, s.webauthn, principalFromContext(r.Context()), id, challenge, binding, input.Credential, input.Label); err != nil {
 		s.writeIdentityError(w, r, err)
 		return
 	}

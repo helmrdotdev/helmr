@@ -14,31 +14,49 @@ import (
 	"uuid"
 )
 
-func TestQueuedHumanInputCannotAdoptNewProof(t *testing.T) {
-	f := newFixture(t)
-	pending := f.enqueue(t, "before-source-retirement")
-	replacement := (sessiontest.Fixture{Pool: f.pool, User: f.user, Environment: f.env}).Principal(t)
-	// Keep the browser envelope alive but replace its proof with another credential.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE browser_account_proofs SET revoked_at=clock_timestamp() WHERE session_id=$1`, f.human.SessionID)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,authenticated_at) VALUES($1,$2,$3,$4,clock_timestamp())`, uuid.NewV7(), f.human.SessionID, f.user, replacement.IdentityID)
-	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, session.ErrNotReady) {
-		t.Fatal("old input acquired replacement proof", err)
+func TestQueuedHumanInputSurvivesRoutineAuthenticationChanges(t *testing.T) {
+	for _, change := range []string{"logout", "expiry", "confirmation"} {
+		t.Run(change, func(t *testing.T) {
+			f := newFixture(t)
+			pending := f.enqueue(t, "accepted-before-auth-change")
+			switch change {
+			case "logout":
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.user)
+			case "expiry":
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET expires_at=clock_timestamp()-interval '1 second' WHERE user_id=$1`, f.user)
+			case "confirmation":
+				replacement := (sessiontest.Fixture{Pool: f.pool, User: f.user, Environment: f.env}).Principal(t)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET identity_id=$2,authenticated_at=clock_timestamp() WHERE user_id=$1 AND channel='browser'`, f.user, replacement.IdentityID)
+			}
+			dispatched, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
+			if err != nil || dispatched.TurnID != pending.TurnID {
+				t.Fatal(dispatched, err)
+			}
+		})
 	}
-	var status, code string
-	if err := f.pool.QueryRow(t.Context(), `SELECT status,error_code FROM turns WHERE id=$1`, pending.TurnID).Scan(&status, &code); err != nil || status != "failed" || code != "permission_revoked" {
-		t.Fatal(status, code, err)
-	}
-	current, err := access.SessionPrincipal(t.Context(), f.pool, f.human.SessionID, f.human.OrgID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	accepted, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.UserCaller(current), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "new-proof", Input: json.RawMessage(`[]`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	dispatched, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
-	if err != nil || dispatched.TurnID != accepted.TurnID {
-		t.Fatal(dispatched, err)
+}
+
+func TestQueuedHumanInputStillRejectsIncidentRevocation(t *testing.T) {
+	for _, change := range []string{"account", "source", "member"} {
+		t.Run(change, func(t *testing.T) {
+			f := newFixture(t)
+			pending := f.enqueue(t, "accepted-before-revocation")
+			switch change {
+			case "account":
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.user)
+			case "source":
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.user)
+			case "member":
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET reauthenticate_after=clock_timestamp() WHERE user_id=$1`, f.user)
+			}
+			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, session.ErrNotReady) && !errors.Is(err, session.ErrDenied) {
+				t.Fatal(err)
+			}
+			var failed bool
+			if err := f.pool.QueryRow(t.Context(), `SELECT status='failed' AND error_code='permission_revoked' AND terminal_at IS NOT NULL FROM turns WHERE id=$1`, pending.TurnID).Scan(&failed); err != nil || !failed {
+				t.Fatal(failed, err)
+			}
+		})
 	}
 }
 

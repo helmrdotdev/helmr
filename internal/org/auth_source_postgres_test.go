@@ -26,7 +26,7 @@ func TestOrganizationManagementRetainsOriginalHumanSource(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, original.Human.IdentityID)
 			case "proof":
 				fresh := dbtest.BrowserPrincipal(t, f.pool, original.OrgID, original.UserID)
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE browser_account_proofs SET identity_id=$2 WHERE session_id=$1`, original.Human.SessionID, fresh.IdentityID)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET identity_id=$2 WHERE id=$1`, original.Human.SessionID, fresh.IdentityID)
 			case "membership":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET removed_at=clock_timestamp(),is_owner=false WHERE id=$1`, original.MemberID)
 				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_members(id,user_id,org_id,is_owner) VALUES($1,$2,$3,true)`, uuid.NewV7(), original.UserID, original.OrgID)

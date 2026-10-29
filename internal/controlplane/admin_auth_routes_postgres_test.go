@@ -21,8 +21,6 @@ func TestAdminAuthenticationRouteBoundaries(t *testing.T) {
 		{"POST", "/account-repairs/redeem"},
 		{"POST", "/account-repairs/" + id + "/options"},
 		{"POST", "/account-repairs/" + id + "/complete"},
-		{"POST", "/account-repairs/" + id + "/assert/options"},
-		{"POST", "/account-repairs/" + id + "/assert/verify"},
 		{"GET", "/regions"}, {"POST", "/regions"},
 	}
 	for _, route := range protected {
@@ -46,7 +44,7 @@ func TestAdminAuthenticationRouteBoundaries(t *testing.T) {
 	}
 	// Old confirmation must block infrastructure mutation but permit the
 	// ceremony that obtains fresh proof and renews the session.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET privileged_login_at=clock_timestamp()-interval '2 hours',privileged_confirmed_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()+interval '9 hours' WHERE channel='operator'`)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()+interval '9 hours' WHERE channel='operator'`)
 	if got := f.request(t, "POST", "/admin/api/v1/regions", operator, `{"id":"blocked","display_name":"Blocked"}`); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "recent_authentication_required") {
 		t.Fatalf("stale mutation: %d %s", got.Code, got.Body)
 	}

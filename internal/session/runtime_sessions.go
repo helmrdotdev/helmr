@@ -79,7 +79,7 @@ func RuntimeListSessions(ctx context.Context, policy auditpolicy.Policy, databas
 			filter.SharedConnection = *source.Connection
 		}
 		if source.mode() == "scoped" {
-			filter, err = readScopeFor(ctx, tx, Caller{Kind: source.kind(), ID: source.id(), Human: source.Human}, caller.Execution.EnvironmentID)
+			filter, err = readScopeFor(ctx, tx, Caller{Kind: source.kind(), ID: source.id(), Human: source.Human, admitted: source.admitted}, caller.Execution.EnvironmentID)
 			if err != nil {
 				return err
 			}

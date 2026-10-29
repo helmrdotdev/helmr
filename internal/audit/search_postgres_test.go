@@ -57,7 +57,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	if _, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, p, f); !errors.Is(err, auditquery.ErrSearchDenied) {
 		t.Fatal("ordinary account gained platform access", err)
 	}
-	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE platform_operators SET disabled_at=clock_timestamp() WHERE id=$1`, operator.OperatorID)
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, operator.SessionID)
 	_, denied = auditquery.SearchAdmin(t.Context(), d.Pool, policy, operator, f)
 	var operatorRefusal *audit.Refusal
 	if !errors.As(denied, &operatorRefusal) || operatorRefusal.Authorization.Decision != "denied" || len(operatorRefusal.Authorization.Checks) != 2 {
@@ -67,7 +67,7 @@ func TestSearchScopesReauthorizationExpiryAndAtomicAdmission(t *testing.T) {
 	if !ok || observed.Result != "failed" || observed.ObservationSource != "transaction" {
 		t.Fatal("lost current operator denial", observed)
 	}
-	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE platform_operators SET disabled_at=NULL WHERE id=$1`, operator.OperatorID)
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET revoked_at=NULL WHERE id=$1`, operator.SessionID)
 	dbtest.GrantMember(t, d.Pool, org, user, &env, "audit_events.read")
 	result, err := auditquery.Search(t.Context(), d.Pool, policy, p, f)
 	if err != nil || len(result.Events) != 1 || result.NextBefore != nil {

@@ -4,11 +4,10 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"testing"
-	"time"
 	"uuid"
 )
 
-func TestAccountRevocationRejectsPendingAndKeepsCredentials(t *testing.T) {
+func TestAccountRevocationRetiresApprovedAccessAndKeepsCredentials(t *testing.T) {
 	f := newIdentityFixture(t)
 	c, b := emailChallenge(t, f, "owner@example.test")
 	if err := MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
@@ -49,8 +48,10 @@ func TestAccountRevocationRejectsPendingAndKeepsCredentials(t *testing.T) {
 	if _, err = AuthenticateLoginSession(t.Context(), f.pool, f.cfg, done.Token, uuid.Nil()); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatal("session survived", err)
 	}
-	if _, err = completeEmail(t, f, pending, b); !errors.Is(err, ErrInvalidToken) {
-		t.Fatal("pre-cutoff anonymous code survived", err)
+	// Anonymous sign-in has not acquired account authority. A valid credential
+	// may start a new session before or after revoke-all.
+	if _, err = completeEmail(t, f, pending, b); err != nil {
+		t.Fatal("valid anonymous sign-in was rejected", err)
 	}
 	if _, err = ExchangeDeviceCode(t.Context(), f.pool, f.cfg, device.DeviceCode); err == nil {
 		t.Fatal("approved device survived")
@@ -87,7 +88,7 @@ func TestEmailChangeRetiresOnlyMailboxSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mixed, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, emailOnly.Token, time.Now())
+	mixed, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, emailOnly.Token, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,9 +129,9 @@ func TestEmailChangeRetiresOnlyMailboxSource(t *testing.T) {
 	if err != nil || current.SessionID != original.SessionID || current.UserID != original.UserID || current.IdentityID == original.IdentityID {
 		t.Fatal(current, err)
 	}
-	var proofs int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM browser_account_proofs WHERE session_id=$1 AND revoked_at IS NULL`, p.SessionID).Scan(&proofs); err != nil || proofs != 2 {
-		t.Fatal("independent proof lost", proofs, err)
+	var source uuid.UUID
+	if err = f.pool.QueryRow(t.Context(), `SELECT identity_id FROM login_sessions WHERE id=$1`, p.SessionID).Scan(&source); err != nil || source != current.IdentityID {
+		t.Fatal("current proof was not replaced", source, err)
 	}
 	var notices int
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(DISTINCT recipient) FROM account_security_notifications WHERE event='identity.email_changed' AND recipient IN ('old@example.test','new@example.test')`).Scan(&notices); err != nil || notices != 2 {

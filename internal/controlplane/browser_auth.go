@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -31,6 +32,7 @@ const (
 type browserAuthFlow struct {
 	SlackManagementSource *slackManagementSource `json:"slack_management_source,omitempty"`
 	SlackConsentID        string                 `json:"slack_consent_id,omitempty"`
+	SessionBound          bool                   `json:"session_bound,omitempty"`
 	SessionHash           string                 `json:"session_hash,omitempty"`
 	StartedAt             time.Time              `json:"started_at"`
 	ConnectionID          string                 `json:"connection_id,omitempty"`
@@ -108,6 +110,12 @@ func (s *Server) writeGitHubAuthStart(w http.ResponseWriter, r *http.Request, ki
 	if raw := rawBrowserSession(r); raw != "" {
 		h := sha256.Sum256([]byte(raw))
 		flow.SessionHash = base64.RawURLEncoding.EncodeToString(h[:])
+		_, authErr := identity.AuthenticateLoginSession(r.Context(), s.tx, s.identity, raw, uuid.Nil())
+		if authErr != nil && !errors.Is(authErr, auth.ErrUnauthenticated) {
+			s.writeIdentityError(w, r, authErr)
+			return
+		}
+		flow.SessionBound = authErr == nil
 	}
 	if len(tokenHash) > 0 {
 		flow.TokenHash = base64.RawURLEncoding.EncodeToString(tokenHash)
@@ -214,7 +222,7 @@ func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, exte
 			return "", identity.ErrWrongAccount
 		}
 	}
-	return identity.SignInBrowserProvider(r.Context(), s.tx, s.identity, external, raw, flow.StartedAt)
+	return identity.SignInBrowserProvider(r.Context(), s.tx, s.identity, external, raw, flow.SessionBound)
 }
 
 // resolveInvitation resolves a raw invitation token for starting an

@@ -14,6 +14,7 @@ import (
 )
 
 type sessionOrigin struct {
+	admitted              bool
 	Human                 auth.Principal
 	User, Key, Activation *uuid.UUID
 	Connection            *uuid.UUID
@@ -57,7 +58,7 @@ func (o sessionOrigin) id() uuid.UUID {
 	return uuid.Nil()
 }
 func loadSessionOrigin(ctx context.Context, q db.DBTX, env, id uuid.UUID) (sessionOrigin, error) {
-	var o sessionOrigin
+	o := sessionOrigin{admitted: true}
 	err := q.QueryRow(ctx, `SELECT origin_user_id,origin_api_key_id,origin_activation_id,agent_id,origin_slack_connection_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&o.User, &o.Key, &o.Activation, &o.Agent, &o.Connection)
 	if err == nil && o.User != nil && o.Connection == nil {
 		o.Human, err = access.ReadHuman(q.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM sessions WHERE environment_id=$1 AND id=$2`, env, id))
@@ -306,6 +307,7 @@ func ownSessionOperation(operation auth.Permission) bool {
 
 // Recheck the immutable Session origin and the caller that supplied deferred input.
 func authorizeDeferredInput(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, caller Caller, input uuid.UUID, message bool, check inputAuthorityCheck) error {
+	caller.admitted = true
 	if caller.Kind == "user" {
 		var request uuid.UUID
 		err := tx.QueryRow(ctx, `SELECT id,thread_id FROM slack_requests WHERE environment_id=$1 AND session_id=$2 AND user_id=$3 AND status='accepted' AND (($5 AND message_id=$4) OR (NOT $5 AND turn_id=$4 AND message_id IS NULL)) AND thread_id IS NOT NULL`, env, session, caller.ID, input, message).Scan(&request, &caller.SlackThreadID)
@@ -349,7 +351,7 @@ func RuntimeAgentScope(ctx context.Context, tx pgx.Tx, caller Caller) (bool, []u
 	if o.mode() == "shared" {
 		return false, []uuid.UUID{o.Agent}, nil
 	}
-	scope, err := readScopeFor(ctx, tx, Caller{Kind: o.kind(), ID: o.id(), Human: o.Human}, caller.Execution.EnvironmentID)
+	scope, err := readScopeFor(ctx, tx, Caller{Kind: o.kind(), ID: o.id(), Human: o.Human, admitted: o.admitted}, caller.Execution.EnvironmentID)
 	return scope.AllAgents, scope.Agents, err
 }
 
@@ -408,7 +410,9 @@ func AuthorizeSessionOperation(ctx context.Context, tx pgx.Tx, caller Caller, en
 
 func (o sessionOrigin) requirePermission(ctx context.Context, q db.DBTX, env, agent uuid.UUID, permission auth.Permission) error {
 	if o.User != nil {
-		return requireCallerPermission(ctx, q, UserCaller(o.Human), env, agent, permission)
+		caller := UserCaller(o.Human)
+		caller.admitted = o.admitted
+		return requireCallerPermission(ctx, q, caller, env, agent, permission)
 	}
 	return requirePermission(ctx, q, o.kind(), o.id(), env, agent, permission)
 }

@@ -365,7 +365,7 @@ func currentCommandAuthority(ctx context.Context, tx pgx.Tx, c db.Command, env u
 	if p.UserID != uuid.UUID(c.CallerID.Bytes) {
 		return access.ErrDenied
 	}
-	p, err = access.HumanInEnvironment(ctx, tx, p, env)
+	p, err = access.WorkInEnvironment(ctx, tx, p, env)
 	if err != nil {
 		return err
 	}

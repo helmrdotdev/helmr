@@ -109,8 +109,8 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 	if a.OperatorID != uuid.Nil() && e.Authorization.Decision == "allowed" {
 		var id uuid.UUID
 		var confirmed time.Time
-		if err := tx.QueryRow(ctx, `SELECT s.id,s.privileged_confirmed_at FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.privileged_key_id AND k.operator_id=o.id
-   WHERE s.id=$1 AND o.id=$2 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND o.disabled_at IS NULL AND o.access_epoch=s.privileged_epoch AND k.revoked_at IS NULL
+		if err := tx.QueryRow(ctx, `SELECT s.id,s.authenticated_at FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.passkey_id AND k.operator_id=o.id
+   WHERE s.id=$1 AND o.id=$2 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND o.access_epoch=s.access_epoch AND k.revoked_at IS NULL
    FOR SHARE OF o,s,k`, e.Authentication.CredentialID, a.OperatorID).Scan(&id, &confirmed); err != nil {
 			return fmt.Errorf("current operator authority: %w", err)
 		}

@@ -76,7 +76,7 @@ func loadKeyUser(ctx context.Context, tx pgx.Tx, userID, operatorID uuid.UUID) (
 	var epoch int64
 	var err error
 	if operatorID != uuid.Nil() {
-		err = tx.QueryRow(ctx, `SELECT webauthn_user_handle,label,access_epoch FROM platform_operators WHERE id=$1 AND disabled_at IS NULL FOR UPDATE`, operatorID).Scan(&user.handle, &user.name, &epoch)
+		err = tx.QueryRow(ctx, `SELECT webauthn_user_handle,label,access_epoch FROM platform_operators WHERE id=$1 FOR UPDATE`, operatorID).Scan(&user.handle, &user.name, &epoch)
 	} else {
 		err = tx.QueryRow(ctx, `SELECT webauthn_user_handle,display_name,access_epoch FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&user.handle, &user.name, &epoch)
 	}
@@ -208,16 +208,6 @@ func finishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config,
 				return ErrWrongAccount
 			}
 		}
-		if !operator {
-			var started time.Time
-			var cutoff pgtype.Timestamptz
-			if err = tx.QueryRow(ctx, `SELECT c.created_at,u.reauthenticate_after FROM webauthn_challenges c CROSS JOIN users u WHERE c.id=$1 AND u.id=$2`, id, userID).Scan(&started, &cutoff); err != nil {
-				return err
-			}
-			if cutoff.Valid && !started.After(cutoff.Time) {
-				return ErrInvalidToken
-			}
-		}
 
 		key, err := wa.ValidateDiscoverableLogin(func(rawID, handle []byte) (webauthn.User, error) {
 			if !bytes.Equal(rawID, parsed.RawID) || !bytes.Equal(handle, user.handle) {
@@ -334,16 +324,7 @@ func insertKey(ctx context.Context, tx pgx.Tx, user, operator uuid.UUID, label s
 		return uuid.Nil(), err
 	}
 	id := uuid.NewV7()
-	transports := make([]string, 0, len(key.Transport))
-	for _, t := range key.Transport {
-		transports = append(transports, string(t))
-	}
-	var aaguid pgtype.UUID
-	if len(key.Authenticator.AAGUID) == 16 {
-		aaguid.Valid = true
-		copy(aaguid.Bytes[:], key.Authenticator.AAGUID)
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO passkey_credentials(id,credential_id,public_key,user_id,operator_id,label,sign_count,backup_eligible,backup_state,transports,aaguid,credential_data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, id, key.ID, key.PublicKey, optionalUUID(user), optionalUUID(operator), label, key.Authenticator.SignCount, key.Flags.BackupEligible, key.Flags.BackupState, transports, aaguid, data)
+	_, err = tx.Exec(ctx, `INSERT INTO passkey_credentials(id,credential_id,user_id,operator_id,label,credential_data) VALUES($1,$2,$3,$4,$5,$6)`, id, key.ID, optionalUUID(user), optionalUUID(operator), label, data)
 	return id, err
 }
 func updateKey(ctx context.Context, tx pgx.Tx, id uuid.UUID, key *webauthn.Credential) error {
@@ -351,7 +332,7 @@ func updateKey(ctx context.Context, tx pgx.Tx, id uuid.UUID, key *webauthn.Crede
 	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE passkey_credentials SET credential_data=$2,sign_count=$3,backup_eligible=$4,backup_state=$5,last_used_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL`, id, data, key.Authenticator.SignCount, key.Flags.BackupEligible, key.Flags.BackupState)
+	tag, err := tx.Exec(ctx, `UPDATE passkey_credentials SET credential_data=$2,last_used_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL`, id, data)
 	if err != nil {
 		return err
 	}

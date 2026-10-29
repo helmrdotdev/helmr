@@ -33,7 +33,7 @@ func TestAuthenticationFoundationRetainsActorsAndInvalidatesLegacyProof(t *testi
  EXISTS(SELECT 1 FROM auth_identities WHERE id='00000000-0000-0000-0000-000000000004' AND revoked_at IS NULL) AND
  EXISTS(SELECT 1 FROM auth_identities WHERE id='00000000-0000-0000-0000-000000000005' AND revoked_at IS NOT NULL) AND
  EXISTS(SELECT 1 FROM login_sessions WHERE id='00000000-0000-0000-0000-000000000006' AND revoked_at IS NOT NULL AND org_id IS NULL) AND
- NOT EXISTS(SELECT 1 FROM device_codes) AND NOT EXISTS(SELECT 1 FROM browser_account_proofs) AND NOT EXISTS(SELECT 1 FROM platform_operators)`).Scan(&valid)
+ NOT EXISTS(SELECT 1 FROM device_codes) AND NOT EXISTS(SELECT 1 FROM platform_operators)`).Scan(&valid)
 	if err != nil || !valid {
 		t.Fatalf("retained actors and retired proof: valid=%v err=%v", valid, err)
 	}

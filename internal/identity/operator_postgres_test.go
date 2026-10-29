@@ -16,7 +16,7 @@ func (f identityFixture) operator(t *testing.T) (uuid.UUID, uuid.UUID, string) {
 	t.Helper()
 	op, key := uuid.NewV7(), uuid.NewV7()
 	f.exec(t, `INSERT INTO platform_operators(id,label,webauthn_user_handle) VALUES($1,'Operator',uuid_send($1::uuid))`, op)
-	f.exec(t, `INSERT INTO passkey_credentials(id,operator_id,credential_id,public_key,label,sign_count,backup_eligible,backup_state,credential_data) VALUES($1,$2,uuid_send($1::uuid),'key','Security key',0,false,false,'{}')`, key, op)
+	f.exec(t, `INSERT INTO passkey_credentials(id,operator_id,credential_id,label,credential_data) VALUES($1,$2,uuid_send($1::uuid),'Security key','{}')`, key, op)
 	var raw string
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 		var err error
@@ -106,7 +106,7 @@ func TestAuthenticationOwnerShapeConstraints(t *testing.T) {
 	}
 	user := f.user(t, "Account", "")
 	for _, mutation := range []string{
-		`user_id=$2`, `org_id=$2`, `channel='browser'`, `expires_at=privileged_login_at+interval '13 hours'`,
+		`user_id=$2`, `org_id=$2`, `channel='browser'`, `expires_at=issued_at+interval '13 hours'`,
 	} {
 		_, err = f.pool.Exec(t.Context(), `UPDATE login_sessions SET `+mutation+` WHERE id=$1 AND $2::uuid IS NOT NULL`, p.SessionID, user)
 		var pe *pgconn.PgError
@@ -178,5 +178,45 @@ func TestOperatorLogoutSerializesWithCredentialMutation(t *testing.T) {
 	}
 	if err = RemoveOperatorKey(t.Context(), f.pool, f.cfg, p, uuid.NewV7()); err == nil {
 		t.Fatal("mutation admitted after logout")
+	}
+}
+
+func TestAccountRevocationInvalidatesPendingRepair(t *testing.T) {
+	f := newIdentityFixture(t)
+	op, _, raw := f.operator(t)
+	operator, _, err := AuthenticateOperator(t.Context(), f.pool, f.cfg, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, b := emailChallenge(t, f, "repair@example.test")
+	if err = MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+		t.Fatal(err)
+	}
+	signed, err := completeEmail(t, f, c, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, signed.Token, uuid.Nil())
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := IssueAccountRepair(t.Context(), f.pool, user.UserID, op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := make([]byte, 32)
+	redeemed, err := RedeemAccountRepair(t.Context(), f.pool, operator, issued.Capability, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = RevokeAccountAccess(t.Context(), f.pool, f.cfg, user); err != nil {
+		t.Fatal(err)
+	}
+	err = db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		_, _, err := lockAccountRepair(t.Context(), tx, operator, redeemed.ID, binding)
+		return err
+	})
+	if !errors.Is(err, ErrInvalidToken) {
+		t.Fatal("old recovery capability survived account revocation", err)
 	}
 }
