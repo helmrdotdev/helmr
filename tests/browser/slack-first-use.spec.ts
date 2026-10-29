@@ -41,6 +41,6 @@ test("first-use confirmation returns to Slack only after explicit linking", asyn
   await expect(page.getByRole("heading", { name: "Your accounts are linked" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Return to Slack" })).toHaveAttribute("href", returnURL);
   await expect(page.getByText("Linking does not apply your earlier action.", { exact: false })).toBeVisible();
-  expect(confirmations).toEqual([{ confirmation: "confirmation", confirmed: true }]);
+  expect(confirmations).toEqual([{ confirmation: "confirmation", confirmed: true, resume_previous_delivery: false }]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
