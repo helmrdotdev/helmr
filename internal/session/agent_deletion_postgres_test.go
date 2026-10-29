@@ -114,6 +114,7 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 			caller := runtimeReadCaller(t, f)
 			target := uuid.NewV7()
 			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'child-agent'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,false,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3; UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, target, f.agent)
+			sessiontest.PublishRuntimeAgentSet(t, sessiontest.Fixture{Pool: f.pool, Environment: f.env, Deployment: f.deployment}, "agent", "child-agent")
 			var orgID uuid.UUID
 			if err := f.pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, f.env).Scan(&orgID); err != nil {
 				t.Fatal(err)

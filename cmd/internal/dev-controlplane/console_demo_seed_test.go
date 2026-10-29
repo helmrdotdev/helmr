@@ -199,8 +199,8 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE environment_id=$1`, demoSeedEnvironmentID).Scan(&admitted); err != nil || admitted != 10 {
 		t.Fatalf("Sessions after refused start=%d %v, want the 10 seeded", admitted, err)
 	}
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("synthetic history without original human proof enqueue=%v, want denied", err)
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
+		t.Fatalf("closed synthetic history enqueue=%v, want not ready", err)
 	}
 }
 
