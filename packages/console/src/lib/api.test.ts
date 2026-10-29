@@ -98,7 +98,7 @@ test("a different account never retries the old request", async () => {
   expect(operations).toBe(1);
 });
 
-for (const path of ["/admin/api/v1/regions", "/api/operator/credentials"]) {
+for (const path of ["/admin/api/v1/regions", "/admin/api/v1/credentials"]) {
   test(`expired operator authority uses its own login for ${path}`, async () => {
     const location = { pathname: "/admin/security", search: "", href: "" };
     (globalThis as { window?: unknown }).window = { location };
@@ -110,8 +110,8 @@ for (const path of ["/admin/api/v1/regions", "/api/operator/credentials"]) {
       return Response.json({ error: { code: "authentication_required", message: "Operator sign-in required" } }, { status: 403 });
     }) as typeof fetch;
     await expect(request(path, { method: "POST" })).rejects.toMatchObject({ code: "authentication_required" });
-    expect(calls).toEqual([path, "/api/operator/me"]);
-    expect(location.href).toBe("/operator/login?next=%2Fadmin%2Fsecurity");
+    expect(calls).toEqual([path, "/admin/api/v1/me"]);
+    expect(location.href).toBe("/admin/login?next=%2Fadmin%2Fsecurity");
   });
 }
 
@@ -121,10 +121,24 @@ test("same operator rotation retries a read independently of the ordinary accoun
   sessionStorage.setItem("helmr.account", "ordinary-user");
   let reads = 0;
   globalThis.fetch = (async (input: string | URL | Request) => {
-    if (input === "/api/operator/me") return Response.json({ id: "operator-1" });
+    if (input === "/admin/api/v1/me") return Response.json({ id: "operator-1" });
     reads++;
     return reads === 1 ? Response.json({ error: { code: "authentication_required", message: "old cookie" } }, { status: 403 }) : Response.json({ credentials: [] });
   }) as typeof fetch;
-  expect(await request("/api/operator/credentials")).toEqual({ credentials: [] });
+  expect(await request("/admin/api/v1/credentials")).toEqual({ credentials: [] });
   expect(reads).toBe(2);
+});
+
+
+test("operator rotation never replays a mutation", async () => {
+  (globalThis as { window?: unknown }).window = { location: { pathname: "/admin/security", search: "", href: "" } };
+  sessionStorage.setItem("helmr.operator", "operator-1");
+  let writes = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    if (input === "/admin/api/v1/me") return Response.json({ id: "operator-1" });
+    writes++;
+    return Response.json({ error: { code: "authentication_required", message: "Sign in" } }, { status: 403 });
+  }) as typeof fetch;
+  await expect(request("/admin/api/v1/credentials/enroll", { method: "POST" })).rejects.toMatchObject({ code: "authentication_changed" });
+  expect(writes).toBe(1);
 });

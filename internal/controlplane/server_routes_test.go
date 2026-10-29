@@ -54,12 +54,12 @@ func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 	sort.Strings(got)
 
 	want := strings.Split(strings.TrimSpace(`
+DELETE /admin/api/v1/credentials/{id}
 DELETE /api/account/credentials/{id}
 DELETE /api/groups/{id}
 DELETE /api/groups/{id}/members/{memberID}
 DELETE /api/invitations/{id}
 DELETE /api/members/{memberID}
-DELETE /api/operator/credentials/{id}
 DELETE /api/projects/{project}/environments/{environment}/agents/{agentName}/slack/{connectionID}
 DELETE /api/projects/{project}/environments/{environment}/agents/{agent}
 DELETE /api/projects/{project}/environments/{environment}/api-keys/{id}
@@ -70,8 +70,11 @@ DELETE /api/slack/user-links/{teamID}/{slackUserID}
 DELETE /v1/computers/{computerID}
 GET /admin/api/v1/audit-events
 GET /admin/api/v1/audit-events/actions
+GET /admin/api/v1/credentials
+GET /admin/api/v1/me
 GET /admin/api/v1/regions
 GET /admin/api/v1/regions/{regionID}
+GET /admin/api/v1/setup
 GET /admin/api/v1/worker-groups
 GET /admin/api/v1/worker-groups/{groupID}
 GET /admin/api/v1/worker-groups/{groupID}/pools
@@ -88,9 +91,6 @@ GET /api/invitations
 GET /api/me
 GET /api/members
 GET /api/members/{memberID}/permissions
-GET /api/operator/credentials
-GET /api/operator/me
-GET /api/operator/setup
 GET /api/organization
 GET /api/organizations
 GET /api/ownership/members
@@ -201,6 +201,22 @@ PATCH /api/projects/{project}/settings
 PATCH /api/role-grants/{id}
 PATCH /api/roles/{id}
 PATCH /v1/computers/{computerID}
+POST /admin/api/v1/account-repairs/redeem
+POST /admin/api/v1/account-repairs/{id}/assert/options
+POST /admin/api/v1/account-repairs/{id}/assert/verify
+POST /admin/api/v1/account-repairs/{id}/complete
+POST /admin/api/v1/account-repairs/{id}/options
+POST /admin/api/v1/auth/logout
+POST /admin/api/v1/auth/options
+POST /admin/api/v1/auth/renew/options
+POST /admin/api/v1/auth/renew/verify
+POST /admin/api/v1/auth/verify
+POST /admin/api/v1/credentials/enroll
+POST /admin/api/v1/enrollment/redeem
+POST /admin/api/v1/enrollment/{id}/assert/options
+POST /admin/api/v1/enrollment/{id}/assert/verify
+POST /admin/api/v1/enrollment/{id}/complete
+POST /admin/api/v1/enrollment/{id}/options
 POST /admin/api/v1/regions
 POST /admin/api/v1/worker-groups
 POST /admin/api/v1/worker-groups/{groupID}/activate
@@ -242,22 +258,6 @@ POST /api/invitations
 POST /api/members/{memberID}/resume
 POST /api/members/{memberID}/revoke-sessions
 POST /api/members/{memberID}/suspend
-POST /api/operator/account-repairs/redeem
-POST /api/operator/account-repairs/{id}/assert/options
-POST /api/operator/account-repairs/{id}/assert/verify
-POST /api/operator/account-repairs/{id}/complete
-POST /api/operator/account-repairs/{id}/options
-POST /api/operator/auth/logout
-POST /api/operator/auth/options
-POST /api/operator/auth/renew/options
-POST /api/operator/auth/renew/verify
-POST /api/operator/auth/verify
-POST /api/operator/credentials/enroll
-POST /api/operator/enrollment/redeem
-POST /api/operator/enrollment/{id}/assert/options
-POST /api/operator/enrollment/{id}/assert/verify
-POST /api/operator/enrollment/{id}/complete
-POST /api/operator/enrollment/{id}/options
 POST /api/organizations
 POST /api/ownership/recover-access
 POST /api/projects

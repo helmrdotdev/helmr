@@ -136,7 +136,7 @@ It requires `computers:update`.
 | Prefix | Purpose |
 | --- | --- |
 | `/api` | Management used by the console and by CLI commands with a saved login. |
-| `/admin/api/v1` | Administration. |
+| `/admin/api/v1` | Deployment administration, including operator authentication, credentials and recovery. |
 | `/capacity/v1` | Capacity scaling for self-hosted deployments. See [Capacity](/docs/self-hosting/capacity). |
 | `/worker/v1` | Worker control. |
 | `/integrations/slack/apps/{registrationID}/events`, `/interactions` | Slack app callbacks. |
@@ -144,6 +144,32 @@ It requires `computers:update`.
 
 These families have their own authentication and are not alternatives to the
 Developer API.
+
+### Management and administration boundaries
+
+The ordinary Console signs in at `/login`; deployment operators sign in at
+`/admin/login`. `/setup` coordinates the first self-hosted organization with both
+an operator session and the ordinary account that will own it. Organization owners
+are not deployment operators.
+
+Within `/api`, `/auth/*` handles ordinary authentication and CLI consent,
+`/me` returns the account projection, and `/account/*` manages that account.
+`/organizations` lists the account's memberships; `/organization` reads the
+explicitly selected organization. Organization resources such as `/members` retain
+the `X-Helmr-Organization` selection contract. An account login alone does not grant
+access to any organization.
+
+`/admin/api/v1` also includes `/me`, `/setup`, `/auth/*`, `/credentials/*`,
+`/enrollment/*` and `/account-repairs/*`. These are browser-cookie or
+browser-bound ceremony APIs, not an additional CLI or bearer-token login method.
+The `v1` administration prefix does not make their credentials interchangeable
+with Developer, Worker or Capacity API credentials. See
+[operator authentication](/docs/self-hosting/authentication#operator-api-authentication)
+for the per-operation requirements.
+
+Authentication steps use
+`options`, `verify` and `complete` to distinguish challenge preparation, proof
+verification and registration.
 
 ## Trigger activations and occurrences
 

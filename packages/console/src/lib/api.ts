@@ -82,10 +82,10 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
   if (!headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const operator = path.startsWith("/api/operator/") || path.startsWith("/admin/");
-  const identityPath = operator ? "/api/operator/me" : "/api/me";
+  const operator = path.startsWith("/admin/api/v1/");
+  const identityPath = operator ? "/admin/api/v1/me" : "/api/me";
   const identityKey = operator ? "helmr.operator" : "helmr.account";
-  const loginPath = operator ? "/operator/login" : "/login";
+  const loginPath = operator ? "/admin/login" : "/login";
   const organization = operator ? "" : selectedOrganization();
   if (organization) headers.set("X-Helmr-Organization", organization);
   const account = sessionStorage.getItem(identityKey) ?? "";

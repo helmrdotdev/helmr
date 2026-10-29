@@ -38,10 +38,10 @@ test("ordinary passkey registration, sign-in, replay rejection and operator isol
     const replay = await page.request.post("/api/auth/passkey/verify", { headers: { Origin: baseURL! }, data: assertion });
     expect(replay.ok()).toBe(false);
 
-    await page.goto("/operator/login");
+    await page.goto("/admin/login");
     await page.getByRole("button", { name: "Sign in with operator key" }).click();
     await expect(page.getByRole("alert")).toBeVisible();
-    expect((await page.request.get("/api/operator/me")).status()).toBe(403);
+    expect((await page.request.get("/admin/api/v1/me")).status()).toBe(403);
     expect((await (await page.request.get("/api/me")).json()).user_id).toBe(original.user_id);
   } finally {
     await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
@@ -72,35 +72,51 @@ test("deployment-local operator enrollment requires registration and a working a
       stdio: "pipe", timeout: 60_000,
     });
     const enrollment = JSON.parse(readFileSync(file, "utf8"));
-    await page.goto("/operator/login");
+    await page.goto("/admin/login");
     await page.getByText("Set up or repair an operator key", { exact: true }).click();
     await page.getByLabel("Setup or repair capability", { exact: true }).fill(enrollment.capability);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await page.getByRole("button", { name: "Register a key", exact: true }).click();
     await expect(page.getByRole("button", { name: "Verify this key", exact: true })).toBeVisible();
-    expect((await page.request.get("/api/operator/me")).status()).toBe(403);
+    expect((await page.request.get("/admin/api/v1/me")).status()).toBe(403);
     await page.getByRole("button", { name: "Verify this key", exact: true }).click();
     await expect(page.getByRole("status")).toHaveText("Your key is ready. Sign in with it above.");
-    expect((await page.request.get("/api/operator/me")).status()).toBe(403);
+    expect((await page.request.get("/admin/api/v1/me")).status()).toBe(403);
     await page.getByRole("button", { name: "Sign in with operator key", exact: true }).click();
     await expect(page).toHaveURL(/\/setup$/);
-    expect((await page.request.get("/api/operator/me")).status()).toBe(200);
-    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET expires_at=issued_at+interval '1 millisecond' WHERE channel='operator'"], {
+    expect((await page.request.get("/admin/api/v1/me")).status()).toBe(200);
+    await expect(page.getByRole("heading", { name: "Setup is complete" })).toBeVisible();
+    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET privileged_login_at=clock_timestamp()-interval '2 hours',privileged_confirmed_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()+interval '9 hours' WHERE channel='operator'"], { stdio: "pipe" });
+    await page.goto("/admin/security");
+    await page.getByRole("button", { name: "Reauthenticate and renew session", exact: true }).click();
+    await expect(page.getByText("New 12-hour operator session started.", { exact: true })).toBeVisible();
+    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET privileged_login_at=clock_timestamp()-interval '2 hours',privileged_confirmed_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()-interval '1 second' WHERE channel='operator'"], {
       env: { ...process.env, PGDATABASE: `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable` }, stdio: "pipe",
     });
-    await page.goto("/operator/login");
+    await page.goto("/admin/security");
+    await page.getByRole("link", { name: "Sign in as an operator", exact: true }).click();
     await page.getByRole("button", { name: "Sign in with operator key", exact: true }).click();
-    await expect(page).toHaveURL(/\/setup$/);
-    expect((await page.request.get("/api/operator/me")).status()).toBe(200);
+    await expect(page).toHaveURL(/\/admin\/security$/);
+    expect((await page.request.get("/admin/api/v1/me")).status()).toBe(200);
     expect((await page.request.get("/api/me")).status()).toBe(403);
     await page.goto("/login");
     await page.getByRole("button", { name: "Continue with a passkey" }).click();
     await expect(page.getByRole("alert")).toBeVisible();
     expect((await page.request.get("/api/me")).status()).toBe(403);
-    expect((await page.request.get("/api/operator/me")).status()).toBe(200);
+    expect((await page.request.get("/admin/api/v1/me")).status()).toBe(200);
   } finally {
     rmSync(directory, { recursive: true, force: true });
     await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
     await cdp.detach();
   }
+});
+
+
+test("real setup entry without an operator session renders its login action", async ({ page }) => {
+  await page.goto("/setup");
+  await expect(page.getByRole("heading", { name: "Set up Helmr" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Operator sign-in" })).toHaveAttribute("href", "/admin/login?next=%2Fsetup");
+  await page.goto("/dev/login");
+  await page.goto("/setup");
+  await expect(page.getByRole("heading", { name: "Set up Helmr" })).toBeVisible();
 });

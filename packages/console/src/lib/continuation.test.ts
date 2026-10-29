@@ -5,7 +5,7 @@ import { onboardingRedirectPath, type Me } from "./auth";
 
 test("preserves the requested page, query and fragment across login and onboarding", () => {
   const destination = "/auth/device?code=ABCD-EFGH#confirm";
-  for (const path of ["/login", "/organizations/new", "/projects/new", "/access-required"]) {
+  for (const path of ["/login", "/admin/login", "/organizations/new", "/projects/new", "/access-required"]) {
     const url = new URL(withNext(path, destination), "https://helmr.test");
     expect(locationDestination(url)).toBe(destination);
   }
@@ -14,7 +14,7 @@ test("preserves the requested page, query and fragment across login and onboardi
 });
 
 test("rejects external, malformed, and looping destinations", () => {
-  for (const path of [undefined, "", "https://evil.test", "//evil.test", "/\\evil.test", "/%2f/evil.test", "/%5cevil.test", "/bad\npath", "/%zz", "/login", "/%6cogin", "/runs/../login", "/auth/github/callback?code=secret", "/auth/magic-link/callback", "/organizations/new?next=/", "/projects/new?next=/projects/new", "/access-required", "/" + "x".repeat(256)]) {
+  for (const path of [undefined, "", "https://evil.test", "//evil.test", "/\\evil.test", "/%2f/evil.test", "/%5cevil.test", "/bad\npath", "/%zz", "/login", "/%6cogin", "/admin/login", "/admin/login?next=/admin/login", "/runs/../login", "/auth/github/callback?code=secret", "/auth/magic-link/callback", "/organizations/new?next=/", "/projects/new?next=/projects/new", "/access-required", "/" + "x".repeat(256)]) {
     expect(returnPath(path)).toBe("/");
   }
   expect(returnPath("/runs/../sessions?state=waiting")).toBe("/sessions?state=waiting");

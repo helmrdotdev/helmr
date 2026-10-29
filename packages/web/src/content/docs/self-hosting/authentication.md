@@ -35,7 +35,7 @@ control-plane operator enroll --label "Deployment operator" --output-file /prote
 
 The command creates a new owner-readable file and never prints the capability.
 Keep it out of arguments, URLs, logs, source control and support bundles. Transfer
-it through your protected deployment process and open `/operator/login` in the Console. Redeem the capability, register a passkey and complete the separate key
+it through your protected deployment process and open `/admin/login` in the Console. Redeem the capability, register a passkey and complete the separate key
 assertion. Enrollment expires after fifteen minutes; unfinished registration
 provides no operator authority. Remove the local capability file after use.
 
@@ -50,6 +50,35 @@ and `--operator-id`. For self-hosted ordinary account repair, use `repair-accoun
 with `--operator-id`, `--user-id` and a new protected `--output-file`; the operation
 requires explicit `DEPLOYMENT_MODE=self-hosted`. The repair must complete verified
 key registration before existing access is retired. It is not an email reset.
+
+## Operator API authentication
+
+Operator pages and APIs share the administration namespace: `/admin/login`,
+`/admin/security` and `/admin/api/v1/*`. The internal operator identity remains
+separate from ordinary accounts. Authentication is defined per operation, not
+inferred from the URL prefix.
+
+| Route under `/admin/api/v1` | Requirement |
+| --- | --- |
+| `POST /auth/options`, `/auth/verify` | Browser-bound challenge and a valid operator key; no existing operator session is required to sign in. |
+| `POST /enrollment/redeem` | Valid deployment-issued enrollment capability in the body, bound to the redeeming browser. |
+| `POST /enrollment/{id}/options`, `/complete`, `/assert/options`, `/assert/verify` | The matching restricted enrollment and browser binding; registration alone does not grant operator access. |
+| `GET /me`, `/setup`, `/credentials` | Current operator session. |
+| `POST /auth/renew/options`, `/auth/renew/verify` | Current operator session plus a fresh key assertion to complete renewal. Old confirmation does not prevent starting renewal. |
+| `POST /auth/logout` | Retires the presented operator session; does not require a fresh confirmation. |
+| `POST /credentials/enroll`, `DELETE /credentials/{id}` | Current operator session and the operation's fresh-key/retained-key checks. |
+| `POST /account-repairs/*` | Self-hosted only; current operator session plus the repair capability, browser binding and operation-specific fresh-proof checks. |
+| Existing region, worker-group and pool APIs | Current operator session; mutations additionally require recent operator proof. |
+
+All these browser mutations have same-origin protection. Ceremony requests have
+a 128 MiB request limit; infrastructure requests have a 64 KiB limit.
+Operator cookies use root path scope so the first
+organization can be created through `POST /api/organizations` with both independent
+identities. Cookie path is not an authorization boundary.
+
+The Console returns to the requested page after operator login. Setup displays an
+operator sign-in action when that session is absent, asks for the ordinary owner
+account when needed, and offers retry for service or network failures.
 
 ## Ordinary accounts and CLI
 

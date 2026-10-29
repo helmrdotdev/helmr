@@ -214,7 +214,7 @@ export function App() {
       <Route path="/" component={wrap(Overview)} />
       <Route path="/login" component={Login} />
       <Route path="/organizations" component={Organizations} />
-      <Route path="/operator/login" component={OperatorLogin} />
+      <Route path="/admin/login" component={OperatorLogin} />
       <Route path="/setup" component={Setup} />
       <Route path="/invite" component={Invite} />
       <Route path="/auth/device" component={() => <RequireAuth requirement="organization"><Device /></RequireAuth>} />

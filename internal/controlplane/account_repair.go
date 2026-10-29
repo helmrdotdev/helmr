@@ -13,11 +13,11 @@ func (s *Server) mountAccountRepairRoutes(r chi.Router) {
 	}
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireOperator)
-		r.Post("/operator/account-repairs/redeem", s.redeemAccountRepair)
-		r.Post("/operator/account-repairs/{id}/options", s.accountRepairRegisterOptions)
-		r.Post("/operator/account-repairs/{id}/complete", s.accountRepairRegisterComplete)
-		r.Post("/operator/account-repairs/{id}/assert/options", s.accountRepairAssertOptions)
-		r.Post("/operator/account-repairs/{id}/assert/verify", s.accountRepairAssertVerify)
+		r.Post("/account-repairs/redeem", s.redeemAccountRepair)
+		r.Post("/account-repairs/{id}/options", s.accountRepairRegisterOptions)
+		r.Post("/account-repairs/{id}/complete", s.accountRepairRegisterComplete)
+		r.Post("/account-repairs/{id}/assert/options", s.accountRepairAssertOptions)
+		r.Post("/account-repairs/{id}/assert/verify", s.accountRepairAssertVerify)
 	})
 }
 func (s *Server) redeemAccountRepair(w http.ResponseWriter, r *http.Request) {
