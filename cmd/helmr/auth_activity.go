@@ -49,7 +49,7 @@ func confirmCLIIfNeeded(cmd *cobra.Command, err error) {
 		fmt.Fprintln(cmd.ErrOrStderr(), "Run helmr login --confirm, then retry the command explicitly.")
 		return
 	}
-	fmt.Fprintln(cmd.ErrOrStderr(), "Confirm this CLI login in your browser. The command will not be retried automatically.")
+	fmt.Fprintln(cmd.ErrOrStderr(), "Confirm this CLI login in your browser.")
 	if confirmErr := deviceLogin(cmd, human.origin, true, false, human.client); confirmErr != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Confirmation failed: %v\n", confirmErr)
 		return

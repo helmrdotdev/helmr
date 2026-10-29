@@ -100,6 +100,9 @@ func TestCLIConfirmationRequiresExplicitCommandRetry(t *testing.T) {
 			if token != wantToken {
 				t.Fatalf("saved token %q", token)
 			}
+			if wantExchanges == 1 && !strings.Contains(output.String(), "Queued work and open streams") {
+				t.Fatal("missing confirmation impact notice")
+			}
 			if mode == "json" && !json.Valid([]byte(output.String()+err.Error())) {
 				t.Fatalf("JSON contaminated: %s %v", output.String(), err)
 			}
@@ -182,9 +185,13 @@ func TestLoginConfirmUsesSavedBearer(t *testing.T) {
 	}
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
+	var notices bytes.Buffer
+	cmd.SetErr(&notices)
 	if err := executeCommand(cmd, []string{"login", server.URL, "--confirm", "--no-browser"}); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(notices.String(), "Queued work and open streams") || !strings.Contains(notices.String(), "will not be retried automatically") {
+		t.Fatalf("missing confirmation guidance: %s", notices.String())
 	}
 	token, err := state.Token(server.URL)
 	if err != nil {

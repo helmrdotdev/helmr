@@ -7,7 +7,7 @@ sidebarLabel: login
 # `helmr login`, `logout`, `whoami` and `completion`
 
 ```text
-helmr login [URL] [--no-browser]
+helmr login [URL] [--no-browser] [--confirm]
 helmr logout [URL]
 helmr whoami [--json]
 helmr completion SHELL
@@ -25,6 +25,7 @@ login for that control plane origin.
 | --- | --- |
 | `URL` | Control plane origin. Cannot be combined with `--api-url`. |
 | `--no-browser` | Print the URL without opening a browser. |
+| `--confirm` | Confirm the saved CLI login in the browser for sensitive changes. Requires an existing login. |
 
 The origin is chosen from, in order: `URL` or `--api-url`, `HELMR_API_URL`, the
 saved default origin, then `https://helmr.dev`, the planned managed service.
@@ -35,6 +36,32 @@ The browser page shows the account, organization, server and code to approve.
 An expired or denied request needs a new `helmr login`. CLI login does not
 require a Project; commands that act in an Environment still need
 `--project` and `--env`.
+
+### Confirming sensitive changes
+
+A CLI login is bound to the account and organization approved in the browser.
+To authorize another organization, run `helmr login` again and approve that
+organization.
+
+When a sensitive command requires fresh authentication, an interactive terminal
+opens the browser confirmation flow. You can also start it explicitly:
+
+```sh
+helmr login --confirm
+# After browser confirmation, run your original command again.
+```
+
+Confirmation replaces the existing CLI session for the same account and organization.
+Queued work and open streams using the old session lose access at their next
+authority check. Commands are never automatically replayed after confirmation.
+Non-interactive commands print guidance instead of opening confirmation; JSON
+output retains the error without starting an interactive flow.
+`--no-browser` can be combined with `--confirm` to print the approval URL.
+
+CLI sessions expire after thirty days without explicit human activity. Successful
+commands in an interactive terminal record activity; background polling does not
+extend the expiry. Browser logout does not log out the CLI, but account-wide
+revocation and removing the sign-in method used to approve the CLI can retire CLI access.
 
 ## `helmr logout`
 
@@ -48,8 +75,8 @@ Reports which credentials the CLI would use.
 
 | Output | Description |
 | --- | --- |
-| Text | `AUTH_SOURCE ORIGIN`, where `AUTH_SOURCE` is `api_key` or `login`. |
-| `--json` | One object with `auth_source` and `api_url`. For a saved login it also includes the account fields: `user_id`, `display_name`, `profile_image_url`, `app_origin`, `org_id`, `org_name`, `org_slug`, `role`, `admin`, `permissions`, `organization_required` and `project_required`, when present. |
+| Text | `AUTH_SOURCE ORIGIN`, where `AUTH_SOURCE` is `api_key` or `login`. Saved logins also show account and organization names and IDs. |
+| `--json` | One object with `auth_source` and `api_url`. A saved login also includes `organization`, containing `id`, `name`, `slug`, `current_member`, `authentication` and `onboarding`. `current_member.user_id` identifies the account; `current_member.id` identifies its organization membership. API-key output omits `organization`. |
 
 ## Credential selection
 

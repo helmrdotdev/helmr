@@ -28,6 +28,10 @@ func whoamiCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), response)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", response.AuthSource, response.APIURL)
+			if org := response.Organization; org != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Account: %s (%s)\n", org.CurrentMember.DisplayName, org.CurrentMember.UserID)
+				fmt.Fprintf(cmd.OutOrStdout(), "Organization: %s (%s)\n", org.Name, org.ID)
+			}
 			return nil
 		},
 	}

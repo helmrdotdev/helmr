@@ -72,6 +72,9 @@ func deviceLogin(cmd *cobra.Command, baseURL string, confirm, noBrowser bool, co
 	if err != nil {
 		return err
 	}
+	if confirm {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Approving confirmation replaces this CLI session. Queued work and open streams using the old session lose access at their next authority check. Retry your original command explicitly after confirmation; it will not be retried automatically.")
+	}
 	verificationURL := start.VerificationURIComplete
 	if verificationURL == "" {
 		verificationURL = start.VerificationURI
