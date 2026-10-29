@@ -850,7 +850,7 @@ test("related work exposes an independent command stop action",async({page})=>{
  await page.route(`**${base}/sessions*`,route=>{filtered=new URL(route.request().url()).searchParams.get("related_user_id")===user;return route.fulfill({json:{sessions:[{id:"00000000-0000-7000-8000-000000000601",agent:"assistant",template:"browser",deployment_id:deploymentID,computer_id:null,status:"open",holds:[],created_at:now,related_via:"descendant"}]}});});
  await page.route(`**${base}/related-commands*`,route=>route.fulfill({json:{can_cancel:true,commands:cancelled?[]:[{id:command,computer_id:"00000000-0000-7000-8000-000000000779",status:"running",created_at:now}]}}));
  await page.route(`**${base}/commands/${command}/cancel`,route=>{cancelled++;return route.fulfill({status:204});});
- await page.goto(`/sessions?related_user_id=${user}`);
+ await page.goto(`/sessions?user_id=${user}`);
  await expect(page.getByText("Started by related work",{exact:true})).toBeVisible();
  expect(filtered).toBe(true);
  await page.getByRole("button",{name:"Stop command…",exact:true}).click();

@@ -77,7 +77,7 @@ export function SessionList(props: { agent?: string }) {
   const environmentID = () => scope().environmentID;
   // On an Agent's page the Agent is fixed; on the Sessions page it is a filter
   // kept in the URL (`?agent=`), so a link can open the list already filtered.
-  const [params, setParams] = useSearchParams<{ agent?: string; related_user_id?: string }>();
+  const [params, setParams] = useSearchParams<{ agent?: string; user_id?: string }>();
   const fixedAgent = () => props.agent !== undefined;
   const agent = () => props.agent ?? params.agent ?? "";
   const agents = createQuery(() => ({
@@ -94,14 +94,14 @@ export function SessionList(props: { agent?: string }) {
   ];
   const [filter, setFilter] = createSignal<SessionFilter>("all");
   const sessions = createInfiniteQuery(() => ({
-    queryKey: ["sessions", "list", filter(), projectID(), environmentID(), agent(),params.related_user_id],
+    queryKey: ["sessions", "list", filter(), projectID(), environmentID(), agent(),params.user_id],
     queryFn: ({ pageParam }) => {
       const status = filter();
       return listSessions({
         projectID: projectID(),
         environmentID: environmentID(),
         agent: agent() || undefined,
-        relatedUserID:params.related_user_id,
+        relatedUserID:params.user_id,
         statuses: status === "all" ? undefined : [status],
         cursor: pageParam || undefined,
         limit: 100,
@@ -136,7 +136,7 @@ export function SessionList(props: { agent?: string }) {
   return (
     <>
       <copyLink.LiveRegion />
-      <Show when={params.related_user_id}><Notice tone="info" class="mb-3">Related work for <IDText value={params.related_user_id!}/> in the selected environment. Access revocation does not stop this work. Use each row's separate controls; only work you can view is listed. Future scheduled runs remain active until their schedule is changed. <button type="button" class="underline" onClick={()=>setParams({related_user_id:undefined})}>Clear filter</button></Notice></Show>
+      <Show when={params.user_id}><Notice tone="info" class="mb-3">Related work for <IDText value={params.user_id!}/> in the selected environment. Access revocation does not stop this work. Use each row's separate controls; only work you can view is listed. Future scheduled runs remain active until their schedule is changed. <button type="button" class="underline" onClick={()=>setParams({user_id:undefined})}>Clear filter</button></Notice></Show>
       <Show when={receipt()}>{text => <Notice tone="info" class="mb-3" onDismiss={() => setReceipt(undefined)}>{text()}</Notice>}</Show>
       <Show when={controls.error()}>{text => <Notice tone="danger" class="mb-3" role="alert" onDismiss={controls.clearError}>{text()}</Notice>}</Show>
       <Toolbar
@@ -169,7 +169,7 @@ export function SessionList(props: { agent?: string }) {
           </DataTable>
         )}
       </QueryState>
-      <Show when={params.related_user_id}>{user=><RelatedCommands user={user()} />}</Show>
+      <Show when={params.user_id}>{user=><RelatedCommands user={user()} />}</Show>
       <controls.Dialogs />
     </>
   );

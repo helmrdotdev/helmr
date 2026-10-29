@@ -254,7 +254,7 @@ function MemberRow(props: {
           }).concat(props.canRemove ? [
  {label:"Revoke sessions",onSelect:()=>props.onAccess(props.member,"revoke-sessions")},
  ...(!isOwner() ? [{label:props.member.status === "suspended" ? "Resume member" : "Suspend member",onSelect:()=>props.onAccess(props.member,props.member.status === "suspended" ? "resume":"suspend")}] : []),
- ] : []).concat([{label:"View related work",href:`/sessions?related_user_id=${encodeURIComponent(props.member.user_id)}`}],auditItem({ actor: props.member.user_id })) : [{label:"View related work",href:`/sessions?related_user_id=${encodeURIComponent(props.member.user_id)}`},...auditItem({ actor: props.member.user_id })]}
+ ] : []).concat([{label:"View related work",href:`/sessions?user_id=${encodeURIComponent(props.member.user_id)}`}],auditItem({ actor: props.member.user_id })) : [{label:"View related work",href:`/sessions?user_id=${encodeURIComponent(props.member.user_id)}`},...auditItem({ actor: props.member.user_id })]}
         />
       </tr>
     </>
