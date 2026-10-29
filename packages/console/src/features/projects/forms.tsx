@@ -1,7 +1,7 @@
-import { createQuery } from "@tanstack/solid-query";
+import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { errorMessage } from "../../lib/error";
-import { useMe } from "../../lib/me";
+import { ME_QUERY_KEY, useMe } from "../../lib/me";
 import { createEnvironment, createProject, listRegions, type Environment, type Project } from "../../lib/projects";
 import { FormDialog } from "../../ui/Dialog";
 import { ColorField, createDerivedSlug, Field, SlugInput, TextInput } from "../../ui/Field";
@@ -85,6 +85,7 @@ export function createEnvironmentDraft() {
 }
 
 function useSubmission<T>(submit: () => Promise<T>, done: (result: T) => Promise<void> | void) {
+  const cache = useQueryClient();
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   return {
@@ -94,7 +95,9 @@ function useSubmission<T>(submit: () => Promise<T>, done: (result: T) => Promise
       setBusy(true);
       setError(null);
       try {
-        await done(await submit());
+        const result = await submit();
+        await cache.invalidateQueries({ queryKey: ME_QUERY_KEY });
+        await done(result);
       } catch (cause) {
         setError(errorMessage(cause));
       } finally {

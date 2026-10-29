@@ -558,6 +558,11 @@ func TestHistoryRetentionPolicyDefaultsAndAtomic(t *testing.T) {
 
 func projectManager(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) ManagingMember {
 	t.Helper()
+	if err := db.RunTx(t.Context(), pool, func(tx pgx.Tx) error {
+		return SeedStandardRoles(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, orgID, audit.Internal(audit.ControlPlane))
+	}); err != nil {
+		t.Fatal(err)
+	}
 	userID, memberID := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO users(id,display_name) VALUES($1,'Project manager'); INSERT INTO org_members(id,org_id,user_id) VALUES($2,$3,$1)`, pgx.QueryExecModeSimpleProtocol, userID, memberID, orgID)
 	for _, role := range auth.StandardRoles() {

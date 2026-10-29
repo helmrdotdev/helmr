@@ -93,7 +93,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 		t.Fatal("retry not idempotent")
 	}
 	var auditCount int
-	err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE org_id=$1 AND action='role_grant.created'`, orgID).Scan(&auditCount)
+	err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE org_id=$1 AND action='role_grant.created' AND target_id=$2`, orgID, grant.ID).Scan(&auditCount)
 	if err != nil || auditCount != 1 {
 		t.Fatalf("audit %d %v", auditCount, err)
 	}
@@ -115,7 +115,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 			t.Fatalf("duplicate assignment status %d", code)
 		}
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE org_id=$1 AND action='role_grant.created'`, orgID).Scan(&auditCount); err != nil || auditCount != 1 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE org_id=$1 AND action='role_grant.created' AND target_id=$2`, orgID, grant.ID).Scan(&auditCount); err != nil || auditCount != 1 {
 		t.Fatalf("duplicate audit %d %v", auditCount, err)
 	}
 	// Different POST targets conflict; conditional PATCH replaces the complete selection.

@@ -1,4 +1,3 @@
-import { EnvironmentAccessSetup } from "../access/EnvironmentAccessSetup";
 import { A } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, For, Match, Show, Switch } from "solid-js";
@@ -196,7 +195,6 @@ export function SetUpPanel(props: { projectID: string; environmentID: string }) 
 
   return (
     <Panel title="Set up">
-      <EnvironmentAccessSetup projectID={props.projectID} environmentID={props.environmentID} />
       <Steps label="Set up" steps={steps} />
     </Panel>
   );

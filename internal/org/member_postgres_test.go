@@ -179,7 +179,7 @@ func TestInitialOrganizationRollsBackFailedAdministratorGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	var valid bool
-	if err := database.Pool.QueryRow(t.Context(), `SELECT count(*)=2 FROM role_grants WHERE org_id=$1`, created.ID).Scan(&valid); err != nil || !valid {
+	if err := database.Pool.QueryRow(t.Context(), `SELECT count(*)=3 FROM role_grants WHERE org_id=$1`, created.ID).Scan(&valid); err != nil || !valid {
 		t.Fatalf("initial owner grants: %v %v", valid, err)
 	}
 	for range 2 {
