@@ -1,15 +1,12 @@
+import "./browser-test-env";
 import { expect, test } from "bun:test";
 
 import { hasPermission, type Me } from "./auth";
 
 const base: Me = {
-  user_id: "u1",
-  display_name: null,
-  profile_image_url: null,
-  admin: false,
-  permissions: [],
-  organization_required: false,
-  project_required: false,
+ user_id:"u1",display_name:"User",profile_image_url:"",primary_email:"user@example.test",app_origin:"http://localhost",
+ is_owner:false,permissions:[],permission_scopes:[],organization_required:false,project_required:false,access_required:false,
+ email_delivery:true,organizations:[],organization_selection_required:false,setup_required:false,
 };
 
 test("grants only permissions the session reports", () => {

@@ -1,6 +1,6 @@
 import { A, useNavigate, useSearchParams } from "@solidjs/router";
 import { createSignal, Match, onMount, Switch } from "solid-js";
-import { finishGitHubAuth, finishMagicLink } from "../lib/auth";
+import { finishGitHubAuth } from "../lib/auth";
 import { returnPath } from "../lib/continuation";
 import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
 import { AuthError, AuthMissing, AuthWindow, AuthWorking } from "../ui/AuthWindow";
@@ -77,15 +77,6 @@ export function AuthGitHubCallback() {
         ...(params["error"] !== undefined ? { error: params["error"] } : {}),
         ...(params["error_description"] !== undefined ? { error_description: params["error_description"] } : {}),
       })}
-    />
-  );
-}
-
-export function AuthMagicLinkCallback() {
-  return (
-    <SignInCallback
-      path="/auth/magic-link/callback"
-      finish={(params) => (params["token"] ? finishMagicLink(params["token"]) : null)}
     />
   );
 }

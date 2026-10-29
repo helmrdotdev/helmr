@@ -29,12 +29,15 @@ trusted local code with the invoking user's authority.
 
 Template `network` fixes the Computer's outbound maximum, with a separately
 resolved `prepareNetwork` phase. Agent `runtimeMcp` fixes a Session's optional
-managed-operation maximum; a connection getter can narrow it. Omission retains
-ordinary network or base-authorized MCP behavior. Existing authorization and
-installation denies always apply.
+managed-operation maximum; a connection getter can narrow it. Omitted network
+policy retains ordinary network access. Omitted MCP policy resolves at publication
+to the exact Agent set in that Deployment, with new Computer placement. Runtime
+operations stay within the caller’s workload relationships; new human operations
+and delivery still require live authorization.
 
 These are distinct boundaries. An authorized delegate retains its own policies,
-and a caller with unrestricted placement may reach other eligible Computers.
+and sharing the caller’s own Computer requires explicit `computer: "caller"`
+permission. Runtime discovery does not expose unrelated Computers.
 Result/control relays and application data remain channels even with external
 network traffic blocked. See [Execution policies](/docs/concepts/execution-policies)
 for exact scope, native injection and pinned readback.

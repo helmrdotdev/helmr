@@ -443,7 +443,7 @@ variable "dispatcher_environment" {
 }
 
 variable "email_provider" {
-  description = "Email delivery provider for magic links and run wait notifications."
+  description = "Email delivery provider for sign-in codes and run wait notifications."
   type        = string
   default     = "none"
 
@@ -481,8 +481,9 @@ variable "smtp_password_enabled" {
 }
 
 variable "github_oauth_client_id" {
-  description = "GitHub OAuth application client ID."
+  description = "GitHub OAuth application client ID; empty disables GitHub login."
   type        = string
+  default     = ""
 }
 
 variable "certificate_arn" {

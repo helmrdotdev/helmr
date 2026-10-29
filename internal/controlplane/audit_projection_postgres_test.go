@@ -102,10 +102,13 @@ func TestAuditHTTPPublicAndAdminProjection(t *testing.T) {
 	q.Del("actor_kind")
 	get("/admin/api/v1/audit-events", owner, q, 403)
 	get("/admin/api/v1/audit-events/actions", owner, nil, 403)
-	// The same human and organization route stay projected after admin elevation.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE users SET admin=true WHERE id IN (SELECT user_id FROM org_members WHERE org_id=$1)`, org)
+	operator := f.operatorSession(t)
 	for _, path := range []string{"/api/audit-events/actions", "/admin/api/v1/audit-events/actions"} {
-		body := get(path, owner, nil, 200)
+		token := owner
+		if strings.HasPrefix(path, "/admin/") {
+			token = operator
+		}
+		body := get(path, token, nil, 200)
 		var catalog api.AuditActionsResponse
 		if err := json.Unmarshal([]byte(body), &catalog); err != nil {
 			t.Fatal(err)
@@ -142,7 +145,7 @@ func TestAuditHTTPPublicAndAdminProjection(t *testing.T) {
 	q.Set("actor_kind", "worker_host")
 	q.Set("actor_id", host.String())
 	q.Set("organization_id", org.String())
-	body = get("/admin/api/v1/audit-events", owner, q, 200)
+	body = get("/admin/api/v1/audit-events", operator, q, 200)
 	if !strings.Contains(body, host.String()) || !strings.Contains(body, "credential_version") {
 		t.Fatal("admin lost raw evidence", body)
 	}
@@ -155,7 +158,7 @@ func TestAuditHTTPPublicAndAdminProjection(t *testing.T) {
 	if strings.Contains(body, first.String()) || strings.Contains(body, "private-marker") {
 		t.Fatal("partial page escaped", body)
 	}
-	body = get("/admin/api/v1/audit-events", owner, q, 200)
+	body = get("/admin/api/v1/audit-events", operator, q, 200)
 	if !strings.Contains(body, "private-marker") || !strings.Contains(body, platform.String()) {
 		t.Fatal("admin capture unavailable", body)
 	}

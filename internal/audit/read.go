@@ -29,11 +29,13 @@ func DecodeDetails(action, outcome string, data []byte) (Details, error) {
 
 func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 	switch action {
+	case "identity.profile_updated", "identity.email_changed", "identity.credential_added", "identity.credential_removed", "identity.access_revoked", "identity.account_repaired", "operator.sign_in", "operator.session_confirmed", "operator.session_revoked", "operator.credential_added", "operator.credential_removed", "operator.repaired":
+		return decodeDetail[IdentitySecurityDetails], true
 	case "identity.session_revoked":
 		return decodeDetail[SessionRevokedDetails], true
 	case "message.rejected":
 		return decodeDetail[MessageRejectedDetails], true
-	case "identity.sign_in", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested":
+	case "identity.sign_in", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested", "identity.email_code_requested":
 		return decodeDetail[AuthenticationDetails], true
 	case "audit.searched":
 		return decodeDetail[SearchDetails], true
@@ -71,7 +73,7 @@ func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 		return decodeDetail[OwnershipChangedDetails], true
 	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role_grant.created", "role_grant.updated", "role_grant.deleted":
 		return decodeDetail[AccessChangeDetails], true
-	case "member.granted", "member.removed", "invitation.accepted":
+	case "member.granted", "member.removed", "member.sessions_revoked", "member.suspended", "member.resumed", "invitation.accepted":
 		return decodeDetail[MembershipDetails], true
 	case "platform_admin.granted":
 		return decodeDetail[PlatformAdminGrantedDetails], true
@@ -212,6 +214,8 @@ func DecodeAuthorization(data []byte) (Authorization, error) {
 		switch tag.Type {
 		case "permission":
 			c = &PermissionCheck{}
+		case "platform_operator":
+			c = &OperatorCheck{}
 		case "user_attribute":
 			c = &UserAttributeCheck{}
 		case "membership_attribute":

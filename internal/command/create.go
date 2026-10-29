@@ -79,6 +79,7 @@ func tooLarge(format string, args ...any) InputError {
 
 // Creator is the API key or session that creates a Command.
 type Creator struct {
+	Human             auth.Principal
 	CredentialVersion int64
 	UserID            uuid.UUID
 	Kind              string
@@ -263,7 +264,16 @@ func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, requ
 	if kind == string(auth.PrincipalKindSession) {
 		kind, id = "user", request.Creator.UserID
 	}
-	principal, err := access.Principal(ctx, tx, kind, id, request.EnvironmentID)
+	var principal auth.Principal
+	var err error
+	if kind == "user" {
+		if request.Creator.Human.UserID != id {
+			return db.Command{}, computer.ErrDenied
+		}
+		principal, err = access.HumanInEnvironment(ctx, tx, request.Creator.Human, request.EnvironmentID)
+	} else {
+		principal, err = access.Principal(ctx, tx, kind, id, request.EnvironmentID)
+	}
 	if err == nil && kind == "api_key" && request.Creator.CredentialVersion > 0 && request.Creator.CredentialVersion != principal.CredentialVersion {
 		err = access.ErrDenied
 	}
@@ -272,9 +282,6 @@ func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, requ
 			return db.Command{}, computer.ErrDenied
 		}
 		return db.Command{}, err
-	}
-	if kind == "user" {
-		principal.SessionID = request.Creator.ID
 	}
 	actor, err := audit.Authorized(principal, auth.PermissionComputersExecute, auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID})
 	if err != nil {

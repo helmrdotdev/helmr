@@ -137,6 +137,10 @@ func (s *Store) Create(ctx context.Context, principal auth.Principal, env uuid.U
 	}
 	var result db.GetSecretSnapshotRow
 	err = db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
+		actor, err := authorizeMutation(ctx, tx, principal, env, auth.PermissionSecretsCreate)
+		if err != nil {
+			return err
+		}
 		var locked uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 FOR NO KEY UPDATE`, env).Scan(&locked); err != nil {
 			return err
@@ -148,10 +152,7 @@ func (s *Store) Create(ctx context.Context, principal auth.Principal, env uuid.U
 				return err
 			}
 		}
-		actor, err := authorizeMutation(ctx, tx, principal, env, auth.PermissionSecretsCreate)
-		if err != nil {
-			return err
-		}
+
 		return idempotency.Run(ctx, tx, request, func(tx pgx.Tx, acquired idempotency.Result) (idempotency.Completion, error) {
 			q := db.New(tx)
 			if !acquired.New {
@@ -361,24 +362,22 @@ func secretFromCreate(row db.CreateSecretRow) db.Secret {
 // authorizeMutation consumes executable authority independently of audit evidence.
 func authorizeMutation(ctx context.Context, tx pgx.Tx, principal auth.Principal, env uuid.UUID, permission auth.Permission) (audit.Evidence, error) {
 	p := principal
-	var kind string
-	var id uuid.UUID
+	var current auth.Principal
+	var err error
 	switch p.Kind {
 	case auth.PrincipalKindSession:
-		kind, id = "user", p.UserID
+		current, err = access.HumanInEnvironment(ctx, tx, p, env)
 	case auth.PrincipalKindAPIKey:
-		kind, id = "api_key", p.APIKeyID
+		current, err = access.Principal(ctx, tx, "api_key", p.APIKeyID, env)
 	default:
 		return audit.Evidence{}, access.ErrDenied
 	}
-	current, err := access.Principal(ctx, tx, kind, id, env)
 	if err != nil {
 		return audit.Evidence{}, err
 	}
 	if p.Kind == auth.PrincipalKindAPIKey && current.CredentialVersion != p.CredentialVersion {
 		return audit.Evidence{}, &access.PrincipalUnavailable{APIKeyID: p.APIKeyID, Reason: "credential_version_changed", PresentedVersion: p.CredentialVersion, ObservedVersion: current.CredentialVersion}
 	}
-	current.SessionID = p.SessionID
 	evidence, err := audit.Authorized(current, permission, auth.Scope{OrgID: current.OrgID, ProjectID: current.ProjectID, EnvironmentID: current.EnvironmentID})
 	if err != nil {
 		return evidence, errors.Join(access.ErrDenied, err)

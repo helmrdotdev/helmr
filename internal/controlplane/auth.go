@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -45,6 +44,9 @@ func (s *Server) requireAPIKeyWithErrorWriter(
 			writeAuthError(w, s.log, err)
 			return
 		}
+		if !s.acceptExpectedActor(w, r, principal) {
+			return
+		}
 		if !s.admitPrincipal(w, r, principal) {
 			return
 		}
@@ -65,6 +67,15 @@ func (s *Server) apiKeyPrincipal(r *http.Request, token string) (auth.Principal,
 		}
 		return auth.Principal{}, fmt.Errorf("api key authentication: %w", err)
 	}
+	if r.Header.Get("X-Helmr-Auth-Context") != "" || rawBrowserSession(r) != "" || operatorToken(r) != "" {
+		return auth.Principal{}, auth.ErrUnauthenticated
+	}
+	if target := r.Header.Get("X-Helmr-Organization"); target != "" {
+		id, e := uuid.Parse(target)
+		if e != nil || id != principal.OrgID {
+			return auth.Principal{}, auth.ErrUnauthenticated
+		}
+	}
 	return principal, nil
 }
 
@@ -82,17 +93,33 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 }
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
-	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !principalFromContext(r.Context()).Admin {
-			evidence, _ := audit.PlatformOperator(principalFromContext(r.Context()))
-			if !s.refuseOperation(w, r, "platform_authority_required", &audit.Refusal{Authorization: evidence.Authorization, Cause: errors.New("administrator access is required")}) {
+	return s.requireOperator(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if err := auth.RequireRecentProof(principalFromContext(r.Context())); err != nil {
+				s.writeOperationError(w, r, err)
 				return
 			}
-			writeError(w, forbidden(errors.New("administrator access is required")))
-			return
 		}
 		next.ServeHTTP(w, r)
 	}))
+}
+
+type accountOnlyContextKey struct{}
+
+func (s *Server) requireAccount(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := bearerToken(r.Header.Get("Authorization")); ok {
+			writeError(w, forbidden(errors.New("account cookie is required")))
+			return
+		}
+		s.requireSessionWithErrorWriter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if principalFromContext(r.Context()).Channel != "browser" {
+				writeError(w, forbidden(errors.New("ordinary account authentication is required")))
+				return
+			}
+			next.ServeHTTP(w, r)
+		}), writeCookieAuthError).ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), accountOnlyContextKey{}, true)))
+	})
 }
 
 func (s *Server) requireSessionWithErrorWriter(
@@ -100,6 +127,14 @@ func (s *Server) requireSessionWithErrorWriter(
 	writeAuthError authErrorWriter,
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Helmr-Auth-Context") != "" {
+			writeError(w, forbidden(errors.New("unsupported authentication context")))
+			return
+		}
+		if r.Header.Get("Authorization") != "" && rawBrowserSession(r) != "" {
+			writeError(w, badRequest(errors.New("mixed authentication credentials")))
+			return
+		}
 		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
 			token = strings.TrimSpace(token)
 			if strings.HasPrefix(token, auth.APIKeyPrefix) || !looksLikeSessionBearerToken(token) {
@@ -117,32 +152,57 @@ func (s *Server) requireSessionWithErrorWriter(
 				writeAuthError(w, s.log, err)
 				return
 			}
+			if !s.acceptExpectedActor(w, r, principal) {
+				return
+			}
 			if !s.admitPrincipal(w, r, principal) {
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 			return
 		}
-		principal, rawSession, err := s.sessionPrincipal(r)
+		principal, _, err := s.sessionPrincipal(r)
 		if err != nil {
-			clearSessionCookie(w, r)
 			if presentedCredential(r) && !s.refuseOperation(w, r, "authentication_invalid") {
 				return
 			}
 			writeAuthError(w, s.log, err)
 			return
 		}
+		if !s.acceptExpectedActor(w, r, principal) {
+			return
+		}
 		if !s.admitPrincipal(w, r, principal) {
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
-		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.identity.Lifetimes().Session)
-		next.ServeHTTP(recorder, r)
-		recorder.finish()
+		next.ServeHTTP(w, r)
 	})
 }
 
-func writeSessionAuthError(w http.ResponseWriter, _ *slog.Logger, _ error) {
+// Cookie-only entry has no HTTP authentication scheme to challenge. The
+// explicit code drives browser continuation without advertising bearer access.
+func writeCookieAuthError(w http.ResponseWriter, _ *slog.Logger, err error) {
+	if errors.Is(err, identity.ErrOrganizationAccessDenied) {
+		writeError(w, forbidden(codedError{code: "access_denied", message: "Organization access is unavailable."}))
+		return
+	}
+	if errors.Is(err, identity.ErrOrganizationRequired) {
+		writeError(w, badRequest(codedError{code: "organization_required", message: "Choose an organization."}))
+		return
+	}
+	writeError(w, forbidden(codedError{code: "authentication_required", message: "Sign in to continue."}))
+}
+
+func writeSessionAuthError(w http.ResponseWriter, _ *slog.Logger, err error) {
+	if errors.Is(err, identity.ErrOrganizationAccessDenied) {
+		writeError(w, forbidden(codedError{code: "access_denied", message: "Organization access is unavailable."}))
+		return
+	}
+	if errors.Is(err, identity.ErrOrganizationRequired) {
+		writeError(w, badRequest(codedError{code: "organization_required", message: "Choose an organization."}))
+		return
+	}
 	writeError(w, unauthorized(errors.New("session authentication is required")))
 }
 
@@ -203,7 +263,35 @@ func (s *Server) sessionPrincipalFromToken(r *http.Request, rawSession string) (
 	if err := s.userAuthConfigured(); err != nil {
 		return auth.Principal{}, err
 	}
-	return identity.AuthenticateLoginSession(r.Context(), s.tx, s.identity, rawSession)
+	target := uuid.Nil()
+	if account, _ := r.Context().Value(accountOnlyContextKey{}).(bool); !account {
+		value := r.Header.Get("X-Helmr-Organization")
+		if value != "" {
+			var err error
+			target, err = uuid.Parse(value)
+			if err != nil || target == uuid.Nil() {
+				return auth.Principal{}, identity.ErrOrganizationRequired
+			}
+		}
+		if target == uuid.Nil() && s.selfHostedMode() {
+			ids, err := s.db.ListOrganizationIDs(r.Context(), 2)
+			if err != nil {
+				return auth.Principal{}, err
+			}
+			if len(ids) == 1 {
+				target = uuid.UUID(ids[0].Bytes)
+			}
+		}
+	}
+	p, err := identity.AuthenticateLoginSession(r.Context(), s.tx, s.identity, rawSession, target)
+	if err != nil {
+		return p, err
+	}
+	_, bearer := bearerToken(r.Header.Get("Authorization"))
+	if (bearer && p.Channel != "cli") || (!bearer && p.Channel != "browser") {
+		return auth.Principal{}, auth.ErrUnauthenticated
+	}
+	return p, nil
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {
@@ -277,60 +365,6 @@ func bearerToken(value string) (string, bool) {
 	return token, token != ""
 }
 
-type sessionRefreshResponseWriter struct {
-	http.ResponseWriter
-	request     *http.Request
-	rawSession  string
-	ttl         time.Duration
-	wroteHeader bool
-}
-
-func newSessionRefreshResponseWriter(w http.ResponseWriter, r *http.Request, rawSession string, ttl time.Duration) *sessionRefreshResponseWriter {
-	return &sessionRefreshResponseWriter{
-		ResponseWriter: w,
-		request:        r,
-		rawSession:     rawSession,
-		ttl:            ttl,
-	}
-}
-
-func (w *sessionRefreshResponseWriter) WriteHeader(statusCode int) {
-	if w.wroteHeader {
-		return
-	}
-	w.ensureSessionCookie()
-	w.wroteHeader = true
-	w.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (w *sessionRefreshResponseWriter) Write(body []byte) (int, error) {
-	if !w.wroteHeader {
-		w.WriteHeader(http.StatusOK)
-	}
-	return w.ResponseWriter.Write(body)
-}
-
-func (w *sessionRefreshResponseWriter) Flush() {
-	if !w.wroteHeader {
-		w.WriteHeader(http.StatusOK)
-	}
-	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
-}
-
-func (w *sessionRefreshResponseWriter) finish() {
-	if !w.wroteHeader {
-		w.ensureSessionCookie()
-	}
-}
-
-func (w *sessionRefreshResponseWriter) ensureSessionCookie() {
-	if w.Header().Get("set-cookie") == "" {
-		setSessionCookie(w.ResponseWriter, w.request, w.rawSession, w.ttl)
-	}
-}
-
 func sessionCookieName(r *http.Request) string {
 	if isSecureRequest(r) {
 		return "__Host-helmr_session"
@@ -345,8 +379,9 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, raw string, maxAge
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(maxAge.Seconds()),
-		Secure:   isSecureRequest(r),
+		// Server inactivity is authoritative; reads never rewrite rotated cookies.
+		MaxAge: int((400 * 24 * time.Hour).Seconds()),
+		Secure: isSecureRequest(r),
 	}
 	http.SetCookie(w, cookie)
 }
@@ -377,4 +412,23 @@ func writeStaleWorkerClaims(w http.ResponseWriter, err error) bool {
 	return true
 }
 
-func (w *sessionRefreshResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+// acceptExpectedActor binds a mounted Console form to its original account.
+// It is an expectation, never an authentication credential or authority grant.
+func (s *Server) acceptExpectedActor(w http.ResponseWriter, r *http.Request, p auth.Principal) bool {
+	values := r.Header.Values("X-Helmr-Actor")
+	if len(values) == 0 {
+		return true
+	}
+	actor := p.UserID
+	if p.Channel == "operator" {
+		actor = p.OperatorID
+	}
+	if (p.Channel == "browser" || p.Channel == "operator") && len(values) == 1 && values[0] == actor.String() {
+		return true
+	}
+	if !s.refuseOperation(w, r, "authentication_invalid") {
+		return false
+	}
+	writeError(w, conflict(codedError{code: "account_changed", message: "Your account changed. Refresh before retrying."}))
+	return false
+}

@@ -1,6 +1,6 @@
 import { ApiError, del, postJson, request } from "./api";
 
-type MemberStatus = "active" | "removed";
+type MemberStatus = "active" | "suspended" | "removed";
 type InvitationStatus = "pending" | "accepted" | "revoked" | "expired";
 
 export type OrganizationMember = {
@@ -158,3 +158,5 @@ export async function revokeInvitation(id: string): Promise<void> {
     throw error;
   }
 }
+
+export function changeMemberAccess(id:string,action:"revoke-sessions"|"suspend"|"resume"):Promise<void> { return postJson<Record<string, never>,void>(`/api/members/${encodeURIComponent(id)}/${action}`, {}); }

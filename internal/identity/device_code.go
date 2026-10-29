@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // DeviceAuthorization is a started device authorization: the device code the
@@ -28,19 +29,30 @@ type DeviceAuthorization struct {
 // DeviceCodeState is the state of a device code as its approver sees it.
 // Status is pending, approved, denied, consumed or expired.
 type DeviceCodeState struct {
-	Status    string
-	ExpiresAt time.Time
+	Confirmation bool
+	Status       string
+	ExpiresAt    time.Time
 }
 
 // DeviceConsent is the account and organization a user reviewed before
 // deciding a device code, as canonical IDs.
 type DeviceConsent struct {
-	UserID string
-	OrgID  string
+	OrgID string
 }
 
 // StartDeviceCode starts a device authorization.
 func StartDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config) (DeviceAuthorization, error) {
+	return startDeviceCode(ctx, database, cfg, nil)
+}
+
+// StartDeviceConfirmation binds a fresh device ceremony to this exact CLI bearer.
+func StartDeviceConfirmation(ctx context.Context, database db.TxBeginner, cfg Config, prior auth.Principal) (DeviceAuthorization, error) {
+	if prior.Channel != "cli" {
+		return DeviceAuthorization{}, ErrInvalidToken
+	}
+	return startDeviceCode(ctx, database, cfg, &prior)
+}
+func startDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, prior *auth.Principal) (DeviceAuthorization, error) {
 	codes, err := auth.GenerateDeviceCodes()
 	if err != nil {
 		return DeviceAuthorization{}, fmt.Errorf("generate device code: %w", err)
@@ -57,6 +69,14 @@ func StartDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config) (D
 	pollInterval := cfg.lifetimes.DevicePollInterval
 	id := uuid.NewV7()
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if prior != nil {
+			if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, prior.UserID); err != nil {
+				return err
+			}
+			if _, err := access.CurrentHuman(ctx, tx, *prior); err != nil {
+				return ErrInvalidToken
+			}
+		}
 		q := db.New(tx)
 		if _, err := q.CreateDeviceCode(ctx, db.CreateDeviceCodeParams{
 			ID:                  pgvalue.UUID(id),
@@ -68,6 +88,12 @@ func StartDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config) (D
 			return fmt.Errorf("create device code: %w", err)
 		}
 		actor := audit.Unauthenticated("absent", "")
+		if prior != nil {
+			if _, err := tx.Exec(ctx, `UPDATE device_codes SET replaces_session_id=$2,user_id=$3 WHERE id=$1`, id, prior.SessionID, prior.UserID); err != nil {
+				return err
+			}
+			actor = audit.FromPrincipal(*prior)
+		}
 		actor.Authorization = audit.NotEvaluated()
 		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: actor, Action: "identity.device_started", TargetKind: "device_code", TargetID: id, Details: audit.AuthenticationDetails{Method: "device_authorization"}})
 	})
@@ -90,7 +116,7 @@ func DeviceCodeStatus(ctx context.Context, q db.Querier, cfg Config, userCode st
 	if err != nil {
 		return DeviceCodeState{}, fmt.Errorf("load device code: %w", err)
 	}
-	return DeviceCodeState{Status: deviceStatus(device), ExpiresAt: pgvalue.Time(device.ExpiresAt)}, nil
+	return DeviceCodeState{Status: deviceStatus(device), ExpiresAt: pgvalue.Time(device.ExpiresAt), Confirmation: device.ReplacesSessionID.Valid}, nil
 }
 
 // ApproveDeviceCode approves the pending device code with the user code for
@@ -122,22 +148,48 @@ func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, a
 	if approver.MemberID == uuid.Nil() {
 		return DeviceCodeState{}, ErrOrganizationRequired
 	}
-	if consent.UserID != approver.UserID.String() || consent.OrgID != approver.OrgID.String() {
+	if consent.OrgID != approver.OrgID.String() {
 		return DeviceCodeState{}, ErrDeviceApproverChanged
 	}
 	var device db.DeviceCode
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if approver.Channel != "browser" {
+			return ErrInvalidToken
+		}
+		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, approver.UserID); err != nil {
+			return err
+		}
 		current, err := access.Current(ctx, tx, approver, auth.Scope{OrgID: approver.OrgID})
 		if err != nil {
 			return err
 		}
 		approver = current
 		q := db.New(tx)
+		pending, err := q.GetDeviceCodeByUserCodeHash(ctx, hash)
+		if isNoRows(err) {
+			return ErrDeviceCodeNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if pending.ReplacesSessionID.Valid {
+			old, err := access.SessionPrincipal(ctx, tx, nullableUUID(pending.ReplacesSessionID), uuid.Nil())
+			if err != nil || old.Channel != "cli" || old.UserID != approver.UserID || old.OrgID != approver.OrgID || old.MemberID != approver.MemberID {
+				return ErrDeviceApproverChanged
+			}
+			if approve && !access.Recent(approver, time.Now()) {
+				return ErrRecentProofRequired
+			}
+		}
 		if approve {
 			device, err = q.ApproveDeviceCode(ctx, db.ApproveDeviceCodeParams{
-				OrgID:        pgvalue.UUID(approver.OrgID),
-				MemberID:     pgvalue.UUID(approver.MemberID),
-				UserCodeHash: hash,
+				UserID:     pgvalue.UUID(approver.UserID),
+				IdentityID: optionalUUID(approver.IdentityID), PasskeyID: optionalUUID(approver.PasskeyID),
+				AuthenticatedAt:  pgvalue.Timestamptz(approver.AuthenticatedAt),
+				BrowserSessionID: pgvalue.UUID(approver.SessionID),
+				OrgID:            pgvalue.UUID(approver.OrgID),
+				MemberID:         pgvalue.UUID(approver.MemberID),
+				UserCodeHash:     hash,
 			})
 		} else {
 			device, err = q.DenyDeviceCode(ctx, db.DenyDeviceCodeParams{
@@ -163,7 +215,7 @@ func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, a
 	if err != nil {
 		return DeviceCodeState{}, err
 	}
-	return DeviceCodeState{Status: deviceStatus(device), ExpiresAt: pgvalue.Time(device.ExpiresAt)}, nil
+	return DeviceCodeState{Status: deviceStatus(device), ExpiresAt: pgvalue.Time(device.ExpiresAt), Confirmation: device.ReplacesSessionID.Valid}, nil
 }
 
 // ExchangeDeviceCode consumes an approved device code once and issues a login
@@ -199,6 +251,9 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		default:
 			return ErrInvalidDeviceCode
 		}
+		if _, err = tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, device.UserID); err != nil {
+			return err
+		}
 		consumed, err := q.ConsumeDeviceCode(ctx, hash)
 		if isNoRows(err) {
 			return ErrInvalidDeviceCode
@@ -206,11 +261,16 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		if err != nil {
 			return fmt.Errorf("consume device code: %w", err)
 		}
-		member, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{OrgID: consumed.OrgID, ID: consumed.DecidedByMemberID})
-		if err != nil || member.RemovedAt.Valid {
+		var epoch int64
+		if err = tx.QueryRow(ctx, `SELECT access_epoch FROM login_sessions WHERE id=$1`, consumed.BrowserSessionID).Scan(&epoch); err != nil {
+			return err
+		}
+		prior := auth.Principal{Kind: auth.PrincipalKindSession, Channel: "browser", UserID: pgvalue.MustUUIDValue(consumed.UserID), OrgID: pgvalue.MustUUIDValue(consumed.OrgID), MemberID: pgvalue.MustUUIDValue(consumed.DecidedByMemberID), SessionID: pgvalue.MustUUIDValue(consumed.BrowserSessionID), IdentityID: nullableUUID(consumed.IdentityID), PasskeyID: nullableUUID(consumed.PasskeyID), AccessEpoch: epoch, AuthenticatedAt: consumed.AuthenticatedAt.Time}
+		current, err := access.CurrentHuman(ctx, tx, prior)
+		if err != nil {
 			return ErrInvalidDeviceCode
 		}
-		rawSession, err = issueLoginSession(ctx, tx, cfg, signedInUser{id: member.UserID, actor: audit.VerifiedDevice(pgvalue.MustUUIDValue(member.UserID), pgvalue.MustUUIDValue(consumed.ID)), authentication: audit.AuthenticationDetails{Method: "device_authorization", DeviceCodeID: pgvalue.MustUUIDValue(consumed.ID)}}, consumed.OrgID)
+		rawSession, err = issueCLISession(ctx, tx, cfg, current, nullableUUID(consumed.ReplacesSessionID), pgvalue.MustUUIDValue(consumed.ID))
 		return err
 	})
 	if err != nil {
@@ -233,4 +293,45 @@ func deviceStatus(device db.DeviceCode) string {
 		return "expired"
 	}
 	return string(device.Status)
+}
+
+func nullableUUID(id pgtype.UUID) uuid.UUID {
+	if !id.Valid {
+		return uuid.Nil()
+	}
+	return pgvalue.MustUUIDValue(id)
+}
+
+func issueCLISession(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principal, replaces, device uuid.UUID) (string, error) {
+	raw, err := auth.GenerateOpaque(loginSessionTokenBytes)
+	if err != nil {
+		return "", err
+	}
+	hash, err := auth.HashToken(cfg.sessionKey, raw)
+	if err != nil {
+		return "", err
+	}
+	if replaces != uuid.Nil() {
+		old, err := access.SessionPrincipal(ctx, tx, replaces, uuid.Nil())
+		if err != nil || old.Channel != "cli" || old.UserID != p.UserID || old.OrgID != p.OrgID || old.MemberID != p.MemberID || !access.Recent(p, time.Now()) {
+			return "", ErrInvalidDeviceCode
+		}
+		tag, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1 AND user_id=$2 AND org_id=$3 AND member_id=$4 AND channel='cli' AND revoked_at IS NULL AND expires_at>clock_timestamp()`, replaces, p.UserID, p.OrgID, p.MemberID)
+		if err != nil {
+			return "", err
+		}
+		if tag.RowsAffected() != 1 {
+			return "", ErrInvalidDeviceCode
+		}
+	}
+	id := uuid.NewV7()
+	_, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,access_epoch,identity_id,passkey_id,authenticated_at,expires_at)
+ VALUES($1,$2,'cli',$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+interval '30 days')`, id, p.UserID, p.OrgID, p.MemberID, hash, p.AccessEpoch, optionalUUID(p.IdentityID), optionalUUID(p.PasskeyID), p.AuthenticatedAt)
+	if err != nil {
+		return "", err
+	}
+	if err = appendSessionLifecycle(ctx, tx, cfg, audit.FromPrincipal(p), pgvalue.UUID(p.OrgID), "identity.sign_in", id, audit.AuthenticationDetails{Method: "device_authorization", DeviceCodeID: device}); err != nil {
+		return "", err
+	}
+	return raw, nil
 }

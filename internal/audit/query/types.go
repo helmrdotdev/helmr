@@ -19,6 +19,7 @@ type Record struct {
 	RetentionSeconds     int64             `json:"retention_seconds"`
 	ExpiresAt            time.Time         `json:"expires_at"`
 	ActorUserID          *uuid.UUID        `json:"actor_user_id"`
+	ActorOperatorID      *uuid.UUID        `json:"actor_operator_id"`
 	ActorAPIKeyID        *uuid.UUID        `json:"actor_api_key_id"`
 	ActorSessionID       *uuid.UUID        `json:"actor_session_id"`
 	ActorWorkerHostID    *uuid.UUID        `json:"actor_worker_host_id"`

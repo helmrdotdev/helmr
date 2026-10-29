@@ -1,11 +1,11 @@
 ---
 title: Authentication
-description: Configure GitHub OAuth and first-organization setup for a self-hosted environment.
+description: Configure sign-in, deployment operators, and first-organization setup.
 ---
 
 # Authentication
 
-Self-hosted Helmr uses a GitHub OAuth app for browser login. Repository credentials used by Agents are separate: bind a scoped Secret to the Agent’s Computer when it needs repository access.
+Helmr supports passkeys, email verification codes when delivery is configured, and GitHub OAuth when configured. Repository credentials used by Agents are separate: bind a scoped Secret to the Agent’s Computer when it needs repository access.
 
 ## Configure GitHub OAuth
 
@@ -23,13 +23,120 @@ After the application endpoint and public URL exist, set the OAuth callback URL 
 
 Use the exact `controlplane_url` output, including scheme and any configured hostname. Store the matching client secret in the stack-created `github_oauth_client_secret` Secrets Manager entry; never place it in tfvars.
 
-## First organization
+## First organization and deployment operators
 
-Self-hosted mode requires a high-entropy `setup_token`. The bootstrap helper generates it and stores it in Secrets Manager without writing it to Terraform state.
+Deployment operators are separate from ordinary accounts and organization owners.
+Use a protected deployment shell with the application database connection already
+configured to issue a short-lived enrollment file:
 
-Once `/readyz` succeeds, sign in through GitHub. If the environment has no organization, enter the setup token to create the first organization. The self-hosted instance supports a single organization; after it exists, a member with Manage access must invite additional users.
+```sh
+control-plane operator enroll --label "Deployment operator" --output-file /protected/operator-enrollment.json
+```
 
-The setup token is a bootstrap credential, not a substitute for user authentication. Restrict access to its secret and logs. The checked-in helper initializes missing secret values only; it does not rotate an existing setup token.
+The command creates a new owner-readable file and never prints the capability.
+Keep it out of arguments, URLs, logs, source control and support bundles. Transfer
+it through your protected deployment process and open `/admin/login` in the Console. Redeem the capability, register a passkey and complete the separate key
+assertion. Enrollment expires after fifteen minutes; unfinished registration
+provides no operator authority. Remove the local capability file after use.
+
+Operator sessions last twelve hours. Sensitive actions require confirmation within
+the last hour. They do not authorize ordinary organization resources. To create
+the first self-hosted organization, sign in separately with the ordinary account
+that will own it, then complete setup with both identities. The deployment supports
+one organization. An existing organization's owner is not promoted to operator.
+
+To replace an operator's lost keys, use the same deployment command with `repair`
+and `--operator-id`. For self-hosted ordinary account repair, use `repair-account`
+with `--operator-id`, `--user-id` and a new protected `--output-file`; the operation
+requires explicit `DEPLOYMENT_MODE=self-hosted`. Ordinary account repair completes
+when the account holder registers a new key. Existing browser, CLI and Slack access is revoked; accepted work continues.
+Existing sign-in methods remain for the holder to review.
+Operator key replacement additionally verifies an assertion with the new key
+before retiring old keys. Neither operation is an email reset.
+
+Accepted Sessions, Turns and Commands continue after logout, credential removal,
+account revocation, membership removal or API-key expiration. New requests,
+human answers, management actions and result disclosure require current access.
+An Agent executes within its published Deployment contract, pinned when the
+Session starts; it does not borrow the current permissions of its original caller
+or a later participant. A currently authorized colleague can continue the existing
+conversation.
+
+Revoke account or member access to prevent new operations and disclosure. Stop
+unwanted work separately with Session and Command controls. **View related work**
+in Account settings or Members shows visible work initiated by or involving that
+person, plus descendants, in the selected Environment. It does not include work
+you cannot view or turn revocation into automatic cancellation. Schedules and
+organization-owned resources remain independently managed. A valid sign-in can
+establish new access after revoke-all; retire compromised credentials as well.
+
+Each browser session retains one current authentication source. Before removing
+that source, confirm with a sign-in method you will keep.
+
+## Operator API authentication
+
+Operator pages and APIs share the administration namespace: `/admin/login`,
+`/admin/security` and `/admin/api/v1/*`. The internal operator identity remains
+separate from ordinary accounts. Authentication is defined per operation, not
+inferred from the URL prefix.
+
+| Route under `/admin/api/v1` | Requirement |
+| --- | --- |
+| `POST /auth/options`, `/auth/verify` | Browser-bound challenge and a valid operator key; no existing operator session is required to sign in. |
+| `POST /enrollment/redeem` | Valid deployment-issued enrollment capability in the body, bound to the redeeming browser. |
+| `POST /enrollment/{id}/options`, `/complete`, `/assert/options`, `/assert/verify` | The matching restricted enrollment and browser binding; registration alone does not grant operator access. |
+| `GET /me`, `/setup`, `/credentials` | Current operator session. |
+| `POST /auth/renew/options`, `/auth/renew/verify` | Current operator session plus a fresh key assertion to complete renewal. Old confirmation does not prevent starting renewal. |
+| `POST /auth/logout` | Retires the presented operator session; does not require a fresh confirmation. |
+| `POST /credentials/enroll`, `DELETE /credentials/{id}` | Current operator session and the operation's fresh-key/retained-key checks. |
+| `POST /account-repairs/*` | Self-hosted only; current operator session plus the repair capability, browser binding and operation-specific fresh-proof checks. |
+| Existing region, worker-group and pool APIs | Current operator session; mutations additionally require recent operator proof. |
+
+All these browser mutations have same-origin protection. Ceremony requests have
+a 128 MiB request limit; infrastructure requests have a 64 KiB limit.
+Operator cookies use root path scope so the first
+organization can be created through `POST /api/organizations` with both independent
+identities. Cookie path is not an authorization boundary.
+
+The Console returns to the requested page after operator login. Setup displays an
+operator sign-in action when that session is absent, asks for the ordinary owner
+account when needed, and offers retry for service or network failures.
+
+## Ordinary accounts and CLI
+
+Each account can hold multiple passkeys and linked sign-in methods. Email codes
+are entered in the browser that requested them; invitation URLs alone do not
+prove mailbox ownership. A provider's reported email does not silently change
+an account's login email or merge accounts.
+
+Browser, CLI and Slack access have separate lifetimes. Logging out of one channel
+does not log out the others. Removing a sign-in method retires browser proof from
+that method; already-issued CLI and Slack access remains independent. Account-wide
+revocation retires all channels. Browser and CLI sessions
+expire after thirty days without explicit human activity. Background polling does
+not extend them. Removing an organization membership preserves the account and
+other organizations, and reinvitation creates a new membership lifetime.
+
+Use `helmr login` to authorize a CLI for the displayed account and organization.
+Sensitive CLI commands request browser confirmation; `helmr login --confirm` starts
+it explicitly. After confirmation, retry the original command yourself. A CLI token
+cannot switch to another organization by adding a request header. Confirmation replaces
+the old CLI session: open streams lose access, while accepted work continues.
+Retry the intended new operation explicitly after confirmation.
+
+Members with `members.remove` can revoke a member's sessions or suspend/resume the
+member from **Members**. These operations affect only that organization, preserve
+credentials and grants, and require fresh authentication before access resumes.
+Owners cannot be suspended; resume a member before granting ownership. Account
+settings and sign-in confirmation remain available when organization access ends.
+
+A disconnected Slack installation is not an explicit unlink. Reauthorizing the
+same installation can restore a still-valid link. Account or member revocation
+and explicit unlink retire the old link. Relinking creates new access. Resuming
+private delivery to earlier conversations requires explicit consent, the same
+Helmr account and Slack recipient, and current access. Removing a sign-in method
+does not revoke an issued link. Disconnecting Slack stops input and delivery;
+accepted computation and result storage continue.
 
 ## Invite members
 
@@ -49,12 +156,38 @@ Invite those people again.
 Inviting members requires [email delivery](/docs/reference/env). Without it,
 members can't be invited.
 
-## Deployment administrators
+## Deployment maintenance
 
-The AWS reference roots accept `controlplane_environment.ADMIN_EMAILS`, a comma-separated list of verified login emails
-that receive deployment administrator authority when those users first sign in.
-Set it before the intended operators' first login. It does not promote existing
-users or revoke existing grants when edited. Organization ownership and deployment
-administrator authority are separate. Administrator sessions authorize the
-fenced Pool retirement API used after [maintenance](/docs/self-hosting/upgrades#retire-an-old-pool-separately);
-the deployment Capacity token does not grant administrator-session access.
+Operator sessions authorize the separate Pool retirement API used after
+[maintenance](/docs/self-hosting/upgrades#retire-an-old-pool-separately).
+Keep the deployment Capacity token separate; it does not grant operator-session
+or ordinary account access.
+
+## Browser origin
+
+Set `APP_ORIGIN` to the canonical HTTPS DNS origin that users and deployment
+operators open in their browser. IP-literal and single-label deployment origins
+are unsupported because operator bootstrap and repair require WebAuthn. For local
+development, use `http://localhost:<port>`; the server may still listen on loopback.
+The control plane rejects an unsupported origin at startup rather than starting
+without its required operator authentication path.
+
+## Database initialization and retained installations
+
+These pre-release schema sources are revised together and require a freshly
+initialized database. In-place upgrades from earlier pre-release schemas are not
+supported. Migration tests against earlier versions of the current source do not
+qualify databases created by an older release.
+
+A retained installation needs a separately qualified migration and recovery plan.
+Inventory its accounts, provider subjects, login addresses and Slack history;
+retain a backup and matching application and worker artifacts before any data
+operation. Existing Slack threads and accepted inputs do not have the required
+consent/source references, and existing constraint names can differ. No automatic
+backfill or reset is provided. Existing organization ownership never creates a
+deployment operator credential.
+
+The down migration refuses to discard enrolled passkeys or undelivered security
+notifications. A successful empty-database round trip does not authorize erasing
+credentials, pending delivery or retained user work. Qualify recovery with the
+installation's data and matching application artifacts.

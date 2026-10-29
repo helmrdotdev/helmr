@@ -1,6 +1,7 @@
 package command
 
 import (
+	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
@@ -8,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
+func TestQueuedCommandRetainsAcceptedAuthority(t *testing.T) {
 	for _, kind := range []string{"human_grant", "removed_member", "api_key"} {
 		t.Run(kind, func(t *testing.T) {
 			f := commandFixture(t)
@@ -32,12 +33,16 @@ func TestQueuedCommandRechecksCallerPermission(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=now() WHERE id=$1`, request.Creator.ID)
 			}
 			claimed, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), f.claim())
-			if err != nil || claimed.Start != nil {
-				t.Fatalf("revoked command dispatched: %+v, %v", claimed, err)
+			if err != nil || claimed.Start == nil {
+				t.Fatalf("accepted command did not dispatch: %+v, %v", claimed, err)
+			}
+			request.IdempotencyKey = "after-revocation"
+			if _, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, request); err == nil {
+				t.Fatal("revoked caller submitted new command")
 			}
 			got := f.get(t, uuid.UUID(c.ID.Bytes))
-			if got.Status != "failed" || got.TerminalReasonCode.String != "permission_revoked" || !got.TerminalAt.Valid || got.StartedAt.Valid {
-				t.Fatalf("command not settled before execution: %+v", got)
+			if got.Status != "running" || got.TerminalAt.Valid || !got.StartedAt.Valid {
+				t.Fatalf("accepted command did not start: %+v", got)
 			}
 		})
 	}
@@ -53,5 +58,29 @@ func TestAdmittedCommandRetainsDispatchReceiptAfterRevocation(t *testing.T) {
 	}
 	if err := CheckStart(t.Context(), f.Pool, f.host(), *replay.Start); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestQueuedCommandSurvivesLogoutAndAccountRevocation(t *testing.T) {
+	for _, incident := range []bool{false, true} {
+		t.Run(fmt.Sprint(incident), func(t *testing.T) {
+			f := commandFixture(t)
+			c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("auth-lifetime"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
+			if incident {
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.User)
+			}
+			claimed, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), f.claim())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if claimed.Start == nil || claimed.Start.Command.ID != c.ID {
+				t.Fatal("access revocation cancelled accepted command", claimed)
+			}
+
+		})
 	}
 }

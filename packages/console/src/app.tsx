@@ -1,3 +1,8 @@
+import { AuthenticationNotice } from "./components/AuthenticationNotice";
+import { OperatorSecurity } from "./routes/operator-security";
+import { Organizations } from "./routes/organizations";
+import { OperatorLogin } from "./routes/operator-login";
+import { Setup } from "./routes/setup";
 import { A, Navigate, Route, Router, useLocation } from "@solidjs/router";
 import { environmentChip } from "./features/projects/display";
 import type { JSX } from "solid-js";
@@ -26,7 +31,7 @@ import { AuthSlackLink } from "./routes/auth-slack-link";
 import { SlackConnect } from "./routes/slack-connect";
 import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { AccountSettings } from "./routes/account-settings";
-import { AuthGitHubCallback, AuthMagicLinkCallback } from "./routes/auth-callback";
+import { AuthGitHubCallback } from "./routes/auth-callback";
 import { SessionList } from "./routes/sessions";
 import { TriggerList } from "./routes/triggers";
 import { AgentsSection, AgentList, AgentDetail, AgentSessionsTab, AgentTriggersTab, AgentSlackTab, AgentAccessTab } from "./routes/agents";
@@ -84,9 +89,7 @@ function DrawerAccount(props: { close: () => void }) {
     <div class="flex flex-col gap-0.5 p-2">
       <A href="/settings/project" class={item(location.pathname.startsWith("/settings") && location.pathname !== "/settings/account")} onClick={props.close}>Settings</A>
       <A href="/settings/account" class={item(location.pathname === "/settings/account")} onClick={props.close}>Account settings</A>
-      <Show when={me.data?.admin}>
-        <A href="/admin" class={item(false)} onClick={props.close}>Admin</A>
-      </Show>
+
       <button
         type="button"
         class={cx(ui.drawerItem, ui.drawerItemIdle)}
@@ -207,16 +210,18 @@ const wrapAdmin = (Inner: () => JSX.Element) => () => (
 
 export function App() {
   return (
-    <Router>
+    <Router root={props => <><AuthenticationNotice />{props.children}</>}>
       <Route path="/" component={wrap(Overview)} />
       <Route path="/login" component={Login} />
+      <Route path="/organizations" component={Organizations} />
+      <Route path="/admin/login" component={OperatorLogin} />
+      <Route path="/setup" component={Setup} />
       <Route path="/invite" component={Invite} />
       <Route path="/auth/device" component={() => <RequireAuth requirement="organization"><Device /></RequireAuth>} />
       <Route path="/auth/slack/callback" component={AuthSlackCallback} />
       <Route path="/auth/slack/link" component={AuthSlackLink} />
       <Route path="/auth/slack/connect" component={SlackConnect} />
       <Route path="/auth/github/callback" component={AuthGitHubCallback} />
-      <Route path="/auth/magic-link/callback" component={AuthMagicLinkCallback} />
       <Route path="/access-required" component={() => <RequireAuth requirement="session"><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />
 
@@ -244,11 +249,12 @@ export function App() {
 
       <Route path="/admin" component={() => <Navigate href="/admin/worker-groups" />} />
       <Route path="/admin/audit-events" component={wrapAdmin(() => <Page><AuditEvents adminView /></Page>)} />
+      <Route path="/admin/security" component={wrapAdmin(OperatorSecurity)} />
       <Route path="/admin/regions" component={wrapAdmin(AdminRegions)} />
       <Route path="/admin/worker-groups" component={wrapAdmin(AdminWorkerGroups)} />
 
       <Route path="/settings" component={() => <Navigate href="/settings/project" />} />
-      <Route path="/settings/account" component={wrapSettings(AccountSettings, "organization")} />
+      <Route path="/settings/account" component={wrapSettings(AccountSettings, "session")} />
       <Route path="/settings/project" component={wrapSettings(ProjectSettings)} />
       <Route path="/settings/environments" component={wrapSettings(Environments)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />

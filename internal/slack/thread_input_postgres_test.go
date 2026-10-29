@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"strings"
 	"sync"
 	"testing"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
-	"github.com/jackc/pgx/v5"
 )
 
 func (f statusFixture) threadMessage(t *testing.T, key, text string, at time.Time) uuid.UUID {
@@ -140,7 +140,7 @@ func TestSlackThreadInputControlAuthorityAndTerminalState(t *testing.T) {
 			case "read-only":
 				f.SetPermissions(t, "sessions.read")
 			case "closed":
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			case "unbound":

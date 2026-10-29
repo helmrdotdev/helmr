@@ -16,6 +16,8 @@ import (
 // Agent and Slack admission acquire Worker supply before their channel locks.
 // Command admission uses Org's Environment gate. Dispatch composes Command and
 // Session failure transitions atomically when an execution admission expires.
+// Identity composes account and membership revocation with Slack-owned access
+// retirement in the same transaction; Slack remains the writer of its link tables.
 var ownerImports = map[string][]string{
 	"agent":       {"audit", "session", "slack", "slackroute", "computer", "org", "workergroup"},
 	"computer":    {"audit", "secret", "workergroup"},
@@ -25,7 +27,7 @@ var ownerImports = map[string][]string{
 	"slackroute":  {},
 	"deployment":  {"agent", "computer", "slack", "slackroute", "session", "org", "audit"},
 	"command":     {"audit", "computer", "secret", "workergroup", "org"},
-	"identity":    {"org", "audit"},
+	"identity":    {"org", "audit", "slack"},
 	"org":         {"audit"},
 	"secret":      {"audit"},
 	"workergroup": {"audit"},

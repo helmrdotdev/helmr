@@ -74,8 +74,8 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			request := uuid.NewV7()
 			body := []byte(`{"message_ts":"123.456","text":"retained input"}`)
 			digest := sha256.Sum256(body)
-			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_requests(id,installation_id,request_key,request_digest,source_occurred_at,slack_user_id,payload,expires_at,status,finished_at,user_id,thread_id,thread_source_id,environment_id,session_id,operation,turn_id)
- SELECT $1,c.installation_id,'retained-input',$2,clock_timestamp(),'human',$3,clock_timestamp()+interval '1 minute','accepted',clock_timestamp(),$4,p.thread_id,p.id,p.environment_id,p.session_id,'enqueue',$5 FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE p.session_id=$6`, request, digest[:], body, f.user, turn.TurnID, f.session)
+			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_requests(id,installation_id,request_key,request_digest,source_occurred_at,slack_user_id,payload,expires_at,status,finished_at,user_id,thread_id,thread_source_id,environment_id,session_id,operation,turn_id,source_link_id)
+ SELECT $1,c.installation_id,'retained-input',$2,clock_timestamp(),'human',$3,clock_timestamp()+interval '1 minute','accepted',clock_timestamp(),$4,p.thread_id,p.id,p.environment_id,p.session_id,'enqueue',$5,gen_random_uuid() FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE p.session_id=$6`, request, digest[:], body, f.user, turn.TurnID, f.session)
 			reconcileHistory(t, f)
 			released := kind == "abandoned-post" || kind == "abandoned-stopped-stream" || kind == "stopped-stream" || kind == "posted" || kind == "failed" || kind == "suppressed"
 			if got := historyClock(t, f); (got != nil) != released {

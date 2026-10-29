@@ -14,38 +14,43 @@ import (
 	"uuid"
 )
 
-func TestEvidencePreservesIdentityAndEvaluatedAdminSnapshot(t *testing.T) {
+func TestEvidencePreservesIndependentOperatorAndAccountIdentity(t *testing.T) {
 	d := dbtest.Open(t)
 	if err := schema.Up(t.Context(), d.DSN); err != nil {
 		t.Fatal(err)
 	}
 	user, credential := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name,admin) VALUES($1,'Account name',true)`, user)
-	p := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: credential, Admin: true}
-	normal := audit.FromPrincipal(p)
-	admin, err := audit.PlatformOperator(p)
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Account name')`, user)
+	ordinary := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, SessionID: credential}
+	if _, err := audit.PlatformOperator(ordinary); err == nil {
+		t.Fatal("ordinary account became operator")
+	}
+	operator := dbtest.OperatorPrincipal(t, d.Pool)
+	admin, err := audit.PlatformOperator(operator)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The account changes after the real decision. Capture must not replace the
-	// evaluated flag with the current flag or invent an admin role revision.
-	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE users SET admin=false WHERE id=$1`, user)
-	for _, evidence := range []audit.Evidence{normal, admin} {
-		err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
+	for _, evidence := range []audit.Evidence{audit.FromPrincipal(ordinary), admin} {
+		if err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
 			return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: evidence, Action: "worker_group.created", TargetKind: "worker_group", TargetID: uuid.NewV7()})
-		})
-		if err != nil {
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var valid bool
-	err = d.Pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(actor_user_id=$1 AND credential_id=$2 AND actor_api_key_id IS NULL AND actor_component IS NULL AND actor_identity->>'display_name'='Account name') AND count(*) FILTER(WHERE authorization_evidence->>'decision'='not_evaluated')=1 AND count(*) FILTER(WHERE authorization_evidence->'checks' @> '[{"type":"user_attribute","attribute":"admin","expected":true,"observed":true,"observation_source":"request_authentication","scope":{"kind":"platform"}}]'::jsonb)=1 FROM audit_events`, user, credential).Scan(&valid)
-	if err != nil || !valid {
+	if err := d.Pool.QueryRow(t.Context(), `SELECT count(*)=2 AND count(*) FILTER(WHERE actor_user_id=$1 AND actor_operator_id IS NULL AND credential_id=$2 AND actor_identity->>'display_name'='Account name')=1 AND count(*) FILTER(WHERE actor_operator_id=$3 AND actor_user_id IS NULL AND credential_id=$4 AND authorization_evidence->'checks' @> '[{"type":"platform_operator"}]'::jsonb)=1 FROM audit_events`, user, credential, operator.OperatorID, operator.SessionID).Scan(&valid); err != nil || !valid {
 		t.Fatal(valid, err)
 	}
 	dbtest.MustExec(t, t.Context(), d.Pool, `DELETE FROM users WHERE id=$1`, user)
-	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*)=2 AND bool_and(actor_user_id=$1 AND actor_identity->>'display_name'='Account name') FROM audit_events`, user).Scan(&valid); err != nil || !valid {
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, operator.SessionID)
+	if err := d.Pool.QueryRow(t.Context(), `SELECT count(*)=2 AND count(*) FILTER(WHERE actor_user_id=$1 AND actor_identity->>'display_name'='Account name')=1 FROM audit_events`, user).Scan(&valid); err != nil || !valid {
 		t.Fatal("history lost", valid, err)
+	}
+	err = db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
+		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: admin, Action: "worker_group.created", TargetKind: "worker_group", TargetID: uuid.NewV7()})
+	})
+	if err == nil {
+		t.Fatal("retired operator session committed mutation")
 	}
 }
 

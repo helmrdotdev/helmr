@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -29,7 +28,7 @@ func TestIdentityErrorMapsHTTPContract(t *testing.T) {
 		{identity.ErrInvalidToken, http.StatusBadRequest, "invalid_token", "token is invalid or expired"},
 		{identity.ErrWrongAccount, http.StatusBadRequest, "wrong_account", "verified email does not match invitation"},
 		{identity.ErrAlreadyMember, http.StatusConflict, "already_member", "identity is already a member of this organization"},
-		{identity.ErrUserNotFound, http.StatusUnauthorized, "unauthorized", "authentication is required"},
+		{identity.ErrUserNotFound, http.StatusForbidden, "authentication_required", "Sign in to continue."},
 		{identity.ErrOrganizationRequired, http.StatusForbidden, "forbidden", "organization is required"},
 		{identity.ErrAPIKeyManagementRequired, http.StatusForbidden, "forbidden", identity.ErrAPIKeyManagementRequired.Error()},
 		{identity.ErrDeviceCodeNotFound, http.StatusNotFound, "not_found", "device code not found"},
@@ -69,7 +68,9 @@ func TestBrowserAuthSupersededCallbackKeepsNewerFlow(t *testing.T) {
 	handler := f.handler
 	payload, _ := json.Marshal(api.GitHubAuthStartRequest{Next: "/auth/device?code=NEW"})
 	start := httptest.NewRecorder()
-	handler.ServeHTTP(start, httptest.NewRequest("POST", "https://helmr.example.test/api/auth/github/start", bytes.NewReader(payload)))
+	rStart := httptest.NewRequest("POST", "https://helmr.example.test/api/auth/github/start", bytes.NewReader(payload))
+	rStart.Header.Set("Origin", f.origin)
+	handler.ServeHTTP(start, rStart)
 	var started api.GitHubAuthStartResponse
 	if start.Code != http.StatusOK || json.Unmarshal(start.Body.Bytes(), &started) != nil {
 		t.Fatalf("start: %d %s", start.Code, start.Body.String())
@@ -91,6 +92,7 @@ func TestBrowserAuthSupersededCallbackKeepsNewerFlow(t *testing.T) {
 				r.AddCookie(cookie)
 			}
 			w := httptest.NewRecorder()
+			r.Header.Set("Origin", f.origin)
 			handler.ServeHTTP(w, r)
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("state=%q denied=%v status=%d", state, denied, w.Code)
@@ -124,15 +126,15 @@ func TestInvitationStartRejectsEmptyToken(t *testing.T) {
 	cfg := completeServerConfig(t)
 	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "helmr.example.test"}
 	cfg.AuthProvider = continuationAuthProvider{}
-	cfg.MagicLinkDebugURLs = true
-	cfg.MagicLinkDelivery = NewMagicLinkDelivery(discardTestLogger(), time.Second)
 	handler, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/api/auth/github/invite/start", "/api/auth/magic-link/invite/start"} {
+	for _, path := range []string{"/api/auth/github/invite/start", "/api/auth/invitations/resolve"} {
 		recorder := httptest.NewRecorder()
-		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "https://helmr.example.test"+path, bytes.NewReader([]byte(`{"token":""}`))))
+		r := httptest.NewRequest(http.MethodPost, "https://helmr.example.test"+path, bytes.NewReader([]byte(`{"token":""}`)))
+		r.Header.Set("Origin", "https://helmr.example.test")
+		handler.ServeHTTP(recorder, r)
 		var body api.HTTPErrorResponse
 		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 			t.Fatalf("%s: %v", path, err)

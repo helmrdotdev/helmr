@@ -1,3 +1,4 @@
+import { authenticationResponse, isAuthenticationPath } from "./fixtures/authentication";
 import { expect, test, type Page } from "@playwright/test";
 
 const projectID = "console-demo";
@@ -13,7 +14,7 @@ async function catalog(page: Page, permissions = ["agents.read", "deployments.re
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname;
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", permissions, admin: false, organization_required: false, project_required: false };
+    if (isAuthenticationPath(path)) json = { user_id: "local", display_name: "Local", org_id: "org", permissions, admin: false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === base) json = environment;
@@ -24,7 +25,7 @@ async function catalog(page: Page, permissions = ["agents.read", "deployments.re
     else if (path.endsWith("/turns")) json = { turns: [] };
     else if (path.endsWith("/events")) json = { records: [], next_after: 0, has_more: false, retained_after: 0 };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(path,json) });
   });
   return deployment;
 }

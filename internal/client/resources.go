@@ -16,14 +16,14 @@ func (c *Client) BaseURL() string {
 	return c.transport.BaseURL()
 }
 
-func (c *Client) GetMe(ctx context.Context) (api.MeResponse, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/api/me", nil)
+func (c *Client) GetOrganizationContext(ctx context.Context) (api.OrganizationContextResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/api/organization", nil)
 	if err != nil {
-		return api.MeResponse{}, err
+		return api.OrganizationContextResponse{}, err
 	}
-	var response api.MeResponse
+	var response api.OrganizationContextResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.MeResponse{}, err
+		return api.OrganizationContextResponse{}, err
 	}
 	return response, nil
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agents(environment_id,id,key,deleted_at) VALUES($1,$2,'child-agent',clock_timestamp());
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,false,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
  INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,status) VALUES($1,$4,$2,$5,$6,$6,$6,1,$7,'closed');`, pgx.QueryExecModeSimpleProtocol, f.env, target, f.agent, child, f.deployment, f.session, f.user)
+	sessiontest.PublishRuntimeAgentSet(t, sessiontest.Fixture{Pool: f.pool, Environment: f.env, Deployment: f.deployment}, "agent", "child-agent")
 	turn := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET computer_id=$3 WHERE environment_id=$1 AND id=$2; INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,request_digest,terminal_at,processing_closed_at) VALUES($1,$4,$2,$3,1,'cancelled','session',$5,'spawn',$2,decode(repeat('00',32),'hex'),clock_timestamp(),clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, f.env, child, f.computer, turn, f.session)
 	if _, err := session.RuntimeObserveTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, child, turn); err != nil {
@@ -118,11 +120,10 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 			}
 			dbtest.GrantMember(t, f.pool, orgID, f.user, nil, "assignments.create")
 			dbtest.GrantMember(t, f.pool, orgID, f.user, &f.env, "agents.delete")
-			principal, err := access.Principal(t.Context(), f.pool, "user", f.user, f.env)
+			principal, err := access.HumanInEnvironment(t.Context(), f.pool, f.human, f.env)
 			if err != nil {
 				t.Fatal(err)
 			}
-			principal.SessionID = uuid.NewV7()
 			scope := auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID}
 			activation := uuid.NewV7()
 			if kind == "schedule" {
@@ -177,5 +178,53 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAgentCleanupSerializesSameManagerBeforeSharedChecks(t *testing.T) {
+	f := newAdmissionFixture(t)
+	principal, err := access.HumanInEnvironment(t.Context(), f.pool, f.human, f.env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.GrantMember(t, f.pool, principal.OrgID, f.user, &f.env, "agents.delete")
+	scope := auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID}
+	gate, err := f.pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gate.Rollback(t.Context())
+	var member uuid.UUID
+	if err = gate.QueryRow(t.Context(), `SELECT id FROM org_members WHERE id=$1 FOR SHARE`, principal.MemberID).Scan(&member); err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "agent", "1", false, true)
+			results <- err
+		}()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting int
+		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%org_members%' AND query LIKE '%FOR UPDATE%'`).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("management calls did not reach membership lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err = gate.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err = <-results; err != nil {
+			t.Fatal("concurrent cleanup failed", err)
+		}
 	}
 }

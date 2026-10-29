@@ -74,7 +74,7 @@ func TestSlackPublishedStartHTTPAndSDK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
+	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 	owner := h.session(t, f.User, orgID)
 	base := "/api/projects/project/environments/test"
 	call := func(method, path, token, body string, status int) []byte {

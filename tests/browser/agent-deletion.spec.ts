@@ -11,12 +11,12 @@ async function choose(page: Page, menu: string, item: string) {
 test("Agent deletion previews prerequisites and restores retained identity without redeploying", async ({ page }, testInfo) => {
   await page.goto("/dev/login");
   const { scope, base, environmentID, environmentInternalID, deploymentID } = await createAgentCatalog(page);
-  const me = await (await page.request.get("/api/me")).json();
+  const { current_member: me } = await (await page.request.get("/api/organization")).json();
   const targets = await (await page.request.get("/api/projects/console-demo/access-targets")).json();
   const roleResponse = await page.request.post("/api/roles", { data: { name: `Deletion ${crypto.randomUUID()}`, permissions: ["agents.read", "agents.delete", "agents.restore", "agents.use", "sessions.read", "sessions.close", "deployments.promote"] } });
   expect(roleResponse.ok(), await roleResponse.text()).toBeTruthy();
   const role = await roleResponse.json();
-  const grant = await page.request.post("/api/role-grants", { data: { role_id: role.id, expected_role_revision: role.revision, subject: { type: "member", member_id: me.membership_id }, project_id: targets.project_id, environment_id: environmentInternalID, agents_mode: "all", agent_ids: [] } });
+  const grant = await page.request.post("/api/role-grants", { data: { role_id: role.id, expected_role_revision: role.revision, subject: { type: "member", member_id: me.id }, project_id: targets.project_id, environment_id: environmentInternalID, agents_mode: "all", agent_ids: [] } });
   expect(grant.ok(), await grant.text()).toBeTruthy();
   const started = await page.request.post(`${base}/sessions`, { data: { agent: "browser-agent", idempotency_key: crypto.randomUUID() } });
   expect(started.ok(), await started.text()).toBeTruthy();

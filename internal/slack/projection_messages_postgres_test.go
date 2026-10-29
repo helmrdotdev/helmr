@@ -38,13 +38,13 @@ func TestSlackSteeringFailureKeepsExactDispositionWithoutRequeue(t *testing.T) {
 				t.Fatal(err)
 			}
 			if kind != "not-started" {
-				m, err := session.ClaimRuntimeMessage(t.Context(), f.Pool, host, execution, attachment.Sequence, turn, fixtureConversationVerifier(true))
+				m, err := session.ClaimRuntimeMessage(t.Context(), f.Pool, host, execution, attachment.Sequence, turn)
 				if err != nil || m == nil || m.ID != message {
 					t.Fatal(m, err)
 				}
 			}
 			if kind == "not-started" || kind == "started-then-stopped" {
-				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stop"}); err != nil {
+				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "stop"}); err != nil {
 					t.Fatal(err)
 				}
 			} else {

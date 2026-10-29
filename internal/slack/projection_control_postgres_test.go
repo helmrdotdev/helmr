@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/session"
-	"uuid"
 )
 
 func TestSlackNativeStopWaitsForCessationBeforeNoticeAndNewDispatch(t *testing.T) {
@@ -162,7 +161,7 @@ func TestSlackProjectionDisposesControlsForInactiveSources(t *testing.T) {
 func TestSlackNativeStopBeforeStartupPostsCessationAndAdmitsNewMessage(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
-	turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "first", Input: json.RawMessage(`[]`)})
+	turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "first", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

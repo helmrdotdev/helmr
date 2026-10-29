@@ -138,10 +138,11 @@ locals {
     AUTH_KEY                           = aws_secretsmanager_secret.auth_key.arn
     ENCRYPTION_KEY                     = aws_secretsmanager_secret.encryption_key.arn
     COMPUTER_FENCING_KEY               = aws_secretsmanager_secret.computer_fencing_key.arn
-    GITHUB_OAUTH_CLIENT_SECRET         = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
+    var.github_oauth_client_id != "" ? {
+      GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret[0].arn
+    } : {},
     var.deployment_mode == "self-hosted" ? {
-      SETUP_TOKEN           = aws_secretsmanager_secret.setup_token[0].arn
       COMPUTER_WRAPPING_KEY = aws_secretsmanager_secret.computer_wrapping_key[0].arn
     } : {},
     var.bootstrap_enabled ? {
@@ -172,7 +173,6 @@ locals {
     "CLICKHOUSE_URL",
     "CLICKHOUSE_USER",
     "CLICKHOUSE_PASSWORD",
-    "SETUP_TOKEN",
   ])
   reserved_controlplane_environment_keys = toset(keys(local.controlplane_environment_defaults))
   reserved_controlplane_secret_keys      = setunion(toset(keys(local.controlplane_secret_defaults)), toset(["CAPACITY_TOKEN"]))
@@ -1304,14 +1304,6 @@ resource "aws_secretsmanager_secret" "auth_key" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "setup_token" {
-  count                   = var.deployment_mode == "self-hosted" ? 1 : 0
-  name                    = "${local.name}/controlplane/setup-token"
-  kms_key_id              = aws_kms_key.helmr.arn
-  recovery_window_in_days = var.secret_recovery_window_in_days
-  tags                    = var.tags
-}
-
 resource "aws_secretsmanager_secret" "computer_wrapping_key" {
   count                   = var.deployment_mode == "self-hosted" ? 1 : 0
   name                    = "${local.name}/controlplane/computer-wrapping-key"
@@ -1335,7 +1327,13 @@ resource "aws_secretsmanager_secret" "computer_fencing_key" {
 }
 
 
+moved {
+  from = aws_secretsmanager_secret.github_oauth_client_secret
+  to   = aws_secretsmanager_secret.github_oauth_client_secret[0]
+}
+
 resource "aws_secretsmanager_secret" "github_oauth_client_secret" {
+  count                   = var.github_oauth_client_id != "" ? 1 : 0
   name                    = "${local.name}/controlplane/github-oauth-client-secret"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days

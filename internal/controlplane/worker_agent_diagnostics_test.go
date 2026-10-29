@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -111,18 +110,5 @@ func TestWorkerAgentJoinedTransactionDiagnosticsKeepHTTPGeneric(t *testing.T) {
 	if record.Error.Operation.Stage != "commit transaction" || record.Error.Operation.Cause != "context_cancelled" ||
 		record.Error.Rollback.Stage != "rollback transaction" || record.Error.Rollback.Cause != "transaction_closed" || strings.Contains(logs.String(), "private") {
 		t.Fatalf("missing or unsafe joined diagnostics: %s", logs.String())
-	}
-}
-
-func TestWorkerAgentMissingConversationVerifierIsRetryableAndLogged(t *testing.T) {
-	var logs bytes.Buffer
-	server := &Server{log: slog.New(slog.NewJSONHandler(&logs, nil))}
-	response := httptest.NewRecorder()
-	server.writeAgentWorkerError(response, httptest.NewRequest(http.MethodPost, "/", nil), session.ErrConversationVerificationUnavailable)
-	if !errors.Is(session.ErrConversationVerificationUnavailable, session.ErrNotReady) || response.Code != http.StatusConflict {
-		t.Fatalf("verification configuration must keep work pending: %d", response.Code)
-	}
-	if !strings.Contains(logs.String(), "conversation verification is not configured") || !strings.Contains(logs.String(), `"level":"WARN"`) {
-		t.Fatalf("missing operational diagnostic: %s", logs.String())
 	}
 }

@@ -53,7 +53,7 @@ func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	if s.slackConfig != nil && principal.Kind == auth.PrincipalKindSession {
-		connections, count, err := slack.ReauthorizationRequired(r.Context(), s.tx, principal.OrgID, principal.UserID, env, session.AttentionLimit)
+		connections, count, err := slack.ReauthorizationRequired(r.Context(), s.tx, principal, env, session.AttentionLimit)
 		switch {
 		case slack.IsInstallationDenied(err):
 			// Management authority changed since sign-in; the kind stays hidden.
@@ -109,7 +109,7 @@ func (s *Server) countAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	principal := principalFromContext(r.Context())
 	if s.slackConfig != nil && principal.Kind == auth.PrincipalKindSession {
-		count, err := slack.CountReauthorizationRequired(r.Context(), s.tx, principal.OrgID, principal.UserID, env)
+		count, err := slack.CountReauthorizationRequired(r.Context(), s.tx, principal, env)
 		switch {
 		case slack.IsInstallationDenied(err):
 		case err != nil:

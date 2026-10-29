@@ -62,8 +62,24 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 		return result, err
 	}
 	env := uuid.MustParse(scope.EnvironmentID)
-	m := org.ManagingMember{AuditPolicy: policy, Actor: audit.FromPrincipal(p), OrgID: p.OrgID, UserID: p.UserID, MemberID: p.MemberID}
+	m := org.ManagingMember{Human: p, AuditPolicy: policy, Actor: audit.FromPrincipal(p), OrgID: p.OrgID, UserID: p.UserID, MemberID: p.MemberID}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		// Grant cleanup needs an exclusive membership lock. Take it before
+		// currentPrincipal's shared membership check to avoid concurrent upgrades.
+		// The user root remains first so source retirement uses the same order.
+		var locked uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 FOR SHARE`, p.UserID).Scan(&locked); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrPermissionRequired
+			}
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT id FROM org_members WHERE id=$1 AND org_id=$2 AND user_id=$3 AND removed_at IS NULL AND suspended_at IS NULL FOR UPDATE`, p.MemberID, p.OrgID, p.UserID).Scan(&locked); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrPermissionRequired
+			}
+			return err
+		}
 		current, err := currentPrincipal(ctx, tx, p, scope)
 		if err != nil {
 			return err
@@ -90,7 +106,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 		}
 		var disconnection *slack.ConnectionDisconnection
 		if connection != nil && !restore {
-			disconnection, err = slack.LockAgentDeletionDisconnection(ctx, tx, p.OrgID, p.UserID, env, id, *connection)
+			disconnection, err = slack.LockAgentDeletionDisconnection(ctx, tx, p, env, id, *connection)
 			if err != nil {
 				return err
 			}

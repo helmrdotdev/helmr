@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 )
 
 type errKind int
@@ -115,6 +116,9 @@ func tooManyRequests(err error) error {
 }
 
 func errorStatus(err error) int {
+	if errors.Is(err, auth.ErrRecentProofRequired) {
+		return http.StatusForbidden
+	}
 	var apiErr apiError
 	if !errors.As(err, &apiErr) {
 		return http.StatusInternalServerError
@@ -160,6 +164,9 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func writeErrorStatus(w http.ResponseWriter, status int, err error) {
+	if status == http.StatusUnauthorized && w.Header().Get("WWW-Authenticate") == "" {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="Helmr"`)
+	}
 	code := defaultErrorCode(status)
 	message := publicErrorMessage(status, err)
 	var details map[string]json.RawMessage

@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/org"
@@ -227,7 +226,7 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			}
 		}
 		var deployment uuid.UUID
-		if caller.Kind == "session" && method == "spawn" {
+		if caller.Kind == "session" {
 			if err = tx.QueryRow(ctx, `SELECT deployment_id FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, caller.ID).Scan(&deployment); err != nil {
 				return err
 			}
@@ -284,8 +283,10 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 		} else if err = authorizeStart(ctx, tx, caller, req.EnvironmentID); err != nil {
 			return err
 		}
-		if err = lineage.authorize(ctx, tx, req.EnvironmentID, agentID); err != nil {
-			return err
+		if caller.Kind != "session" {
+			if err = lineage.authorize(ctx, tx, req.EnvironmentID, agentID); err != nil {
+				return err
+			}
 		}
 		if computerID != uuid.Nil() {
 			if err = computerAcceptsAdmission(ctx, tx, req.EnvironmentID, computerID, true); err != nil {
@@ -385,7 +386,7 @@ func StartReceipt(ctx context.Context, pool db.TxBeginner, p StartPlan) (*Admiss
 			return err
 		}
 		var err error
-		if caller.Kind == "session" && method == "spawn" {
+		if caller.Kind == "session" {
 			err = tx.QueryRow(ctx, `SELECT d.agent_id FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.deployment_id)=(s.environment_id,s.deployment_id) JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE s.environment_id=$1 AND s.id=$2 AND a.key=$3`, req.EnvironmentID, caller.ID, req.Agent).Scan(&agentID)
 		} else {
 			err = tx.QueryRow(ctx, `SELECT id FROM agents WHERE environment_id=$1 AND key=$2`, req.EnvironmentID, req.Agent).Scan(&agentID)
@@ -467,7 +468,7 @@ func sessionCreationReceipt(ctx context.Context, tx pgx.Tx, caller Caller, env, 
 }
 
 func authorizeStart(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID) error {
-	_, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+	_, err := callerPrincipal(ctx, tx, caller, env)
 	return accessError(err)
 }
 

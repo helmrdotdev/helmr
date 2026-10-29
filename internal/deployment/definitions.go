@@ -328,6 +328,12 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 		Input       []byte  `json:"input"`
 		Destination *string `json:"slack_channel_id"`
 	}
+	agentKeys := []string{}
+	for _, d := range output.Metadata.Definitions {
+		if d.Agent != nil {
+			agentKeys = append(agentKeys, d.DeclaredID)
+		}
+	}
 	inputs := make([]agentInput, 0, len(output.Metadata.Definitions))
 	triggers := []triggerInput{}
 	for _, d := range output.Metadata.Definitions {
@@ -339,7 +345,7 @@ func registerProgramDefinitions(ctx context.Context, tx pgx.Tx, env, deployment 
 				}
 				triggers = append(triggers, triggerInput{Agent: d.DeclaredID, Key: key, Cron: trigger.Cron, Timezone: trigger.Timezone, Input: trigger.Input, Destination: destination})
 			}
-			policy, err := mcppolicy.Normalize(d.Agent.RuntimeMcp, nil)
+			policy, err := mcppolicy.Resolve(d.Agent.RuntimeMcp, agentKeys)
 			if err != nil {
 				return err
 			}

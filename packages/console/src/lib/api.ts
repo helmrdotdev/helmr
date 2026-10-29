@@ -1,6 +1,27 @@
-import { locationDestination, withNext } from "./continuation";
+import { locationDestination, returnPath, withNext } from "./continuation";
 
-const ON_LOGIN_PATH = () => window.location.pathname === "/login";
+
+// A mounted page keeps its original identity. Only a full navigation may adopt
+// another account; the server checks this expectation against each request cookie.
+const pageIdentities = new Map<string, string>();
+
+// Only an explicit account-switch flow may release a page's identity; ordinary
+// expired forms keep theirs until a full reload.
+export function releasePageIdentity(): void {
+  pageIdentities.delete("helmr.account");
+  sessionStorage.removeItem("helmr.account");
+}
+
+export function expectedActorHeaders(operator = false): Record<string, string> {
+  const key = operator ? "helmr.operator" : "helmr.account";
+  const id = pageIdentities.get(key) ?? sessionStorage.getItem(key);
+  return id ? { "X-Helmr-Actor": id } : {};
+}
+
+function establishesAuthentication(path: string): boolean {
+  return /^\/api\/auth\/(github\/(start|finish)|passkey\/(options|verify)|email\/(start|[^/]+\/(resend|verify)))$/.test(path)
+    || /^\/admin\/api\/v1\/auth\/(options|verify)$/.test(path);
+}
 
 type RequestOptions = RequestInit & {
   redirectOnUnauthorized?: boolean;
@@ -8,12 +29,7 @@ type RequestOptions = RequestInit & {
 
 async function handleResponse<T>(
   response: Response,
-  { redirectOnUnauthorized }: { redirectOnUnauthorized: boolean },
 ): Promise<T> {
-  if (response.status === 401 && redirectOnUnauthorized && !ON_LOGIN_PATH()) {
-    window.location.href = withNext("/login", locationDestination(window.location));
-    throw new ApiError("unauthorized", "Authentication is required.", response.status);
-  }
   if (!response.ok) {
     const body = await response.json().catch((): Record<string, unknown> => ({}));
     const error = objectField(body, "error");
@@ -88,12 +104,73 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
   if (!headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(path, {
-    ...fetchInit,
-    credentials: "include",
-    headers,
-  });
-  return handleResponse<T>(response, { redirectOnUnauthorized });
+  const operator = path.startsWith("/admin/api/v1/");
+  const identityPath = operator ? "/admin/api/v1/me" : "/api/me";
+  const identityKey = operator ? "helmr.operator" : "helmr.account";
+  const loginPath = operator ? "/admin/login" : "/login";
+  const organization = operator ? "" : selectedOrganization();
+  if (organization) headers.set("X-Helmr-Organization", organization);
+  const account = pageIdentities.get(identityKey) ?? sessionStorage.getItem(identityKey) ?? "";
+  if (account && path !== identityPath && !establishesAuthentication(path)) headers.set("X-Helmr-Actor", account);
+  const send = () => fetch(path, { ...fetchInit, credentials: "include", headers });
+  let response = await send();
+  let result: T;
+  try { result = await handleResponse<T>(response); }
+  catch (error) {
+    if (error instanceof ApiError && error.code === "account_changed") {
+      sessionStorage.removeItem(identityKey);
+      if (!operator) setOrganization("");
+      window.location.reload();
+      throw error;
+    }
+    if (error instanceof ApiError && error.code === "recent_authentication_required") {
+      window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator } }));
+    }
+    const needsLogin = error instanceof ApiError && (error.code === "authentication_required" || (error.status === 401 && error.code === "unauthorized"));
+    if (!needsLogin) throw error;
+    // One current-cookie read distinguishes rotation from actual sign-out. It
+    // bypasses this helper, and cannot recursively retry or replay a mutation.
+    let currentID: string | undefined;
+    try {
+      const check = await fetch(identityPath, { credentials: "include", cache: "no-store" });
+      if (check.ok) { const current = await check.json() as { id?: string; user_id?: string }; currentID = operator ? current.id : current.user_id; }
+    } catch { /* Preserve the original failure when the network is unavailable. */ }
+    if (currentID) {
+      if (!account || currentID !== account || (!operator && selectedOrganization() !== organization)) {
+        throw new ApiError("account_changed", "Your account or organization changed. Refresh before retrying.", 409);
+      }
+      if ((fetchInit.method ?? "GET").toUpperCase() !== "GET") {
+        throw new ApiError("authentication_changed", "Your sign-in was refreshed. Retry this action.", 409);
+      }
+      response = await send();
+      result = await handleResponse<T>(response);
+    } else {
+      if (redirectOnUnauthorized && window.location.pathname !== loginPath) {
+        if (account) {
+          window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator, signIn: true } }));
+        } else window.location.href = withNext(loginPath, locationDestination(window.location));
+      }
+      throw error;
+    }
+  }
+  if (path === identityPath) {
+    const identity = result as { id?: string; user_id?: string };
+    const user = operator ? identity.id : identity.user_id;
+    if (user) {
+      const pinned = pageIdentities.get(identityKey);
+      if (pinned && pinned !== user) {
+        sessionStorage.removeItem(identityKey);
+        if (!operator) setOrganization("");
+        window.location.reload();
+        throw new ApiError("account_changed", "Your account changed. Reloading this page.", 409);
+      }
+      pageIdentities.set(identityKey, user);
+      if (!operator && account && account !== user) setOrganization("");
+      sessionStorage.setItem(identityKey, user);
+    }
+  }
+  if(response.ok&&fetchInit.method==="POST"&&(/^\/api\/auth\/(github\/finish|passkey\/verify|email\/[^/]+\/verify|logout)$/.test(path)||path==="/api/account/access/revoke-all"))localStorage.setItem("helmr.account-change",crypto.randomUUID());
+  return result;
 }
 
 export async function postJson<TReq, TRes>(
@@ -107,3 +184,13 @@ export async function postJson<TReq, TRes>(
 export async function del<T>(path: string, init: RequestOptions = {}): Promise<T> {
   return request<T>(path, { ...init, method: "DELETE" });
 }
+
+// Organization selection belongs to this tab. Changing it reloads the application
+// so requests, streams and query caches from the previous context are discarded.
+export function selectedOrganization():string {
+ return sessionStorage.getItem("helmr.organization")??"";
+}
+export function setOrganization(id:string):void {
+ if(id)sessionStorage.setItem("helmr.organization",id);else sessionStorage.removeItem("helmr.organization");
+}
+export function chooseOrganization(id:string,next="/"):void {setOrganization(id);window.location.assign(returnPath(next));}

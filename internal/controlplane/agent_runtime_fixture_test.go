@@ -51,9 +51,7 @@ func dispatchRuntimeTurn(t *testing.T, pool db.TxBeginner, e session.Execution) 
 		}
 		sequence = a.Sequence
 	}
-	dispatch, err := session.DispatchRuntimeTurn(t.Context(), auditpolicy.Policy{
-		RetentionSeconds: 3600,
-	}, pool, host, e, sequence, nil)
+	dispatch, err := session.DispatchRuntimeTurn(t.Context(), pool, host, e, sequence)
 	if err != nil {
 		return session.TurnDispatch{}, err
 	}

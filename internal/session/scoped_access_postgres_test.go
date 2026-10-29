@@ -3,6 +3,7 @@ package session_test
 import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"uuid"
 
@@ -55,7 +56,7 @@ func TestScopedSessionOriginIsolationAndCurrentAccess(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Peer');
  INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$1 FROM environments WHERE id=$2;
  INSERT INTO permission_group_members(org_id,group_id,member_id) SELECT gm.org_id,gm.group_id,other.id FROM permission_group_members gm JOIN org_members existing ON existing.id=gm.member_id JOIN org_members other ON other.org_id=gm.org_id AND other.user_id=$1 WHERE existing.user_id=$3`, pgx.QueryExecModeSimpleProtocol, other, f.env, f.user)
-	peer := session.Caller{Kind: "user", ID: other, CredentialID: uuid.NewV7()}
+	peer := session.UserCaller((sessiontest.Fixture{Pool: f.pool, User: other, Environment: f.env}).Principal(t))
 	if _, err = session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, peer, f.env, first.SessionID); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("peer read own-origin session", err)
 	}
@@ -126,25 +127,25 @@ func TestScopedRuntimeRelationsAndQueuedRevocation(t *testing.T) {
 	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("same-origin peer readable", err)
 	}
-	if _, _, err := session.RuntimeListComputers(ctx, f.pool, caller, computer.ListPage{Limit: 10}); !errors.Is(err, session.ErrDenied) {
+	if _, _, err := session.RuntimeListComputers(ctx, f.pool, caller, computer.ListPage{Limit: 10}); err != nil {
 		t.Fatal("scoped runtime listed Computers", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET requester_session_id=$1,causal_depth=1 WHERE id=$2`, f.session, peer.session)
 	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); err != nil {
 		t.Fatal("direct requested root denied", err)
 	}
-	// Revoking the origin prevents a fresh queued Turn and records its failure.
+	// Accepted input and runtime reads survive the original user losing access.
 	queued := peer.enqueue(t, "queued")
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
-	if _, err := dispatchTurnForTest(ctx, f.pool, peer.execution()); !errors.Is(err, session.ErrNotReady) {
+	if _, err := dispatchTurnForTest(ctx, f.pool, peer.execution()); err != nil {
 		t.Fatal("revoked Turn dispatched", err)
 	}
 	var failed bool
-	if err := f.pool.QueryRow(ctx, `SELECT status='failed' AND error_code='permission_revoked' AND processing_closed_at IS NOT NULL FROM turns WHERE id=$1`, queued.TurnID).Scan(&failed); err != nil || !failed {
+	if err := f.pool.QueryRow(ctx, `SELECT status='running' AND processing_closed_at IS NULL FROM turns WHERE id=$1`, queued.TurnID).Scan(&failed); err != nil || !failed {
 		t.Fatal("denied queue not settled", failed, err)
 	}
-	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
-		t.Fatal("revoked runtime read accepted", err)
+	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); err != nil {
+		t.Fatal("accepted runtime read denied", err)
 	}
 }
 
@@ -228,8 +229,8 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 		t.Fatalf("ungranted helper admitted: %v", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
-	if _, err := session.Spawn(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("revoked")); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("revoked origin spawned: %v", err)
+	if _, err := session.Spawn(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("revoked")); err != nil {
+		t.Fatalf("accepted runtime could not spawn: %v", err)
 	}
 }
 
@@ -261,5 +262,31 @@ func TestAPIKeySelectedAgentSessionVisibilityAndRevocation(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM role_grants WHERE api_key_id=$1`, key)
 	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, f.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("removed assignment still authorizes", err)
+	}
+}
+
+func TestAcceptedRuntimeCanContinueChildrenAfterAccessRevocation(t *testing.T) {
+	for _, method := range []string{"create", "spawn"} {
+		t.Run(method, func(t *testing.T) {
+			f := newAdmissionFixture(t)
+			caller := runtimeReadCaller(t, f)
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.user)
+			result, err := session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("after-logout"), method)
+			if err != nil {
+				t.Fatal("logout blocked the accepted runtime", err)
+			}
+			var inherited bool
+			if err = f.pool.QueryRow(t.Context(), `SELECT child.computer_id<>parent.computer_id AND child.origin_user_id=parent.origin_user_id FROM sessions child JOIN sessions parent ON parent.environment_id=child.environment_id WHERE child.environment_id=$1 AND child.id=$2 AND parent.id=$3`, f.env, result.SessionID, f.session).Scan(&inherited); err != nil || !inherited {
+				t.Fatal(inherited, err)
+			}
+			// New human requests do not inherit the runtime's continuing authority.
+			if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("new-human")); !errors.Is(err, session.ErrDenied) {
+				t.Fatal("logged-out human started new work", err)
+			}
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.user)
+			if _, err = session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("after-incident"), method); err != nil {
+				t.Fatal("account revocation blocked accepted runtime", err)
+			}
+		})
 	}
 }

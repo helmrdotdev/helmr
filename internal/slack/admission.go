@@ -24,6 +24,7 @@ var errAdmissionExpired = errors.New("slack gesture expired during admission")
 // messageAdmission is a disposable preflight snapshot, never an authorization
 // grant. The receipt, connection and human authority are rechecked at commit.
 type messageAdmission struct {
+	human                   auth.Principal
 	installation            uuid.UUID
 	route                   slackroute.StartRoute
 	message                 messageGesture
@@ -90,7 +91,8 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return reject("stale_gesture")
 	}
 	var code string
-	p.user, code, err = linkedHuman(ctx, tx, p.route.Target.TeamID, actor, env, target, occurred)
+	p.human, code, err = linkedHuman(ctx, tx, p.route.Target.TeamID, actor, p.installation, env, target, occurred)
+	p.user = p.human.UserID
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +209,7 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 		if err != nil || current == nil {
 			return err
 		}
-		if current.user != p.user || current.route.Target.ConnectionID != p.route.Target.ConnectionID || !current.route.Target.AuthorizedAt.Equal(p.route.Target.AuthorizedAt) {
+		if current.human.SlackLinkID != p.human.SlackLinkID || current.user != p.user || current.route.Target.ConnectionID != p.route.Target.ConnectionID || !current.route.Target.AuthorizedAt.Equal(p.route.Target.AuthorizedAt) {
 			return slackroute.ErrConversationChanged
 		}
 		// A concurrent mention may have created the same front during remote checks.
@@ -229,7 +231,7 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 				if slackroute.IsDirectMessage(p.message.Channel) {
 					destination = nil
 				}
-				caller := session.Caller{CredentialKind: "slack", Kind: "user", ID: p.user}
+				caller := slackCaller(p.human, uuid.Nil())
 				if destination != nil {
 					caller.SlackConnectionID = p.route.Target.ConnectionID
 				}
@@ -247,7 +249,7 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 				if err = resumeNativeStops(ctx, auditPolicy, core, id, p); err != nil {
 					return err
 				}
-				receipt, err = session.RouteSlackInput(ctx, auditPolicy, core, trust, session.Caller{CredentialKind: "slack", Kind: "user", ID: p.user, SlackThreadID: p.thread}, session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
+				receipt, err = session.RouteSlackInput(ctx, auditPolicy, core, trust, slackCaller(p.human, p.thread), session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {
 				return err
@@ -305,7 +307,7 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 			operation = "slack_route"
 			message = receipt.MessageID
 		}
-		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$8,turn_id=$7,message_id=$9 WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, receipt.TurnID, operation, message)
+		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$8,turn_id=$7,message_id=$9,source_link_id=CASE WHEN $8 IN ('start','enqueue') THEN $10::uuid END WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, receipt.TurnID, operation, message, p.human.SlackLinkID)
 		return err
 	})
 }
@@ -343,7 +345,7 @@ func applyThreadInput(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *messageAd
 	if !unexpired {
 		return true, rejectMessage(ctx, tx, id, "gesture_expired")
 	}
-	if err := session.AuthorizeSessionOperation(ctx, tx, session.Caller{CredentialKind: "slack", Kind: "user", ID: p.user, SlackThreadID: p.thread}, p.route.Target.EnvironmentID, p.session, auth.PermissionSessionsInterrupt); err != nil {
+	if err := session.AuthorizeSessionOperation(ctx, tx, slackCaller(p.human, p.thread), p.route.Target.EnvironmentID, p.session, auth.PermissionSessionsInterrupt); err != nil {
 		if errors.Is(err, session.ErrDenied) {
 			return true, rejectMessage(ctx, tx, id, "permission_denied")
 		}

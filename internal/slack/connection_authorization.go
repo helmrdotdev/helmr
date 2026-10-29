@@ -24,10 +24,11 @@ type connectionAuthorization struct {
 	app          *string
 }
 
-func (s *CredentialStore) connectionAuthorization(ctx context.Context, org, user, connection uuid.UUID) (connectionAuthorization, error) {
+func (s *CredentialStore) connectionAuthorization(ctx context.Context, prior auth.Principal, connection uuid.UUID) (connectionAuthorization, error) {
+	org := prior.OrgID
 	var value connectionAuthorization
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockConnectionManager(ctx, tx, org, user, connection, auth.PermissionAgentConnectionsAuthorize); err != nil {
+		if err := lockConnectionManager(ctx, tx, prior, connection, auth.PermissionAgentConnectionsAuthorize); err != nil {
 			return err
 		}
 		err := tx.QueryRow(ctx, `SELECT r.id,p.slack_installation_id,r.credential_revision,r.client_id,r.app_id FROM slack_connections p JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND e.org_id=$2 AND r.org_id=$2 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND r.credential_revision>0 AND r.transport=$3`, connection, org, s.mode).Scan(&value.registration, &value.installation, &value.revision, &value.clientID, &value.app)
@@ -39,8 +40,8 @@ func (s *CredentialStore) connectionAuthorization(ctx context.Context, org, user
 	return value, err
 }
 
-func (s *CredentialStore) ConnectionAuthorizationURL(ctx context.Context, org, user, connection uuid.UUID, state, redirect string) (string, error) {
-	value, err := s.connectionAuthorization(ctx, org, user, connection)
+func (s *CredentialStore) ConnectionAuthorizationURL(ctx context.Context, prior auth.Principal, connection uuid.UUID, state, redirect string) (string, error) {
+	value, err := s.connectionAuthorization(ctx, prior, connection)
 	if err != nil {
 		return "", err
 	}
@@ -50,11 +51,11 @@ func (s *CredentialStore) ConnectionAuthorizationURL(ctx context.Context, org, u
 
 // AuthorizeConnection performs remote exchange outside SQL locks, then verifies
 // the unchanged registration and connection slot before attaching the grant.
-func (s *CredentialStore) AuthorizeConnection(ctx context.Context, actor audit.Evidence, org, user, connection uuid.UUID, code, redirect string, transport http.RoundTripper) (uuid.UUID, error) {
+func (s *CredentialStore) AuthorizeConnection(ctx context.Context, prior auth.Principal, connection uuid.UUID, code, redirect string, transport http.RoundTripper) (uuid.UUID, error) {
 	if code == "" || len(code) > 4096 || redirect == "" {
 		return uuid.Nil(), ErrOAuthAuthorization
 	}
-	observed, err := s.connectionAuthorization(ctx, org, user, connection)
+	observed, err := s.connectionAuthorization(ctx, prior, connection)
 	if err != nil {
 		return uuid.Nil(), err
 	}
@@ -72,20 +73,22 @@ func (s *CredentialStore) AuthorizeConnection(ctx context.Context, actor audit.E
 			return uuid.Nil(), ErrOAuthAuthorization
 		}
 	}
-	return s.attachConnectionGrant(ctx, actor, org, user, connection, observed, result.grant)
+	return s.attachConnectionGrant(ctx, prior, connection, observed, result.grant)
 }
 
-func (s *CredentialStore) attachConnectionGrant(ctx context.Context, actor audit.Evidence, org, user, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant) (uuid.UUID, error) {
+func (s *CredentialStore) attachConnectionGrant(ctx context.Context, prior auth.Principal, connection uuid.UUID, observed connectionAuthorization, grant oauthGrant) (uuid.UUID, error) {
+	org := prior.OrgID
+	user := prior.UserID
 	installation := uuid.NewV7()
 	err := db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockConnectionManager(ctx, tx, org, user, connection, auth.PermissionAgentConnectionsAuthorize); err != nil {
+		if err := lockConnectionManager(ctx, tx, prior, connection, auth.PermissionAgentConnectionsAuthorize); err != nil {
 			return err
 		}
-		verified, proofErr := connectionAuditActor(ctx, tx, actor, org, user, connection, auth.PermissionAgentConnectionsAuthorize)
+		verified, proofErr := connectionAuditActor(ctx, tx, prior, connection, auth.PermissionAgentConnectionsAuthorize)
 		if proofErr != nil {
 			return proofErr
 		}
-		actor = verified
+		actor := verified
 		var revision int64
 		var app *string
 		err := tx.QueryRow(ctx, `SELECT credential_revision,app_id FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND retired_at IS NULL AND transport=$3 FOR NO KEY UPDATE`, observed.registration, org, s.mode).Scan(&revision, &app)

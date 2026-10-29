@@ -37,17 +37,15 @@ type Querier interface {
 	CompleteWorkerStartupRecovery(ctx context.Context, arg CompleteWorkerStartupRecoveryParams) (WorkerHost, error)
 	ConfirmWorkerHostProviderAbsent(ctx context.Context, workerHostID pgtype.UUID) (ConfirmWorkerHostProviderAbsentRow, error)
 	ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
-	ConsumeMagicLink(ctx context.Context, arg ConsumeMagicLinkParams) (int64, error)
 	CountOrganizations(ctx context.Context) (int64, error)
 	CountReadyWorkerPoolHosts(ctx context.Context, arg CountReadyWorkerPoolHostsParams) (int64, error)
-	CountRecentMagicLinks(ctx context.Context, arg CountRecentMagicLinksParams) (int64, error)
+	CreateAccount(ctx context.Context, arg CreateAccountParams) (User, error)
+	CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentityParams) (AuthIdentity, error)
 	CreateCommand(ctx context.Context, arg CreateCommandParams) (Command, error)
 	CreateDeviceCode(ctx context.Context, arg CreateDeviceCodeParams) (DeviceCode, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
 	CreateIdempotencyReceipt(ctx context.Context, arg CreateIdempotencyReceiptParams) (IdempotencyReceipt, error)
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error)
-	CreateLoginSession(ctx context.Context, arg CreateLoginSessionParams) (LoginSession, error)
-	CreateMagicLink(ctx context.Context, arg CreateMagicLinkParams) (MagicLink, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
 	CreatePendingWorkerPool(ctx context.Context, arg CreatePendingWorkerPoolParams) (WorkerPool, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
@@ -62,10 +60,12 @@ type Querier interface {
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
 	EnsureRegion(ctx context.Context, arg EnsureRegionParams) error
 	FenceWorkerHost(ctx context.Context, arg FenceWorkerHostParams) (FenceWorkerHostRow, error)
+	GetAccount(ctx context.Context, id pgtype.UUID) (User, error)
+	GetAccountByEmail(ctx context.Context, lower string) (User, error)
 	GetActiveInvitation(ctx context.Context, tokenHash []byte) (GetActiveInvitationRow, error)
 	GetActiveInvitationByID(ctx context.Context, id pgtype.UUID) (GetActiveInvitationByIDRow, error)
-	GetActiveMagicLinkByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveMagicLinkByTokenHashRow, error)
 	GetActiveOrgMemberByUser(ctx context.Context, arg GetActiveOrgMemberByUserParams) (OrgMember, error)
+	GetAuthIdentity(ctx context.Context, arg GetAuthIdentityParams) (AuthIdentity, error)
 	GetCapacityWorkerHost(ctx context.Context, workerHostID pgtype.UUID) (GetCapacityWorkerHostRow, error)
 	GetCasObject(ctx context.Context, arg GetCasObjectParams) (CasObject, error)
 	GetCommand(ctx context.Context, arg GetCommandParams) (Command, error)
@@ -77,7 +77,8 @@ type Querier interface {
 	GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	GetEnvironment(ctx context.Context, arg GetEnvironmentParams) (Environment, error)
 	GetEnvironmentBySlug(ctx context.Context, arg GetEnvironmentBySlugParams) (Environment, error)
-	GetLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetLoginSessionByTokenHashRow, error)
+	GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSession, error)
+	GetLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (LoginSession, error)
 	GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error)
 	GetPendingInvitationByEmail(ctx context.Context, arg GetPendingInvitationByEmailParams) (GetPendingInvitationByEmailRow, error)
 	GetProject(ctx context.Context, arg GetProjectParams) (Project, error)
@@ -98,7 +99,6 @@ type Querier interface {
 	GetWorkerHostStatusByResource(ctx context.Context, arg GetWorkerHostStatusByResourceParams) (GetWorkerHostStatusByResourceRow, error)
 	GetWorkerPool(ctx context.Context, arg GetWorkerPoolParams) (WorkerPool, error)
 	GetWorkerPoolByGroupName(ctx context.Context, arg GetWorkerPoolByGroupNameParams) (WorkerPool, error)
-	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) (int64, error)
 	InsertWorkerPoolCPUShape(ctx context.Context, arg InsertWorkerPoolCPUShapeParams) (int64, error)
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	ListAPIKeyRoleNames(ctx context.Context, arg ListAPIKeyRoleNamesParams) ([]string, error)
@@ -142,7 +142,6 @@ type Querier interface {
 	LockCommand(ctx context.Context, arg LockCommandParams) (Command, error)
 	LockDiskObject(ctx context.Context, arg LockDiskObjectParams) (DiskObject, error)
 	LockIdempotencyReceipt(ctx context.Context, arg LockIdempotencyReceiptParams) (LockIdempotencyReceiptRow, error)
-	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationForProjectDefaults(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error)
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockWorkerDrainCompletion(ctx context.Context, arg LockWorkerDrainCompletionParams) (LockWorkerDrainCompletionRow, error)
@@ -152,8 +151,6 @@ type Querier interface {
 	LockWorkerHostForActivation(ctx context.Context, arg LockWorkerHostForActivationParams) (WorkerHost, error)
 	LockWorkerPool(ctx context.Context, arg LockWorkerPoolParams) (WorkerPool, error)
 	LockWorkerPoolActiveHosts(ctx context.Context, arg LockWorkerPoolActiveHostsParams) ([]pgtype.UUID, error)
-	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
-	MarkMagicLinkSent(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkWorkerHostLost(ctx context.Context, arg MarkWorkerHostLostParams) (MarkWorkerHostLostRow, error)
 	PruneExpiredCommandResults(ctx context.Context, rowLimit int32) (int64, error)
 	PruneExpiredIdempotencyReceipts(ctx context.Context, rowLimit int32) (int64, error)
@@ -164,7 +161,7 @@ type Querier interface {
 	RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error)
 	RecordCasBlobReclamation(ctx context.Context, arg RecordCasBlobReclamationParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (RecordWorkerObservationRow, error)
-	RefreshLoginSession(ctx context.Context, arg RefreshLoginSessionParams) error
+	RefreshLoginSession(ctx context.Context, arg RefreshLoginSessionParams) (int64, error)
 	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
 	RemoveOrgMember(ctx context.Context, arg RemoveOrgMemberParams) (OrgMember, error)
 	RequestCommandCancellation(ctx context.Context, arg RequestCommandCancellationParams) (Command, error)
@@ -176,9 +173,8 @@ type Querier interface {
 	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]pgtype.UUID, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
 	RevokeLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
-	RevokeLoginSessionsForMembership(ctx context.Context, arg RevokeLoginSessionsForMembershipParams) error
+	RevokeLoginSessionsForMembership(ctx context.Context, memberID pgtype.UUID) error
 	RevokeLoginSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)
-	RevokeOpenMagicLinksForRecipient(ctx context.Context, arg RevokeOpenMagicLinksForRecipientParams) (int64, error)
 	RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error)
 	RotateActiveAPIKey(ctx context.Context, arg RotateActiveAPIKeyParams) (APIKey, error)
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)
@@ -195,9 +191,7 @@ type Querier interface {
 	UpdateProjectDetails(ctx context.Context, arg UpdateProjectDetailsParams) (Project, error)
 	UpdateRegionMetadata(ctx context.Context, arg UpdateRegionMetadataParams) (Region, error)
 	UpdateWorkerGroupDescription(ctx context.Context, arg UpdateWorkerGroupDescriptionParams) (WorkerGroup, error)
-	UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentityParams) (UpsertAuthIdentityRow, error)
 	UpsertCasObject(ctx context.Context, arg UpsertCasObjectParams) (CasObject, error)
-	UpsertMagicLinkAuthIdentity(ctx context.Context, arg UpsertMagicLinkAuthIdentityParams) (UpsertMagicLinkAuthIdentityRow, error)
 	UpsertVMPlatform(ctx context.Context, arg UpsertVMPlatformParams) (VMPlatform, error)
 }
 

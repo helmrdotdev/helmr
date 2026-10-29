@@ -39,7 +39,7 @@ func computerStorageFixture(t *testing.T) (sessiontest.Fixture, computer.Scope) 
 func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 	f, scope := computerStorageFixture(t)
 	start := func(key string) error {
-		_, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
+		_, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"{\"work\":1}"}]`)})
 		return err
 	}
 	assertStatus := func(want computer.Status) {

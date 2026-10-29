@@ -68,8 +68,8 @@ before starting Helmr. Root-only `/run/helmr/compose.json` contains the material
 container configuration; do not copy it into logs or support bundles.
 The timer performs ordinary audit-record retention; it does not back up data.
 
-Check `https://your-host/readyz`, sign in and finish first-organization setup using
-the setup token in `secret_arns.setup_token`. See the
+Check `https://your-host/readyz`, enroll a deployment operator through the protected
+local command, then sign in separately as the first organization owner. See the
 [authentication guide](../../../packages/web/src/content/docs/self-hosting/authentication.md).
 
 Then set `create_worker=true` and apply again. The default is one `c8i.large`
@@ -109,8 +109,8 @@ Worker-only updates retain the existing immutable Pool generations and
 [full-stop capacity procedure](../../../packages/web/src/content/docs/self-hosting/upgrades.md).
 Keep the current Control Plane inputs unchanged during that procedure. The
 Capacity token is initialized by the helper and its ARN is emitted as
-`capacity_token_secret_arn`. Configure `ADMIN_EMAILS` before the operator's first
-login if Pool retirement is needed.
+`capacity_token_secret_arn`. Enroll a separate deployment operator through the
+protected local command before Pool retirement is needed.
 
 ## Remove
 

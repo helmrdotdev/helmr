@@ -569,7 +569,7 @@ func projectManager(t *testing.T, pool *pgxpool.Pool, orgID uuid.UUID) ManagingM
 			dbtest.GrantMember(t, pool, orgID, userID, nil, permissions...)
 		}
 	}
-	return ManagingMember{Actor: audit.VerifiedLogin(userID, "fixture"), OrgID: orgID, UserID: userID, MemberID: memberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
+	return ManagingMember{Human: dbtest.BrowserPrincipal(t, pool, orgID, userID), Actor: audit.VerifiedLogin(userID, "fixture"), OrgID: orgID, UserID: userID, MemberID: memberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
 }
 
 func TestCreateProjectWaitsBeforeLockingMemberAndRechecksRemoval(t *testing.T) {

@@ -44,7 +44,7 @@ type AuditAuthentication = {
 type AuditMetadata = {
   id: string; org_id: string | null; project_id: string | null; environment_id: string | null;
   occurred_at: string; recorded_at: string; expires_at: string; retention_seconds: number;
-  actor_user_id: string | null; actor_api_key_id: string | null; actor_session_id: string | null;
+  actor_operator_id: string | null; actor_user_id: string | null; actor_api_key_id: string | null; actor_session_id: string | null;
   actor_identity: AuditIdentity | null; authentication: AuditAuthentication;
   deployment_id: string | null; session_id: string | null; turn_id: string | null;
   computer_id: string | null; schema_version: number;

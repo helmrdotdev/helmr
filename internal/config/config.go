@@ -50,7 +50,6 @@ type ControlPlane struct {
 	WorkerHostCredentialSigningKey  []byte
 	Bootstrap                       Bootstrap
 	CapacityToken                   string
-	SetupToken                      string
 	AuthKey                         []byte
 	EncryptionKey                   []byte
 	ComputerWrappingKey             []byte
@@ -58,8 +57,6 @@ type ControlPlane struct {
 	ComputerKMSKeyARN               string
 	ComputerFencingKey              []byte
 	AppOrigin                       string
-	MagicLinkDebugURLs              bool
-	AdminEmails                     []string
 	EmailProvider                   string
 	ResendAPIKey                    string
 	SMTPAddr                        string

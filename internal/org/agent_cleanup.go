@@ -151,7 +151,7 @@ func (c *AgentGrantCleanup) Apply(ctx context.Context, tx pgx.Tx) error {
 }
 
 func authorizeAgentCleanup(ctx context.Context, tx pgx.Tx, m *ManagingMember, env, agent uuid.UUID, permission auth.Permission) error {
-	current, err := access.Principal(ctx, tx, "user", m.UserID, env)
+	current, err := access.HumanInEnvironment(ctx, tx, m.Human, env)
 	if err != nil {
 		return err
 	}
@@ -159,7 +159,6 @@ func authorizeAgentCleanup(ctx context.Context, tx pgx.Tx, m *ManagingMember, en
 		return access.ErrDenied
 	}
 	scope := auth.Scope{OrgID: m.OrgID, ProjectID: current.ProjectID, EnvironmentID: env.String(), AgentID: agent.String()}
-	current.SessionID = m.Actor.Authentication.CredentialID
 	actor, err := audit.Authorized(current, permission, scope)
 	if err != nil {
 		return errors.Join(access.ErrDenied, err)

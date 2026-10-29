@@ -1,5 +1,5 @@
 // Package identity owns who a caller is: users and their auth identities,
-// login sessions, magic links, device codes and API keys. Operations take
+// login sessions, email codes, device codes and API keys. Operations take
 // domain inputs and a principal where authorization applies, own their
 // transactions and return the errors declared here; callers map them to their
 // transport. Sign-in with an invitation joins the organization through org on
@@ -18,10 +18,16 @@ import (
 )
 
 var (
+	ErrEnrollmentConflict       = errors.New("enrollment phase has changed")
+	ErrIdentityConflict         = errors.New("identity belongs to another credential lifetime")
+	ErrAccountProofRequired     = errors.New("ordinary account proof is required")
+	ErrRecentProofRequired      = auth.ErrRecentProofRequired
+	ErrRateLimited              = errors.New("too many authentication attempts")
 	ErrInvalidToken             = errors.New("token is invalid or expired")
 	ErrWrongAccount             = errors.New("verified email does not match invitation")
 	ErrAlreadyMember            = errors.New("identity is already a member of this organization")
 	ErrUserNotFound             = errors.New("user not found")
+	ErrOrganizationAccessDenied = errors.New("organization access is denied")
 	ErrOrganizationRequired     = errors.New("organization is required")
 	ErrInvalidDeviceCode        = errors.New("invalid device code")
 	ErrDeviceCodeNotFound       = errors.New("device code not found")
@@ -48,8 +54,6 @@ func invalidInput(format string, args ...any) error {
 }
 
 const (
-	defaultSessionTTL         = 30 * 24 * time.Hour
-	defaultMagicLinkTTL       = 15 * time.Minute
 	defaultDeviceCodeTTL      = 10 * time.Minute
 	defaultDevicePollInterval = 5 * time.Second
 )
@@ -57,67 +61,41 @@ const (
 // Lifetimes are how long issued credentials stay valid. A non-positive value
 // takes the default.
 type Lifetimes struct {
-	Session            time.Duration
-	MagicLink          time.Duration
 	DeviceCode         time.Duration
 	DevicePollInterval time.Duration
 }
 
-// Config holds the keys that hash login credentials, their lifetimes and the
-// verified email addresses whose users become administrators when first
-// created.
+// Config holds the keys that hash login credentials and device protocol lifetimes.
 type Config struct {
 	auditPolicy   auditpolicy.Policy
 	sessionKey    []byte
-	magicLinkKey  []byte
+	emailCodeKey  []byte
 	deviceCodeKey []byte
 	invitationKey []byte
 	lifetimes     Lifetimes
-	adminEmails   map[string]struct{}
 }
 
 // NewConfig derives the identity configuration from the authentication keys.
-func NewConfig(keys auth.Keys, lifetimes Lifetimes, adminEmails []string, policy auditpolicy.Policy) Config {
-	if lifetimes.Session <= 0 {
-		lifetimes.Session = defaultSessionTTL
-	}
-	if lifetimes.MagicLink <= 0 {
-		lifetimes.MagicLink = defaultMagicLinkTTL
-	}
+func NewConfig(keys auth.Keys, lifetimes Lifetimes, policy auditpolicy.Policy) Config {
 	if lifetimes.DeviceCode <= 0 {
 		lifetimes.DeviceCode = defaultDeviceCodeTTL
 	}
 	if lifetimes.DevicePollInterval <= 0 {
 		lifetimes.DevicePollInterval = defaultDevicePollInterval
 	}
-	admins := make(map[string]struct{}, len(adminEmails))
-	for _, address := range adminEmails {
-		if address = normalizeEmail(address); address != "" {
-			admins[address] = struct{}{}
-		}
-	}
 	return Config{
 		auditPolicy:   policy,
 		sessionKey:    keys.Session,
-		magicLinkKey:  keys.MagicLink,
+		emailCodeKey:  keys.EmailCode,
 		deviceCodeKey: keys.DeviceCode,
 		invitationKey: keys.Invitation,
 		lifetimes:     lifetimes,
-		adminEmails:   admins,
 	}
 }
 
 // Lifetimes returns the credential lifetimes with defaults applied.
 func (c Config) Lifetimes() Lifetimes {
 	return c.lifetimes
-}
-
-func (c Config) initialAdmin(email string, verified bool) bool {
-	if !verified {
-		return false
-	}
-	_, ok := c.adminEmails[normalizeEmail(email)]
-	return ok
 }
 
 func normalizeEmail(email string) string {

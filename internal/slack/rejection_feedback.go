@@ -115,14 +115,14 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			if err != nil {
 				return err
 			}
-			user, denied, err := linkedSessionHuman(ctx, tx, team, actor, target.Environment, target.Session, source)
+			human, denied, err := linkedSessionHuman(ctx, tx, team, actor, target.Installation, target.Environment, target.Session, source)
 			if err != nil {
 				return err
 			}
 			if denied != "" {
 				return nil
 			}
-			if err := session.AuthorizeSessionOperation(ctx, tx, session.Caller{Kind: "user", ID: user, SlackThreadID: target.Thread}, target.Environment, target.Session, auth.PermissionSessionsRead); err != nil {
+			if err := session.AuthorizeSessionOperation(ctx, tx, slackCaller(human, target.Thread), target.Environment, target.Session, auth.PermissionSessionsRead); err != nil {
 				if errors.Is(err, session.ErrDenied) {
 					return nil
 				}

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"net/http"
 	"strings"
@@ -12,7 +13,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/jackc/pgx/v5"
 )
 
 func (f statusFixture) historyDue(t *testing.T, post uuid.UUID) {

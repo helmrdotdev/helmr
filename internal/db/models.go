@@ -5,53 +5,8 @@
 package db
 
 import (
-	"database/sql/driver"
-	"fmt"
-
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-type MagicLinkPurpose string
-
-const (
-	MagicLinkPurposeLogin        MagicLinkPurpose = "login"
-	MagicLinkPurposeInviteAccept MagicLinkPurpose = "invite_accept"
-)
-
-func (e *MagicLinkPurpose) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = MagicLinkPurpose(s)
-	case string:
-		*e = MagicLinkPurpose(s)
-	default:
-		return fmt.Errorf("unsupported scan type for MagicLinkPurpose: %T", src)
-	}
-	return nil
-}
-
-type NullMagicLinkPurpose struct {
-	MagicLinkPurpose MagicLinkPurpose `json:"magic_link_purpose"`
-	Valid            bool             `json:"valid"` // Valid is true if MagicLinkPurpose is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullMagicLinkPurpose) Scan(value interface{}) error {
-	if value == nil {
-		ns.MagicLinkPurpose, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.MagicLinkPurpose.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullMagicLinkPurpose) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.MagicLinkPurpose), nil
-}
 
 type APIKey struct {
 	ID                pgtype.UUID        `json:"id"`
@@ -67,6 +22,17 @@ type APIKey struct {
 	LastUsedAt        pgtype.Timestamptz `json:"last_used_at"`
 	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type AuthIdentity struct {
+	ID                  pgtype.UUID        `json:"id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	Provider            string             `json:"provider"`
+	Subject             string             `json:"subject"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	LastAuthenticatedAt pgtype.Timestamptz `json:"last_authenticated_at"`
+	RevokedAt           pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type CasObject struct {
@@ -144,6 +110,12 @@ type DeviceCode struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
 	ConsumedAt          pgtype.Timestamptz `json:"consumed_at"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	IdentityID          pgtype.UUID        `json:"identity_id"`
+	PasskeyID           pgtype.UUID        `json:"passkey_id"`
+	AuthenticatedAt     pgtype.Timestamptz `json:"authenticated_at"`
+	BrowserSessionID    pgtype.UUID        `json:"browser_session_id"`
+	ReplacesSessionID   pgtype.UUID        `json:"replaces_session_id"`
 }
 
 type DiskObject struct {
@@ -222,42 +194,34 @@ type Invitation struct {
 }
 
 type LoginSession struct {
-	ID         pgtype.UUID        `json:"id"`
-	OrgID      pgtype.UUID        `json:"org_id"`
-	UserID     pgtype.UUID        `json:"user_id"`
-	TokenHash  []byte             `json:"token_hash"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	LastSeenAt pgtype.Timestamptz `json:"last_seen_at"`
-	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
-}
-
-type MagicLink struct {
-	ID               pgtype.UUID        `json:"id"`
-	Purpose          MagicLinkPurpose   `json:"purpose"`
-	TokenHash        []byte             `json:"token_hash"`
-	Email            string             `json:"email"`
-	OrgID            pgtype.UUID        `json:"org_id"`
-	InvitationID     pgtype.UUID        `json:"invitation_id"`
-	RedirectAfter    pgtype.Text        `json:"redirect_after"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	SentAt           pgtype.Timestamptz `json:"sent_at"`
-	DeliveryFailedAt pgtype.Timestamptz `json:"delivery_failed_at"`
-	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
-	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
-	ConsumedByUserID pgtype.UUID        `json:"consumed_by_user_id"`
-	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	TokenHash           []byte             `json:"token_hash"`
+	IssuedAt            pgtype.Timestamptz `json:"issued_at"`
+	LastHumanActivityAt pgtype.Timestamptz `json:"last_human_activity_at"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	RevokedAt           pgtype.Timestamptz `json:"revoked_at"`
+	OperatorID          pgtype.UUID        `json:"operator_id"`
+	Channel             string             `json:"channel"`
+	AccessEpoch         int64              `json:"access_epoch"`
+	MemberID            pgtype.UUID        `json:"member_id"`
+	IdentityID          pgtype.UUID        `json:"identity_id"`
+	PasskeyID           pgtype.UUID        `json:"passkey_id"`
+	AuthenticatedAt     pgtype.Timestamptz `json:"authenticated_at"`
 }
 
 type OrgMember struct {
-	ID          pgtype.UUID        `json:"id"`
-	OrgID       pgtype.UUID        `json:"org_id"`
-	UserID      pgtype.UUID        `json:"user_id"`
-	IsOwner     bool               `json:"is_owner"`
-	DisplayName pgtype.Text        `json:"display_name"`
-	RemovedAt   pgtype.Timestamptz `json:"removed_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	IsOwner             bool               `json:"is_owner"`
+	DisplayName         pgtype.Text        `json:"display_name"`
+	RemovedAt           pgtype.Timestamptz `json:"removed_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	SuspendedAt         pgtype.Timestamptz `json:"suspended_at"`
+	ReauthenticateAfter pgtype.Timestamptz `json:"reauthenticate_after"`
 }
 
 type Organization struct {
@@ -306,6 +270,17 @@ type SecretVersion struct {
 	Nonce      []byte             `json:"nonce"`
 	Ciphertext []byte             `json:"ciphertext"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type User struct {
+	ID                 pgtype.UUID        `json:"id"`
+	DisplayName        string             `json:"display_name"`
+	ProfileImageURL    pgtype.Text        `json:"profile_image_url"`
+	PrimaryEmail       pgtype.Text        `json:"primary_email"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	AccessEpoch        int64              `json:"access_epoch"`
+	WebauthnUserHandle []byte             `json:"webauthn_user_handle"`
 }
 
 type VMPlatform struct {

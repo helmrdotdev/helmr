@@ -2,11 +2,16 @@ package controlplane
 
 import (
 	"context"
+	"crypto/hmac"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -19,7 +24,13 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(err))
 		return
 	}
-	authorization, err := identity.StartDeviceCode(r.Context(), s.tx, s.identity)
+	var authorization identity.DeviceAuthorization
+	var err error
+	if r.URL.Path == "/api/auth/device/confirm/start" {
+		authorization, err = identity.StartDeviceConfirmation(r.Context(), s.tx, s.identity, principalFromContext(r.Context()))
+	} else {
+		authorization, err = identity.StartDeviceCode(r.Context(), s.tx, s.identity)
+	}
 	if err != nil {
 		s.writeIdentityError(w, r, err)
 		return
@@ -46,10 +57,30 @@ func (s *Server) deviceStatus(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.DeviceStatusResponse{
-		Status:    state.Status,
-		ExpiresAt: state.ExpiresAt.Format(time.RFC3339),
-	})
+	p := principalFromContext(r.Context())
+	if p.Channel != "browser" {
+		s.writeIdentityError(w, r, identity.ErrInvalidToken)
+		return
+	}
+	response := api.DeviceStatusResponse{Status: state.Status, Confirmation: state.Confirmation, ExpiresAt: state.ExpiresAt.Format(time.RFC3339)}
+	if state.Status == "pending" {
+		if p.MemberID == uuid.Nil() {
+			writeError(w, badRequest(codedError{code: "organization_required", message: "Choose an organization before approving this device."}))
+			return
+		}
+		view := &api.DeviceConsentView{OrganizationID: p.OrgID.String()}
+		if err := s.tx.QueryRow(r.Context(), `SELECT COALESCE(m.display_name,u.display_name,u.id::text),o.name FROM org_members m JOIN users u ON u.id=m.user_id JOIN organizations o ON o.id=m.org_id WHERE m.id=$1 AND m.org_id=$2 AND m.user_id=$3`, p.MemberID, p.OrgID, p.UserID).Scan(&view.AccountName, &view.OrganizationName); err != nil {
+			writeError(w, err)
+			return
+		}
+		view.Proof, err = s.deviceConsentProof(p, r.URL.Query().Get("user_code"), state.ExpiresAt.Unix())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		response.Consent = view
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) approveDeviceCode(w http.ResponseWriter, r *http.Request) {
@@ -70,7 +101,12 @@ func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide
 		writeError(w, fmt.Errorf("invalid device authorization JSON: %w", err))
 		return
 	}
-	consent := identity.DeviceConsent{UserID: request.UserID, OrgID: request.OrgID}
+	p := principalFromContext(r.Context())
+	if p.Channel != "browser" || !s.validDeviceConsent(p, request.UserCode, r.Header.Get("X-Helmr-Device-Consent")) {
+		s.writeIdentityError(w, r, identity.ErrDeviceApproverChanged)
+		return
+	}
+	consent := identity.DeviceConsent{OrgID: request.OrgID}
 	state, err := decide(r.Context(), s.tx, s.identity, principalFromContext(r.Context()), consent, request.UserCode)
 	if err != nil {
 		s.writeIdentityError(w, r, err)
@@ -95,7 +131,7 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, api.DeviceTokenResponse{
 			AccessToken:      rawSession,
 			TokenType:        "bearer",
-			ExpiresInSeconds: int64(s.identity.Lifetimes().Session.Seconds()),
+			ExpiresInSeconds: int64((30 * 24 * time.Hour).Seconds()),
 		})
 	case errors.Is(err, identity.ErrAuthorizationPending):
 		writeJSON(w, http.StatusAccepted, api.DeviceTokenResponse{Error: "authorization_pending"})
@@ -113,4 +149,28 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 // writeDeviceTokenError writes a device access token error response.
 func writeDeviceTokenError(w http.ResponseWriter, code string) {
 	writeJSON(w, http.StatusBadRequest, api.DeviceTokenResponse{Error: code})
+}
+
+// This page-held proof binds the displayed consent to its browser envelope. It is
+// not a login token; the code and live browser authority are checked separately.
+func (s *Server) deviceConsentProof(p auth.Principal, code string, expires int64) (string, error) {
+	expiry := strconv.FormatInt(expires, 10)
+	message := strings.Join([]string{"device-consent", p.SessionID.String(), p.UserID.String(), p.OrgID.String(), p.MemberID.String(), auth.NormalizeUserCode(code), expiry}, "\n")
+	mac, err := auth.MAC(s.authKeys.BrowserAuth, []byte(message))
+	if err != nil {
+		return "", err
+	}
+	return expiry + "." + base64.RawURLEncoding.EncodeToString(mac), nil
+}
+func (s *Server) validDeviceConsent(p auth.Principal, code, proof string) bool {
+	expiry, _, ok := strings.Cut(proof, ".")
+	if !ok {
+		return false
+	}
+	expires, err := strconv.ParseInt(expiry, 10, 64)
+	if err != nil || time.Now().Unix() >= expires {
+		return false
+	}
+	expected, err := s.deviceConsentProof(p, code, expires)
+	return err == nil && hmac.Equal([]byte(proof), []byte(expected))
 }

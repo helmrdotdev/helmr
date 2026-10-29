@@ -51,7 +51,7 @@ func projectRecord(r Record, scope readScope) (api.AuditEvent, error) {
 		return api.AuditEvent{}, err
 	}
 	captured := audit.Evidence{
-		Actor:             audit.Actor{UserID: pointerValue(r.ActorUserID), APIKeyID: pointerValue(r.ActorAPIKeyID), SessionID: pointerValue(r.ActorSessionID), WorkerHostID: pointerValue(r.ActorWorkerHostID), Component: pointerValue(r.ActorComponent)},
+		Actor:             audit.Actor{OperatorID: pointerValue(r.ActorOperatorID), UserID: pointerValue(r.ActorUserID), APIKeyID: pointerValue(r.ActorAPIKeyID), SessionID: pointerValue(r.ActorSessionID), WorkerHostID: pointerValue(r.ActorWorkerHostID), Component: pointerValue(r.ActorComponent)},
 		Authentication:    audit.Authentication{Result: r.AuthenticationResult, Origin: r.AuthenticationOrigin, Provider: pointerValue(r.IdentityProvider), CredentialKind: pointerValue(r.CredentialKind), CredentialID: pointerValue(r.CredentialID), CredentialVersion: pointerValue(r.CredentialVersion)},
 		RuntimeGeneration: pointerValue(r.RuntimeGeneration), ProcessEpoch: pointerValue(r.ProcessEpoch), Authorization: z,
 	}
@@ -61,12 +61,14 @@ func projectRecord(r Record, scope readScope) (api.AuditEvent, error) {
 	event := api.AuditEvent{
 		ID: r.ID, OrgID: r.OrgID, ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID, SchemaVersion: r.SchemaVersion,
 		OccurredAt: r.OccurredAt, RecordedAt: r.RecordedAt, RetentionSeconds: r.RetentionSeconds, ExpiresAt: r.ExpiresAt,
-		ActorUserID: r.ActorUserID, ActorAPIKeyID: r.ActorAPIKeyID, ActorSessionID: r.ActorSessionID,
+		ActorOperatorID: r.ActorOperatorID, ActorUserID: r.ActorUserID, ActorAPIKeyID: r.ActorAPIKeyID, ActorSessionID: r.ActorSessionID,
 		Authentication: api.AuditAuthentication{Result: r.AuthenticationResult, Origin: r.AuthenticationOrigin, Provider: r.IdentityProvider, CredentialKind: r.CredentialKind, CredentialID: r.CredentialID, CredentialVersion: r.CredentialVersion},
 		Action:         r.Action, Outcome: r.Outcome, TargetKind: r.TargetKind, TargetID: r.TargetID, TargetUserID: r.TargetUserID, SlackTeamID: r.SlackTeamID, SlackUserID: r.SlackUserID, TargetResolution: r.TargetResolution,
 		OperationID: r.OperationID, SessionID: r.SessionID, TurnID: r.TurnID, ComputerID: r.ComputerID, DeploymentID: r.DeploymentID, Channel: r.Channel,
 		Restricted: []api.AuditRestrictedSection{}}
 	switch {
+	case r.ActorOperatorID != nil:
+		event.ActorKind = api.AuditActorOperator
 	case r.ActorUserID != nil:
 		event.ActorKind = api.AuditActorUser
 	case r.ActorAPIKeyID != nil:
@@ -80,7 +82,7 @@ func projectRecord(r Record, scope readScope) (api.AuditEvent, error) {
 		event.ActorKind = api.AuditActorUnidentified
 	}
 	if r.ActorIdentity != nil {
-		if r.ActorUserID == nil || r.ActorIdentity.Source != "account" {
+		if !((r.ActorUserID != nil && r.ActorIdentity.Source == "account") || (r.ActorOperatorID != nil && r.ActorIdentity.Source == "operator")) {
 			return api.AuditEvent{}, errors.New("invalid audit human identity")
 		}
 		event.ActorIdentity = &api.AuditIdentity{Source: r.ActorIdentity.Source, DisplayName: r.ActorIdentity.DisplayName, Email: r.ActorIdentity.Email}
@@ -95,7 +97,7 @@ func projectRecord(r Record, scope readScope) (api.AuditEvent, error) {
 		event.Authentication.CredentialVersion = nil
 		restrict(&event, api.AuditRestrictedAuthentication)
 	}
-	if event.Authorization.PlatformAuthority && (event.Authentication.CredentialID != nil || event.Authentication.CredentialVersion != nil) {
+	if (r.ActorOperatorID != nil || event.Authorization.PlatformAuthority) && (event.Authentication.CredentialID != nil || event.Authentication.CredentialVersion != nil) {
 		event.Authentication.CredentialID = nil
 		event.Authentication.CredentialVersion = nil
 		restrict(&event, api.AuditRestrictedAuthentication)
@@ -128,6 +130,12 @@ func projectAuthorization(event *api.AuditEvent, z audit.Authorization, scope re
 	passedAdmin, failedAdmin := false, false
 	for _, check := range z.Checks {
 		switch c := check.(type) {
+		case *audit.OperatorCheck:
+			if event.ActorOperatorID != nil && c.OperatorID == *event.ActorOperatorID {
+				passedAdmin = passedAdmin || c.Result == "passed"
+				failedAdmin = failedAdmin || c.Result == "failed"
+			}
+			restrict(event, api.AuditRestrictedAuthorization)
 		case *audit.UserAttributeCheck:
 			if event.ActorUserID != nil && c.UserID == *event.ActorUserID {
 				passedAdmin = passedAdmin || c.Result == "passed"

@@ -1,3 +1,4 @@
+import { isAuthenticationPath, authenticationResponse } from "./fixtures/authentication";
 import { expect, test, type Page } from "@playwright/test";
 
 // Keyboard and focus behavior of the shared Console parts (popovers, menus,
@@ -37,7 +38,7 @@ async function fixture(page: Page, accessAdmin = false): Promise<Fixture> {
     const path = url.pathname;
     const method = route.request().method();
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: [...(accessAdmin ? ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"] : []), "projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke", "secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke", "deployments.read"] }], admin: false, organization_required: false, project_required: false, email_delivery: true };
+    if (isAuthenticationPath(path)) json = { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: [...(accessAdmin ? ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"] : []), "projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke", "secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke", "deployments.read"] }], admin: false, organization_required: false, project_required: false, email_delivery: true };
     else if (path === "/api/groups") json = { groups: [] };
     else if (path === "/api/role-grants") json = { grants: [] };
     else if (path === "/api/roles") json = { roles: [{id:"viewer",name:"Session viewer",permissions:["sessions.read"],assignment_levels:["environment"],api_key_assignable:true,revision:7}], catalog:[{id:"sessions.read",name:"View all sessions",resource_type:"sessions",scope_types: ["agent"], assignment_levels: ["environment"],api_key_assignable:true}] };
@@ -92,7 +93,7 @@ async function fixture(page: Page, accessAdmin = false): Promise<Fixture> {
     else if (path === `${base}/templates`) json = { deployment_id: deploymentID, templates: [{ template: "browser", resources: { milliCpu: 1000, memoryMiB: 512 } }] };
     else if (path.endsWith("/events")) json = { events: [] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(path, json) });
   });
   return state;
 }
@@ -344,10 +345,10 @@ test("a slow table shows its column headers over skeleton rows, then the rows", 
 });
 
 test("a mistyped sign-in email is the person's to fix: no technical details", async ({ page }) => {
-  await page.route("**/api/auth/magic-link/start", route => route.fulfill({ status: 400, json: { error: { code: "bad_request", message: "invalid email" } } }));
+  await page.route("**/api/auth/email/start", route => route.fulfill({ status: 400, json: { error: { code: "bad_request", message: "invalid email" } } }));
   await page.goto("/login");
   await page.getByLabel("Email").fill("someone@example.test");
-  await page.getByRole("button", { name: "Send sign-in link" }).click();
+  await page.getByRole("button", { name: "Send verification code" }).click();
   await expect(page.getByRole("alert")).toHaveText("Enter a valid email address.");
   await expect(page.getByText("Technical details")).toHaveCount(0);
 });
@@ -469,7 +470,7 @@ test("a failed first load says what failed, offers Retry and folds the server me
 
 test("a denied read without create permission is a neutral notice without Retry", async ({ page }) => {
   await fixture(page);
-  await page.route("**/api/me", route => route.fulfill({ json: { user_id: "local", org_id: "org", permissions: [], organization_required: false, project_required: false } }));
+  await page.route(url => isAuthenticationPath(url.pathname), route => route.fulfill({ json: authenticationResponse(new URL(route.request().url()).pathname, { user_id: "local", org_id: "org", permissions: [], organization_required: false, project_required: false }) }));
   await page.route(`**${base}/secrets`, route => route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }));
   await page.goto(`/settings/secrets?${scope}`);
   await expect(page.getByRole("status").filter({ hasText: "You do not have permission to view secrets." })).toBeVisible();
@@ -551,7 +552,7 @@ test("members and pending invitations share one table told apart by status", asy
   await expect(rows.nth(1)).toContainText("you");
   // Owners cannot be removed; ownership changes separately from ordinary roles.
   await page.getByRole("button", { name: "Actions for Local", exact: true }).click();
-  await expect(page.getByRole("menuitem")).toHaveText(["Grant access", "Change ownership"]);
+  await expect(page.getByRole("menuitem")).toHaveText(["View related work", "Grant access", "Change ownership", "Revoke sessions"]);
   await page.keyboard.press("Escape");
   await expect(rows.nth(1).getByRole("cell").nth(3)).toHaveText("Active");
   await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Member");
@@ -763,7 +764,7 @@ test("when no invitation email can be sent the form stays open with its addresse
 
 test("without email delivery, inviting members is unavailable and says why", async ({ page }) => {
   await fixture(page, true);
-  await page.route("**/api/me", route => route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"], admin: false, organization_required: false, project_required: false, email_delivery: false } }));
+  await page.route(url => isAuthenticationPath(url.pathname), route => route.fulfill({ json: authenticationResponse(new URL(route.request().url()).pathname, { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"], admin: false, organization_required: false, project_required: false, email_delivery: false }) }));
   await page.goto(`/settings/members?${scope}`);
   await expect(page.getByText("Email delivery is not set up in Helmr, so members can't be invited.", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Invite members", exact: true })).toBeDisabled();
@@ -794,10 +795,10 @@ for (const withRole of [false, true]) {
 
 test("secret read permission alone offers no creation action in an empty environment", async ({ page }) => {
   await fixture(page);
-  await page.route("**/api/me", route => route.fulfill({ json: {
+  await page.route(url => isAuthenticationPath(url.pathname), route => route.fulfill({ json: authenticationResponse(new URL(route.request().url()).pathname, {
     user_id: "local", org_id: "org", permissions: [], organization_required: false, project_required: false,
     permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["secrets.read"] }],
-  } }));
+  }) }));
   await page.route(`**${base}/secrets`, route => route.fulfill({ json: { secrets: [] } }));
   await page.goto(`/settings/secrets?${scope}`);
   await expect(page.getByText("No secrets in Production yet.", { exact: true })).toBeVisible();
@@ -806,10 +807,10 @@ test("secret read permission alone offers no creation action in an empty environ
 
 test("secret create permission remains usable when reading secrets is denied", async ({ page }) => {
   const state = await fixture(page);
-  await page.route("**/api/me", route => route.fulfill({ json: {
+  await page.route(url => isAuthenticationPath(url.pathname), route => route.fulfill({ json: authenticationResponse(new URL(route.request().url()).pathname, {
     user_id: "local", org_id: "org", permissions: [], organization_required: false, project_required: false,
     permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["secrets.create"] }],
-  } }));
+  }) }));
   await page.route(`**${base}/secrets`, route => route.request().method() === "GET"
     ? route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "denied" } } }) : route.fallback());
   await page.goto(`/settings/secrets?${scope}`);
@@ -821,4 +822,40 @@ test("secret create permission remains usable when reading secrets is denied", a
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(state.secretWrites).toEqual([{ path: `${base}/secrets`, body: { secret: "WRITE_ONLY", value: "synthetic-value", idempotency_key: expect.any(String) } }]);
+});
+
+test("member suspension, resumption and session revocation require confirmation",async({page})=>{
+ await fixture(page,true);
+ let status="active";const writes:string[]=[];
+ await page.route("**/api/members**",async route=>{
+ const path=new URL(route.request().url()).pathname;
+ if(path==="/api/members"&&route.request().method()==="GET")return route.fulfill({json:{members:[{user_id:"member-2",membership_id:"membership-2",display_name:"Second Member",is_owner:false,status,created_at:now,updated_at:now}]}});
+ if(route.request().method()==="POST"&&path.startsWith("/api/members/membership-2/")){writes.push(path);if(path.endsWith("/suspend"))status="suspended";if(path.endsWith("/resume"))status="active";return route.fulfill({status:204});}
+ return route.fallback();
+ });
+ await page.goto(`/settings/members?${scope}`);
+ for(const [label,action] of [["Suspend member","suspend"],["Resume member","resume"],["Revoke sessions","revoke-sessions"]]){
+ await page.getByRole("button",{name:"Actions for Second Member",exact:true}).click();await page.getByRole("menuitem",{name:label,exact:true}).click();
+ const dialog=page.getByRole("dialog",{name:label,exact:true});await expect(dialog).toBeVisible();expect(writes).not.toContain(`/api/members/membership-2/${action}`);
+ await dialog.getByRole("button",{name:"Confirm",exact:true}).click();await expect(dialog).toHaveCount(0);
+ expect(writes).toContain(`/api/members/membership-2/${action}`);
+ }
+});
+
+test("related work exposes an independent command stop action",async({page})=>{
+ const state=await fixture(page,true);
+ const user="00000000-0000-7000-8000-000000000777";
+ const command="00000000-0000-7000-8000-000000000778";
+ let cancelled=0;let filtered=false;
+ await page.route(`**${base}/sessions*`,route=>{filtered=new URL(route.request().url()).searchParams.get("related_user_id")===user;return route.fulfill({json:{sessions:[{id:"00000000-0000-7000-8000-000000000601",agent:"assistant",template:"browser",deployment_id:deploymentID,computer_id:null,status:"open",holds:[],created_at:now,related_via:"descendant"}]}});});
+ await page.route(`**${base}/related-commands*`,route=>route.fulfill({json:{can_cancel:true,commands:cancelled?[]:[{id:command,computer_id:"00000000-0000-7000-8000-000000000779",status:"running",created_at:now}]}}));
+ await page.route(`**${base}/commands/${command}/cancel`,route=>{cancelled++;return route.fulfill({status:204});});
+ await page.goto(`/sessions?user_id=${user}`);
+ await expect(page.getByText("Started by related work",{exact:true})).toBeVisible();
+ expect(filtered).toBe(true);
+ await page.getByRole("button",{name:"Stop command…",exact:true}).click();
+ expect(cancelled).toBe(0);
+ await page.getByRole("dialog",{name:"Stop command",exact:true}).getByRole("button",{name:"Stop command",exact:true}).click();
+ await expect(page.getByText("No active direct commands in this environment.",{exact:true})).toBeVisible();
+ expect(cancelled).toBe(1);expect(state.revocations).toBe(0);
 });

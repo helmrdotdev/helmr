@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
-	"github.com/jackc/pgx/v5"
 )
 
 func streamBody(t *testing.T, text string) []byte {
@@ -477,7 +477,7 @@ func TestSlackCrashedStreamReconciliationReleasesOnlyItsStatusClaim(t *testing.T
 			if err := f.Pool.QueryRow(t.Context(), `SELECT inflight_attempt_id IS NULL AND claimed_until IS NULL AND stream_status_repair AND status_confirmation='unknown' FROM slack_threads WHERE id=$1`, f.thread).Scan(&safe); err != nil || !safe {
 				t.Fatal("confirmed crash retained claim or lost repair", safe, err)
 			}
-			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "retire"}); err != nil {
+			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "retire"}); err != nil {
 				t.Fatal(err)
 			}
 			// The fixture supplies physical fencing and consumed lifecycle events; the

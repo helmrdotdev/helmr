@@ -128,8 +128,8 @@ func TestPermissionCLISelfInspectionDoesNotRequireManagementLookup(t *testing.T)
 		calls = append(calls, r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/api/me":
-			json.NewEncoder(w).Encode(map[string]any{"user_id": uuid.NewV7().String(), "membership_id": user})
+		case "/api/organization":
+			json.NewEncoder(w).Encode(map[string]any{"current_member": map[string]any{"user_id": uuid.NewV7().String(), "id": user}})
 		case "/api/projects/work":
 			w.Write([]byte(`{"project":"work"}`))
 		case "/api/members/" + user + "/permissions":

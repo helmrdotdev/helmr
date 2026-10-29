@@ -1,3 +1,4 @@
+import "./browser-test-env";
 import { expect, test } from "bun:test";
 import { linkNotice, linkRestoreScope, readScopeHint, scopeShareURL, withoutScopeHint } from "./scope-link";
 

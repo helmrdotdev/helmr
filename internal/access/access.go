@@ -107,15 +107,7 @@ func Current(ctx context.Context, q db.DBTX, prior auth.Principal, scope auth.Sc
 		if prior.Kind != auth.PrincipalKindSession || (scope.OrgID != uuid.Nil() && scope.OrgID != prior.OrgID) {
 			return auth.Principal{}, ErrDenied
 		}
-		p, err := OrganizationPrincipal(ctx, q, prior.OrgID, prior.UserID)
-		if err != nil {
-			return p, err
-		}
-		if prior.MemberID != uuid.Nil() && p.MemberID != prior.MemberID {
-			return auth.Principal{}, ErrDenied
-		}
-		p.SessionID = prior.SessionID
-		return p, nil
+		return CurrentHuman(ctx, q, prior)
 	}
 	env, err := uuid.Parse(scope.EnvironmentID)
 	if err != nil {
@@ -126,6 +118,21 @@ func Current(ctx context.Context, q db.DBTX, prior auth.Principal, scope auth.Sc
 		kind, id = "api_key", prior.APIKeyID
 	} else if prior.Kind != auth.PrincipalKindSession {
 		return auth.Principal{}, ErrDenied
+	}
+	if prior.Kind == auth.PrincipalKindSession {
+		p, err := CurrentHuman(ctx, q, prior)
+		if err != nil {
+			return p, err
+		}
+		var org, project uuid.UUID
+		if err = q.QueryRow(ctx, `SELECT org_id,project_id FROM environments WHERE id=$1`, env).Scan(&org, &project); err != nil {
+			return p, humanReadError(err)
+		}
+		if p.OrgID != org || (scope.OrgID != uuid.Nil() && scope.OrgID != org) || scope.ProjectID != project.String() {
+			return p, ErrDenied
+		}
+		p.ProjectID, p.EnvironmentID = project.String(), env.String()
+		return p, nil
 	}
 	p, err := Principal(ctx, q, kind, id, env)
 	if err != nil {

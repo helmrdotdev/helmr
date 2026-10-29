@@ -14,6 +14,7 @@ import (
 )
 
 type sessionOrigin struct {
+	Human                 auth.Principal
 	User, Key, Activation *uuid.UUID
 	Connection            *uuid.UUID
 	Agent                 uuid.UUID
@@ -56,7 +57,7 @@ func (o sessionOrigin) id() uuid.UUID {
 	return uuid.Nil()
 }
 func loadSessionOrigin(ctx context.Context, q db.DBTX, env, id uuid.UUID) (sessionOrigin, error) {
-	var o sessionOrigin
+	o := sessionOrigin{}
 	err := q.QueryRow(ctx, `SELECT origin_user_id,origin_api_key_id,origin_activation_id,agent_id,origin_slack_connection_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&o.User, &o.Key, &o.Activation, &o.Agent, &o.Connection)
 	return o, hideMissing(err)
 }
@@ -92,7 +93,7 @@ func (o sessionOrigin) authorize(ctx context.Context, q db.DBTX, env, agent uuid
 	if o.mode() != "scoped" {
 		return ErrDenied
 	}
-	return requirePermission(ctx, q, o.kind(), o.id(), env, agent, permission)
+	return o.requirePermission(ctx, q, env, agent, permission)
 }
 func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req StartRequest, agent uuid.UUID) (sessionOrigin, error) {
 	var o sessionOrigin
@@ -102,14 +103,13 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 		if err != nil {
 			return o, err
 		}
-		if err = o.authorize(ctx, tx, req.EnvironmentID, o.Agent); err != nil {
-			return o, err
-		}
+		return o, authorizeRuntimeOrigin(ctx, tx, req.EnvironmentID, caller.ID)
 	} else {
 		o = sessionOrigin{Agent: agent}
 		if caller.Kind == "user" {
 			id := caller.ID
 			o.User = &id
+			o.Human = caller.Human
 		} else if caller.Kind == "api_key" {
 			id := caller.ID
 			o.Key = &id
@@ -118,7 +118,7 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 		}
 	}
 	if caller.Kind != "session" && caller.SlackConnectionID != uuid.Nil() {
-		if err := requirePermission(ctx, tx, caller.Kind, caller.ID, req.EnvironmentID, agent, auth.PermissionAgentsUse); err != nil {
+		if err := requireCallerPermission(ctx, tx, caller, req.EnvironmentID, agent, auth.PermissionAgentsUse); err != nil {
 			return o, err
 		}
 		connection := caller.SlackConnectionID
@@ -131,13 +131,13 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 		if o.mode() != "scoped" {
 			return o, ErrDenied
 		}
-		if err := requirePermission(ctx, tx, o.kind(), o.id(), req.EnvironmentID, uuid.Nil(), auth.PermissionComputersExecute); err != nil {
+		if err := o.requirePermission(ctx, tx, req.EnvironmentID, uuid.Nil(), auth.PermissionComputersExecute); err != nil {
 			return o, err
 		}
 	}
 	if o.mode() == "scoped" {
 		if req.SessionKey != nil || req.SlackChannelID != nil {
-			if err := requirePermission(ctx, tx, caller.Kind, caller.ID, req.EnvironmentID, agent, auth.PermissionSessionsCreateKeyed); err != nil {
+			if err := requireCallerPermission(ctx, tx, caller, req.EnvironmentID, agent, auth.PermissionSessionsCreateKeyed); err != nil {
 				return o, err
 			}
 		}
@@ -149,7 +149,7 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 }
 
 // authorizeTarget is used before target reads, mutations and receipt returns.
-// Runtime relations are additional constraints, never a replacement for origin.
+// Runtime operations are bounded by the published policy and workload lineage.
 func authorizeTarget(ctx context.Context, tx pgx.Tx, caller Caller, env, target uuid.UUID, operation auth.Permission) error {
 	if err := authorizeTargetAuthority(ctx, tx, caller, env, target, operation); err != nil {
 		return err
@@ -172,7 +172,7 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 		return err
 	}
 	if caller.Kind != "session" {
-		p, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+		p, err := callerPrincipal(ctx, tx, caller, env)
 		if err != nil {
 			return accessError(err)
 		}
@@ -181,9 +181,6 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 		}
 		scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, AgentID: o.Agent.String()}
 		if p.HasPermission(operation, scope) {
-			if auth.SessionExecutionOperation(operation) {
-				return o.authorize(ctx, tx, env, o.Agent)
-			}
 			return nil
 		}
 		if ownSessionOperation(operation) && o.mode() == "shared" && caller.SlackThreadID != uuid.Nil() && p.HasPermission(auth.PermissionAgentsUse, scope) {
@@ -193,7 +190,7 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 				return err
 			}
 			if related {
-				return o.authorize(ctx, tx, env, o.Agent)
+				return nil
 			}
 		}
 		if !ownSessionOperation(operation) || o.mode() != "scoped" || o.kind() != caller.Kind || o.id() != caller.ID {
@@ -205,27 +202,7 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 		}
 		return nil
 	}
-	source, err := loadSessionOrigin(ctx, tx, env, caller.ID)
-	if err != nil {
-		return err
-	}
-	if err = source.authorize(ctx, tx, env, source.Agent); err != nil {
-		return err
-	}
-	if source.mode() == "environment" {
-		if o.mode() != "environment" {
-			return ErrDenied
-		}
-		return nil
-	}
-	if source.mode() == "shared" {
-		if o.mode() != "shared" || *source.Connection != *o.Connection {
-			return ErrDenied
-		}
-	} else if o.mode() != "scoped" || o.kind() != source.kind() || o.id() != source.id() {
-		return ErrDenied
-	}
-	if err = source.authorize(ctx, tx, env, o.Agent); err != nil {
+	if err := authorizeRuntimeOrigin(ctx, tx, env, caller.ID); err != nil {
 		return err
 	}
 	var related bool
@@ -242,17 +219,18 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 	return nil
 }
 
-// The Session origin governs future runtime admission. Already admitted native
-// effects and cleanup observations do not acquire new authority through this check.
+// Runtime authority belongs to the pinned deployment and the work lifecycle.
+// Requester and authentication-channel provenance never grants or revokes it.
 func authorizeRuntimeOrigin(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) error {
-	o, err := loadSessionOrigin(ctx, tx, env, id)
-	if err != nil {
+	var agent uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT agent_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&agent); err != nil {
+		return hideMissing(err)
+	}
+	if err := requireAgentAvailable(ctx, tx, env, agent); err != nil {
 		return err
 	}
-	if err := requireAgentAvailable(ctx, tx, env, o.Agent); err != nil {
-		return err
-	}
-	return o.authorize(ctx, tx, env, o.Agent)
+	_, err := runtimeMCPMaximum(ctx, tx, Caller{ID: id, Execution: Execution{EnvironmentID: env}})
+	return err
 }
 
 type sessionReadScope struct {
@@ -273,7 +251,7 @@ func readScopeFor(ctx context.Context, q db.DBTX, caller Caller, env uuid.UUID) 
 	} else if caller.Kind == "api_key" {
 		filter.Key = &caller.ID
 	}
-	p, err := access.Principal(ctx, q, caller.Kind, caller.ID, env)
+	p, err := callerPrincipal(ctx, q, caller, env)
 	if err != nil {
 		return filter, accessError(err)
 	}
@@ -294,55 +272,6 @@ func ownSessionOperation(operation auth.Permission) bool {
 		return true
 	}
 	return false
-}
-
-// Recheck the immutable Session origin and the caller that supplied deferred input.
-func authorizeDeferredInput(ctx context.Context, tx pgx.Tx, env, session uuid.UUID, caller Caller, input uuid.UUID, message bool, check inputAuthorityCheck) error {
-	if caller.Kind == "user" {
-		var request uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT id,thread_id FROM slack_requests WHERE environment_id=$1 AND session_id=$2 AND user_id=$3 AND status='accepted' AND (($5 AND message_id=$4) OR (NOT $5 AND turn_id=$4 AND message_id IS NULL)) AND thread_id IS NOT NULL`, env, session, caller.ID, input, message).Scan(&request, &caller.SlackThreadID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		if err == nil {
-			if request != check.request {
-				return ErrNotReady
-			}
-			if !check.allowed {
-				return ErrDenied
-			}
-			if err := authorizeSlackInputActor(ctx, tx, request); err != nil {
-				return err
-			}
-		}
-	}
-	if err := authorizeRuntimeOrigin(ctx, tx, env, session); err != nil {
-		return err
-	}
-	if caller.Kind == "schedule" {
-		return nil
-	}
-	return authorizeTarget(ctx, tx, caller, env, session, auth.PermissionSessionsSend)
-}
-
-// RuntimeAgentScope is used only after LockRuntimeCaller, in the same transaction.
-// It preserves scoped lineage even when its principal later acquires broader access.
-func RuntimeAgentScope(ctx context.Context, tx pgx.Tx, caller Caller) (bool, []uuid.UUID, error) {
-	o, err := loadSessionOrigin(ctx, tx, caller.Execution.EnvironmentID, caller.ID)
-	if err != nil {
-		return false, nil, err
-	}
-	if err = o.authorize(ctx, tx, caller.Execution.EnvironmentID, o.Agent); err != nil {
-		return false, nil, err
-	}
-	if o.mode() == "environment" {
-		return true, []uuid.UUID{}, nil
-	}
-	if o.mode() == "shared" {
-		return false, []uuid.UUID{o.Agent}, nil
-	}
-	scope, err := readScopeFor(ctx, tx, Caller{Kind: o.kind(), ID: o.id()}, caller.Execution.EnvironmentID)
-	return scope.AllAgents, scope.Agents, err
 }
 
 func failQueuedPermission(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session uuid.UUID) error {
@@ -374,7 +303,7 @@ func externalSessionPermissions(ctx context.Context, tx pgx.Tx, caller Caller, e
 	if err != nil {
 		return nil, err
 	}
-	p, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+	p, err := callerPrincipal(ctx, tx, caller, env)
 	if err != nil {
 		return nil, accessError(err)
 	}
@@ -396,4 +325,12 @@ func externalSessionPermissions(ctx context.Context, tx pgx.Tx, caller Caller, e
 // presentation and local controls as to core Session actions.
 func AuthorizeSessionOperation(ctx context.Context, tx pgx.Tx, caller Caller, env, target uuid.UUID, operation auth.Permission) error {
 	return authorizeTarget(ctx, tx, caller, env, target, operation)
+}
+
+func (o sessionOrigin) requirePermission(ctx context.Context, q db.DBTX, env, agent uuid.UUID, permission auth.Permission) error {
+	if o.User != nil {
+		caller := UserCaller(o.Human)
+		return requireCallerPermission(ctx, q, caller, env, agent, permission)
+	}
+	return requirePermission(ctx, q, o.kind(), o.id(), env, agent, permission)
 }

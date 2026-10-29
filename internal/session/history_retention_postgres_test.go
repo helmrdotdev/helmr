@@ -230,7 +230,7 @@ func TestHistoryRetentionCurrentProjectPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	memberID := dbtest.GrantMember(t, f.pool, orgID, f.user, nil, "projects.update_retention")
-	manager := org.ManagingMember{OrgID: orgID, UserID: f.user, MemberID: memberID, Actor: audit.VerifiedLogin(f.user, "fixture"), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
+	manager := org.ManagingMember{Human: dbtest.BrowserPrincipal(t, f.pool, orgID, f.user), OrgID: orgID, UserID: f.user, MemberID: memberID, Actor: audit.VerifiedLogin(f.user, "fixture"), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
 	for _, seconds := range []*int64{nil, new(int64(3 * 86400)), nil, new(int64(86400))} {
 		if err := org.UpdateProjectHistoryRetention(t.Context(), f.pool, manager, projectID, seconds); err != nil {
 			t.Fatal(err)

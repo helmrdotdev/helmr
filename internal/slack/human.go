@@ -14,88 +14,104 @@ import (
 
 // linkedHuman retains the live link and membership locks through admission.
 // Action owners separately check the exact Session and operation.
-func linkedHuman(ctx context.Context, tx pgx.Tx, team, actor string, environment, agent uuid.UUID, source time.Time) (uuid.UUID, string, error) {
-	var user uuid.UUID
+func linkedHuman(ctx context.Context, tx pgx.Tx, team, actor string, installation, environment, agent uuid.UUID, source time.Time) (auth.Principal, string, error) {
+	var link uuid.UUID
 	var linked time.Time
-	err := tx.QueryRow(ctx, `SELECT user_id,linked_at FROM slack_user_links WHERE team_id=$1 AND slack_user_id=$2 FOR SHARE`, team, actor).Scan(&user, &linked)
+	err := tx.QueryRow(ctx, `SELECT id,linked_at FROM slack_user_links WHERE installation_id=$1 AND team_id=$2 AND slack_user_id=$3 AND revoked_at IS NULL`, installation, team, actor).Scan(&link, &linked)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil(), "identity_unlinked", nil
+		return auth.Principal{}, "identity_unlinked", nil
 	}
 	if err != nil {
-		return uuid.Nil(), "", err
+		return auth.Principal{}, "", err
 	}
 	if source.Before(linked) {
-		return uuid.Nil(), "identity_unlinked", nil
+		return auth.Principal{}, "identity_unlinked", nil
 	}
-	_, err = access.Principal(ctx, tx, "user", user, environment)
+	p, err := access.SlackPrincipal(ctx, tx, link)
+	if err == nil {
+		p, err = access.HumanInEnvironment(ctx, tx, p, environment)
+	}
 	if errors.Is(err, access.ErrDenied) {
-		return uuid.Nil(), "permission_denied", nil
+		return p, "permission_denied", nil
 	}
-	if err != nil {
-		return uuid.Nil(), "", err
-	}
-	return user, "", nil
+	return p, "", err
 }
-
-func linkedSessionHuman(ctx context.Context, tx pgx.Tx, team, actor string, environment, target uuid.UUID, source time.Time) (uuid.UUID, string, error) {
+func linkedSessionHuman(ctx context.Context, tx pgx.Tx, team, actor string, installation, environment, target uuid.UUID, source time.Time) (auth.Principal, string, error) {
 	var agent uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT agent_id FROM sessions WHERE environment_id=$1 AND id=$2`, environment, target).Scan(&agent); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return uuid.Nil(), "permission_denied", nil
+			return auth.Principal{}, "permission_denied", nil
 		}
-		return uuid.Nil(), "", err
+		return auth.Principal{}, "", err
 	}
-	return linkedHuman(ctx, tx, team, actor, environment, agent, source)
+	return linkedHuman(ctx, tx, team, actor, installation, environment, agent, source)
+}
+func slackCaller(p auth.Principal, thread uuid.UUID) session.Caller {
+	c := session.UserCaller(p)
+	c.SlackThreadID = thread
+	return c
 }
 
-// Direct output remains bound to its original linked recipient and current use
+// Direct output requires its original recipient, explicit consent on a replacement
+// link to resume prior delivery, and current use
 // permission. A route that remains connected does not preserve a revoked user's
 // access. Public channel output follows the configured shared publication route.
-func directRecipientAuthorized(ctx context.Context, tx pgx.Tx, thread uuid.UUID) (bool, error) {
-	var direct, bound bool
-	var user *uuid.UUID
-	var env, agent uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT left(t.slack_channel_id,1)='D',l.user_id,s.environment_id,s.agent_id,
- s.origin_slack_connection_id IS NULL AND COALESCE(s.origin_user_id=l.user_id,false)
+func directRecipient(ctx context.Context, tx pgx.Tx, thread uuid.UUID) (bool, auth.Principal, uuid.UUID, error) {
+	var direct bool
+	var link *uuid.UUID
+	var env uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT left(t.slack_channel_id,1)='D',l.id,s.environment_id
  FROM slack_threads t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id)
- LEFT JOIN slack_user_links l ON l.team_id=t.recipient_team_id AND l.slack_user_id=t.recipient_user_id
- WHERE t.id=$1`, thread).Scan(&direct, &user, &env, &agent, &bound)
+ LEFT JOIN slack_user_links l ON l.user_id=s.origin_user_id AND l.org_id=t.org_id
+ AND l.installation_id=(SELECT installation_id FROM slack_channel_bindings WHERE id=t.slack_channel_binding_id)
+ AND l.revoked_at IS NULL AND (l.id=t.initial_recipient_link_id OR l.resume_previous_delivery)
+ AND l.team_id=t.recipient_team_id AND l.slack_user_id=t.recipient_user_id
+ WHERE t.id=$1 AND (s.origin_slack_connection_id IS NULL OR left(t.slack_channel_id,1)<>'D')`, thread).Scan(&direct, &link, &env)
 	if err != nil {
-		return false, err
+		return direct, auth.Principal{}, env, err
 	}
 	if !direct {
-		return true, nil
+		return false, auth.Principal{}, env, nil
 	}
-	if user == nil || !bound {
-		return false, nil
+	if link == nil {
+		return true, auth.Principal{}, env, access.ErrDenied
 	}
-	err = access.Check(ctx, tx, "user", *user, env, agent, auth.PermissionAgentsUse)
+	p, err := access.SlackPrincipal(ctx, tx, *link)
+	if err == nil {
+		p, err = access.HumanInEnvironment(ctx, tx, p, env)
+	}
+	return true, p, env, err
+}
+func directRecipientAuthorized(ctx context.Context, tx pgx.Tx, thread uuid.UUID) (bool, error) {
+	direct, p, env, err := directRecipient(ctx, tx, thread)
 	if errors.Is(err, access.ErrDenied) {
 		return false, nil
 	}
-	return err == nil, err
-}
-
-// Child activity is separate Agent metadata even when attached to a parent's
-// work message. Channel publication follows its shared route; DMs require the
-// recipient's current access to every represented Session.
-func directRecipientCanReadSession(ctx context.Context, tx pgx.Tx, thread, target uuid.UUID) (bool, error) {
-	var direct bool
-	var user *uuid.UUID
-	var env uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT left(t.slack_channel_id,1)='D',l.user_id,t.environment_id
- FROM slack_threads t LEFT JOIN slack_user_links l ON l.team_id=t.recipient_team_id AND l.slack_user_id=t.recipient_user_id
- WHERE t.id=$1`, thread).Scan(&direct, &user, &env)
 	if err != nil {
 		return false, err
 	}
 	if !direct {
 		return true, nil
 	}
-	if user == nil {
+	var agent uuid.UUID
+	if err = tx.QueryRow(ctx, `SELECT s.agent_id FROM slack_threads t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id) WHERE t.id=$1`, thread).Scan(&agent); err != nil {
+		return false, err
+	}
+	scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: env.String(), AgentID: agent.String()}
+	return p.HasPermission(auth.PermissionAgentsUse, scope), nil
+}
+func directRecipientCanReadSession(ctx context.Context, tx pgx.Tx, thread, target uuid.UUID) (bool, error) {
+	direct, p, env, err := directRecipient(ctx, tx, thread)
+	if errors.Is(err, access.ErrDenied) {
 		return false, nil
 	}
-	err = session.AuthorizeSessionOperation(ctx, tx, session.Caller{Kind: "user", ID: *user}, env, target, auth.PermissionSessionsRead)
+	if err != nil {
+		return false, err
+	}
+	if !direct {
+		return true, nil
+	}
+	err = session.AuthorizeSessionOperation(ctx, tx, session.UserCaller(p), env, target, auth.PermissionSessionsRead)
 	if errors.Is(err, session.ErrDenied) {
 		return false, nil
 	}

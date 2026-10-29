@@ -79,7 +79,7 @@ There are two ways to create work:
 | Tool | Creates | Deployment |
 | --- | --- | --- |
 | `spawn` | A child Session owned by the caller. | The caller's pinned Deployment. |
-| `start` | An independent root Session. | The Environment's current Deployment. |
+| `start` | An independent root Session. | The caller's pinned Deployment. |
 
 Both take `agent`, `input` (text parts) and a required `idempotencyKey`, plus
 optional `computerId` and `closeAfterIdleMs`. They return

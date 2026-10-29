@@ -66,7 +66,7 @@ func TestSlackStartCreatesOpeningAndPreservesReceiptAndKeyedRoute(t *testing.T) 
 		t.Fatal(err)
 	}
 	var exact bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT t.thread_ts IS NULL AND p.role='opening' AND p.turn_id=$2 AND p.session_id=t.front_session_id AND p.source_thread_id IS NULL AND p.post_key=t.opening_post_key FROM slack_threads t JOIN slack_posts p ON p.thread_id=t.id WHERE t.front_session_id=$1`, first.SessionID, first.TurnID).Scan(&exact); err != nil || !exact {
+	if err = f.pool.QueryRow(t.Context(), `SELECT t.thread_ts IS NULL AND p.role='opening' AND p.turn_id=$2 AND p.session_id=t.front_session_id AND p.post_key=t.opening_post_key FROM slack_threads t JOIN slack_posts p ON p.thread_id=t.id WHERE t.front_session_id=$1`, first.SessionID, first.TurnID).Scan(&exact); err != nil || !exact {
 		t.Fatal(exact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
@@ -166,17 +166,12 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 		t.Fatalf("child owned a Slack route: %v", err)
 	}
 	req.IdempotencyKey = "independent"
-	preflight := startPreflightFunc(func(ctx context.Context, value slackroute.StartContext) (json.RawMessage, error) {
-		if value.Route.Source == nil || value.Route.Source.SessionID != f.session {
-			t.Fatal("missing source provenance")
-		}
-		return acceptedStartPreflight(ctx, value)
-	})
+	preflight := startPreflightFunc(acceptedStartPreflight)
 	independent, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, caller, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = f.pool.QueryRow(t.Context(), `SELECT s.parent_session_id IS NULL AND s.root_session_id=s.id AND s.requester_session_id=$2 AND t.front_session_id=s.id AND p.source_thread_id=source.id FROM sessions s JOIN slack_threads t ON t.front_session_id=s.id JOIN slack_posts p ON p.thread_id=t.id AND p.role='opening' JOIN slack_threads source ON source.front_session_id=$2 WHERE s.id=$1`, independent.SessionID, f.session).Scan(&exact); err != nil || !exact {
+	if err = f.pool.QueryRow(t.Context(), `SELECT s.parent_session_id IS NULL AND s.root_session_id=s.id AND s.requester_session_id=$2 AND NOT EXISTS(SELECT 1 FROM slack_threads WHERE front_session_id=s.id) FROM sessions s WHERE s.id=$1`, independent.SessionID, f.session).Scan(&exact); err != nil || !exact {
 		t.Fatal(exact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE environment_id=$1`, f.env)
@@ -185,7 +180,7 @@ func TestSlackSpawnJoinsSourceButStartOwnsIndependentRoot(t *testing.T) {
 		t.Fatal(retry, err)
 	}
 	req.IdempotencyKey = "unavailable"
-	if _, err = slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, caller, req); !errors.Is(err, slack.ErrSourceConversationUnavailable) {
+	if _, err = slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, preflight, caller, req); err != nil {
 		t.Fatal(err)
 	}
 }

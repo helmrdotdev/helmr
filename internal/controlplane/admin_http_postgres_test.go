@@ -2,7 +2,12 @@ package controlplane
 
 import (
 	"encoding/json"
+	"errors"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
+	"log/slog"
+
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -14,36 +19,24 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/identity"
+
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const supplyAdminEmail = "admin@example.test"
-
-// newSupplyHTTPFixture serves the control plane with a platform administrator
-// address and a capacity token configured.
+// newSupplyHTTPFixture serves the control plane with a capacity token configured.
 func newSupplyHTTPFixture(t *testing.T) httpPostgresFixture {
 	t.Helper()
 	return newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-		cfg.AdminEmails = []string{supplyAdminEmail}
 		cfg.CapacityToken = capacityTestToken()
 	})
 }
 
-// adminSession signs in the configured administrator address and returns the
-// session token.
+// adminSession supplies independent operator authentication for administration.
 func (f httpPostgresFixture) adminSession(t *testing.T) string {
 	t.Helper()
-	token, err := identity.SignIn(t.Context(), f.pool, identity.NewConfig(f.keys, identity.Lifetimes{}, []string{supplyAdminEmail}, auditpolicy.Policy{RetentionSeconds: 3600}), identity.ExternalIdentity{
-		Provider: "github", Subject: "supply-admin", DisplayName: "Administrator",
-		Email: supplyAdminEmail, EmailVerified: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return token
+	return f.operatorSession(t)
 }
 
 // sealWorkerPool seals a pending pool the way the first activating host does.
@@ -141,7 +134,7 @@ func TestAdminHTTPRequiresPlatformAdminSession(t *testing.T) {
 		token  string
 		status int
 	}{
-		{name: "unauthenticated", status: http.StatusUnauthorized},
+		{name: "unauthenticated", status: http.StatusForbidden},
 		{name: "ordinary session", token: ordinary, status: http.StatusForbidden},
 		{name: "administrator", token: f.adminSession(t), status: http.StatusOK},
 	} {
@@ -275,5 +268,55 @@ func TestAdminHTTPWorkerPools(t *testing.T) {
 		path + "/" + uuid.New().String() + "/drain",
 	} {
 		assertAdminError(t, f.request(t, http.MethodPost, malformed, admin, `{}`), http.StatusBadRequest, "bad_request")
+	}
+}
+
+func TestAdminMutationRequiresRecentOperatorProof(t *testing.T) {
+	f := newSupplyHTTPFixture(t)
+	token := f.adminSession(t)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET authenticated_at=statement_timestamp()-interval '2 hours',issued_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()+interval '10 hours' WHERE channel='operator'`)
+	if got := f.request(t, http.MethodGet, "/admin/api/v1/regions", token, ""); got.Code != http.StatusOK {
+		t.Fatal(got.Code, got.Body)
+	}
+	got := f.request(t, http.MethodPost, "/admin/api/v1/regions", token, `{"id":"fresh-required","display_name":"Fresh"}`)
+	if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "recent_authentication_required") {
+		t.Fatal(got.Code, got.Body)
+	}
+	var exists bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM regions WHERE id='fresh-required')`).Scan(&exists); err != nil || exists {
+		t.Fatal(exists, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET authenticated_at=clock_timestamp() WHERE channel='operator'`)
+	if got := f.request(t, http.MethodPost, "/admin/api/v1/regions", token, `{"id":"fresh-required","display_name":"Fresh"}`); got.Code != http.StatusCreated {
+		t.Fatal(got.Code, got.Body)
+	}
+}
+
+func TestOperatorProofExpiryAtCommitReturnsConfirmation(t *testing.T) {
+	f := newSupplyHTTPFixture(t)
+	p := dbtest.OperatorPrincipal(t, f.pool)
+	actor, err := audit.PlatformOperator(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Admission occurred while fresh; the operation reaches commit after expiry.
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET issued_at=statement_timestamp()-interval '2 hours',authenticated_at=statement_timestamp()-interval '2 hours',expires_at=statement_timestamp()+interval '10 hours' WHERE id=$1`, p.SessionID)
+	err = db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(t.Context(), `INSERT INTO regions(id,display_name) VALUES('late-commit','Late')`); err != nil {
+			return err
+		}
+		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Event{Evidence: actor, Action: "region.created", TargetKind: "region", Details: audit.RegionDetails{RegionID: "late-commit"}})
+	})
+	if !errors.Is(err, auth.ErrRecentProofRequired) || errors.Is(err, audit.ErrCapture) {
+		t.Fatal("authorization became capture failure", err)
+	}
+	response := httptest.NewRecorder()
+	(&Server{log: slog.Default()}).writeOperationError(response, httptest.NewRequest(http.MethodPost, "/admin/api/v1/regions", nil), err)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "recent_authentication_required") {
+		t.Fatal(response.Code, response.Body)
+	}
+	var exists bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM regions WHERE id='late-commit')`).Scan(&exists); err != nil || exists {
+		t.Fatal("mutation escaped rollback", exists, err)
 	}
 }

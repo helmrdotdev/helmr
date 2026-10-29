@@ -40,6 +40,11 @@ func Promote(ctx context.Context, txb db.TxBeginner, policy auditpolicy.Policy, 
 	}
 	var result Record
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		// Retained human authority precedes environment and route locks, matching
+		// membership changes and Agent cleanup. Re-read permissions below.
+		if _, err := access.Current(ctx, tx, principal, scope); err != nil {
+			return err
+		}
 		pins, err := pinTriggerRoutes(ctx, tx, pgvalue.MustUUIDValue(env), routes)
 		if err != nil {
 			return err

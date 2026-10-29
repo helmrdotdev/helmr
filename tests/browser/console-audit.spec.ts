@@ -1,3 +1,4 @@
+import { isAuthenticationPath, authenticationResponse } from "./fixtures/authentication";
 import { expect, test, type Page } from "@playwright/test";
 
 // The audit events page against a synthetic API fixture.
@@ -48,7 +49,7 @@ async function fixture(page: Page, options: { permissions?: string[]; paged?: bo
     const url = new URL(route.request().url());
     const path = url.pathname;
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", membership_id: "m-local", display_name: "Local", org_id: "org", is_owner: false, permissions, admin: options.adminView ?? false, organization_required: false, project_required: false };
+    if (isAuthenticationPath(path)) json = { user_id: "local", membership_id: "m-local", display_name: "Local", org_id: "org", is_owner: false, permissions, admin: options.adminView ?? false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === `/api/projects/${projectID}/access-targets`) json = { project_id: "p", targets: [{ environment_id: environmentUUID, environment: "production", name: "Production", agents: [] }] };
@@ -69,7 +70,7 @@ async function fixture(page: Page, options: { permissions?: string[]; paged?: bo
     else if (path === "/api/members") json = { members: [{ user_id: userID, membership_id: "m-sato", display_name: "Sato Kenji", email: "sato@acme.dev", is_owner: false, status: "active", created_at: ago(1000) }] };
     else if (path === "/api/role-grants") json = { grants: [] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(path, json) });
   });
   return { searches };
 }

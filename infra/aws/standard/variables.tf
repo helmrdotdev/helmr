@@ -334,7 +334,7 @@ variable "dispatcher_desired_count" {
 }
 
 variable "email_provider" {
-  description = "Email delivery provider for magic links and run wait notifications."
+  description = "Email delivery provider for sign-in codes and run wait notifications."
   type        = string
   default     = "none"
 }
@@ -380,8 +380,9 @@ variable "enable_cloudfront" {
 }
 
 variable "github_oauth_client_id" {
-  description = "GitHub OAuth application client ID."
+  description = "GitHub OAuth application client ID; empty disables GitHub login."
   type        = string
+  default     = ""
 }
 
 variable "database_instance_class" {
@@ -776,7 +777,7 @@ variable "capacity_token_kms_key_arn" {
 }
 
 variable "controlplane_environment" {
-  description = "Additional non-secret environment variables for helmr-controlplane, including ADMIN_EMAILS for first-login deployment administrator setup. Managed variables cannot be overridden."
+  description = "Additional non-secret environment variables for helmr-controlplane. Managed variables cannot be overridden."
   type        = map(string)
   default     = {}
 }

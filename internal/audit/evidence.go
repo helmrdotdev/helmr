@@ -11,6 +11,7 @@ import (
 // Actor references the entity that acted, independently of its credential or authority.
 // Exactly one reference is set for an established actor. Historical references have no live FKs.
 type Actor struct {
+	OperatorID   uuid.UUID
 	UserID       uuid.UUID
 	APIKeyID     uuid.UUID
 	SessionID    uuid.UUID
@@ -193,10 +194,18 @@ func FromPrincipal(p auth.Principal) Evidence {
 		e.Authentication.CredentialKind = "api_key"
 		e.Authentication.CredentialID = p.APIKeyID
 		e.Authentication.CredentialVersion = p.CredentialVersion
+	case auth.PrincipalKindOperator:
+		e.Actor.OperatorID = p.OperatorID
+		e.Authentication.CredentialKind = "login_session"
+		e.Authentication.CredentialID = p.SessionID
 	case auth.PrincipalKindSession:
 		e.Actor.UserID = p.UserID
 		e.Authentication.CredentialKind = "login_session"
 		e.Authentication.CredentialID = p.SessionID
+		if p.SlackLinkID != uuid.Nil() {
+			e.Authentication.CredentialKind = "slack_link"
+			e.Authentication.CredentialID = p.SlackLinkID
+		}
 	}
 	return e
 }
@@ -207,7 +216,7 @@ func Authorized(p auth.Principal, permission auth.Permission, scope auth.Scope) 
 	if !ok {
 		return e, &auth.PermissionRefusal{Principal: p, Checks: checks}
 	}
-	return e, nil
+	return e, auth.RequireRecentFor(p, permission)
 }
 func VerifiedLogin(user uuid.UUID, provider string) Evidence {
 	return Evidence{Actor: Actor{UserID: user}, Authentication: Authentication{Origin: "request", Result: "verified", CredentialKind: "provider_assertion", Provider: provider}, Authorization: NotEvaluated()}
@@ -232,16 +241,30 @@ func CapacityAuthority() Evidence {
 	e.Authentication = Authentication{Origin: "request", Result: "verified", CredentialKind: "capacity_token"}
 	return e
 }
+
+type OperatorCheck struct {
+	Type              string    `json:"type"`
+	OperatorID        uuid.UUID `json:"operator_id"`
+	SessionID         uuid.UUID `json:"session_id"`
+	AccessEpoch       int64     `json:"access_epoch"`
+	ObservationSource string    `json:"observation_source"`
+	Result            string    `json:"result"`
+}
+
+func (OperatorCheck) auditCheck()      {}
+func (c OperatorCheck) result() string { return c.Result }
+func (c OperatorCheck) validate() error {
+	if c.Type != "platform_operator" || c.OperatorID == uuid.Nil() || c.SessionID == uuid.Nil() || c.AccessEpoch < 0 || !slices.Contains([]string{"request_authentication", "transaction"}, c.ObservationSource) || !slices.Contains([]string{"passed", "failed"}, c.Result) {
+		return errors.New("invalid operator check")
+	}
+	return nil
+}
 func PlatformOperator(p auth.Principal) (Evidence, error) {
 	e := FromPrincipal(p)
-	if p.Kind != auth.PrincipalKindSession {
-		return e, errors.New("platform authority requires a login session")
+	if p.Kind != auth.PrincipalKindOperator || p.OperatorID == uuid.Nil() || p.SessionID == uuid.Nil() || p.AccessEpoch < 0 {
+		return e, errors.New("platform authority requires an operator session")
 	}
-	e.Authorization = Authorization{Decision: "denied", Checks: []Check{UserAttributeCheck{Type: "user_attribute", UserID: p.UserID, Attribute: "admin", Expected: true, Observed: p.Admin, ObservationSource: "request_authentication", Scope: CheckScope{Kind: "platform"}, Result: checkResult(p.Admin)}}}
-	if !p.Admin {
-		return e, errors.New("platform authority is required")
-	}
-	e.Authorization.Decision = "allowed"
+	e.Authorization = Authorization{Decision: "allowed", Checks: []Check{OperatorCheck{Type: "platform_operator", OperatorID: p.OperatorID, SessionID: p.SessionID, AccessEpoch: p.AccessEpoch, ObservationSource: "request_authentication", Result: "passed"}}}
 	return e, nil
 }
 func Ownership(p auth.Principal) Authorization {
@@ -267,7 +290,7 @@ func Unauthenticated(result, kind string) Evidence {
 // Validate checks captured evidence independently of current authority.
 func (e Evidence) Validate() error {
 	a, n := e.Actor, 0
-	for _, id := range []uuid.UUID{a.UserID, a.APIKeyID, a.SessionID, a.WorkerHostID} {
+	for _, id := range []uuid.UUID{a.OperatorID, a.UserID, a.APIKeyID, a.SessionID, a.WorkerHostID} {
 		if id != uuid.Nil() {
 			n++
 		}
@@ -300,7 +323,7 @@ func (e Evidence) Validate() error {
 	if c.Result != "verified" && (c.CredentialID != uuid.Nil() || c.CredentialVersion != 0 || e.RuntimeGeneration != 0 || e.ProcessEpoch != 0) {
 		return errors.New("unverified credential reference")
 	}
-	if c.CredentialKind != "" && !slices.Contains([]string{"login_session", "api_key", "worker_host", "capacity_token", "provider_assertion", "magic_link", "device_code"}, c.CredentialKind) {
+	if c.CredentialKind != "" && !slices.Contains([]string{"login_session", "api_key", "worker_host", "capacity_token", "provider_assertion", "magic_link", "device_code", "email_code", "passkey", "slack_link"}, c.CredentialKind) {
 		return errors.New("invalid credential kind")
 	}
 	if c.Result == "verified" && c.CredentialKind == "" {
@@ -321,8 +344,11 @@ func (e Evidence) Validate() error {
 	if a.SessionID != uuid.Nil() && (c.CredentialKind != "worker_host" || c.CredentialID == uuid.Nil() || c.CredentialVersion <= 0 || e.RuntimeGeneration <= 0) {
 		return errors.New("invalid runtime identity")
 	}
+	if a.OperatorID != uuid.Nil() && (!slices.Contains([]string{"login_session", "passkey"}, c.CredentialKind) || c.CredentialID == uuid.Nil()) {
+		return errors.New("invalid operator credential")
+	}
 	if a.UserID != uuid.Nil() {
-		if !slices.Contains([]string{"login_session", "provider_assertion", "magic_link", "device_code"}, c.CredentialKind) {
+		if !slices.Contains([]string{"login_session", "provider_assertion", "magic_link", "device_code", "email_code", "passkey", "slack_link"}, c.CredentialKind) {
 			return errors.New("invalid user credential")
 		}
 		if (c.CredentialKind == "login_session" || c.CredentialKind == "device_code" || c.CredentialKind == "magic_link") && c.CredentialID == uuid.Nil() {

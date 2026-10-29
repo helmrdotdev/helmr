@@ -25,7 +25,7 @@ def fixture():
         "postgres", "helmr_app", "helmr_migration", "helmr_audit", "helmr_admin", "helmr_reader", "helmr_ingester")}
     key = base64.b64encode(b"q" * 32).decode()
     platform = {name: key for name in ("auth_key", "encryption_key", "computer_fencing_key", "computer_wrapping_key", "worker_host_credential_signing_key")}
-    platform.update({"github_oauth_client_secret": "literal-$UNSET-'quote'", "setup_token": "setup-test-token",
+    platform.update({"github_oauth_client_secret": "literal-$UNSET-'quote'",
                      "capacity_token": base64.urlsafe_b64encode(b"c" * 32).decode().rstrip("="),
                      "worker_enrollment_token": "hlmr_wgt_" + base64.urlsafe_b64encode(b"w" * 32).decode().rstrip("=")})
     return config, credentials, platform

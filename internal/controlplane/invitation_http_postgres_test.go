@@ -45,7 +45,7 @@ func newInvitationHTTPFixture(t *testing.T, sender email.Sender) httpPostgresFix
 	return newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
 		if sender != nil {
 			cfg.Mailer = sender
-			cfg.MagicLinkDelivery = NewMagicLinkDelivery(discardTestLogger(), time.Second)
+			cfg.EmailCodeDelivery = NewEmailCodeDelivery(discardTestLogger())
 		}
 	})
 }
@@ -79,8 +79,8 @@ func (f httpPostgresFixture) memberWithEmail(t *testing.T, orgID uuid.UUID, addr
 
 func emailDelivery(t *testing.T, fixture httpPostgresFixture, token string) bool {
 	t.Helper()
-	recorder := fixture.request(t, http.MethodGet, "/api/me", token, "")
-	var me api.MeResponse
+	recorder := fixture.request(t, http.MethodGet, "/api/auth/config", token, "")
+	var me api.AuthConfigResponse
 	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &me) != nil {
 		t.Fatalf("me = %d %s", recorder.Code, recorder.Body.String())
 	}
@@ -307,7 +307,7 @@ func TestCreateInvitationsHTTPPostgresCommitsWhenTheCallerLeavesAfterTheSend(t *
 	fixture := newInvitationHTTPFixture(t, sender)
 	_, token := fixture.organizationOwner(t, "acme")
 	request := httptest.NewRequestWithContext(requestCtx, http.MethodPost, "/api/invitations", strings.NewReader(`{"emails":["ada@example.test"]}`))
-	request.Header.Set("Authorization", "Bearer "+token)
+	fixture.authenticateRequest(request, token)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	fixture.handler.ServeHTTP(recorder, request)

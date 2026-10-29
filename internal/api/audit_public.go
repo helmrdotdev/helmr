@@ -18,6 +18,7 @@ type AuditEventMetadata struct {
 	RetentionSeconds int64                    `json:"retention_seconds"`
 	ExpiresAt        time.Time                `json:"expires_at"`
 	ActorUserID      *uuid.UUID               `json:"actor_user_id"`
+	ActorOperatorID  *uuid.UUID               `json:"actor_operator_id"`
 	ActorAPIKeyID    *uuid.UUID               `json:"actor_api_key_id"`
 	ActorSessionID   *uuid.UUID               `json:"actor_session_id"`
 	ActorIdentity    *AuditIdentity           `json:"actor_identity"`
@@ -44,6 +45,7 @@ type AuditEventMetadata struct {
 type AuditActorKind string
 
 const (
+	AuditActorOperator        AuditActorKind = "operator"
 	AuditActorUser            AuditActorKind = "user"
 	AuditActorAPIKey          AuditActorKind = "api_key"
 	AuditActorSession         AuditActorKind = "session"

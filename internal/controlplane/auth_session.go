@@ -1,8 +1,8 @@
 package controlplane
 
 import (
-	"errors"
 	"net/http"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/access"
@@ -12,63 +12,106 @@ import (
 )
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	principal := principalFromContext(r.Context())
-	if principal.UserID == uuid.Nil() {
-		writeError(w, unauthorized(errors.New("session authentication is required")))
+	p := principalFromContext(r.Context())
+	if p.Channel != "browser" {
+		writeError(w, forbidden(codedError{code: "authentication_required", message: "ordinary authentication is required"}))
 		return
 	}
-	account, err := identity.LoadAccount(r.Context(), s.db, principal)
+	var response api.MeResponse
+	response.UserID = p.UserID.String()
+	if err := s.tx.QueryRow(r.Context(), `SELECT display_name,COALESCE(profile_image_url,''),COALESCE(primary_email,'') FROM users WHERE id=$1`, p.UserID).Scan(&response.DisplayName, &response.ProfileImageURL, &response.PrimaryEmail); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+func (s *Server) organizationContext(w http.ResponseWriter, r *http.Request) {
+	p := principalFromContext(r.Context())
+	if p.MemberID == uuid.Nil() {
+		writeError(w, badRequest(codedError{code: "organization_required", message: "Choose an organization."}))
+		return
+	}
+	response := api.OrganizationContextResponse{ID: p.OrgID.String(), CurrentMember: api.CurrentMember{ID: p.MemberID.String(), UserID: p.UserID.String(), IsOwner: p.IsOwner, Permissions: sessionPermissions(p), PermissionScopes: []api.PermissionScope{}}, Authentication: api.AuthenticationContext{Method: "ordinary", AuthenticatedAt: p.AuthenticatedAt.UTC().Format(time.RFC3339Nano)}}
+	var projects bool
+	if err := s.tx.QueryRow(r.Context(), `SELECT o.name,o.slug,COALESCE(m.display_name,u.display_name),EXISTS(SELECT 1 FROM projects WHERE org_id=o.id) FROM organizations o JOIN org_members m ON m.org_id=o.id JOIN users u ON u.id=m.user_id WHERE o.id=$1 AND m.id=$2`, p.OrgID, p.MemberID).Scan(&response.Name, &response.Slug, &response.CurrentMember.DisplayName, &projects); err != nil {
+		writeError(w, err)
+		return
+	}
+	response.Onboarding.ProjectRequired = !projects && p.HasPermission(auth.PermissionProjectsCreate, auth.Scope{OrgID: p.OrgID})
+	grants, err := access.MemberGrants(r.Context(), s.tx, p.OrgID, p.MemberID)
 	if err != nil {
-		s.writeIdentityError(w, r, err)
+		writeError(w, err)
 		return
 	}
-	hasOrg := principal.OrgID != uuid.Nil()
-	response := api.MeResponse{
-		UserID:          principal.UserID.String(),
-		DisplayName:     account.DisplayName,
-		ProfileImageURL: account.ProfileImageURL,
-		AppOrigin:       s.appOrigin.String(),
-		Admin:           principal.Admin,
-		Permissions:     []string{},
-		ProjectRequired: hasOrg && !account.HasProjects && principal.HasPermission(auth.PermissionProjectsCreate, auth.Scope{OrgID: principal.OrgID}),
-		EmailDelivery:   s.emailConfigured(),
+	for _, g := range grants {
+		if g.EnvironmentID == "" {
+			continue
+		}
+		item := api.PermissionScope{Project: g.ProjectSlug, Environment: g.EnvironmentSlug, Agent: g.AgentKey, Permissions: []string{}}
+		scope := auth.Scope{OrgID: p.OrgID, ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID, AgentID: g.AgentID}
+		for _, permission := range auth.AllPermissions() {
+			if p.HasPermission(permission, scope) {
+				item.Permissions = append(item.Permissions, string(permission))
+			}
+		}
+		response.CurrentMember.PermissionScopes = append(response.CurrentMember.PermissionScopes, item)
 	}
-	switch {
-	case hasOrg:
-		response.OrgID = principal.OrgID.String()
-		response.OrgName = account.OrgName
-		response.OrgSlug = account.OrgSlug
-		response.MembershipID = principal.MemberID.String()
-		response.IsOwner = principal.IsOwner
-		response.Permissions = sessionPermissions(principal)
-		grants, err := access.MemberGrants(r.Context(), s.tx, principal.OrgID, principal.MemberID)
+	writeJSON(w, http.StatusOK, response)
+}
+func (s *Server) organizations(w http.ResponseWriter, r *http.Request) {
+	p := principalFromContext(r.Context())
+	if p.Channel != "browser" {
+		writeError(w, forbidden(codedError{code: "authentication_required", message: "ordinary authentication is required"}))
+		return
+	}
+	rows, err := s.tx.Query(r.Context(), `SELECT o.id,o.name,o.slug,m.id FROM org_members m JOIN organizations o ON o.id=m.org_id WHERE m.user_id=$1 AND m.removed_at IS NULL AND m.suspended_at IS NULL ORDER BY o.name,o.id`, p.UserID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer rows.Close()
+	response := api.OrganizationsResponse{Organizations: []api.OrganizationMembership{}}
+	for rows.Next() {
+		var o api.OrganizationMembership
+		if err = rows.Scan(&o.ID, &o.Name, &o.Slug, &o.MembershipID); err != nil {
+			writeError(w, err)
+			return
+		}
+		o.AuthenticationRequired = "ordinary"
+		response.Organizations = append(response.Organizations, o)
+	}
+	if err = rows.Err(); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+func (s *Server) authConfig(w http.ResponseWriter, r *http.Request) {
+	response := api.AuthConfigResponse{DeploymentMode: s.deploymentMode, Methods: []string{"passkey"}, EmailDelivery: s.emailConfigured(), AppOrigin: s.appOrigin.String(), SignupEnabled: true, OrganizationCreationEnabled: !s.selfHostedMode() && !s.organizationCreationAdminOnly}
+	if s.emailConfigured() {
+		response.Methods = append(response.Methods, "email")
+	}
+	if s.authProvider != nil {
+		response.Methods = append(response.Methods, "github")
+	}
+	if err := s.tx.QueryRow(r.Context(), `SELECT NOT EXISTS(SELECT 1 FROM org_members WHERE is_owner AND removed_at IS NULL)`).Scan(&response.SetupRequired); err != nil {
+		writeError(w, err)
+		return
+	}
+	if s.selfHostedMode() {
+		rows, err := s.db.ListOrganizationIDs(r.Context(), 2)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		response.PermissionScopes = []api.PermissionScope{}
-		for _, g := range grants {
-			if g.EnvironmentID == "" {
-				continue
+		if len(rows) == 1 {
+			var o api.OrganizationMembership
+			if err = s.tx.QueryRow(r.Context(), `SELECT id,name,slug FROM organizations WHERE id=$1`, rows[0]).Scan(&o.ID, &o.Name, &o.Slug); err != nil {
+				writeError(w, err)
+				return
 			}
-			item := api.PermissionScope{Project: g.ProjectSlug, Environment: g.EnvironmentSlug, Agent: g.AgentKey, Permissions: []string{}}
-			scope := auth.Scope{OrgID: principal.OrgID, ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID, AgentID: g.AgentID}
-			for _, operation := range auth.AllPermissions() {
-				if principal.HasPermission(operation, scope) {
-					item.Permissions = append(item.Permissions, string(operation))
-				}
-			}
-
-			response.PermissionScopes = append(response.PermissionScopes, item)
+			response.SingleOrganization = &o
 		}
-	case s.selfHostedMode():
-		response.OrganizationRequired = !account.OrganizationExists
-		response.AccessRequired = account.OrganizationExists
-		response.SetupTokenRequired = !account.OrganizationExists
-	case s.organizationCreationAdminOnly && !principal.Admin:
-		response.AccessRequired = true
-	default:
-		response.OrganizationRequired = true
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -103,5 +146,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	clearSessionCookie(w, r)
+	clearBinding(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }

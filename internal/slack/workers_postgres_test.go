@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/dbnotify"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,7 +16,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestSlackDeliveryRunProgressesPeerWhileAnotherRequestIsInFlight(t *testing.T) {

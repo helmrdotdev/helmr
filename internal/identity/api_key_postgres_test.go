@@ -12,7 +12,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -39,11 +38,10 @@ func newAPIKeyFixture(t *testing.T) apiKeyFixture {
 	fixture.exec(t, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true,1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, environmentID, orgID, projectID)
 	dbtest.GrantMember(t, fixture.pool, orgID, userID, nil, "members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete")
 	dbtest.GrantMember(t, fixture.pool, orgID, userID, &environmentID, "api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke")
-	principal, err := access.Principal(t.Context(), fixture.pool, "user", userID, environmentID)
+	principal, err := AuthenticateLoginSession(t.Context(), fixture.pool, fixture.cfg, fixture.session(t, userID, uuid.Nil()), orgID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal.SessionID = uuid.NewV7()
 	return apiKeyFixture{
 		identityFixture: fixture,
 		owner:           principal,
@@ -191,7 +189,11 @@ func TestAPIKeyPostgresListsAndRevokesWithinEnvironment(t *testing.T) {
 	fixture.exec(t, `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'other', 'Other', true)`, otherProjectID, otherOrg)
 	fixture.exec(t, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true,1024,32,1024,1024000,1099511627776,1099511627776,600000,1000000,1000000,1000000,clock_timestamp())`, otherEnvironmentID, otherOrg, otherProjectID)
 	other.MemberID = dbtest.GrantMember(t, fixture.pool, otherOrg, other.UserID, &otherEnvironmentID, "api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke")
-	other.Grants = []auth.PermissionGrant{{ProjectID: otherProjectID.String(), EnvironmentID: otherEnvironmentID.String(), Permission: auth.PermissionAPIKeysCreate}}
+	var otherErr error
+	other, otherErr = AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, fixture.session(t, other.UserID, uuid.Nil()), otherOrg)
+	if otherErr != nil {
+		t.Fatal(otherErr)
+	}
 	otherScope := auth.Scope{OrgID: otherOrg, ProjectID: otherProjectID.String(), EnvironmentID: otherEnvironmentID.String()}
 	if _, err := IssueAPIKey(ctx, fixture.pool, auditpolicy.Policy{RetentionSeconds: 3600}, other, otherScope, APIKeyInput{Name: "other-org"}); err != nil {
 		t.Fatal(err)
@@ -358,7 +360,7 @@ func TestAPIKeyEditsAndRotationAuditRollback(t *testing.T) {
 		t.Fatal("rollback lost original active token or edited policy", err)
 	}
 	var count int
-	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events`).Scan(&count); err != nil || count != 3 {
+	if err := f.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action<>'identity.sign_in'`).Scan(&count); err != nil || count != 3 {
 		t.Fatal("partial audit committed", count, err)
 	}
 }
@@ -383,8 +385,11 @@ func TestAPIKeyRotateRacesRevoke(t *testing.T) {
 	adminID := f.user(t, "Other administrator", "")
 	f.member(t, f.owner.OrgID, adminID, "admin")
 	env := uuid.MustParse(f.scope.EnvironmentID)
-	memberID := dbtest.GrantMember(t, f.pool, f.owner.OrgID, adminID, &env, "api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke")
-	admin := auth.Principal{OrgID: f.owner.OrgID, UserID: adminID, MemberID: memberID, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7(), Grants: f.owner.Grants}
+	dbtest.GrantMember(t, f.pool, f.owner.OrgID, adminID, &env, "api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke")
+	admin, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, f.session(t, adminID, uuid.Nil()), f.owner.OrgID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := range 4 {
 		key := f.issue(t, fmt.Sprintf("race-%d", i), auth.PermissionAgentsUse)
 		id := pgvalue.MustUUIDValue(key.Record.ID)
@@ -468,5 +473,23 @@ func TestAPIKeyRoleIssuanceIsAtomicAndRequiresAccessManagement(t *testing.T) {
 	p, err = NewAPIKeyAuthenticator(f.pool).Authenticate(ctx, key.Raw)
 	if err != nil || !p.HasPermission(auth.PermissionAgentsUse, f.scope) {
 		t.Fatal("Role not effective", err)
+	}
+}
+
+func TestAPIKeyExpiryUpdateRequiresCurrentRecentProof(t *testing.T) {
+	f := newAPIKeyFixture(t)
+	key := f.issue(t, "bounded", auth.PermissionSessionsRead)
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, f.owner.SessionID)
+	if err := f.pool.QueryRow(t.Context(), `SELECT authenticated_at FROM login_sessions WHERE id=$1`, f.owner.SessionID).Scan(&f.owner.AuthenticatedAt); err != nil {
+		t.Fatal(err)
+	}
+	// The retained source is current, but its proof is too old to widen authority.
+	_, err := UpdateAPIKey(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.owner, f.scope, pgvalue.MustUUIDValue(key.Record.ID), APIKeyUpdate{Name: "unbounded"})
+	if !errors.Is(err, auth.ErrRecentProofRequired) {
+		t.Fatalf("stale proof widened key: %v", err)
+	}
+	var name string
+	if err := f.pool.QueryRow(t.Context(), `SELECT name FROM api_keys WHERE id=$1`, key.Record.ID).Scan(&name); err != nil || name != "bounded" {
+		t.Fatal(name, err)
 	}
 }

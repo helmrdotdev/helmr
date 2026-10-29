@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"uuid"
 
@@ -30,7 +31,7 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 	member := dbtest.GrantMember(t, f.pool, org, viewer, &f.env, "sessions.read")
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id=$1;
  INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE member_id=$1`, pgx.QueryExecModeSimpleProtocol, member, f.agent)
-	caller := session.Caller{Kind: "user", ID: viewer, CredentialID: uuid.NewV7()}
+	caller := session.UserCaller((sessiontest.Fixture{Pool: f.pool, User: viewer, Environment: f.env}).Principal(t))
 	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, f.session); err != nil {
 		t.Fatal("selected personal history denied", err)
 	}
@@ -63,11 +64,11 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, input); err != nil {
 		t.Fatal("matching grants did not combine", err)
 	}
-	// Management cannot revive a personal runtime whose original owner lost use.
+	// Current matching permissions allow continuing after the original owner loses access.
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=array_remove(permissions,'agents.use') WHERE id IN (SELECT g.role_id FROM role_grants g JOIN permission_group_members gm ON gm.group_id=g.group_id JOIN org_members m ON m.id=gm.member_id WHERE m.user_id=$1)`, f.user)
 	input.IdempotencyKey = "revoked-origin"
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, input); !errors.Is(err, session.ErrDenied) {
-		t.Fatal("management revived origin", err)
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, input); err != nil {
+		t.Fatal("current participant could not continue", err)
 	}
 	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, f.session); err != nil {
 		t.Fatal("revoked origin hid retained history", err)

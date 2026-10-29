@@ -1,10 +1,11 @@
+import "./browser-test-env";
 import { describe, expect, test } from "bun:test";
 import type { AdminAuditEvent as AuditEvent } from "./audit";
 import { actionLabel, actorOf, checkFields, eventSummary, scopeText, signInFields, targetLabel } from "./auditText";
 
 const event = (overrides: Partial<AuditEvent>): AuditEvent => ({
   id: "e1", org_id: "o", project_id: null, environment_id: null, occurred_at: "2026-10-26T05:02:11Z", recorded_at: "2026-10-26T05:02:11Z",
-  expires_at: "2027-01-24T05:02:11Z", retention_seconds: 7_776_000, actor_user_id: null, actor_api_key_id: null, actor_session_id: null,
+  expires_at: "2027-01-24T05:02:11Z", retention_seconds: 7_776_000, actor_operator_id: null, actor_user_id: null, actor_api_key_id: null, actor_session_id: null,
   actor_worker_host_id: null, actor_component: null, actor_identity: null, runtime_generation: null, process_epoch: null,
   authentication: { result: "verified", origin: "request", provider: null, credential_kind: "login_session", credential_id: null, credential_version: 1 },
   deployment_id: null, session_id: null, turn_id: null, computer_id: null, cause_event_id: null, schema_version: 1,

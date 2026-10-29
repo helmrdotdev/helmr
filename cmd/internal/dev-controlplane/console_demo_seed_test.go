@@ -163,7 +163,12 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 		t.Fatalf("background reconciliation changed the demo history:\n%s\n%s", before, after)
 	}
 	// The Overview reads the held Session and the recent failure as waiting work.
-	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101"), CredentialID: uuid.NewV7()}, uuid.MustParse(demoSeedEnvironmentID))
+	var organization uuid.UUID
+	if err := pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, uuid.MustParse(demoSeedEnvironmentID)).Scan(&organization); err != nil {
+		t.Fatal(err)
+	}
+	human := dbtest.BrowserPrincipal(t, pool, organization, uuid.MustParse("00000000-0000-7000-8000-000000000101"))
+	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, session.UserCaller(human), uuid.MustParse(demoSeedEnvironmentID))
 	if err != nil || attention.HoldCount != 1 || attention.FailedTurnCount != 1 || attention.QuestionCount != 0 ||
 		attention.Holds[0].SessionID.String() != demoSeedHeldSessionID || attention.FailedTurns[0].ID.String() != demoSeedFailedTurnID {
 		t.Fatalf("demo attention: %+v %v", attention, err)
@@ -183,7 +188,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  GROUP BY s.created_at,t.processing_closed_at,t.terminal_at,d.created_at,trigger.active_from,spec.created_at`, demoSeedEnvironmentID, demoSeedSessionID).Scan(&chronological); err != nil || !chronological {
 		t.Fatalf("demo history chronological=%v: %v", chronological, err)
 	}
-	caller := session.Caller{Kind: "user", ID: uuid.MustParse("00000000-0000-7000-8000-000000000101"), CredentialID: uuid.NewV7()}
+	caller := session.UserCaller(human)
 	env := uuid.MustParse(demoSeedEnvironmentID)
 	// The promoted Deployment is synthetic: its image spec has no Computer seed
 	// profile, so work sent to it is refused before anything is admitted.
@@ -194,8 +199,8 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE environment_id=$1`, demoSeedEnvironmentID).Scan(&admitted); err != nil || admitted != 10 {
 		t.Fatalf("Sessions after refused start=%d %v, want the 10 seeded", admitted, err)
 	}
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("terminal demo enqueue=%v, want not ready", err)
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, pool, nil, caller, session.EnqueueRequest{EnvironmentID: env, SessionID: uuid.MustParse(demoSeedSessionID), IdempotencyKey: "should-not-enqueue", Input: []byte(`[{"type":"text","text":"work"}]`)}); !errors.Is(err, session.ErrDenied) {
+		t.Fatalf("synthetic history without original human proof enqueue=%v, want denied", err)
 	}
 }
 

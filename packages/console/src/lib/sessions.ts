@@ -1,10 +1,11 @@
 import { parseAsk, parseAskPage } from "../../../../sdk/typescript/src/internal/asks";
 import type { JsonValue } from "../../../../sdk/typescript/src/contract";
-import { postJson, request } from "./api";
+import { postJson, request, selectedOrganization, expectedActorHeaders } from "./api";
 
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled";
 type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
 export type Session = {
+  related_via?: "initiated" | "contributed" | "answered" | "descendant";
   permissions?: string[];
   agent: string;
   template: string;
@@ -94,6 +95,7 @@ type ListSessionsResponse = {
 };
 
 export async function listSessions(options: {
+  relatedUserID?: string | undefined;
   projectID: string;
   environmentID: string;
   agent?: string | undefined;
@@ -105,6 +107,7 @@ export async function listSessions(options: {
     throw new Error("Session project and environment are required");
   }
   const params = new URLSearchParams();
+  if (options.relatedUserID) params.set("related_user_id",options.relatedUserID);
   if (options.agent) params.set("agent", options.agent);
   for (const status of options.statuses ?? []) params.append("status", status);
   if (options.cursor) params.set("cursor", options.cursor);
@@ -214,9 +217,49 @@ export function interruptTurn(address: SessionAddress, turnID: string, input: { 
 
 // Reconnection always refreshes durable snapshots; hints need no event cursor.
 export function watchSession(address: SessionAddress, changed: () => void): () => void {
-  const source = new EventSource(`${sessionAPIPath(address)}/updates`, { withCredentials: true });
-  source.addEventListener("change", changed);
-  return () => source.close();
+  const controller = new AbortController();
+  const organization = selectedOrganization();
+  const actor = expectedActorHeaders();
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  const connect = async () => {
+    try {
+      const response = await fetch(`${sessionAPIPath(address)}/updates`, {
+        credentials: "same-origin", signal: controller.signal,
+        headers: { Accept: "text/event-stream", "X-Helmr-Organization": organization, ...actor },
+        cache: "no-store",
+      });
+      if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 409) {
+        changed(); // Refresh the authoritative view and its actionable auth state.
+        return;
+      }
+      if (!response.ok || !response.body) throw new Error("Update stream unavailable");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          pending += decoder.decode(value, { stream: true });
+          if (pending.length > 65536) throw new Error("Invalid update frame");
+          let end: number;
+          while ((end = pending.indexOf("\n\n")) !== -1) {
+            const frame = pending.slice(0, end);
+            pending = pending.slice(end + 2);
+            if (frame.split("\n").some((line) => line === "event: change")) changed();
+          }
+        }
+      } finally {
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
+      }
+    } catch {
+      // Network interruptions reconnect; explicit authority refusals above stop.
+    }
+    if (!controller.signal.aborted) retry = setTimeout(() => void connect(), 2000);
+  };
+  void connect();
+  return () => { controller.abort(); if (retry !== undefined) clearTimeout(retry); };
 }
 
 export type RecoveryGap = {

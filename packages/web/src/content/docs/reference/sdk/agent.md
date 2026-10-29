@@ -56,7 +56,7 @@ When `init` is absent, `ctx.initResult` is `undefined`.
 | --- | --- | --- |
 | `id` | yes | Definition ID, matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Used by `client.sessions.create({ agent: id })` and `helmr session create`. |
 | `template` | yes | A `template()` definition. New Sessions run on a Computer created from it unless the start request names an existing Computer. See [Computer](/docs/reference/sdk/computer). |
-| `runtimeMcp` | no | Runtime MCP maximum: `{ allow: [...] }` narrows the Agent's base authority. Omission adds no restriction; `{ allow: [] }` grants no remote business operations. See [Runtime MCP policy](#runtime-mcp-policy). |
+| `runtimeMcp` | no | Runtime MCP maximum: `{ allow: [...] }` declares permitted operations and Agent keys. Omission resolves to that Deployment’s Agent set with new Computer placement; `{ allow: [] }` grants no remote business operations. See [Runtime MCP policy](#runtime-mcp-policy). |
 | `init` | no | Runs once per Session process before its first Turn. The returned value is `ctx.initResult`. |
 | `turn` | yes | Handles one Turn. Its return value is validated by `resultSchema` when supplied and becomes the machine `result`. |
 | `inputSchema` | no | Validates incoming JSON before the handler; `turn.input` is the schema output. Without it, input is conversational text content. |
@@ -281,8 +281,9 @@ export interface RuntimeMcpPolicy {
 
 The optional `agent({ runtimeMcp })` field sets a maximum for the pinned Session.
 An explicit policy requires `allow`; null, booleans, empty objects, unknown fields
-and `blockAll` are invalid. Omission preserves existing base-authorized
-operations and targets, including subsequently supported ones. A finite policy
+and `blockAll` are invalid. Omission resolves at publication to supported
+operations and exact Agent keys in that Deployment, with new Computer placement.
+Later publications cannot widen an existing Session’s pin. An explicit policy
 grants only its named operations and Agent keys; an empty array grants none.
 Policies never inject an MCP connection automatically.
 
@@ -298,7 +299,7 @@ are derived from `inspect_turn` rather than authored as extra grants.
 `ctx.mcp.getConnectionOptions()` inherits the maximum, including a finite or
 empty maximum. `getConnectionOptions({ allow: [...] })` obtains a narrower
 descriptor and rejects widening. Getter Agent keys are checked against the
-caller's pinned manifest, even under an unrestricted maximum. Equivalent
+caller's pinned manifest and published maximum. Equivalent
 normalized policies reuse the same connection credentials; a Session process
 supports at most 16 distinct scopes, including its maximum, without eviction.
 
@@ -452,8 +453,9 @@ client.agents.list(query?: { deploymentId?: string; cursor?: string; limit?: num
 ```
 
 `AgentInfo` includes `agent`, `template`, `deploymentId`, the input contract and
-optional `runtimeMcp`. The policy is omitted for unrestricted authority and is
-otherwise a normalized allowlist, preserving `{ allow: [] }`. Creation rules
+`runtimeMcp`, a resolved normalized allowlist, preserving `{ allow: [] }`.
+An omitted authored policy resolves to the published Deployment’s exact Agent
+set, with new Computer placement. Creation rules
 include their resolved `computer` placement. List items expose the same policy.
 The `agent` identifier is declared in code and remains stable across Deployments
 within its environment. `inputKind: "text"` identifies conversational input;

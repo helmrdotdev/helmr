@@ -1,3 +1,4 @@
+import { isAuthenticationPath, authenticationResponse } from "./fixtures/authentication";
 import { expect, test, type Page } from "@playwright/test";
 const projectID = "console-demo";
 const environmentID = "demo";
@@ -32,7 +33,7 @@ async function scope(page: Page) {
   await page.route("**/api/**", async (route) => {
     const endpoint = new URL(route.request().url()).pathname;
     let json: unknown;
-    if (endpoint === "/api/me")
+    if (isAuthenticationPath(endpoint))
       json = {
         user_id: "local",
         display_name: "Local",
@@ -52,7 +53,7 @@ async function scope(page: Page) {
       });
       return;
     }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(endpoint, json) });
   });
 }
 

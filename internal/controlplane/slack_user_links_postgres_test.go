@@ -6,7 +6,9 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"math/big"
 	"net/http"
@@ -17,15 +19,12 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/slack"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testing.T) {
@@ -80,7 +79,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
 			f.SetPermissions(t, "agents.use", "sessions.read", "sessions.send", "agent_connections.update_credentials")
-			if err = store.StoreAppCredentials(t.Context(), audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: f.User, OrgID: org, SessionID: uuid.NewV7()}), org, f.User, registration, slack.AppCredentials{ClientID: "client", ClientSecret: "private-secret", SigningSecret: "secret"}); err != nil {
+			if err = store.StoreAppCredentials(t.Context(), f.Principal(t), registration, slack.AppCredentials{ClientID: "client", ClientSecret: "private-secret", SigningSecret: "secret"}); err != nil {
 				t.Fatal(err)
 			}
 			f.SetPermissions(t, "agents.use", "deployments.publish", "deployments.promote", "sessions.read", "sessions.send", "computers.execute", "secrets.create", "api_keys.create")
@@ -98,7 +97,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 			if err != nil {
 				t.Fatal(err)
 			}
-			fixture := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
+			fixture := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 			session := fixture.session(t, f.User, org)
 			other := fixture.user(t, "Other Person")
 			fixture.member(t, org, other, "member")
@@ -108,7 +107,13 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				raw, _ := json.Marshal(body)
 				r := httptest.NewRequest(method, "https://console.example.test"+path, bytes.NewReader(raw))
 				r.Header.Set("Content-Type", "application/json")
-				r.Header.Set("Authorization", "Bearer "+token)
+				r.Header.Set("Origin", "https://console.example.test")
+				if token != "" {
+					r.AddCookie(&http.Cookie{Name: sessionCookieName(r), Value: token})
+				}
+				if id := fixture.browserOrganizations[token]; id != uuid.Nil() {
+					r.Header.Set("X-Helmr-Organization", id.String())
+				}
 				// A browser replaces earlier Set-Cookie values for the same name.
 				jar := map[string]*http.Cookie{}
 				for _, cookie := range cookies {
@@ -142,7 +147,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				}
 				link := payload + "." + base64.RawURLEncoding.EncodeToString(mac)
 				authorize = map[string]string{"link": link}
-				call("GET", "/api/slack/user-links/first-use?link="+url.QueryEscape(link), "", nil, nil, 401)
+				call("GET", "/api/slack/user-links/first-use?link="+url.QueryEscape(link), "", nil, nil, 403)
 				nonmember := fixture.user(t, "Nonmember")
 				call("GET", "/api/slack/user-links/first-use?link="+url.QueryEscape(link), fixture.session(t, nonmember, uuid.Nil()), nil, nil, 403)
 				// The link identifies the intended organization even before an org is selected.
@@ -210,7 +215,7 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				t.Fatal("missing Slack return destination")
 			}
 			var count int
-			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_user_links`).Scan(&count); err != nil || count != 0 {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_user_links WHERE revoked_at IS NULL`).Scan(&count); err != nil || count != 0 {
 				t.Fatal("link persisted before explicit confirmation", err)
 			}
 			call("POST", "/api/slack/user-links/confirm", session, map[string]any{"confirmation": proof.Confirmation, "confirmed": false}, verified.Result().Cookies(), 400)
@@ -226,9 +231,17 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				t.Fatal("other user removed link")
 			}
 			call("DELETE", "/api/slack/user-links/team/human", session, nil, nil, 204)
-			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_user_links`).Scan(&count); err != nil || count != 0 {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_user_links WHERE revoked_at IS NULL`).Scan(&count); err != nil || count != 0 {
 				t.Fatal("unlink failed", err)
 			}
+			call("POST", "/api/auth/logout", session, nil, nil, 204)
+			freshSession := fixture.session(t, f.User, org)
+			previousExchanges := exchanges
+			call("POST", "/api/slack/user-links/verify", freshSession, input, started.Result().Cookies(), 400)
+			if exchanges != previousExchanges {
+				t.Fatal("old session flow exchanged provider code")
+			}
+
 		})
 	}
 }

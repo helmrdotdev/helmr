@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -15,13 +14,9 @@ import (
 
 // DispatchRuntimeTurn admits work only from the current physical attachment.
 // A nil assignment means this process has no dispatchable work at present.
-func DispatchRuntimeTurn(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64, verifier ConversationVerifier) (*TurnDispatch, error) {
-	check, err := checkInputConversation(ctx, pool, host, e, attachment, uuid.Nil(), verifier)
-	if err != nil {
-		return nil, err
-	}
+func DispatchRuntimeTurn(ctx context.Context, pool db.TxBeginner, host workergroup.HostPrincipal, e Execution, attachment int64) (*TurnDispatch, error) {
 	var result *TurnDispatch
-	err = db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		authority, err := lockRuntimeAuthority(ctx, tx, host, e)
 		if err != nil {
 			return err
@@ -35,7 +30,7 @@ func DispatchRuntimeTurn(ctx context.Context, auditPolicy auditpolicy.Policy, po
 			return ErrDenied
 		}
 		var assignment TurnDispatch
-		err = dispatchTurn(ctx, auditPolicy, tx, e, &assignment, check)
+		err = dispatchTurn(ctx, tx, e, &assignment)
 		if err != nil && !(errors.Is(err, ErrNotReady) || errors.Is(err, computer.ErrNotReady)) {
 			return err
 		}

@@ -62,14 +62,16 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
+	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 	owner := h.session(t, f.User, org)
 	call := func(method, path, token string, body any, cookies []*http.Cookie) *httptest.ResponseRecorder {
 		t.Helper()
 		raw, _ := json.Marshal(body)
 		r := httptest.NewRequest(method, "https://console.example.test"+path, bytes.NewReader(raw))
 		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("Authorization", "Bearer "+token)
+		r.AddCookie(&http.Cookie{Name: sessionCookieName(r), Value: token})
+		r.Header.Set("Origin", cfg.AppOrigin.String())
+		r.Header.Set("X-Helmr-Organization", org.String())
 		for _, cookie := range cookies {
 			r.AddCookie(cookie)
 		}
@@ -133,6 +135,11 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	}
 	if w := call("POST", "/api/auth/github/finish", owner, map[string]string{"state": state, "code": "verified-code"}, cookies); w.Code == 200 || exchanges != 0 {
 		t.Fatal("Slack flow accepted as GitHub flow")
+	}
+	// Another login to the same account cannot finish the initiating browser flow.
+	replacement := h.session(t, f.User, org)
+	if w := finish(state, replacement, cookies); w.Code != 400 || exchanges != 0 {
+		t.Fatal("replacement session exchanged old flow", w.Code, w.Body.String())
 	}
 	w := finish(state, owner, cookies)
 	var connected struct {

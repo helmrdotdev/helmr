@@ -118,11 +118,12 @@ output "secret_arns" {
     auth_key                           = aws_secretsmanager_secret.auth_key.arn
     encryption_key                     = aws_secretsmanager_secret.encryption_key.arn
     computer_fencing_key               = aws_secretsmanager_secret.computer_fencing_key.arn
-    github_oauth_client_secret         = aws_secretsmanager_secret.github_oauth_client_secret.arn
     checkpoint_encryption_key          = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },
+    var.github_oauth_client_id != "" ? {
+      github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret[0].arn
+    } : {},
     var.deployment_mode == "self-hosted" ? {
-      setup_token           = aws_secretsmanager_secret.setup_token[0].arn
       computer_wrapping_key = aws_secretsmanager_secret.computer_wrapping_key[0].arn
     } : {},
     var.email_provider == "resend" ? {

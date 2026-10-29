@@ -50,15 +50,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
 	defaultAddr                    = ":8080"
-	defaultAppOrigin               = "http://127.0.0.1:3000"
+	defaultAppOrigin               = "http://localhost:3000"
 	defaultAuthKey                 = "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
-	defaultSetupToken              = "dev-setup-token"
 	defaultWorkerHostCredentialKey = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
 	defaultSecretEncryptionKey     = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 	defaultComputerFencingKey      = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
@@ -197,7 +196,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure allocation owner: %w", err)
 	}
-	mailer, magicLinkDelivery := devEmail(log)
+	mailer, emailCodeDelivery := devEmail(log)
 	changes := dbnotify.New()
 	allocationWake, stopAllocationWake := changes.Subscribe("dispatch")
 	defer stopAllocationWake()
@@ -226,12 +225,11 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 		SecretDelivery:                 secretStore,
 		SecretProxy:                    secretStore,
 		WorkerHostCredentialSigningKey: cfg.workerHostCredentialKey,
-		SetupToken:                     cfg.setupToken,
 		AuthKey:                        cfg.authKey,
 		AppOrigin:                      appOrigin,
 		TelemetryReader:                telemetryReader,
 		Mailer:                         mailer,
-		MagicLinkDelivery:              magicLinkDelivery,
+		EmailCodeDelivery:              emailCodeDelivery,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control server: %w", err)
@@ -270,7 +268,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 			return dispatch.RunImageBuildLifecycle(ctx, cfg.auditPolicy, pool, log)
 		}},
 		{name: "Deployment event retention", run: func(ctx context.Context) error { return deployment.RunEventRetention(ctx, pool, log) }},
-		{name: "magic link delivery", run: magicLinkDelivery.Run},
+		{name: "email code delivery", run: emailCodeDelivery.Run},
 	}
 	loginURL := strings.TrimRight(cfg.appOrigin, "/") + "/dev/login"
 	// Deferred ClickHouse and PostgreSQL closes run only after serveDev
@@ -281,8 +279,8 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 // devEmail is the dev control plane's email delivery: sign-in and invitation
 // links are written to the log instead of being sent, so local development
 // can exercise both without an email provider.
-func devEmail(log *slog.Logger) (email.Sender, *controlplane.MagicLinkDelivery) {
-	return email.LogSender{Log: log}, controlplane.NewMagicLinkDelivery(log, 10*time.Second)
+func devEmail(log *slog.Logger) (email.Sender, *controlplane.EmailCodeDelivery) {
+	return email.LogSender{Log: log}, controlplane.NewEmailCodeDelivery(log)
 }
 
 type backgroundLoop struct {
@@ -369,7 +367,6 @@ type devConfig struct {
 	deploymentRuntimeDescriptorPath string
 	appOrigin                       string
 	authKey                         []byte
-	setupToken                      string
 	workerHostCredentialKey         []byte
 	encryptionKey                   []byte
 	computerWrappingKey             []byte
@@ -401,7 +398,6 @@ func loadConfig() (devConfig, error) {
 		platformStoreURI:                textEnv("PLATFORM_STORE_URI", ""),
 		deploymentRuntimeDescriptorPath: textEnv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", ""),
 		appOrigin:                       textEnv("APP_ORIGIN", defaultAppOrigin),
-		setupToken:                      secretEnv("SETUP_TOKEN", defaultSetupToken),
 	}
 	if cfg.seedData, err = boolEnv("HELMR_DEV_SEED_DATA", true); err != nil {
 		return cfg, err
@@ -439,9 +435,6 @@ func loadConfig() (devConfig, error) {
 	}
 	if cfg.deploymentRuntimeDescriptorPath == "" {
 		return cfg, errors.New("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH is required")
-	}
-	if strings.TrimSpace(cfg.setupToken) != cfg.setupToken {
-		return cfg, errors.New("SETUP_TOKEN must not have surrounding whitespace")
 	}
 	if cfg.clickHouseURL == "" {
 		return cfg, errors.New("CLICKHOUSE_URL is required")
@@ -641,15 +634,20 @@ ON CONFLICT (id) DO UPDATE
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if _, err := queries.CreateLoginSession(ctx, db.CreateLoginSessionParams{
-		ID:        pgvalue.UUID(uuid.NewV7()),
-		UserID:    pgvalue.UUID(userID),
-		TokenHash: hash,
-		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(30 * 24 * time.Hour), Valid: true},
+	if err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		source, session := uuid.NewV7(), uuid.NewV7()
+		if _, err := tx.Exec(ctx, `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'local-development',$1::uuid::text,clock_timestamp())`, source, userID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,access_epoch,token_hash,identity_id,authenticated_at,expires_at) SELECT $1,id,'browser',access_epoch,$3,$4,clock_timestamp(),clock_timestamp()+interval '30 days' FROM users WHERE id=$2`, session, userID, hash, source); err != nil {
+			return err
+		}
+		return nil
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     "helmr_session_dev",
 		Value:    raw,

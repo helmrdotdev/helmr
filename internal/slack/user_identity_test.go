@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/golang-jwt/jwt/v5"
 	"io"
 	"math/big"
 	"net/http"
@@ -13,8 +14,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestSlackUserIdentityVerifiesSignedOpenIDClaims(t *testing.T) {

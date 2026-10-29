@@ -50,7 +50,7 @@ func (s *Server) refuseOperation(w http.ResponseWriter, r *http.Request, reason 
 	}
 	actor := audit.Unauthenticated(result, "")
 	org := uuid.Nil()
-	if p.UserID != uuid.Nil() || p.APIKeyID != uuid.Nil() {
+	if p.UserID != uuid.Nil() || p.APIKeyID != uuid.Nil() || p.OperatorID != uuid.Nil() {
 		actor = audit.FromPrincipal(p)
 		org = p.OrgID
 	}
@@ -134,7 +134,7 @@ func (s *Server) writeOperationError(w http.ResponseWriter, r *http.Request, err
 	writeError(w, err)
 }
 func presentedCredential(r *http.Request) bool {
-	if r.Header.Get("Authorization") != "" {
+	if r.Header.Get("Authorization") != "" || operatorToken(r) != "" {
 		return true
 	}
 	_, err := r.Cookie(sessionCookieName(r))

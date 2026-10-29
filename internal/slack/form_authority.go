@@ -59,7 +59,7 @@ func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, c
 	if actor == bot || source.Before(authorized) || source.Before(connected) {
 		return empty, 0, errControlInvalid
 	}
-	user, code, err := linkedSessionHuman(ctx, tx, team, actor, target.Environment, target.Session, source)
+	human, code, err := linkedSessionHuman(ctx, tx, team, actor, target.Installation, target.Environment, target.Session, source)
 	if err != nil {
 		return empty, 0, err
 	}
@@ -69,7 +69,7 @@ func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, c
 		}
 		return empty, 0, errControlInvalid
 	}
-	if err := session.AuthorizeSessionOperation(ctx, tx, session.Caller{Kind: "user", ID: user, SlackThreadID: target.Thread}, target.Environment, target.Session, auth.PermissionSessionsAnswer); err != nil {
+	if err := session.AuthorizeSessionOperation(ctx, tx, slackCaller(human, target.Thread), target.Environment, target.Session, auth.PermissionSessionsAnswer); err != nil {
 		return empty, 0, err
 	}
 	var view session.AskView

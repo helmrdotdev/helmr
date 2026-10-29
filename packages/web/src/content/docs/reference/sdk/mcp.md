@@ -30,7 +30,8 @@ interface RuntimeMcpConnectionOptions {
 Returns the connection for the current Session process: a local
 `http://127.0.0.1:<port>/mcp` URL and a bearer `Authorization` header. Omitting
 `policy` requests the Agent's published `runtimeMcp` maximum. If that Agent field
-is omitted, the maximum adds no restriction to current base authorization.
+is omitted, publication resolves a finite maximum using the exact Agent keys in
+that Deployment and new Computer placement.
 A supplied `{ allow: [...] }` must be a subset of the maximum; `{ allow: [] }`
 grants no remote operations. There is no explicit unrestricted argument.
 
@@ -184,7 +185,7 @@ List Agent definitions that `spawn` or `start` can target.
 
 | Input | Type | Description |
 | --- | --- | --- |
-| `operation` | `"spawn" \| "start"` | Required. `spawn` lists the caller's pinned Deployment; `start` lists the Environment's current Deployment. |
+| `operation` | `"spawn" \| "start"` | Required. Both list the caller's pinned Deployment. |
 | `cursor` | string | Optional continuation cursor. |
 
 Result: `{ "deploymentId": string, "agents": [{ "agent": string }], "nextCursor"?: string }`.
@@ -203,8 +204,8 @@ Result: `{ "computers": [Computer], "next_cursor"?: string }`. Each Computer has
 `id`, `key?`, `template`, `deployment_id`, `status`, `residency`, `error?`,
 `delete_after_unused_ms`, `unused_since`, `last_activity_at`, `created_at` and
 `updated_at`. A finite creation rule with `computer: "caller"` permits only the
-caller's own logical Computer ID. An unrestricted connection retains current base
-authorization for other eligible Computers.
+caller's own logical Computer ID. Other Computers cannot be selected for runtime
+creation. Discovery is limited to the caller’s workload and permitted relations.
 
 ### `spawn`
 
@@ -212,7 +213,7 @@ Create child work owned by the caller, using the caller's pinned Deployment.
 
 ### `start`
 
-Create independent work, using the Environment's current Deployment. The new
+Create independent work, using the caller's pinned Deployment. The new
 Session records the caller as its requester but is not owned by it.
 
 `spawn` and `start` take the same input:

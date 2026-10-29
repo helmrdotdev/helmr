@@ -32,7 +32,7 @@ configure_stack() {
   fi
   export HELMR_DEV_POSTGRES_PORT="$((port + 2))"
   export HELMR_DEV_CLICKHOUSE_HTTP_PORT="$((port + 3))"
-  export APP_ORIGIN="http://127.0.0.1:${port}"
+  export APP_ORIGIN="http://localhost:${port}"
   # Lifecycle checks never touch object storage; the closed endpoint keeps it so.
   export CAS_URI="s3://helmr-dev-test-cas?endpoint=http://127.0.0.1:9"
   export PLATFORM_STORE_URI="s3://helmr-dev-test-platform?endpoint=http://127.0.0.1:9"
@@ -219,7 +219,7 @@ test_failed_second_start_preserves_lock() {
   export HELMR_DEV_CONTROL_PLANE_PORT=36210
   export HELMR_DEV_POSTGRES_PORT=36211
   export HELMR_DEV_CLICKHOUSE_HTTP_PORT=36212
-  export APP_ORIGIN="http://127.0.0.1:36210"
+  export APP_ORIGIN="http://localhost:36210"
   run_wrapper_expect_failure "${dir}/second.log" 15
   if [ ! -f "${dir}/.stack.lock/pid" ]; then
     fail "first stack lock was removed after failed second start"
@@ -382,7 +382,7 @@ test_reset_holds_lock_exclusion() {
   export HELMR_DEV_CONTROL_PLANE_PORT=36330
   export HELMR_DEV_POSTGRES_PORT=36332
   export HELMR_DEV_CLICKHOUSE_HTTP_PORT=36333
-  export APP_ORIGIN="http://127.0.0.1:36330"
+  export APP_ORIGIN="http://localhost:36330"
   run_wrapper_expect_failure "${dir}/blocked.log" 15
   helmr_dev_release_lock
   rm -rf "${dir}"

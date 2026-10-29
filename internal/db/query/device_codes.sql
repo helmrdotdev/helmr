@@ -22,6 +22,11 @@ SELECT *
 -- name: ApproveDeviceCode :one
 UPDATE device_codes
    SET status = 'approved',
+       user_id=sqlc.arg(user_id),
+       identity_id=sqlc.narg(identity_id),
+       passkey_id=sqlc.narg(passkey_id),
+       authenticated_at=sqlc.arg(authenticated_at),
+       browser_session_id=sqlc.arg(browser_session_id),
        org_id = sqlc.arg(org_id),
        decided_by_member_id = sqlc.arg(member_id),
        decided_at = now()

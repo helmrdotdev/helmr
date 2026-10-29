@@ -12,7 +12,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -27,7 +26,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 	}
 	org, user := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO organizations(id,slug,name) VALUES($1,'workload','Workload')`, org)
-	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name,admin) VALUES($1,'Workload auditor',true)`, user)
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Workload auditor')`, user)
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
 	const writers, perWriter = 4, 2000
 	var wg sync.WaitGroup
@@ -73,7 +72,7 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 	t.Logf("sample writers=%d rows=%d elapsed_ms=%.3f append_p50_ms=%.3f append_p95_ms=%.3f append_p99_ms=%.3f table_bytes=%d index_bytes=%d", writers, rows, float64(elapsed.Microseconds())/1000, float64(times[len(times)/2].Microseconds())/1000, float64(times[len(times)*95/100].Microseconds())/1000, float64(times[len(times)*99/100].Microseconds())/1000, tableBytes, indexBytes)
 	dbtest.MustExec(t, t.Context(), d.Pool, `ANALYZE audit_events`)
 	filter := SearchFilter{OrgID: org, From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), Limit: 100}
-	principal := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, Admin: true, SessionID: uuid.NewV7()}
+	principal := dbtest.OperatorPrincipal(t, d.Pool)
 	for _, action := range []string{"command.completed", "command.failed"} {
 		filter.Actions = []string{action}
 		started := time.Now()
@@ -94,13 +93,13 @@ func TestAuditRepresentativeConcurrentWorkload(t *testing.T) {
 		}
 		t.Logf("query_plan action=%s %s", action, plan)
 	}
-	filter.Actions, filter.ActorKind, filter.ActorID = nil, "user", user
+	filter.Actions, filter.ActorKind, filter.ActorID = nil, "operator", principal.OperatorID
 	actorRows, err := SearchAdmin(t.Context(), d.Pool, policy, principal, filter)
 	if err != nil || len(actorRows.Events) != 2 {
 		t.Fatal("actor search", len(actorRows.Events), err)
 	}
 	var actorPlan json.RawMessage
-	if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "user", user, []string{}, "", nil, "", nil, "", "", 101, nil, nil, true, audit.PlatformActions()).Scan(&actorPlan); err != nil {
+	if err := d.Pool.QueryRow(t.Context(), "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) "+searchSQL, org, true, []uuid.UUID{}, nil, filter.From, filter.To, nil, nil, "operator", principal.OperatorID, []string{}, "", nil, "", nil, "", "", 101, nil, nil, true, audit.PlatformActions()).Scan(&actorPlan); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("actor_query_plan %s", actorPlan)

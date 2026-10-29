@@ -11,7 +11,8 @@ Both intersect with existing authorization and installation restrictions.
 
 Omitting network policy keeps ordinary IPv4 connectivity under installation
 restrictions. Omitting MCP
-policy adds no authored restriction to base-authorized Runtime MCP operations.
+policy resolves at publication to the Deployment’s exact Agent set and supported
+operations, with new Computer placement.
 Choose explicit limits when an application needs a smaller authority boundary.
 
 ## Configure outbound networking
@@ -113,8 +114,10 @@ export const reviewer = agent({
 })
 ```
 
-Omitted `runtimeMcp` preserves all supported operations and targets permitted by
-base authorization, including later additions. `{ allow: [] }` grants zero remote
+Omitted `runtimeMcp` resolves at publication to supported operations and exact
+Agent keys in that Deployment. It permits new Computer placement; sharing the
+caller’s Computer must be declared explicitly. Future Agents or operations do
+not widen an already published contract. `{ allow: [] }` grants zero remote
 business operations. An explicit policy requires `allow`; there is no MCP
 `blockAll` or unrestricted argument. Ordinary non-use requires no policy: simply
 do not obtain or inject a connection into the native client.
@@ -128,8 +131,7 @@ control grant. See the complete [Runtime MCP policy types](/docs/reference/sdk/a
 
 A no-argument getter inherits the Agent maximum. A supplied allowlist narrows
 that maximum for the returned descriptor and rejects widening. Finite getter
-keys still resolve against the caller's pinned manifest under an unrestricted
-maximum. Equivalent normalized requests reuse credentials. A Session process
+keys resolve against the caller's pinned manifest and published maximum. Equivalent normalized requests reuse credentials. A Session process
 supports at most 16 distinct scopes, including its maximum, without eviction.
 
 ### Inject the connection into a native client
@@ -189,17 +191,19 @@ available with an empty MCP allowlist.
 
 ## Admission, placement and trust
 
-Every managed call still passes current Role, authenticated Environment, origin,
-relationship, visibility and lifecycle checks. Unrestricted MCP retains existing
-eligible-Computer placement authority. Finite creation rules narrow reuse to the
-caller's Computer; restricting only a destination Agent does not protect its
-Computer from otherwise authorized callers.
+New human and machine requests require current permissions in their authenticated
+Environment. Accepted runtime work uses the Agent's finite published execution
+contract, with relationship, placement, resource and lifecycle checks. Publishing
+a Deployment authorizes that contract; later changes to the publisher or requester
+do not change accepted work. Reusing the caller's Computer requires an explicit
+creation rule; unrelated Computers are outside the runtime contract.
 
-`start` selects the latest Deployment, `spawn` uses the caller's pinned Deployment,
-and operations on an existing Session use that Session's pin. Runtime MCP `start` and `spawn` require valid initial input. The selected Agent, Deployment, Computer and initial Turn
-are fixed when work is admitted. Delayed delivery rechecks current mutable
-authorization and Secret eligibility; caller reconstruction does not cancel
-already admitted work.
+Runtime `start` and `spawn` both select the caller's pinned Deployment. Calls from
+an external Client select the current Deployment. Operations on an existing
+Session use that Session's pin. Runtime MCP creation requires valid initial input;
+the Agent, Deployment, Computer and initial Turn are fixed at admission. Dispatch
+checks work controls, resource eligibility and physical ownership. Current access
+is checked again for new input and output disclosure, independently of execution.
 
 Retry a mutation with its original idempotency key and body. The current
 descriptor must permit the operation before an old receipt is returned. A request
@@ -238,12 +242,12 @@ const session = await client.sessions.get(sessionId)
 const agent = await client.agents.get(session.agent, {
   deploymentId: session.deploymentId,
 })
-agent.runtimeMcp // undefined = unrestricted; { allow: [] } = zero remote grants.
+agent.runtimeMcp // Resolved finite allowlist; { allow: [] } = zero remote grants.
 ```
 
 These reads show normalized published configuration at each resource's own pin.
 The Session's default Template does not substitute for the actual Computer.
-Installation restrictions and current base authorization remain separate; a read
+Transport delivery restrictions and current human authorization remain separate; a read
 is not a live packet-enforcement acknowledgement.
 
 ## Policy errors

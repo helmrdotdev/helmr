@@ -12,14 +12,14 @@ cat >"${tmp}/bin/mock-tofu" <<'EOF'
 set -euo pipefail
 case "$*" in
   'output -json secret_arns')
-    jq -n --arg setup "${MOCK_SETUP_TOKEN_PRESENT:-1}" --arg capacity "${MOCK_CAPACITY_TOKEN_PRESENT:-0}" '{
+    jq -n --arg local_key "${MOCK_LOCAL_WRAPPING_KEY_PRESENT:-1}" --arg capacity "${MOCK_CAPACITY_TOKEN_PRESENT:-0}" '{
       worker_host_credential_signing_key:"arn:worker-host-credential-signing-key",
       auth_key:"arn:auth-key",
       encryption_key:"arn:encryption-key",
       computer_fencing_key:"arn:computer-fencing-key",
       checkpoint_encryption_key:"arn:checkpoint-encryption-key",
       github_oauth_client_secret:"arn:github-oauth-client-secret"
-    } + (if $setup == "1" then {setup_token:"arn:setup-token",computer_wrapping_key:"arn:computer-wrapping-key"} else {} end) + (if $capacity == "1" then {capacity_token:"arn:capacity-token"} else {} end)'
+    } + (if $local_key == "1" then {computer_wrapping_key:"arn:computer-wrapping-key"} else {} end) + (if $capacity == "1" then {capacity_token:"arn:capacity-token"} else {} end)'
     ;;
   'output -raw worker_enrollment_secret_arn') printf 'arn:worker-enrollment-token\n' ;;
   *) exit 90 ;;
@@ -74,8 +74,8 @@ run_helper present
 
 : >"${tmp}/puts"
 run_helper missing
-[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 8 ] || {
-  printf 'expected all eight missing secret values to be initialized\n' >&2
+[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 7 ] || {
+  printf 'expected all seven missing secret values to be initialized\n' >&2
   exit 1
 }
 
@@ -103,9 +103,9 @@ MOCK_CAPACITY_TOKEN_PRESENT=1 run_helper present
 [ ! -s "${tmp}/puts" ]
 
 : >"${tmp}/puts"
-MOCK_SETUP_TOKEN_PRESENT=0 run_helper missing
+MOCK_LOCAL_WRAPPING_KEY_PRESENT=0 run_helper missing
 [ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 6 ] || {
-  printf 'managed secret initialization required a setup token\n' >&2
+  printf 'managed secret initialization required a local wrapping key\n' >&2
   exit 1
 }
 

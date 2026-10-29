@@ -43,7 +43,7 @@ func newAgentDeleteFixture(t *testing.T) agentDeleteFixture {
 func (f agentDeleteFixture) request(t *testing.T, method, path, token, body, revision string, status int) *httptest.ResponseRecorder {
 	t.Helper()
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
-	r.Header.Set("Authorization", "Bearer "+token)
+	f.h.authenticateRequest(r, token)
 	if body != "" {
 		r.Header.Set("Content-Type", "application/json")
 	}
@@ -231,7 +231,7 @@ func TestAgentDeleteSerializesPromotion(t *testing.T) {
 				body = `{}`
 			}
 			r := httptest.NewRequest(method, path, strings.NewReader(body))
-			r.Header.Set("Authorization", "Bearer "+f.token)
+			f.h.authenticateRequest(r, f.token)
 			r.Header.Set("If-Match", `"1"`)
 			w := httptest.NewRecorder()
 			f.h.handler.ServeHTTP(w, r)
@@ -277,7 +277,7 @@ func TestAgentDeleteRechecksNewDependencies(t *testing.T) {
 			defer cancel()
 			go func() {
 				r := httptest.NewRequest(http.MethodDelete, f.base, nil).WithContext(ctx)
-				r.Header.Set("Authorization", "Bearer "+f.token)
+				f.h.authenticateRequest(r, f.token)
 				r.Header.Set("If-Match", `"1"`)
 				w := httptest.NewRecorder()
 				f.h.handler.ServeHTTP(w, r)
@@ -360,7 +360,7 @@ func TestAgentDeleteReadsRoleAfterConcurrentEdit(t *testing.T) {
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		r := httptest.NewRequest(http.MethodDelete, f.base, nil).WithContext(ctx)
-		r.Header.Set("Authorization", "Bearer "+f.token)
+		f.h.authenticateRequest(r, f.token)
 		r.Header.Set("If-Match", `"1"`)
 		w := httptest.NewRecorder()
 		f.h.handler.ServeHTTP(w, r)
@@ -417,7 +417,7 @@ func TestAgentDeleteRevocationWhileWaitingReturnsPermissionRequired(t *testing.T
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		r := httptest.NewRequest(http.MethodDelete, f.base, nil).WithContext(ctx)
-		r.Header.Set("Authorization", "Bearer "+f.token)
+		f.h.authenticateRequest(r, f.token)
 		r.Header.Set("If-Match", `"1"`)
 		w := httptest.NewRecorder()
 		f.h.handler.ServeHTTP(w, r)

@@ -1,13 +1,13 @@
 package slack
 
 import (
+	"github.com/jackc/pgx/v5"
 	"testing"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
@@ -23,7 +23,7 @@ func TestSlackFormReadRequiresCurrentExactLinkedAuthority(t *testing.T) {
 			case "operator":
 				f.SetPermissions(t, "agents.use", "sessions.send")
 			case "unlinked":
-				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM slack_user_links`)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_user_links SET revoked_at=clock_timestamp()`)
 			case "disabled_member":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			case "revoked_publication":

@@ -120,8 +120,8 @@ func diagnosticFixture(t *testing.T, attention api.AttentionCounts, role string,
 				t.Error("readiness received credential")
 			}
 			_, _ = w.Write([]byte(`{"status":"ready"}`))
-		case "/api/me":
-			_ = json.NewEncoder(w).Encode(api.MeResponse{UserID: "user", IsOwner: role == "owner"})
+		case "/api/organization":
+			_ = json.NewEncoder(w).Encode(api.OrganizationContextResponse{CurrentMember: api.CurrentMember{UserID: "user", IsOwner: role == "owner"}})
 		case "/api/projects/project":
 			_ = json.NewEncoder(w).Encode(api.ProjectSummary{Project: "project", Environments: []api.EnvironmentSummary{{Environment: "environment", Project: "project"}}})
 		case "/api/projects/project/environments/environment/deployments/current", "/v1/deployments/current":
@@ -202,7 +202,7 @@ func TestDiagnosticAPIKeyAndScopeBoundary(t *testing.T) {
 func TestDiagnosticReadFailureNeverEchoesResponseBody(t *testing.T) {
 	clearDiagnosticEnvironment(t)
 	server := diagnosticFixture(t, api.AttentionCounts{}, "", func(w http.ResponseWriter, r *http.Request) bool {
-		if r.URL.Path != "/api/me" {
+		if r.URL.Path != "/api/organization" {
 			return false
 		}
 		w.WriteHeader(401)

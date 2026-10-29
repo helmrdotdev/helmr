@@ -11,7 +11,7 @@ if (!Number.isInteger(selfPort) || selfPort < 1024 || selfPort > 65535) {
 }
 
 const e2eDevDir = path.join(process.cwd(), ".helmr-dev-e2e");
-const baseURL = externalBaseURL ?? `http://127.0.0.1:${selfPort}`;
+const baseURL = externalBaseURL ?? `http://localhost:${selfPort}`;
 
 const managedWebServerEnv: Record<string, string> = {
   HELMR_DEV_DIR: e2eDevDir,
@@ -21,7 +21,7 @@ const managedWebServerEnv: Record<string, string> = {
   HELMR_DEV_CONTROL_PLANE_PORT: String(selfPort),
   HELMR_DEV_POSTGRES_PORT: String(selfPort + 1),
   HELMR_DEV_CLICKHOUSE_HTTP_PORT: String(selfPort + 2),
-  APP_ORIGIN: `http://127.0.0.1:${selfPort}`,
+  APP_ORIGIN: `http://localhost:${selfPort}`,
   // Browser acceptance never touches object storage; the closed endpoint keeps it so.
   CAS_URI: "s3://helmr-e2e-cas?endpoint=http://127.0.0.1:9",
   PLATFORM_STORE_URI: "s3://helmr-e2e-platform?endpoint=http://127.0.0.1:9",
@@ -50,6 +50,7 @@ export default defineConfig({
   use: {
     baseURL,
     headless: true,
+    extraHTTPHeaders: { Origin: baseURL },
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },

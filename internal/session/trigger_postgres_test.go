@@ -215,7 +215,7 @@ func TestTriggerSlackGenerationAdmissionAndRevocation(t *testing.T) {
 				t.Fatal(err)
 			}
 			var pinned bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_posts p ON p.thread_id=t.id WHERE t.front_session_id=s.id AND t.slack_channel_binding_id=$3 AND t.thread_ts IS NULL AND p.role='opening' AND p.turn_id=o.turn_id AND p.source_thread_id IS NULL) FROM trigger_occurrences o JOIN sessions s ON (s.environment_id,s.id)=(o.environment_id,o.session_id) WHERE o.environment_id=$1 AND o.activation_id=$2 AND o.disposition='admitted'`, f.env, trigger, channel).Scan(&pinned); err != nil || !pinned {
+			if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_posts p ON p.thread_id=t.id WHERE t.front_session_id=s.id AND t.slack_channel_binding_id=$3 AND t.thread_ts IS NULL AND p.role='opening' AND p.turn_id=o.turn_id) FROM trigger_occurrences o JOIN sessions s ON (s.environment_id,s.id)=(o.environment_id,o.session_id) WHERE o.environment_id=$1 AND o.activation_id=$2 AND o.disposition='admitted'`, f.env, trigger, channel).Scan(&pinned); err != nil || !pinned {
 				t.Fatalf("scheduled route missing: %v %v", pinned, err)
 			}
 			switch revocation {

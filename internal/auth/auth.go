@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -14,12 +15,20 @@ var ErrUnauthenticated = errors.New("unauthenticated")
 type PrincipalKind string
 
 const (
-	PrincipalKindAPIKey  PrincipalKind = "api_key"
-	PrincipalKindSession PrincipalKind = "session"
+	PrincipalKindAPIKey   PrincipalKind = "api_key"
+	PrincipalKindSession  PrincipalKind = "session"
+	PrincipalKindOperator PrincipalKind = "operator"
 )
 
 type Principal struct {
 	CredentialVersion int64
+	OperatorID        uuid.UUID
+	SlackLinkID       uuid.UUID
+	IdentityID        uuid.UUID
+	PasskeyID         uuid.UUID
+	AuthenticatedAt   time.Time
+	AccessEpoch       int64
+	Channel           string
 
 	OrgID         uuid.UUID
 	UserID        uuid.UUID
@@ -30,7 +39,6 @@ type Principal struct {
 	ProjectID     string
 	EnvironmentID string
 	Kind          PrincipalKind
-	Admin         bool
 	Grants        []PermissionGrant
 }
 

@@ -66,3 +66,17 @@ func TestDerivedOperationsExplainCanonicalGrantsWithoutTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestOmittedPolicyResolvesToPublishedTargetsAndIsolatedPlacement(t *testing.T) {
+	maximum, err := Resolve(nil, []string{"worker", "coordinator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maximum.Kind != "allow" || !maximum.Allows("start", "worker", "new") || maximum.Allows("start", "worker", "caller") || maximum.Allows("spawn", "future-agent", "new") || maximum.Allows("unknown", "worker", "") {
+		t.Fatalf("unbounded default: %+v", maximum)
+	}
+	empty, err := Resolve(json.RawMessage(`{"allow":[]}`), []string{"worker"})
+	if err != nil || empty.Has("start") || empty.Has("list_computers") {
+		t.Fatal("explicit empty default widened", empty, err)
+	}
+}

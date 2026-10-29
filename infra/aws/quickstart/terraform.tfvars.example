@@ -32,5 +32,4 @@ worker_vm_memory_mib       = 2048
 slack_transport = "socket"
 controlplane_environment = {
   # Set verified operator emails before their first login when needed.
-  # ADMIN_EMAILS = "operator@example.com"
 }

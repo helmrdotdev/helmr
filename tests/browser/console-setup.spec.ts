@@ -35,11 +35,12 @@ async function secrets(page: Page, initial: SecretState, options: { manage?: boo
     await route.fulfill({ json: { secret: id, status: "active", created_at: new Date().toISOString() } });
   });
   if (options.manage === false) {
-    await page.route("**/api/me", async (route) => {
+    await page.route("**/api/organization", async (route) => {
       const response = await route.fetch();
-      const me = await response.json() as import("../../packages/console/src/lib/auth").Me;
+      const organization = await response.json() as import("../../packages/console/src/lib/auth").OrganizationContext;
+      const me = organization.current_member;
       const withoutSecrets = (permissions: string[]) => permissions.filter(permission => !["secrets.read", "secrets.create"].includes(permission));
-      await route.fulfill({ response, json: { ...me, is_owner: false, permissions: withoutSecrets(me.permissions), permission_scopes: me.permission_scopes?.map(scope => ({ ...scope, permissions: withoutSecrets(scope.permissions) })) } });
+      await route.fulfill({ response, json: { ...organization, current_member: { ...me, is_owner: false, permissions: withoutSecrets(me.permissions), permission_scopes: me.permission_scopes?.map(scope => ({ ...scope, permissions: withoutSecrets(scope.permissions) })) } } });
     });
   }
   return writes;

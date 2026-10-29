@@ -1,9 +1,12 @@
 package slack
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,7 +16,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
-	"github.com/jackc/pgx/v5"
 )
 
 func (f statusFixture) grantDirect(t *testing.T) {
@@ -180,7 +182,7 @@ func TestSlackDirectReplyRejectsAuthorityChanges(t *testing.T) {
 				if err := f.Pool.QueryRow(t.Context(), `SELECT session_id FROM slack_requests WHERE id=$1`, first).Scan(&sid); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: sid, Kind: "cancel", IdempotencyKey: "close"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: sid, Kind: "cancel", IdempotencyKey: "close"}); err != nil {
 					t.Fatal(err)
 				}
 			case "grants":
@@ -250,9 +252,10 @@ func TestSlackDirectAppHomeOnlySetsVerifiedPrompts(t *testing.T) {
 func directBoundFixture(t *testing.T) statusFixture {
 	f := newStatusFixture(t)
 	f.grantDirect(t)
-	f.link(t)
+	link := f.linkActor(t, f.User, "human")
+
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) SELECT $3,environment_id,connection_id,installation_id,org_id,team_id,'D1' FROM slack_channel_bindings WHERE id=$1;
- UPDATE slack_threads SET slack_channel_binding_id=$3,slack_channel_id='D1',recipient_user_id='human',recipient_team_id='team' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.channel, f.thread, uuid.NewV7())
+ UPDATE slack_threads SET slack_channel_binding_id=$3,slack_channel_id='D1',recipient_user_id='human',recipient_team_id='team',initial_recipient_link_id=$4 WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.channel, f.thread, uuid.NewV7(), link)
 	return f
 }
 
@@ -502,11 +505,171 @@ func TestDirectDeliveryRechecksRecipientUseAndIdentity(t *testing.T) {
 			case "permission":
 				f.SetPermissions(t, "sessions.read")
 			case "link":
-				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM slack_user_links WHERE user_id=$1`, f.User)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			case "membership":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			}
 			check(false)
+		})
+	}
+}
+
+func TestDirectDeliveryRelinkRequiresExplicitConsentAndExactRecipient(t *testing.T) {
+	f := newSlackAdmissionFixture(t)
+	f.grantDirect(t)
+	f.link(t)
+	id := f.directEvent(t, "private-before-relink", slackNow(), "")
+	f.reconcileDirect(t, id)
+	f.receiptStatus(t, id, "accepted")
+	var thread, org uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.thread_id,e.org_id FROM slack_requests r JOIN environments e ON e.id=r.environment_id WHERE r.id=$1`, id).Scan(&thread, &org); err != nil {
+		t.Fatal(err)
+	}
+	check := func(want bool) {
+		t.Helper()
+		err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
+			got, err := directRecipientAuthorized(t.Context(), tx, thread)
+			if err == nil && got != want {
+				t.Fatalf("delivery %v want %v", got, want)
+			}
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	check(true)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
+	check(false)
+	actor := audit.FromPrincipal(f.Principal(t))
+	who := UserIdentity{TeamID: "team", SlackUserID: "human"}
+	binding := make([]byte, 32)
+	consent, err := PrepareUserLink(t.Context(), f.Pool, actor, org, f.User, f.installation, who, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: consent, BrowserHash: binding}); err != nil {
+		t.Fatal(err)
+	}
+	check(false)
+	consent, err = PrepareUserLink(t.Context(), f.Pool, actor, org, f.User, f.installation, who, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: consent, BrowserHash: binding, ResumePreviousDelivery: true}); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET recipient_user_id='another-person' WHERE id=$1`, thread)
+	check(false)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET recipient_user_id='human' WHERE id=$1; UPDATE org_members SET suspended_at=clock_timestamp() WHERE user_id=$2`, pgx.QueryExecModeSimpleProtocol, thread, f.User)
+	check(false)
+}
+
+type verifyingRecipientCaller struct {
+	callerFunc
+	verify func()
+}
+
+func (c verifyingRecipientCaller) VerifyConversation(context.Context, uuid.UUID, int64, string, string, string) error {
+	c.verify()
+	return nil
+}
+
+func TestDirectDeliveryRevocationDuringConversationCheck(t *testing.T) {
+	for _, kind := range []string{"post", "stream", "status"} {
+		for _, revoke := range []string{"link", "account", "membership", "permission"} {
+			t.Run(kind+"/"+revoke, func(t *testing.T) {
+				f := directBoundFixture(t)
+				calls, checks := 0, 0
+				client := verifyingRecipientCaller{callerFunc: func(context.Context, uuid.UUID, int64, string, []byte) DeliveryResult {
+					calls++
+					return DeliveryResult{Disposition: Acknowledged, Timestamp: "123.999"}
+				}, verify: func() {
+					checks++
+					switch revoke {
+					case "link":
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
+					case "account":
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.User)
+					case "membership":
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET suspended_at=clock_timestamp() WHERE user_id=$1`, f.User)
+					case "permission":
+						f.SetPermissions(t, "sessions.read")
+					}
+				}}
+				var sent bool
+				var err error
+				if kind == "status" {
+					sent, err = ReconcileStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, f.thread)
+				} else {
+					var post uuid.UUID
+					if kind == "stream" {
+						post = f.streamPost(t, 1, "response")
+					} else {
+						post = f.post(t, 1, "content", "lifecycle", nil)
+					}
+					sent, err = ReconcilePost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, client, post)
+				}
+				if err != nil || sent || calls != 0 || checks != 1 {
+					t.Fatalf("delivery after revocation: sent=%v calls=%d checks=%d err=%v", sent, calls, checks, err)
+				}
+			})
+		}
+	}
+}
+
+func TestDirectDeliveryRechecksPublicationAfterRecipientLockWait(t *testing.T) {
+	for _, kind := range []string{"post", "status"} {
+		t.Run(kind, func(t *testing.T) {
+			f := directBoundFixture(t)
+			var check func() (bool, error)
+			if kind == "post" {
+				claim := f.postClaim(t, f.post(t, 1, "content", "lifecycle", nil))
+				check = func() (bool, error) { return postClaimAuthorized(t.Context(), f.Pool, claim) }
+			} else {
+				claim, err := ClaimStatus(t.Context(), f.Pool, f.thread)
+				if err != nil || claim == nil {
+					t.Fatalf("claim %v %v", claim, err)
+				}
+				check = func() (bool, error) { return statusClaimAuthorized(t.Context(), f.Pool, *claim) }
+			}
+			blocker, err := f.Pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer blocker.Rollback(t.Context())
+			var pid int
+			if err = blocker.QueryRow(t.Context(), `SELECT pg_backend_pid() FROM users WHERE id=$1 FOR NO KEY UPDATE`, f.User).Scan(&pid); err != nil {
+				t.Fatal(err)
+			}
+			type result struct {
+				allowed bool
+				err     error
+			}
+			done := make(chan result, 1)
+			go func() { allowed, err := check(); done <- result{allowed, err} }()
+			waiting := false
+			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+				if err = f.Pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !waiting {
+				t.Fatal("recipient check did not wait on user lock")
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_connections SET revoked_at=clock_timestamp() WHERE id=$1`, f.publication)
+			if err = blocker.Commit(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			got := <-done
+			if got.err != nil || got.allowed {
+				t.Fatalf("revoked publication after wait: %+v", got)
+			}
 		})
 	}
 }

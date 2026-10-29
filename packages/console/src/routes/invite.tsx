@@ -1,114 +1,28 @@
-import { A, useSearchParams } from "@solidjs/router";
-import { createSignal, onMount, Show } from "solid-js";
-import { startGitHubInvite, startInviteMagicLink } from "../lib/auth";
-import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
-import { AuthCopy, AuthDivider, AuthError, AuthLink, AuthMissing, AuthWindow, AuthTitle } from "../ui/AuthWindow";
-import { cx, ui } from "../ui/styles";
-
-const failure = (error: unknown) => describeFailure(error, AUTH_MESSAGES, "This invite could not be accepted. Try again, or ask for a new invite link.");
-
-export function Invite() {
-  const [params] = useSearchParams();
-  const [error, setError] = createSignal<Failure | null>(null);
-  const [sent, setSent] = createSignal(false);
-  const [sentEmail, setSentEmail] = createSignal<string | null>(null);
-  const [debugURL, setDebugURL] = createSignal<string | null>(null);
-  const [token, setToken] = createSignal<string | null>(null);
-  const [checked, setChecked] = createSignal(false);
-  const [magicBusy, setMagicBusy] = createSignal(false);
-  const [githubBusy, setGitHubBusy] = createSignal(false);
-
-  onMount(() => {
-    const tokenRaw = params["token"];
-    const value = Array.isArray(tokenRaw) ? tokenRaw[0] : tokenRaw;
-    history.replaceState({}, "", "/invite");
-    setToken(value || null);
-    setChecked(true);
-  });
-
-  async function sendMagicLink() {
-    const currentToken = token();
-    if (!currentToken) return;
-    setMagicBusy(true);
-    setError(null);
-    try {
-      const result = await startInviteMagicLink(currentToken);
-      setSent(true);
-      setSentEmail(result.email ?? null);
-      setDebugURL(result.debug_url ?? null);
-    } catch (e) {
-      setError(failure(e));
-    } finally {
-      setMagicBusy(false);
-    }
-  }
-
-  async function continueWithGitHub() {
-    const currentToken = token();
-    if (!currentToken) return;
-    setGitHubBusy(true);
-    setError(null);
-    try {
-      const { redirect_url } = await startGitHubInvite(currentToken);
-      window.location.href = redirect_url;
-    } catch (e) {
-      setError(failure(e));
-      setGitHubBusy(false);
-    }
-  }
-
-  return (
-    <AuthWindow>
-      <Show when={token()} fallback={
-        <Show when={checked()}>
-          <AuthMissing title="This invite link is incomplete" action={<A class={cx(ui.button, "auth-full")} href="/login">Back to sign in</A>}>
-            The link is missing its invitation. Open the full link from your invite email, or ask the person who invited you for a new one.
-          </AuthMissing>
-        </Show>
-      }>
-        <Show when={sent()} fallback={
-          <>
-            <AuthTitle>Accept invite</AuthTitle>
-            <AuthCopy>Choose how to verify this invitation.</AuthCopy>
-            <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
-            <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
-              {githubBusy() ? "Redirecting…" : "Continue with GitHub"}
-            </button>
-            <AuthDivider>OR</AuthDivider>
-            <button class={ui.secondaryButton} type="button" onClick={sendMagicLink} disabled={githubBusy() || magicBusy()}>
-              {magicBusy() ? "Sending…" : "Send invite link"}
-            </button>
-          </>
-        }>
-          <AuthTitle>Check your email</AuthTitle>
-          <Show
-            when={sentEmail()}
-            fallback={<AuthCopy>We sent a sign-in link to the email address on this invite.</AuthCopy>}
-          >
-            {(email) => (
-              <AuthCopy>
-                We sent a sign-in link to <strong>{email()}</strong>. Open it in this browser
-                to accept the invite.
-              </AuthCopy>
-            )}
-          </Show>
-          <Show when={debugURL()}>
-            {(url) => (
-              <button class={ui.secondaryButton} type="button" onClick={() => { window.location.href = url(); }}>
-                Continue with dev link
-              </button>
-            )}
-          </Show>
-          <AuthDivider>OR</AuthDivider>
-          <Show when={error()}>{(current) => <AuthError message={current().message} details={current().details} />}</Show>
-          <button class={ui.button} type="button" onClick={continueWithGitHub} disabled={githubBusy() || magicBusy()}>
-            {githubBusy() ? "Redirecting…" : "Continue with GitHub"}
-          </button>
-          <AuthLink onClick={sendMagicLink} disabled={githubBusy() || magicBusy()}>
-            {magicBusy() ? "Sending…" : "Send another invite link"}
-          </AuthLink>
-        </Show>
-      </Show>
-    </AuthWindow>
-  );
+import { A,useSearchParams } from "@solidjs/router";
+import { createSignal,onMount,Show } from "solid-js";
+import { getAccount,getAuthConfig,type Account,type AuthConfig } from "../lib/auth";
+import { postJson,chooseOrganization,setOrganization,releasePageIdentity } from "../lib/api";
+import { assertPasskey } from "../lib/passkey";
+import { EmailSignIn } from "../components/EmailSignIn";
+import { AuthCopy,AuthError,AuthWindow,AuthTitle } from "../ui/AuthWindow";
+import { ui } from "../ui/styles";
+type Summary={organization_id:string;organization_name:string;email:string;expires_at:string};
+export function Invite(){
+ const [params]=useSearchParams();const [token,setToken]=createSignal("");const [summary,setSummary]=createSignal<Summary>();
+ const [account,setAccount]=createSignal<Account>();const [config,setConfig]=createSignal<AuthConfig>();const [error,setError]=createSignal("");const [busy,setBusy]=createSignal(false);
+ async function refresh(){try{setAccount(await getAccount());}catch{setAccount(undefined);}}
+ async function run(fn:()=>Promise<void>){setBusy(true);setError("");try{await fn();}catch(e){setError(e instanceof Error?e.message:"Unable to continue.");}finally{setBusy(false);}}
+ onMount(()=>{const raw=params["token"];const value=Array.isArray(raw)?raw[0]:raw;history.replaceState({},"","/invite");setToken(value??"");void run(async()=>{if(!value)throw new Error("Open the full invitation link from your email.");setSummary(await postJson("/api/auth/invitations/resolve",{token:value},{redirectOnUnauthorized:false}));setConfig(await getAuthConfig());await refresh();});});
+ return <AuthWindow><AuthTitle>Join an organization</AuthTitle><Show when={error()}><AuthError message={error()} /></Show><Show when={summary()}>{s=><>
+  <AuthCopy>You are invited to <strong>{s().organization_name}</strong> as <strong>{s().email}</strong>. Accepting gives this account membership in the organization.</AuthCopy>
+  <Show when={account()} fallback={<>
+   <Show when={config()?.methods.includes("email")}><EmailSignIn email={s().email} invitationToken={token()} complete={()=>void refresh()} /></Show>
+   <Show when={config()?.methods.includes("passkey")}><button class={ui.secondaryButton} disabled={busy()} onClick={()=>void run(async()=>{await assertPasskey("/api/auth/passkey/options","/api/auth/passkey/verify");await refresh();})}>Sign in with a passkey</button></Show>
+   <AuthCopy><A href="/login">Other sign-in methods</A>: sign in, then reopen your invitation link to accept.</AuthCopy>
+  </>}>{a=><>
+   <AuthCopy>Signed in as {a().primary_email}.</AuthCopy>
+   <button class={ui.button} disabled={busy()||a().primary_email.toLowerCase()!==s().email.toLowerCase()} onClick={()=>void run(async()=>{const accepted=await postJson<{token:string},{organization_id:string}>("/api/auth/invitations/accept",{token:token()},{redirectOnUnauthorized:false});chooseOrganization(accepted.organization_id);})}>Accept invitation</button>
+   <button class={ui.secondaryButton} disabled={busy()} onClick={()=>void run(async()=>{await postJson("/api/auth/logout",{}, {redirectOnUnauthorized:false});setOrganization("");setAccount(undefined);releasePageIdentity();})}>Sign out to use another account</button>
+  </>}</Show>
+ </>}</Show></AuthWindow>;
 }

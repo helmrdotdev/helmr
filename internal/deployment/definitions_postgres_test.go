@@ -3,6 +3,7 @@ package deployment
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"uuid"
 
@@ -282,7 +283,7 @@ func TestDefinitionPoliciesPublishAndReadNormalizedAuthority(t *testing.T) {
 		t.Fatalf("finite MCP %s", finite.RuntimeMcp)
 	}
 	unrestricted := scan(agentDefinitionProjection, "chat", definition.KindAgent)
-	if len(unrestricted.RuntimeMcp) != 0 {
+	if len(unrestricted.RuntimeMcp) == 0 || strings.Contains(string(unrestricted.RuntimeMcp), `"kind"`) || !strings.Contains(string(unrestricted.RuntimeMcp), `"build","chat"`) {
 		t.Fatalf("unrestricted leaked private tag: %s", unrestricted.RuntimeMcp)
 	}
 	var before string

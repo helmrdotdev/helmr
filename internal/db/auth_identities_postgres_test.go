@@ -1,86 +1,35 @@
 package db_test
 
 import (
-	"testing"
-	"uuid"
-
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
+	"testing"
+	"uuid"
 )
 
-func TestAuthIdentityRepeatLoginAndMagicLinkShareUser(t *testing.T) {
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
+func TestAuthIdentityCreationDoesNotCorrelateOrOverwriteAccountByEmail(t *testing.T) {
+	d := dbtest.Open(t)
+	if err := schema.Up(t.Context(), d.DSN); err != nil {
 		t.Fatal(err)
 	}
-	queries := db.New(database.Pool)
-
-	userID := uuid.NewV7()
-	first, err := queries.UpsertAuthIdentity(t.Context(), db.UpsertAuthIdentityParams{
-		UserID:           pgvalue.UUID(userID),
-		DisplayName:      "first name",
-		ProfileImageURL:  pgtype.Text{String: "https://example.test/first.png", Valid: true},
-		EmailVerified:    true,
-		Email:            pgtype.Text{String: "owner@example.test", Valid: true},
-		IdentityProvider: "github",
-		IdentitySubject:  "123",
-		IdentityID:       pgvalue.UUID(uuid.NewV7()),
-	})
+	q := db.New(d.Pool)
+	first, second := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name,primary_email) VALUES($1,'Original','original@example.test'),($2,'Other','other@example.test')`, first, second)
+	source, err := q.CreateAuthIdentity(t.Context(), db.CreateAuthIdentityParams{ID: pgvalue.NewUUIDv7(), UserID: pgvalue.UUID(first), Provider: "github", Subject: "123"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ID != pgvalue.UUID(userID) {
-		t.Fatalf("first user = %s, want %s", first.ID, userID)
+	if _, err = q.CreateAuthIdentity(t.Context(), db.CreateAuthIdentityParams{ID: pgvalue.NewUUIDv7(), UserID: pgvalue.UUID(second), Provider: "github", Subject: "123"}); err == nil {
+		t.Fatal("same live subject transferred to another account")
 	}
-
-	repeated, err := queries.UpsertAuthIdentity(t.Context(), db.UpsertAuthIdentityParams{
-		UserID:           pgvalue.UUID(uuid.NewV7()),
-		DisplayName:      "updated name",
-		ProfileImageURL:  pgtype.Text{String: "https://example.test/updated.png", Valid: true},
-		EmailVerified:    true,
-		Email:            pgtype.Text{String: "owner@example.test", Valid: true},
-		IdentityProvider: "github",
-		IdentitySubject:  "123",
-		IdentityID:       pgvalue.UUID(uuid.NewV7()),
-	})
-	if err != nil {
-		t.Fatal(err)
+	found, err := q.GetAuthIdentity(t.Context(), db.GetAuthIdentityParams{Provider: "github", Subject: "123"})
+	if err != nil || found.ID != source.ID || found.UserID != pgvalue.UUID(first) {
+		t.Fatalf("source changed: %+v %v", found, err)
 	}
-	if repeated.ID != first.ID || repeated.DisplayName != "updated name" ||
-		repeated.ProfileImageURL.String != "https://example.test/updated.png" {
-		t.Fatalf("repeated login = %+v, want updated original user", repeated)
-	}
-
-	linked, err := queries.UpsertMagicLinkAuthIdentity(t.Context(), db.UpsertMagicLinkAuthIdentityParams{
-		UserID:           pgvalue.UUID(uuid.NewV7()),
-		DisplayName:      "owner@example.test",
-		Email:            pgtype.Text{String: "owner@example.test", Valid: true},
-		IdentityProvider: "magic-link",
-		IdentitySubject:  "owner@example.test",
-		IdentityID:       pgvalue.UUID(uuid.NewV7()),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if linked.ID != first.ID {
-		t.Fatalf("Magic Link user = %s, want linked user %s", linked.ID, first.ID)
-	}
-
-	var identityCount, userCount int
-	if err := database.Pool.QueryRow(t.Context(), `
-		SELECT count(*), count(DISTINCT user_id)
-		  FROM auth_identities
-		 WHERE (provider, subject) IN (
-		     ('github', '123'),
-		     ('magic-link', 'owner@example.test')
-		 )
-	`).Scan(&identityCount, &userCount); err != nil {
-		t.Fatal(err)
-	}
-	if identityCount != 2 || userCount != 1 {
-		t.Fatalf("identities/users = %d/%d, want 2/1", identityCount, userCount)
+	var unchanged bool
+	if err = d.Pool.QueryRow(t.Context(), `SELECT display_name='Original' AND primary_email='original@example.test' FROM users WHERE id=$1`, first).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("provider email overwrote profile: %v %v", unchanged, err)
 	}
 }

@@ -41,7 +41,7 @@ func newIdentityFixture(t *testing.T) identityFixture {
 		pool:    database.Pool,
 		queries: db.New(database.Pool),
 		keys:    keys,
-		cfg:     NewConfig(keys, Lifetimes{}, []string{" Admin@Example.test "}, auditpolicy.Policy{RetentionSeconds: 3600}),
+		cfg:     NewConfig(keys, Lifetimes{}, auditpolicy.Policy{RetentionSeconds: 3600}),
 	}
 }
 
@@ -86,7 +86,7 @@ func (f identityFixture) invitation(t *testing.T, orgID uuid.UUID, email string,
 	memberID := dbtest.GrantMember(t, f.pool, orgID, owner, nil, "invitations.create")
 	var delivered org.NewInvitation
 	results, err := org.CreateInvitations(t.Context(), f.pool, f.keys.Invitation,
-		org.ManagingMember{Actor: audit.VerifiedLogin(owner, "fixture"), OrgID: orgID, UserID: owner, MemberID: memberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, org.InvitationInput{Emails: []string{email}},
+		org.ManagingMember{Human: dbtest.BrowserPrincipal(t, f.pool, orgID, owner), Actor: audit.VerifiedLogin(owner, "fixture"), OrgID: orgID, UserID: owner, MemberID: memberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, org.InvitationInput{Emails: []string{email}},
 		func(_ context.Context, invitations []org.NewInvitation) error {
 			delivered = invitations[0]
 			return nil
@@ -102,14 +102,19 @@ func (f identityFixture) invitation(t *testing.T, orgID uuid.UUID, email string,
 
 func (f identityFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.UUID) string {
 	t.Helper()
-	orgRef := pgtype.UUID{}
-	if orgID != uuid.Nil() {
-		orgRef = pgvalue.UUID(orgID)
-	}
 	var raw string
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		source := uuid.NewV7()
+		var epoch int64
+		var at time.Time
+		if err := tx.QueryRow(t.Context(), `SELECT access_epoch FROM users WHERE id=$1`, userID).Scan(&epoch); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(t.Context(), `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'fixture',$1::uuid::text,clock_timestamp()) RETURNING last_authenticated_at`, source, userID).Scan(&at); err != nil {
+			return err
+		}
 		var err error
-		raw, err = issueLoginSession(t.Context(), tx, f.cfg, signedInUser{id: pgvalue.UUID(userID), actor: audit.VerifiedLogin(userID, "fixture"), authentication: audit.AuthenticationDetails{Method: "fixture"}}, orgRef)
+		raw, err = issueLoginSession(t.Context(), tx, f.cfg, provedUser(userID, source, uuid.Nil(), epoch, at, "fixture"), pgtype.UUID{})
 		return err
 	})
 	if err != nil {
@@ -131,7 +136,7 @@ func (f identityFixture) userByEmail(t *testing.T, email string) (uuid.UUID, boo
 	t.Helper()
 	var userID uuid.UUID
 	var admin bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT id, admin FROM users WHERE lower(primary_email) = lower($1)`, email).Scan(&userID, &admin); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT id, false FROM users WHERE lower(primary_email) = lower($1)`, email).Scan(&userID, &admin); err != nil {
 		t.Fatal(err)
 	}
 	return userID, admin

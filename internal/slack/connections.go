@@ -24,13 +24,15 @@ type ConnectionSetup struct {
 
 // BeginConnection reserves the Agent's sole connection slot, including pending
 // setup. A failed setup must be discarded before another can be created.
-func BeginConnection(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID, mode Transport) (ConnectionSetup, error) {
+func BeginConnection(ctx context.Context, pool db.TxBeginner, prior auth.Principal, environment, agent uuid.UUID, mode Transport) (ConnectionSetup, error) {
+	org := prior.OrgID
+	user := prior.UserID
 	if !mode.enabled() {
 		return ConnectionSetup{}, ErrConnectionUnavailable
 	}
 	setup := ConnectionSetup{ID: uuid.NewV7(), RegistrationID: uuid.NewV7()}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockAgentManager(ctx, tx, org, user, environment, agent, auth.PermissionAgentConnectionsCreate); err != nil {
+		if err := lockAgentManager(ctx, tx, prior, environment, agent, auth.PermissionAgentConnectionsCreate); err != nil {
 			return err
 		}
 		var id uuid.UUID
@@ -85,7 +87,8 @@ type ConnectionView struct {
 	AppIconURL               *string       `json:"app_icon_url"`
 }
 
-func ConnectionAgent(ctx context.Context, pool db.TxBeginner, org, user, environment uuid.UUID, name string, permission auth.Permission) (uuid.UUID, error) {
+func ConnectionAgent(ctx context.Context, pool db.TxBeginner, prior auth.Principal, environment uuid.UUID, name string, permission auth.Permission) (uuid.UUID, error) {
+	org := prior.OrgID
 	if auth.PermissionResourceType(permission) != "agent_connections" {
 		return uuid.Nil(), errInstallationAuthority
 	}
@@ -98,18 +101,19 @@ func ConnectionAgent(ctx context.Context, pool db.TxBeginner, org, user, environ
 		if err != nil {
 			return err
 		}
-		return lockAgentManager(ctx, tx, org, user, environment, agent, permission)
+		return lockAgentManager(ctx, tx, prior, environment, agent, permission)
 	})
 	return agent, err
 }
 
-func GetConnection(ctx context.Context, pool db.TxBeginner, org, user, environment, agent uuid.UUID, permission auth.Permission) (*ConnectionView, error) {
+func GetConnection(ctx context.Context, pool db.TxBeginner, prior auth.Principal, environment, agent uuid.UUID, permission auth.Permission) (*ConnectionView, error) {
+	org := prior.OrgID
 	if auth.PermissionResourceType(permission) != "agent_connections" {
 		return nil, errInstallationAuthority
 	}
 	var view *ConnectionView
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockAgentManager(ctx, tx, org, user, environment, agent, permission); err != nil {
+		if err := lockAgentManager(ctx, tx, prior, environment, agent, permission); err != nil {
 			return err
 		}
 		var value ConnectionView
@@ -161,8 +165,9 @@ type ConnectionDisconnection struct {
 
 // LockConnectionDisconnection takes the Slack generation locks before the
 // caller's Environment lock. Apply joins that caller's transaction.
-func LockConnectionDisconnection(ctx context.Context, tx pgx.Tx, org, user, environment, connection uuid.UUID) (*ConnectionDisconnection, error) {
-	if err := lockConnectionManager(ctx, tx, org, user, connection, auth.PermissionAgentConnectionsDelete); err != nil {
+func LockConnectionDisconnection(ctx context.Context, tx pgx.Tx, prior auth.Principal, environment, connection uuid.UUID) (*ConnectionDisconnection, error) {
+	org := prior.OrgID
+	if err := lockConnectionManager(ctx, tx, prior, connection, auth.PermissionAgentConnectionsDelete); err != nil {
 		return nil, err
 	}
 	return lockConnectionDisconnection(ctx, tx, org, environment, connection)
@@ -170,8 +175,9 @@ func LockConnectionDisconnection(ctx context.Context, tx pgx.Tx, org, user, envi
 
 // LockAgentDeletionDisconnection limits deletion authority to the connection of
 // the exact Agent being deleted. It does not grant connection administration.
-func LockAgentDeletionDisconnection(ctx context.Context, tx pgx.Tx, org, user, environment, agent, connection uuid.UUID) (*ConnectionDisconnection, error) {
-	if err := lockAgentManager(ctx, tx, org, user, environment, agent, auth.PermissionAgentsDelete); err != nil {
+func LockAgentDeletionDisconnection(ctx context.Context, tx pgx.Tx, prior auth.Principal, environment, agent, connection uuid.UUID) (*ConnectionDisconnection, error) {
+	org := prior.OrgID
+	if err := lockAgentManager(ctx, tx, prior, environment, agent, auth.PermissionAgentsDelete); err != nil {
 		return nil, err
 	}
 	var matches bool
@@ -246,9 +252,10 @@ func (p *ConnectionDisconnection) Apply(ctx context.Context, tx pgx.Tx, policy a
 	return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: p.org, EnvironmentID: p.environment, Action: "slack_connection.disconnected", TargetKind: "slack_connection", TargetID: p.connection, Details: details})
 }
 
-func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.Evidence, org, user, environment, connection uuid.UUID) error {
+func (s *CredentialStore) DisconnectConnection(ctx context.Context, prior auth.Principal, environment, connection uuid.UUID) error {
+	org := prior.OrgID
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		p, err := LockConnectionDisconnection(ctx, tx, org, user, environment, connection)
+		p, err := LockConnectionDisconnection(ctx, tx, prior, environment, connection)
 		if err != nil {
 			return err
 		}
@@ -256,7 +263,7 @@ func (s *CredentialStore) DisconnectConnection(ctx context.Context, actor audit.
 		if err = tx.QueryRow(ctx, `SELECT id FROM environments WHERE id=$1 AND org_id=$2 FOR SHARE`, environment, org).Scan(&id); err != nil {
 			return err
 		}
-		verified, err := connectionAuditActor(ctx, tx, actor, org, user, connection, auth.PermissionAgentConnectionsDelete)
+		verified, err := connectionAuditActor(ctx, tx, prior, connection, auth.PermissionAgentConnectionsDelete)
 		if err != nil {
 			return err
 		}

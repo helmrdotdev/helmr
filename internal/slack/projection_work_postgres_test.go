@@ -80,7 +80,7 @@ func TestSlackWorkCapIncludesQuestionSeparatedGroups(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.projectAll(t)
-		if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
+		if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: uuid.NewV7().String(), Answer: json.RawMessage(`"yes"`)}); err != nil {
 			t.Fatal(err)
 		}
 		f.projectAll(t)

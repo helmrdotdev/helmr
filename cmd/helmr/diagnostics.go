@@ -63,16 +63,16 @@ type diagnosticSession struct {
 }
 
 type diagnosticReport struct {
-	Schema      string               `json:"schema"`
-	CLIVersion  string               `json:"cli_version"`
-	Offline     bool                 `json:"offline"`
-	APIURL      *diagnosticValue     `json:"api_url"`
-	Project     *diagnosticValue     `json:"project"`
-	Environment *diagnosticValue     `json:"environment"`
-	Credential  diagnosticCredential `json:"credential"`
-	Identity    *api.MeResponse      `json:"identity"`
-	Live        *diagnosticLive      `json:"live"`
-	Checks      []diagnosticCheck    `json:"checks"`
+	Schema      string                           `json:"schema"`
+	CLIVersion  string                           `json:"cli_version"`
+	Offline     bool                             `json:"offline"`
+	APIURL      *diagnosticValue                 `json:"api_url"`
+	Project     *diagnosticValue                 `json:"project"`
+	Environment *diagnosticValue                 `json:"environment"`
+	Credential  diagnosticCredential             `json:"credential"`
+	Identity    *api.OrganizationContextResponse `json:"identity"`
+	Live        *diagnosticLive                  `json:"live"`
+	Checks      []diagnosticCheck                `json:"checks"`
 }
 
 func statusCommand() *cobra.Command { return diagnosticCommand(false) }
@@ -174,7 +174,7 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 		}
 	}
 	if cp.UsesSessionScopedRoutes() {
-		identity, err := cp.GetMe(ctx)
+		identity, err := cp.GetOrganizationContext(ctx)
 		if err != nil {
 			report.readError("auth.identity", err)
 			return report
@@ -389,7 +389,7 @@ func printDiagnostics(cmd *cobra.Command, report diagnosticReport) {
 	}
 	fmt.Fprintf(out, "Credential: %s, present=%s (%s); expiry unknown\n", report.Credential.Kind, presence, report.Credential.Source)
 	if report.Identity != nil {
-		fmt.Fprintf(out, "Identity: %s · %s · membership %s (owner=%t)\n", report.Identity.DisplayName, report.Identity.OrgName, report.Identity.MembershipID, report.Identity.IsOwner)
+		fmt.Fprintf(out, "Identity: %s · %s · membership %s (owner=%t)\n", report.Identity.CurrentMember.DisplayName, report.Identity.Name, report.Identity.CurrentMember.ID, report.Identity.CurrentMember.IsOwner)
 	}
 	if live := report.Live; live != nil {
 		if live.Deployment == nil {

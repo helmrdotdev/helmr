@@ -14,7 +14,7 @@ import (
 const computerCommandBodyMaxBytes = int64(2 << 20)
 
 func computerCommandCreatorFromPrincipal(principal auth.Principal) command.Creator {
-	creator := command.Creator{Kind: string(principal.Kind), UserID: principal.UserID, CredentialVersion: principal.CredentialVersion}
+	creator := command.Creator{Human: principal, Kind: string(principal.Kind), UserID: principal.UserID, CredentialVersion: principal.CredentialVersion}
 	switch principal.Kind {
 	case auth.PrincipalKindAPIKey:
 		if principal.APIKeyID != uuid.Nil() {

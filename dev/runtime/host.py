@@ -107,7 +107,7 @@ def compile_config(raw):
         'CONTROL_PLANE_ADDR': '127.0.0.1:58080', 'APP_ORIGIN': app_origin,
         'BOOTSTRAP_ENABLED': 'true',
         'BOOTSTRAP_REGION_ID': 'default', 'BOOTSTRAP_WORKER_GROUP_NAME': 'default',
-        'SETUP_TOKEN': secrets.token_urlsafe(32), 'COMPUTER_WRAPPING_KEY_ID': 'verification',
+        'COMPUTER_WRAPPING_KEY_ID': 'verification',
         'EMAIL_PROVIDER': 'none',
     }
     for key in ['AUTH_KEY', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY',

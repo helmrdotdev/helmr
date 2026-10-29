@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"strings"
@@ -155,7 +154,7 @@ func authorizeComputerExecution(ctx context.Context, tx pgx.Tx, caller Caller, e
 	} else if kind != "wake" {
 		return auth.Principal{}, ErrInvalidInput
 	}
-	p, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+	p, err := callerPrincipal(ctx, tx, caller, env)
 	if err != nil {
 		return auth.Principal{}, err
 	}

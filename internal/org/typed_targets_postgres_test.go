@@ -18,6 +18,14 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	f := newMemberFixture(t)
 	ctx := t.Context()
 	m := f.owner
+	checkHumanTarget := func(t *testing.T, env, agent uuid.UUID, permission auth.Permission) error {
+		p, err := access.HumanInEnvironment(t.Context(), f.pool, f.member.Human, env)
+		if err != nil {
+			return err
+		}
+		return auth.Require(p, permission, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, AgentID: agent.String()}, access.ErrDenied)
+	}
+	_ = checkHumanTarget
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('typed','Typed')`)
 	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "typed", Name: "Typed", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
 	if err != nil {
@@ -39,7 +47,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	grant := rows[0]
 	check := func(env, agent uuid.UUID, p auth.Permission, want bool) {
 		t.Helper()
-		err := access.Check(ctx, f.pool, "user", f.member.UserID, env, agent, p)
+		err := checkHumanTarget(t, env, agent, p)
 		if want && err != nil || !want && !errors.Is(err, access.ErrDenied) {
 			t.Fatalf("%s %s %s allowed=%v: %v", env, agent, p, want, err)
 		}
@@ -276,6 +284,14 @@ func TestCatalogAgentTargetsAndInspectionVisibility(t *testing.T) {
 	f := newMemberFixture(t)
 	ctx := t.Context()
 	m := f.owner
+	checkHumanTarget := func(t *testing.T, env, agent uuid.UUID, permission auth.Permission) error {
+		p, err := access.HumanInEnvironment(t.Context(), f.pool, f.member.Human, env)
+		if err != nil {
+			return err
+		}
+		return auth.Require(p, permission, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, AgentID: agent.String()}, access.ErrDenied)
+	}
+	_ = checkHumanTarget
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO regions(id,display_name) VALUES('catalog','Catalog')`)
 	project, envs, err := org.CreateProject(ctx, f.pool, m, org.ProjectInput{Slug: "catalog", Name: "Catalog", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}})
 	if err != nil {
@@ -297,10 +313,10 @@ func TestCatalogAgentTargetsAndInspectionVisibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := access.Check(ctx, f.pool, "user", f.member.UserID, env, selected, definition.ID); err != nil {
+			if err := checkHumanTarget(t, env, selected, definition.ID); err != nil {
 				t.Fatalf("selected target: %v", err)
 			}
-			if err := access.Check(ctx, f.pool, "user", f.member.UserID, env, other, definition.ID); !errors.Is(err, access.ErrDenied) {
+			if err := checkHumanTarget(t, env, other, definition.ID); !errors.Is(err, access.ErrDenied) {
 				t.Fatalf("catalog Agent capability escaped selection: %v", err)
 			}
 		})

@@ -26,10 +26,6 @@ func LoadControlPlane() (ControlPlane, error) {
 	if err != nil {
 		return ControlPlane{}, err
 	}
-	magicLinkDebugURLs, err := envBool("MAGIC_LINK_DEBUG_URLS", false)
-	if err != nil {
-		return ControlPlane{}, err
-	}
 	cfg := ControlPlane{
 		AuditPolicy:                     policy,
 		SlackTransport:                  env("SLACK_TRANSPORT", "http"),
@@ -46,10 +42,7 @@ func LoadControlPlane() (ControlPlane, error) {
 		PlatformStoreURI:                envText("PLATFORM_STORE_URI"),
 		Bootstrap:                       bootstrapConfig,
 		CapacityToken:                   envSecret("CAPACITY_TOKEN"),
-		SetupToken:                      envSecret("SETUP_TOKEN"),
 		AppOrigin:                       appOrigin,
-		MagicLinkDebugURLs:              magicLinkDebugURLs,
-		AdminEmails:                     splitNormalizedList(envText("ADMIN_EMAILS")),
 		EmailProvider:                   envLower("EMAIL_PROVIDER"),
 		ResendAPIKey:                    envSecret("RESEND_API_KEY"),
 		SMTPAddr:                        envText("SMTP_ADDR"),
@@ -108,25 +101,18 @@ func LoadControlPlane() (ControlPlane, error) {
 	if err := validateControlPlaneEmailConfig(&cfg); err != nil {
 		return cfg, err
 	}
-	if cfg.GitHubOAuthClientID == "" {
-		return cfg, errors.New("GITHUB_OAUTH_CLIENT_ID is required")
-	}
-	if cfg.GitHubOAuthClientSecret == "" {
-		return cfg, errors.New("GITHUB_OAUTH_CLIENT_SECRET is required")
+	if (cfg.GitHubOAuthClientID == "") != (cfg.GitHubOAuthClientSecret == "") {
+		return cfg, errors.New("GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET must be configured together")
 	}
 	for _, token := range []struct {
 		name  string
 		value string
 	}{
 		{"CAPACITY_TOKEN", cfg.CapacityToken},
-		{"SETUP_TOKEN", cfg.SetupToken},
 	} {
 		if strings.TrimSpace(token.value) != token.value {
 			return cfg, fmt.Errorf("%s must not have surrounding whitespace", token.name)
 		}
-	}
-	if cfg.DeploymentMode == DeploymentModeSelfHosted && cfg.SetupToken == "" {
-		return cfg, errors.New("SETUP_TOKEN is required when DEPLOYMENT_MODE is self-hosted")
 	}
 	if cfg.DeploymentMode == DeploymentModeManagedCloud {
 		cfg.OrganizationCreationAdminOnly, err = envBool("ORGANIZATION_CREATION_ADMIN_ONLY", false)
@@ -180,26 +166,6 @@ func LoadBootstrap() (Bootstrap, error) {
 		WorkerToken:       envSecret("BOOTSTRAP_WORKER_TOKEN"),
 	}
 	return cfg, nil
-}
-
-func splitNormalizedList(value string) []string {
-	if value == "" {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	result := make([]string, 0)
-	for part := range strings.SplitSeq(value, ",") {
-		part = strings.ToLower(strings.TrimSpace(part))
-		if part == "" {
-			continue
-		}
-		if _, ok := seen[part]; ok {
-			continue
-		}
-		seen[part] = struct{}{}
-		result = append(result, part)
-	}
-	return result
 }
 
 func validateControlPlaneEmailConfig(cfg *ControlPlane) error {

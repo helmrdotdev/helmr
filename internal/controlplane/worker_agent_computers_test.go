@@ -33,12 +33,16 @@ func runtimeDiscoveryEnvironment(t *testing.T, original sessiontest.Fixture) ses
 	return f
 }
 
-func TestWorkerAgentMCPListsEnvironmentComputers(t *testing.T) {
+func TestWorkerAgentMCPListsOnlyWorkloadComputers(t *testing.T) {
 	f, origin, execution := runtimeAdmissionOrigin(t)
 	foreign := runtimeDiscoveryEnvironment(t, f)
-	// More than one page, including Computers with no Session relationship.
+	// More than one page of related work, plus an unrelated Computer in the same environment.
+	unrelated := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, unrelated, f.Computer)
 	for range 51 {
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3`, f.Environment, uuid.NewV7(), f.Computer)
+		computer, child := uuid.NewV7(), uuid.NewV7()
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(environment_id,id,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes) SELECT environment_id,$2,initial_root_id,initial_root_digest,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes FROM computers WHERE environment_id=$1 AND id=$3;
+ INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,requester_session_id,causal_depth,origin_user_id,status) SELECT environment_id,$4,agent_id,deployment_id,$2,$4,id,1,origin_user_id,'open' FROM sessions WHERE environment_id=$1 AND id=$5`, pgx.QueryExecModeSimpleProtocol, f.Environment, computer, f.Computer, child, f.Session)
 	}
 	server := httptest.NewServer(newPostgresServer(t, f.Pool))
 	defer server.Close()
@@ -65,7 +69,7 @@ func TestWorkerAgentMCPListsEnvironmentComputers(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, item := range page.Computers {
-			if seen[item.ID] || item.ID == foreign.Computer.String() {
+			if seen[item.ID] || item.ID == foreign.Computer.String() || item.ID == unrelated.String() {
 				t.Fatalf("duplicate or foreign Computer %s", item.ID)
 			}
 			seen[item.ID] = true
@@ -112,9 +116,13 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy)
             SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3`, f.Environment, id, f.Agent)
 	}
+	keys := []string{"agent"}
 	for i := range 51 {
-		addDefinition(f, fmt.Sprintf("worker-%02d", i))
+		key := fmt.Sprintf("worker-%02d", i)
+		addDefinition(f, key)
+		keys = append(keys, key)
 	}
+	sessiontest.PublishRuntimeAgentSet(t, f, keys...)
 	addDefinition(foreign, "foreign-only")
 	// Promotion cannot replace the Session's pinned definition set.
 	promoted := uuid.NewV7()
@@ -192,7 +200,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 	if response.Error != nil {
 		t.Fatal(response.Error)
 	}
-	if err := json.Unmarshal(response.Value, &current); err != nil || current.DeploymentID != promoted || len(current.Agents) != 1 || current.Agents[0].ID != "agent" {
+	if err := json.Unmarshal(response.Value, &current); err != nil || current.DeploymentID != f.Deployment || len(current.Agents) != 50 || current.NextCursor == "" {
 		t.Fatalf("current start definitions: %+v %v", current, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
@@ -202,7 +210,7 @@ func TestWorkerAgentMCPListsPinnedAgentDefinitions(t *testing.T) {
 		t.Fatalf("start pagination: %+v", firstPage)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, promoted)
-	if response := call(beforePromotion.NextCursor); response.Error == nil || response.Error.Code != "invalid_arguments" {
+	if response := call(beforePromotion.NextCursor); response.Error != nil {
 		t.Fatalf("promotion mixed snapshots: %+v", response)
 	}
 	operation = "spawn"

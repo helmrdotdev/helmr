@@ -146,7 +146,7 @@ func adminAuditHTTPRecord(r auditquery.Record) api.AdminAuditEvent {
 		RecordedAt:       r.RecordedAt,
 		RetentionSeconds: r.RetentionSeconds,
 		ExpiresAt:        r.ExpiresAt,
-		ActorUserID:      r.ActorUserID, ActorAPIKeyID: r.ActorAPIKeyID, ActorSessionID: r.ActorSessionID, ActorWorkerHostID: r.ActorWorkerHostID, ActorComponent: r.ActorComponent,
+		ActorOperatorID:  r.ActorOperatorID, ActorUserID: r.ActorUserID, ActorAPIKeyID: r.ActorAPIKeyID, ActorSessionID: r.ActorSessionID, ActorWorkerHostID: r.ActorWorkerHostID, ActorComponent: r.ActorComponent,
 		RuntimeGeneration: r.RuntimeGeneration, ProcessEpoch: r.ProcessEpoch,
 		Authentication:   api.AuditAuthentication{Result: r.AuthenticationResult, Origin: r.AuthenticationOrigin, Provider: r.IdentityProvider, CredentialKind: r.CredentialKind, CredentialID: r.CredentialID, CredentialVersion: r.CredentialVersion},
 		Action:           r.Action,

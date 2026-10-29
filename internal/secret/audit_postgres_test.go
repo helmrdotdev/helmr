@@ -6,6 +6,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -100,5 +101,57 @@ func TestSecretMutationPreservesTransactionCredentialFailure(t *testing.T) {
 	var count int
 	if err := d.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secrets WHERE environment_id=$1`, env).Scan(&count); err != nil || count != 0 {
 		t.Fatal(count, err)
+	}
+}
+
+func TestSecretMutationRechecksExactHumanSource(t *testing.T) {
+	for _, retired := range []string{"logout", "source", "account", "membership", "old-proof"} {
+		t.Run(retired, func(t *testing.T) {
+			d := dbtest.Open(t)
+			if err := schema.Up(t.Context(), d.DSN); err != nil {
+				t.Fatal(err)
+			}
+			env := seedSecretEnvironment(t, d.Pool)
+			var org uuid.UUID
+			if err := d.Pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, env).Scan(&org); err != nil {
+				t.Fatal(err)
+			}
+			user, member := uuid.NewV7(), uuid.NewV7()
+			dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Manager')`, user)
+			dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, member, org, user)
+			dbtest.GrantMember(t, d.Pool, org, user, &env, "secrets.create", "secrets.rotate", "secrets.revoke")
+			p := dbtest.BrowserPrincipal(t, d.Pool, org, user)
+			store, err := New(db.New(d.Pool), d.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
+			if err != nil {
+				t.Fatal(err)
+			}
+			row, err := store.Create(t.Context(), p, env, "ORIGINAL", []byte("original"), "initial")
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch retired {
+			case "logout":
+				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, p.SessionID)
+			case "source":
+				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, p.IdentityID)
+			case "account":
+				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, user)
+			case "membership":
+				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE org_members SET removed_at=clock_timestamp() WHERE id=$1`, member)
+				dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, uuid.NewV7(), org, user)
+				dbtest.GrantMember(t, d.Pool, org, user, &env, "secrets.create", "secrets.rotate", "secrets.revoke")
+			case "old-proof":
+				p.AuthenticatedAt = p.AuthenticatedAt.Add(-2 * time.Hour)
+				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
+			}
+			_, createErr := store.Create(t.Context(), p, env, "DENIED", []byte("new"), "denied")
+			_, rotateErr := store.Rotate(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), []byte("new"), "rotate")
+			_, revokeErr := store.Revoke(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), "revoke")
+			for _, err := range []error{createErr, rotateErr, revokeErr} {
+				if !errors.Is(err, access.ErrDenied) && !errors.Is(err, auth.ErrRecentProofRequired) {
+					t.Fatalf("retired source admitted mutation: %v", err)
+				}
+			}
+		})
 	}
 }

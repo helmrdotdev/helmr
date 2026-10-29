@@ -40,7 +40,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
+func TestEmailProviderNoneDisablesEmailCodeLogin(t *testing.T) {
 	store := &emptyStore{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	appOrigin, err := url.Parse("https://helmr.example.test")
@@ -77,15 +77,15 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		WorkerHostCredentialSigningKey: make([]byte, workergroup.HostCredentialSigningKeySize),
 		AppOrigin:                      appOrigin,
 		TelemetryReader:                controlplanetestTelemetryReader{store: store},
-		MagicLinkDebugURLs:             true,
 		Mailer:                         configuredEmailSender(log, config.ControlPlane{EmailProvider: config.EmailProviderNone}, nil), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/auth/magic-link/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/email/start", bytes.NewBufferString(`{"email":"user@example.test"}`))
 	rec := httptest.NewRecorder()
 
+	req.Header.Set("Origin", "https://helmr.example.test")
 	handler.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
@@ -301,13 +301,16 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", runtimeDescriptorPath)
 	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-smoke-runtime")
 	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("COMPUTER_WRAPPING_KEY_ID", "test-computer-root")
 	t.Setenv("COMPUTER_WRAPPING_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
-	t.Setenv("APP_ORIGIN", "http://"+addr)
+	_, appPort, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("APP_ORIGIN", "http://localhost:"+appPort)
 	t.Setenv("EMAIL_PROVIDER", "none")
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "client-secret")

@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/audit"
 	auditquery "github.com/helmrdotdev/helmr/internal/audit/query"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -23,8 +22,8 @@ func TestAuditRetentionUsesCaptureTimeAndSurvivesRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name,admin) VALUES($1,'Retention auditor',true)`, user)
-	principal := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, Admin: true, SessionID: uuid.NewV7()}
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Retention auditor')`, user)
+	principal := dbtest.OperatorPrincipal(t, d.Pool)
 	old, newer := uuid.NewV7(), uuid.NewV7()
 	appendFact := func(tx pgx.Tx, id uuid.UUID, seconds int64) error {
 		return audit.Append(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: seconds}, audit.Event{ID: id, Evidence: audit.Internal(audit.ControlPlane), OccurredAt: time.Now().Add(-24 * time.Hour), Action: "worker_group.created", TargetKind: "worker_group", TargetID: uuid.NewV7()})
@@ -81,7 +80,7 @@ func TestAuditDeletedOrganizationCustodyAndCompositeTargets(t *testing.T) {
 	}
 	org, user, member, target := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO organizations(id,slug,name) VALUES($1,'original','Original')`, org)
-	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name,admin) VALUES($1,'Auditor',true)`, user)
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Auditor')`, user)
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, member, org, user)
 	dbtest.GrantMember(t, d.Pool, org, user, nil, "audit_events.read")
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
@@ -93,7 +92,7 @@ func TestAuditDeletedOrganizationCustodyAndCompositeTargets(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	principal := auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: user, MemberID: member, SessionID: uuid.NewV7(), Admin: true}
+	principal := dbtest.BrowserPrincipal(t, d.Pool, org, user)
 	filter := auditquery.SearchFilter{OrgID: org, From: time.Now().Add(-time.Hour), To: time.Now().Add(time.Minute), TargetUserID: target, SlackTeamID: "TONE", SlackUserID: "UONE", Limit: 100}
 	result, err := auditquery.Search(t.Context(), d.Pool, policy, principal, filter)
 	if err != nil || len(result.Events) != 1 || result.Events[0].ID != ids[0] {
@@ -103,7 +102,7 @@ func TestAuditDeletedOrganizationCustodyAndCompositeTargets(t *testing.T) {
 	if _, err = auditquery.Search(t.Context(), d.Pool, policy, principal, filter); !errors.Is(err, auditquery.ErrSearchDenied) {
 		t.Fatal("deleted membership kept custody", err)
 	}
-	adminResult, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, principal, filter)
+	adminResult, err := auditquery.SearchAdmin(t.Context(), d.Pool, policy, dbtest.OperatorPrincipal(t, d.Pool), filter)
 	if err != nil || len(adminResult.Events) != 1 || adminResult.Events[0].ID != ids[0] {
 		t.Fatal("deleted history lost", adminResult, err)
 	}

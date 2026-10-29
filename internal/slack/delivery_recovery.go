@@ -49,13 +49,13 @@ type DeliveryView struct {
 // ListSessionDelivery exposes only diagnostics and authored fallback text, never
 // signed controls, provider credentials or frozen transport request bodies.
 func ListSessionDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner, principal auth.Principal, environment, session uuid.UUID, after int64, limit int) ([]DeliveryView, error) {
-	org, user := principal.OrgID, principal.UserID
+	org := principal.OrgID
 	result := []DeliveryView{}
 	if after < 0 || limit < 1 || limit > 100 {
 		return nil, ErrDeliveryUnavailable
 	}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		err := sessionowner.AuthorizeSessionOperation(ctx, tx, sessionowner.Caller{Kind: "user", ID: user}, environment, session, auth.PermissionSessionsRead)
+		err := sessionowner.AuthorizeSessionOperation(ctx, tx, sessionowner.UserCaller(principal), environment, session, auth.PermissionSessionsRead)
 		if errors.Is(err, sessionowner.ErrDenied) {
 			return ErrDeliveryUnavailable
 		}
@@ -103,7 +103,7 @@ func ListSessionDelivery(ctx context.Context, policy auditpolicy.Policy, pool db
 			return err
 		}
 		rows.Close()
-		return sessionowner.RecordContentRead(ctx, policy, tx, sessionowner.Caller{Kind: "user", ID: user, CredentialID: principal.SessionID}, environment, session)
+		return sessionowner.RecordContentRead(ctx, policy, tx, sessionowner.UserCaller(principal), environment, session)
 	})
 	if err != nil {
 		return nil, err
@@ -125,10 +125,7 @@ func RecoverDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		return ErrDeliveryChanged
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockSlackMember(ctx, tx, org, user); err != nil {
-			return err
-		}
-		p, err := access.Principal(ctx, tx, "user", user, environment)
+		p, err := access.HumanInEnvironment(ctx, tx, principal, environment)
 		if err != nil {
 			return err
 		}
@@ -146,7 +143,7 @@ func RecoverDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		if p.OrgID != org || !p.HasPermission(permission, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}) {
 			return errInstallationAuthority
 		}
-		if err := sessionowner.AuthorizeSessionOperation(ctx, tx, sessionowner.Caller{Kind: "user", ID: user}, environment, session, auth.PermissionSessionsRead); err != nil {
+		if err := sessionowner.AuthorizeSessionOperation(ctx, tx, sessionowner.UserCaller(principal), environment, session, auth.PermissionSessionsRead); err != nil {
 			if errors.Is(err, sessionowner.ErrDenied) {
 				return errInstallationAuthority
 			}
@@ -178,7 +175,7 @@ func RecoverDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		var installation, thread, participant uuid.UUID
 		var publication string
 		err = tx.QueryRow(ctx, `SELECT c.installation_id,p.thread_id,p.thread_source_id,p.post_key
- FROM slack_posts p JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id
+ FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
  JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND p.session_id=$3 AND e.org_id=$4`, post, environment, session, org).Scan(&installation, &thread, &participant, &publication)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrDeliveryUnavailable
@@ -218,7 +215,7 @@ func RecoverDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 				return ErrDeliveryChanged
 			}
 			var available bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id OR t.id=p.source_thread_id
+			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id
  JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_connections pub ON pub.id=c.connection_id
  JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id JOIN slack_installations i ON i.id=c.installation_id
  WHERE p.id=$1 AND pub.revoked_at IS NULL AND reg.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL)`, post).Scan(&available); err != nil {

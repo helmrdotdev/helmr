@@ -223,8 +223,8 @@ func assertPrimitiveLifecycleSchema(
 	`).Scan(&categoricalEnums); err != nil {
 		t.Fatal(err)
 	}
-	if categoricalEnums != 1 {
-		t.Fatalf("categorical enum sentinels = %d, want 1", categoricalEnums)
+	if categoricalEnums != 0 {
+		t.Fatalf("retired authentication enum sentinels = %d, want 0", categoricalEnums)
 	}
 
 	queryFiles, err := filepath.Glob("../query/*.sql")

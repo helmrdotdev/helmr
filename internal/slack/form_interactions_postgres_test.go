@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/jackc/pgx/v5"
 )
 
 func formCallbackBody(t *testing.T, payload map[string]any) []byte {

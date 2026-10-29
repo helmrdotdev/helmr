@@ -20,9 +20,9 @@ export async function createAgentCatalog(page: Page, environmentPermissions: str
   const environmentInternalID = execFileSync("bash", ["tests/browser/fixtures/agent-catalog.sh", environment.environment, deploymentID, agentID], { cwd: process.cwd(), encoding: "utf8" }).trim();
   // Ownership does not confer workload access. Grant this fixture member access
   // only to its newly seeded Agent, through the real access API.
-  const meResponse = await page.request.get("/api/me");
+  const meResponse = await page.request.get("/api/organization");
   expect(meResponse.ok(), await meResponse.text()).toBeTruthy();
-  const me = await meResponse.json() as { membership_id: string };
+  const { current_member: me } = await meResponse.json() as { current_member: { id: string } };
   const roleResponse = await page.request.post("/api/roles", { data: {
     name: slug, description: "Browser conversation fixture", permissions: ["agents.read", "agents.use", "sessions.read", "sessions.create_keyed", "sessions.send", "sessions.answer", "sessions.resume", "sessions.interrupt", "sessions.cancel", "sessions.close", "triggers.read"],
   } });
@@ -33,7 +33,7 @@ export async function createAgentCatalog(page: Page, environmentPermissions: str
   const targets = await targetsResponse.json() as { project_id: string };
   const grant = await page.request.post("/api/role-grants", { data: {
     role_id: role.id, expected_role_revision: role.revision,
-    subject: { type: "member", member_id: me.membership_id },
+    subject: { type: "member", member_id: me.id },
     project_id: targets.project_id, environment_id: environmentInternalID,
     agents_mode: "selected", agent_ids: [agentID],
   } });
@@ -46,7 +46,7 @@ export async function createAgentCatalog(page: Page, environmentPermissions: str
     const environmentRole = await response.json() as { id: string; revision: number };
     const assignment = await page.request.post("/api/role-grants", { data: {
       role_id: environmentRole.id, expected_role_revision: environmentRole.revision,
-      subject: { type: "member", member_id: me.membership_id },
+      subject: { type: "member", member_id: me.id },
       project_id: targets.project_id, environment_id: environmentInternalID,
       agents_mode: "none", agent_ids: [],
     } });

@@ -1,3 +1,4 @@
+import "./browser-test-env";
 import { afterEach, expect, test } from "bun:test";
 import { finishSlackAuthorization, getAgentSlackConnection, authorizeAgentSlackConnection } from "./slack";
 
@@ -20,8 +21,9 @@ test("Slack authorization names the exact Agent connection generation", async ()
 });
 
 test("an expired Slack callback reports authentication failure without navigating or forwarding its code", async () => {
-  let calls = 0;
-  globalThis.fetch = (async () => { calls++; return Response.json({ error: { code: "unauthorized", message: "Authentication is required." } }, { status: 401 }); }) as typeof fetch;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => { calls.push(String(input)); return Response.json({ error: { code: "unauthorized", message: "Authentication is required." } }, { status: 401 }); }) as typeof fetch;
   await expect(finishSlackAuthorization({ state: "state", code: "fixture-code" })).rejects.toThrow("Authentication is required.");
-  expect(calls).toBe(1);
+  expect(calls).toHaveLength(2);
+  expect(calls[1]).toBe("/api/me");
 });

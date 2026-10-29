@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -30,7 +31,7 @@ type LinkWorkspace struct {
 
 func lockLinkUser(ctx context.Context, tx pgx.Tx, org, user uuid.UUID) (uuid.UUID, error) {
 	var member uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT m.id FROM org_members m WHERE m.org_id=$1 AND m.user_id=$2 AND m.removed_at IS NULL FOR SHARE OF m`, org, user).Scan(&member)
+	err := tx.QueryRow(ctx, `SELECT m.id FROM org_members m WHERE m.org_id=$1 AND m.user_id=$2 AND m.removed_at IS NULL AND m.suspended_at IS NULL FOR SHARE OF m`, org, user).Scan(&member)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return member, ErrUserLinkDenied
 	}
@@ -97,7 +98,7 @@ func ListUserLinks(ctx context.Context, pool db.TxBeginner, org, user uuid.UUID,
 		if _, err := lockLinkUser(ctx, tx, org, user); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT team_id,slack_user_id,linked_at FROM slack_user_links WHERE user_id=$1 AND team_id>$2 ORDER BY team_id LIMIT $3`, user, after, limit)
+		rows, err := tx.Query(ctx, `SELECT team_id,slack_user_id,linked_at FROM slack_user_links WHERE user_id=$1 AND team_id>$2 AND org_id=$4 AND revoked_at IS NULL ORDER BY team_id LIMIT $3`, user, after, limit, org)
 		if err != nil {
 			return err
 		}
@@ -117,7 +118,7 @@ func ListUserLinks(ctx context.Context, pool db.TxBeginner, org, user uuid.UUID,
 // LinkUser is called only after OpenID proof and explicit browser confirmation.
 // Uniqueness never performs a merge or replacement, and exact retries preserve
 // the original link time used to reject older Slack gestures.
-func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, org, user, installation uuid.UUID, identity UserIdentity) error {
+func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy, actor audit.Evidence, org, user, installation uuid.UUID, identity UserIdentity, consent LinkConsent) error {
 	if actor.Actor.UserID != user || user == uuid.Nil() {
 		return ErrUserLinkDenied
 	}
@@ -127,7 +128,24 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy
 		return ErrUserLinkDenied
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		member, err := lockLinkUser(ctx, tx, org, user)
+		current, err := linkConsentPrincipal(ctx, tx, actor, org, user)
+		if err != nil {
+			return err
+		}
+		member := current.MemberID
+		// A new proof cannot substitute for the source shown at consent.
+		var consumed uuid.UUID
+		err = tx.QueryRow(ctx, `UPDATE slack_link_requests SET consumed_at=clock_timestamp()
+ WHERE id=$1 AND browser_hash=$2 AND browser_session_id=$3 AND installation_id=$4
+ AND org_id=$5 AND member_id=$6 AND user_id=$7 AND team_id=$8 AND slack_user_id=$9
+ AND identity_id IS NOT DISTINCT FROM $10
+ AND passkey_id IS NOT DISTINCT FROM $11
+ AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() RETURNING id`,
+			consent.ID, consent.BrowserHash, current.SessionID, installation, org, member, user, identity.TeamID, identity.SlackUserID,
+			optionalLinkID(current.IdentityID), optionalLinkID(current.PasskeyID)).Scan(&consumed)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserLinkDenied
+		}
 		if err != nil {
 			return err
 		}
@@ -138,20 +156,33 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy
 		if !active {
 			return ErrUserLinkDenied
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO slack_user_links(team_id,slack_user_id,user_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, identity.TeamID, identity.SlackUserID, user)
+		tag, err := tx.Exec(ctx, `INSERT INTO slack_user_links(id,team_id,slack_user_id,user_id,installation_id,org_id,member_id,access_epoch,identity_id,passkey_id,authenticated_at,resume_previous_delivery)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`, uuid.NewV7(), identity.TeamID, identity.SlackUserID, user, installation, org, member, current.AccessEpoch, optionalLinkID(current.IdentityID), optionalLinkID(current.PasskeyID), current.AuthenticatedAt, consent.ResumePreviousDelivery)
 		if err != nil {
 			return err
 		}
 		if tag.RowsAffected() == 1 {
 			return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: org, Action: "slack_user.linked", TargetKind: "slack_user_link", TargetUserID: user, SlackTeamID: identity.TeamID, SlackUserID: identity.SlackUserID})
 		}
-		var exact bool
-		err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_user_links WHERE team_id=$1 AND slack_user_id=$2 AND user_id=$3)`, identity.TeamID, identity.SlackUserID, user).Scan(&exact)
+		var existing uuid.UUID
+		err = tx.QueryRow(ctx, `SELECT id FROM slack_user_links WHERE team_id=$1 AND slack_user_id=$2 AND user_id=$3 AND installation_id=$4 AND revoked_at IS NULL`, identity.TeamID, identity.SlackUserID, user, installation).Scan(&existing)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserLinkConflict
+		}
 		if err != nil {
 			return err
 		}
-		if !exact {
+		if _, err = access.SlackPrincipal(ctx, tx, existing); errors.Is(err, access.ErrDenied) {
 			return ErrUserLinkConflict
+		}
+		if err != nil {
+			return err
+		}
+		if consent.ResumePreviousDelivery {
+			if _, err = tx.Exec(ctx, `UPDATE slack_user_links SET resume_previous_delivery=true WHERE id=$1`, existing); err != nil {
+				return err
+			}
+			return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: org, Action: "slack_user.linked", TargetKind: "slack_user_link", TargetUserID: user, SlackTeamID: identity.TeamID, SlackUserID: identity.SlackUserID})
 		}
 		return nil
 	})
@@ -169,13 +200,66 @@ func UnlinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Poli
 		return ErrUserLinkDenied
 	}
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if _, err := lockLinkUser(ctx, tx, org, user); err != nil {
+		if _, err := linkConsentPrincipal(ctx, tx, actor, org, user); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(ctx, `DELETE FROM slack_user_links WHERE team_id=$1 AND slack_user_id=$2 AND user_id=$3`, team, slackUser, user)
+		tag, err := tx.Exec(ctx, `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE team_id=$1 AND slack_user_id=$2 AND user_id=$3 AND org_id=$4 AND revoked_at IS NULL`, team, slackUser, user, org)
 		if err != nil || tag.RowsAffected() == 0 {
 			return err
 		}
 		return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: org, Action: "slack_user.unlinked", TargetKind: "slack_user_link", TargetUserID: user, SlackTeamID: team, SlackUserID: slackUser})
 	})
+}
+
+// Consent is issued from a live browser proof under the same account root lock
+// as source retirement and revoke-all. The resulting link is independent of it.
+func linkConsentPrincipal(ctx context.Context, tx pgx.Tx, e audit.Evidence, org, user uuid.UUID) (auth.Principal, error) {
+	if e.Authentication.CredentialKind != "login_session" || e.Authentication.CredentialID == uuid.Nil() {
+		return auth.Principal{}, ErrUserLinkDenied
+	}
+	var locked uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, user).Scan(&locked); err != nil {
+		return auth.Principal{}, err
+	}
+	p, err := access.SessionPrincipal(ctx, tx, e.Authentication.CredentialID, org)
+	if errors.Is(err, access.ErrDenied) {
+		return p, ErrUserLinkDenied
+	}
+	if err != nil {
+		return p, err
+	}
+	if p.UserID != user || p.Channel != "browser" || !access.Recent(p, time.Now()) {
+		return p, ErrUserLinkDenied
+	}
+	return p, nil
+}
+func optionalLinkID(id uuid.UUID) any {
+	if id == uuid.Nil() {
+		return nil
+	}
+	return pgvalue.UUID(id)
+}
+
+// LinkConsent is a one-use confirmation bound to an exact browser and source.
+type LinkConsent struct {
+	ResumePreviousDelivery bool
+	ID                     uuid.UUID
+	BrowserHash            []byte
+}
+
+func PrepareUserLink(ctx context.Context, pool db.TxBeginner, actor audit.Evidence, org, user, installation uuid.UUID, identity UserIdentity, binding []byte) (uuid.UUID, error) {
+	id := uuid.NewV7()
+	if len(binding) != 32 || actor.Actor.UserID != user || identity.TeamID == "" || identity.SlackUserID == "" {
+		return uuid.Nil(), ErrUserLinkDenied
+	}
+	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		p, err := linkConsentPrincipal(ctx, tx, actor, org, user)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO slack_link_requests(id,installation_id,org_id,team_id,slack_user_id,browser_hash,browser_session_id,user_id,member_id,identity_id,passkey_id,expires_at)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,clock_timestamp()+interval '10 minutes')`, id, installation, org, identity.TeamID, identity.SlackUserID, binding, p.SessionID, user, p.MemberID, optionalLinkID(p.IdentityID), optionalLinkID(p.PasskeyID))
+		return err
+	})
+	return id, err
 }

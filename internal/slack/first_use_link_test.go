@@ -66,7 +66,7 @@ func TestFirstUseLinkRetainsContextButNeverAdmitsRejectedWork(t *testing.T) {
 	if _, err := ResolveFirstUseLink(t.Context(), f.Pool, config.ControlKey, token, uuid.NewV7()); !errors.Is(err, ErrUserLinkDenied) {
 		t.Fatal("nonmember accepted", err)
 	}
-	if err := LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.VerifiedLogin(f.User, "fixture"), origin.OrganizationID, f.User, f.installation, UserIdentity{TeamID: "team", SlackUserID: "human"}); err != nil {
+	if err := linkTestUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.FromPrincipal(f.Principal(t)), origin.OrganizationID, f.User, f.installation, UserIdentity{TeamID: "team", SlackUserID: "human"}); err != nil {
 		t.Fatal(err)
 	}
 	origin, err = ResolveFirstUseLink(t.Context(), f.Pool, config.ControlKey, token, f.User)

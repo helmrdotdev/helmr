@@ -175,6 +175,27 @@ func Normalize(raw json.RawMessage, agentKeys []string) (Policy, error) {
 	}
 	return normalizeRules(*value.Allow, agentKeys)
 }
+
+// Resolve binds authoring omission to this deployment's exact Agent set.
+// The default permits isolated creation and operations on the caller's lineage;
+// sharing its Computer requires an explicit caller-placement rule.
+func Resolve(raw json.RawMessage, agentKeys []string) (Policy, error) {
+	if len(raw) > 0 {
+		return Normalize(raw, agentKeys)
+	}
+	rules := []Rule{{Operation: "list_computers"}}
+	for _, operation := range []string{"start", "spawn", "enqueue", "send_turn", "interrupt_turn", "interrupt_session", "resume_session", "close_session", "cancel_session", "inspect_session", "inspect_turn"} {
+		for offset := 0; offset < len(agentKeys); offset += 256 {
+			r := Rule{Operation: operation, Agents: append([]string{}, agentKeys[offset:min(offset+256, len(agentKeys))]...)}
+			if operation == "start" || operation == "spawn" {
+				r.Computer = "new"
+			}
+			rules = append(rules, r)
+		}
+	}
+	return normalizeRules(rules, agentKeys)
+}
+
 func normalizeRules(rules []Rule, keys []string) (Policy, error) {
 	if len(rules) > 256 {
 		return Policy{}, fmt.Errorf("%w: at most 256 rules", ErrInvalid)

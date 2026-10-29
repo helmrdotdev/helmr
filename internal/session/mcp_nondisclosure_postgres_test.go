@@ -6,6 +6,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"testing"
 	"uuid"
@@ -17,6 +18,7 @@ func TestRuntimeMCPScopeDenialPreservesTargetNondisclosure(t *testing.T) {
 	for key, id := range map[string]uuid.UUID{"hidden": hiddenAgent, "helper": helperAgent} {
 		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,$3); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, id, key, f.agent)
 	}
+	sessiontest.PublishRuntimeAgentSet(t, sessiontest.Fixture{Pool: f.pool, Environment: f.env, Deployment: f.deployment}, "agent", "helper", "hidden")
 	invisible := f.peer(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET agent_id=$3 WHERE environment_id=$1 AND id=$2`, f.env, invisible.session, hiddenAgent)
 	hiddenTurn := invisible.enqueue(t, "hidden-human-turn")
