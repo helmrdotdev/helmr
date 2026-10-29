@@ -96,19 +96,19 @@ func (s *Server) emailStart(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	s.queueEmailCode(r, challenge)
+	s.queueEmailCode(challenge)
 	writeJSON(w, http.StatusAccepted, challenge)
 }
-func (s *Server) queueEmailCode(r *http.Request, c identity.EmailChallenge) {
-	job := emailCodeDeliveryJob{id: fmt.Sprintf("%s/%d", c.ID, c.Generation), deliver: func(ctx context.Context) error {
+func (s *Server) queueEmailCode(c identity.EmailChallenge) {
+	job := emailCodeDeliveryJob{deliver: func(ctx context.Context) error {
 		err := s.mailer.SendEmail(ctx, email.Message{To: c.Email, Subject: "Your Helmr verification code", PlainText: fmt.Sprintf("Your Helmr verification code is %s.\n\nEnter it in the browser where you requested it. It expires at %s.\nIf you did not request this code, ignore this message.\n", c.Code, c.ExpiresAt.UTC().Format(time.RFC3339)), IdempotencyKey: fmt.Sprintf("email-code/%s/%d", c.ID, c.Generation)})
-		markErr := identity.MarkEmailDelivery(ctx, s.tx, c, err == nil)
-		return errors.Join(err, markErr)
-	}, fail: func(ctx context.Context) error { return identity.MarkEmailDelivery(ctx, s.tx, c, false) }}
-	if s.emailCodeDelivery == nil || !s.emailCodeDelivery.enqueue(job) {
-		if err := identity.MarkEmailDelivery(r.Context(), s.tx, c, false); err != nil {
-			s.log.Error("mark code delivery failure", "error", err)
+		if err != nil {
+			return err
 		}
+		return identity.MarkEmailDelivered(ctx, s.tx, c)
+	}}
+	if s.emailCodeDelivery != nil {
+		s.emailCodeDelivery.enqueue(job)
 	}
 }
 func (s *Server) emailResend(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +132,7 @@ func (s *Server) emailResend(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	s.queueEmailCode(r, c)
+	s.queueEmailCode(c)
 	writeJSON(w, http.StatusAccepted, c)
 }
 func (s *Server) emailVerify(w http.ResponseWriter, r *http.Request) {

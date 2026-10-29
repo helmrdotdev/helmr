@@ -29,14 +29,14 @@ func lockOperatorEnrollment(ctx context.Context, tx pgx.Tx, id uuid.UUID, bindin
 	if len(binding) != sha256.Size {
 		return e, user, ErrInvalidToken
 	}
-	if err := tx.QueryRow(ctx, `SELECT operator_id FROM credential_enrollments WHERE id=$1 AND browser_hash=$2`, id, binding).Scan(&e.operator); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT operator_id FROM operator_passkey_enrollments WHERE id=$1 AND browser_hash=$2`, id, binding).Scan(&e.operator); err != nil {
 		return e, user, ErrInvalidToken
 	}
 	user, epoch, err := loadKeyUser(ctx, tx, uuid.Nil(), e.operator)
 	if err != nil {
 		return e, user, err
 	}
-	err = tx.QueryRow(ctx, `SELECT expected_epoch,purpose,provisional_credential,expires_at FROM credential_enrollments WHERE id=$1 AND browser_hash=$2 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE`, id, binding).Scan(&e.epoch, &e.purpose, &e.provisional, &e.expires)
+	err = tx.QueryRow(ctx, `SELECT expected_access_epoch,purpose,provisional_credential,expires_at FROM operator_passkey_enrollments WHERE id=$1 AND browser_hash=$2 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE`, id, binding).Scan(&e.epoch, &e.purpose, &e.provisional, &e.expires)
 	if isNoRows(err) {
 		return e, user, ErrInvalidToken
 	}
@@ -48,7 +48,7 @@ func lockOperatorEnrollment(ctx context.Context, tx pgx.Tx, id uuid.UUID, bindin
 	}
 	if e.purpose == "add_key" {
 		var issuer uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT issuer_session_id FROM credential_enrollments WHERE id=$1`, id).Scan(&issuer); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT issuer_session_id FROM operator_passkey_enrollments WHERE id=$1`, id).Scan(&issuer); err != nil {
 			return e, user, err
 		}
 		current, err := operatorFromSession(ctx, tx, issuer)
@@ -137,7 +137,7 @@ func CompleteOperatorRegistration(ctx context.Context, database db.TxBeginner, w
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE credential_enrollments SET provisional_credential=$2 WHERE id=$1 AND provisional_credential IS NULL`, id, data); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE operator_passkey_enrollments SET provisional_credential=$2 WHERE id=$1 AND provisional_credential IS NULL`, id, data); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE webauthn_challenges SET consumed_at=clock_timestamp() WHERE id=$1`, challenge)
@@ -221,7 +221,7 @@ func VerifyOperatorEnrollment(ctx context.Context, database db.TxBeginner, cfg C
 				return err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE credential_enrollments SET consumed_at=CASE WHEN id=$2 THEN clock_timestamp() ELSE consumed_at END,revoked_at=CASE WHEN id<>$2 THEN clock_timestamp() ELSE revoked_at END,provisional_credential=NULL WHERE operator_id=$1 AND consumed_at IS NULL`, e.operator, id); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE operator_passkey_enrollments SET consumed_at=CASE WHEN id=$2 THEN clock_timestamp() ELSE consumed_at END,revoked_at=CASE WHEN id<>$2 THEN clock_timestamp() ELSE revoked_at END,provisional_credential=NULL WHERE operator_id=$1 AND consumed_at IS NULL`, e.operator, id); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE webauthn_challenges SET consumed_at=clock_timestamp() WHERE id=$1`, challenge)

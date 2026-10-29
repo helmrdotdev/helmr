@@ -108,12 +108,8 @@ func StartEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Config
 	return result, err
 }
 
-func MarkEmailDelivery(ctx context.Context, database db.DBTX, c EmailChallenge, delivered bool) error {
-	if delivered {
-		_, err := database.Exec(ctx, `UPDATE email_challenges SET sent_at=clock_timestamp(),delivery_failed_at=NULL WHERE id=$1 AND generation=$2 AND consumed_at IS NULL AND revoked_at IS NULL`, c.ID, c.Generation)
-		return err
-	}
-	_, err := database.Exec(ctx, `UPDATE email_challenges SET delivery_failed_at=clock_timestamp() WHERE id=$1 AND generation=$2 AND consumed_at IS NULL`, c.ID, c.Generation)
+func MarkEmailDelivered(ctx context.Context, database db.DBTX, c EmailChallenge) error {
+	_, err := database.Exec(ctx, `UPDATE email_challenges SET sent_at=clock_timestamp() WHERE id=$1 AND generation=$2 AND consumed_at IS NULL AND revoked_at IS NULL`, c.ID, c.Generation)
 	return err
 }
 
@@ -137,7 +133,7 @@ func ResendEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Confi
 			return ErrRateLimited
 		}
 		result.Generation = generation + 1
-		if err := tx.QueryRow(ctx, `UPDATE email_challenges SET generation=$2,code_mac=$3,sent_at=NULL,delivery_failed_at=NULL,next_send_at=clock_timestamp()+interval '60 seconds' WHERE id=$1 RETURNING next_send_at`, id, result.Generation, codeMAC(cfg, id, result.Generation, code)).Scan(&result.ResendAfter); err != nil {
+		if err := tx.QueryRow(ctx, `UPDATE email_challenges SET generation=$2,code_mac=$3,sent_at=NULL,next_send_at=clock_timestamp()+interval '60 seconds' WHERE id=$1 RETURNING next_send_at`, id, result.Generation, codeMAC(cfg, id, result.Generation, code)).Scan(&result.ResendAfter); err != nil {
 			return err
 		}
 		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: audit.Unauthenticated("absent", ""), Action: "identity.email_code_requested", TargetKind: "email_challenge", TargetID: id, Details: audit.AuthenticationDetails{Method: "email_code"}})

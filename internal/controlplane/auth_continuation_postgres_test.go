@@ -180,7 +180,7 @@ func hasSessionCookie(w *httptest.ResponseRecorder, r *http.Request) bool {
 
 func TestAuthContinuationEmailCodeIsBrowserBoundAndReturnsDestination(t *testing.T) {
 	sender := &recordingEmailCodeSender{sent: make(chan email.Message, 1)}
-	delivery := newEmailCodeDelivery(discardEmailCodeLog(), 1, 1, time.Second)
+	delivery := newEmailCodeDelivery(discardEmailCodeLog(), 1, 1)
 	f := newEmailCodeDeliveryPostgresFixture(t, sender, delivery)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

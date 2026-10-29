@@ -3,7 +3,6 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/url"
@@ -27,7 +26,6 @@ func attentionSession(t *testing.T, f sessiontest.Fixture) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1))`, f.Environment, id, f.Agent, f.Deployment, f.Computer)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET (`+access.HumanColumns+`)=($3,$4,$5,$6,$7,$8,$9,$10,$11) WHERE environment_id=$1 AND id=$2`, append([]any{f.Environment, id}, access.HumanValues(f.Principal(t))...)...)
 	return id
 }
 

@@ -2,7 +2,6 @@ package session_test
 
 import (
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -10,7 +9,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"testing"
-	"uuid"
 )
 
 func TestQueuedHumanInputSurvivesRoutineAuthenticationChanges(t *testing.T) {
@@ -59,12 +57,14 @@ func TestQueuedHumanInputSurvivesAccessRevocation(t *testing.T) {
 
 func TestCurrentParticipantCanContinueAfterOriginalSourceRetires(t *testing.T) {
 	f := newFixture(t)
-	var source uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT human_identity_id FROM sessions WHERE id=$1`, f.session).Scan(&source); err != nil {
+	original := f.caller()
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, original, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "original-source", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
+	source := original.Human.IdentityID
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, source)
 	// A separate current login can read and continue organization-owned work.
+	f.human = dbtest.BrowserPrincipal(t, f.pool, original.Human.OrgID, f.user)
 	if _, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session); err != nil {
 		t.Fatal("lost retained history", err)
 	}
@@ -73,11 +73,6 @@ func TestCurrentParticipantCanContinueAfterOriginalSourceRetires(t *testing.T) {
 	}
 }
 
-// Synthetic peer sessions retain the same source as their original runtime.
-func copySessionHuman(t *testing.T, f fixture, target uuid.UUID) {
-	t.Helper()
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET (`+access.HumanColumns+`)= (SELECT `+access.HumanColumns+` FROM sessions WHERE id=$1) WHERE id=$2`, f.session, target)
-}
 func TestRuntimeAgentScopeIsPublishedAndIndependentOfHumanSource(t *testing.T) {
 	f := newFixture(t)
 	caller := runtimeReadCaller(t, f)

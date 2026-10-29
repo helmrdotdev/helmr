@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -57,5 +58,28 @@ func TestRelatedWorkIncludesRetainedAnswers(t *testing.T) {
 	page, err := session.ListSessions(t.Context(), policy, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, RelatedUserID: contributor, Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session || page.Sessions[0].RelatedVia != "answered" {
 		t.Fatalf("answer contribution: %+v %v", page, err)
+	}
+}
+
+func TestRelatedWorkOutlivesAdmissionAuditAndCredentialRecords(t *testing.T) {
+	f := newFixture(t)
+	caller := f.caller()
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 1}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "retained-attribution", Input: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal(err)
+	}
+	// Wait for the admission event's actual expiry, not an assumed scheduler delay.
+	dbtest.MustExec(t, t.Context(), f.pool, `SELECT pg_sleep(GREATEST(0,EXTRACT(EPOCH FROM max(expires_at)-clock_timestamp()))+0.01) FROM audit_events WHERE session_id=$1 AND retention_seconds=1`, f.session)
+	if _, err := audit.Purge(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 1}, 1000); err != nil {
+		t.Fatal(err)
+	}
+	var retained int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND retention_seconds=1`, f.session).Scan(&retained); err != nil || retained != 0 {
+		t.Fatal(retained, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM login_sessions WHERE id=$1; DELETE FROM auth_identities WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, caller.Human.SessionID, caller.Human.IdentityID)
+	f.human = dbtest.BrowserPrincipal(t, f.pool, caller.Human.OrgID, f.user)
+	page, err := session.ListSessions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, RelatedUserID: f.user, Limit: 100})
+	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session || page.Sessions[0].RelatedVia != "initiated" {
+		t.Fatal("lost business attribution", page, err)
 	}
 }

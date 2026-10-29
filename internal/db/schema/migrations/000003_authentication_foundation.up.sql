@@ -1,6 +1,5 @@
--- Legacy bearers have no authenticated source or proof time. Retain their IDs
--- for history, but require a new login instead of inventing that provenance.
-UPDATE login_sessions SET revoked_at=COALESCE(revoked_at,clock_timestamp()),org_id=NULL;
+-- Authentication credentials require fresh enrollment under the new proof model.
+DELETE FROM login_sessions;
 DELETE FROM device_codes;
 DROP TABLE magic_links;
 ALTER TABLE invitations DROP CONSTRAINT invitations_org_id_id_key;
@@ -72,7 +71,7 @@ ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_owner CHECK (num_nonnul
 ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_shape CHECK (
  (channel='browser' AND user_id IS NOT NULL AND access_epoch IS NOT NULL
   AND org_id IS NULL AND member_id IS NULL
-  AND (revoked_at IS NOT NULL OR (num_nonnulls(identity_id,passkey_id)=1 AND authenticated_at IS NOT NULL)))
+  AND num_nonnulls(identity_id,passkey_id)=1 AND authenticated_at IS NOT NULL)
  OR (channel='cli' AND user_id IS NOT NULL AND access_epoch IS NOT NULL
   AND org_id IS NOT NULL AND member_id IS NOT NULL AND authenticated_at IS NOT NULL
   AND num_nonnulls(identity_id,passkey_id)=1)
@@ -99,7 +98,6 @@ CREATE TABLE email_challenges (
  safe_next text NOT NULL DEFAULT '/',
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  sent_at timestamptz,
- delivery_failed_at timestamptz,
  expires_at timestamptz NOT NULL,
  consumed_at timestamptz,
  revoked_at timestamptz,
@@ -109,19 +107,22 @@ CREATE TABLE email_challenges (
 );
 CREATE INDEX email_challenges_recent ON email_challenges(email,created_at DESC);
 
-CREATE TABLE credential_enrollments (
+CREATE TABLE operator_passkey_enrollments (
  id uuid PRIMARY KEY,
  operator_id uuid NOT NULL REFERENCES platform_operators(id),
  purpose text NOT NULL CHECK (purpose IN ('bootstrap','repair','add_key')),
  capability_hash bytea UNIQUE,
- expected_epoch bigint NOT NULL CHECK (expected_epoch>=0),
+ expected_access_epoch bigint NOT NULL CHECK (expected_access_epoch>=0),
  issuer_session_id uuid REFERENCES login_sessions(id),
  browser_hash bytea,
  provisional_credential jsonb,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  expires_at timestamptz NOT NULL,
  consumed_at timestamptz,
- revoked_at timestamptz
+ revoked_at timestamptz,
+ CHECK ((purpose='add_key' AND issuer_session_id IS NOT NULL AND browser_hash IS NOT NULL AND capability_hash IS NULL)
+  OR (purpose IN ('bootstrap','repair') AND issuer_session_id IS NULL AND num_nonnulls(capability_hash,browser_hash)=1)),
+ CHECK (provisional_credential IS NULL OR browser_hash IS NOT NULL)
 );
 CREATE TABLE account_repair_enrollments (
  id uuid PRIMARY KEY,
@@ -140,25 +141,29 @@ CREATE TABLE webauthn_challenges (
  ceremony text NOT NULL CHECK (ceremony IN ('register','assert')),
  purpose text NOT NULL CHECK (purpose IN ('login','confirm','renew','register','enroll','repair')),
  operator_scope boolean NOT NULL DEFAULT false,
- challenge_hash bytea NOT NULL,
  verification_state jsonb NOT NULL,
  browser_hash bytea NOT NULL,
  user_id uuid REFERENCES users(id),
  operator_id uuid REFERENCES platform_operators(id),
  session_id uuid REFERENCES login_sessions(id),
- credential_enrollment_id uuid REFERENCES credential_enrollments(id),
+ operator_passkey_enrollment_id uuid REFERENCES operator_passkey_enrollments(id),
  account_repair_enrollment_id uuid REFERENCES account_repair_enrollments(id),
- security_version bigint CHECK (security_version>=0),
+ expected_access_epoch bigint CHECK (expected_access_epoch>=0),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  expires_at timestamptz NOT NULL,
  consumed_at timestamptz,
  revoked_at timestamptz,
  CHECK (num_nonnulls(user_id,operator_id)<=1),
- CHECK ((purpose='login' AND ceremony='assert' AND num_nonnulls(user_id,operator_id,session_id,credential_enrollment_id,account_repair_enrollment_id,security_version)=0)
-  OR (purpose IN ('confirm','renew','register') AND session_id IS NOT NULL AND security_version IS NOT NULL AND num_nonnulls(user_id,operator_id)=1 AND num_nonnulls(credential_enrollment_id,account_repair_enrollment_id)=0)
-  OR (purpose='enroll' AND operator_scope AND operator_id IS NOT NULL AND credential_enrollment_id IS NOT NULL AND account_repair_enrollment_id IS NULL AND security_version IS NOT NULL)
-  OR (purpose='repair' AND ceremony='register' AND NOT operator_scope AND user_id IS NOT NULL AND account_repair_enrollment_id IS NOT NULL AND credential_enrollment_id IS NULL AND security_version IS NOT NULL))
+ CHECK (operator_id IS NULL OR operator_scope),
+ CHECK (user_id IS NULL OR NOT operator_scope),
+ CHECK (purpose NOT IN ('confirm','renew') OR ceremony='assert'),
+ CHECK (purpose<>'register' OR (ceremony='register' AND NOT operator_scope)),
+ CHECK ((purpose='login' AND ceremony='assert' AND num_nonnulls(user_id,operator_id,session_id,operator_passkey_enrollment_id,account_repair_enrollment_id,expected_access_epoch)=0)
+  OR (purpose IN ('confirm','renew','register') AND session_id IS NOT NULL AND expected_access_epoch IS NOT NULL AND num_nonnulls(user_id,operator_id)=1 AND num_nonnulls(operator_passkey_enrollment_id,account_repair_enrollment_id)=0)
+  OR (purpose='enroll' AND operator_scope AND operator_id IS NOT NULL AND operator_passkey_enrollment_id IS NOT NULL AND account_repair_enrollment_id IS NULL AND expected_access_epoch IS NOT NULL)
+  OR (purpose='repair' AND ceremony='register' AND NOT operator_scope AND user_id IS NOT NULL AND account_repair_enrollment_id IS NOT NULL AND operator_passkey_enrollment_id IS NULL AND expected_access_epoch IS NOT NULL))
 );
+ALTER TABLE device_codes DROP CONSTRAINT device_codes_org_id_decided_by_member_id_fkey;
 ALTER TABLE device_codes ADD COLUMN user_id uuid;
 ALTER TABLE device_codes ADD COLUMN identity_id uuid;
 ALTER TABLE device_codes ADD COLUMN passkey_id uuid;
@@ -170,10 +175,10 @@ ALTER TABLE device_codes ADD FOREIGN KEY (org_id,decided_by_member_id,user_id) R
 ALTER TABLE device_codes ADD FOREIGN KEY (identity_id,user_id) REFERENCES auth_identities(id,user_id);
 ALTER TABLE device_codes ADD FOREIGN KEY (passkey_id,user_id) REFERENCES passkey_credentials(id,user_id);
 ALTER TABLE device_codes ADD CHECK (status NOT IN ('approved','consumed') OR
- (user_id IS NOT NULL AND authenticated_at IS NOT NULL AND access_epoch IS NOT NULL AND browser_session_id IS NOT NULL AND num_nonnulls(identity_id,passkey_id)=1));
+ (user_id IS NOT NULL AND decided_by_member_id IS NOT NULL AND authenticated_at IS NOT NULL AND access_epoch IS NOT NULL AND browser_session_id IS NOT NULL AND num_nonnulls(identity_id,passkey_id)=1));
 
--- Prior Slack associations are attribution only until consent establishes a
--- current organization, membership lifetime and independent source proof.
+-- Existing associations must complete fresh, scoped consent.
+DELETE FROM slack_user_links;
 ALTER TABLE slack_user_links DROP CONSTRAINT slack_user_links_pkey;
 ALTER TABLE slack_user_links DROP CONSTRAINT slack_user_links_team_id_user_id_key;
 ALTER TABLE slack_user_links ADD COLUMN id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY;
@@ -187,23 +192,19 @@ ALTER TABLE slack_user_links ADD COLUMN passkey_id uuid;
 ALTER TABLE slack_user_links ADD COLUMN authenticated_at timestamptz;
 ALTER TABLE slack_user_links ADD COLUMN revoked_at timestamptz;
 ALTER TABLE slack_user_links ADD COLUMN resume_previous_delivery boolean NOT NULL DEFAULT false;
-UPDATE slack_user_links SET revoked_at=clock_timestamp();
 ALTER TABLE slack_user_links ADD FOREIGN KEY (installation_id,org_id,team_id) REFERENCES slack_installations(id,org_id,team_id);
 ALTER TABLE slack_user_links ADD FOREIGN KEY (org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id);
 ALTER TABLE slack_user_links ADD FOREIGN KEY (identity_id,user_id) REFERENCES auth_identities(id,user_id);
 ALTER TABLE slack_user_links ADD FOREIGN KEY (passkey_id,user_id) REFERENCES passkey_credentials(id,user_id);
-ALTER TABLE slack_user_links ADD CHECK (revoked_at IS NOT NULL OR
- (installation_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id,passkey_id)=1));
+ALTER TABLE slack_user_links ADD CHECK (installation_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id,passkey_id)=1);
 CREATE UNIQUE INDEX slack_user_links_live ON slack_user_links(installation_id,team_id,slack_user_id) WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX slack_user_links_live_account ON slack_user_links(installation_id,user_id) WHERE revoked_at IS NULL;
 CREATE TABLE slack_link_requests (
  id uuid PRIMARY KEY,
  user_id uuid NOT NULL REFERENCES users(id),
  member_id uuid NOT NULL,
- access_epoch bigint NOT NULL CHECK(access_epoch>=0),
  identity_id uuid,
  passkey_id uuid,
- authenticated_at timestamptz NOT NULL,
  CHECK(num_nonnulls(identity_id,passkey_id)=1),
  FOREIGN KEY(org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id),
  FOREIGN KEY(identity_id,user_id) REFERENCES auth_identities(id,user_id),
@@ -213,7 +214,7 @@ CREATE TABLE slack_link_requests (
  team_id text NOT NULL,
  slack_user_id text NOT NULL,
  browser_hash bytea NOT NULL,
- browser_session_id uuid REFERENCES login_sessions(id),
+ browser_session_id uuid NOT NULL REFERENCES login_sessions(id),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  expires_at timestamptz NOT NULL,
  consumed_at timestamptz,
@@ -269,27 +270,14 @@ DO $$ DECLARE c record; BEGIN
 END $$;
 ALTER TABLE audit_events ADD CONSTRAINT audit_anonymous_operation CHECK (authentication_result NOT IN ('failed','absent') OR outcome IN ('denied','failed') OR (authentication_result='absent' AND action IN ('identity.device_started','identity.magic_link_requested','identity.email_code_requested')));
 
--- Persist exact human admission, independently of current profile/membership.
--- Historical source IDs do not keep disposable authentication records alive.
-DO $$ DECLARE relation text; BEGIN
- FOREACH relation IN ARRAY ARRAY['sessions','turns','turn_messages','commands'] LOOP
-  EXECUTE format('ALTER TABLE %I
-   ADD COLUMN human_user_id uuid REFERENCES users(id),
-   ADD COLUMN human_org_id uuid,
-   ADD COLUMN human_member_id uuid,
-   ADD COLUMN human_session_id uuid,
-   ADD COLUMN human_slack_link_id uuid,
-   ADD COLUMN human_identity_id uuid,
-   ADD COLUMN human_passkey_id uuid,
-   ADD COLUMN human_access_epoch bigint,
-   ADD COLUMN human_authenticated_at timestamptz,
-   ADD FOREIGN KEY(human_org_id,human_member_id,human_user_id) REFERENCES org_members(org_id,id,user_id),
-   ADD FOREIGN KEY(human_identity_id,human_user_id) REFERENCES auth_identities(id,user_id),
-   ADD FOREIGN KEY(human_passkey_id,human_user_id) REFERENCES passkey_credentials(id,user_id),
-   ADD CHECK ((num_nonnulls(human_user_id,human_org_id,human_member_id,human_session_id,human_slack_link_id,human_identity_id,human_passkey_id,human_access_epoch,human_authenticated_at)=0) OR
-    (human_user_id IS NOT NULL AND human_org_id IS NOT NULL AND human_member_id IS NOT NULL AND human_access_epoch IS NOT NULL AND human_access_epoch>=0 AND human_authenticated_at IS NOT NULL AND num_nonnulls(human_session_id,human_slack_link_id)=1 AND num_nonnulls(human_identity_id,human_passkey_id)=1))',relation);
- END LOOP;
-END $$;
+-- Delivery consent and input presentation belong to the Slack transport.
+-- Historical link IDs do not retain disposable authorization rows.
+ALTER TABLE slack_threads ADD COLUMN initial_recipient_link_id uuid,
+ ADD CHECK (left(slack_channel_id,1)<>'D' OR initial_recipient_link_id IS NOT NULL);
+ALTER TABLE slack_requests ADD COLUMN source_link_id uuid,
+ ADD CHECK (status<>'accepted' OR operation NOT IN ('start','enqueue') OR source_link_id IS NOT NULL);
+CREATE UNIQUE INDEX slack_requests_turn_admission ON slack_requests(environment_id,session_id,turn_id)
+ WHERE status='accepted' AND operation IN ('start','enqueue');
 
 -- Related-work lookup retains initiator/contributor provenance independently of access.
 CREATE INDEX sessions_related_user ON sessions(environment_id,origin_user_id,id) WHERE origin_user_id IS NOT NULL AND parent_session_id IS NULL AND requester_session_id IS NULL;

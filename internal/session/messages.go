@@ -91,9 +91,6 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,''),$14)`, req.EnvironmentID, result.MessageID, req.SessionID, turn, e.ProcessEpoch, sequence, []byte(req.Input), caller.Kind, caller.ID, nullableID(caller.TurnID), method, target, req.IdempotencyKey, digest[:]); err != nil {
 		return false, err
 	}
-	if err = saveMessageHuman(ctx, tx, req.EnvironmentID, result.MessageID, caller); err != nil {
-		return false, err
-	}
 	if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsSend, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: turn, Action: "message.admitted", Outcome: "accepted", TargetKind: "message", TargetID: result.MessageID, Details: audit.LifecycleDetails{Sequence: sequence}}); err != nil {
 		return false, err
 	}

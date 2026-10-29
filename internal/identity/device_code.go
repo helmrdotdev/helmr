@@ -186,7 +186,7 @@ func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, a
 				UserID:     pgvalue.UUID(approver.UserID),
 				IdentityID: optionalUUID(approver.IdentityID), PasskeyID: optionalUUID(approver.PasskeyID),
 				AuthenticatedAt:  pgvalue.Timestamptz(approver.AuthenticatedAt),
-				AccessEpoch:  pgtype.Int8{Int64: approver.AccessEpoch, Valid: true},
+				AccessEpoch:      pgtype.Int8{Int64: approver.AccessEpoch, Valid: true},
 				BrowserSessionID: pgvalue.UUID(approver.SessionID),
 				OrgID:            pgvalue.UUID(approver.OrgID),
 				MemberID:         pgvalue.UUID(approver.MemberID),

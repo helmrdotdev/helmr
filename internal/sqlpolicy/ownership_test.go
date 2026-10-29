@@ -40,7 +40,7 @@ var dynamicStatementSites = map[string]string{
 var tableOwners = map[string]string{
 	"account_repair_enrollments":     "internal/identity",
 	"account_security_notifications": "internal/identity",
-	"credential_enrollments":         "internal/identity",
+	"operator_passkey_enrollments":   "internal/identity",
 	"email_challenges":               "internal/identity",
 	"passkey_credentials":            "internal/identity",
 	"platform_operators":             "internal/identity",

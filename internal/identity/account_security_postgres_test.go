@@ -10,7 +10,7 @@ import (
 func TestAccountRevocationRetiresApprovedAccessAndKeepsCredentials(t *testing.T) {
 	f := newIdentityFixture(t)
 	c, b := emailChallenge(t, f, "owner@example.test")
-	if err := MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+	if err := MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
 		t.Fatal(err)
 	}
 	done, err := completeEmail(t, f, c, b)
@@ -26,7 +26,7 @@ func TestAccountRevocationRetiresApprovedAccessAndKeepsCredentials(t *testing.T)
 		t.Fatal("email offered as removable credential", credentials, err)
 	}
 	pending, _ := emailChallenge(t, f, "owner@example.test")
-	if err = MarkEmailDelivery(t.Context(), f.pool, pending, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, pending); err != nil {
 		t.Fatal(err)
 	}
 	org := f.organization(t, "account-revoke")
@@ -57,7 +57,7 @@ func TestAccountRevocationRetiresApprovedAccessAndKeepsCredentials(t *testing.T)
 		t.Fatal("approved device survived")
 	}
 	fresh, _ := emailChallenge(t, f, "owner@example.test")
-	if err = MarkEmailDelivery(t.Context(), f.pool, fresh, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, fresh); err != nil {
 		t.Fatal(err)
 	}
 	renewed, err := completeEmail(t, f, fresh, b)
@@ -77,7 +77,7 @@ func TestEmailChangeRetiresOnlyMailboxSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, b := emailChallenge(t, f, "old@example.test")
-	if err = MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
 		t.Fatal(err)
 	}
 	emailOnly, err := completeEmail(t, f, c, b)
@@ -101,7 +101,7 @@ func TestEmailChangeRetiresOnlyMailboxSource(t *testing.T) {
 	}
 	// Retain a separate email-only envelope to prove source-specific revocation.
 	c2, _ := emailChallenge(t, f, "old@example.test")
-	if err = MarkEmailDelivery(t.Context(), f.pool, c2, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, c2); err != nil {
 		t.Fatal(err)
 	}
 	separate, err := completeEmail(t, f, c2, b)
@@ -112,7 +112,7 @@ func TestEmailChangeRetiresOnlyMailboxSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = MarkEmailDelivery(t.Context(), f.pool, change, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, change); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := CompleteEmailChallenge(t.Context(), f.pool, f.cfg, change.ID, b, change.Code, mixed, "email_change")

@@ -37,22 +37,3 @@ func requireCallerPermission(ctx context.Context, q db.DBTX, c Caller, env, agen
 	}
 	return auth.Require(p, permission, scope, ErrDenied)
 }
-
-func saveSessionHuman(ctx context.Context, q db.DBTX, env, id uuid.UUID, p auth.Principal) error {
-	_, err := q.Exec(ctx, `UPDATE sessions SET (`+access.HumanColumns+`)=($3,$4,$5,$6,$7,$8,$9,$10,$11) WHERE environment_id=$1 AND id=$2`, append([]any{env, id}, access.HumanValues(p)...)...)
-	return err
-}
-func saveTurnHuman(ctx context.Context, q db.DBTX, env, id uuid.UUID, c Caller) error {
-	if c.Kind != "user" {
-		return nil
-	}
-	_, err := q.Exec(ctx, `UPDATE turns SET (`+access.HumanColumns+`)=($3,$4,$5,$6,$7,$8,$9,$10,$11) WHERE environment_id=$1 AND id=$2`, append([]any{env, id}, access.HumanValues(c.Human)...)...)
-	return err
-}
-func saveMessageHuman(ctx context.Context, q db.DBTX, env, id uuid.UUID, c Caller) error {
-	if c.Kind != "user" {
-		return nil
-	}
-	_, err := q.Exec(ctx, `UPDATE turn_messages SET (`+access.HumanColumns+`)=($3,$4,$5,$6,$7,$8,$9,$10,$11) WHERE environment_id=$1 AND id=$2`, append([]any{env, id}, access.HumanValues(c.Human)...)...)
-	return err
-}

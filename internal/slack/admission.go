@@ -307,7 +307,7 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 			operation = "slack_route"
 			message = receipt.MessageID
 		}
-		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$8,turn_id=$7,message_id=$9 WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, receipt.TurnID, operation, message)
+		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$8,turn_id=$7,message_id=$9,source_link_id=CASE WHEN $8 IN ('start','enqueue') THEN $10::uuid END WHERE id=$1`, id, p.user, p.thread, p.source, p.route.Target.EnvironmentID, p.session, receipt.TurnID, operation, message, p.human.SlackLinkID)
 		return err
 	})
 }

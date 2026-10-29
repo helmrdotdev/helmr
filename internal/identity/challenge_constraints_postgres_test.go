@@ -25,7 +25,7 @@ func TestEmailChallengePurposeConstraints(t *testing.T) {
 		}
 	}
 	c, b := emailChallenge(t, f, "history@example.test")
-	if err := MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+	if err := MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := completeEmail(t, f, c, b); err != nil {
@@ -102,5 +102,54 @@ func TestDeviceCodeStateAndDeletedDecisionActor(t *testing.T) {
 	var retained bool
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)=3 AND bool_and(decided_at IS NOT NULL AND org_id=$2 AND decided_by_member_id=$3 AND ((status='consumed')=(consumed_at IS NOT NULL))) FROM device_codes WHERE id=ANY($1::uuid[])`, ids, orgID, member).Scan(&retained); err != nil || !retained {
 		t.Fatal(retained, err)
+	}
+}
+
+// No issued CLI Session may mask the pending approval's own membership fence.
+func TestDeviceApprovalRequiresExactMemberBeforeExchange(t *testing.T) {
+	f := newIdentityFixture(t)
+	org := f.organization(t, "approval-only")
+	user := f.user(t, "Approver", "")
+	member := f.member(t, org, user, "member")
+	principal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, f.session(t, user, uuid.Nil()), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := StartDeviceCode(t.Context(), f.pool, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, principal, DeviceConsent{OrgID: org.String()}, started.UserCode); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := userCodeHash(f.cfg, started.UserCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mutation := range []string{
+		"decided_by_member_id=NULL",
+		"status='consumed',consumed_at=clock_timestamp(),decided_by_member_id=NULL",
+		"decided_by_member_id=gen_random_uuid()",
+		"user_id=gen_random_uuid()",
+		"org_id=gen_random_uuid()",
+	} {
+		_, err = f.pool.Exec(t.Context(), `UPDATE device_codes SET `+mutation+` WHERE user_code_hash=$1`, hash)
+		var pe *pgconn.PgError
+		if !errors.As(err, &pe) || (pe.Code != "23514" && pe.Code != "23503") {
+			t.Fatalf("%s: %v", mutation, err)
+		}
+	}
+	_, err = f.pool.Exec(t.Context(), `DELETE FROM org_members WHERE id=$1`, member)
+	var pe *pgconn.PgError
+	if !errors.As(err, &pe) || pe.Code != "23503" {
+		t.Fatal("approval lost its member", err)
+	}
+	var memberFKs int
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_constraint WHERE conrelid='device_codes'::regclass AND confrelid='org_members'::regclass AND contype='f'`).Scan(&memberFKs); err != nil || memberFKs != 1 {
+		t.Fatal(memberFKs, err)
+	}
+	f.exec(t, `UPDATE org_members SET removed_at=clock_timestamp() WHERE id=$1`, member)
+	if _, err = ExchangeDeviceCode(t.Context(), f.pool, f.cfg, started.DeviceCode); !errors.Is(err, ErrInvalidDeviceCode) {
+		t.Fatal("removed member exchanged approval", err)
 	}
 }

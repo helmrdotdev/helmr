@@ -378,9 +378,6 @@ func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 		if err != nil {
 			return err
 		}
-		if err = saveTurnHuman(ctx, tx, req.EnvironmentID, result.TurnID, caller); err != nil {
-			return err
-		}
 		if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsSend, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: result.TurnID, Action: "turn.admitted", Outcome: "accepted", TargetKind: "turn", TargetID: result.TurnID, Details: audit.LifecycleDetails{Sequence: result.Sequence}}); err != nil {
 			return err
 		}

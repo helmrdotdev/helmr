@@ -87,7 +87,6 @@ func (f fixture) peer(t *testing.T) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	copySessionHuman(t, f, p.session)
 	// Membership tests deliberately create peers while their Computer cannot
 	// admit business work. Seed the pinned maximum as identity fixture data.
 	var raw []byte

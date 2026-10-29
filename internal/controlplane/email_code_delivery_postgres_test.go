@@ -17,9 +17,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/identity"
 )
 
-func TestEmailCodeDeliveryPostgresShutdownFailsActiveAndQueuedRows(t *testing.T) {
+func TestEmailCodeDeliveryPostgresShutdownLeavesActiveAndQueuedUndelivered(t *testing.T) {
 	sender := &blockingEmailCodeSender{started: make(chan email.Message, emailCodeDeliveryWorkers)}
-	delivery := NewEmailCodeDelivery(discardEmailCodeLog(), 10*time.Second)
+	delivery := NewEmailCodeDelivery(discardEmailCodeLog())
 	fixture := newEmailCodeDeliveryPostgresFixture(t, sender, delivery)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -48,7 +48,7 @@ func TestEmailCodeDeliveryPostgresShutdownFailsActiveAndQueuedRows(t *testing.T)
 	}
 	var failed, sent int
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT count(*) FILTER (WHERE delivery_failed_at IS NOT NULL),
+		SELECT count(*) FILTER (WHERE sent_at IS NULL),
 		       count(*) FILTER (WHERE sent_at IS NOT NULL)
 		  FROM email_challenges
 	`).Scan(&failed, &sent); err != nil {
@@ -62,7 +62,7 @@ func TestEmailCodeDeliveryPostgresShutdownFailsActiveAndQueuedRows(t *testing.T)
 
 func TestEmailCodeLoginQueueSaturationRemainsNonEnumerating(t *testing.T) {
 	sender := &blockingEmailCodeSender{started: make(chan email.Message, 1)}
-	delivery := newEmailCodeDelivery(discardEmailCodeLog(), 1, 1, time.Second)
+	delivery := newEmailCodeDelivery(discardEmailCodeLog(), 1, 1)
 	fixture := newEmailCodeDeliveryPostgresFixture(t, sender, delivery)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -81,14 +81,14 @@ func TestEmailCodeLoginQueueSaturationRemainsNonEnumerating(t *testing.T) {
 	}
 	var failed bool
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT delivery_failed_at IS NOT NULL
+		SELECT sent_at IS NULL
 		  FROM email_challenges
 		 WHERE email = 'saturated@example.test'
 	`).Scan(&failed); err != nil {
 		t.Fatal(err)
 	}
 	if !failed {
-		t.Fatal("saturated delivery row was left pending")
+		t.Fatal("saturated delivery was incorrectly marked sent")
 	}
 	cancel()
 	if runErr := <-done; !errors.Is(runErr, context.Canceled) {
@@ -98,7 +98,7 @@ func TestEmailCodeLoginQueueSaturationRemainsNonEnumerating(t *testing.T) {
 
 func TestEmailCodeDeliveryUsesBoundedWorker(t *testing.T) {
 	sender := &recordingEmailCodeSender{sent: make(chan email.Message, 1)}
-	delivery := newEmailCodeDelivery(discardEmailCodeLog(), 1, 1, time.Second)
+	delivery := newEmailCodeDelivery(discardEmailCodeLog(), 1, 1)
 	fixture := newEmailCodeDeliveryPostgresFixture(t, sender, delivery)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

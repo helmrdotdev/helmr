@@ -212,7 +212,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	telemetryReader := clickhouse.NewReader(clickHouseClient)
 	mailer := configuredEmailSender(log, cfg, external)
 	shutdownTimeout := 10 * time.Second
-	emailCodeDelivery := controlplane.NewEmailCodeDelivery(log, shutdownTimeout)
+	emailCodeDelivery := controlplane.NewEmailCodeDelivery(log)
 	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey, cfg.AuditPolicy)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)

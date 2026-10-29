@@ -6,13 +6,9 @@ DROP INDEX commands_related_user;
 DROP INDEX turn_messages_related_user;
 DROP INDEX turns_related_user;
 DROP INDEX sessions_related_user;
-DO $$ DECLARE relation text; retained boolean; BEGIN
- FOREACH relation IN ARRAY ARRAY['sessions','turns','turn_messages','commands'] LOOP
-  EXECUTE format('SELECT EXISTS(SELECT 1 FROM %I WHERE human_user_id IS NOT NULL)',relation) INTO retained;
-  IF retained THEN RAISE EXCEPTION 'cannot remove retained human admission provenance'; END IF;
-  EXECUTE format('ALTER TABLE %I DROP COLUMN human_user_id,DROP COLUMN human_org_id,DROP COLUMN human_member_id,DROP COLUMN human_session_id,DROP COLUMN human_slack_link_id,DROP COLUMN human_identity_id,DROP COLUMN human_passkey_id,DROP COLUMN human_access_epoch,DROP COLUMN human_authenticated_at',relation);
- END LOOP;
-END $$;
+DROP INDEX slack_requests_turn_admission;
+ALTER TABLE slack_requests DROP COLUMN source_link_id;
+ALTER TABLE slack_threads DROP COLUMN initial_recipient_link_id;
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM account_security_notifications) THEN
   RAISE EXCEPTION 'account security notification history requires backup before rollback';
@@ -57,10 +53,11 @@ END $$;
 DROP TABLE slack_link_requests;
 DROP TABLE webauthn_challenges;
 DROP TABLE account_repair_enrollments;
-DROP TABLE credential_enrollments;
+DROP TABLE operator_passkey_enrollments;
 DROP TABLE email_challenges;
 ALTER TABLE device_codes DROP COLUMN user_id, DROP COLUMN identity_id, DROP COLUMN passkey_id,
  DROP COLUMN authenticated_at, DROP COLUMN access_epoch, DROP COLUMN browser_session_id, DROP COLUMN replaces_session_id;
+ALTER TABLE device_codes ADD FOREIGN KEY (org_id,decided_by_member_id) REFERENCES org_members(org_id,id) ON DELETE SET NULL (decided_by_member_id);
 DELETE FROM login_sessions WHERE user_id IS NULL;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_shape, DROP CONSTRAINT login_sessions_owner;
 ALTER TABLE login_sessions DROP COLUMN operator_id, DROP COLUMN channel, DROP COLUMN access_epoch,

@@ -93,7 +93,7 @@ func TestOperatorEnrollmentCapabilityOnceAndBounded(t *testing.T) {
 		t.Fatal("replayed enrollment", err)
 	}
 	var bound bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT capability_hash IS NULL AND browser_hash=$2 FROM credential_enrollments WHERE id=$1`, issued.ID, binding).Scan(&bound); err != nil || !bound {
+	if err = f.pool.QueryRow(t.Context(), `SELECT capability_hash IS NULL AND browser_hash=$2 FROM operator_passkey_enrollments WHERE id=$1`, issued.ID, binding).Scan(&bound); err != nil || !bound {
 		t.Fatal(bound, err)
 	}
 }
@@ -189,7 +189,7 @@ func TestAccountRevocationInvalidatesPendingRepair(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, b := emailChallenge(t, f, "repair@example.test")
-	if err = MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
 		t.Fatal(err)
 	}
 	signed, err := completeEmail(t, f, c, b)

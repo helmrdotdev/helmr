@@ -280,7 +280,7 @@ func runDev(ctx context.Context, log *slog.Logger) error {
 // links are written to the log instead of being sent, so local development
 // can exercise both without an email provider.
 func devEmail(log *slog.Logger) (email.Sender, *controlplane.EmailCodeDelivery) {
-	return email.LogSender{Log: log}, controlplane.NewEmailCodeDelivery(log, 10*time.Second)
+	return email.LogSender{Log: log}, controlplane.NewEmailCodeDelivery(log)
 }
 
 type backgroundLoop struct {

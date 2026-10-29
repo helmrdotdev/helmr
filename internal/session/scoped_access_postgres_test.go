@@ -276,7 +276,7 @@ func TestAcceptedRuntimeCanContinueChildrenAfterAccessRevocation(t *testing.T) {
 				t.Fatal("logout blocked the accepted runtime", err)
 			}
 			var inherited bool
-			if err = f.pool.QueryRow(t.Context(), `SELECT child.computer_id<>parent.computer_id AND child.human_user_id=parent.human_user_id AND child.human_member_id=parent.human_member_id AND child.human_access_epoch=parent.human_access_epoch AND child.human_identity_id IS NOT DISTINCT FROM parent.human_identity_id AND child.human_passkey_id IS NOT DISTINCT FROM parent.human_passkey_id FROM sessions child JOIN sessions parent ON parent.environment_id=child.environment_id WHERE child.environment_id=$1 AND child.id=$2 AND parent.id=$3`, f.env, result.SessionID, f.session).Scan(&inherited); err != nil || !inherited {
+			if err = f.pool.QueryRow(t.Context(), `SELECT child.computer_id<>parent.computer_id AND child.origin_user_id=parent.origin_user_id FROM sessions child JOIN sessions parent ON parent.environment_id=child.environment_id WHERE child.environment_id=$1 AND child.id=$2 AND parent.id=$3`, f.env, result.SessionID, f.session).Scan(&inherited); err != nil || !inherited {
 				t.Fatal(inherited, err)
 			}
 			// New human requests do not inherit the runtime's continuing authority.

@@ -3,7 +3,6 @@ package slack
 import (
 	"context"
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -254,13 +253,9 @@ func directBoundFixture(t *testing.T) statusFixture {
 	f := newStatusFixture(t)
 	f.grantDirect(t)
 	link := f.linkActor(t, f.User, "human")
-	p, err := access.SlackPrincipal(t.Context(), f.Pool, link)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET (`+access.HumanColumns+`)=($2,$3,$4,$5,$6,$7,$8,$9,$10) WHERE id=$1`, append([]any{f.Session}, access.HumanValues(p)...)...)
+
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) SELECT $3,environment_id,connection_id,installation_id,org_id,team_id,'D1' FROM slack_channel_bindings WHERE id=$1;
- UPDATE slack_threads SET slack_channel_binding_id=$3,slack_channel_id='D1',recipient_user_id='human',recipient_team_id='team' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.channel, f.thread, uuid.NewV7())
+ UPDATE slack_threads SET slack_channel_binding_id=$3,slack_channel_id='D1',recipient_user_id='human',recipient_team_id='team',initial_recipient_link_id=$4 WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.channel, f.thread, uuid.NewV7(), link)
 	return f
 }
 

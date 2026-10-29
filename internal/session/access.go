@@ -59,12 +59,6 @@ func (o sessionOrigin) id() uuid.UUID {
 func loadSessionOrigin(ctx context.Context, q db.DBTX, env, id uuid.UUID) (sessionOrigin, error) {
 	o := sessionOrigin{}
 	err := q.QueryRow(ctx, `SELECT origin_user_id,origin_api_key_id,origin_activation_id,agent_id,origin_slack_connection_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&o.User, &o.Key, &o.Activation, &o.Agent, &o.Connection)
-	if err == nil && o.User != nil && o.Connection == nil {
-		o.Human, err = access.ReadHuman(q.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM sessions WHERE environment_id=$1 AND id=$2`, env, id))
-		if errors.Is(err, access.ErrDenied) {
-			err = nil
-		}
-	}
 	return o, hideMissing(err)
 }
 func accessError(err error) error {

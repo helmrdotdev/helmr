@@ -45,10 +45,10 @@ func IssueOperatorEnrollment(ctx context.Context, database db.TxBeginner, label 
 		} else if err = tx.QueryRow(ctx, `SELECT access_epoch FROM platform_operators WHERE id=$1 FOR UPDATE`, operatorID).Scan(&epoch); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE credential_enrollments SET revoked_at=clock_timestamp(),provisional_credential=NULL WHERE operator_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL`, operatorID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE operator_passkey_enrollments SET revoked_at=clock_timestamp(),provisional_credential=NULL WHERE operator_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL`, operatorID); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `INSERT INTO credential_enrollments(id,operator_id,purpose,capability_hash,expected_epoch,expires_at) VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, operatorID, purpose, hash[:], epoch).Scan(&result.ExpiresAt)
+		return tx.QueryRow(ctx, `INSERT INTO operator_passkey_enrollments(id,operator_id,purpose,capability_hash,expected_access_epoch,expires_at) VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, operatorID, purpose, hash[:], epoch).Scan(&result.ExpiresAt)
 	})
 	return result, err
 }
@@ -59,7 +59,7 @@ func RedeemOperatorEnrollment(ctx context.Context, database db.TxBeginner, raw s
 	hash := sha256.Sum256([]byte(raw))
 	var result OperatorEnrollment
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `UPDATE credential_enrollments e SET capability_hash=NULL,browser_hash=$2 WHERE capability_hash=$1 AND browser_hash IS NULL AND e.consumed_at IS NULL AND e.revoked_at IS NULL AND e.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM platform_operators o WHERE o.id=e.operator_id AND o.access_epoch=e.expected_epoch) RETURNING e.id,e.expires_at`, hash[:], binding).Scan(&result.ID, &result.ExpiresAt)
+		err := tx.QueryRow(ctx, `UPDATE operator_passkey_enrollments e SET capability_hash=NULL,browser_hash=$2 WHERE capability_hash=$1 AND browser_hash IS NULL AND e.consumed_at IS NULL AND e.revoked_at IS NULL AND e.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM platform_operators o WHERE o.id=e.operator_id AND o.access_epoch=e.expected_access_epoch) RETURNING e.id,e.expires_at`, hash[:], binding).Scan(&result.ID, &result.ExpiresAt)
 		if isNoRows(err) {
 			return ErrInvalidToken
 		}
@@ -185,7 +185,7 @@ func BeginOperatorKeyEnrollment(ctx context.Context, database db.TxBeginner, p a
 			return ErrRecentProofRequired
 		}
 		result.ID = uuid.NewV7()
-		return tx.QueryRow(ctx, `INSERT INTO credential_enrollments(id,operator_id,purpose,expected_epoch,issuer_session_id,browser_hash,expires_at) VALUES($1,$2,'add_key',$3,$4,$5,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, p.OperatorID, current.AccessEpoch, p.SessionID, binding).Scan(&result.ExpiresAt)
+		return tx.QueryRow(ctx, `INSERT INTO operator_passkey_enrollments(id,operator_id,purpose,expected_access_epoch,issuer_session_id,browser_hash,expires_at) VALUES($1,$2,'add_key',$3,$4,$5,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, p.OperatorID, current.AccessEpoch, p.SessionID, binding).Scan(&result.ExpiresAt)
 	})
 	return result, err
 }

@@ -27,7 +27,7 @@ func TestEmailCodeDeliveryBindingConsumption(t *testing.T) {
 	if _, err := completeEmail(t, f, c, b); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal("undelivered", err)
 	}
-	if err := MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+	if err := MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := completeEmail(t, f, c, bytes.Repeat([]byte{8}, 32)); !errors.Is(err, ErrInvalidToken) {
@@ -55,7 +55,7 @@ func TestEmailCodeDeliveryBindingConsumption(t *testing.T) {
 		t.Fatal("ordinary token became operator", err)
 	}
 	expired, b := emailChallenge(t, f, "expired@example.test")
-	if err = MarkEmailDelivery(t.Context(), f.pool, expired, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, expired); err != nil {
 		t.Fatal(err)
 	}
 	f.exec(t, `UPDATE email_challenges SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, expired.ID)
@@ -66,9 +66,6 @@ func TestEmailCodeDeliveryBindingConsumption(t *testing.T) {
 func TestEmailCodeLimitsAndResend(t *testing.T) {
 	f := newIdentityFixture(t)
 	c, b := emailChallenge(t, f, "limited@example.test")
-	if err := MarkEmailDelivery(t.Context(), f.pool, c, false); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := completeEmail(t, f, c, b); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal("failed delivery", err)
 	}
@@ -81,13 +78,13 @@ func TestEmailCodeLimitsAndResend(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A delayed success for an obsolete delivery cannot mark the new generation delivered.
-	if err = MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = completeEmail(t, f, newer, b); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal("stale delivery", err)
 	}
-	if err = MarkEmailDelivery(t.Context(), f.pool, newer, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, newer); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = completeEmail(t, f, c, b); !errors.Is(err, ErrInvalidToken) {
@@ -118,7 +115,7 @@ func TestEmailCodeInvitationRequiresConsent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+	if err = MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
 		t.Fatal(err)
 	}
 	done, err := CompleteEmailChallenge(t.Context(), f.pool, f.cfg, c.ID, b, c.Code, "", "invite")

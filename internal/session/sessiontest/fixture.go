@@ -98,8 +98,6 @@ func New(t *testing.T) Fixture {
 	digest := maximum.Digest()
 	f.MCPScope = uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_mcp_scopes(environment_id,session_id,process_epoch,id,slot,policy,policy_digest) VALUES($1,$2,1,$3,0,$4,$5)`, f.Environment, f.Session, f.MCPScope, maximum.Bytes(), digest[:])
-	p := f.Principal(t)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET (`+access.HumanColumns+`)=($3,$4,$5,$6,$7,$8,$9,$10,$11) WHERE environment_id=$1 AND id=$2`, append([]any{f.Environment, f.Session}, access.HumanValues(p)...)...)
 	return f
 }
 

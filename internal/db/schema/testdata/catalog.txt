@@ -208,15 +208,6 @@ column commands.environment_id uuid not null
 column commands.error jsonb
 column commands.exit_code integer
 column commands.failure_reason text
-column commands.human_access_epoch bigint
-column commands.human_authenticated_at timestamp with time zone
-column commands.human_identity_id uuid
-column commands.human_member_id uuid
-column commands.human_org_id uuid
-column commands.human_passkey_id uuid
-column commands.human_session_id uuid
-column commands.human_slack_link_id uuid
-column commands.human_user_id uuid
 column commands.id uuid not null
 column commands.output_fenced boolean not null default false
 column commands.process_exited_at timestamp with time zone
@@ -363,18 +354,6 @@ column computers.recovery_save_id uuid
 column computers.storage_reservation_bytes bigint
 column computers.unused_since timestamp with time zone
 column computers.updated_at timestamp with time zone not null default clock_timestamp()
-column credential_enrollments.browser_hash bytea
-column credential_enrollments.capability_hash bytea
-column credential_enrollments.consumed_at timestamp with time zone
-column credential_enrollments.created_at timestamp with time zone not null default clock_timestamp()
-column credential_enrollments.expected_epoch bigint not null
-column credential_enrollments.expires_at timestamp with time zone not null
-column credential_enrollments.id uuid not null
-column credential_enrollments.issuer_session_id uuid
-column credential_enrollments.operator_id uuid not null
-column credential_enrollments.provisional_credential jsonb
-column credential_enrollments.purpose text not null
-column credential_enrollments.revoked_at timestamp with time zone
 column deployment_events.accepted_at timestamp with time zone not null default clock_timestamp()
 column deployment_events.deployment_id uuid not null
 column deployment_events.environment_id uuid not null
@@ -503,7 +482,6 @@ column email_challenges.browser_hash bytea not null
 column email_challenges.code_mac bytea not null
 column email_challenges.consumed_at timestamp with time zone
 column email_challenges.created_at timestamp with time zone not null default clock_timestamp()
-column email_challenges.delivery_failed_at timestamp with time zone
 column email_challenges.email text not null
 column email_challenges.expires_at timestamp with time zone not null
 column email_challenges.failed_attempts integer not null default 0
@@ -655,6 +633,18 @@ column login_sessions.passkey_id uuid
 column login_sessions.revoked_at timestamp with time zone
 column login_sessions.token_hash bytea not null
 column login_sessions.user_id uuid
+column operator_passkey_enrollments.browser_hash bytea
+column operator_passkey_enrollments.capability_hash bytea
+column operator_passkey_enrollments.consumed_at timestamp with time zone
+column operator_passkey_enrollments.created_at timestamp with time zone not null default clock_timestamp()
+column operator_passkey_enrollments.expected_access_epoch bigint not null
+column operator_passkey_enrollments.expires_at timestamp with time zone not null
+column operator_passkey_enrollments.id uuid not null
+column operator_passkey_enrollments.issuer_session_id uuid
+column operator_passkey_enrollments.operator_id uuid not null
+column operator_passkey_enrollments.provisional_credential jsonb
+column operator_passkey_enrollments.purpose text not null
+column operator_passkey_enrollments.revoked_at timestamp with time zone
 column org_members.created_at timestamp with time zone not null default now()
 column org_members.display_name text
 column org_members.id uuid not null
@@ -858,15 +848,6 @@ column sessions.deployment_id uuid not null
 column sessions.environment_id uuid not null
 column sessions.history_eligible_at timestamp with time zone
 column sessions.history_expired_at timestamp with time zone
-column sessions.human_access_epoch bigint
-column sessions.human_authenticated_at timestamp with time zone
-column sessions.human_identity_id uuid
-column sessions.human_member_id uuid
-column sessions.human_org_id uuid
-column sessions.human_passkey_id uuid
-column sessions.human_session_id uuid
-column sessions.human_slack_link_id uuid
-column sessions.human_user_id uuid
 column sessions.id uuid not null
 column sessions.idle_since timestamp with time zone
 column sessions.key text
@@ -943,10 +924,8 @@ column slack_installations.refresh_error text
 column slack_installations.refresh_next_at timestamp with time zone not null default clock_timestamp()
 column slack_installations.team_id text not null
 column slack_installations.workspace_name text
-column slack_link_requests.access_epoch bigint not null
-column slack_link_requests.authenticated_at timestamp with time zone not null
 column slack_link_requests.browser_hash bytea not null
-column slack_link_requests.browser_session_id uuid
+column slack_link_requests.browser_session_id uuid not null
 column slack_link_requests.consumed_at timestamp with time zone
 column slack_link_requests.created_at timestamp with time zone not null default clock_timestamp()
 column slack_link_requests.expires_at timestamp with time zone not null
@@ -1032,6 +1011,7 @@ column slack_requests.request_digest bytea not null
 column slack_requests.request_key text not null
 column slack_requests.session_id uuid
 column slack_requests.slack_user_id text not null
+column slack_requests.source_link_id uuid
 column slack_requests.source_occurred_at timestamp with time zone not null
 column slack_requests.status text not null default 'received'::text
 column slack_requests.thread_id uuid
@@ -1067,6 +1047,7 @@ column slack_threads.front_session_id uuid not null
 column slack_threads.id uuid not null
 column slack_threads.inflight_attempt_id uuid
 column slack_threads.inflight_method text
+column slack_threads.initial_recipient_link_id uuid
 column slack_threads.input_changed_at timestamp with time zone
 column slack_threads.input_muted boolean not null default false
 column slack_threads.input_unmuted_at timestamp with time zone
@@ -1163,15 +1144,6 @@ column turn_messages.caller_id uuid not null
 column turn_messages.caller_kind text not null
 column turn_messages.created_at timestamp with time zone not null default clock_timestamp()
 column turn_messages.environment_id uuid not null
-column turn_messages.human_access_epoch bigint
-column turn_messages.human_authenticated_at timestamp with time zone
-column turn_messages.human_identity_id uuid
-column turn_messages.human_member_id uuid
-column turn_messages.human_org_id uuid
-column turn_messages.human_passkey_id uuid
-column turn_messages.human_session_id uuid
-column turn_messages.human_slack_link_id uuid
-column turn_messages.human_user_id uuid
 column turn_messages.id uuid not null
 column turn_messages.idempotency_key text
 column turn_messages.message bytea
@@ -1198,15 +1170,6 @@ column turns.environment_id uuid not null
 column turns.error_code text
 column turns.error_message bytea
 column turns.has_recorded_result boolean generated stored (result_recorded_at IS NOT NULL)
-column turns.human_access_epoch bigint
-column turns.human_authenticated_at timestamp with time zone
-column turns.human_identity_id uuid
-column turns.human_member_id uuid
-column turns.human_org_id uuid
-column turns.human_passkey_id uuid
-column turns.human_session_id uuid
-column turns.human_slack_link_id uuid
-column turns.human_user_id uuid
 column turns.id uuid not null
 column turns.idempotency_key text
 column turns.input bytea
@@ -1254,17 +1217,16 @@ column vm_platforms.snapshot_format_version text not null
 column webauthn_challenges.account_repair_enrollment_id uuid
 column webauthn_challenges.browser_hash bytea not null
 column webauthn_challenges.ceremony text not null
-column webauthn_challenges.challenge_hash bytea not null
 column webauthn_challenges.consumed_at timestamp with time zone
 column webauthn_challenges.created_at timestamp with time zone not null default clock_timestamp()
-column webauthn_challenges.credential_enrollment_id uuid
+column webauthn_challenges.expected_access_epoch bigint
 column webauthn_challenges.expires_at timestamp with time zone not null
 column webauthn_challenges.id uuid not null
 column webauthn_challenges.operator_id uuid
+column webauthn_challenges.operator_passkey_enrollment_id uuid
 column webauthn_challenges.operator_scope boolean not null default false
 column webauthn_challenges.purpose text not null
 column webauthn_challenges.revoked_at timestamp with time zone
-column webauthn_challenges.security_version bigint
 column webauthn_challenges.session_id uuid
 column webauthn_challenges.user_id uuid
 column webauthn_challenges.verification_state jsonb not null
@@ -1564,7 +1526,6 @@ constraint commands c CHECK (computer_lease_epoch > 0)
 constraint commands c CHECK (failure_reason = ANY (ARRAY['guest_failure'::text, 'dispatch_failed'::text, 'scope_termination_failed'::text]))
 constraint commands c CHECK (jsonb_typeof(env) = 'object'::text)
 constraint commands c CHECK (jsonb_typeof(error) = 'object'::text)
-constraint commands c CHECK (num_nonnulls(human_user_id, human_org_id, human_member_id, human_session_id, human_slack_link_id, human_identity_id, human_passkey_id, human_access_epoch, human_authenticated_at) = 0 OR human_user_id IS NOT NULL AND human_org_id IS NOT NULL AND human_member_id IS NOT NULL AND human_access_epoch IS NOT NULL AND human_access_epoch >= 0 AND human_authenticated_at IS NOT NULL AND num_nonnulls(human_session_id, human_slack_link_id) = 1 AND num_nonnulls(human_identity_id, human_passkey_id) = 1)
 constraint commands c CHECK (octet_length(stdin) <= 1048576)
 constraint commands c CHECK (process_reconciled_at IS NULL OR terminal_at IS NOT NULL)
 constraint commands c CHECK (result_pruned_at IS NULL AND argv IS NOT NULL AND env IS NOT NULL AND stdin IS NOT NULL OR result_pruned_at IS NOT NULL AND result_expires_at IS NOT NULL AND result_pruned_at >= result_expires_at AND terminal_at IS NOT NULL AND (computer_lease_epoch IS NULL OR process_reconciled_at IS NOT NULL) AND argv IS NULL AND cwd IS NULL AND env IS NULL AND stdin IS NULL AND error IS NULL)
@@ -1587,10 +1548,6 @@ constraint commands c CHECK (stdout_last_digest IS NULL OR octet_length(stdout_l
 constraint commands c CHECK (timeout_ms > 0)
 constraint commands f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
 constraint commands f FOREIGN KEY (environment_id, computer_id, computer_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
-constraint commands f FOREIGN KEY (human_identity_id, human_user_id) REFERENCES auth_identities(id, user_id)
-constraint commands f FOREIGN KEY (human_org_id, human_member_id, human_user_id) REFERENCES org_members(org_id, id, user_id)
-constraint commands f FOREIGN KEY (human_passkey_id, human_user_id) REFERENCES passkey_credentials(id, user_id)
-constraint commands f FOREIGN KEY (human_user_id) REFERENCES users(id)
 constraint commands p PRIMARY KEY (environment_id, id)
 constraint commands u UNIQUE (environment_id, computer_id, id)
 constraint computer_controls c CHECK ((status = 'accepted'::text) = (settled_at IS NULL))
@@ -1680,12 +1637,6 @@ constraint computers f FOREIGN KEY (environment_id, image_spec_id, image_id) REF
 constraint computers f FOREIGN KEY (environment_id, initial_root_id) REFERENCES disk_roots(environment_id, id)
 constraint computers f FOREIGN KEY (environment_id, origin_template_id, origin_deployment_id) REFERENCES template_definitions(environment_id, template_id, deployment_id)
 constraint computers p PRIMARY KEY (environment_id, id)
-constraint credential_enrollments c CHECK (expected_epoch >= 0)
-constraint credential_enrollments c CHECK (purpose = ANY (ARRAY['bootstrap'::text, 'repair'::text, 'add_key'::text]))
-constraint credential_enrollments f FOREIGN KEY (issuer_session_id) REFERENCES login_sessions(id)
-constraint credential_enrollments f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
-constraint credential_enrollments p PRIMARY KEY (id)
-constraint credential_enrollments u UNIQUE (capability_hash)
 constraint deployment_events c CHECK (length(kind) > 0)
 constraint deployment_events f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint deployment_events f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
@@ -1698,7 +1649,7 @@ constraint deployments c CHECK (bundle_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint deployments f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint deployments p PRIMARY KEY (environment_id, id)
 constraint deployments u UNIQUE (environment_id, bundle_digest)
-constraint device_codes c CHECK ((status <> ALL (ARRAY['approved'::text, 'consumed'::text])) OR user_id IS NOT NULL AND authenticated_at IS NOT NULL AND access_epoch IS NOT NULL AND browser_session_id IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1)
+constraint device_codes c CHECK ((status <> ALL (ARRAY['approved'::text, 'consumed'::text])) OR user_id IS NOT NULL AND decided_by_member_id IS NOT NULL AND authenticated_at IS NOT NULL AND access_epoch IS NOT NULL AND browser_session_id IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1)
 constraint device_codes c CHECK (access_epoch >= 0)
 constraint device_codes c CHECK (poll_interval_seconds > 0)
 constraint device_codes c CHECK (status = 'pending'::text AND org_id IS NULL AND decided_by_member_id IS NULL AND decided_at IS NULL AND consumed_at IS NULL OR (status = ANY (ARRAY['approved'::text, 'denied'::text])) AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NULL OR status = 'consumed'::text AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NOT NULL)
@@ -1706,7 +1657,6 @@ constraint device_codes c CHECK (status = ANY (ARRAY['pending'::text, 'approved'
 constraint device_codes f FOREIGN KEY (browser_session_id) REFERENCES login_sessions(id)
 constraint device_codes f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint device_codes f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
-constraint device_codes f FOREIGN KEY (org_id, decided_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (decided_by_member_id)
 constraint device_codes f FOREIGN KEY (org_id, decided_by_member_id, user_id) REFERENCES org_members(org_id, id, user_id)
 constraint device_codes f FOREIGN KEY (passkey_id, user_id) REFERENCES passkey_credentials(id, user_id)
 constraint device_codes f FOREIGN KEY (replaces_session_id) REFERENCES login_sessions(id)
@@ -1902,7 +1852,7 @@ constraint invitations u UNIQUE (token_hash)
 constraint login_sessions c CHECK (access_epoch >= 0)
 constraint login_sessions c CHECK (channel = ANY (ARRAY['browser'::text, 'cli'::text, 'operator'::text]))
 constraint login_sessions c login_sessions_owner CHECK (num_nonnulls(user_id, operator_id) = 1)
-constraint login_sessions c login_sessions_shape CHECK (channel = 'browser'::text AND user_id IS NOT NULL AND access_epoch IS NOT NULL AND org_id IS NULL AND member_id IS NULL AND (revoked_at IS NOT NULL OR num_nonnulls(identity_id, passkey_id) = 1 AND authenticated_at IS NOT NULL) OR channel = 'cli'::text AND user_id IS NOT NULL AND access_epoch IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1 OR channel = 'operator'::text AND operator_id IS NOT NULL AND passkey_id IS NOT NULL AND access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(org_id, member_id, identity_id) = 0 AND expires_at <= (issued_at + '12:00:00'::interval) AND authenticated_at >= issued_at AND authenticated_at <= expires_at)
+constraint login_sessions c login_sessions_shape CHECK (channel = 'browser'::text AND user_id IS NOT NULL AND access_epoch IS NOT NULL AND org_id IS NULL AND member_id IS NULL AND num_nonnulls(identity_id, passkey_id) = 1 AND authenticated_at IS NOT NULL OR channel = 'cli'::text AND user_id IS NOT NULL AND access_epoch IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1 OR channel = 'operator'::text AND operator_id IS NOT NULL AND passkey_id IS NOT NULL AND access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(org_id, member_id, identity_id) = 0 AND expires_at <= (issued_at + '12:00:00'::interval) AND authenticated_at >= issued_at AND authenticated_at <= expires_at)
 constraint login_sessions f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint login_sessions f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
 constraint login_sessions f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
@@ -1911,6 +1861,14 @@ constraint login_sessions f FOREIGN KEY (passkey_id, user_id) REFERENCES passkey
 constraint login_sessions f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint login_sessions p PRIMARY KEY (id)
 constraint login_sessions u UNIQUE (token_hash)
+constraint operator_passkey_enrollments c CHECK (expected_access_epoch >= 0)
+constraint operator_passkey_enrollments c CHECK (provisional_credential IS NULL OR browser_hash IS NOT NULL)
+constraint operator_passkey_enrollments c CHECK (purpose = 'add_key'::text AND issuer_session_id IS NOT NULL AND browser_hash IS NOT NULL AND capability_hash IS NULL OR (purpose = ANY (ARRAY['bootstrap'::text, 'repair'::text])) AND issuer_session_id IS NULL AND num_nonnulls(capability_hash, browser_hash) = 1)
+constraint operator_passkey_enrollments c CHECK (purpose = ANY (ARRAY['bootstrap'::text, 'repair'::text, 'add_key'::text]))
+constraint operator_passkey_enrollments f FOREIGN KEY (issuer_session_id) REFERENCES login_sessions(id)
+constraint operator_passkey_enrollments f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
+constraint operator_passkey_enrollments p PRIMARY KEY (id)
+constraint operator_passkey_enrollments u UNIQUE (capability_hash)
 constraint org_members c CHECK (NOT is_owner OR removed_at IS NULL)
 constraint org_members f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint org_members f FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -2095,7 +2053,6 @@ constraint sessions c CHECK (history_expired_at IS NULL OR history_eligible_at I
 constraint sessions c CHECK (next_event_seq > 0)
 constraint sessions c CHECK (next_turn_seq > 0)
 constraint sessions c CHECK (num_nonnulls(creation_caller_kind, creation_caller_id, creation_method, creation_digest) = ANY (ARRAY[0, 4]))
-constraint sessions c CHECK (num_nonnulls(human_user_id, human_org_id, human_member_id, human_session_id, human_slack_link_id, human_identity_id, human_passkey_id, human_access_epoch, human_authenticated_at) = 0 OR human_user_id IS NOT NULL AND human_org_id IS NOT NULL AND human_member_id IS NOT NULL AND human_access_epoch IS NOT NULL AND human_access_epoch >= 0 AND human_authenticated_at IS NOT NULL AND num_nonnulls(human_session_id, human_slack_link_id) = 1 AND num_nonnulls(human_identity_id, human_passkey_id) = 1)
 constraint sessions c CHECK (num_nonnulls(origin_user_id, origin_api_key_id, origin_activation_id) = 1)
 constraint sessions c CHECK (octet_length(creation_digest) = 32)
 constraint sessions c CHECK (octet_length(creation_idempotency_key) >= 1 AND octet_length(creation_idempotency_key) <= 512)
@@ -2116,10 +2073,6 @@ constraint sessions f FOREIGN KEY (environment_id, parent_session_id, root_sessi
 constraint sessions f FOREIGN KEY (environment_id, requester_session_id) REFERENCES sessions(environment_id, id)
 constraint sessions f FOREIGN KEY (environment_id, requester_session_id, origin_turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint sessions f FOREIGN KEY (environment_id, root_session_id) REFERENCES sessions(environment_id, id)
-constraint sessions f FOREIGN KEY (human_identity_id, human_user_id) REFERENCES auth_identities(id, user_id)
-constraint sessions f FOREIGN KEY (human_org_id, human_member_id, human_user_id) REFERENCES org_members(org_id, id, user_id)
-constraint sessions f FOREIGN KEY (human_passkey_id, human_user_id) REFERENCES passkey_credentials(id, user_id)
-constraint sessions f FOREIGN KEY (human_user_id) REFERENCES users(id)
 constraint sessions f FOREIGN KEY (origin_user_id) REFERENCES users(id)
 constraint sessions p PRIMARY KEY (environment_id, id)
 constraint sessions u UNIQUE (environment_id, agent_id, key)
@@ -2177,7 +2130,6 @@ constraint slack_installations f FOREIGN KEY (org_id) REFERENCES organizations(i
 constraint slack_installations p PRIMARY KEY (id)
 constraint slack_installations u UNIQUE (id, app_registration_id)
 constraint slack_installations u UNIQUE (id, org_id, team_id)
-constraint slack_link_requests c CHECK (access_epoch >= 0)
 constraint slack_link_requests c CHECK (num_nonnulls(identity_id, passkey_id) = 1)
 constraint slack_link_requests f FOREIGN KEY (browser_session_id) REFERENCES login_sessions(id)
 constraint slack_link_requests f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
@@ -2250,6 +2202,7 @@ constraint slack_requests c CHECK (octet_length(request_key) >= 1 AND octet_leng
 constraint slack_requests c CHECK (operation = ANY (ARRAY['start'::text, 'enqueue'::text, 'slack_route'::text, 'answer'::text, 'native_stop'::text, 'mute'::text, 'unmute'::text, 'sleep'::text, 'wake'::text, 'close'::text, 'help'::text, 'hibernate'::text, 'confirm_close'::text]))
 constraint slack_requests c CHECK (payload_expired_at IS NULL OR status <> 'received'::text)
 constraint slack_requests c CHECK (slack_user_id <> ''::text)
+constraint slack_requests c CHECK (status <> 'accepted'::text OR (operation <> ALL (ARRAY['start'::text, 'enqueue'::text])) OR source_link_id IS NOT NULL)
 constraint slack_requests c CHECK (status <> 'accepted'::text OR user_id IS NOT NULL AND thread_id IS NOT NULL AND thread_source_id IS NOT NULL AND environment_id IS NOT NULL AND session_id IS NOT NULL AND operation IS NOT NULL)
 constraint slack_requests c CHECK (status = 'accepted'::text AND ((operation = ANY (ARRAY['start'::text, 'enqueue'::text])) AND turn_id IS NOT NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'slack_route'::text AND turn_id IS NOT NULL AND message_id IS NOT NULL AND ask_id IS NULL AND control_id IS NULL OR operation = 'answer'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NOT NULL AND control_id IS NULL OR operation = 'native_stop'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NOT NULL OR (operation = ANY (ARRAY['mute'::text, 'unmute'::text, 'sleep'::text, 'wake'::text, 'close'::text, 'help'::text, 'hibernate'::text, 'confirm_close'::text])) AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL) OR status <> 'accepted'::text AND turn_id IS NULL AND message_id IS NULL AND ask_id IS NULL AND control_id IS NULL)
 constraint slack_requests c CHECK (status = ANY (ARRAY['received'::text, 'accepted'::text, 'rejected'::text]))
@@ -2281,6 +2234,7 @@ constraint slack_thread_sources u UNIQUE (environment_id, session_id)
 constraint slack_thread_sources u UNIQUE (environment_id, session_id, id)
 constraint slack_thread_sources u UNIQUE (thread_id, environment_id, id)
 constraint slack_thread_sources u UNIQUE (thread_id, id)
+constraint slack_threads c CHECK ("left"(slack_channel_id, 1) <> 'D'::text OR initial_recipient_link_id IS NOT NULL)
 constraint slack_threads c CHECK ((recipient_team_id IS NULL) = (recipient_user_id IS NULL))
 constraint slack_threads c CHECK (desired_status = ANY (ARRAY['active'::text, 'processing'::text, 'suspended'::text, 'closed'::text]))
 constraint slack_threads c CHECK (last_acknowledged_status = ANY (ARRAY['active'::text, 'processing'::text, 'suspended'::text, 'closed'::text]))
@@ -2297,7 +2251,7 @@ constraint slack_threads u UNIQUE (id, environment_id)
 constraint slack_threads u UNIQUE (org_id, team_id, slack_channel_id, thread_ts)
 constraint slack_threads u UNIQUE (slack_channel_binding_id, opening_post_key)
 constraint slack_user_links c CHECK (access_epoch >= 0)
-constraint slack_user_links c CHECK (revoked_at IS NOT NULL OR installation_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1)
+constraint slack_user_links c CHECK (installation_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1)
 constraint slack_user_links c CHECK (slack_user_id <> ''::text)
 constraint slack_user_links c CHECK (team_id <> ''::text)
 constraint slack_user_links f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
@@ -2361,7 +2315,6 @@ constraint turn_messages c CHECK ((status = ANY (ARRAY['delivered'::text, 'rejec
 constraint turn_messages c CHECK (admission_method = 'slack_route'::text AND target_id = session_id OR admission_method = 'turn_send'::text AND target_id = turn_id)
 constraint turn_messages c CHECK (admission_method = ANY (ARRAY['slack_route'::text, 'turn_send'::text]))
 constraint turn_messages c CHECK (caller_kind = ANY (ARRAY['user'::text, 'api_key'::text, 'session'::text]))
-constraint turn_messages c CHECK (num_nonnulls(human_user_id, human_org_id, human_member_id, human_session_id, human_slack_link_id, human_identity_id, human_passkey_id, human_access_epoch, human_authenticated_at) = 0 OR human_user_id IS NOT NULL AND human_org_id IS NOT NULL AND human_member_id IS NOT NULL AND human_access_epoch IS NOT NULL AND human_access_epoch >= 0 AND human_authenticated_at IS NOT NULL AND num_nonnulls(human_session_id, human_slack_link_id) = 1 AND num_nonnulls(human_identity_id, human_passkey_id) = 1)
 constraint turn_messages c CHECK (octet_length(idempotency_key) >= 1 AND octet_length(idempotency_key) <= 512)
 constraint turn_messages c CHECK (octet_length(request_digest) = 32)
 constraint turn_messages c CHECK (origin_turn_id IS NULL OR caller_kind = 'session'::text)
@@ -2370,10 +2323,6 @@ constraint turn_messages c CHECK (seq > 0)
 constraint turn_messages c CHECK (status = ANY (ARRAY['admitted'::text, 'started'::text, 'delivered'::text, 'rejected'::text]))
 constraint turn_messages f FOREIGN KEY (environment_id, caller_id, origin_turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint turn_messages f FOREIGN KEY (environment_id, session_id, turn_id, process_epoch) REFERENCES turns(environment_id, session_id, id, process_epoch)
-constraint turn_messages f FOREIGN KEY (human_identity_id, human_user_id) REFERENCES auth_identities(id, user_id)
-constraint turn_messages f FOREIGN KEY (human_org_id, human_member_id, human_user_id) REFERENCES org_members(org_id, id, user_id)
-constraint turn_messages f FOREIGN KEY (human_passkey_id, human_user_id) REFERENCES passkey_credentials(id, user_id)
-constraint turn_messages f FOREIGN KEY (human_user_id) REFERENCES users(id)
 constraint turn_messages p PRIMARY KEY (environment_id, id)
 constraint turn_messages u UNIQUE (environment_id, caller_kind, caller_id, admission_method, target_id, idempotency_key)
 constraint turn_messages u UNIQUE (environment_id, session_id, turn_id, id)
@@ -2387,7 +2336,6 @@ constraint turns c CHECK (admission_method = ANY (ARRAY['create'::text, 'spawn':
 constraint turns c CHECK (caller_kind = ANY (ARRAY['user'::text, 'api_key'::text, 'session'::text, 'schedule'::text]))
 constraint turns c CHECK (error_code IS NULL OR status = 'failed'::text AND error_code <> ''::text)
 constraint turns c CHECK (next_message_seq > 0)
-constraint turns c CHECK (num_nonnulls(human_user_id, human_org_id, human_member_id, human_session_id, human_slack_link_id, human_identity_id, human_passkey_id, human_access_epoch, human_authenticated_at) = 0 OR human_user_id IS NOT NULL AND human_org_id IS NOT NULL AND human_member_id IS NOT NULL AND human_access_epoch IS NOT NULL AND human_access_epoch >= 0 AND human_authenticated_at IS NOT NULL AND num_nonnulls(human_session_id, human_slack_link_id) = 1 AND num_nonnulls(human_identity_id, human_passkey_id) = 1)
 constraint turns c CHECK (octet_length(idempotency_key) >= 1 AND octet_length(idempotency_key) <= 512)
 constraint turns c CHECK (octet_length(request_digest) = 32)
 constraint turns c CHECK (octet_length(response_digest) = 32)
@@ -2403,10 +2351,6 @@ constraint turns c CHECK (status = ANY (ARRAY['queued'::text, 'running'::text, '
 constraint turns f FOREIGN KEY (environment_id, caller_id, origin_turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint turns f FOREIGN KEY (environment_id, session_id, computer_id) REFERENCES sessions(environment_id, id, computer_id)
 constraint turns f FOREIGN KEY (environment_id, session_id, process_epoch) REFERENCES session_processes(environment_id, session_id, epoch)
-constraint turns f FOREIGN KEY (human_identity_id, human_user_id) REFERENCES auth_identities(id, user_id)
-constraint turns f FOREIGN KEY (human_org_id, human_member_id, human_user_id) REFERENCES org_members(org_id, id, user_id)
-constraint turns f FOREIGN KEY (human_passkey_id, human_user_id) REFERENCES passkey_credentials(id, user_id)
-constraint turns f FOREIGN KEY (human_user_id) REFERENCES users(id)
 constraint turns p PRIMARY KEY (environment_id, id)
 constraint turns u UNIQUE (environment_id, caller_kind, caller_id, admission_method, target_id, idempotency_key)
 constraint turns u UNIQUE (environment_id, id, computer_id)
@@ -2430,14 +2374,18 @@ constraint vm_platforms c CHECK (kernel_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint vm_platforms c CHECK (rootfs_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint vm_platforms c CHECK (snapshot_format_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'::text)
 constraint vm_platforms p PRIMARY KEY (id)
+constraint webauthn_challenges c CHECK ((purpose <> ALL (ARRAY['confirm'::text, 'renew'::text])) OR ceremony = 'assert'::text)
 constraint webauthn_challenges c CHECK (ceremony = ANY (ARRAY['register'::text, 'assert'::text]))
+constraint webauthn_challenges c CHECK (expected_access_epoch >= 0)
 constraint webauthn_challenges c CHECK (num_nonnulls(user_id, operator_id) <= 1)
-constraint webauthn_challenges c CHECK (purpose = 'login'::text AND ceremony = 'assert'::text AND num_nonnulls(user_id, operator_id, session_id, credential_enrollment_id, account_repair_enrollment_id, security_version) = 0 OR (purpose = ANY (ARRAY['confirm'::text, 'renew'::text, 'register'::text])) AND session_id IS NOT NULL AND security_version IS NOT NULL AND num_nonnulls(user_id, operator_id) = 1 AND num_nonnulls(credential_enrollment_id, account_repair_enrollment_id) = 0 OR purpose = 'enroll'::text AND operator_scope AND operator_id IS NOT NULL AND credential_enrollment_id IS NOT NULL AND account_repair_enrollment_id IS NULL AND security_version IS NOT NULL OR purpose = 'repair'::text AND ceremony = 'register'::text AND NOT operator_scope AND user_id IS NOT NULL AND account_repair_enrollment_id IS NOT NULL AND credential_enrollment_id IS NULL AND security_version IS NOT NULL)
+constraint webauthn_challenges c CHECK (operator_id IS NULL OR operator_scope)
+constraint webauthn_challenges c CHECK (purpose <> 'register'::text OR ceremony = 'register'::text AND NOT operator_scope)
+constraint webauthn_challenges c CHECK (purpose = 'login'::text AND ceremony = 'assert'::text AND num_nonnulls(user_id, operator_id, session_id, operator_passkey_enrollment_id, account_repair_enrollment_id, expected_access_epoch) = 0 OR (purpose = ANY (ARRAY['confirm'::text, 'renew'::text, 'register'::text])) AND session_id IS NOT NULL AND expected_access_epoch IS NOT NULL AND num_nonnulls(user_id, operator_id) = 1 AND num_nonnulls(operator_passkey_enrollment_id, account_repair_enrollment_id) = 0 OR purpose = 'enroll'::text AND operator_scope AND operator_id IS NOT NULL AND operator_passkey_enrollment_id IS NOT NULL AND account_repair_enrollment_id IS NULL AND expected_access_epoch IS NOT NULL OR purpose = 'repair'::text AND ceremony = 'register'::text AND NOT operator_scope AND user_id IS NOT NULL AND account_repair_enrollment_id IS NOT NULL AND operator_passkey_enrollment_id IS NULL AND expected_access_epoch IS NOT NULL)
 constraint webauthn_challenges c CHECK (purpose = ANY (ARRAY['login'::text, 'confirm'::text, 'renew'::text, 'register'::text, 'enroll'::text, 'repair'::text]))
-constraint webauthn_challenges c CHECK (security_version >= 0)
+constraint webauthn_challenges c CHECK (user_id IS NULL OR NOT operator_scope)
 constraint webauthn_challenges f FOREIGN KEY (account_repair_enrollment_id) REFERENCES account_repair_enrollments(id)
-constraint webauthn_challenges f FOREIGN KEY (credential_enrollment_id) REFERENCES credential_enrollments(id)
 constraint webauthn_challenges f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
+constraint webauthn_challenges f FOREIGN KEY (operator_passkey_enrollment_id) REFERENCES operator_passkey_enrollments(id)
 constraint webauthn_challenges f FOREIGN KEY (session_id) REFERENCES login_sessions(id)
 constraint webauthn_challenges f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint webauthn_challenges p PRIMARY KEY (id)
@@ -2661,6 +2609,7 @@ index CREATE UNIQUE INDEX slack_connections_configured ON public.slack_connectio
 index CREATE UNIQUE INDEX slack_connections_installation_claim ON public.slack_connections USING btree (slack_installation_id) WHERE ((revoked_at IS NULL) AND (slack_installation_id IS NOT NULL))
 index CREATE UNIQUE INDEX slack_installations_active ON public.slack_installations USING btree (app_id, team_id) WHERE (disconnected_at IS NULL)
 index CREATE UNIQUE INDEX slack_posts_one_opening ON public.slack_posts USING btree (environment_id, turn_id) WHERE (role = 'opening'::text)
+index CREATE UNIQUE INDEX slack_requests_turn_admission ON public.slack_requests USING btree (environment_id, session_id, turn_id) WHERE ((status = 'accepted'::text) AND (operation = ANY (ARRAY['start'::text, 'enqueue'::text])))
 index CREATE UNIQUE INDEX slack_user_links_live ON public.slack_user_links USING btree (installation_id, team_id, slack_user_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX slack_user_links_live_account ON public.slack_user_links USING btree (installation_id, user_id) WHERE (revoked_at IS NULL)
 index CREATE UNIQUE INDEX trigger_activations_current ON public.trigger_activations USING btree (environment_id, agent_id, trigger_key) WHERE (active_until IS NULL)

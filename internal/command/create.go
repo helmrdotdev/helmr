@@ -384,11 +384,6 @@ func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, requ
 		if err != nil {
 			return idempotency.Completion{}, fmt.Errorf("create computer exec: %w", err)
 		}
-		if kind == "user" {
-			if _, err = tx.Exec(ctx, `UPDATE commands SET (`+access.HumanColumns+`)=($3,$4,$5,$6,$7,$8,$9,$10,$11) WHERE environment_id=$1 AND id=$2`, append([]any{request.EnvironmentID, created.ID}, access.HumanValues(principal)...)...); err != nil {
-				return idempotency.Completion{}, err
-			}
-		}
 		receipt, err := json.Marshal(createReceipt{CommandID: pgvalue.UUIDString(created.ID)})
 		if err != nil {
 			return idempotency.Completion{}, err

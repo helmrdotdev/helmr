@@ -201,7 +201,7 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 				issue := func() (string, error) { return SignIn(t.Context(), f.pool, f.cfg, external) }
 				if method == "email" {
 					c, b := emailChallenge(t, f, external.Email)
-					if err = MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+					if err = MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
 						t.Fatal(err)
 					}
 					issue = func() (string, error) { r, e := completeEmail(t, f, c, b); return r.Token, e }

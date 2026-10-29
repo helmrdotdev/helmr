@@ -40,7 +40,10 @@ func projectionRecipient(ctx context.Context, tx pgx.Tx, o projectionOwner, turn
 	var team, user string
 	err := tx.QueryRow(ctx, `SELECT l.team_id,l.slack_user_id FROM turns t
  JOIN slack_installations i ON i.id=$4 JOIN environments e ON e.id=t.environment_id AND e.org_id=i.org_id
- JOIN slack_user_links l ON l.id=t.human_slack_link_id AND l.user_id=t.caller_id AND l.installation_id=i.id
+ JOIN slack_requests r ON r.environment_id=t.environment_id AND r.session_id=t.session_id AND r.turn_id=t.id
+  AND r.installation_id=i.id AND r.user_id=t.caller_id AND r.status='accepted'
+  AND r.operation IN ('start','enqueue') AND r.message_id IS NULL
+ JOIN slack_user_links l ON l.id=r.source_link_id AND l.user_id=t.caller_id AND l.installation_id=i.id
  JOIN org_members m ON m.id=l.member_id AND m.org_id=e.org_id AND m.user_id=l.user_id
  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3 AND t.caller_kind='user' AND m.removed_at IS NULL`, o.environment, o.session, turn, o.installation).Scan(&team, &user)
 	if errors.Is(err, pgx.ErrNoRows) {

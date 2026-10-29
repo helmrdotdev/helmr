@@ -45,7 +45,7 @@ func newInvitationHTTPFixture(t *testing.T, sender email.Sender) httpPostgresFix
 	return newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
 		if sender != nil {
 			cfg.Mailer = sender
-			cfg.EmailCodeDelivery = NewEmailCodeDelivery(discardTestLogger(), time.Second)
+			cfg.EmailCodeDelivery = NewEmailCodeDelivery(discardTestLogger())
 		}
 	})
 }

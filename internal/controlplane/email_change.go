@@ -30,7 +30,7 @@ func (s *Server) emailChangeStart(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	s.queueEmailCode(r, c)
+	s.queueEmailCode(c)
 	writeJSON(w, http.StatusAccepted, c)
 }
 func (s *Server) emailChangeResend(w http.ResponseWriter, r *http.Request) {
@@ -77,6 +77,6 @@ func (s *Server) emailChangeContinue(w http.ResponseWriter, r *http.Request, ver
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	s.queueEmailCode(r, c)
+	s.queueEmailCode(c)
 	writeJSON(w, http.StatusAccepted, c)
 }
