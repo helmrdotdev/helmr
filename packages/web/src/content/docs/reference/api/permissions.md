@@ -172,11 +172,11 @@ Agents or all current and future Agents in that environment.
 | `api_keys.rotate` | Environment | No | Rotate and receive a replacement credential. Can act with that key's assigned authority. |
 | `api_keys.revoke` | Environment | No | Revoke a key. |
 | `projects.read` | Organization | No | Read the organization-wide Project directory, full Project metadata and history-retention settings. |
-| `projects.create` | Organization | No | Create a Project in the organization. |
+| `projects.create` | Organization | No | Create a Project and receive resource administration and audit access in its initial Environments. |
 | `projects.update` | Organization | No | Change a Project's display name; no slug/identity reassignment. |
 | `projects.update_retention` | Organization | No | Change Project history retention; explicitly potentially destructive to retained history. |
 | `environments.read` | Organization | No | Read full Environment metadata in the organization. |
-| `environments.create` | Organization | No | Create an Environment under an existing Project. |
+| `environments.create` | Organization | No | Create an Environment and receive resource administration and audit access in it. |
 | `environments.update` | Organization | No | Update an Environment's display name and color; no identity/region move. |
 | `members.read` | Organization | No | List current members and identity metadata. |
 | `members.remove` | Organization | No | Remove membership and its fixed cleanup; last-owner protections remain. |
@@ -233,10 +233,23 @@ they are not another user-managed collection.
 
 ## Ownership and initialization
 
-A new organization has sixteen standard Roles, no custom Groups and no All members
-Grants. Its creator is an Owner and receives two explicit organization Grants:
-Access Administrator and Organization Structure Administrator. Creating an Environment grants
-no workload access; assign an Environment Role separately.
+A new organization has seventeen standard Roles, no custom Groups and no All members
+Grants. Its creator is an Owner and receives three explicit organization Grants:
+Access Administrator, Organization Structure Administrator and Auditor.
+
+Creating a Project automatically assigns its creator Environment Resource
+Administrator and Auditor in both initial Environments (production and staging).
+Creating an additional Environment assigns those same Roles to its creator in that
+Environment. These assignments include all current and future Agents in the new
+Environment, including other members' Session contents. Resource creation and
+these assignments commit together; no separate assignment permission or opt-in is
+required. The assignments can be inspected and removed through ordinary access
+management, and removal does not automatically recreate them.
+
+Creation does not assign access in other existing Environments, change other
+members' access or grant platform operator authority. Existing resources receive
+no retrospective assignments. Access administrators without deployment permissions
+can use **Grant access** on Overview to assign a Role to themselves or others.
 
 An Owner can use `PUT /api/members/{member_id}/ownership` with `is_owner` and
 `expected_is_owner` booleans. At least one active Owner must remain. Changing

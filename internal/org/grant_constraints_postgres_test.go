@@ -6,9 +6,11 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -29,6 +31,11 @@ func TestGrantSchemaRejectsInvalidSubjectAndTenant(t *testing.T) {
 	input := org.ProjectInput{Slug: "constraints", Name: "Constraints", ExecutionLimits: org.ExecutionLimits{MaxResidentComputers: 10, MaxCPUMillis: 16000, MaxMemoryBytes: 1 << 36, MaxReservedStorageBytes: 1 << 40, MaxOutstandingAdmissions: 100, MaxCausalDepth: 8, AdmissionRatePerSecond: 10, AdmissionBurst: 20, PreparationTimeoutMS: 600000}}
 	_, environments, err := org.CreateProject(t.Context(), f.pool, f.owner, input)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		return org.SeedStandardRoles(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, foreignOrg, f.owner.Actor)
+	}); err != nil {
 		t.Fatal(err)
 	}
 	foreignMember := uuid.NewV7()

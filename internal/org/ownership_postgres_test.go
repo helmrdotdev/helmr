@@ -38,15 +38,18 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 		t.Fatalf("roles: %d %v", len(roles), err)
 	}
 	var groupCount, grantCount int
-	if err = d.Pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM permission_groups),(SELECT count(*) FROM role_grants)`).Scan(&groupCount, &grantCount); err != nil || groupCount != 0 || grantCount != 2 {
+	if err = d.Pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM permission_groups),(SELECT count(*) FROM role_grants)`).Scan(&groupCount, &grantCount); err != nil || groupCount != 0 || grantCount != 3 {
 		t.Fatalf("initial policy: %d %d %v", groupCount, grantCount, err)
 	}
-	if !principal.IsOwner || len(principal.Grants) != 26 {
+	if !principal.IsOwner || len(principal.Grants) != 27 {
 		t.Fatalf("bootstrap principal: %+v", principal)
 	}
+	if !principal.HasPermission(auth.PermissionAuditEventsRead, auth.Scope{OrgID: orgID}) {
+		t.Fatal("organization creator lacks audit access")
+	}
 	var grantID uuid.UUID
-	// Remove Organization Structure Administrator first, then Access Administrator through the writer.
-	for _, capability := range []string{"projects.create", "assignments.create"} {
+	// Remove Auditor and Organization Structure Administrator before Access Administrator.
+	for _, capability := range []string{"audit_events.read", "projects.create", "assignments.create"} {
 		if err = d.Pool.QueryRow(ctx, `SELECT g.id FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.org_id=$1 AND p.permission=$2`, orgID, capability).Scan(&grantID); err != nil {
 			t.Fatal(err)
 		}

@@ -156,6 +156,9 @@ func CreateProject(ctx context.Context, txb db.TxBeginner, m ManagingMember, inp
 			if err := audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: orgID, ProjectID: pgvalue.MustUUIDValue(project.ID), EnvironmentID: pgvalue.MustUUIDValue(environment.ID), Action: "environment.created", TargetKind: "environment", TargetID: pgvalue.MustUUIDValue(environment.ID)}); err != nil {
 				return err
 			}
+			if err := grantEnvironmentCreatorAccess(ctx, tx, m, pgvalue.MustUUIDValue(environment.ID)); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -275,7 +278,10 @@ func CreateEnvironment(ctx context.Context, txb db.TxBeginner, m ManagingMember,
 		if err != nil {
 			return fmt.Errorf("create environment: %w", err)
 		}
-		return audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: orgID, ProjectID: projectID, EnvironmentID: pgvalue.MustUUIDValue(environment.ID), Action: "environment.created", TargetKind: "environment", TargetID: pgvalue.MustUUIDValue(environment.ID)})
+		if err := audit.Append(ctx, tx, m.AuditPolicy, audit.Event{Evidence: m.Actor, OrgID: orgID, ProjectID: projectID, EnvironmentID: pgvalue.MustUUIDValue(environment.ID), Action: "environment.created", TargetKind: "environment", TargetID: pgvalue.MustUUIDValue(environment.ID)}); err != nil {
+			return err
+		}
+		return grantEnvironmentCreatorAccess(ctx, tx, m, pgvalue.MustUUIDValue(environment.ID))
 	})
 	if err != nil {
 		return db.Environment{}, err

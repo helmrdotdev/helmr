@@ -6,6 +6,7 @@ import { createMemo, createSignal, For, Match, Show, Switch, type JSX } from "so
 import { computerHref } from "../features/computers/navigation";
 import { deploymentHref } from "../features/deployments/navigation";
 import { useAttention } from "../lib/attention";
+import { EnvironmentAccessSetup } from "../features/access/EnvironmentAccessSetup";
 import { SetUpPanel } from "../features/onboarding/SetUpPanel";
 import { UsageBand, useUsage } from "../features/overview/UsageBand";
 import { listComputers, type ComputerListItem, type ComputerScope } from "../lib/computers";
@@ -379,6 +380,9 @@ export function Overview() {
     <Page>
       <PageHeader title="Overview" />
       <Show when={enabled()} fallback={<NoScopeState hint={<>If none are available, ask an access administrator for a role. <A href="/settings/account" class="underline">View your access</A>.</>} />}>
+        <Show when={can("assignments.create") && !(can("deployments.publish") && can("deployments.promote"))}>
+          <EnvironmentAccessSetup projectID={ids().projectID} environmentID={ids().environmentID} />
+        </Show>
         <Switch>
           <Match when={deciding()}>
             <PageSkeleton label="Loading overview" sections={["Agents", "Running now"]} rail="Deployments" />

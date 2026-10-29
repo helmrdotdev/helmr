@@ -131,7 +131,6 @@ export function Environments() {
               await queryClient.invalidateQueries({ queryKey: ["projects"] });
               scope.setSelectedEnvironmentID(env.environment);
               setCreating(false);
-              if(hasPermission(me.data,"assignments.create")) setAccessEnvironment(env.environment);
             }}
           />
         )}

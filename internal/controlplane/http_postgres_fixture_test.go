@@ -11,12 +11,15 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/access"
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -69,6 +72,11 @@ func (f httpPostgresFixture) organizationOwner(t *testing.T, slug string) (uuid.
 	orgID := uuid.NewV7()
 	if _, err := f.queries.CreateOrganization(t.Context(), db.CreateOrganizationParams{
 		ID: pgvalue.UUID(orgID), Name: slug, Slug: slug,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+		return org.SeedStandardRoles(t.Context(), tx, auditpolicy.Policy{RetentionSeconds: 3600}, orgID, audit.Internal(audit.ControlPlane))
 	}); err != nil {
 		t.Fatal(err)
 	}
