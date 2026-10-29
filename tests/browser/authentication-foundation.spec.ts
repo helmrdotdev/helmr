@@ -14,9 +14,10 @@ test("ordinary passkey registration, sign-in, replay rejection and operator isol
     const oldCookies = await context.cookies();
     expect(original.user_id).toBeTruthy();
     await page.goto("/settings/account");
-    await page.getByLabel("Passkey name", { exact: true }).fill("Browser acceptance key");
+    await expect(page.getByLabel("Passkey name", { exact: true })).toHaveValue("Passkey 1");
     await page.getByRole("button", { name: "Add passkey", exact: true }).click();
     await expect(page.getByText("Passkey added.", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Passkey name", { exact: true })).toHaveValue("Passkey 2");
     const credentials = await cdp.send("WebAuthn.getCredentials", { authenticatorId });
     expect(credentials.credentials).toHaveLength(1);
     expect(credentials.credentials[0]?.isResidentCredential).toBe(true);

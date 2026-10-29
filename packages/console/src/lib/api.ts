@@ -124,7 +124,7 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
       throw error;
     }
     if (error instanceof ApiError && error.code === "recent_authentication_required") {
-      window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator } }));
+      window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator, removingCredential: fetchInit.method === "DELETE" && path.startsWith("/api/account/credentials/") } }));
     }
     const needsLogin = error instanceof ApiError && (error.code === "authentication_required" || (error.status === 401 && error.code === "unauthorized"));
     if (!needsLogin) throw error;

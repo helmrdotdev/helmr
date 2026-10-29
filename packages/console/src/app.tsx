@@ -1,3 +1,4 @@
+import { AuthConfirmation } from "./routes/auth-confirmation";
 import { AuthenticationNotice } from "./components/AuthenticationNotice";
 import { OperatorSecurity } from "./routes/operator-security";
 import { Organizations } from "./routes/organizations";
@@ -221,6 +222,7 @@ export function App() {
       <Route path="/auth/slack/callback" component={AuthSlackCallback} />
       <Route path="/auth/slack/link" component={AuthSlackLink} />
       <Route path="/auth/slack/connect" component={SlackConnect} />
+      <Route path="/auth/confirmation" component={AuthConfirmation} />
       <Route path="/auth/github/callback" component={AuthGitHubCallback} />
       <Route path="/access-required" component={() => <RequireAuth requirement="session"><AccessRequired /></RequireAuth>} />
       <Route path="/organizations/new" component={() => <RequireAuth requirement="session"><OrganizationNew /></RequireAuth>} />

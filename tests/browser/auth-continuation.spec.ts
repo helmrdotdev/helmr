@@ -230,11 +230,11 @@ for(const membership of ["none","denied"]){
  await context.route("**/api/account/credentials",route=>route.fulfill({json:{credentials:[]}}));
  await page.goto("/settings/account");
  await expect(page.getByRole("heading",{name:"My account",exact:true})).toBeVisible();
- await expect(page.getByRole("heading",{name:"Confirm your account",exact:true})).toBeVisible();
+ await expect(page.getByRole("heading",{name:"Sign-in methods",exact:true})).toBeVisible();
  await expect(page).toHaveURL(/\/settings\/account$/);
  if(membership==="denied"){
- await page.goto("/");await expect(page.getByRole("link",{name:"Confirm sign-in",exact:true})).toBeVisible();
- await page.getByRole("link",{name:"Confirm sign-in",exact:true}).click();await expect(page.getByRole("heading",{name:"Confirm your account",exact:true})).toBeVisible();
+ await page.goto("/");await expect(page.getByRole("button",{name:"Confirm sign-in",exact:true})).toBeVisible();
+ await page.getByRole("button",{name:"Confirm sign-in",exact:true}).click();await expect(page.getByRole("dialog",{name:"Confirm your sign-in",exact:true})).toBeVisible();
  }
  });
 }
@@ -266,6 +266,9 @@ test("email confirmation follows a changed login address without reload",async({
  await page.getByRole("button",{name:"Verify new email",exact:true}).click();
  await page.getByLabel("Verification code",{exact:true}).fill("12345678");
  await page.getByRole("button",{name:"Verify and change email",exact:true}).click();
+ await context.route("**/api/account/access/revoke-all", route=>route.fulfill({status:403,json:{error:{code:"recent_authentication_required",message:"Confirm sign-in"}}}));
+ await page.getByRole("button",{name:"Revoke all access…"}).click();
+ await page.getByRole("button",{name:"Confirm revoke all access"}).click();
  await expect(page.getByLabel("Email",{exact:true})).toHaveValue("changed@example.test");
  const sent=page.waitForRequest(request=>new URL(request.url()).pathname==="/api/auth/email/start");
  await page.getByRole("button",{name:"Send verification code",exact:true}).click();
@@ -288,4 +291,64 @@ test("invitation survives switching out of a different account",async({page,cont
  await page.getByRole("button",{name:"Verify email",exact:true}).click();
  await expect(page.getByRole("button",{name:"Accept invitation",exact:true})).toBeEnabled();
  await expect(page).toHaveURL(/\/invite$/);
+});
+
+for (const method of ["email", "github"] as const) {
+ test(`CLI approval confirms with ${method} in context without automatic approval`, async ({page,context}) => {
+  const state=await fixture(context,{loggedIn:true});
+  let attempts=0;
+  await context.route("**/api/auth/device/approve",route=>{
+   attempts++;
+   if(attempts===1)return route.fulfill({status:403,json:{error:{code:"recent_authentication_required",message:"Confirm sign-in"}}});
+   return route.fallback();
+  });
+  await page.goto("/auth/device?code=RETAINED");
+  await page.getByRole("button",{name:"Approve",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"Confirm your sign-in"});
+  await expect(dialog).toBeVisible();
+  if(method==="email"){
+   await dialog.getByRole("button",{name:"Send verification code"}).click();
+   await dialog.getByLabel("Verification code").fill("12345678");
+   await dialog.getByRole("button",{name:"Verify email",exact:true}).click();
+  }else{
+   await dialog.getByRole("button",{name:"Confirm with GitHub"}).click();
+  }
+  await expect(dialog.getByRole("status")).toContainText("Sign-in confirmed");
+  expect(attempts).toBe(1);expect(state.approved).toEqual([]);
+  await dialog.getByRole("button",{name:"Return to your action"}).click();
+  await expect(page.getByLabel("Device code")).toHaveText("RETAINED");
+  await page.getByRole("button",{name:"Approve",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"CLI authorized"})).toBeVisible();
+  expect(attempts).toBe(2);expect(state.approved).toHaveLength(1);
+ });
+}
+
+test("credential removal preserves its target and edited passkey name through confirmation and cancellation", async ({page,context}, testInfo) => {
+ await fixture(context,{loggedIn:true});
+ let removals=0;
+ await context.route("**/api/account/credentials",route=>route.fulfill({json:{credentials:[{id:"key-1",method:"passkey",label:"Passkey 1",created_at:new Date().toISOString()}]}}));
+ await context.route("**/api/account/credentials/key-1",route=>{
+  removals++;
+  if(removals<3)return route.fulfill({status:403,json:{error:{code:"recent_authentication_required",message:"Use a retained method"}}});
+  return route.fulfill({status:204});
+ });
+ await page.goto("/settings/account");
+ const name=page.getByLabel("Passkey name",{exact:true});
+ await expect(name).toHaveValue("Passkey 2");await name.fill("My laptop");
+ await page.getByRole("button",{name:"Remove",exact:true}).click();
+ await page.getByRole("button",{name:"Remove method",exact:true}).click();
+ const dialog=page.getByRole("dialog",{name:"Confirm your sign-in"});
+ await expect(dialog).toContainText("Use a different sign-in method or passkey");
+ await page.screenshot({path:testInfo.outputPath("account-confirmation.png"),fullPage:true});
+ await dialog.getByRole("button",{name:"Cancel",exact:true}).click();
+ await expect(name).toHaveValue("My laptop");expect(removals).toBe(1);
+ await page.getByRole("button",{name:"Remove method",exact:true}).click();
+ await dialog.getByRole("button",{name:"Send verification code"}).click();
+ await dialog.getByLabel("Verification code").fill("12345678");
+ await dialog.getByRole("button",{name:"Verify email",exact:true}).click();
+ await dialog.getByRole("button",{name:"Return to your action"}).click();
+ await expect(name).toHaveValue("My laptop");expect(removals).toBe(2);
+ await page.getByRole("button",{name:"Remove method",exact:true}).click();
+ await expect(page.getByText("Sign-in method removed.", {exact:true})).toBeVisible();
+ expect(removals).toBe(3);
 });

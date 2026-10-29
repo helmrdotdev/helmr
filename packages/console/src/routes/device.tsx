@@ -1,7 +1,6 @@
 import { A, useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, Match, Show, Switch } from "solid-js";
-import { ApiError } from "../lib/api";
 import { approveDeviceCode, denyDeviceCode, getDeviceCodeStatus } from "../lib/auth";
 import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
 import { AuthCopy, AuthError, AuthFact, AuthFacts, AuthLink, AuthMissing, AuthSuccess, AuthTitle, AuthWindow } from "../ui/AuthWindow";
@@ -37,7 +36,6 @@ export function Device() {
   const queryClient = useQueryClient();
   const code = createMemo(() => normalizeCode(readParam(params["code"])));
   const [busy, setBusy] = createSignal<"approve" | "deny" | null>(null);
-  const [confirmationRequired,setConfirmationRequired]=createSignal(false);
   const [actionError, setActionError] = createSignal<Failure | null>(null);
 
   const status = createQuery(() => ({
@@ -53,14 +51,12 @@ export function Device() {
     if (!identity?.org_id) return;
     const consent = { org_id: identity.org_id };
     setActionError(null);
-    setConfirmationRequired(false);
     setBusy(approve ? "approve" : "deny");
     try {
       const result = approve ? await approveDeviceCode(requestCode, consent,identity.proof) : await denyDeviceCode(requestCode, consent,identity.proof);
       queryClient.setQueryData(["device-code", requestCode], result);
     } catch (error) {
       if (code() !== requestCode) return;
-      setConfirmationRequired(error instanceof ApiError && error.code === "recent_authentication_required");
       setActionError(deviceFailure(error, "This device request could not be updated. Try again."));
       const refreshed = await status.refetch();
       if (refreshed.data && refreshed.data.status !== "pending") setActionError(null);
@@ -119,7 +115,6 @@ export function Device() {
                   <AuthFact label="Expires"><RelativeTime value={device().expires_at} /></AuthFact>
                 </AuthFacts>
                 <Show when={actionError()}>{(failure) => <AuthError {...failure()} />}</Show>
-                <Show when={confirmationRequired()}><AuthCopy>Confirm your account in a new tab, then return here and press Approve again. <a class={ui.monoLink} href="/settings/account" target="_blank" rel="noopener">Confirm account</a></AuthCopy></Show>
                 <button type="button" class={ui.button} disabled={!canResolve()} onClick={() => resolveDevice(true)}>
                   {busy() === "approve" ? "Approving…" : "Approve"}
                 </button>
