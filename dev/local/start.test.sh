@@ -45,7 +45,8 @@ configure_stack() {
 
 wait_ready() {
   local port="$1"
-  for _ in $(seq 1 120); do
+  # The wrapper also downloads dependencies and compiles on a cold CI runner.
+  for _ in $(seq 1 600); do
     if curl -fsS --max-time 1 "http://127.0.0.1:${port}/readyz" >/dev/null 2>&1; then
       return 0
     fi
