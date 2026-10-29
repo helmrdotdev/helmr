@@ -174,7 +174,6 @@ ALTER TABLE slack_user_links ADD COLUMN identity_id uuid;
 ALTER TABLE slack_user_links ADD COLUMN passkey_id uuid;
 ALTER TABLE slack_user_links ADD COLUMN authenticated_at timestamptz NOT NULL;
 ALTER TABLE slack_user_links ADD COLUMN revoked_at timestamptz;
-ALTER TABLE slack_user_links ADD COLUMN resume_previous_delivery boolean NOT NULL DEFAULT false;
 ALTER TABLE slack_user_links ADD FOREIGN KEY (installation_id,org_id,team_id) REFERENCES slack_installations(id,org_id,team_id);
 ALTER TABLE slack_user_links ADD FOREIGN KEY (org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id);
 ALTER TABLE slack_user_links ADD FOREIGN KEY (identity_id,user_id) REFERENCES auth_identities(id,user_id);
@@ -237,8 +236,6 @@ CREATE TABLE account_security_notifications (
 CREATE INDEX account_security_notifications_pending ON account_security_notifications(next_attempt_at);
 
 -- Historical link IDs do not retain disposable authorization rows.
-ALTER TABLE slack_threads ADD COLUMN initial_recipient_link_id uuid,
- ADD CHECK (left(slack_channel_id,1)<>'D' OR initial_recipient_link_id IS NOT NULL);
 ALTER TABLE slack_requests ADD COLUMN source_link_id uuid,
  ADD CHECK (status<>'accepted' OR operation NOT IN ('start','enqueue') OR source_link_id IS NOT NULL);
 CREATE UNIQUE INDEX slack_requests_turn_admission ON slack_requests(environment_id,session_id,turn_id)

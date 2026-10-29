@@ -47,7 +47,7 @@ func validateSlackStart(ctx context.Context, tx pgx.Tx, env, agent, deployment u
 	return nil
 }
 
-func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel, sourceLink uuid.UUID, p slackroute.StartRoute) error {
+func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel uuid.UUID, p slackroute.StartRoute) error {
 	thread := uuid.NewV7()
 	var opening, root, recipientTeam, recipientUser any
 	if p.HumanThreadTS != "" {
@@ -59,7 +59,7 @@ func createSlackRoot(ctx context.Context, tx pgx.Tx, env, session, turn, channel
 	} else {
 		opening = "opening:" + session.String()
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key,recipient_team_id,recipient_user_id,initial_recipient_link_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, thread, env, session, channel, p.Target.OrganizationID, p.Target.TeamID, p.Target.ChannelID, root, opening, recipientTeam, recipientUser, optionalLinkID(sourceLink))
+	_, err := tx.Exec(ctx, `INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key,recipient_team_id,recipient_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, thread, env, session, channel, p.Target.OrganizationID, p.Target.TeamID, p.Target.ChannelID, root, opening, recipientTeam, recipientUser)
 	if err != nil {
 		return err
 	}
@@ -166,7 +166,7 @@ func admitRoutedRoot(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer,
 	if err = validateSlackStart(ctx, tx, plan.Request.EnvironmentID, pin.AgentID, pin.DeploymentID, plan.Caller, &route); err != nil {
 		return session.Admission{}, err
 	}
-	if err = createSlackRoot(ctx, tx, plan.Request.EnvironmentID, admission.SessionID, admission.TurnID, channel, plan.Caller.Human.SlackLinkID, route); err != nil {
+	if err = createSlackRoot(ctx, tx, plan.Request.EnvironmentID, admission.SessionID, admission.TurnID, channel, route); err != nil {
 		return session.Admission{}, err
 	}
 	return admission, nil
@@ -199,7 +199,7 @@ func CreateScheduledRoot(ctx context.Context, tx pgx.Tx, env, sessionID, turn, b
 		return slackroute.ErrChannelUnavailable
 	}
 	opening, _ := json.Marshal(map[string]any{"text": "Started " + connection.AgentName + ".", "mrkdwn": false, "parse": "none", "link_names": false, "unfurl_links": false, "unfurl_media": false})
-	return createSlackRoot(ctx, tx, env, sessionID, turn, binding, uuid.Nil(), slackroute.StartRoute{Target: connection, DeploymentID: deployment, Opening: opening})
+	return createSlackRoot(ctx, tx, env, sessionID, turn, binding, slackroute.StartRoute{Target: connection, DeploymentID: deployment, Opening: opening})
 }
 
 func nullableTurn(id uuid.UUID) any {

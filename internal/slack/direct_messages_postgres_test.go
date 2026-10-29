@@ -252,10 +252,10 @@ func TestSlackDirectAppHomeOnlySetsVerifiedPrompts(t *testing.T) {
 func directBoundFixture(t *testing.T) statusFixture {
 	f := newStatusFixture(t)
 	f.grantDirect(t)
-	link := f.linkActor(t, f.User, "human")
+	f.linkActor(t, f.User, "human")
 
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) SELECT $3,environment_id,connection_id,installation_id,org_id,team_id,'D1' FROM slack_channel_bindings WHERE id=$1;
- UPDATE slack_threads SET slack_channel_binding_id=$3,slack_channel_id='D1',recipient_user_id='human',recipient_team_id='team',initial_recipient_link_id=$4 WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.channel, f.thread, uuid.NewV7(), link)
+ UPDATE slack_threads SET slack_channel_binding_id=$3,slack_channel_id='D1',recipient_user_id='human',recipient_team_id='team' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.channel, f.thread, uuid.NewV7())
 	return f
 }
 
@@ -514,7 +514,7 @@ func TestDirectDeliveryRechecksRecipientUseAndIdentity(t *testing.T) {
 	}
 }
 
-func TestDirectDeliveryRelinkRequiresExplicitConsentAndExactRecipient(t *testing.T) {
+func TestDirectDeliveryRelinkRestoresOnlyExactRecipient(t *testing.T) {
 	f := newSlackAdmissionFixture(t)
 	f.grantDirect(t)
 	f.link(t)
@@ -549,14 +549,6 @@ func TestDirectDeliveryRelinkRequiresExplicitConsentAndExactRecipient(t *testing
 		t.Fatal(err)
 	}
 	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: consent, BrowserHash: binding}); err != nil {
-		t.Fatal(err)
-	}
-	check(false)
-	consent, err = PrepareUserLink(t.Context(), f.Pool, actor, org, f.User, f.installation, who, binding)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: consent, BrowserHash: binding, ResumePreviousDelivery: true}); err != nil {
 		t.Fatal(err)
 	}
 	check(true)

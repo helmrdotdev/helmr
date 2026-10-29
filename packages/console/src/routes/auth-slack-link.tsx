@@ -52,7 +52,6 @@ export function AuthSlackLink() {
   const [verifyError, setVerifyError] = createSignal<(Failure & { code: string }) | null>(null);
   const [confirmError, setConfirmError] = createSignal<(Failure & { code: string }) | null>(null);
   const [busy, setBusy] = createSignal(false);
-  const [resumeDelivery,setResumeDelivery] = createSignal(false);
   const [complete, setComplete] = createSignal(false);
   let mounted = true; onCleanup(() => { mounted = false; });
   onMount(async () => {
@@ -65,7 +64,7 @@ export function AuthSlackLink() {
   const confirm = async () => {
     const current = proof(); if (!current) return;
     setBusy(true); setConfirmError(null);
-    try { await confirmSlackUserLink(current.confirmation, resumeDelivery()); if (mounted) { if (current.return_url) setComplete(true); else navigate("/settings/account", { replace: true }); } }
+    try { await confirmSlackUserLink(current.confirmation); if (mounted) { if (current.return_url) setComplete(true); else navigate("/settings/account", { replace: true }); } }
     catch (e) { if (mounted) setConfirmError(linkFailure(e, "Your accounts could not be linked.")); }
     finally { if (mounted) setBusy(false); }
   };
@@ -94,7 +93,6 @@ export function AuthSlackLink() {
             <AuthFact label="Helmr">{current().helmr_display_name} in {current().helmr_org_name}</AuthFact>
           </AuthFacts>
           <AuthCopy>Confirm that both accounts are yours. Slack actions will use this Helmr account’s current permissions. Linking does not change organization membership.</AuthCopy>
-          <label class="my-3 flex items-start gap-2 text-control"><input type="checkbox" checked={resumeDelivery()} onChange={event=>setResumeDelivery(event.currentTarget.checked)} />Resume delivery to my previous direct conversations in this workspace, wherever my current permissions allow it.</label>
           <Show when={confirmError()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<NextStep failure={failure()} inline />} />}</Show>
           <button type="button" class={ui.button} disabled={busy()} onClick={() => void confirm()}>{busy() ? "Linking…" : "Confirm these accounts are mine"}</button>
           <AuthLink href="/settings/account">My account</AuthLink>

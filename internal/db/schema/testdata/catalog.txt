@@ -1039,7 +1039,6 @@ column slack_threads.front_session_id uuid not null
 column slack_threads.id uuid not null
 column slack_threads.inflight_attempt_id uuid
 column slack_threads.inflight_method text
-column slack_threads.initial_recipient_link_id uuid
 column slack_threads.input_changed_at timestamp with time zone
 column slack_threads.input_muted boolean not null default false
 column slack_threads.input_unmuted_at timestamp with time zone
@@ -1066,7 +1065,6 @@ column slack_user_links.linked_at timestamp with time zone not null default cloc
 column slack_user_links.member_id uuid not null
 column slack_user_links.org_id uuid not null
 column slack_user_links.passkey_id uuid
-column slack_user_links.resume_previous_delivery boolean not null default false
 column slack_user_links.revoked_at timestamp with time zone
 column slack_user_links.slack_user_id text not null
 column slack_user_links.team_id text not null
@@ -2216,7 +2214,6 @@ constraint slack_thread_sources u UNIQUE (environment_id, session_id)
 constraint slack_thread_sources u UNIQUE (environment_id, session_id, id)
 constraint slack_thread_sources u UNIQUE (thread_id, environment_id, id)
 constraint slack_thread_sources u UNIQUE (thread_id, id)
-constraint slack_threads c CHECK ("left"(slack_channel_id, 1) <> 'D'::text OR initial_recipient_link_id IS NOT NULL)
 constraint slack_threads c CHECK ((recipient_team_id IS NULL) = (recipient_user_id IS NULL))
 constraint slack_threads c CHECK (desired_status = ANY (ARRAY['active'::text, 'processing'::text, 'suspended'::text, 'closed'::text]))
 constraint slack_threads c CHECK (last_acknowledged_status = ANY (ARRAY['active'::text, 'processing'::text, 'suspended'::text, 'closed'::text]))

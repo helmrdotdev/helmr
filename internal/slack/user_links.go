@@ -156,8 +156,8 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy
 		if !active {
 			return ErrUserLinkDenied
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO slack_user_links(id,team_id,slack_user_id,user_id,installation_id,org_id,member_id,access_epoch,identity_id,passkey_id,authenticated_at,resume_previous_delivery)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT DO NOTHING`, uuid.NewV7(), identity.TeamID, identity.SlackUserID, user, installation, org, member, current.AccessEpoch, optionalLinkID(current.IdentityID), optionalLinkID(current.PasskeyID), current.AuthenticatedAt, consent.ResumePreviousDelivery)
+		tag, err := tx.Exec(ctx, `INSERT INTO slack_user_links(id,team_id,slack_user_id,user_id,installation_id,org_id,member_id,access_epoch,identity_id,passkey_id,authenticated_at)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`, uuid.NewV7(), identity.TeamID, identity.SlackUserID, user, installation, org, member, current.AccessEpoch, optionalLinkID(current.IdentityID), optionalLinkID(current.PasskeyID), current.AuthenticatedAt)
 		if err != nil {
 			return err
 		}
@@ -178,12 +178,7 @@ func LinkUser(ctx context.Context, pool db.TxBeginner, policy auditpolicy.Policy
 		if err != nil {
 			return err
 		}
-		if consent.ResumePreviousDelivery {
-			if _, err = tx.Exec(ctx, `UPDATE slack_user_links SET resume_previous_delivery=true WHERE id=$1`, existing); err != nil {
-				return err
-			}
-			return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: org, Action: "slack_user.linked", TargetKind: "slack_user_link", TargetUserID: user, SlackTeamID: identity.TeamID, SlackUserID: identity.SlackUserID})
-		}
+
 		return nil
 	})
 }
@@ -242,9 +237,8 @@ func optionalLinkID(id uuid.UUID) any {
 
 // LinkConsent is a one-use confirmation bound to an exact browser and source.
 type LinkConsent struct {
-	ResumePreviousDelivery bool
-	ID                     uuid.UUID
-	BrowserHash            []byte
+	ID          uuid.UUID
+	BrowserHash []byte
 }
 
 func PrepareUserLink(ctx context.Context, pool db.TxBeginner, actor audit.Evidence, org, user, installation uuid.UUID, identity UserIdentity, binding []byte) (uuid.UUID, error) {

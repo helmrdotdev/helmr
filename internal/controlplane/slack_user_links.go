@@ -307,9 +307,8 @@ func (s *Server) confirmSlackUserLink(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	p := principalFromContext(r.Context())
 	var input struct {
-		Confirmation           string `json:"confirmation"`
-		Confirmed              bool   `json:"confirmed"`
-		ResumePreviousDelivery bool   `json:"resume_previous_delivery"`
+		Confirmation string `json:"confirmation"`
+		Confirmed    bool   `json:"confirmed"`
 	}
 	if err := decodeRequestJSON(r, &input); err != nil {
 		s.writeOperationError(w, r, err)
@@ -339,7 +338,7 @@ func (s *Server) confirmSlackUserLink(w http.ResponseWriter, r *http.Request) {
 		s.writeSlackLinkError(w, r, slack.ErrUserLinkDenied)
 		return
 	}
-	err = slack.LinkUser(r.Context(), s.tx, s.auditPolicy, audit.FromPrincipal(p), p.OrgID, p.UserID, installation, slack.UserIdentity{TeamID: flow.SlackTeamID, SlackUserID: flow.SlackUserID}, slack.LinkConsent{ID: consentID, BrowserHash: binding, ResumePreviousDelivery: input.ResumePreviousDelivery})
+	err = slack.LinkUser(r.Context(), s.tx, s.auditPolicy, audit.FromPrincipal(p), p.OrgID, p.UserID, installation, slack.UserIdentity{TeamID: flow.SlackTeamID, SlackUserID: flow.SlackUserID}, slack.LinkConsent{ID: consentID, BrowserHash: binding})
 	if err != nil {
 		s.writeSlackLinkError(w, r, err)
 		return
