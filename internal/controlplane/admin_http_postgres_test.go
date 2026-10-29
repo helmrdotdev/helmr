@@ -25,14 +25,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const supplyAdminEmail = "admin@example.test"
-
-// newSupplyHTTPFixture serves the control plane with a platform administrator
-// address and a capacity token configured.
+// newSupplyHTTPFixture serves the control plane with a capacity token configured.
 func newSupplyHTTPFixture(t *testing.T) httpPostgresFixture {
 	t.Helper()
 	return newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
-
 		cfg.CapacityToken = capacityTestToken()
 	})
 }

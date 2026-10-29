@@ -401,7 +401,7 @@ func TestDeploymentHTTPPostgresUploadReleasesOrdinaryAdmission(t *testing.T) {
 		cfg.DeploymentUploadLimits.ProcessConcurrency = capacity
 		cfg.DeploymentUploadLimits.OrganizationConcurrency = capacity
 	})
-	orgID, token := fixture.organizationOwner(t, "upload-handoff")
+	orgID, _ := fixture.organizationOwner(t, "upload-handoff")
 	_, environmentID := deploymentHTTPEnvironment(t, fixture, orgID)
 	var userID uuid.UUID
 	if err := fixture.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id=$1 AND is_owner`, orgID).Scan(&userID); err != nil {
@@ -427,7 +427,7 @@ func TestDeploymentHTTPPostgresUploadReleasesOrdinaryAdmission(t *testing.T) {
 	server := httptest.NewServer(fixture.handler)
 	defer server.Close()
 	defer releaseOnce.Do(func() { close(release) })
-	token = fixture.cliSession(t, userID, orgID)
+	token := fixture.cliSession(t, userID, orgID)
 	c, err := client.New(server.URL, client.WithBearerToken(token), client.WithSessionScopedRoutes())
 	if err != nil {
 		t.Fatal(err)

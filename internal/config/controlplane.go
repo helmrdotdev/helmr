@@ -168,26 +168,6 @@ func LoadBootstrap() (Bootstrap, error) {
 	return cfg, nil
 }
 
-func splitNormalizedList(value string) []string {
-	if value == "" {
-		return nil
-	}
-	seen := make(map[string]struct{})
-	result := make([]string, 0)
-	for part := range strings.SplitSeq(value, ",") {
-		part = strings.ToLower(strings.TrimSpace(part))
-		if part == "" {
-			continue
-		}
-		if _, ok := seen[part]; ok {
-			continue
-		}
-		seen[part] = struct{}{}
-		result = append(result, part)
-	}
-	return result
-}
-
 func validateControlPlaneEmailConfig(cfg *ControlPlane) error {
 	if cfg.EmailProvider == "" {
 		switch {
