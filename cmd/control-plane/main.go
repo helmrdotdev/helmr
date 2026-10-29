@@ -63,6 +63,12 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "operator":
+			if err := runOperatorCommand(context.Background(), os.Args[2:]); err != nil {
+				log.Error("operator enrollment failed", "error", err)
+				os.Exit(1)
+			}
+			return
 		case "check-config":
 			if len(os.Args) != 2 {
 				log.Error("usage: control-plane check-config")
@@ -206,7 +212,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	telemetryReader := clickhouse.NewReader(clickHouseClient)
 	mailer := configuredEmailSender(log, cfg, external)
 	shutdownTimeout := 10 * time.Second
-	magicLinkDelivery := controlplane.NewMagicLinkDelivery(log, shutdownTimeout)
+	emailCodeDelivery := controlplane.NewEmailCodeDelivery(log, shutdownTimeout)
 	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey, cfg.AuditPolicy)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
@@ -271,15 +277,12 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		SecretProxy:                    secretStore,
 		TelemetryReader:                telemetryReader,
 		Mailer:                         mailer,
-		MagicLinkDelivery:              magicLinkDelivery,
+		EmailCodeDelivery:              emailCodeDelivery,
 		AuthProvider:                   authProvider,
 		WorkerHostCredentialSigningKey: cfg.WorkerHostCredentialSigningKey,
 		CapacityToken:                  cfg.CapacityToken,
-		SetupToken:                     cfg.SetupToken,
 		AuthKey:                        cfg.AuthKey,
 		AppOrigin:                      appOrigin,
-		MagicLinkDebugURLs:             cfg.MagicLinkDebugURLs,
-		AdminEmails:                    cfg.AdminEmails,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control plane server: %w", err)
@@ -320,7 +323,8 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "exec result retention", run: func(ctx context.Context) error {
 			return command.CollectResults(ctx, queries, log)
 		}},
-		{name: "magic link delivery", run: magicLinkDelivery.Run},
+		{name: "email code delivery", run: emailCodeDelivery.Run},
+		{name: "account security notifications", run: func(ctx context.Context) error { return controlplane.RunSecurityNotifications(ctx, pool, mailer, log) }},
 	}
 	return serveControlPlane(ctx, log, server, workflows, shutdownTimeout)
 }

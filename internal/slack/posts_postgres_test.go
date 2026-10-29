@@ -24,7 +24,7 @@ func (f statusFixture) post(t *testing.T, seq int64, key, role string, turn *uui
 }
 func (f statusFixture) opening(t *testing.T) uuid.UUID {
 	t.Helper()
-	turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "opening-fixture", Input: json.RawMessage(`[]`)})
+	turn, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "opening-fixture", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/http/httptest"
@@ -26,7 +27,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	defer server.Close()
 	client := seedHostSecret(t, f.Pool, f.Worker).client(t, server.URL)
 	sessionID := runtimeTestSession(f)
-	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, Input: json.RawMessage(`[]`)})
+	a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,6 +48,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1));
  INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status) VALUES($1,$2,1,$5,1,'ready');
  UPDATE sessions SET parent_session_id=$2,requester_session_id=$2,root_session_id=$2,causal_depth=1 WHERE environment_id=$1 AND id=$6`, pgx.QueryExecModeSimpleProtocol, f.Environment, parent.Session, f.Agent, f.Deployment, f.Computer, f.Session)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET (`+access.HumanColumns+`)=($3,$4,$5,$6,$7,$8,$9,$10,$11) WHERE environment_id=$1 AND id=$2`, append([]any{f.Environment, parent.Session}, access.HumanValues(f.Principal(t))...)...)
 	sendOp := op
 	sendOp.Session = runtimeTestSession(parent)
 	sendOp.MCPScopeID = fixtureMCPScope(t, parent).String()

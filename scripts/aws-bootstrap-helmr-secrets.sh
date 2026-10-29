@@ -88,10 +88,7 @@ computer_wrapping_key_secret_arn="$(secret_arn_optional computer_wrapping_key)"
 if [ -n "$computer_wrapping_key_secret_arn" ]; then
   put_secret_arn computer_wrapping_key "$computer_wrapping_key_secret_arn" "$(random_base64_32)"
 fi
-setup_token_secret_arn="$(secret_arn_optional setup_token)"
-if [ -n "$setup_token_secret_arn" ]; then
-  put_secret_arn setup_token "$setup_token_secret_arn" "$(openssl rand -hex 32)"
-fi
+
 
 capacity_token_secret_arn="$(secret_arn_optional capacity_token)"
 if [ -n "$capacity_token_secret_arn" ]; then

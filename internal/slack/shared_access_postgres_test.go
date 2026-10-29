@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"testing"
 	"time"
 	"uuid"
@@ -14,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
@@ -36,10 +36,10 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 		t.Fatal("shared runtime borrowed personal origin", shared, err)
 	}
 	// Slack participation never becomes Console access to all conversation history.
-	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, f.Environment, target); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), f.Environment, target); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("channel participation became Console history access", err)
 	}
-	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionListRequest{EnvironmentID: f.Environment, Limit: 100})
+	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionListRequest{EnvironmentID: f.Environment, Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,18 +49,19 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 		}
 	}
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'local','personal','user',$4),($1,uuidv7(),$3,'local','shared','user',$4)`, f.Environment, f.Session, target, f.User)
-	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, f.Environment)
+	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), f.Environment)
 	if err != nil || attention.HoldCount != 1 || len(attention.Holds) != 1 || attention.Holds[0].SessionID != f.Session {
 		t.Fatalf("shared creator gained personal attention access: %+v %v", attention, err)
 	}
 	dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM session_holds WHERE environment_id=$1`, f.Environment)
 	peer := uuid.NewV7()
-	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Peer'); INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$1 FROM environments WHERE id=$2; INSERT INTO slack_user_links(team_id,slack_user_id,user_id) VALUES('team','peer',$1)`, pgx.QueryExecModeSimpleProtocol, peer, f.Environment)
+	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Peer'); INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$1 FROM environments WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, peer, f.Environment)
 	var org uuid.UUID
 	if err := f.Pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
 	member := dbtest.GrantMember(t, f.Pool, org, peer, &f.Environment, "agents.use")
+	f.linkActor(t, peer, "peer")
 	// Losing the creator's grant does not transfer administrative authority or stop
 	// an independently authorized participant from using the shared connection.
 	dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.User)
@@ -154,7 +155,7 @@ func TestSlackQueuedInputRechecksExactActorLinkAfterVerification(t *testing.T) {
 				t.Fatal(err)
 			}
 			verifier := callbackConversationVerifier(func() (bool, error) {
-				_, err := f.Pool.Exec(t.Context(), `DELETE FROM slack_user_links WHERE user_id=$1`, f.User)
+				_, err := f.Pool.Exec(t.Context(), `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
 				return true, err
 			})
 			e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
@@ -261,7 +262,9 @@ func TestSharedRuntimeDiscoveryKeepsRelationshipsAndScheduleIsolation(t *testing
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=ARRAY['agents.use']`)
 	for _, operation := range []auth.Permission{auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsResume} {
 		err := db.RunTx(ctx, f.Pool, func(tx pgx.Tx) error {
-			return session.AuthorizeSessionOperation(ctx, tx, session.Caller{Kind: "user", ID: f.User, SlackThreadID: f.thread, CredentialID: uuid.NewV7()}, f.Environment, f.Session, operation)
+			human := session.UserCaller(f.Principal(t))
+			human.SlackThreadID = f.thread
+			return session.AuthorizeSessionOperation(ctx, tx, human, f.Environment, f.Session, operation)
 		})
 		if err != nil {
 			t.Fatalf("participant %s: %v", operation, err)

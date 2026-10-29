@@ -45,8 +45,8 @@ key from your application's configuration to its constructor.
 Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`,
 `DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH`, `PLATFORM_STORE_URI`,
 `WORKER_HOST_CREDENTIAL_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
-`COMPUTER_FENCING_KEY`,
-`GITHUB_OAUTH_CLIENT_ID`, and `GITHUB_OAUTH_CLIENT_SECRET`.
+`COMPUTER_FENCING_KEY`. Configure `GITHUB_OAUTH_CLIENT_ID` and
+`GITHUB_OAUTH_CLIENT_SECRET` together to enable GitHub login; both may be omitted.
 
 Deployment uploads require the same explicit process configuration in Managed
 Cloud and self-hosted installations. There are no server-side capacity defaults:
@@ -133,7 +133,10 @@ check does not prove full startup or availability. Runtime sink failures and que
 exhaustion continue to use bounded retry and backpressure; separate pools do not
 isolate a shared PostgreSQL outage. Accepted records retain their configured expiry.
 
-Deployment mode: `DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
+Deployment mode: `DEPLOYMENT_MODE` defaults to `self-hosted`. First-organization setup
+requires a deployment operator session and a separately authenticated ordinary account.
+Managed-cloud organization creation follows the configured creation policy.
+See [authentication](/docs/self-hosting/authentication) for operator enrollment.
 
 Regions and Worker Groups are PostgreSQL resources managed through the Admin
 API and Console. Control Plane startup does not reconcile them from process
@@ -155,12 +158,11 @@ PostgreSQL.
 DNS name. Its normalized UTF-8 value must be 1–255 bytes and contain no
 surrounding whitespace or control characters.
 
-`ADMIN_EMAILS` is an optional comma-separated list of normalized user email
-addresses that receive the platform-wide Admin flag when their user record is
-created. Admin differs from organization membership roles and controls the
-`/admin` Console and `/admin/api/v1` API surfaces.
+Deployment operators use separate, passkey-authenticated identities. Ordinary user
+email addresses never confer deployment authority. Issue enrollment through the
+local deployment command described in the authentication guide.
 
-Optional: `CONTROL_PLANE_ADDR`, `APP_ORIGIN`, and `MAGIC_LINK_DEBUG_URLS`.
+Optional: `CONTROL_PLANE_ADDR` and `APP_ORIGIN`.
 `APP_ORIGIN` is the canonical browser/API origin used for login callbacks, Console
 links and Slack setup. It can be private HTTPS if users' browsers can reach it.
 
@@ -218,7 +220,7 @@ Email delivery is disabled by default. Set `EMAIL_PROVIDER` to choose a sender:
 | Provider | Required variables | Optional variables |
 | --- | --- | --- |
 | `none` | None. This is the default when no email settings are present. | None |
-| `log` | `EMAIL_PROVIDER=log` | `MAGIC_LINK_DEBUG_URLS=true` also returns sign-in links in API responses. Sign-in and invitation links are written to the Control Plane log instead of being sent. For local development only; rejected when `DEPLOYMENT_MODE` is `managed-cloud`. |
+| `log` | `EMAIL_PROVIDER=log` | Sign-in codes and invitation links are written to the Control Plane log instead of being sent. For local development only; rejected when `DEPLOYMENT_MODE` is `managed-cloud`. |
 | `smtp` | `EMAIL_PROVIDER=smtp`, `SMTP_ADDR`, `EMAIL_FROM` | `SMTP_USERNAME`, `SMTP_PASSWORD` |
 | `resend` | `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `EMAIL_FROM` | None |
 

@@ -1,3 +1,4 @@
+import "./browser-test-env";
 import { describe, expect, test } from "bun:test";
 import type { AttentionItem } from "./attention";
 import type { ComputerListItem } from "./computers";

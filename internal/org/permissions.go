@@ -125,7 +125,12 @@ func lockAccessMembers(ctx context.Context, tx pgx.Tx, m *ManagingMember, permis
 
 func lockActiveMembers(ctx context.Context, tx pgx.Tx, m ManagingMember, targets ...uuid.UUID) error {
 	ids := append([]uuid.UUID{m.MemberID}, targets...)
-	rows, err := tx.Query(ctx, `SELECT id,removed_at IS NULL AND (id<>$3 OR user_id=$4) FROM org_members WHERE org_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE`, m.OrgID, ids, m.MemberID, m.UserID)
+	// Account roots precede membership locks, including the target being removed.
+	// This prevents a manager waiting for a member lock from blocking source revoke.
+	if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id IN (SELECT user_id FROM org_members WHERE org_id=$1 AND id=ANY($2::uuid[])) ORDER BY id FOR SHARE`, m.OrgID, ids); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `SELECT id,removed_at IS NULL AND (id<>$3 OR (user_id=$4 AND suspended_at IS NULL)) FROM org_members WHERE org_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE`, m.OrgID, ids, m.MemberID, m.UserID)
 	if err != nil {
 		return err
 	}

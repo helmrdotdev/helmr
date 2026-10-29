@@ -29,7 +29,7 @@ func TestComputerExecutionHTTPUsesCurrentAuthorityAndConfirmedScope(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	hf := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
+	hf := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 	var org uuid.UUID
 	if err = f.Pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
 		t.Fatal(err)

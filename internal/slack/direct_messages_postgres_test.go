@@ -2,8 +2,10 @@ package slack
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,7 +15,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
-	"github.com/jackc/pgx/v5"
 )
 
 func (f statusFixture) grantDirect(t *testing.T) {
@@ -180,7 +181,7 @@ func TestSlackDirectReplyRejectsAuthorityChanges(t *testing.T) {
 				if err := f.Pool.QueryRow(t.Context(), `SELECT session_id FROM slack_requests WHERE id=$1`, first).Scan(&sid); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: sid, Kind: "cancel", IdempotencyKey: "close"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: sid, Kind: "cancel", IdempotencyKey: "close"}); err != nil {
 					t.Fatal(err)
 				}
 			case "grants":
@@ -250,7 +251,12 @@ func TestSlackDirectAppHomeOnlySetsVerifiedPrompts(t *testing.T) {
 func directBoundFixture(t *testing.T) statusFixture {
 	f := newStatusFixture(t)
 	f.grantDirect(t)
-	f.link(t)
+	link := f.linkActor(t, f.User, "human")
+	p, err := access.SlackPrincipal(t.Context(), f.Pool, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET (`+access.HumanColumns+`)=($2,$3,$4,$5,$6,$7,$8,$9,$10) WHERE id=$1`, append([]any{f.Session}, access.HumanValues(p)...)...)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_channel_bindings(id,environment_id,connection_id,installation_id,org_id,team_id,slack_channel_id) SELECT $3,environment_id,connection_id,installation_id,org_id,team_id,'D1' FROM slack_channel_bindings WHERE id=$1;
  UPDATE slack_threads SET slack_channel_binding_id=$3,slack_channel_id='D1',recipient_user_id='human',recipient_team_id='team' WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, f.channel, f.thread, uuid.NewV7())
 	return f
@@ -502,7 +508,7 @@ func TestDirectDeliveryRechecksRecipientUseAndIdentity(t *testing.T) {
 			case "permission":
 				f.SetPermissions(t, "sessions.read")
 			case "link":
-				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM slack_user_links WHERE user_id=$1`, f.User)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			case "membership":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			}

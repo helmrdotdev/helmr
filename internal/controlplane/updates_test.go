@@ -19,8 +19,7 @@ func TestUpdateStreamWakesRechecksAuthorityAndJoins(t *testing.T) {
 	joined := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer close(joined)
-		wrapped := newSessionRefreshResponseWriter(w, r, "test", time.Hour)
-		streamUpdates(wrapped, r, wake, func() error {
+		streamUpdates(w, r, wake, func() error {
 			if denied.Load() {
 				return errors.New("revoked")
 			}

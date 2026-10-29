@@ -445,8 +445,9 @@ variable "control_disk_gb" {
 }
 
 variable "github_oauth_client_id" {
-  description = "GitHub OAuth application client ID."
+  description = "GitHub OAuth application client ID; empty disables GitHub login."
   type        = string
+  default     = ""
 }
 
 variable "region_id" {

@@ -2,6 +2,7 @@ package slack
 
 import (
 	"errors"
+	"github.com/jackc/pgx/v5"
 	"testing"
 	"time"
 	"uuid"
@@ -10,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestSlackWakeRetriesUnavailableCapacityWithoutCommittingControls(t *testing.T) {

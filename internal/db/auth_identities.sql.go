@@ -11,121 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const grantUserAdmin = `-- name: GrantUserAdmin :execrows
-UPDATE users SET admin = true, updated_at = now() WHERE id = $1 AND NOT admin
+const createAccount = `-- name: CreateAccount :one
+INSERT INTO users(id,primary_email,display_name,profile_image_url,webauthn_user_handle)
+VALUES ($1,$2,$3,$4,$5) RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, reauthenticate_after, webauthn_user_handle
 `
 
-func (q *Queries) GrantUserAdmin(ctx context.Context, userID pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, grantUserAdmin, userID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+type CreateAccountParams struct {
+	ID                 pgtype.UUID `json:"id"`
+	PrimaryEmail       pgtype.Text `json:"primary_email"`
+	DisplayName        string      `json:"display_name"`
+	ProfileImageURL    pgtype.Text `json:"profile_image_url"`
+	WebauthnUserHandle []byte      `json:"webauthn_user_handle"`
 }
 
-const upsertAuthIdentity = `-- name: UpsertAuthIdentity :one
-WITH upserted_user AS (
-    INSERT INTO users (id, display_name, profile_image_url, primary_email, admin)
-    SELECT
-        $1 AS id,
-        $2 AS display_name,
-        $3 AS profile_image_url,
-        CASE WHEN $4::bool THEN $5 ELSE NULL END AS primary_email,
-        $6::bool AS admin
-     WHERE NOT EXISTS (
-         SELECT 1
-           FROM auth_identities AS auth_identity
-          WHERE auth_identity.provider = $7
-            AND auth_identity.subject = $8
-     )
-    ON CONFLICT (lower(primary_email)) WHERE primary_email IS NOT NULL DO UPDATE
-       SET primary_email = users.primary_email
-    RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at
-),
-target_user AS (
-    SELECT auth_identity.user_id AS id
-      FROM auth_identities AS auth_identity
-     WHERE auth_identity.provider = $7
-       AND auth_identity.subject = $8
-    UNION ALL
-    SELECT id FROM upserted_user
-),
-upserted_identity AS (
-    INSERT INTO auth_identities (
-        id,
-        user_id,
-        provider,
-        subject,
-        email,
-        last_login_at
-    )
-    SELECT
-        $9 AS id,
-        target_user.id AS user_id,
-        $7 AS provider,
-        $8 AS subject,
-        $5 AS email,
-        now() AS last_login_at
-      FROM target_user
-    ON CONFLICT (provider, subject) DO UPDATE
-       SET email = EXCLUDED.email,
-           updated_at = now(),
-           last_login_at = now()
-    RETURNING user_id
-),
-updated_existing_user AS (
-    UPDATE users
-       SET display_name = $2,
-           profile_image_url = COALESCE($3, users.profile_image_url),
-           primary_email = CASE WHEN $4::bool THEN $5 ELSE users.primary_email END,
-           updated_at = now()
-     WHERE id IN (SELECT user_id FROM upserted_identity)
-    RETURNING id, display_name, profile_image_url, primary_email, created_at, updated_at
-),
-selected_user AS (
-    SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at FROM updated_existing_user
-    UNION ALL
-    SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at
-      FROM upserted_user
-     WHERE NOT EXISTS (SELECT 1 FROM updated_existing_user)
-)
-SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at FROM selected_user
-`
-
-type UpsertAuthIdentityParams struct {
-	UserID           pgtype.UUID `json:"user_id"`
-	DisplayName      string      `json:"display_name"`
-	ProfileImageURL  pgtype.Text `json:"profile_image_url"`
-	EmailVerified    bool        `json:"email_verified"`
-	Email            pgtype.Text `json:"email"`
-	Admin            bool        `json:"admin"`
-	IdentityProvider string      `json:"identity_provider"`
-	IdentitySubject  string      `json:"identity_subject"`
-	IdentityID       pgtype.UUID `json:"identity_id"`
-}
-
-type UpsertAuthIdentityRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	DisplayName     string             `json:"display_name"`
-	ProfileImageURL pgtype.Text        `json:"profile_image_url"`
-	PrimaryEmail    pgtype.Text        `json:"primary_email"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentityParams) (UpsertAuthIdentityRow, error) {
-	row := q.db.QueryRow(ctx, upsertAuthIdentity,
-		arg.UserID,
+func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (User, error) {
+	row := q.db.QueryRow(ctx, createAccount,
+		arg.ID,
+		arg.PrimaryEmail,
 		arg.DisplayName,
 		arg.ProfileImageURL,
-		arg.EmailVerified,
-		arg.Email,
-		arg.Admin,
-		arg.IdentityProvider,
-		arg.IdentitySubject,
-		arg.IdentityID,
+		arg.WebauthnUserHandle,
 	)
-	var i UpsertAuthIdentityRow
+	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.DisplayName,
@@ -133,6 +40,113 @@ func (q *Queries) UpsertAuthIdentity(ctx context.Context, arg UpsertAuthIdentity
 		&i.PrimaryEmail,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AccessEpoch,
+		&i.ReauthenticateAfter,
+		&i.WebauthnUserHandle,
+	)
+	return i, err
+}
+
+const createAuthIdentity = `-- name: CreateAuthIdentity :one
+INSERT INTO auth_identities(id,user_id,provider,subject,observed_email,last_authenticated_at)
+VALUES ($1,$2,$3,$4,$5,clock_timestamp()) RETURNING id, user_id, provider, subject, observed_email, created_at, updated_at, last_authenticated_at, revoked_at
+`
+
+type CreateAuthIdentityParams struct {
+	ID            pgtype.UUID `json:"id"`
+	UserID        pgtype.UUID `json:"user_id"`
+	Provider      string      `json:"provider"`
+	Subject       string      `json:"subject"`
+	ObservedEmail pgtype.Text `json:"observed_email"`
+}
+
+func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentityParams) (AuthIdentity, error) {
+	row := q.db.QueryRow(ctx, createAuthIdentity,
+		arg.ID,
+		arg.UserID,
+		arg.Provider,
+		arg.Subject,
+		arg.ObservedEmail,
+	)
+	var i AuthIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.Subject,
+		&i.ObservedEmail,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastAuthenticatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getAccount = `-- name: GetAccount :one
+SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, reauthenticate_after, webauthn_user_handle FROM users WHERE id=$1
+`
+
+func (q *Queries) GetAccount(ctx context.Context, id pgtype.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, getAccount, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.DisplayName,
+		&i.ProfileImageURL,
+		&i.PrimaryEmail,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AccessEpoch,
+		&i.ReauthenticateAfter,
+		&i.WebauthnUserHandle,
+	)
+	return i, err
+}
+
+const getAccountByEmail = `-- name: GetAccountByEmail :one
+SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, reauthenticate_after, webauthn_user_handle FROM users WHERE lower(primary_email)=lower($1)
+`
+
+func (q *Queries) GetAccountByEmail(ctx context.Context, lower string) (User, error) {
+	row := q.db.QueryRow(ctx, getAccountByEmail, lower)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.DisplayName,
+		&i.ProfileImageURL,
+		&i.PrimaryEmail,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AccessEpoch,
+		&i.ReauthenticateAfter,
+		&i.WebauthnUserHandle,
+	)
+	return i, err
+}
+
+const getAuthIdentity = `-- name: GetAuthIdentity :one
+SELECT id, user_id, provider, subject, observed_email, created_at, updated_at, last_authenticated_at, revoked_at FROM auth_identities WHERE provider=$1 AND subject=$2 ORDER BY created_at DESC LIMIT 1
+`
+
+type GetAuthIdentityParams struct {
+	Provider string `json:"provider"`
+	Subject  string `json:"subject"`
+}
+
+func (q *Queries) GetAuthIdentity(ctx context.Context, arg GetAuthIdentityParams) (AuthIdentity, error) {
+	row := q.db.QueryRow(ctx, getAuthIdentity, arg.Provider, arg.Subject)
+	var i AuthIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.Subject,
+		&i.ObservedEmail,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastAuthenticatedAt,
+		&i.RevokedAt,
 	)
 	return i, err
 }

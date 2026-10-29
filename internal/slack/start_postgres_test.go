@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"sync"
 	"testing"
 	"time"
@@ -15,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
-	"github.com/jackc/pgx/v5"
 )
 
 type startPreflightFunc func(context.Context, slackroute.StartContext) (json.RawMessage, error)
@@ -33,7 +33,7 @@ func TestSlackStartSourceRetainsPositivelyBoundSuppressedOpening(t *testing.T) {
 	preflight := startPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
 		return json.RawMessage(`{"text":"Started agent.","mrkdwn":false}`), nil
 	})
-	root, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, preflight, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, req)
+	root, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, preflight, session.UserCaller(f.Principal(t)), req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestSlackStartWaitsForFirstChannelBindingBeforeEnvironment(t *testing.T) {
 		channel := "C2"
 		_, err := Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, admission, nil, startPreflightFunc(func(context.Context, slackroute.StartContext) (json.RawMessage, error) {
 			return json.RawMessage(`{"text":"Started agent.","mrkdwn":false}`), nil
-		}), session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.StartRequest{
+		}), session.UserCaller(f.Principal(t)), session.StartRequest{
 			EnvironmentID: f.Environment, Agent: "agent", IdempotencyKey: "first-channel", SlackChannelID: &channel,
 			Input: json.RawMessage(`[{"type":"text","text":"work"}]`),
 		})

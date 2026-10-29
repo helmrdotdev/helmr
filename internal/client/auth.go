@@ -25,3 +25,12 @@ func (c *Client) ExchangeDeviceCode(ctx context.Context, deviceCode string) (api
 func (c *Client) Logout(ctx context.Context) error {
 	return c.postJSON(ctx, "/api/auth/logout", struct{}{}, nil)
 }
+
+func (c *Client) StartDeviceConfirmation(ctx context.Context) (api.DeviceStartResponse, error) {
+	var result api.DeviceStartResponse
+	err := c.postJSON(ctx, "/api/auth/device/confirm/start", struct{}{}, &result)
+	return result, err
+}
+func (c *Client) RecordHumanActivity(ctx context.Context) error {
+	return c.postJSON(ctx, "/api/auth/device/activity", struct{}{}, nil)
+}

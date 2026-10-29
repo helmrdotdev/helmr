@@ -50,7 +50,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpFixture := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
+	httpFixture := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 	owner := httpFixture.session(t, f.User, orgID)
 	base := "/api/projects/project/environments/test"
 	start := base + "/sessions"
@@ -344,7 +344,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	}
 	sdkServer := httptest.NewServer(handler)
 	defer sdkServer.Close()
-	assertAgentCLIHTTP(t, sdkServer.URL, sdkKey.Raw, owner, "project", "test")
+	assertAgentCLIHTTP(t, sdkServer.URL, sdkKey.Raw, httpFixture.cliSession(t, f.User, orgID), "project", "test")
 	script, err := filepath.Abs("../../sdk/typescript/testdata/retained-work-http.ts")
 	if err != nil {
 		t.Fatal(err)
@@ -359,7 +359,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatalf("SDK HTTP composition: %v\n%s", err, output)
 	}
 	t.Run("exact Turn interrupt across public clients", func(t *testing.T) {
-		a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
+		a, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "exact", Input: json.RawMessage(`[{"type":"text","text":"run"}]`)})
 		if err != nil {
 			t.Fatal(err)
 		}

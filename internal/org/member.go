@@ -35,6 +35,7 @@ const (
 
 // ManagingMember identifies the acting human membership. Authority is read live.
 type ManagingMember struct {
+	Human       auth.Principal
 	AuditPolicy auditpolicy.Policy
 	Actor       audit.Evidence
 	OrgID       uuid.UUID
@@ -43,18 +44,7 @@ type ManagingMember struct {
 }
 
 func (m *ManagingMember) Authorize(ctx context.Context, database db.DBTX, permission auth.Permission) error {
-	q := db.New(database)
-	member, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(m.OrgID), UserID: pgvalue.UUID(m.UserID)})
-	if isNoRows(err) {
-		return ErrMemberManagementRequired
-	}
-	if err != nil {
-		return err
-	}
-	if pgvalue.MustUUIDValue(member.ID) != m.MemberID {
-		return ErrMemberManagementRequired
-	}
-	p, err := access.OrganizationPrincipal(ctx, database, m.OrgID, m.UserID)
+	p, err := m.Current(ctx, database)
 	if err != nil {
 		return err
 	}
@@ -64,7 +54,23 @@ func (m *ManagingMember) Authorize(ctx context.Context, database db.DBTX, permis
 		return errors.Join(ErrMemberManagementRequired, &auth.PermissionRefusal{Principal: p, Checks: checks})
 	}
 
-	return nil
+	return auth.RequireRecentFor(p, permission)
+}
+
+// Current retains the credential and membership that admitted this operation.
+func (m *ManagingMember) Current(ctx context.Context, database db.DBTX) (auth.Principal, error) {
+	if m.Human.OrgID != m.OrgID || m.Human.UserID != m.UserID || m.Human.MemberID != m.MemberID {
+		return auth.Principal{}, ErrMemberManagementRequired
+	}
+	p, err := access.CurrentHuman(ctx, database, m.Human)
+	if errors.Is(err, access.ErrDenied) {
+		return p, ErrMemberManagementRequired
+	}
+	if err != nil {
+		return p, err
+	}
+	m.Actor = audit.FromPrincipal(p)
+	return p, nil
 }
 
 // InvitationInput describes one invitation request: the addresses to invite
@@ -108,33 +114,37 @@ type UpdatedMember struct {
 }
 
 // ListMembers returns every member of the organization, including disabled ones.
-func ListMembers(ctx context.Context, database db.DBTX, manager ManagingMember) ([]db.ListOrgMembersRow, error) {
-	q := db.New(database)
-	if err := manager.Authorize(ctx, database, auth.PermissionMembersRead); err != nil {
-		return nil, err
-	}
-	members, err := q.ListOrgMembers(ctx, pgvalue.UUID(manager.OrgID))
-	if err != nil {
-		return nil, fmt.Errorf("list members: %w", err)
-	}
-	return members, nil
+func ListMembers(ctx context.Context, database db.TxBeginner, manager ManagingMember) ([]db.ListOrgMembersRow, error) {
+	var members []db.ListOrgMembersRow
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := manager.Authorize(ctx, tx, auth.PermissionMembersRead); err != nil {
+			return err
+		}
+		var err error
+		members, err = db.New(tx).ListOrgMembers(ctx, pgvalue.UUID(manager.OrgID))
+		return err
+	})
+	return members, err
 }
 
-// ListInvitations returns up to limit invitations of the organization after
-// the given position and whether more follow.
-func ListInvitations(ctx context.Context, database db.DBTX, manager ManagingMember, limit int32, after *InvitationPosition) ([]db.ListInvitationsRow, bool, error) {
-	q := db.New(database)
-	if err := manager.Authorize(ctx, database, auth.PermissionInvitationsRead); err != nil {
-		return nil, false, err
-	}
-	params := db.ListInvitationsParams{OrgID: pgvalue.UUID(manager.OrgID), RowLimit: limit + 1}
-	if after != nil {
-		params.AfterCreatedAt = pgvalue.Timestamptz(after.CreatedAt)
-		params.AfterID = pgvalue.UUID(after.ID)
-	}
-	invitations, err := q.ListInvitations(ctx, params)
+// ListInvitations reads the page under the same authority locks as admission.
+func ListInvitations(ctx context.Context, database db.TxBeginner, manager ManagingMember, limit int32, after *InvitationPosition) ([]db.ListInvitationsRow, bool, error) {
+	var invitations []db.ListInvitationsRow
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if err := manager.Authorize(ctx, tx, auth.PermissionInvitationsRead); err != nil {
+			return err
+		}
+		params := db.ListInvitationsParams{OrgID: pgvalue.UUID(manager.OrgID), RowLimit: limit + 1}
+		if after != nil {
+			params.AfterCreatedAt = pgvalue.Timestamptz(after.CreatedAt)
+			params.AfterID = pgvalue.UUID(after.ID)
+		}
+		var err error
+		invitations, err = db.New(tx).ListInvitations(ctx, params)
+		return err
+	})
 	if err != nil {
-		return nil, false, fmt.Errorf("list invitations: %w", err)
+		return nil, false, err
 	}
 	if len(invitations) > int(limit) {
 		return invitations[:limit], true, nil
@@ -350,6 +360,16 @@ func UpdateMemberOwnership(ctx context.Context, database db.TxBeginner, manager 
 		if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, manager.OrgID); err != nil {
 			return err
 		}
+		if err := lockActiveMembers(ctx, tx, manager, targetID); err != nil {
+			return err
+		}
+		current, err := manager.Current(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := auth.RequireRecentProof(current); err != nil {
+			return err
+		}
 		q := db.New(tx)
 		actor, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(manager.OrgID), UserID: pgvalue.UUID(manager.UserID)})
 		if isNoRows(err) {
@@ -371,12 +391,15 @@ func UpdateMemberOwnership(ctx context.Context, database db.TxBeginner, manager 
 		if err != nil {
 			return err
 		}
+		if value && target.SuspendedAt.Valid {
+			return invalidInput("resume the member before granting ownership")
+		}
 		if target.IsOwner != expected {
 			return ErrMemberRoleChanged
 		}
 		if target.IsOwner && !value {
 			var count int
-			if err := tx.QueryRow(ctx, `SELECT count(*) FROM org_members WHERE org_id=$1 AND is_owner AND removed_at IS NULL`, manager.OrgID).Scan(&count); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM org_members WHERE org_id=$1 AND is_owner AND removed_at IS NULL AND suspended_at IS NULL`, manager.OrgID).Scan(&count); err != nil {
 				return err
 			}
 			if count <= 1 {
@@ -535,4 +558,13 @@ func AcceptInvitation(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy,
 		return ErrInvitationNotFound
 	}
 	return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: invitation.OrgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: invitation.ID, TargetUserID: userID, Details: audit.MembershipDetails{MembershipID: pgvalue.UUIDString(member.ID)}})
+}
+
+// AcceptExistingMemberInvitation records consent without changing membership grants.
+// The caller holds the organization, invitation and account locks.
+func AcceptExistingMemberInvitation(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, actor audit.Evidence, id, orgID, memberID, userID uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `UPDATE invitations SET accepted_at=clock_timestamp(),accepted_by_member_id=$2 WHERE id=$1`, id, memberID); err != nil {
+		return err
+	}
+	return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, OrgID: orgID, Action: "invitation.accepted", TargetKind: "invitation", TargetID: id, TargetUserID: userID, Details: audit.MembershipDetails{MembershipID: memberID.String()}})
 }

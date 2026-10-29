@@ -35,7 +35,7 @@ func TestSlackNativeStopCoalescesAndResumesOnlyItsOwnHold(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
 	turn, ask := f.pendingQuestion(t)
-	queued, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "old-queue", Input: json.RawMessage(`[]`)})
+	queued, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "old-queue", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestSlackNativeStopCoalescesAndResumesOnlyItsOwnHold(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT a.status='accepted' AND b.status='accepted' AND a.control_id=b.control_id AND t.status='interrupted' AND q.status='cancelled' FROM slack_requests a JOIN slack_requests b ON b.id=$2 JOIN turns t ON t.id=$3 JOIN turn_asks q ON q.id=$4 WHERE a.id=$1`, first, second, turn, ask).Scan(&exact); err != nil || !exact {
 		t.Fatalf("coalesced stop: %v %v", exact, err)
 	}
-	other, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "admin-hold"})
+	other, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "interrupt", IdempotencyKey: "admin-hold"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestSlackNativeStopCannotAdmitAgainstNewerExecutionOrChangedAuthority(t *te
 			id := f.nativeStop(t, "delayed")
 			switch change {
 			case "turn":
-				_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "newer", Input: json.RawMessage(`[]`)})
+				_, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "newer", Input: json.RawMessage(`[]`)})
 				if err != nil {
 					t.Fatal(err)
 				}

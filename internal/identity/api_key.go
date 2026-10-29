@@ -184,7 +184,7 @@ func IssueAPIKey(ctx context.Context, database db.TxBeginner, policy auditpolicy
 		if input.Role != nil {
 			keyID := pgvalue.MustUUIDValue(record.ID)
 			project, environment := pgvalue.MustUUIDValue(projectID), pgvalue.MustUUIDValue(environmentID)
-			grants, err := org.AssignRole(ctx, tx, org.ManagingMember{AuditPolicy: policy, Actor: audit.FromPrincipal(issuer), OrgID: issuer.OrgID, UserID: issuer.UserID, MemberID: issuer.MemberID}, org.GrantInput{
+			grants, err := org.AssignRole(ctx, tx, org.ManagingMember{Human: issuer, AuditPolicy: policy, Actor: audit.FromPrincipal(issuer), OrgID: issuer.OrgID, UserID: issuer.UserID, MemberID: issuer.MemberID}, org.GrantInput{
 				Subject: org.GrantSubject{Type: "api_key", APIKeyID: &keyID}, RoleID: input.Role.RoleID, ExpectedRoleRevision: input.Role.ExpectedRoleRevision,
 				ProjectID: &project, EnvironmentID: &environment, AgentsMode: input.Role.AgentsMode, AgentIDs: input.Role.AgentIDs,
 			})
@@ -310,6 +310,11 @@ func apiKeyWriteError(err error) error {
 	return err
 }
 func lockAPIKeyManager(ctx context.Context, tx pgx.Tx, manager auth.Principal, scope auth.Scope, permission auth.Permission) (audit.Evidence, error) {
+	if manager.Kind == auth.PrincipalKindSession {
+		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR SHARE`, manager.UserID); err != nil {
+			return audit.Evidence{}, err
+		}
+	}
 	if err := authorizeAPIKeyManagement(manager, scope, permission); err != nil {
 		return audit.Evidence{}, err
 	}

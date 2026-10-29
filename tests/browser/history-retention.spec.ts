@@ -1,3 +1,4 @@
+import { authenticationResponse, isAuthenticationPath } from "./fixtures/authentication";
 import { expect, test, type Page } from "@playwright/test";
 
 const projectID = "console-demo";
@@ -9,6 +10,7 @@ async function scope(page: Page, options: { policy?: string; manage?: boolean; f
   const writes: { path: string; body: Record<string, unknown> }[] = [];
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname;
+    if(path === "/api/account/activity") return route.fulfill({status:204});
     if (["POST", "PATCH"].includes(route.request().method())) {
       const body = route.request().postDataJSON(); writes.push({ path, body });
       if (path.endsWith("/settings")) {
@@ -19,7 +21,7 @@ async function scope(page: Page, options: { policy?: string; manage?: boolean; f
       if (path === "/api/projects") return route.fulfill({ json: { ...project(), ...body } });
       environment = { ...environment, ...body }; return route.fulfill({ json: environment });
     }
-    if (path === "/api/me") return route.fulfill({ json: { user_id: "local", display_name: "Local", org_id: "org", permissions: options.manage === false ? [] : ["projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], admin: false, organization_required: false, project_required: false } });
+    if (isAuthenticationPath(path)) return route.fulfill({ json: authenticationResponse(path, { user_id: "local", display_name: "Local", org_id: "org", permissions: options.manage === false ? [] : ["projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], admin: false, organization_required: false, project_required: false }) });
     if (path === "/api/projects") return route.fulfill({ json: { projects: [project()] } });
     if (path === `/api/projects/${projectID}`) return route.fulfill({ json: project() });
     if (path.endsWith("/settings")) {

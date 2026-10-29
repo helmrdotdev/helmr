@@ -18,8 +18,21 @@ func RecoverOwnAccess(ctx context.Context, database db.TxBeginner, m ManagingMem
 		if _, err := tx.Exec(ctx, `SELECT id FROM organizations WHERE id=$1 FOR UPDATE`, m.OrgID); err != nil {
 			return err
 		}
+		if err := lockActiveMembers(ctx, tx, m); err != nil {
+			return err
+		}
+		current, err := m.Current(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if err := auth.RequireRecentProof(current); err != nil {
+			return err
+		}
+		if !current.IsOwner {
+			return ErrOwnerRoleRequired
+		}
 		var member uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM org_members WHERE org_id=$1 AND id=$2 AND user_id=$3 AND is_owner AND removed_at IS NULL FOR UPDATE`, m.OrgID, m.MemberID, m.UserID).Scan(&member); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id FROM org_members WHERE org_id=$1 AND id=$2 AND user_id=$3 AND is_owner AND removed_at IS NULL AND suspended_at IS NULL FOR UPDATE`, m.OrgID, m.MemberID, m.UserID).Scan(&member); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrOwnerRoleRequired
 			}
@@ -68,8 +81,15 @@ type OwnershipMember struct {
 func OwnershipMembers(ctx context.Context, database db.TxBeginner, m ManagingMember) ([]OwnershipMember, error) {
 	result := []OwnershipMember{}
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		current, err := m.Current(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if !current.IsOwner {
+			return ErrOwnerRoleRequired
+		}
 		var owner bool
-		if err := tx.QueryRow(ctx, `SELECT is_owner FROM org_members WHERE org_id=$1 AND id=$2 AND user_id=$3 AND removed_at IS NULL`, m.OrgID, m.MemberID, m.UserID).Scan(&owner); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT is_owner FROM org_members WHERE org_id=$1 AND id=$2 AND user_id=$3 AND removed_at IS NULL AND suspended_at IS NULL`, m.OrgID, m.MemberID, m.UserID).Scan(&owner); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrOwnerRoleRequired
 			}
@@ -78,7 +98,7 @@ func OwnershipMembers(ctx context.Context, database db.TxBeginner, m ManagingMem
 		if !owner {
 			return ErrOwnerRoleRequired
 		}
-		rows, err := tx.Query(ctx, `SELECT m.id,COALESCE(m.display_name,u.display_name),m.is_owner FROM org_members m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.removed_at IS NULL ORDER BY m.is_owner DESC,m.id`, m.OrgID)
+		rows, err := tx.Query(ctx, `SELECT m.id,COALESCE(m.display_name,u.display_name),m.is_owner FROM org_members m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.removed_at IS NULL AND m.suspended_at IS NULL ORDER BY m.is_owner DESC,m.id`, m.OrgID)
 		if err != nil {
 			return err
 		}

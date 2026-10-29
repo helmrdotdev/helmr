@@ -60,7 +60,7 @@ func TestDeploymentHTTPPostgresUploadAuthorityAndManifest(t *testing.T) {
 	}
 	viewerID := fixture.user(t, "upload-viewer")
 	fixture.member(t, orgID, viewerID, "member")
-	viewer := fixture.session(t, viewerID, orgID)
+	viewer := fixture.cliSession(t, viewerID, orgID)
 	otherOrg, otherToken := fixture.organizationOwner(t, "other-upload")
 	otherProject, otherEnvironment := deploymentHTTPEnvironment(t, fixture, otherOrg)
 	var otherUser uuid.UUID
@@ -75,7 +75,7 @@ func TestDeploymentHTTPPostgresUploadAuthorityAndManifest(t *testing.T) {
 	request := func(path, credential, media, encoding string, payload []byte) int {
 		t.Helper()
 		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, server.URL+path, bytes.NewReader(payload))
-		req.Header.Set("Authorization", "Bearer "+credential)
+		fixture.authenticateRequest(req, credential)
 		req.Header.Set("Content-Type", media)
 		req.Header.Set("Expect", "100-continue")
 		if encoding != "" {
@@ -89,9 +89,9 @@ func TestDeploymentHTTPPostgresUploadAuthorityAndManifest(t *testing.T) {
 		_, _ = io.Copy(io.Discard, response.Body)
 		return response.StatusCode
 	}
-	deploymentUploadRawStatus(t, server.URL, base+objectPath, "invalid", manifest.Program.Artifact.MediaType, 4096, "a", http.StatusUnauthorized)
-	deploymentUploadRawStatus(t, server.URL, base+objectPath, viewer, manifest.Program.Artifact.MediaType, 4096, "a", http.StatusForbidden)
-	deploymentUploadRawStatus(t, server.URL, base+objectPath, token, "application/octet-stream", 4096, "a", http.StatusBadRequest)
+	deploymentUploadRawStatus(t, fixture, server.URL, base+objectPath, "invalid", manifest.Program.Artifact.MediaType, 4096, "a", http.StatusUnauthorized)
+	deploymentUploadRawStatus(t, fixture, server.URL, base+objectPath, viewer, manifest.Program.Artifact.MediaType, 4096, "a", http.StatusForbidden)
+	deploymentUploadRawStatus(t, fixture, server.URL, base+objectPath, token, "application/octet-stream", 4096, "a", http.StatusBadRequest)
 	reads := store.reads.Load()
 	if got := request(base+objectPath, viewer, manifest.Program.Artifact.MediaType, "", body); got != http.StatusForbidden {
 		t.Fatalf("unprivileged upload=%d", got)
@@ -144,7 +144,7 @@ func TestDeploymentHTTPPostgresUploadAuthorityAndManifest(t *testing.T) {
 	if !store.has(orgID.String(), manifest.Program.Artifact.Digest) || !store.has(otherOrg.String(), manifest.Program.Artifact.Digest) {
 		t.Fatal("quarantine writes were not isolated by organization")
 	}
-	deploymentUploadRawStatus(t, server.URL, base+objectPath, token, manifest.Program.Artifact.MediaType, 4096, "a", http.StatusNoContent)
+	deploymentUploadRawStatus(t, fixture, server.URL, base+objectPath, token, manifest.Program.Artifact.MediaType, 4096, "a", http.StatusNoContent)
 	// A completed quarantine object does not bypass current permission checks.
 	if _, err := fixture.pool.Exec(t.Context(), `DELETE FROM role_grants WHERE org_id=$1 AND member_id=$2 AND environment_id=$3`, orgID, memberID, environmentID); err != nil {
 		t.Fatal(err)
@@ -212,7 +212,7 @@ func TestDeploymentHTTPPostgresUploadBodyLimits(t *testing.T) {
 			req, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, server.URL+prefix+"/deployment-bundles/"+digest+"/objects/"+manifest.Program.Artifact.Digest, io.LimitReader(zeroUploadReader{}, size))
 			req.ContentLength = size
 			req.Header.Set("Content-Type", manifest.Program.Artifact.MediaType)
-			req.Header.Set("Authorization", "Bearer "+token)
+			fixture.authenticateRequest(req, token)
 			req.Header.Set("Expect", "100-continue")
 			response, err := server.Client().Do(req)
 			if err != nil {
@@ -247,14 +247,14 @@ func TestDeploymentHTTPPostgresUploadCapacity(t *testing.T) {
 	releases := make(map[uuid.UUID]chan struct{})
 	releaseA, releaseB, releaseD := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	for i := range tokens {
-		org, token := fixture.organizationOwner(t, fmt.Sprintf("upload-capacity-%d", i))
+		org, _ := fixture.organizationOwner(t, fmt.Sprintf("upload-capacity-%d", i))
 		_, environment := deploymentHTTPEnvironment(t, fixture, org)
 		var user uuid.UUID
 		if err := fixture.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id=$1 AND is_owner`, org).Scan(&user); err != nil {
 			t.Fatal(err)
 		}
 		fixture.grant(t, org, user, environment, "deployments.publish")
-		tokens[i] = token
+		tokens[i] = fixture.cliSession(t, user, org)
 		if i == 0 {
 			releases[org] = releaseA
 		} else if i == 1 {
@@ -329,7 +329,7 @@ func TestDeploymentHTTPPostgresUploadCapacity(t *testing.T) {
 	waitEntered(2)
 	// One slow organization cannot take the remaining capacity, even though its
 	// other CLI attempts keep waiting. Reject a partial body without draining it.
-	deploymentUploadRawStatus(t, server.URL, path, tokens[0], manifest.Program.Artifact.MediaType, 4096, "a", http.StatusTooManyRequests)
+	deploymentUploadRawStatus(t, fixture, server.URL, path, tokens[0], manifest.Program.Artifact.MediaType, 4096, "a", http.StatusTooManyRequests)
 	otherResults := make(chan error, 2)
 	for range 2 {
 		go func() { otherResults <- upload(ctx, 1) }()
@@ -337,9 +337,9 @@ func TestDeploymentHTTPPostgresUploadCapacity(t *testing.T) {
 	waitEntered(2)
 	// Four globally held streams still leave ordinary APIs usable, and the fifth
 	// upload is refused regardless of its organization.
-	deploymentUploadRawStatus(t, server.URL, path, tokens[2], manifest.Program.Artifact.MediaType, 4096, "a", http.StatusTooManyRequests)
-	ordinary, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/me", nil)
-	ordinary.Header.Set("Authorization", "Bearer "+tokens[0])
+	deploymentUploadRawStatus(t, fixture, server.URL, path, tokens[2], manifest.Program.Artifact.MediaType, 4096, "a", http.StatusTooManyRequests)
+	ordinary, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/organization", nil)
+	fixture.authenticateRequest(ordinary, tokens[0])
 	response, err := server.Client().Do(ordinary)
 	if err != nil {
 		t.Fatal(err)
@@ -427,6 +427,7 @@ func TestDeploymentHTTPPostgresUploadReleasesOrdinaryAdmission(t *testing.T) {
 	server := httptest.NewServer(fixture.handler)
 	defer server.Close()
 	defer releaseOnce.Do(func() { close(release) })
+	token = fixture.cliSession(t, userID, orgID)
 	c, err := client.New(server.URL, client.WithBearerToken(token), client.WithSessionScopedRoutes())
 	if err != nil {
 		t.Fatal(err)
@@ -452,9 +453,9 @@ func TestDeploymentHTTPPostgresUploadReleasesOrdinaryAdmission(t *testing.T) {
 		}
 	}
 	path := "/api/projects/deployments/environments/staging/deployment-bundles/" + digest + "/objects/" + manifest.Program.Artifact.Digest
-	deploymentUploadRawStatus(t, server.URL, path, token, manifest.Program.Artifact.MediaType, 4096, "a", http.StatusTooManyRequests)
-	ordinary, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/me", nil)
-	ordinary.Header.Set("Authorization", "Bearer "+token)
+	deploymentUploadRawStatus(t, fixture, server.URL, path, token, manifest.Program.Artifact.MediaType, 4096, "a", http.StatusTooManyRequests)
+	ordinary, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/api/organization", nil)
+	fixture.authenticateRequest(ordinary, token)
 	response, err := server.Client().Do(ordinary)
 	if err != nil {
 		t.Fatal(err)
@@ -481,7 +482,7 @@ func TestDeploymentHTTPPostgresUploadReleasesOrdinaryAdmission(t *testing.T) {
 	}
 }
 
-func deploymentUploadRawStatus(t *testing.T, origin, path, token, media string, length int64, prefix string, status int) {
+func deploymentUploadRawStatus(t *testing.T, fixture httpPostgresFixture, origin, path, token, media string, length int64, prefix string, status int) {
 	t.Helper()
 	conn, err := net.Dial("tcp", strings.TrimPrefix(origin, "http://"))
 	if err != nil {
@@ -489,7 +490,13 @@ func deploymentUploadRawStatus(t *testing.T, origin, path, token, media string, 
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
-	_, err = fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: test\r\nAuthorization: Bearer %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n%s", path, token, media, length, prefix)
+	request := httptest.NewRequest("PUT", path, nil)
+	fixture.authenticateRequest(request, token)
+	var headers strings.Builder
+	if err := request.Header.Write(&headers); err != nil {
+		t.Fatal(err)
+	}
+	_, err = fmt.Fprintf(conn, "PUT %s HTTP/1.1\r\nHost: test\r\n%sContent-Type: %s\r\nContent-Length: %d\r\n\r\n%s", path, headers.String(), media, length, prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -530,7 +537,7 @@ func TestDeploymentHTTPPostgresUploadStorageFailure(t *testing.T) {
 			store.phase = phase
 			for range 5 { // Failed requests must return both capacity permits.
 				request, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, server.URL+path, strings.NewReader(strings.Repeat("a", 4096)))
-				request.Header.Set("Authorization", "Bearer "+token)
+				fixture.authenticateRequest(request, token)
 				request.Header.Set("Content-Type", manifest.Program.Artifact.MediaType)
 				response, err := server.Client().Do(request)
 				if err != nil {
@@ -573,7 +580,7 @@ func TestDeploymentHTTPPostgresUploadPreflightDeadline(t *testing.T) {
 	for range 5 { // More cancellations than the configured organization capacity.
 		ctx, cancel := context.WithCancel(t.Context())
 		request := httptest.NewRequest(http.MethodPut, path, strings.NewReader(strings.Repeat("a", 4096))).WithContext(ctx)
-		request.Header.Set("Authorization", "Bearer "+token)
+		fixture.authenticateRequest(request, token)
 		request.Header.Set("Content-Type", manifest.Program.Artifact.MediaType)
 		response := httptest.NewRecorder()
 		done := make(chan struct{})

@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"errors"
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"time"
@@ -23,11 +24,12 @@ type ReauthorizationView struct {
 // ReauthorizationRequired lists, oldest loss first and at most limit, the
 // Environment's connections whose status reads reauthorization_required, with
 // the complete count, filtered to connections the caller can manage.
-func ReauthorizationRequired(ctx context.Context, pool db.TxBeginner, org, user, environment uuid.UUID, limit int) ([]ReauthorizationView, int64, error) {
+func ReauthorizationRequired(ctx context.Context, pool db.TxBeginner, prior auth.Principal, environment uuid.UUID, limit int) ([]ReauthorizationView, int64, error) {
+	org := prior.OrgID
 	views := []ReauthorizationView{}
 	var count int64
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		all, agents, err := reauthorizationScope(ctx, tx, org, user, environment)
+		all, agents, err := reauthorizationScope(ctx, tx, prior, environment)
 		if err != nil {
 			return err
 		}
@@ -59,11 +61,12 @@ const reauthorizationFromSQL = `
  AND ($3 OR p.agent_id::text=ANY($4::text[]))
  AND i.disconnected_at IS NULL AND r.retired_at IS NULL AND i.authorization_lost_at IS NOT NULL`
 
-func reauthorizationScope(ctx context.Context, tx pgx.Tx, org, user, environment uuid.UUID) (bool, []string, error) {
-	if err := lockSlackMember(ctx, tx, org, user); err != nil {
-		return false, nil, err
+func reauthorizationScope(ctx context.Context, tx pgx.Tx, prior auth.Principal, environment uuid.UUID) (bool, []string, error) {
+	org := prior.OrgID
+	principal, err := access.HumanInEnvironment(ctx, tx, prior, environment)
+	if errors.Is(err, access.ErrDenied) {
+		return false, nil, errInstallationAuthority
 	}
-	principal, err := access.Principal(ctx, tx, "user", user, environment)
 	if err != nil {
 		return false, nil, err
 	}
@@ -88,10 +91,11 @@ func reauthorizationScope(ctx context.Context, tx pgx.Tx, org, user, environment
 }
 
 // CountReauthorizationRequired selects metadata only under the same current authority.
-func CountReauthorizationRequired(ctx context.Context, pool db.TxBeginner, org, user, environment uuid.UUID) (int64, error) {
+func CountReauthorizationRequired(ctx context.Context, pool db.TxBeginner, prior auth.Principal, environment uuid.UUID) (int64, error) {
+	org := prior.OrgID
 	var count int64
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		all, agents, err := reauthorizationScope(ctx, tx, org, user, environment)
+		all, agents, err := reauthorizationScope(ctx, tx, prior, environment)
 		if err != nil {
 			return err
 		}

@@ -1,3 +1,4 @@
+import { authenticationResponse } from "./fixtures/authentication";
 import { expect, test, type Page, type BrowserContext } from "@playwright/test";
 
 // Real console routing/components; external authentication and API responses are
@@ -5,6 +6,7 @@ import { expect, test, type Page, type BrowserContext } from "@playwright/test";
 async function fixture(context: BrowserContext, options: { loggedIn?: boolean; newUser?: boolean; status?: string; meError?: number } = {}) {
   const state = {
     loggedIn: options.loggedIn ?? false,
+    userID:"user-1", name:"Developer", orgID:"org-1", orgName:"Example org",
     orgRequired: options.newUser ?? false,
     projectRequired: true,
     status: options.status ?? "pending",
@@ -18,28 +20,33 @@ async function fixture(context: BrowserContext, options: { loggedIn?: boolean; n
     const url = new URL(request.url());
     const body = request.method() === "POST" ? request.postDataJSON() ?? {} : {};
     const json = (value: unknown, status = 200) => route.fulfill({ status, json: value });
+    const account = {user_id:state.userID,display_name:state.name,org_id:state.orgRequired?null:state.orgID,org_name:state.orgName,permissions:[],organization_required:state.orgRequired,project_required:state.projectRequired,app_origin:url.origin};
+    if(request.method()==="GET" && ["/api/auth/config","/api/organizations","/api/organization"].includes(url.pathname))return json(authenticationResponse(url.pathname,account));
+    if(/^\/api\/auth\/email\/[^/]+\/verify$/.test(url.pathname)) {
+      state.loggedIn=true;
+      return json({redirect_after:state.next.get(url.pathname.split("/")[4]!)??"/"});
+    }
     switch (url.pathname) {
       case "/api/me":
         if (state.meError) return json({ error: { code: "internal_error", message: "unavailable" } }, state.meError);
-        if (!state.loggedIn) return json({ error: { code: "unauthorized", message: "Sign in" } }, 401);
-        return json({ user_id: "user-1", display_name: "Developer", permissions: [], admin: false, org_id: state.orgRequired ? null : "org-1", org_name: "Example org", organization_required: state.orgRequired, project_required: state.projectRequired, app_origin: url.origin });
+        if (!state.loggedIn) return json({ error: { code: "authentication_required", message: "Sign in" } }, 403);
+        return json(authenticationResponse("/api/me",account));
       case "/api/auth/github/start": {
         const id = String(state.next.size + 1); state.next.set(id, body.next);
         return json({ redirect_url: `${url.origin}/auth/github/callback?code=fixture&state=${id}` });
       }
-      case "/api/auth/magic-link/start": {
+      case "/api/auth/email/start": {
         const id = String(state.next.size + 1); state.next.set(id, body.next);
-        return json({ sent: true, debug_url: `${url.origin}/auth/magic-link/callback?token=${id}` });
+        return json({challenge_id:id,expires_at:new Date(Date.now()+600000).toISOString(),resend_after:new Date(Date.now()+60000).toISOString()},202);
       }
       case "/api/auth/github/finish":
-      case "/api/auth/magic-link/finish":
         state.loggedIn = true;
         return json({ redirect_after: state.next.get(body.state ?? body.token) ?? "/" });
       case "/api/organizations":
         state.orgRequired = false;
         return json({ id: "org-1", name: body.name, slug: body.slug }, 201);
       case "/api/auth/device/status":
-        return json({ status: state.status, expires_at: new Date(Date.now() + 600_000).toISOString() });
+        return json({ status: state.status, confirmation:false, consent:{account_name:state.name,org_name:state.orgName,org_id:state.orgID,proof:"fixture-consent"}, expires_at: new Date(Date.now() + 600_000).toISOString() });
       case "/api/auth/device/approve":
       case "/api/auth/device/deny":
         state.approved.push(body);
@@ -67,8 +74,9 @@ async function signIn(page: Page, method: "github" | "email") {
   if (method === "github") await page.getByRole("button", { name: "Continue with GitHub" }).click();
   else {
     await page.getByLabel("Email").fill("developer@example.test");
-    await page.getByRole("button", { name: "Send sign-in link" }).click();
-    await page.getByRole("button", { name: "Continue with dev link" }).click();
+    await page.getByRole("button", { name: "Send verification code" }).click();
+    await page.getByLabel("Verification code").fill("12345678");
+    await page.getByRole("button", { name: "Verify email", exact:true }).click();
   }
 }
 
@@ -88,7 +96,7 @@ for (const method of ["github", "email"] as const) {
     await page.getByRole("button", { name: "Approve", exact: true }).click();
     await expect(page.getByRole("heading", { name: "CLI authorized" })).toBeVisible();
     await expect(page.getByText("Return to your terminal to finish signing in.")).toBeVisible();
-    expect(state.approved).toEqual([{ user_code: "ABCD-EFGH", user_id: "user-1", org_id: "org-1" }]);
+    expect(state.approved).toEqual([{ user_code: "ABCD-EFGH", org_id: "org-1" }]);
   });
 }
 
@@ -151,15 +159,15 @@ test("two request URLs retain separate codes when login is already available", a
 });
 
 test("a changed account requires another explicit review and approval", async ({ page, context }) => {
-  await fixture(context, { loggedIn: true });
+  const state = await fixture(context, { loggedIn: true });
   await page.goto("/auth/device?code=CHANGED");
   await expect(detail(page, "Account")).toHaveText("Developer");
-  await context.route("**/api/me", (route) => route.fulfill({ json: { user_id: "user-2", display_name: "Another user", org_id: "org-2", org_name: "Another org", permissions: [], organization_required: false, project_required: true, admin: false } }));
+  state.userID="user-2";state.name="Another user";state.orgID="org-2";state.orgName="Another org";
   let attempts = 0;
   await context.route("**/api/auth/device/approve", async (route) => {
     attempts++;
     if (attempts === 1) return route.fulfill({ status: 409, json: { error: { code: "device_identity_changed", message: "Account changed. Review again." } } });
-    expect(route.request().postDataJSON()).toEqual({ user_code: "CHANGED", user_id: "user-2", org_id: "org-2" });
+    expect(route.request().postDataJSON()).toEqual({ user_code: "CHANGED", org_id: "org-2" });
     return route.fulfill({ json: { status: "approved" } });
   });
   await page.getByRole("button", { name: "Approve", exact: true }).click();
@@ -173,7 +181,7 @@ test("a changed account requires another explicit review and approval", async ({
   expect(attempts).toBe(2);
 });
 
-for (const method of ["github", "magic-link"]) {
+for (const method of ["github"]) {
   test(`${method} callback failures distinguish CLI retry from console sign-in`, async ({ page, context }) => {
     await fixture(context);
     await context.route(`**/api/auth/${method}/finish`, route => route.fulfill({ status: 400, json: { error: { code: "invalid_request", message: "Sign-in failed" } } }));
@@ -206,3 +214,27 @@ test("a request consumed elsewhere replaces the stale action error", async ({ pa
   await expect(page.getByRole("heading", { name: "This request was already used" })).toBeVisible();
   await expect(page.getByText("Old action failed")).toHaveCount(0);
 });
+
+test("organization choice preserves the CLI consent destination",async({page,context})=>{
+ await fixture(context,{loggedIn:true});
+ await page.goto("/organizations?next=%2Fauth%2Fdevice%3Fuser_code%3DABCD-EFGH");
+ await page.getByRole("button",{name:"Example org",exact:true}).click();
+ await expect(page).toHaveURL(/\/auth\/device\?user_code=ABCD-EFGH/);
+});
+
+for(const membership of ["none","denied"]){
+ test(`account confirmation remains available with ${membership} organization access`,async({page,context})=>{
+ await fixture(context,{loggedIn:true});
+ await context.route("**/api/organization",route=>route.fulfill({status:403,json:{error:{code:"access_denied",message:"Membership access ended"}}}));
+ if(membership==="none")await context.route("**/api/organizations",route=>route.fulfill({json:{organizations:[]}}));
+ await context.route("**/api/account/credentials",route=>route.fulfill({json:{credentials:[]}}));
+ await page.goto("/settings/account");
+ await expect(page.getByRole("heading",{name:"My account",exact:true})).toBeVisible();
+ await expect(page.getByRole("heading",{name:"Confirm your account",exact:true})).toBeVisible();
+ await expect(page).toHaveURL(/\/settings\/account$/);
+ if(membership==="denied"){
+ await page.goto("/");await expect(page.getByRole("link",{name:"Confirm sign-in",exact:true})).toBeVisible();
+ await page.getByRole("link",{name:"Confirm sign-in",exact:true}).click();await expect(page.getByRole("heading",{name:"Confirm your account",exact:true})).toBeVisible();
+ }
+ });
+}

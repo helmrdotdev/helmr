@@ -313,7 +313,6 @@ run "fixed_capacity_plan" {
       ENVIRONMENT_ADMISSION_RATE_PER_SECOND  = "10"
       ENVIRONMENT_ADMISSION_BURST            = "20"
       ENVIRONMENT_PREPARATION_TIMEOUT_MS     = "600000"
-      ADMIN_EMAILS                           = "operator@example.test"
     }
   }
 }

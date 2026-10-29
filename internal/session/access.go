@@ -14,6 +14,7 @@ import (
 )
 
 type sessionOrigin struct {
+	Human                 auth.Principal
 	User, Key, Activation *uuid.UUID
 	Connection            *uuid.UUID
 	Agent                 uuid.UUID
@@ -58,6 +59,12 @@ func (o sessionOrigin) id() uuid.UUID {
 func loadSessionOrigin(ctx context.Context, q db.DBTX, env, id uuid.UUID) (sessionOrigin, error) {
 	var o sessionOrigin
 	err := q.QueryRow(ctx, `SELECT origin_user_id,origin_api_key_id,origin_activation_id,agent_id,origin_slack_connection_id FROM sessions WHERE environment_id=$1 AND id=$2`, env, id).Scan(&o.User, &o.Key, &o.Activation, &o.Agent, &o.Connection)
+	if err == nil && o.User != nil && o.Connection == nil {
+		o.Human, err = access.ReadHuman(q.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM sessions WHERE environment_id=$1 AND id=$2`, env, id))
+		if errors.Is(err, access.ErrDenied) {
+			err = nil
+		}
+	}
 	return o, hideMissing(err)
 }
 func accessError(err error) error {
@@ -92,7 +99,7 @@ func (o sessionOrigin) authorize(ctx context.Context, q db.DBTX, env, agent uuid
 	if o.mode() != "scoped" {
 		return ErrDenied
 	}
-	return requirePermission(ctx, q, o.kind(), o.id(), env, agent, permission)
+	return o.requirePermission(ctx, q, env, agent, permission)
 }
 func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req StartRequest, agent uuid.UUID) (sessionOrigin, error) {
 	var o sessionOrigin
@@ -110,6 +117,7 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 		if caller.Kind == "user" {
 			id := caller.ID
 			o.User = &id
+			o.Human = caller.Human
 		} else if caller.Kind == "api_key" {
 			id := caller.ID
 			o.Key = &id
@@ -118,7 +126,7 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 		}
 	}
 	if caller.Kind != "session" && caller.SlackConnectionID != uuid.Nil() {
-		if err := requirePermission(ctx, tx, caller.Kind, caller.ID, req.EnvironmentID, agent, auth.PermissionAgentsUse); err != nil {
+		if err := requireCallerPermission(ctx, tx, caller, req.EnvironmentID, agent, auth.PermissionAgentsUse); err != nil {
 			return o, err
 		}
 		connection := caller.SlackConnectionID
@@ -131,13 +139,13 @@ func resolveStartOrigin(ctx context.Context, tx pgx.Tx, caller Caller, req Start
 		if o.mode() != "scoped" {
 			return o, ErrDenied
 		}
-		if err := requirePermission(ctx, tx, o.kind(), o.id(), req.EnvironmentID, uuid.Nil(), auth.PermissionComputersExecute); err != nil {
+		if err := o.requirePermission(ctx, tx, req.EnvironmentID, uuid.Nil(), auth.PermissionComputersExecute); err != nil {
 			return o, err
 		}
 	}
 	if o.mode() == "scoped" {
 		if req.SessionKey != nil || req.SlackChannelID != nil {
-			if err := requirePermission(ctx, tx, caller.Kind, caller.ID, req.EnvironmentID, agent, auth.PermissionSessionsCreateKeyed); err != nil {
+			if err := requireCallerPermission(ctx, tx, caller, req.EnvironmentID, agent, auth.PermissionSessionsCreateKeyed); err != nil {
 				return o, err
 			}
 		}
@@ -172,7 +180,7 @@ func authorizeTargetAuthority(ctx context.Context, tx pgx.Tx, caller Caller, env
 		return err
 	}
 	if caller.Kind != "session" {
-		p, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+		p, err := callerPrincipal(ctx, tx, caller, env)
 		if err != nil {
 			return accessError(err)
 		}
@@ -273,7 +281,7 @@ func readScopeFor(ctx context.Context, q db.DBTX, caller Caller, env uuid.UUID) 
 	} else if caller.Kind == "api_key" {
 		filter.Key = &caller.ID
 	}
-	p, err := access.Principal(ctx, q, caller.Kind, caller.ID, env)
+	p, err := callerPrincipal(ctx, q, caller, env)
 	if err != nil {
 		return filter, accessError(err)
 	}
@@ -341,7 +349,7 @@ func RuntimeAgentScope(ctx context.Context, tx pgx.Tx, caller Caller) (bool, []u
 	if o.mode() == "shared" {
 		return false, []uuid.UUID{o.Agent}, nil
 	}
-	scope, err := readScopeFor(ctx, tx, Caller{Kind: o.kind(), ID: o.id()}, caller.Execution.EnvironmentID)
+	scope, err := readScopeFor(ctx, tx, Caller{Kind: o.kind(), ID: o.id(), Human: o.Human}, caller.Execution.EnvironmentID)
 	return scope.AllAgents, scope.Agents, err
 }
 
@@ -374,7 +382,7 @@ func externalSessionPermissions(ctx context.Context, tx pgx.Tx, caller Caller, e
 	if err != nil {
 		return nil, err
 	}
-	p, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+	p, err := callerPrincipal(ctx, tx, caller, env)
 	if err != nil {
 		return nil, accessError(err)
 	}
@@ -396,4 +404,11 @@ func externalSessionPermissions(ctx context.Context, tx pgx.Tx, caller Caller, e
 // presentation and local controls as to core Session actions.
 func AuthorizeSessionOperation(ctx context.Context, tx pgx.Tx, caller Caller, env, target uuid.UUID, operation auth.Permission) error {
 	return authorizeTarget(ctx, tx, caller, env, target, operation)
+}
+
+func (o sessionOrigin) requirePermission(ctx context.Context, q db.DBTX, env, agent uuid.UUID, permission auth.Permission) error {
+	if o.User != nil {
+		return requireCallerPermission(ctx, q, UserCaller(o.Human), env, agent, permission)
+	}
+	return requirePermission(ctx, q, o.kind(), o.id(), env, agent, permission)
 }

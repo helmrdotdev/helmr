@@ -16,7 +16,7 @@ import (
 
 func (f statusFixture) outputWriter(t *testing.T) func(string) int64 {
 	t.Helper()
-	receipt, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "projection", Input: json.RawMessage(`[]`)})
+	receipt, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "projection", Input: json.RawMessage(`[]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestSlackProjectionQuestionBypassesUnknownOutputAndWithdrawsAnswerControl(t
 	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, q, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.791"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: "answer", Answer: json.RawMessage(`{"selectedIds":["a"]}`)}); err != nil {
+	if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: "answer", Answer: json.RawMessage(`{"selectedIds":["a"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	f.projectAll(t)

@@ -6,6 +6,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"slices"
 	"time"
+	"uuid"
 )
 
 // Details contains only the facts permitted for an administrative action.
@@ -126,19 +127,30 @@ type AgentChangeDetails struct {
 
 func (AgentChangeDetails) auditDetails() {}
 
+// IdentitySecurityDetails records source references without credential material or mailbox values.
+type IdentitySecurityDetails struct {
+	CredentialID uuid.UUID `json:"credential_id,omitzero"`
+	Method       string    `json:"method,omitempty"`
+}
+
+func (IdentitySecurityDetails) auditDetails() {}
+
 func marshalDetails(action string, details Details) ([]byte, error) {
 	if _, ok := Lookup(action); !ok {
 		return nil, fmt.Errorf("unknown audit action %s", action)
 	}
 	valid := false
 	switch action {
+	case "identity.profile_updated", "identity.email_changed", "identity.credential_added", "identity.credential_removed", "identity.access_revoked", "identity.account_repaired", "operator.sign_in", "operator.session_confirmed", "operator.session_revoked", "operator.credential_added", "operator.credential_removed", "operator.repaired":
+		d, ok := details.(IdentitySecurityDetails)
+		valid = ok && len(d.Method) <= 64
 	case "identity.session_revoked":
 		d, ok := details.(SessionRevokedDetails)
 		valid = ok && (d.Reason == "logout" || d.Reason == "membership_removed" || d.Reason == "invitation_accepted")
 	case "message.rejected":
 		d, ok := details.(MessageRejectedDetails)
 		valid = ok && (d.Reason == "message_rejected" || d.Reason == "callback_failed" || d.Reason == "turn_closed" || d.Reason == "turn_terminated")
-	case "identity.sign_in", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested":
+	case "identity.sign_in", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested", "identity.email_code_requested":
 		d, ok := details.(AuthenticationDetails)
 		valid = ok && d.Method != "" && len(d.Method) <= 64 && len(d.Provider) <= 128 && len(d.Subject) <= 512
 	case "audit.searched":
@@ -198,7 +210,7 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "access.recovered", "permission_group.created", "permission_group.updated", "permission_group.deleted", "permission_group.member_added", "permission_group.member_removed", "role.created", "role.updated", "role.deleted", "role_grant.created", "role_grant.updated", "role_grant.deleted":
 		d, ok := details.(AccessChangeDetails)
 		valid = ok && (d.Before != nil || d.After != nil)
-	case "member.granted", "member.removed", "invitation.accepted":
+	case "member.granted", "member.removed", "member.sessions_revoked", "member.suspended", "member.resumed", "invitation.accepted":
 		d, ok := details.(MembershipDetails)
 		valid = ok && d.MembershipID != ""
 	case "platform_admin.granted":

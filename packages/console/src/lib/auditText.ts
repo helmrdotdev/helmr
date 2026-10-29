@@ -75,12 +75,13 @@ export function actionLabel(action: string): string {
   return word ? `${word} ${noun}` : `${noun} ${verb.replaceAll("_", " ")}`.replace(/^./, (c) => c.toUpperCase());
 }
 
-export type ActorKind = "member" | "api_key" | "session" | "worker_host" | "helmr" | "platform_service" | "unidentified";
+export type ActorKind = "operator" | "member" | "api_key" | "session" | "worker_host" | "helmr" | "platform_service" | "unidentified";
 
 // Who acted: a person, an API key, an agent's session, a worker host or Helmr
 // itself, with the label recorded at the time.
 export function actorOf(event: AuditEvent): { kind: ActorKind; name: string; detail?: string | undefined; id?: string } {
   const label = event.actor_identity?.display_name;
+  if (event.actor_operator_id) return { kind: "operator", name: label || `Operator ${shortID(event.actor_operator_id)}`, id: event.actor_operator_id };
   if (event.actor_user_id) return { kind: "member", name: label || `Member ${shortID(event.actor_user_id)}`, detail: event.actor_identity?.email, id: event.actor_user_id };
   if (event.actor_api_key_id) return { kind: "api_key", name: label || `API key ${shortID(event.actor_api_key_id)}`, detail: "API key", id: event.actor_api_key_id };
   if (event.actor_session_id) return { kind: "session", name: label || `Session ${shortID(event.actor_session_id)}`, detail: "Agent session", id: event.actor_session_id };
@@ -148,6 +149,7 @@ const REASONS: Record<string, string> = {
 const CHECK_TITLES: Record<string, string> = {
   permission: "Permission",
   membership_attribute: "Organization owner",
+  platform_operator: "Platform operator",
   user_attribute: "Helmr administrator",
   runtime_binding: "Current runtime",
   session_origin: "Started by",

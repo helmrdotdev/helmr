@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"uuid"
 )
 
 func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
@@ -89,7 +88,7 @@ func TestWorkerAgentDurableControlsReachRetainedProcess(t *testing.T) {
 				if !acknowledged {
 					return errors.New("guest receipt retired before durable acknowledgment")
 				}
-				caller := session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}
+				caller := session.UserCaller(f.Principal(t))
 				req := session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: kind}
 				switch index {
 				case 0:
@@ -177,7 +176,7 @@ func TestWorkerAgentSupersededControlReceiptKeepsCurrentAttachment(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "hold-before-receipt", Kind: "interrupt"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "hold-before-receipt", Kind: "interrupt"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.AcknowledgeAgentControl(t.Context(), workerapi.AgentControlReceipt{Session: request.Session, AttachmentSequence: request.AttachmentSequence, Sequence: first.Sequence, AuthorityGeneration: first.AuthorityGeneration, Kind: first.Kind}); err != nil {

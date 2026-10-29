@@ -150,7 +150,7 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 			f := sessiontest.New(t)
 			handler := newPostgresServer(t, f.Pool)
 			client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
-			origin, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
+			origin, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "origin", Input: json.RawMessage(`[{"type":"text","text":"1"}]`)})
 			if err != nil {
 				t.Fatal(err)
 			}

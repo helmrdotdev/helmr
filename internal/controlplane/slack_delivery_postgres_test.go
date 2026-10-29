@@ -70,7 +70,7 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
+	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 	owner := h.session(t, f.User, org)
 	base := fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/slack-delivery", f.Session)
 	call := func(method, path, token, body string, want int) []byte {

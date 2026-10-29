@@ -136,7 +136,6 @@ function Palette(props: { onClose: () => void }) {
       current: location.pathname === page.href,
       onSelect: () => go(page.href),
     }));
-    if (me.data?.admin) pages.push({ id: "page:/admin", group: "Go to", label: "Admin", onSelect: () => go("/admin") });
     const agentItems: CommandItem[] = (agents.data?.agents ?? []).map((agent) => ({
       id: `agent:${agent.agent}`,
       group: "Agents",

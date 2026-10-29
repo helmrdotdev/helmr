@@ -20,7 +20,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	principal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw)
+	principal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,21 +36,25 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 		t.Fatal("historical identity changed", issued, err)
 	}
 	linked := external
-	linked.Provider = "oidc"
+	linked.Provider = "github"
 	linked.Subject = "linked-subject"
+	raw, err = LinkProvider(t.Context(), f.pool, f.cfg, principal, linked, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
 	second, err := SignIn(t.Context(), f.pool, f.cfg, linked)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondPrincipal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, second)
+	secondPrincipal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, second, uuid.Nil())
 	if err != nil || secondPrincipal.UserID != principal.UserID {
 		t.Fatal("linked provider identity", secondPrincipal.UserID, err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND count(DISTINCT details->>'provider')=2 FROM audit_events WHERE action='identity.sign_in' AND target_id=ANY($1::uuid[])`, []uuid.UUID{principal.SessionID, secondPrincipal.SessionID}).Scan(&issued); err != nil || !issued {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND count(DISTINCT details->>'subject')=2 FROM audit_events WHERE action='identity.sign_in' AND target_id=ANY($1::uuid[])`, []uuid.UUID{principal.SessionID, secondPrincipal.SessionID}).Scan(&issued); err != nil || !issued {
 		t.Fatal("concurrent provider provenance", issued, err)
 	}
 	f.exec(t, `ALTER TABLE audit_events ADD CONSTRAINT reject_issuance CHECK(action<>'identity.sign_in') NOT VALID`)
-	if token, err := SignIn(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "rejected", DisplayName: "Must rollback"}); err == nil || token != "" {
+	if token, err := SignIn(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "rejected", DisplayName: "Must rollback", Email: "rollback@example.test", EmailVerified: true}); err == nil || token != "" {
 		t.Fatal("released unaudited credential", token != "", err)
 	}
 	var absent bool
@@ -62,14 +66,14 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 	if err := RevokeLoginSession(t.Context(), f.pool, f.cfg, raw); err == nil {
 		t.Fatal("unaudited logout succeeded")
 	}
-	if _, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw); err != nil {
+	if _, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, uuid.Nil()); err != nil {
 		t.Fatal("failed logout changed credential", err)
 	}
 	f.exec(t, `ALTER TABLE audit_events DROP CONSTRAINT reject_revocation`)
 	if err := RevokeLoginSession(t.Context(), f.pool, f.cfg, raw); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw); !errors.Is(err, auth.ErrUnauthenticated) {
+	if _, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, uuid.Nil()); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatal(err)
 	}
 	var revoked bool
@@ -81,12 +85,12 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 func TestAuditAuthenticationRefusalSurvivesCancellation(t *testing.T) {
 	f := newIdentityFixture(t)
 	ctx := t.Context()
-	if _, err := CompleteMagicLink(ctx, f.pool, f.cfg, "invalid-token"); !errors.Is(err, ErrInvalidToken) {
+	if _, err := CompleteEmailChallenge(ctx, f.pool, f.cfg, uuid.Nil(), nil, "", "", "login"); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal(err)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := CompleteMagicLink(cancelled, f.pool, f.cfg, " "); !errors.Is(err, ErrInvalidToken) {
+	if _, err := CompleteEmailChallenge(cancelled, f.pool, f.cfg, uuid.Nil(), nil, "", "", "login"); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal(err)
 	}
 	var safe bool
@@ -94,7 +98,7 @@ func TestAuditAuthenticationRefusalSurvivesCancellation(t *testing.T) {
 		t.Fatal(safe, err)
 	}
 	f.exec(t, `ALTER TABLE audit_events ADD CONSTRAINT reject_refusal CHECK(outcome<>'denied') NOT VALID`)
-	if _, err := CompleteMagicLink(ctx, f.pool, f.cfg, uuid.NewV7().String()); !errors.Is(err, audit.ErrCapture) {
+	if _, err := CompleteEmailChallenge(ctx, f.pool, f.cfg, uuid.NewV7(), nil, "", "", "login"); !errors.Is(err, audit.ErrCapture) {
 		t.Fatal("capture failure hidden", err)
 	}
 }
@@ -120,7 +124,7 @@ func (tx lostCommitTransaction) Commit(ctx context.Context) error {
 }
 func TestAuditAuthenticationLostCommitAcknowledgement(t *testing.T) {
 	f := newIdentityFixture(t)
-	_, err := SignIn(t.Context(), lostCommitAcknowledgement{f.pool}, f.cfg, ExternalIdentity{Provider: "github", Subject: "lost-ack", DisplayName: "Committed"})
+	_, err := SignIn(t.Context(), lostCommitAcknowledgement{f.pool}, f.cfg, ExternalIdentity{Provider: "github", Subject: "lost-ack", DisplayName: "Committed", Email: "committed@example.test", EmailVerified: true})
 	if !db.CommitOutcomeUnknown(err) {
 		t.Fatalf("expected uncertain commit: %v", err)
 	}
@@ -135,17 +139,17 @@ func TestAuditAuthenticationLostCommitAcknowledgement(t *testing.T) {
 
 func TestAuditDeviceIssuanceLinksVerifiedAuthorization(t *testing.T) {
 	f := newIdentityFixture(t)
-	raw, err := SignIn(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "device-authorizer", DisplayName: "Approver"})
+	raw, err := SignIn(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "device-authorizer", DisplayName: "Approver", Email: "approver@example.test", EmailVerified: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw)
+	p, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
 	}
 	org := f.organization(t, "device-audit")
 	f.member(t, org, p.UserID, "member")
-	p, err = AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw)
+	p, err = AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, org)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,14 +157,14 @@ func TestAuditDeviceIssuanceLinksVerifiedAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, DeviceConsent{UserID: p.UserID.String(), OrgID: org.String()}, started.UserCode); err != nil {
+	if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, DeviceConsent{OrgID: org.String()}, started.UserCode); err != nil {
 		t.Fatal(err)
 	}
 	issued, err := ExchangeDeviceCode(t.Context(), f.pool, f.cfg, started.DeviceCode)
 	if err != nil {
 		t.Fatal(err)
 	}
-	device, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, issued)
+	device, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, issued, uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,57 +179,43 @@ func TestAuditDeviceIssuanceLinksVerifiedAuthorization(t *testing.T) {
 }
 
 func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
-	for _, method := range []string{"provider", "magic_link", "device"} {
-		for _, failure := range []string{"none", "platform", "organization"} {
+	for _, method := range []string{"provider", "email", "device"} {
+		failures := []string{"none", "platform"}
+		if method == "device" {
+			failures = append(failures, "organization")
+		}
+		for _, failure := range failures {
 			t.Run(method+"/"+failure, func(t *testing.T) {
 				f := newIdentityFixture(t)
-				external := ExternalIdentity{Provider: "github", Subject: "custody", DisplayName: "Audited user", Email: "custody@example.test", EmailVerified: true}
+				external := ExternalIdentity{Provider: "github", Subject: "custody", DisplayName: "User", Email: "custody@example.test", EmailVerified: true}
 				initial, err := SignIn(t.Context(), f.pool, f.cfg, external)
 				if err != nil {
 					t.Fatal(err)
 				}
-				p, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, initial)
+				p, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, initial, uuid.Nil())
 				if err != nil {
 					t.Fatal(err)
 				}
 				org := f.organization(t, "custody")
-				if method == "device" {
-					f.member(t, org, p.UserID, "member")
-				}
-				p, err = AuthenticateLoginSession(t.Context(), f.pool, f.cfg, initial)
-				if err != nil {
-					t.Fatal(err)
-				}
+				f.member(t, org, p.UserID, "member")
 				issue := func() (string, error) { return SignIn(t.Context(), f.pool, f.cfg, external) }
-				recipient := MagicLinkRecipient{Purpose: db.MagicLinkPurposeLogin, Email: external.Email}
-				if method != "device" {
-					_, invitationToken := f.invitation(t, org, external.Email, "member")
-					resolved, hash, err := ResolveInvitation(t.Context(), f.queries, f.cfg, invitationToken)
+				if method == "email" {
+					c, b := emailChallenge(t, f, external.Email)
+					if err = MarkEmailDelivery(t.Context(), f.pool, c, true); err != nil {
+						t.Fatal(err)
+					}
+					issue = func() (string, error) { r, e := completeEmail(t, f, c, b); return r.Token, e }
+				}
+				if method == "device" {
+					p, err = AuthenticateLoginSession(t.Context(), f.pool, f.cfg, initial, org)
 					if err != nil {
 						t.Fatal(err)
 					}
-					issue = func() (string, error) { return SignInWithInvitation(t.Context(), f.pool, f.cfg, hash, external) }
-					recipient = invitationRecipient(resolved.InviteeEmail, resolved.OrgID, resolved.ID)
-				}
-				if method == "magic_link" {
-					link, created, err := CreateMagicLink(t.Context(), f.pool, f.cfg, recipient, "/")
-					if err != nil || !created {
-						t.Fatal("create magic link", created, err)
-					}
-					if err := MarkMagicLinkSent(t.Context(), f.pool, link); err != nil {
-						t.Fatal(err)
-					}
-					issue = func() (string, error) {
-						result, err := CompleteMagicLink(t.Context(), f.pool, f.cfg, link.Token)
-						return result.Session, err
-					}
-				}
-				if method == "device" {
 					started, err := StartDeviceCode(t.Context(), f.pool, f.cfg)
 					if err != nil {
 						t.Fatal(err)
 					}
-					if _, err := ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, DeviceConsent{UserID: p.UserID.String(), OrgID: org.String()}, started.UserCode); err != nil {
+					if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, DeviceConsent{OrgID: org.String()}, started.UserCode); err != nil {
 						t.Fatal(err)
 					}
 					issue = func() (string, error) { return ExchangeDeviceCode(t.Context(), f.pool, f.cfg, started.DeviceCode) }
@@ -239,11 +229,10 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 				raw, err := issue()
 				if failure != "none" {
 					if !errors.Is(err, audit.ErrCapture) || raw != "" {
-						t.Fatal("released unaudited login", raw != "", err)
+						t.Fatal("unaudited issuance", err)
 					}
-					var valid bool
-					if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM login_sessions WHERE user_id=$1)=1 AND (SELECT count(*) FROM audit_events WHERE action='identity.sign_in' AND actor_user_id=$1)=1`, p.UserID).Scan(&valid); err != nil || !valid {
-						t.Fatal("one failed copy committed another copy/credential", valid, err)
+					if f.activeSessions(t, p.UserID) != 1 {
+						t.Fatal("failed audit committed credential")
 					}
 					f.exec(t, `ALTER TABLE audit_events DROP CONSTRAINT reject_copy`)
 					raw, err = issue()
@@ -251,13 +240,17 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				issued, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw)
+				issued, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, uuid.Nil())
 				if err != nil {
 					t.Fatal(err)
 				}
-				var valid bool
-				if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=2 AND count(*) FILTER(WHERE org_id IS NULL)=1 AND count(*) FILTER(WHERE org_id=$2)=1 AND bool_and(outcome='succeeded' AND authentication_result='verified') FROM audit_events WHERE action='identity.sign_in' AND target_id=$1`, issued.SessionID, org).Scan(&valid); err != nil || !valid {
-					t.Fatal("login custody duplication", valid, err)
+				expected := 1
+				if method == "device" {
+					expected = 2
+				}
+				var count int
+				if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='identity.sign_in' AND target_id=$1 AND outcome='succeeded'`, issued.SessionID).Scan(&count); err != nil || count != expected {
+					t.Fatal("custody", count, expected, err)
 				}
 			})
 		}
@@ -268,9 +261,12 @@ func TestAuditDeviceDenialFailureKeepsDecision(t *testing.T) {
 	f := newIdentityFixture(t)
 	user := f.user(t, "Approver", "")
 	org := f.organization(t, "decision-audit")
-	member := f.member(t, org, user, "member")
-	approver := auth.Principal{Kind: auth.PrincipalKindSession, UserID: user, OrgID: org, MemberID: member, SessionID: uuid.NewV7()}
-	consent := DeviceConsent{UserID: user.String(), OrgID: org.String()}
+	f.member(t, org, user, "member")
+	approver, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, f.session(t, user, uuid.Nil()), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consent := DeviceConsent{OrgID: org.String()}
 	started, err := StartDeviceCode(t.Context(), f.pool, f.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -289,5 +285,19 @@ func TestAuditDeviceDenialFailureKeepsDecision(t *testing.T) {
 	state, err := DeviceCodeStatus(t.Context(), f.queries, f.cfg, started.UserCode)
 	if err != nil || state.Status != "pending" {
 		t.Fatalf("decision failed to roll back: %+v %v", state, err)
+	}
+}
+
+func TestPasskeyFailureAuditsIndependentPrincipalKinds(t *testing.T) {
+	f := newIdentityFixture(t)
+	for _, operator := range []bool{false, true} {
+		_, err := FinishPasskeyLogin(t.Context(), f.pool, f.cfg, nil, operator, uuid.NewV7(), nil, []byte(`{}`), "")
+		if !errors.Is(err, ErrInvalidToken) {
+			t.Fatal(err)
+		}
+	}
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action IN ('identity.sign_in','operator.sign_in') AND outcome='denied' AND credential_kind='passkey' AND actor_user_id IS NULL AND actor_operator_id IS NULL`).Scan(&count); err != nil || count != 2 {
+		t.Fatal(count, err)
 	}
 }

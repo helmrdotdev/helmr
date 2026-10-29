@@ -26,6 +26,7 @@ import (
 )
 
 type fixture struct {
+	human auth.Principal
 	sessiontest.Fixture
 	OrgID, ProjectID uuid.UUID
 }
@@ -36,10 +37,11 @@ func commandFixture(t *testing.T) fixture {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&f.OrgID, &f.ProjectID); err != nil {
 		t.Fatal(err)
 	}
+	f.human = f.Principal(t)
 	return f
 }
 func (f fixture) request(key string) CreateRequest {
-	return CreateRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: Creator{Kind: string(auth.PrincipalKindSession), ID: f.User, UserID: f.User}, Argv: []string{"true"}, IdempotencyKey: key}
+	return CreateRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment, ComputerID: f.Computer, Creator: Creator{Human: f.human, Kind: string(auth.PrincipalKindSession), ID: f.human.SessionID, UserID: f.User}, Argv: []string{"true"}, IdempotencyKey: key}
 }
 func (f fixture) ref(id uuid.UUID) Ref {
 	return Ref{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.Environment, CommandID: id}
@@ -459,7 +461,7 @@ func TestCommandCaptureWaitsForPhysicalReconciliation(t *testing.T) {
 	if err := Reconcile(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), report); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "reconciled"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "reconciled"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.BeginComputerCapture(t.Context(), f.Pool, f.host(), request); err != nil {

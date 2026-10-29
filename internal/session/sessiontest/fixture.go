@@ -89,6 +89,8 @@ func New(t *testing.T) Fixture {
 	digest := maximum.Digest()
 	f.MCPScope = uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_mcp_scopes(environment_id,session_id,process_epoch,id,slot,policy,policy_digest) VALUES($1,$2,1,$3,0,$4,$5)`, f.Environment, f.Session, f.MCPScope, maximum.Bytes(), digest[:])
+	p := f.Principal(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET (`+access.HumanColumns+`)=($3,$4,$5,$6,$7,$8,$9,$10,$11) WHERE environment_id=$1 AND id=$2`, append([]any{f.Environment, f.Session}, access.HumanValues(p)...)...)
 	return f
 }
 
@@ -118,11 +120,18 @@ func ObserveProvisioning(t *testing.T, f Fixture) {
 
 func (f Fixture) Principal(t *testing.T) auth.Principal {
 	t.Helper()
-	p, err := access.Principal(t.Context(), f.Pool, "user", f.User, f.Environment)
+	source, session := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'fixture',$1::uuid::text,clock_timestamp())`, source, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO login_sessions(id,user_id,channel,user_access_epoch,token_hash,expires_at) SELECT $1,id,'browser',access_epoch,uuid_send($1::uuid),clock_timestamp()+interval '1 hour' FROM users WHERE id=$2`, session, f.User)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,authenticated_at) VALUES($1,$2,$3,$4,clock_timestamp())`, uuid.NewV7(), session, f.User, source)
+	var org uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	p, err := access.SessionPrincipal(t.Context(), f.Pool, session, org)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.SessionID = uuid.NewV7()
 	return p
 }
 

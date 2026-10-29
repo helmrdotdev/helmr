@@ -1,4 +1,3 @@
-import { A } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import { errorMessage } from "../../lib/error";
@@ -8,7 +7,6 @@ import { FormDialog } from "../../ui/Dialog";
 import { ColorField, createDerivedSlug, Field, SlugInput, TextInput } from "../../ui/Field";
 import { Notice } from "../../ui/Notice";
 import { Select } from "../../ui/Select";
-import { ui } from "../../ui/styles";
 import { defaultEnvironmentColor, ENVIRONMENT_COLOR_PRESETS } from "./display";
 
 // The new-project form shared by the scope selector and the new-project page:
@@ -42,7 +40,7 @@ export function createProjectDraft() {
           <SlugInput slug={slug} placeholder="my-app" />
         </Field>
         <Show when={!regions.isPending && regionOptions().length === 0}>
-          <Notice tone="warning" class="mb-3" action={<Show when={me.data?.admin}><A class={ui.monoLink} href="/admin/regions">Create a region</A></Show>}>
+          <Notice tone="warning" class="mb-3">
             A platform region is required before a project can be created.
           </Notice>
         </Show>

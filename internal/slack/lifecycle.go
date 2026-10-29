@@ -35,7 +35,7 @@ func admitLifecycleMessage(ctx context.Context, auditPolicy auditpolicy.Policy, 
 	}
 	target := controlTarget{Installation: p.installation, Thread: p.thread, Participant: p.source, Environment: p.route.Target.EnvironmentID, Session: p.session}
 	err := db.RunTx(ctx, tx, func(core pgx.Tx) error {
-		_, err := applyLifecycleControl(ctx, auditPolicy, core, session.Caller{CredentialKind: "slack", Kind: "user", ID: p.user, SlackThreadID: p.thread}, target, controlEnvelope{Action: action}, id)
+		_, err := applyLifecycleControl(ctx, auditPolicy, core, slackCaller(p.human, p.thread), target, controlEnvelope{Action: action}, id)
 		if err != nil {
 			return err
 		}
@@ -92,7 +92,10 @@ func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		return nil, session.ErrTerminal
 	}
 	if c.Action == "sleep" {
-		err := access.Check(ctx, tx, caller.Kind, caller.ID, target.Environment, uuid.Nil(), auth.PermissionComputersHibernate)
+		p, err := access.HumanInEnvironment(ctx, tx, caller.Human, target.Environment)
+		if err == nil {
+			err = auth.Require(p, auth.PermissionComputersHibernate, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}, access.ErrDenied)
+		}
 		if errors.Is(err, access.ErrDenied) {
 			return nil, session.ErrDenied
 		}

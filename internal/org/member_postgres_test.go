@@ -94,22 +94,24 @@ func TestCreateOrganizationPostgresInitialSetupAdmitsOneOrganization(t *testing.
 	}
 	queries := db.New(database.Pool)
 	userID := insertUser(t, database.Pool, "Owner", "owner@example.test")
-	created, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "Acme", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
+	account := dbtest.BrowserPrincipal(t, database.Pool, uuid.Nil(), userID)
+	operator := setupOperator(t, database.Pool)
+	created, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "Acme", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, account, operator)
 	if err != nil || created.Slug != "acme" || created.Name != "acme" {
 		t.Fatalf("organization = %+v, err = %v", created, err)
 	}
-	var admin bool
-	if err := database.Pool.QueryRow(t.Context(), `SELECT admin FROM users WHERE id = $1`, userID).Scan(&admin); err != nil || !admin {
-		t.Fatalf("initial owner admin = %t, err = %v", admin, err)
+	var ordinary bool
+	if err := database.Pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM platform_operators WHERE id=$1)`, userID).Scan(&ordinary); err != nil || !ordinary {
+		t.Fatalf("ordinary owner became operator: %v %v", ordinary, err)
 	}
 	member, err := queries.GetActiveOrgMemberByUser(t.Context(), db.GetActiveOrgMemberByUserParams{OrgID: created.ID, UserID: pgvalue.UUID(userID)})
 	if err != nil || member.RemovedAt.Valid || !member.IsOwner {
 		t.Fatalf("owner member = %+v, err = %v", member, err)
 	}
-	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "second", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); !errors.Is(err, org.ErrOrganizationExists) {
+	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "second", OwnerUserID: userID, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, account, operator); !errors.Is(err, org.ErrOrganizationExists) {
 		t.Fatalf("second setup error = %v", err)
 	}
-	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "acme", OwnerUserID: userID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); !errors.Is(err, org.ErrOrganizationSlugInUse) {
+	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "acme", OwnerUserID: userID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, account, operator); !errors.Is(err, org.ErrOrganizationSlugInUse) {
 		t.Fatalf("duplicate slug error = %v", err)
 	}
 }
@@ -128,9 +130,11 @@ func TestMemberRemovalRevokesOnlyItsLoginSessionsAndRollsBackFailure(t *testing.
 	f := newMemberFixture(t)
 	otherOrg := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO organizations(id,name,slug) VALUES($1,'Other','other')`, otherOrg)
-	for _, scope := range []any{f.owner.OrgID, nil, otherOrg} {
+	otherMember := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, otherMember, otherOrg, f.member.UserID)
+	for _, scope := range []struct{ org, member uuid.UUID }{{f.owner.OrgID, f.member.MemberID}, {otherOrg, otherMember}} {
 		id := uuid.NewV7()
-		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO login_sessions(id,user_id,org_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')`, id, f.member.UserID, scope, []byte(id.String()))
+		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO login_sessions(id,user_id,org_id,member_id,channel,user_access_epoch,cli_identity_id,cli_authenticated_at,token_hash,expires_at) VALUES($1,$2,$3,$4,'cli',0,$5,$6,uuid_send($1::uuid),clock_timestamp()+interval '1 hour')`, id, f.member.UserID, scope.org, scope.member, f.member.Human.IdentityID, f.member.Human.AuthenticatedAt)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_member_session_revocation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected session revocation failure'; END $$;
  CREATE TRIGGER reject_member_session_revocation BEFORE UPDATE ON login_sessions FOR EACH STATEMENT EXECUTE FUNCTION reject_member_session_revocation()`)
@@ -146,7 +150,7 @@ func TestMemberRemovalRevokesOnlyItsLoginSessionsAndRollsBackFailure(t *testing.
 		t.Fatal(err)
 	}
 	var correct bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT removed_at IS NOT NULL AND (SELECT bool_and((revoked_at IS NULL)=(org_id IS NOT DISTINCT FROM $3::uuid)) FROM login_sessions WHERE user_id=$2) FROM org_members WHERE org_id=$1 AND user_id=$2`, f.owner.OrgID, f.member.UserID, otherOrg).Scan(&correct); err != nil || !correct {
+	if err := f.pool.QueryRow(t.Context(), `SELECT removed_at IS NOT NULL AND (SELECT bool_and((revoked_at IS NOT NULL)=(member_id IS NOT DISTINCT FROM $3::uuid)) FROM login_sessions WHERE user_id=$2) FROM org_members WHERE org_id=$1 AND user_id=$2`, f.owner.OrgID, f.member.UserID, f.member.MemberID).Scan(&correct); err != nil || !correct {
 		t.Fatalf("member removal changed the revocation scope: %v %v", correct, err)
 	}
 }
@@ -157,24 +161,26 @@ func TestInitialOrganizationRollsBackFailedAdministratorGrant(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := insertUser(t, database.Pool, "Owner", "owner@example.test")
+	account := dbtest.BrowserPrincipal(t, database.Pool, uuid.Nil(), user)
+	operator := setupOperator(t, database.Pool)
 	dbtest.MustExec(t, t.Context(), database.Pool, `CREATE FUNCTION reject_initial_admin() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected administrator grant failure'; END $$;
- CREATE TRIGGER reject_initial_admin BEFORE UPDATE ON users FOR EACH STATEMENT EXECUTE FUNCTION reject_initial_admin()`)
-	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "initial", OwnerUserID: user, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}); err == nil {
+ CREATE TRIGGER reject_initial_admin BEFORE INSERT ON role_grants FOR EACH STATEMENT EXECUTE FUNCTION reject_initial_admin()`)
+	if _, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "initial", OwnerUserID: user, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, account, operator); err == nil {
 		t.Fatal("failed administrator grant created an organization")
 	}
 	var intact bool
-	if err := database.Pool.QueryRow(t.Context(), `SELECT NOT admin AND NOT EXISTS(SELECT 1 FROM organizations) AND NOT EXISTS(SELECT 1 FROM org_members) FROM users WHERE id=$1`, user).Scan(&intact); err != nil || !intact {
+	if err := database.Pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM organizations) AND NOT EXISTS(SELECT 1 FROM org_members) FROM users WHERE id=$1`, user).Scan(&intact); err != nil || !intact {
 		t.Fatalf("initial setup did not roll back: %v %v", intact, err)
 	}
-	dbtest.MustExec(t, t.Context(), database.Pool, `DROP TRIGGER reject_initial_admin ON users; DROP FUNCTION reject_initial_admin()`)
+	dbtest.MustExec(t, t.Context(), database.Pool, `DROP TRIGGER reject_initial_admin ON role_grants; DROP FUNCTION reject_initial_admin()`)
 	actor := audit.VerifiedLogin(user, "fixture")
-	created, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: actor, Slug: "initial", OwnerUserID: user, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
+	created, err := identity.CreateOrganization(t.Context(), database.Pool, org.OrganizationInput{Actor: actor, Slug: "initial", OwnerUserID: user, InitialSetup: true, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, account, operator)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var valid bool
-	if err := database.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(actor_user_id=$1 AND details='{"basis":"initial_setup"}'::jsonb) FROM audit_events WHERE action='platform_admin.granted'`, user).Scan(&valid); err != nil || !valid {
-		t.Fatalf("initial administrator basis: %v %v", valid, err)
+	if err := database.Pool.QueryRow(t.Context(), `SELECT count(*)=2 FROM role_grants WHERE org_id=$1`, created.ID).Scan(&valid); err != nil || !valid {
+		t.Fatalf("initial owner grants: %v %v", valid, err)
 	}
 	for range 2 {
 		if err := db.RunTx(t.Context(), database.Pool, func(tx pgx.Tx) error {
@@ -213,7 +219,7 @@ func newMemberFixture(t *testing.T) memberFixture {
 		if err != nil {
 			t.Fatal(err)
 		}
-		m := org.ManagingMember{Actor: audit.VerifiedLogin(userID, "fixture"), OrgID: orgID, UserID: userID, MemberID: pgvalue.MustUUIDValue(record.ID), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
+		m := org.ManagingMember{Human: dbtest.BrowserPrincipal(t, database.Pool, orgID, userID), Actor: audit.VerifiedLogin(userID, "fixture"), OrgID: orgID, UserID: userID, MemberID: pgvalue.MustUUIDValue(record.ID), AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
 		if role == "owner" || role == "admin" {
 			dbtest.MustExec(t, t.Context(), database.Pool, `INSERT INTO role_grants(id,org_id,member_id,role_id) SELECT $1,$2,$3,id FROM roles WHERE org_id=$2 AND builtin_key='access_administrator'`, uuid.NewV7(), orgID, m.MemberID)
 		}
@@ -278,12 +284,7 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 		}
 		return count
 	}
-	session := func(userID uuid.UUID) {
-		t.Helper()
-		if _, err := fixture.pool.Exec(ctx, `INSERT INTO login_sessions (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour')`, uuid.NewV7(), userID, uuid.NewV7().String()); err != nil {
-			t.Fatal(err)
-		}
-	}
+	session := func(userID uuid.UUID) { t.Helper(); dbtest.BrowserPrincipal(t, fixture.pool, uuid.Nil(), userID) }
 
 	// The membership write satisfies the deferred invitation acceptance
 	// constraint, so acceptance runs on a transaction.
@@ -305,8 +306,8 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 	if err != nil || member.RemovedAt.Valid || member.IsOwner || member.DisplayName.String != "Joiner" {
 		t.Fatalf("member = %+v, err = %v", member, err)
 	}
-	if activeSessions(joiner) != 0 {
-		t.Fatal("acceptance kept earlier login sessions")
+	if activeSessions(joiner) != 1 {
+		t.Fatal("acceptance revoked independent browser account proof")
 	}
 	if err := accept(invitation, joiner, "Joiner"); !errors.Is(err, org.ErrAlreadyMember) {
 		t.Fatalf("active member error = %v", err)
@@ -323,7 +324,7 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 		t.Fatal("rejected acceptance revoked sessions")
 	}
 
-	// A disabled membership is re-enabled with the invited role.
+	// Removal is terminal; reinvitation creates a new membership lifetime.
 	if _, err := fixture.pool.Exec(ctx, `UPDATE org_members SET removed_at = now() WHERE org_id = $1 AND user_id = $2`, fixture.owner.OrgID, joiner); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +333,7 @@ func TestAcceptInvitationPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	if member, err := q.GetActiveOrgMemberByUser(ctx, db.GetActiveOrgMemberByUserParams{OrgID: pgvalue.UUID(fixture.owner.OrgID), UserID: pgvalue.UUID(joiner)}); err != nil || member.RemovedAt.Valid || member.IsOwner {
-		t.Fatalf("re-enabled member = %+v, err = %v", member, err)
+		t.Fatalf("reinvited member = %+v, err = %v", member, err)
 	}
 	var newGrant bool
 	if err := fixture.pool.QueryRow(ctx, `SELECT NOT (details ? 'old_role') AND NOT (details ? 'new_role') AND actor_user_id IS NOT NULL AND target_user_id=$2 FROM audit_events WHERE action='invitation.accepted' AND target_id=$1`, reinvitation.ID, joiner).Scan(&newGrant); err != nil || !newGrant {
@@ -532,4 +533,13 @@ func TestCreateInvitationsPostgresDeliversOneBatchAndRefusesAddressesOnTheirOwn(
 			t.Fatalf("rejected requests created %d invitations, delivered %d batches, err = %v", leaked, len(rejected), err)
 		}
 	})
+}
+
+func setupOperator(t *testing.T, pool *pgxpool.Pool) auth.Principal {
+	t.Helper()
+	operator, key, session := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO platform_operators(id,label,webauthn_user_handle) VALUES($1,'Setup operator',uuid_send($1::uuid))`, operator)
+	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO passkey_credentials(id,credential_id,public_key,operator_id,label,sign_count,backup_eligible,backup_state,credential_data) VALUES($1,uuid_send($1::uuid),'public-key',$2,'Operator key',0,false,false,'{}')`, key, operator)
+	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO login_sessions(id,operator_id,channel,token_hash,privileged_epoch,privileged_key_id,privileged_login_at,privileged_confirmed_at,expires_at) VALUES($1,$2,'operator',uuid_send($1::uuid),0,$3,clock_timestamp(),clock_timestamp(),clock_timestamp()+interval '12 hours')`, session, operator, key)
+	return auth.Principal{Kind: auth.PrincipalKindOperator, Channel: "operator", OperatorID: operator, SessionID: session, PasskeyID: key}
 }

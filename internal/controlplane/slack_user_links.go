@@ -1,11 +1,13 @@
 package controlplane
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
@@ -158,7 +160,8 @@ func (s *Server) startSlackUserLink(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, err)
 		return
 	}
-	flow := browserAuthFlow{Kind: browserAuthSlackUser, State: state, Nonce: nonce, OrganizationID: p.OrgID.String(), UserID: p.UserID.String(), InstallationID: installation.String(), AppRegistrationID: registration.String(), SlackTeamID: workspace.TeamID, SlackUserID: origin.SlackUserID, SlackLinkToken: input.Link, SlackReturnURL: origin.ReturnURL}
+	hash := sha256.Sum256([]byte(rawBrowserSession(r)))
+	flow := browserAuthFlow{StartedAt: time.Now(), SessionHash: base64.RawURLEncoding.EncodeToString(hash[:]), Kind: browserAuthSlackUser, State: state, Nonce: nonce, OrganizationID: p.OrgID.String(), UserID: p.UserID.String(), InstallationID: installation.String(), AppRegistrationID: registration.String(), SlackTeamID: workspace.TeamID, SlackUserID: origin.SlackUserID, SlackLinkToken: input.Link, SlackReturnURL: origin.ReturnURL}
 	encoded, err := s.encodeAuthFlow(flow)
 	if err != nil {
 		s.writeOperationError(w, r, err)
@@ -233,7 +236,8 @@ func (s *Server) verifySlackUserLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	flow, err := s.decodeAuthFlow(r)
-	if err != nil || flow.Kind != browserAuthSlackUser || input.State == "" || input.State != flow.State || flow.UserID != p.UserID.String() || (flow.SlackLinkToken == "" && flow.OrganizationID != p.OrgID.String()) {
+	hash := sha256.Sum256([]byte(rawBrowserSession(r)))
+	if err != nil || flow.StartedAt.IsZero() || flow.SessionHash != base64.RawURLEncoding.EncodeToString(hash[:]) || flow.Kind != browserAuthSlackUser || input.State == "" || input.State != flow.State || flow.UserID != p.UserID.String() || (flow.SlackLinkToken == "" && flow.OrganizationID != p.OrgID.String()) {
 		s.writeOperationError(w, r, badRequest(errors.New("the Slack identity flow expired or account changed; start linking again")))
 		return
 	}
@@ -280,7 +284,17 @@ func (s *Server) verifySlackUserLink(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, err)
 		return
 	}
-	confirmation := browserAuthFlow{Kind: browserAuthSlackUserConfirm, State: state, OrganizationID: p.OrgID.String(), UserID: p.UserID.String(), InstallationID: flow.InstallationID, AppRegistrationID: flow.AppRegistrationID, SlackTeamID: identity.TeamID, SlackUserID: identity.SlackUserID, SlackLinkToken: flow.SlackLinkToken, SlackReturnURL: flow.SlackReturnURL}
+	binding, err := browserBinding(w, r, true)
+	if err != nil {
+		s.writeSlackLinkError(w, r, err)
+		return
+	}
+	consentID, err := slack.PrepareUserLink(r.Context(), s.tx, audit.FromPrincipal(p), p.OrgID, p.UserID, installation, identity, binding)
+	if err != nil {
+		s.writeSlackLinkError(w, r, err)
+		return
+	}
+	confirmation := browserAuthFlow{SlackConsentID: consentID.String(), Kind: browserAuthSlackUserConfirm, State: state, OrganizationID: p.OrgID.String(), UserID: p.UserID.String(), InstallationID: flow.InstallationID, AppRegistrationID: flow.AppRegistrationID, SlackTeamID: identity.TeamID, SlackUserID: identity.SlackUserID, SlackLinkToken: flow.SlackLinkToken, SlackReturnURL: flow.SlackReturnURL}
 	encoded, err := s.encodeAuthFlow(confirmation)
 	if err != nil {
 		s.writeOperationError(w, r, err)
@@ -314,7 +328,17 @@ func (s *Server) confirmSlackUserLink(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(slack.ErrUserIdentity))
 		return
 	}
-	err = slack.LinkUser(r.Context(), s.tx, s.auditPolicy, audit.FromPrincipal(p), p.OrgID, p.UserID, installation, slack.UserIdentity{TeamID: flow.SlackTeamID, SlackUserID: flow.SlackUserID})
+	consentID, err := ids.Parse(flow.SlackConsentID)
+	if err != nil {
+		s.writeSlackLinkError(w, r, slack.ErrUserLinkDenied)
+		return
+	}
+	binding, err := browserBinding(w, r, false)
+	if err != nil {
+		s.writeSlackLinkError(w, r, slack.ErrUserLinkDenied)
+		return
+	}
+	err = slack.LinkUser(r.Context(), s.tx, s.auditPolicy, audit.FromPrincipal(p), p.OrgID, p.UserID, installation, slack.UserIdentity{TeamID: flow.SlackTeamID, SlackUserID: flow.SlackUserID}, slack.LinkConsent{ID: consentID, BrowserHash: binding})
 	if err != nil {
 		s.writeSlackLinkError(w, r, err)
 		return

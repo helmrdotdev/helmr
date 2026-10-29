@@ -81,7 +81,7 @@ func TestPoolRetirementPostgresConcurrentLastRestorePath(t *testing.T) {
 
 func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 	f := newRetirementFixture(t)
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
 		t.Fatal(err)
 	}
 	cloneRestorePool(t, f)
@@ -138,7 +138,7 @@ func TestPoolRetirementPostgresWaitsForCaptureFence(t *testing.T) {
 
 func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
 	f := newRetirementFixture(t)
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
 		t.Fatal(err)
 	}
 	request := f.capture()
@@ -149,7 +149,7 @@ func TestPoolRetirementPostgresParkedQueuedWorkRetainsProfile(t *testing.T) {
 	// supplier retirement, not VM capture or manifest certification.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE checkpoints SET status='ready',manifest=decode('01','hex'),vm_platform_id=(SELECT vm_platform_id FROM worker_hosts WHERE id=$3),ready_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture VM stopped' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, request.CheckpointID, f.Worker)
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "parked-input", Input: []byte(`[]`)}); err != nil {
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "parked-input", Input: []byte(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
 	if demand, err := workergroup.HasQueuedDemand(t.Context(), f.Pool, f.Group); err != nil || !demand {
@@ -250,7 +250,7 @@ func TestScaleInSelectsPublishedRetainedSessionSource(t *testing.T) {
 	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.Group, f.poolID, key); !errors.As(err, &blocked) {
 		t.Fatalf("mandatory execution selected for scale-in: %v", err)
 	}
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "hibernate", IdempotencyKey: "capture"}); err != nil {
 		t.Fatal(err)
 	}
 	request := f.capture()
@@ -269,7 +269,7 @@ func TestScaleInSelectsPublishedRetainedSessionSource(t *testing.T) {
 	// A wake arriving after an idle observation must block the final locked
 	// selection even though it creates no Turn.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_controls SET status='completed',settled_at=clock_timestamp() WHERE computer_id=$1 AND kind='hibernate' AND status='accepted'`, f.Computer)
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "wake", IdempotencyKey: "wake-after-observation"}); err != nil {
+	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.ComputerExecutionRequest{EnvironmentID: f.Environment, ComputerID: f.Computer, Kind: "wake", IdempotencyKey: "wake-after-observation"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := workergroup.SelectScaleIn(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, audit.Internal(audit.ControlPlane), f.Group, f.poolID, key); !errors.As(err, &blocked) || len(blocked.Blockers) != 1 || blocked.Blockers[0] != "queued_work" {

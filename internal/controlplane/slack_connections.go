@@ -2,12 +2,11 @@ package controlplane
 
 import (
 	"errors"
+	"github.com/go-chi/chi/v5"
 	"net/http"
 	"net/url"
 	"uuid"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -40,7 +39,7 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 			permission = auth.PermissionAgentConnectionsAuthorize
 		}
 	}
-	agent, err := slack.ConnectionAgent(r.Context(), s.tx, principal.OrgID, principal.UserID, env, name, permission)
+	agent, err := slack.ConnectionAgent(r.Context(), s.tx, principal, env, name, permission)
 	if err != nil {
 		s.writeSlackError(w, r, err)
 		return
@@ -58,13 +57,13 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method == http.MethodPost && connection == uuid.Nil() {
-		_, err = slack.BeginConnection(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent, s.slackConfig.Credentials.DeliveryTransport())
+		_, err = slack.BeginConnection(r.Context(), s.tx, principal, env, agent, s.slackConfig.Credentials.DeliveryTransport())
 		if err != nil {
 			s.writeSlackError(w, r, err)
 			return
 		}
 	}
-	view, err := slack.GetConnection(r.Context(), s.tx, principal.OrgID, principal.UserID, env, agent, permission)
+	view, err := slack.GetConnection(r.Context(), s.tx, principal, env, agent, permission)
 	if err != nil {
 		s.writeSlackError(w, r, err)
 		return
@@ -80,14 +79,14 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 			s.writeOperationError(w, r, badRequest(errors.New("invalid app credentials")))
 			return
 		}
-		if err = s.slackConfig.Credentials.StoreAppCredentials(r.Context(), audit.FromPrincipal(principal), principal.OrgID, principal.UserID, view.RegistrationID, credentials); err != nil {
+		if err = s.slackConfig.Credentials.StoreAppCredentials(r.Context(), principal, view.RegistrationID, credentials); err != nil {
 			s.writeSlackError(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	case http.MethodDelete:
-		if err = s.slackConfig.Credentials.DisconnectConnection(r.Context(), audit.FromPrincipal(principal), principal.OrgID, principal.UserID, env, connection); err != nil {
+		if err = s.slackConfig.Credentials.DisconnectConnection(r.Context(), principal, env, connection); err != nil {
 			s.writeSlackError(w, r, err)
 			return
 		}
@@ -107,12 +106,12 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 				s.writeOperationError(w, r, err)
 				return
 			}
-			redirect, err := s.slackConfig.Credentials.ConnectionAuthorizationURL(r.Context(), principal.OrgID, principal.UserID, connection, state, s.slackRedirectURL())
+			redirect, err := s.slackConfig.Credentials.ConnectionAuthorizationURL(r.Context(), principal, connection, state, s.slackRedirectURL())
 			if err != nil {
 				s.writeSlackError(w, r, err)
 				return
 			}
-			flow := browserAuthFlow{Kind: browserAuthSlackInstallation, State: state, OrganizationID: principal.OrgID.String(), UserID: principal.UserID.String(), ConnectionID: connection.String(), AppRegistrationID: view.RegistrationID.String(), EnvironmentID: env.String(), RedirectAfter: validateRedirectAfter(input.ReturnTo)}
+			flow := browserAuthFlow{SlackManagementSource: slackManagementSourceFor(principal), Kind: browserAuthSlackInstallation, State: state, OrganizationID: principal.OrgID.String(), UserID: principal.UserID.String(), ConnectionID: connection.String(), AppRegistrationID: view.RegistrationID.String(), EnvironmentID: env.String(), RedirectAfter: validateRedirectAfter(input.ReturnTo)}
 			encoded, err := s.encodeAuthFlow(flow)
 			if err != nil {
 				s.writeOperationError(w, r, err)

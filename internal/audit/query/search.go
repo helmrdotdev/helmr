@@ -66,9 +66,9 @@ func (f SearchFilter) validate(adminView bool) error {
 			return ErrSearchInput
 		}
 	}
-	kinds := []string{"user", "api_key", "session", "platform_service", "unidentified"}
+	kinds := []string{"operator", "user", "api_key", "session", "platform_service", "unidentified"}
 	if adminView {
-		kinds = []string{"user", "api_key", "session", "worker_host", "component", "unidentified"}
+		kinds = []string{"operator", "user", "api_key", "session", "worker_host", "component", "unidentified"}
 	}
 	if !adminView && f.ActorID != uuid.Nil() && (f.ActorKind == "platform_service" || f.ActorKind == "unidentified") {
 		return ErrSearchInput
@@ -127,7 +127,7 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 		accessOrg, accessEnv := uuid.Nil(), uuid.Nil()
 		unresolved := false
 		if adminView {
-			if prior.Kind != auth.PrincipalKindSession {
+			if prior.Kind != auth.PrincipalKindOperator {
 				return ErrSearchDenied
 			}
 			var err error
@@ -136,10 +136,10 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 				return &audit.Refusal{Authorization: actor.Authorization, Cause: ErrSearchDenied}
 			}
 			var active bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND admin)`, prior.UserID).Scan(&active); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.privileged_key_id AND k.operator_id=o.id WHERE s.id=$1 AND s.operator_id=$2 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND o.disabled_at IS NULL AND o.access_epoch=s.privileged_epoch AND o.access_epoch=$3 AND k.revoked_at IS NULL)`, prior.SessionID, prior.OperatorID, prior.AccessEpoch).Scan(&active); err != nil {
 				return err
 			}
-			check := audit.UserAttributeCheck{Type: "user_attribute", UserID: prior.UserID, Attribute: "admin", Expected: true, Observed: active, ObservationSource: "transaction", Scope: audit.CheckScope{Kind: "platform"}, Result: "passed"}
+			check := audit.OperatorCheck{Type: "platform_operator", OperatorID: prior.OperatorID, SessionID: prior.SessionID, AccessEpoch: prior.AccessEpoch, ObservationSource: "transaction", Result: "passed"}
 			if !active {
 				check.Result = "failed"
 				actor.Authorization.Decision = "denied"
@@ -311,7 +311,7 @@ const searchSQL = `SELECT to_jsonb(e), e.recorded_at,e.id FROM audit_events e
    WHERE (e.org_id=$1::uuid OR ($1::uuid IS NULL AND e.org_id IS NULL)) AND ($2::boolean OR e.environment_id=ANY($3::uuid[]))
    AND ($4::uuid IS NULL OR e.environment_id=$4) AND e.recorded_at >= $5 AND e.recorded_at < $6
    AND e.expires_at>statement_timestamp() AND ($7::timestamptz IS NULL OR (e.recorded_at,e.id)<($7,$8::uuid))
-   AND ($9::text='' OR CASE WHEN e.actor_user_id IS NOT NULL THEN 'user' WHEN e.actor_api_key_id IS NOT NULL THEN 'api_key' WHEN e.actor_session_id IS NOT NULL THEN 'session' WHEN e.actor_worker_host_id IS NOT NULL THEN CASE WHEN $21::boolean THEN 'worker_host' ELSE 'platform_service' END WHEN e.actor_component IS NOT NULL THEN CASE WHEN $21::boolean THEN 'component' ELSE 'platform_service' END ELSE 'unidentified' END=$9) AND ($10::uuid IS NULL OR COALESCE(e.actor_user_id,e.actor_api_key_id,e.actor_session_id,CASE WHEN $21::boolean THEN e.actor_worker_host_id END)=$10)
+   AND ($9::text='' OR CASE WHEN e.actor_operator_id IS NOT NULL THEN 'operator' WHEN e.actor_user_id IS NOT NULL THEN 'user' WHEN e.actor_api_key_id IS NOT NULL THEN 'api_key' WHEN e.actor_session_id IS NOT NULL THEN 'session' WHEN e.actor_worker_host_id IS NOT NULL THEN CASE WHEN $21::boolean THEN 'worker_host' ELSE 'platform_service' END WHEN e.actor_component IS NOT NULL THEN CASE WHEN $21::boolean THEN 'component' ELSE 'platform_service' END ELSE 'unidentified' END=$9) AND ($10::uuid IS NULL OR COALESCE(e.actor_operator_id,e.actor_user_id,e.actor_api_key_id,e.actor_session_id,CASE WHEN $21::boolean THEN e.actor_worker_host_id END)=$10)
    AND (COALESCE(cardinality($11::text[]),0)=0 OR e.action=ANY($11::text[])) AND ($12::text='' OR e.target_kind=$12) AND ($13::uuid IS NULL OR e.target_id=$13)
    AND ($14::text='' OR e.outcome=$14) AND ($15::uuid IS NULL OR e.target_user_id=$15)
    AND ($16::text='' OR e.slack_team_id=$16) AND ($17::text='' OR e.slack_user_id=$17)

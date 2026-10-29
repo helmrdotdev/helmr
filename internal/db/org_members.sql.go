@@ -16,7 +16,7 @@ INSERT INTO org_members (id,org_id,user_id,is_owner,display_name)
 VALUES ($1,$2,$3,$4,$5)
 ON CONFLICT (org_id,user_id) WHERE removed_at IS NULL DO UPDATE
 SET display_name=EXCLUDED.display_name, updated_at=now()
-RETURNING id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at
+RETURNING id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at, suspended_at, reauthenticate_after
 `
 
 type EnsureOrgMemberParams struct {
@@ -45,12 +45,14 @@ func (q *Queries) EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams
 		&i.RemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SuspendedAt,
+		&i.ReauthenticateAfter,
 	)
 	return i, err
 }
 
 const getActiveOrgMemberByUser = `-- name: GetActiveOrgMemberByUser :one
-SELECT id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at FROM org_members WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL
+SELECT id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at, suspended_at, reauthenticate_after FROM org_members WHERE org_id=$1 AND user_id=$2 AND removed_at IS NULL
 `
 
 type GetActiveOrgMemberByUserParams struct {
@@ -70,12 +72,14 @@ func (q *Queries) GetActiveOrgMemberByUser(ctx context.Context, arg GetActiveOrg
 		&i.RemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SuspendedAt,
+		&i.ReauthenticateAfter,
 	)
 	return i, err
 }
 
 const getOrgMemberForManagement = `-- name: GetOrgMemberForManagement :one
-SELECT m.id, m.org_id, m.user_id, m.is_owner, m.display_name, m.removed_at, m.created_at, m.updated_at,u.primary_email
+SELECT m.id, m.org_id, m.user_id, m.is_owner, m.display_name, m.removed_at, m.created_at, m.updated_at, m.suspended_at, m.reauthenticate_after,u.primary_email
 FROM org_members m JOIN users u ON u.id=m.user_id
 WHERE m.org_id=$1 AND m.id=$2
 `
@@ -86,15 +90,17 @@ type GetOrgMemberForManagementParams struct {
 }
 
 type GetOrgMemberForManagementRow struct {
-	ID           pgtype.UUID        `json:"id"`
-	OrgID        pgtype.UUID        `json:"org_id"`
-	UserID       pgtype.UUID        `json:"user_id"`
-	IsOwner      bool               `json:"is_owner"`
-	DisplayName  pgtype.Text        `json:"display_name"`
-	RemovedAt    pgtype.Timestamptz `json:"removed_at"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	PrimaryEmail pgtype.Text        `json:"primary_email"`
+	ID                  pgtype.UUID        `json:"id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	IsOwner             bool               `json:"is_owner"`
+	DisplayName         pgtype.Text        `json:"display_name"`
+	RemovedAt           pgtype.Timestamptz `json:"removed_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	SuspendedAt         pgtype.Timestamptz `json:"suspended_at"`
+	ReauthenticateAfter pgtype.Timestamptz `json:"reauthenticate_after"`
+	PrimaryEmail        pgtype.Text        `json:"primary_email"`
 }
 
 func (q *Queries) GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error) {
@@ -109,13 +115,15 @@ func (q *Queries) GetOrgMemberForManagement(ctx context.Context, arg GetOrgMembe
 		&i.RemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SuspendedAt,
+		&i.ReauthenticateAfter,
 		&i.PrimaryEmail,
 	)
 	return i, err
 }
 
 const listOrgMembers = `-- name: ListOrgMembers :many
-SELECT m.id, m.org_id, m.user_id, m.is_owner, m.display_name, m.removed_at, m.created_at, m.updated_at, COALESCE(m.display_name,u.display_name)::text AS effective_display_name,u.primary_email
+SELECT m.id, m.org_id, m.user_id, m.is_owner, m.display_name, m.removed_at, m.created_at, m.updated_at, m.suspended_at, m.reauthenticate_after, COALESCE(m.display_name,u.display_name)::text AS effective_display_name,u.primary_email
 FROM org_members m JOIN users u ON u.id=m.user_id
 WHERE m.org_id=$1
 ORDER BY m.removed_at IS NULL DESC,m.created_at
@@ -130,6 +138,8 @@ type ListOrgMembersRow struct {
 	RemovedAt            pgtype.Timestamptz `json:"removed_at"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	SuspendedAt          pgtype.Timestamptz `json:"suspended_at"`
+	ReauthenticateAfter  pgtype.Timestamptz `json:"reauthenticate_after"`
 	EffectiveDisplayName string             `json:"effective_display_name"`
 	PrimaryEmail         pgtype.Text        `json:"primary_email"`
 }
@@ -152,6 +162,8 @@ func (q *Queries) ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]List
 			&i.RemovedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SuspendedAt,
+			&i.ReauthenticateAfter,
 			&i.EffectiveDisplayName,
 			&i.PrimaryEmail,
 		); err != nil {
@@ -168,7 +180,7 @@ func (q *Queries) ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]List
 const removeOrgMember = `-- name: RemoveOrgMember :one
 UPDATE org_members SET removed_at=now(),updated_at=now()
 WHERE org_id=$1 AND id=$2 AND removed_at IS NULL AND NOT is_owner
-RETURNING id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at
+RETURNING id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at, suspended_at, reauthenticate_after
 `
 
 type RemoveOrgMemberParams struct {
@@ -188,6 +200,8 @@ func (q *Queries) RemoveOrgMember(ctx context.Context, arg RemoveOrgMemberParams
 		&i.RemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SuspendedAt,
+		&i.ReauthenticateAfter,
 	)
 	return i, err
 }
@@ -196,7 +210,7 @@ const updateOrgMemberOwnership = `-- name: UpdateOrgMemberOwnership :one
 UPDATE org_members SET is_owner=$1,updated_at=now()
 WHERE org_id=$2 AND id=$3
 AND removed_at IS NULL AND is_owner=$4
-RETURNING id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at
+RETURNING id, org_id, user_id, is_owner, display_name, removed_at, created_at, updated_at, suspended_at, reauthenticate_after
 `
 
 type UpdateOrgMemberOwnershipParams struct {
@@ -223,6 +237,8 @@ func (q *Queries) UpdateOrgMemberOwnership(ctx context.Context, arg UpdateOrgMem
 		&i.RemovedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SuspendedAt,
+		&i.ReauthenticateAfter,
 	)
 	return i, err
 }

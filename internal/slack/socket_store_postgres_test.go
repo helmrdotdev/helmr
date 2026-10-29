@@ -10,7 +10,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -22,7 +21,7 @@ func socketFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.registration, AppCredentials{ClientID: "client", ClientSecret: "secret", AppToken: "xapp-test"}); err != nil {
+	if err := store.StoreAppCredentials(t.Context(), f.Principal(t), f.registration, AppCredentials{ClientID: "client", ClientSecret: "secret", AppToken: "xapp-test"}); err != nil {
 		t.Fatal(err)
 	}
 	return f, store, org
@@ -59,16 +58,16 @@ func TestSocketOwnershipReplacementFencesReceipts(t *testing.T) {
 func TestSocketAuthorityChangesFenceReceipts(t *testing.T) {
 	for _, change := range []string{"rotation", "disconnect", "revocation"} {
 		t.Run(change, func(t *testing.T) {
-			f, store, org := socketFixture(t)
+			f, store, _ := socketFixture(t)
 			claim, err := store.acquireSocket(t.Context(), uuid.NewV7())
 			if err != nil || claim == nil {
 				t.Fatal(err)
 			}
 			switch change {
 			case "rotation":
-				err = store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.registration, AppCredentials{ClientID: "client", ClientSecret: "replacement", AppToken: "xapp-replacement"})
+				err = store.StoreAppCredentials(t.Context(), f.Principal(t), f.registration, AppCredentials{ClientID: "client", ClientSecret: "replacement", AppToken: "xapp-replacement"})
 			case "disconnect":
-				err = store.DisconnectConnection(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.Environment, f.publication)
+				err = store.DisconnectConnection(t.Context(), f.Principal(t), f.Environment, f.publication)
 			case "revocation":
 				_, err = f.Pool.Exec(t.Context(), `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, f.installation)
 			}
@@ -105,7 +104,7 @@ func TestSocketReceiptCannotCommitAfterLeaseExpiry(t *testing.T) {
 }
 
 func TestSocketCredentialRotationBypassesActionRequiredBackoff(t *testing.T) {
-	f, store, org := socketFixture(t)
+	f, store, _ := socketFixture(t)
 	claim, err := store.acquireSocket(t.Context(), uuid.NewV7())
 	if err != nil || claim == nil {
 		t.Fatal(err)
@@ -116,7 +115,7 @@ func TestSocketCredentialRotationBypassesActionRequiredBackoff(t *testing.T) {
 	if claim, err := store.acquireSocket(t.Context(), uuid.NewV7()); err != nil || claim != nil {
 		t.Fatal("backoff ignored", err)
 	}
-	if err := store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.registration, AppCredentials{ClientID: "client", ClientSecret: "replacement", AppToken: "xapp-replacement"}); err != nil {
+	if err := store.StoreAppCredentials(t.Context(), f.Principal(t), f.registration, AppCredentials{ClientID: "client", ClientSecret: "replacement", AppToken: "xapp-replacement"}); err != nil {
 		t.Fatal(err)
 	}
 	if claim, err := store.acquireSocket(t.Context(), uuid.NewV7()); err != nil || claim == nil || claim.Token != "xapp-replacement" {
@@ -125,7 +124,7 @@ func TestSocketCredentialRotationBypassesActionRequiredBackoff(t *testing.T) {
 }
 
 func TestSocketHealthDoesNotClaimExpiredConnection(t *testing.T) {
-	f, store, org := socketFixture(t)
+	f, store, _ := socketFixture(t)
 	claim, err := store.acquireSocket(t.Context(), uuid.NewV7())
 	if err != nil || claim == nil {
 		t.Fatal(err)
@@ -133,7 +132,7 @@ func TestSocketHealthDoesNotClaimExpiredConnection(t *testing.T) {
 	if err := store.observeSocket(t.Context(), *claim, false); err != nil {
 		t.Fatal(err)
 	}
-	view, err := GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, auth.PermissionAgentConnectionsRead)
+	view, err := GetConnection(t.Context(), f.Pool, f.Principal(t), f.Environment, f.Agent, auth.PermissionAgentConnectionsRead)
 	if err != nil || view == nil || view.Socket == nil || view.Socket.Status != "connected" || view.Socket.LastConnectedAt == nil {
 		t.Fatalf("health unavailable: %+v %v", view, err)
 	}
@@ -151,7 +150,7 @@ func TestSocketHealthDoesNotClaimExpiredConnection(t *testing.T) {
 		t.Fatalf("unexpected socket JSON contract: %s", payload)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_socket_connections SET expires_at=clock_timestamp()-interval '1 second' WHERE app_registration_id=$1`, f.registration)
-	view, err = GetConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, auth.PermissionAgentConnectionsRead)
+	view, err = GetConnection(t.Context(), f.Pool, f.Principal(t), f.Environment, f.Agent, auth.PermissionAgentConnectionsRead)
 	if err != nil || view.Socket.Status != "reconnecting" || view.Status != "connected" {
 		t.Fatalf("lease health confused with authorization: %+v %v", view, err)
 	}

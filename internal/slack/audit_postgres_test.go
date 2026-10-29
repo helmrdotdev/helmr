@@ -2,14 +2,13 @@ package slack
 
 import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/jackc/pgx/v5"
 	"testing"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/jackc/pgx/v5"
 )
 
 func rejectSlackAudit(t *testing.T, f statusFixture) {
@@ -20,13 +19,14 @@ func rejectSlackAudit(t *testing.T, f statusFixture) {
 
 func TestSlackAuditCredentialAndDisconnectAtomicity(t *testing.T) {
 	f, store, org := credentialFixture(t)
-	actor := audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: f.User, SessionID: uuid.NewV7()})
+	principal := f.Principal(t)
+	actor := audit.FromPrincipal(principal)
 	credentials := AppCredentials{ClientID: "client", ClientSecret: "replacement-secret", SigningSecret: "replacement-signing"}
 	rejectSlackAudit(t, f)
-	if err := store.StoreAppCredentials(t.Context(), actor, org, f.User, f.registration, credentials); err == nil {
+	if err := store.StoreAppCredentials(t.Context(), principal, f.registration, credentials); err == nil {
 		t.Fatal("audit failure allowed credential rotation")
 	}
-	if err := store.DisconnectConnection(t.Context(), actor, org, f.User, f.Environment, f.publication); err == nil {
+	if err := store.DisconnectConnection(t.Context(), principal, f.Environment, f.publication); err == nil {
 		t.Fatal("audit failure allowed disconnect")
 	}
 	var intact bool
@@ -34,11 +34,11 @@ func TestSlackAuditCredentialAndDisconnectAtomicity(t *testing.T) {
 		t.Fatal("credential or disconnect mutation survived rollback", intact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `DROP TRIGGER reject_slack_audit ON audit_events`)
-	if err := store.StoreAppCredentials(t.Context(), actor, org, f.User, f.registration, credentials); err != nil {
+	if err := store.StoreAppCredentials(t.Context(), principal, f.registration, credentials); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := store.DisconnectConnection(t.Context(), actor, org, f.User, f.Environment, f.publication); err != nil {
+		if err := store.DisconnectConnection(t.Context(), principal, f.Environment, f.publication); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -50,14 +50,15 @@ func TestSlackAuditCredentialAndDisconnectAtomicity(t *testing.T) {
 
 func TestSlackAuditGrantFactsAndRollback(t *testing.T) {
 	f, store, org := credentialFixture(t)
-	actor := audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: f.User, SessionID: uuid.NewV7()})
-	observed, err := store.connectionAuthorization(t.Context(), org, f.User, f.publication)
+	principal := f.Principal(t)
+	actor := audit.FromPrincipal(principal)
+	observed, err := store.connectionAuthorization(t.Context(), f.Principal(t), f.publication)
 	if err != nil {
 		t.Fatal(err)
 	}
 	grant := refreshResult().grant
 	rejectSlackAudit(t, f)
-	if _, err = store.attachConnectionGrant(t.Context(), actor, org, f.User, f.publication, observed, grant); err == nil {
+	if _, err = store.attachConnectionGrant(t.Context(), principal, f.publication, observed, grant); err == nil {
 		t.Fatal("audit failure allowed grant")
 	}
 	var intact bool
@@ -65,7 +66,7 @@ func TestSlackAuditGrantFactsAndRollback(t *testing.T) {
 		t.Fatal(intact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `DROP TRIGGER reject_slack_audit ON audit_events`)
-	if _, err = store.attachConnectionGrant(t.Context(), actor, org, f.User, f.publication, observed, grant); err != nil {
+	if _, err = store.attachConnectionGrant(t.Context(), principal, f.publication, observed, grant); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -76,10 +77,10 @@ func TestSlackAuditGrantFactsAndRollback(t *testing.T) {
 
 func TestSlackAuditCompositeLinkFactsAndRollback(t *testing.T) {
 	f, _, org := credentialFixture(t)
-	actor := audit.FromPrincipal(auth.Principal{Kind: auth.PrincipalKindSession, UserID: f.User, SessionID: uuid.NewV7()})
+	actor := audit.FromPrincipal(f.Principal(t))
 	identity := UserIdentity{TeamID: "team", SlackUserID: "audit-human"}
 	rejectSlackAudit(t, f)
-	if err := LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, identity); err == nil {
+	if err := linkTestUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, identity); err == nil {
 		t.Fatal("audit failure allowed link")
 	}
 	var count int
@@ -88,7 +89,7 @@ func TestSlackAuditCompositeLinkFactsAndRollback(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE audit_events DISABLE TRIGGER reject_slack_audit`)
 	for range 2 {
-		if err := LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, identity); err != nil {
+		if err := linkTestUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, identity); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -22,7 +22,7 @@ func (s *Server) slackAppCallback(w http.ResponseWriter, r *http.Request, intera
 	}
 	registration, err := ids.Parse(chi.URLParam(r, "registrationID"))
 	if err != nil || registration == uuid.Nil() {
-		w.WriteHeader(http.StatusUnauthorized)
+		w.WriteHeader(http.StatusForbidden)
 		return
 	}
 	events := slack.EventHandler{Database: s.tx, Client: s.slackConfig.Client, Log: s.log}

@@ -2,7 +2,9 @@ package slack
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"sync"
 	"testing"
 	"time"
@@ -12,8 +14,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
 
 func (f statusFixture) reply(t *testing.T, key string, files bool) uuid.UUID {
@@ -26,8 +28,13 @@ func (f statusFixture) reply(t *testing.T, key string, files bool) uuid.UUID {
 	}
 	return receipt.ID
 }
-func (f statusFixture) link(t *testing.T) {
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_user_links(team_id,slack_user_id,user_id) VALUES('team','human',$1)`, f.User)
+func (f statusFixture) link(t *testing.T) { f.linkActor(t, f.User, "human") }
+func (f statusFixture) linkActor(t *testing.T, user uuid.UUID, actor string) uuid.UUID {
+	t.Helper()
+	p := (sessiontest.Fixture{Pool: f.Pool, Environment: f.Environment, User: user}).Principal(t)
+	link := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_user_links(id,installation_id,org_id,member_id,user_id,team_id,slack_user_id,user_access_epoch,identity_id,authenticated_at) VALUES($1,$2,$3,$4,$5,'team',$6,$7,$8,$9)`, link, f.installation, p.OrgID, p.MemberID, user, actor, p.AccessEpoch, p.IdentityID, p.AuthenticatedAt)
+	return link
 }
 
 func TestSlackBoundReplyCommitsOneCoreTurnAndExactReceipt(t *testing.T) {
@@ -86,7 +93,7 @@ func TestSlackBoundReplyRejectsCurrentAuthorityAndContentFailures(t *testing.T) 
 			case "expired":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_requests SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, id)
 			case "closed":
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -260,6 +267,7 @@ func TestSlackHistoricalRootCannotBindAcrossConnectionGeneration(t *testing.T) {
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id) SELECT $4,$3,org_id,app_id,team_id,bot_user_id,1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),granted_scopes,connected_by_user_id FROM slack_installations WHERE id=$6;
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) SELECT $2,environment_id,agent_id,$3,$4,created_by_user_id,(SELECT org_id FROM slack_app_registrations WHERE id=$3) FROM slack_connections WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.publication, nextPublication, nextRegistration, nextInstallation, f.registration, f.installation)
 	f.installation = nextInstallation
+	f.link(t)
 	id := f.newMessage(t, "old-root", "123.456")
 	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), id); err != nil {
 		t.Fatal(err)
@@ -348,12 +356,13 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := uuid.NewV7()
-	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Second'); INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$1 FROM environments WHERE id=$2; INSERT INTO slack_user_links(team_id,slack_user_id,user_id) VALUES('team','second-human',$1)`, pgx.QueryExecModeSimpleProtocol, user, f.Environment)
+	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Second'); INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$1 FROM environments WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, user, f.Environment)
 	var org uuid.UUID
 	if err := f.Pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.GrantMember(t, f.Pool, org, user, &f.Environment, "agents.use", "sessions.send")
+	f.linkActor(t, user, "second-human")
 	payload, _ := json.Marshal(messageGesture{Channel: "C1", Timestamp: slackNow(), Thread: "123.456", Text: "<@bot> another author"})
 	now := time.Now().UTC()
 	second, err := receiveGesture(ctx, f.Pool, inboundGesture{Installation: f.installation, Key: "second-source", Actor: "second-human", OccurredAt: now, ExpiresAt: now.Add(time.Minute), Payload: payload})
@@ -378,4 +387,19 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 	if err != nil || repeated == nil || repeated.ID != message.ID || *repeated.Source.Slack != *message.Source.Slack {
 		t.Fatalf("replay lost attribution: %+v %v", repeated, err)
 	}
+}
+
+// Model a Session and its initial Turn actually admitted through Slack.
+func (f statusFixture) bindLinkedSource(t *testing.T) {
+	var link uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_user_links WHERE installation_id=$1 AND user_id=$2 AND revoked_at IS NULL`, f.installation, f.User).Scan(&link); err != nil {
+		t.Fatal(err)
+	}
+	p, err := access.SlackPrincipal(t.Context(), f.Pool, link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := append([]any{f.Session}, access.HumanValues(p)...)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET (`+access.HumanColumns+`)=($2,$3,$4,$5,$6,$7,$8,$9,$10) WHERE id=$1`, args...)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE turns SET (`+access.HumanColumns+`)=($2,$3,$4,$5,$6,$7,$8,$9,$10) WHERE session_id=$1 AND caller_kind='user'`, args...)
 }

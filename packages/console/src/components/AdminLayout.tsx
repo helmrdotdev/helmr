@@ -9,6 +9,7 @@ import { AppBar } from "./AppBar";
 const ADMIN_NAV = [
   { href: "/admin/worker-groups", label: "Worker groups" },
   { href: "/admin/regions", label: "Regions" },
+  { href: "/admin/security", label: "Operator security" },
   { href: "/admin/audit-events", label: "Audit events" },
 ];
 

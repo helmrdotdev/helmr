@@ -9,7 +9,6 @@ export type Organization = {
 type CreateOrganizationInput = {
   slug: string;
   name: string;
-  setup_token?: string;
 };
 
 export async function createOrganization(input: CreateOrganizationInput): Promise<Organization> {

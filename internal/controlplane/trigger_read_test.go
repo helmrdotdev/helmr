@@ -153,7 +153,7 @@ func TestTriggerHTTPListsMultiplePinnedActivationsWithinScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpFixture := httpPostgresFixture{pool: f.Pool, queries: q, handler: handler, keys: keys}
+	httpFixture := httpPostgresFixture{pool: f.Pool, queries: q, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 	token := httpFixture.session(t, f.User, org)
 	base := "/api/projects/project/environments/test/triggers"
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.Environment)

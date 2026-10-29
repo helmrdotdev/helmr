@@ -8,25 +8,54 @@ type PermissionScope struct {
 }
 
 type MeResponse struct {
-	PermissionScopes     []PermissionScope `json:"permission_scopes"`
-	UserID               string            `json:"user_id"`
-	DisplayName          string            `json:"display_name"`
-	ProfileImageURL      string            `json:"profile_image_url"`
-	AppOrigin            string            `json:"app_origin,omitempty"`
-	OrgID                string            `json:"org_id,omitempty"`
-	OrgName              string            `json:"org_name,omitempty"`
-	OrgSlug              string            `json:"org_slug,omitempty"`
-	MembershipID         string            `json:"membership_id,omitempty"`
-	IsOwner              bool              `json:"is_owner"`
-	Admin                bool              `json:"admin"`
-	Permissions          []string          `json:"permissions"`
-	OrganizationRequired bool              `json:"organization_required"`
-	ProjectRequired      bool              `json:"project_required"`
-	AccessRequired       bool              `json:"access_required"`
-	SetupTokenRequired   bool              `json:"setup_token_required"`
-	// EmailDelivery reports whether Helmr can send email, which
-	// inviting members requires.
-	EmailDelivery bool `json:"email_delivery"`
+	UserID          string `json:"user_id"`
+	DisplayName     string `json:"display_name"`
+	ProfileImageURL string `json:"profile_image_url"`
+	PrimaryEmail    string `json:"primary_email"`
+}
+type OrganizationContextResponse struct {
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Slug           string                 `json:"slug"`
+	CurrentMember  CurrentMember          `json:"current_member"`
+	Authentication AuthenticationContext  `json:"authentication"`
+	Onboarding     OrganizationOnboarding `json:"onboarding"`
+}
+type CurrentMember struct {
+	ID               string            `json:"id"`
+	UserID           string            `json:"user_id"`
+	DisplayName      string            `json:"display_name"`
+	IsOwner          bool              `json:"is_owner"`
+	Permissions      []string          `json:"permissions"`
+	PermissionScopes []PermissionScope `json:"permission_scopes"`
+}
+type AuthenticationContext struct {
+	Method           string  `json:"method"`
+	AuthenticatedAt  string  `json:"authenticated_at"`
+	ReauthenticateAt *string `json:"reauthenticate_at"`
+}
+type OrganizationOnboarding struct {
+	ProjectRequired bool `json:"project_required"`
+}
+type OrganizationMembership struct {
+	ID                     string `json:"id"`
+	Name                   string `json:"name"`
+	Slug                   string `json:"slug"`
+	MembershipID           string `json:"membership_id"`
+	AuthenticationRequired string `json:"authentication_required"`
+}
+type OrganizationsResponse struct {
+	Organizations []OrganizationMembership `json:"organizations"`
+}
+type AuthConfigResponse struct {
+	DeploymentMode              string                  `json:"deployment_mode"`
+	Methods                     []string                `json:"methods"`
+	EmailDelivery               bool                    `json:"email_delivery"`
+	AppOrigin                   string                  `json:"app_origin"`
+	SignupEnabled               bool                    `json:"signup_enabled"`
+	OrganizationCreationEnabled bool                    `json:"organization_creation_enabled"`
+	SingleOrganization          *OrganizationMembership `json:"single_organization,omitempty"`
+	SetupRequired               bool                    `json:"setup_required"`
 }
 
 type GitHubAuthStartRequest struct {
@@ -52,23 +81,15 @@ type GitHubAuthFinishResponse struct {
 	RedirectAfter string `json:"redirect_after"`
 }
 
-type MagicLinkStartRequest struct {
-	Email string `json:"email,omitempty"`
-	Next  string `json:"next,omitempty"`
-	Token string `json:"token,omitempty"`
+type EmailStartRequest struct {
+	Email           string `json:"email"`
+	Next            string `json:"next,omitempty"`
+	InvitationToken string `json:"invitation_token,omitempty"`
 }
-
-type MagicLinkStartResponse struct {
-	Sent     bool   `json:"sent"`
-	Email    string `json:"email,omitempty"`
-	DebugURL string `json:"debug_url,omitempty"`
+type EmailVerifyRequest struct {
+	Code string `json:"code"`
 }
-
-type MagicLinkFinishRequest struct {
-	Token string `json:"token"`
-}
-
-type MagicLinkFinishResponse struct {
+type AuthenticationFinishResponse struct {
 	RedirectAfter string `json:"redirect_after"`
 }
 
@@ -81,14 +102,21 @@ type DeviceStartResponse struct {
 	IntervalSeconds         int64  `json:"interval_seconds"`
 }
 
+type DeviceConsentView struct {
+	AccountName      string `json:"account_name"`
+	OrganizationID   string `json:"org_id"`
+	OrganizationName string `json:"org_name"`
+	Proof            string `json:"proof"`
+}
 type DeviceStatusResponse struct {
-	Status    string `json:"status"`
-	ExpiresAt string `json:"expires_at,omitempty"`
+	Consent      *DeviceConsentView `json:"consent,omitempty"`
+	Confirmation bool               `json:"confirmation"`
+	Status       string             `json:"status"`
+	ExpiresAt    string             `json:"expires_at,omitempty"`
 }
 
 type DeviceAuthorizeRequest struct {
 	UserCode string `json:"user_code"`
-	UserID   string `json:"user_id"`
 	OrgID    string `json:"org_id"`
 }
 

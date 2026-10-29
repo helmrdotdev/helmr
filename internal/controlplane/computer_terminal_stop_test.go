@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
-	"uuid"
 )
 
 func TestCancelledParkedComputerBecomesDeletableAfterLifecycleReconciliation(t *testing.T) {
@@ -21,7 +20,7 @@ func TestCancelledParkedComputerBecomesDeletableAfterLifecycleReconciliation(t *
 	// A retained checkpoint has already allowed source physical cleanup without
 	// terminating its logical process. The Agent tests cover that publication path.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='owned physical closure' WHERE computer_id=$1`, f.Computer)
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
 	scope := computer.Scope{EnvironmentID: f.Environment}

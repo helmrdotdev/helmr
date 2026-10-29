@@ -142,7 +142,7 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	human, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: childID, Kind: "interrupt", IdempotencyKey: "human"})
+	human, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: childID, Kind: "interrupt", IdempotencyKey: "human"})
 	if err != nil {
 		t.Fatal(err)
 	}

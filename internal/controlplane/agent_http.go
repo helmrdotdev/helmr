@@ -26,7 +26,7 @@ import (
 func externalAgentCaller(principal auth.Principal) (session.Caller, error) {
 	switch principal.Kind {
 	case auth.PrincipalKindSession:
-		return session.Caller{Kind: "user", ID: principal.UserID, CredentialID: principal.SessionID, CredentialKind: "login_session"}, nil
+		return session.UserCaller(principal), nil
 	case auth.PrincipalKindAPIKey:
 		return session.Caller{Kind: "api_key", ID: principal.APIKeyID, CredentialID: principal.APIKeyID, CredentialKind: "api_key", CredentialVersion: principal.CredentialVersion}, nil
 	default:

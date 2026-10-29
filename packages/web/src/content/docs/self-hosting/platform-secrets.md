@@ -55,7 +55,6 @@ Set `TOFU=terraform` if required. The helper creates locally generated values fo
 - `encryption_key`
 - `computer_fencing_key`
 - `checkpoint_encryption_key`
-- `setup_token`
 - the worker-group enrollment token
 
 The six root keys are base64-encoded 32-byte values. The helper writes only secrets that do not already have an `AWSCURRENT` value; it never overwrites existing values.

@@ -286,7 +286,7 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) managingMember(principal auth.Principal) org.ManagingMember {
-	return org.ManagingMember{AuditPolicy: s.auditPolicy, Actor: audit.FromPrincipal(principal), OrgID: principal.OrgID, UserID: principal.UserID, MemberID: principal.MemberID}
+	return org.ManagingMember{Human: principal, AuditPolicy: s.auditPolicy, Actor: audit.FromPrincipal(principal), OrgID: principal.OrgID, UserID: principal.UserID, MemberID: principal.MemberID}
 }
 
 func (s *Server) inviteURL(token string) string {
@@ -300,6 +300,9 @@ func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, erro
 		return api.MemberSummary{}, err
 	}
 	status := api.MemberStatusActive
+	if row.SuspendedAt.Valid {
+		status = api.MemberStatusSuspended
+	}
 	disabledAt := row.RemovedAt
 	if disabledAt.Valid {
 		status = api.MemberStatusRemoved
@@ -318,6 +321,7 @@ func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, erro
 		CreatedAt:    pgvalue.Time(row.CreatedAt),
 		UpdatedAt:    pgvalue.Time(row.UpdatedAt),
 		RemovedAt:    pgvalue.TimePtr(disabledAt),
+		SuspendedAt:  pgvalue.TimePtr(row.SuspendedAt),
 	}, nil
 }
 
@@ -328,6 +332,9 @@ func memberSummaryFromUpdated(updated org.UpdatedMember) (api.MemberSummary, err
 		return api.MemberSummary{}, err
 	}
 	status := api.MemberStatusActive
+	if member.SuspendedAt.Valid {
+		status = api.MemberStatusSuspended
+	}
 	if member.RemovedAt.Valid {
 		status = api.MemberStatusRemoved
 	}
@@ -341,6 +348,7 @@ func memberSummaryFromUpdated(updated org.UpdatedMember) (api.MemberSummary, err
 		CreatedAt:    pgvalue.Time(member.CreatedAt),
 		UpdatedAt:    pgvalue.Time(member.UpdatedAt),
 		RemovedAt:    pgvalue.TimePtr(member.RemovedAt),
+		SuspendedAt:  pgvalue.TimePtr(member.SuspendedAt),
 	}, nil
 }
 
@@ -400,4 +408,28 @@ func (s *Server) ownershipMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"members": result})
+}
+
+func (s *Server) revokeMemberSessions(w http.ResponseWriter, r *http.Request) {
+	s.changeMemberAccess(w, r, nil)
+}
+func (s *Server) suspendMember(w http.ResponseWriter, r *http.Request) {
+	value := true
+	s.changeMemberAccess(w, r, &value)
+}
+func (s *Server) resumeMember(w http.ResponseWriter, r *http.Request) {
+	value := false
+	s.changeMemberAccess(w, r, &value)
+}
+func (s *Server) changeMemberAccess(w http.ResponseWriter, r *http.Request, suspended *bool) {
+	id, err := parseUUIDParam(r, "memberID")
+	if err != nil {
+		s.writeOperationError(w, r, notFound(org.ErrMemberNotFound))
+		return
+	}
+	if err := identity.ChangeMemberAccess(r.Context(), s.tx, s.managingMember(principalFromContext(r.Context())), id, suspended); err != nil {
+		s.writeOperationError(w, r, orgError(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

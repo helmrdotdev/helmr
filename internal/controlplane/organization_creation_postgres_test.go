@@ -2,7 +2,10 @@ package controlplane
 
 import (
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"uuid"
 
@@ -13,7 +16,6 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		adminOnly bool
-		admin     bool
 		role      string
 		want      int
 	}{
@@ -22,7 +24,6 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 		{name: "organization owner", adminOnly: true, role: "owner", want: http.StatusForbidden},
 		{name: "organization access administrator", adminOnly: true, role: "admin", want: http.StatusForbidden},
 		{name: "ordinary member", adminOnly: true, role: "member", want: http.StatusForbidden},
-		{name: "platform admin", adminOnly: true, admin: true, want: http.StatusCreated},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
@@ -30,11 +31,6 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 				cfg.OrganizationCreationAdminOnly = tc.adminOnly
 			})
 			user := fixture.user(t, "User")
-			if tc.admin {
-				if _, err := fixture.pool.Exec(t.Context(), "UPDATE users SET admin = true WHERE id = $1", user); err != nil {
-					t.Fatal(err)
-				}
-			}
 			orgID, _ := fixture.organizationOwner(t, "existing")
 			if tc.role != "" {
 				fixture.member(t, orgID, user, tc.role)
@@ -45,17 +41,13 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 			if me.Code != http.StatusOK || json.Unmarshal(me.Body.Bytes(), &account) != nil {
 				t.Fatalf("me: %d %s", me.Code, me.Body.String())
 			}
-			if tc.role == "" {
-				blocked := tc.adminOnly && !tc.admin
-				if account.AccessRequired != blocked || account.OrganizationRequired == blocked || account.SetupTokenRequired {
-					t.Fatalf("onboarding: %+v", account)
-				}
-				// Platform authority does not grant access to another organization's members.
-				if w := fixture.request(t, http.MethodGet, "/api/members", token, ""); w.Code != http.StatusForbidden {
-					t.Fatalf("unaffiliated member access: %d %s", w.Code, w.Body.String())
-				}
-			} else if account.OrgID != orgID.String() || account.IsOwner != (tc.role == "owner") || account.MembershipID == "" || account.AccessRequired || account.OrganizationRequired {
-				t.Fatalf("existing member: %+v", account)
+			if account.UserID != user.String() {
+				t.Fatal("wrong account")
+			}
+			config := fixture.request(t, http.MethodGet, "/api/auth/config", "", "")
+			var policy api.AuthConfigResponse
+			if config.Code != 200 || json.Unmarshal(config.Body.Bytes(), &policy) != nil || policy.OrganizationCreationEnabled == tc.adminOnly {
+				t.Fatalf("creation policy: %d %s", config.Code, config.Body)
 			}
 
 			w := fixture.request(t, http.MethodPost, "/api/organizations", token, `{"slug":"new","name":"New"}`)
@@ -84,21 +76,59 @@ func TestOrganizationCreationAdminOnly(t *testing.T) {
 	}
 }
 
-func TestOrganizationCreationAdminOnlyPreservesSelfHostedSetup(t *testing.T) {
+func TestOrganizationCreationRequiresIndependentOperatorForSetup(t *testing.T) {
 	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
 		cfg.DeploymentMode = deploymentModeSelfHosted
 		cfg.OrganizationCreationAdminOnly = true
-		cfg.SetupToken = "setup-token"
 	})
 	user := fixture.user(t, "First owner")
 	token := fixture.session(t, user, uuid.Nil())
-	if w := fixture.request(t, http.MethodPost, "/api/organizations", token, `{"slug":"first","name":"First"}`); w.Code != http.StatusForbidden {
-		t.Fatalf("missing setup token: %d %s", w.Code, w.Body.String())
+	if w := fixture.request(t, http.MethodPost, "/api/organizations", token, `{"slug":"first","name":"First"}`); w.Code != 403 {
+		t.Fatalf("missing operator: %d %s", w.Code, w.Body)
 	}
-	if w := fixture.request(t, http.MethodPost, "/api/organizations", token, `{"slug":"first","name":"First","setup_token":"setup-token"}`); w.Code != http.StatusCreated {
-		t.Fatalf("initial setup: %d %s", w.Code, w.Body.String())
+	operator := fixture.operatorSession(t)
+	create := func(slug string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/organizations", strings.NewReader(`{"slug":"`+slug+`","name":"Organization"}`))
+		r.Header.Set("Origin", fixture.origin)
+		r.AddCookie(&http.Cookie{Name: sessionCookieName(r), Value: token})
+		r.AddCookie(&http.Cookie{Name: operatorCookieName(r), Value: operator})
+		w := httptest.NewRecorder()
+		fixture.handler.ServeHTTP(w, r)
+		return w
 	}
-	if w := fixture.request(t, http.MethodPost, "/api/organizations", token, `{"slug":"second","name":"Second","setup_token":"setup-token"}`); w.Code != http.StatusConflict {
-		t.Fatalf("second organization: %d %s", w.Code, w.Body.String())
+	if w := create("first"); w.Code != 201 {
+		t.Fatalf("setup: %d %s", w.Code, w.Body)
 	}
+	if w := create("second"); w.Code != 403 {
+		t.Fatalf("second organization: %d %s", w.Code, w.Body)
+	}
+}
+
+// operatorSession supplies an already authenticated key for HTTP admission tests.
+// WebAuthn ceremony verification is exercised separately.
+func (f httpPostgresFixture) operatorSession(t *testing.T) string {
+	t.Helper()
+	op, key, session := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	raw, err := auth.GenerateOpaque(32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashToken(f.keys.Session, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO platform_operators(id,label,webauthn_user_handle) VALUES($1,'Operator',uuid_send($1::uuid))`, []any{op}},
+		{`INSERT INTO passkey_credentials(id,operator_id,credential_id,public_key,label,sign_count,backup_eligible,backup_state,credential_data) VALUES($1,$2,uuid_send($1::uuid),'key','Security key',0,false,false,'{}')`, []any{key, op}},
+		{`INSERT INTO login_sessions(id,operator_id,channel,privileged_key_id,privileged_epoch,privileged_login_at,privileged_confirmed_at,token_hash,expires_at) VALUES($1,$2,'operator',$3,0,now(),now(),$4,now()+interval '12 hours')`, []any{session, op, key, hash}},
+	} {
+		if _, err := f.pool.Exec(t.Context(), q.sql, q.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.operatorTokens[raw] = true
+	return raw
 }

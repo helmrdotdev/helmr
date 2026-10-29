@@ -118,12 +118,10 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", " /etc/helmr/runtime.descriptor.json ")
 	t.Setenv("PLATFORM_STORE_URI", " s3://helmr-cas/runtimes ")
 	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("APP_ORIGIN", " https://helmr.example.test ")
-	t.Setenv("MAGIC_LINK_DEBUG_URLS", " true ")
 	t.Setenv("SMTP_ADDR", " smtp.example.test:587 ")
 	t.Setenv("SMTP_USERNAME", " smtp-user ")
 	t.Setenv("SMTP_PASSWORD", "smtp-password")
@@ -135,7 +133,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || cfg.AppOrigin != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerHostCredentialSigningKey, bytes.Repeat([]byte{1}, 32)) || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || cfg.AppOrigin != "https://helmr.example.test" || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	for _, tc := range []struct {
@@ -170,7 +168,6 @@ func TestLoadControlPlaneDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
 	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
@@ -211,32 +208,6 @@ func TestLoadControlPlaneRequiresManagedRuntimeConfig(t *testing.T) {
 	}
 }
 
-func TestLoadControlPlaneRequiresSetupTokenForSelfHosted(t *testing.T) {
-	setControlPlaneRequiredEnv(t)
-	t.Setenv("DATABASE_URL", "postgres://example")
-	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
-	t.Setenv("CAS_URI", "s3://helmr-cas")
-	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
-	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
-	t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
-
-	_, err := LoadControlPlane()
-	if err == nil {
-		t.Fatal("expected missing setup token error")
-	}
-	if got, want := err.Error(), "SETUP_TOKEN is required"; !strings.HasPrefix(got, want) {
-		t.Fatalf("error = %q", got)
-	}
-
-	t.Setenv("SETUP_TOKEN", " setup-token")
-	_, err = LoadControlPlane()
-	if err == nil || !strings.Contains(err.Error(), "SETUP_TOKEN must not have surrounding whitespace") {
-		t.Fatalf("whitespace error = %v", err)
-	}
-}
-
 func TestLoadControlPlaneRejectsInvalidDeploymentMode(t *testing.T) {
 	setControlPlaneRequiredEnv(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
@@ -244,7 +215,6 @@ func TestLoadControlPlaneRejectsInvalidDeploymentMode(t *testing.T) {
 	t.Setenv("DEPLOYMENT_MODE", "unknown")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
 	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
@@ -305,7 +275,6 @@ func TestLoadControlPlaneAllowsHTTPOnlyForLoopbackAppOrigin(t *testing.T) {
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
 	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("APP_ORIGIN", "http://127.0.0.1:8080")
@@ -332,7 +301,6 @@ func TestLoadControlPlaneDefaultsAppOrigin(t *testing.T) {
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("CAS_URI", "s3://helmr-cas")
 	t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
@@ -361,7 +329,6 @@ func TestLoadControlPlaneRejectsNonOriginAppOrigins(t *testing.T) {
 			t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
 			t.Setenv("CAS_URI", "s3://helmr-cas")
 			t.Setenv("WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
-			t.Setenv("SETUP_TOKEN", "setup-token")
 			t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 			t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 			t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
@@ -371,19 +338,6 @@ func TestLoadControlPlaneRejectsNonOriginAppOrigins(t *testing.T) {
 				t.Fatalf("LoadControlPlane() error = %v", err)
 			}
 		})
-	}
-}
-
-func TestLoadControlPlaneRejectsInvalidMagicLinkDebugURLs(t *testing.T) {
-	t.Setenv("AUDIT_RETENTION_SECONDS", "3600")
-	t.Setenv("MAGIC_LINK_DEBUG_URLS", "sometimes")
-
-	_, err := LoadControlPlane()
-	if err == nil {
-		t.Fatal("expected invalid magic link debug URLs error")
-	}
-	if got, want := err.Error(), "MAGIC_LINK_DEBUG_URLS must be a boolean"; !strings.HasPrefix(got, want) {
-		t.Fatalf("error = %q", got)
 	}
 }
 
@@ -740,7 +694,6 @@ func TestComputerWrappingConfigIsRequiredByDeploymentMode(t *testing.T) {
 			for _, name := range []string{"WORKER_HOST_CREDENTIAL_SIGNING_KEY", "AUTH_KEY", "ENCRYPTION_KEY"} {
 				t.Setenv(name, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 			}
-			t.Setenv("SETUP_TOKEN", "setup-token")
 			t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client")
 			t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "secret")
 			t.Setenv("EMAIL_PROVIDER", "none")

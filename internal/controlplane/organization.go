@@ -1,10 +1,9 @@
 package controlplane
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"net/http"
 	"uuid"
 
@@ -28,14 +27,23 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, fmt.Errorf("invalid organization request JSON: %w", err))
 		return
 	}
-	initialSetup := s.selfHostedMode()
-	if !initialSetup && s.organizationCreationAdminOnly && !principal.Admin {
-		s.writeOperationError(w, r, forbidden(errors.New("organization creation requires a platform administrator")))
+	count, err := s.db.CountOrganizations(r.Context())
+	if err != nil {
+		writeError(w, err)
 		return
 	}
-	if initialSetup && !s.initialSetupTokenMatches(request.SetupToken) {
-		s.writeOperationError(w, r, forbidden(errors.New("invalid setup token")))
+	initialSetup := count == 0
+	if !initialSetup && (s.selfHostedMode() || s.organizationCreationAdminOnly) {
+		writeError(w, forbidden(errors.New("organization creation is disabled")))
 		return
+	}
+	var operator auth.Principal
+	if initialSetup {
+		operator, _, err = identity.AuthenticateOperator(r.Context(), s.tx, s.identity, operatorToken(r))
+		if err != nil {
+			writeError(w, forbidden(errors.New("operator authentication is required for first-owner setup")))
+			return
+		}
 	}
 	created, err := identity.CreateOrganization(r.Context(), s.tx, org.OrganizationInput{AuditPolicy: s.auditPolicy,
 		Actor:        audit.FromPrincipal(principal),
@@ -43,7 +51,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		Name:         request.Name,
 		OwnerUserID:  principal.UserID,
 		InitialSetup: initialSetup,
-	})
+	}, principal, operator)
 	if err != nil {
 		s.writeOperationError(w, r, orgError(err))
 		return
@@ -64,17 +72,6 @@ func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
-}
-
-func (s *Server) initialSetupTokenMatches(token string) bool {
-	expected := s.setupToken
-	provided := token
-	if expected == "" || provided == "" {
-		return false
-	}
-	expectedHash := sha256.Sum256([]byte(expected))
-	providedHash := sha256.Sum256([]byte(provided))
-	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
 }
 
 func (s *Server) selfHostedMode() bool {

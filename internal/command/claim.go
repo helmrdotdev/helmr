@@ -157,7 +157,7 @@ func claimNext(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, w
 		// Running commands retain their durable dispatch receipt, including when
 		// delivery is uncertain. Queued commands need current caller authority.
 		if c.Status != "running" {
-			if err = access.Check(ctx, tx, c.CallerKind, uuid.UUID(c.CallerID.Bytes), request.EnvironmentID, uuid.Nil(), auth.PermissionComputersExecute); err != nil {
+			if err = currentCommandAuthority(ctx, tx, c, request.EnvironmentID); err != nil {
 				if !errors.Is(err, access.ErrDenied) {
 					return ClaimResult{}, err
 				}
@@ -352,4 +352,22 @@ func recordExposure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 		}
 	}
 	return result, protected, nil
+}
+
+func currentCommandAuthority(ctx context.Context, tx pgx.Tx, c db.Command, env uuid.UUID) error {
+	if c.CallerKind != "user" {
+		return access.Check(ctx, tx, c.CallerKind, uuid.UUID(c.CallerID.Bytes), env, uuid.Nil(), auth.PermissionComputersExecute)
+	}
+	p, err := access.ReadHuman(tx.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM commands WHERE environment_id=$1 AND id=$2`, env, c.ID))
+	if err != nil {
+		return err
+	}
+	if p.UserID != uuid.UUID(c.CallerID.Bytes) {
+		return access.ErrDenied
+	}
+	p, err = access.HumanInEnvironment(ctx, tx, p, env)
+	if err != nil {
+		return err
+	}
+	return auth.Require(p, auth.PermissionComputersExecute, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}, access.ErrDenied)
 }

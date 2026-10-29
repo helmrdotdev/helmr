@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	magicLinkDeliveryWorkers = 4
-	magicLinkDeliveryQueue   = 64
+	emailCodeDeliveryWorkers = 4
+	emailCodeDeliveryQueue   = 64
 )
 
-type magicLinkDeliveryJob struct {
+type emailCodeDeliveryJob struct {
 	id      string
 	purpose string
 	deliver func(context.Context) error
@@ -22,7 +22,7 @@ type magicLinkDeliveryJob struct {
 	done    chan error
 }
 
-func (job magicLinkDeliveryJob) complete(err error) {
+func (job emailCodeDeliveryJob) complete(err error) {
 	if job.done == nil {
 		return
 	}
@@ -32,35 +32,35 @@ func (job magicLinkDeliveryJob) complete(err error) {
 	}
 }
 
-// MagicLinkDelivery bounds provider calls and queued delivery memory for one
+// EmailCodeDelivery bounds provider calls and queued delivery memory for one
 // Control Plane process.
-type MagicLinkDelivery struct {
+type EmailCodeDelivery struct {
 	log             *slog.Logger
-	queue           chan magicLinkDeliveryJob
+	queue           chan emailCodeDeliveryJob
 	workers         int
 	shutdownTimeout time.Duration
 
 	mu        sync.Mutex
 	accepting bool
-	pending   map[string]magicLinkDeliveryJob
+	pending   map[string]emailCodeDeliveryJob
 }
 
-func NewMagicLinkDelivery(log *slog.Logger, shutdownTimeout time.Duration) *MagicLinkDelivery {
-	return newMagicLinkDelivery(log, magicLinkDeliveryWorkers, magicLinkDeliveryQueue, shutdownTimeout)
+func NewEmailCodeDelivery(log *slog.Logger, shutdownTimeout time.Duration) *EmailCodeDelivery {
+	return newEmailCodeDelivery(log, emailCodeDeliveryWorkers, emailCodeDeliveryQueue, shutdownTimeout)
 }
 
-func newMagicLinkDelivery(log *slog.Logger, workers int, queueSize int, shutdownTimeout time.Duration) *MagicLinkDelivery {
-	return &MagicLinkDelivery{
+func newEmailCodeDelivery(log *slog.Logger, workers int, queueSize int, shutdownTimeout time.Duration) *EmailCodeDelivery {
+	return &EmailCodeDelivery{
 		log:             log,
-		queue:           make(chan magicLinkDeliveryJob, queueSize),
+		queue:           make(chan emailCodeDeliveryJob, queueSize),
 		workers:         workers,
 		shutdownTimeout: shutdownTimeout,
 		accepting:       true,
-		pending:         make(map[string]magicLinkDeliveryJob, workers+queueSize),
+		pending:         make(map[string]emailCodeDeliveryJob, workers+queueSize),
 	}
 }
 
-func (d *MagicLinkDelivery) enqueue(job magicLinkDeliveryJob) bool {
+func (d *EmailCodeDelivery) enqueue(job emailCodeDeliveryJob) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if !d.accepting {
@@ -81,7 +81,7 @@ func (d *MagicLinkDelivery) enqueue(job magicLinkDeliveryJob) bool {
 	}
 }
 
-func (d *MagicLinkDelivery) Run(ctx context.Context) error {
+func (d *EmailCodeDelivery) Run(ctx context.Context) error {
 	var workers sync.WaitGroup
 	for range d.workers {
 		workers.Go(func() {
@@ -99,7 +99,7 @@ func (d *MagicLinkDelivery) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (d *MagicLinkDelivery) runWorker(ctx context.Context) {
+func (d *EmailCodeDelivery) runWorker(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -118,13 +118,13 @@ func (d *MagicLinkDelivery) runWorker(ctx context.Context) {
 	}
 }
 
-func (d *MagicLinkDelivery) stopAccepting() {
+func (d *EmailCodeDelivery) stopAccepting() {
 	d.mu.Lock()
 	d.accepting = false
 	d.mu.Unlock()
 }
 
-func (d *MagicLinkDelivery) finish(id string, finalized bool) {
+func (d *EmailCodeDelivery) finish(id string, finalized bool) {
 	if !finalized {
 		return
 	}
@@ -133,9 +133,9 @@ func (d *MagicLinkDelivery) finish(id string, finalized bool) {
 	d.mu.Unlock()
 }
 
-func (d *MagicLinkDelivery) failPending(ctx context.Context) error {
+func (d *EmailCodeDelivery) failPending(ctx context.Context) error {
 	d.mu.Lock()
-	pending := make([]magicLinkDeliveryJob, 0, len(d.pending))
+	pending := make([]emailCodeDeliveryJob, 0, len(d.pending))
 	for _, job := range d.pending {
 		pending = append(pending, job)
 	}

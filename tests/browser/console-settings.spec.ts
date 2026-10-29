@@ -1,3 +1,4 @@
+import { isAuthenticationPath, authenticationResponse } from "./fixtures/authentication";
 import { expect, test, type Page } from "@playwright/test";
 
 // Settings navigation by scope level and the in-page Environment selector of
@@ -26,7 +27,7 @@ async function fixture(page: Page, options: { signedOut?: boolean } = {}) {
     const apiKeys = path.match(/^\/api\/projects\/settings-demo\/environments\/([^/]+)\/api-keys$/);
     let json: unknown;
     if (path === "/api/me" && options.signedOut) { await route.fulfill({ status: 401, json: { error: { code: "unauthorized", message: "sign in" } } }); return; }
-    else if (path === "/api/me") json = { user_id: "user-1", display_name: "Dana Example", org_id: "org", org_name: "Research Org", is_owner: true, permission_scopes: environments.map(e => ({ project: projectID, environment: e.environment, permissions: ["secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke", "api_keys.read", "api_keys.create", "api_keys.revoke"] })), permissions: ["projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], admin: false, organization_required: false, project_required: false };
+    else if (isAuthenticationPath(path)) json = { user_id: "user-1", display_name: "Dana Example", org_id: "org", org_name: "Research Org", is_owner: true, permission_scopes: environments.map(e => ({ project: projectID, environment: e.environment, permissions: ["secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke", "api_keys.read", "api_keys.create", "api_keys.revoke"] })), permissions: ["projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], admin: false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === `/api/projects/${projectID}/settings`) json = { history_retention: "30d" };
@@ -37,10 +38,11 @@ async function fixture(page: Page, options: { signedOut?: boolean } = {}) {
     else if (apiKeys && method === "POST") json = { ...apiKey(apiKeys[1]!), raw_key: "hk_test_synthetic_raw_key_value" };
     else if (apiKeys) json = { api_keys: [apiKey(apiKeys[1]!)] };
     else if (scoped && method === "DELETE") json = {};
+    else if (path === "/api/account/credentials") json = {credentials:[]};
     else if (path === "/api/slack/user-links") json = { links: [] };
     else if (path === "/api/slack/link-workspaces") json = { configured: true, workspaces: [] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(path, json) });
   });
   return { requests };
 }
@@ -116,8 +118,10 @@ test("My account shows the profile and the Slack identity section", async ({ pag
   await fixture(page);
   await page.goto(`/settings/account?${scope}`);
   await expect(page.getByRole("heading", { name: "My account", exact: true })).toBeVisible();
-  const profile = page.locator("section").filter({ has: page.getByRole("heading", { name: "Profile", exact: true }) });
-  await expect(profile.locator("dd")).toHaveText(["Dana Example", "Owner", "Research Org"]);
+  const profile = page.getByRole("region", {name:"Your profile",exact:true});
+  await expect(profile.getByLabel("Display name", {exact:true})).toHaveValue("Dana Example");
+  await expect(profile).toContainText("fixture@example.test");
+  await expect(profile).not.toContainText("Research Org");
   await expect(page.getByRole("heading", { name: "Your Slack identity" })).toBeVisible();
   await expect(page.getByText("No Slack identities linked.")).toBeVisible();
 });

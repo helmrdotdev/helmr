@@ -1,3 +1,4 @@
+import "./browser-test-env";
 import { expect, test } from "bun:test";
 import { locationDestination, returnPath, withNext } from "./continuation";
 import { onboardingRedirectPath, type Me } from "./auth";

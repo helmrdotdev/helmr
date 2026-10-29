@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"time"
@@ -116,99 +117,133 @@ func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, in
 	return rawSession, nil
 }
 
-// signedInUser is the user an identity upsert selected.
+// signedInUser carries the actual credential proof into session issuance.
 type signedInUser struct {
-	actor          audit.Evidence
-	authentication audit.AuthenticationDetails
-	id             pgtype.UUID
+	actor           audit.Evidence
+	authentication  audit.AuthenticationDetails
+	id              pgtype.UUID
+	identityID      uuid.UUID
+	passkeyID       uuid.UUID
+	authenticatedAt time.Time
+	accessEpoch     int64
 }
 
 func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external ExternalIdentity) (signedInUser, error) {
+	if external.Provider == "" || external.Subject == "" {
+		return signedInUser{}, ErrInvalidToken
+	}
+	// Serialize the stable subject, including retired lifetimes. An email collision
+	// is never consent to link an unrelated provider identity.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "identity:"+external.Provider+":"+external.Subject); err != nil {
+		return signedInUser{}, err
+	}
 	q := db.New(tx)
-	proposedUser := uuid.NewV7()
-	email := pgtype.Text{}
-	if external.Email != "" {
-		email = pgtype.Text{String: external.Email, Valid: true}
-	}
-	user, err := q.UpsertAuthIdentity(ctx, db.UpsertAuthIdentityParams{
-		UserID:           pgvalue.UUID(proposedUser),
-		IdentityID:       pgvalue.UUID(uuid.NewV7()),
-		IdentityProvider: external.Provider,
-		IdentitySubject:  external.Subject,
-		DisplayName:      external.DisplayName,
-		ProfileImageURL:  pgtype.Text{String: external.ProfileImageURL, Valid: external.ProfileImageURL != ""},
-		Email:            email,
-		EmailVerified:    external.EmailVerified,
-		Admin:            cfg.initialAdmin(external.Email, external.EmailVerified),
-	})
-	if err != nil {
-		return signedInUser{}, fmt.Errorf("record auth identity: %w", err)
-	}
-	if pgvalue.MustUUIDValue(user.ID) == proposedUser && cfg.initialAdmin(external.Email, external.EmailVerified) {
-		if err := audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: audit.Internal(audit.ControlPlane), Action: "platform_admin.granted", TargetKind: "user", TargetID: proposedUser, Details: audit.PlatformAdminGrantedDetails{Basis: "configured_admin_email"}}); err != nil {
+	existing, err := q.GetAuthIdentity(ctx, db.GetAuthIdentityParams{Provider: external.Provider, Subject: external.Subject})
+	if err == nil {
+		if existing.RevokedAt.Valid {
+			return signedInUser{}, ErrIdentityConflict
+		}
+		var epoch int64
+		if err = tx.QueryRow(ctx, `SELECT access_epoch FROM users WHERE id=$1 FOR UPDATE`, existing.UserID).Scan(&epoch); err != nil {
 			return signedInUser{}, err
 		}
+		var at time.Time
+		if err = tx.QueryRow(ctx, `UPDATE auth_identities SET observed_email=$2,last_authenticated_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL RETURNING last_authenticated_at`, existing.ID, external.Email).Scan(&at); err != nil {
+			return signedInUser{}, err
+		}
+		return provedExternal(pgvalue.MustUUIDValue(existing.UserID), pgvalue.MustUUIDValue(existing.ID), epoch, at, external), nil
 	}
-	return signedInUser{id: user.ID, actor: audit.VerifiedLogin(pgvalue.MustUUIDValue(user.ID), external.Provider), authentication: audit.AuthenticationDetails{Method: "provider", Provider: external.Provider, Subject: external.Subject}}, nil
+	if !isNoRows(err) {
+		return signedInUser{}, err
+	}
+	// GitHub is the configured mailbox-verifying ordinary provider. Its assertion
+	// may create a new account; association with an existing account needs proof
+	// from that account through the explicit linking operation.
+	if external.Provider != "github" || !external.EmailVerified {
+		return signedInUser{}, ErrAccountProofRequired
+	}
+	email, err := org.NormalizeEmail(external.Email)
+	if err != nil {
+		return signedInUser{}, ErrAccountProofRequired
+	}
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "email:"+email); err != nil {
+		return signedInUser{}, err
+	}
+	if _, err = q.GetAccountByEmail(ctx, email); err == nil {
+		return signedInUser{}, ErrAccountProofRequired
+	} else if !isNoRows(err) {
+		return signedInUser{}, err
+	}
+	handle, err := randomHandle()
+	if err != nil {
+		return signedInUser{}, err
+	}
+	user, err := q.CreateAccount(ctx, db.CreateAccountParams{ID: pgvalue.UUID(uuid.NewV7()), PrimaryEmail: pgtype.Text{String: email, Valid: true}, DisplayName: external.DisplayName, ProfileImageURL: pgtype.Text{String: external.ProfileImageURL, Valid: external.ProfileImageURL != ""}, WebauthnUserHandle: handle})
+	if err != nil {
+		return signedInUser{}, err
+	}
+	credential, err := q.CreateAuthIdentity(ctx, db.CreateAuthIdentityParams{ID: pgvalue.UUID(uuid.NewV7()), UserID: user.ID, Provider: external.Provider, Subject: external.Subject, ObservedEmail: pgtype.Text{String: email, Valid: true}})
+	if err != nil {
+		return signedInUser{}, err
+	}
+	return provedExternal(pgvalue.MustUUIDValue(user.ID), pgvalue.MustUUIDValue(credential.ID), user.AccessEpoch, credential.LastAuthenticatedAt.Time, external), nil
 }
 
-// startLoginSession issues a login session for the authenticated user. With an
-// invitation, the user first joins its organization and the session selects
-// that organization.
+func provedUser(user, identity, key uuid.UUID, epoch int64, at time.Time, method string) signedInUser {
+	actor := audit.VerifiedLogin(user, method)
+	if method == "email" || method == "passkey" {
+		kind, id := "email_code", identity
+		if method == "passkey" {
+			kind, id = "passkey", key
+		}
+		actor.Authentication = audit.Authentication{Origin: "request", Result: "verified", CredentialKind: kind, CredentialID: id}
+	}
+	return signedInUser{id: pgvalue.UUID(user), identityID: identity, passkeyID: key, authenticatedAt: at, accessEpoch: epoch, actor: actor, authentication: audit.AuthenticationDetails{Method: method}}
+}
+func randomHandle() ([]byte, error) { h := make([]byte, 32); _, err := rand.Read(h); return h, err }
+
 func startLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedInUser, displayName string, invitation *org.PendingInvitation) (string, error) {
-	orgID := pgtype.UUID{}
-	if invitation != nil {
-		userID, err := pgvalue.UUIDValue(user.id)
-		if err != nil {
-			return "", fmt.Errorf("user id: %w", err)
-		}
-		if err := AcceptInvitation(ctx, tx, cfg.auditPolicy, user.actor, *invitation, userID, displayName); err != nil {
-			return "", acceptanceError(err)
-		}
-		orgID = pgvalue.UUID(invitation.OrgID)
-	}
-	return issueLoginSession(ctx, tx, cfg, user, orgID)
+	// Invitations are accepted separately after explicit user consent.
+	return issueLoginSession(ctx, tx, cfg, user, pgtype.UUID{})
 }
-
-// acceptanceError reports the org errors of invitation acceptance as the
-// sign-in errors of this package.
 func acceptanceError(err error) error {
-	switch {
-	case errors.Is(err, org.ErrInvitationNotFound):
+	if errors.Is(err, org.ErrInvitationNotFound) {
 		return ErrInvalidToken
-	case errors.Is(err, org.ErrAlreadyMember):
-		return ErrAlreadyMember
-	default:
-		return err
 	}
+	if errors.Is(err, org.ErrAlreadyMember) {
+		return ErrAlreadyMember
+	}
+	return err
 }
-
-// issueLoginSession creates a login session for the user, selecting orgID when
-// it is valid, and returns its raw token.
 func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedInUser, orgID pgtype.UUID) (string, error) {
-	q := db.New(tx)
-	sessionID := uuid.NewV7()
+	if orgID.Valid {
+		return "", ErrOrganizationRequired
+	}
 	raw, err := auth.GenerateOpaque(loginSessionTokenBytes)
 	if err != nil {
-		return "", fmt.Errorf("generate login session: %w", err)
+		return "", err
 	}
 	hash, err := auth.HashToken(cfg.sessionKey, raw)
 	if err != nil {
-		return "", fmt.Errorf("hash login session: %w", err)
+		return "", err
 	}
-	if _, err := q.CreateLoginSession(ctx, db.CreateLoginSessionParams{
-		ID:        pgvalue.UUID(sessionID),
-		OrgID:     orgID,
-		UserID:    user.id,
-		TokenHash: hash,
-		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(cfg.lifetimes.Session)),
-	}); err != nil {
-		return "", fmt.Errorf("create login session: %w", err)
+	id := uuid.NewV7()
+	if _, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,token_hash,user_access_epoch,expires_at) VALUES($1,$2,'browser',$3,$4,clock_timestamp()+interval '30 days')`, id, user.id, hash, user.accessEpoch); err != nil {
+		return "", err
 	}
-	if err := appendSessionLifecycle(ctx, tx, cfg, user.actor, orgID, "identity.sign_in", sessionID, user.authentication); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,passkey_id,authenticated_at) VALUES($1,$2,$3,$4,$5,$6)`, uuid.NewV7(), id, user.id, optionalUUID(user.identityID), optionalUUID(user.passkeyID), user.authenticatedAt); err != nil {
+		return "", err
+	}
+	if err = appendSessionLifecycle(ctx, tx, cfg, user.actor, pgtype.UUID{}, "identity.sign_in", id, user.authentication); err != nil {
 		return "", err
 	}
 	return raw, nil
+}
+func optionalUUID(id uuid.UUID) pgtype.UUID {
+	if id == uuid.Nil() {
+		return pgtype.UUID{}
+	}
+	return pgvalue.UUID(id)
 }
 
 func appendSessionLifecycle(ctx context.Context, tx pgx.Tx, cfg Config, actor audit.Evidence, orgID pgtype.UUID, action string, id uuid.UUID, details audit.Details) error {
@@ -223,61 +258,50 @@ func appendSessionLifecycle(ctx context.Context, tx pgx.Tx, cfg Config, actor au
 	return nil
 }
 
-// AuthenticateLoginSession resolves a raw login session token to its
-// principal and extends the session's lifetime. An unknown, revoked or expired
-// session or a session whose selected membership is no
-// longer active is auth.ErrUnauthenticated. A session that selects no
-// organization takes the user's first active membership.
-func AuthenticateLoginSession(ctx context.Context, database db.DBTX, cfg Config, rawSession string) (auth.Principal, error) {
-	q := db.New(database)
-	tokenHash, err := auth.HashToken(cfg.sessionKey, rawSession)
+// AuthenticateLoginSession requires explicit target selection. It does not
+// refresh inactivity on failed admission or background observation.
+func AuthenticateLoginSession(ctx context.Context, database db.DBTX, cfg Config, rawSession string, target uuid.UUID) (auth.Principal, error) {
+	hash, err := auth.HashToken(cfg.sessionKey, rawSession)
 	if err != nil {
 		return auth.Principal{}, err
 	}
-	row, err := q.GetLoginSessionByTokenHash(ctx, tokenHash)
+	row, err := db.New(database).GetLoginSessionByTokenHash(ctx, hash)
 	if isNoRows(err) {
 		return auth.Principal{}, auth.ErrUnauthenticated
 	}
 	if err != nil {
-		return auth.Principal{}, fmt.Errorf("load login session: %w", err)
+		return auth.Principal{}, err
 	}
-	sessionID, err := pgvalue.UUIDValue(row.ID)
+	p, err := access.SessionPrincipal(ctx, database, pgvalue.MustUUIDValue(row.ID), target)
+	if errors.Is(err, access.ErrDenied) {
+		if target != uuid.Nil() && row.Channel == "browser" {
+			account, accountErr := access.SessionPrincipal(ctx, database, pgvalue.MustUUIDValue(row.ID), uuid.Nil())
+			if accountErr == nil {
+				return account, ErrOrganizationAccessDenied
+			}
+			if !errors.Is(accountErr, access.ErrDenied) {
+				return auth.Principal{}, accountErr
+			}
+		}
+		return auth.Principal{}, auth.ErrUnauthenticated
+	}
+	return p, err
+}
+
+// liveBrowserSession treats an expired or retired cookie as anonymous. A live
+// account envelope still prevents a fresh login from replacing another account.
+func liveBrowserSession(ctx context.Context, q db.DBTX, cfg Config, raw string) (auth.Principal, error) {
+	p, err := AuthenticateLoginSession(ctx, q, cfg, raw, uuid.Nil())
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		return auth.Principal{}, nil
+	}
 	if err != nil {
-		return auth.Principal{}, fmt.Errorf("login session id: %w", err)
+		return auth.Principal{}, err
 	}
-	userID, err := pgvalue.UUIDValue(row.UserID)
-	if err != nil {
-		return auth.Principal{}, fmt.Errorf("login session user id: %w", err)
+	if p.Channel != "browser" {
+		return auth.Principal{}, nil
 	}
-	if err := q.RefreshLoginSession(ctx, db.RefreshLoginSessionParams{
-		ID:        row.ID,
-		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(cfg.lifetimes.Session)),
-	}); err != nil {
-		return auth.Principal{}, fmt.Errorf("refresh login session: %w", err)
-	}
-	principal := auth.Principal{
-		UserID:    userID,
-		SessionID: sessionID,
-		Kind:      auth.PrincipalKindSession,
-		Admin:     row.Admin,
-	}
-	if row.OrgID.Valid {
-		orgID, err := pgvalue.UUIDValue(row.OrgID)
-		if err != nil {
-			return auth.Principal{}, fmt.Errorf("login session org id: %w", err)
-		}
-		principal.OrgID = orgID
-		principal.MemberID = pgvalue.MustUUIDValue(row.MemberID)
-		principal.IsOwner = row.IsOwner
-		grants, err := access.MemberGrants(ctx, database, orgID, principal.MemberID)
-		if err != nil {
-			return auth.Principal{}, fmt.Errorf("load permission grants: %w", err)
-		}
-		for _, grant := range grants {
-			principal.Grants = append(principal.Grants, grant.PermissionGrant)
-		}
-	}
-	return principal, nil
+	return p, nil
 }
 
 // RevokeLoginSession revokes the login session with the raw token. An empty,
@@ -293,7 +317,15 @@ func RevokeLoginSession(ctx context.Context, database db.TxBeginner, cfg Config,
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		var id, user uuid.UUID
 		var orgID pgtype.UUID
-		err := tx.QueryRow(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE token_hash=$1 AND revoked_at IS NULL RETURNING id,user_id,org_id`, tokenHash).Scan(&id, &user, &orgID)
+		if err := tx.QueryRow(ctx, `SELECT user_id FROM login_sessions WHERE token_hash=$1 AND channel IN ('browser','cli')`, tokenHash).Scan(&user); isNoRows(err) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, user); err != nil {
+			return err
+		}
+		err := tx.QueryRow(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE token_hash=$1 AND channel IN ('browser','cli') AND revoked_at IS NULL RETURNING id,user_id,org_id`, tokenHash).Scan(&id, &user, &orgID)
 		if isNoRows(err) {
 			return nil
 		}
@@ -304,4 +336,51 @@ func RevokeLoginSession(ctx context.Context, database db.TxBeginner, cfg Config,
 		actor.Authorization = audit.NotEvaluated()
 		return appendSessionLifecycle(ctx, tx, cfg, actor, orgID, "identity.session_revoked", id, audit.SessionRevokedDetails{Reason: "logout"})
 	})
+}
+
+// SignInBrowserProvider preserves an existing account envelope on confirmation.
+func SignInBrowserProvider(ctx context.Context, database db.TxBeginner, cfg Config, external ExternalIdentity, raw string, started time.Time) (string, error) {
+	var result string
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		user, err := upsertExternalIdentity(ctx, tx, cfg, external)
+		if err != nil {
+			return err
+		}
+		var cutoff pgtype.Timestamptz
+		if err = tx.QueryRow(ctx, `SELECT reauthenticate_after FROM users WHERE id=$1`, user.id).Scan(&cutoff); err != nil {
+			return err
+		}
+		if started.IsZero() || cutoff.Valid && !started.After(cutoff.Time) {
+			return ErrInvalidToken
+		}
+		existing, err := liveBrowserSession(ctx, tx, cfg, raw)
+		if err != nil {
+			return err
+		}
+		if existing.SessionID == uuid.Nil() {
+			result, err = issueLoginSession(ctx, tx, cfg, user, pgtype.UUID{})
+			return err
+		}
+		hash, err := auth.HashToken(cfg.sessionKey, raw)
+		if err != nil {
+			return ErrInvalidToken
+		}
+		var id uuid.UUID
+		var owner uuid.UUID
+		if err = tx.QueryRow(ctx, `SELECT id,user_id FROM login_sessions WHERE token_hash=$1 AND channel='browser' AND revoked_at IS NULL AND expires_at>clock_timestamp()`, hash).Scan(&id, &owner); err != nil {
+			return ErrInvalidToken
+		}
+		if owner != nullableUUID(user.id) {
+			return ErrWrongAccount
+		}
+		result, err = confirmBrowserProof(ctx, tx, cfg, id, hash, user)
+		return err
+	})
+	return result, err
+}
+
+func provedExternal(user, identity uuid.UUID, epoch int64, at time.Time, external ExternalIdentity) signedInUser {
+	u := provedUser(user, identity, uuid.Nil(), epoch, at, external.Provider)
+	u.authentication = audit.AuthenticationDetails{Method: "provider", Provider: external.Provider, Subject: external.Subject}
+	return u
 }

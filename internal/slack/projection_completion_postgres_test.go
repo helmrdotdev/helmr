@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"net/http"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
@@ -22,8 +22,12 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 			f := newStatusFixture(t)
 			if kind == "stream" || kind == "stream-status-warning" {
 				f.link(t)
+				f.bindLinkedSource(t)
 			}
 			write := f.outputWriter(t)
+			if kind == "stream" || kind == "stream-status-warning" {
+				f.bindLinkedSource(t)
+			}
 			write("visible progress")
 			var turn uuid.UUID
 			if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM turns WHERE session_id=$1 AND status='running'`, f.Session).Scan(&turn); err != nil {
@@ -70,7 +74,7 @@ func TestSlackCommittedResponseWaitsForCoreCompletion(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else if kind == "cancelled" {
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
+				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 					t.Fatal(err)
 				}
 			}

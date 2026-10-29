@@ -31,7 +31,7 @@ export function SlackConnect() {
       if (mounted) setContext(result);
     } catch (e) {
       if (!mounted) return;
-      if (e instanceof ApiError && e.status === 401) setSignIn(true);
+      if (e instanceof ApiError && (e.status === 401 || e.code === "authentication_required")) setSignIn(true);
       else setError(describeFailure(e, MESSAGES, "This linking request is unavailable. Try your action in Slack again."));
     }
   });

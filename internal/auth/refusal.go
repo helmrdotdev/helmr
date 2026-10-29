@@ -13,7 +13,7 @@ func (*PermissionRefusal) Error() string { return "permission denied" }
 func Require(p Principal, permission Permission, scope Scope, denied error) error {
 	checks, ok := p.Evaluate(permission, scope)
 	if ok {
-		return nil
+		return RequireRecentFor(p, permission)
 	}
 	return errors.Join(denied, &PermissionRefusal{Principal: p, Checks: checks})
 }

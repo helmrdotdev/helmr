@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"net/http"
 	"net/url"
@@ -26,13 +27,14 @@ func attentionSession(t *testing.T, f sessiontest.Fixture) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1))`, f.Environment, id, f.Agent, f.Deployment, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET (`+access.HumanColumns+`)=($3,$4,$5,$6,$7,$8,$9,$10,$11) WHERE environment_id=$1 AND id=$2`, append([]any{f.Environment, id}, access.HumanValues(f.Principal(t))...)...)
 	return id
 }
 
 // attentionFailedTurn admits a Turn in the Session and records it failed hoursAgo.
 func attentionFailedTurn(t *testing.T, f sessiontest.Fixture, sessionID uuid.UUID, key string, hoursAgo int) uuid.UUID {
 	t.Helper()
-	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: sessionID, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
+	admission, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.UserCaller(f.Principal(t)), session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: sessionID, IdempotencyKey: key, Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,10 +48,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
 		t.Fatal(err)
 	}
-	caller := session.Caller{Kind: "user", ID: f.User, CredentialID:
-
-	// A pending Question, newest of all.
-	uuid.NewV7()}
+	caller := session.UserCaller(f.Principal(t))
 
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 	asked, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "ask", Input: json.RawMessage(`[{"type":"text","text":"work"}]`)})
@@ -121,7 +120,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
+	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 	path := "/api/projects/project/environments/test/attention"
 	auditCount := func() int {
 		t.Helper()

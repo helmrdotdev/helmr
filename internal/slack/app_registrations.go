@@ -82,19 +82,20 @@ func (s *CredentialStore) openApp(org, registration uuid.UUID, revision int64, c
 
 // StoreAppCredentials rotates secrets for one registration. Once enrolled, the
 // OAuth client is immutable: changing app identity requires new setup.
-func (s *CredentialStore) StoreAppCredentials(ctx context.Context, actor audit.Evidence, org, user, registration uuid.UUID, credentials AppCredentials) error {
+func (s *CredentialStore) StoreAppCredentials(ctx context.Context, prior auth.Principal, registration uuid.UUID, credentials AppCredentials) error {
+	org := prior.OrgID
 	if !credentials.valid(s.mode) {
 		return errCredentialUnavailable
 	}
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockRegistrationManager(ctx, tx, org, user, registration, auth.PermissionAgentConnectionsUpdateCredentials); err != nil {
+		if err := lockRegistrationManager(ctx, tx, prior, registration, auth.PermissionAgentConnectionsUpdateCredentials); err != nil {
 			return err
 		}
-		verified, proofErr := registrationAuditActor(ctx, tx, actor, org, user, registration)
+		verified, proofErr := registrationAuditActor(ctx, tx, prior, registration)
 		if proofErr != nil {
 			return proofErr
 		}
-		actor = verified
+		actor := verified
 		var client *string
 		var revision int64
 		err := tx.QueryRow(ctx, `SELECT client_id,credential_revision FROM slack_app_registrations WHERE id=$1 AND org_id=$2 AND transport=$3 AND retired_at IS NULL FOR NO KEY UPDATE`, registration, org, s.mode).Scan(&client, &revision)

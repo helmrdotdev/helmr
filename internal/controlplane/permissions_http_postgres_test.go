@@ -3,6 +3,7 @@ package controlplane
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -27,7 +28,9 @@ func TestPermissionManagementHTTP(t *testing.T) {
 	}
 	request := func(method, path, body, token, revision string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+token)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName(req), Value: token})
+		req.Header.Set("Origin", f.origin)
+		req.Header.Set("X-Helmr-Organization", f.browserOrganizations[token].String())
 		req.Header.Set("Content-Type", "application/json")
 		if revision != "" {
 			req.Header.Set("If-Match", `"`+revision+`"`)

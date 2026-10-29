@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-func TestMagicLinkDeliveryBoundsWorkersAndQueue(t *testing.T) {
-	delivery := newMagicLinkDelivery(discardMagicLinkLog(), 2, 2, time.Second)
+func TestEmailCodeDeliveryBoundsWorkersAndQueue(t *testing.T) {
+	delivery := newEmailCodeDelivery(discardEmailCodeLog(), 2, 2, time.Second)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- delivery.Run(ctx) }()
@@ -22,8 +22,8 @@ func TestMagicLinkDeliveryBoundsWorkersAndQueue(t *testing.T) {
 	completed := make(chan struct{}, 4)
 	var active atomic.Int32
 	var maximum atomic.Int32
-	job := func(id string) magicLinkDeliveryJob {
-		return magicLinkDeliveryJob{
+	job := func(id string) emailCodeDeliveryJob {
+		return emailCodeDeliveryJob{
 			id: id, purpose: "login",
 			deliver: func(ctx context.Context) error {
 				current := active.Add(1)
@@ -49,7 +49,7 @@ func TestMagicLinkDeliveryBoundsWorkersAndQueue(t *testing.T) {
 	if !delivery.enqueue(job("one")) || !delivery.enqueue(job("two")) {
 		t.Fatal("initial jobs were rejected")
 	}
-	waitMagicLinkSignals(t, started, 2)
+	waitEmailCodeSignals(t, started, 2)
 	if !delivery.enqueue(job("three")) || !delivery.enqueue(job("four")) {
 		t.Fatal("buffered jobs were rejected")
 	}
@@ -59,7 +59,7 @@ func TestMagicLinkDeliveryBoundsWorkersAndQueue(t *testing.T) {
 	for range 4 {
 		release <- struct{}{}
 	}
-	waitMagicLinkSignals(t, completed, 4)
+	waitEmailCodeSignals(t, completed, 4)
 	if got := maximum.Load(); got != 2 {
 		t.Fatalf("maximum active deliveries = %d, want 2", got)
 	}
@@ -69,8 +69,8 @@ func TestMagicLinkDeliveryBoundsWorkersAndQueue(t *testing.T) {
 	}
 }
 
-func TestMagicLinkDeliveryShutdownFailsActiveAndQueuedJobs(t *testing.T) {
-	delivery := newMagicLinkDelivery(discardMagicLinkLog(), 1, 2, time.Second)
+func TestEmailCodeDeliveryShutdownFailsActiveAndQueuedJobs(t *testing.T) {
+	delivery := newEmailCodeDelivery(discardEmailCodeLog(), 1, 2, time.Second)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- delivery.Run(ctx) }()
@@ -78,8 +78,8 @@ func TestMagicLinkDeliveryShutdownFailsActiveAndQueuedJobs(t *testing.T) {
 	started := make(chan struct{}, 1)
 	failed := make(map[string]int)
 	var failedMu sync.Mutex
-	job := func(id string) magicLinkDeliveryJob {
-		return magicLinkDeliveryJob{
+	job := func(id string) emailCodeDeliveryJob {
+		return emailCodeDeliveryJob{
 			id: id, purpose: "login",
 			deliver: func(ctx context.Context) error {
 				started <- struct{}{}
@@ -97,7 +97,7 @@ func TestMagicLinkDeliveryShutdownFailsActiveAndQueuedJobs(t *testing.T) {
 	if !delivery.enqueue(job("active")) {
 		t.Fatal("active job was rejected")
 	}
-	waitMagicLinkSignals(t, started, 1)
+	waitEmailCodeSignals(t, started, 1)
 	if !delivery.enqueue(job("queued-one")) || !delivery.enqueue(job("queued-two")) {
 		t.Fatal("queued jobs were rejected")
 	}
@@ -117,14 +117,14 @@ func TestMagicLinkDeliveryShutdownFailsActiveAndQueuedJobs(t *testing.T) {
 	}
 }
 
-func TestMagicLinkDeliverySurfacesShutdownFailureMarkError(t *testing.T) {
-	delivery := newMagicLinkDelivery(discardMagicLinkLog(), 1, 1, time.Second)
+func TestEmailCodeDeliverySurfacesShutdownFailureMarkError(t *testing.T) {
+	delivery := newEmailCodeDelivery(discardEmailCodeLog(), 1, 1, time.Second)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- delivery.Run(ctx) }()
 	started := make(chan struct{}, 1)
 	want := errors.New("database unavailable")
-	if !delivery.enqueue(magicLinkDeliveryJob{
+	if !delivery.enqueue(emailCodeDeliveryJob{
 		id: "failed-cleanup", purpose: "login",
 		deliver: func(ctx context.Context) error {
 			started <- struct{}{}
@@ -135,14 +135,14 @@ func TestMagicLinkDeliverySurfacesShutdownFailureMarkError(t *testing.T) {
 	}) {
 		t.Fatal("job was rejected")
 	}
-	waitMagicLinkSignals(t, started, 1)
+	waitEmailCodeSignals(t, started, 1)
 	cancel()
 	if runErr := <-done; !errors.Is(runErr, want) || errors.Is(runErr, context.Canceled) {
 		t.Fatalf("Run error = %v, want surfaced cleanup failure", runErr)
 	}
 }
 
-func waitMagicLinkSignals(t *testing.T, signals <-chan struct{}, count int) {
+func waitEmailCodeSignals(t *testing.T, signals <-chan struct{}, count int) {
 	t.Helper()
 	for range count {
 		select {
@@ -153,6 +153,6 @@ func waitMagicLinkSignals(t *testing.T, signals <-chan struct{}, count int) {
 	}
 }
 
-func discardMagicLinkLog() *slog.Logger {
+func discardEmailCodeLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

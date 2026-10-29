@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"io"
@@ -95,14 +96,13 @@ type Server struct {
 	hostAuth                   workergroup.HostAuthConfig
 	workerEnrollmentGuard      *workerEnrollmentGuard
 	capacityTokenHash          []byte
-	setupToken                 string
 	authKeys                   auth.Keys
 	appOrigin                  *url.URL
 	authProvider               AuthProvider
 	mailer                     email.Sender
-	magicLinkDelivery          *MagicLinkDelivery
-	magicLinkDebugURLs         bool
+	emailCodeDelivery          *EmailCodeDelivery
 	identity                   identity.Config
+	webauthn                   *webauthn.WebAuthn
 	deploymentFinalizer        *deployment.Finalizer
 
 	organizationCreationAdminOnly bool
@@ -140,22 +140,16 @@ type ServerConfig struct {
 	SecretProxy       *secret.Store
 	TelemetryReader   telemetry.CommandLogReader
 	Mailer            email.Sender
-	MagicLinkDelivery *MagicLinkDelivery
+	EmailCodeDelivery *EmailCodeDelivery
 	AuthProvider      AuthProvider
 
 	WorkerHostCredentialSigningKey []byte
 	WorkerHostCredentialTTL        time.Duration
 	CapacityToken                  string
-	SetupToken                     string
 	AuthKey                        []byte
 	AppOrigin                      *url.URL
-
-	MagicLinkDebugURLs bool
-	AdminEmails        []string
-	SessionTTL         time.Duration
-	MagicLinkTTL       time.Duration
-	DeviceCodeTTL      time.Duration
-	DevicePollEvery    time.Duration
+	DeviceCodeTTL                  time.Duration
+	DevicePollEvery                time.Duration
 
 	OrganizationCreationAdminOnly bool
 }
@@ -235,14 +229,10 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	mailer := cfg.Mailer
 	if mailer == nil {
-		if cfg.MagicLinkDebugURLs {
-			mailer = email.LogSender{Log: log}
-		} else {
-			mailer = email.Unconfigured{}
-		}
+		mailer = email.Unconfigured{}
 	}
-	if _, unconfigured := mailer.(email.Unconfigured); !unconfigured && cfg.MagicLinkDelivery == nil {
-		return nil, errors.New("magic link delivery worker is required")
+	if _, unconfigured := mailer.(email.Unconfigured); !unconfigured && cfg.EmailCodeDelivery == nil {
+		return nil, errors.New("email code delivery worker is required")
 	}
 	allocationKeys, err := computer.NewKeyBroker(cfg.TX, cfg.ComputerKeys)
 	if err != nil {
@@ -307,19 +297,15 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		hostAuth:                   hostAuth,
 		workerEnrollmentGuard:      newWorkerEnrollmentGuard(),
 		capacityTokenHash:          capacityTokenHash,
-		setupToken:                 cfg.SetupToken,
 		authKeys:                   authKeys,
 		appOrigin:                  cfg.AppOrigin,
 		authProvider:               cfg.AuthProvider,
 		mailer:                     mailer,
-		magicLinkDelivery:          cfg.MagicLinkDelivery,
-		magicLinkDebugURLs:         cfg.MagicLinkDebugURLs,
+		emailCodeDelivery:          cfg.EmailCodeDelivery,
 		identity: identity.NewConfig(authKeys, identity.Lifetimes{
-			Session:            cfg.SessionTTL,
-			MagicLink:          cfg.MagicLinkTTL,
 			DeviceCode:         cfg.DeviceCodeTTL,
 			DevicePollInterval: cfg.DevicePollEvery,
-		}, cfg.AdminEmails, cfg.AuditPolicy),
+		}, cfg.AuditPolicy),
 		deploymentFinalizer: deployment.NewFinalizer(cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission, log, cfg.NetworkInstallation),
 	}
 	router := chi.NewRouter()
@@ -327,6 +313,14 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	router.Use(auditRequest)
 	router.Use(server.limitSecurityAdmission)
 	router.Use(server.recoverPanics)
+	if cfg.AppOrigin != nil {
+		origin := cfg.AppOrigin.Scheme + "://" + cfg.AppOrigin.Host
+		wa, err := identity.NewWebAuthn(origin, cfg.AppOrigin.Hostname(), "Helmr")
+		if err != nil {
+			return nil, err
+		}
+		server.webauthn = wa
+	}
 	router.Use(otelhttp.NewMiddleware("helmr-controlplane"))
 	router.Use(server.requestCorrelation)
 	server.mountRoutes(router)
@@ -379,6 +373,7 @@ func (s *Server) mountRoutes(router chi.Router) {
 
 func (s *Server) mountAdminRoutes(r chi.Router) {
 	r.Use(limitRequestBody(adminRequestBodyLimit))
+	r.Use(s.browserMutationGuard)
 	r.Use(s.requireAdmin)
 	r.Get("/audit-events", s.adminListAuditEvents)
 	r.Get("/audit-events/actions", s.adminListAuditActions)
@@ -452,6 +447,7 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 
 func (s *Server) mountManagementRoutes(r chi.Router) {
 	r.Use(limitAPIRequestBody)
+	r.Use(s.browserMutationGuard)
 	r.With(s.requireSession).Get("/audit-events", s.listAuditEvents)
 	r.With(s.requireSession).Get("/audit-events/actions", s.listAuditActions)
 	s.mountAuthRoutes(r)
@@ -476,17 +472,39 @@ func (s *Server) mountAuthRoutes(r chi.Router) {
 	r.Post("/auth/github/start", s.githubStart)
 	r.Post("/auth/github/invite/start", s.githubInviteStart)
 	r.Post("/auth/github/finish", s.githubFinish)
-	r.Post("/auth/magic-link/start", s.magicLinkStart)
-	r.Post("/auth/magic-link/invite/start", s.magicLinkInviteStartRoute)
-	r.Post("/auth/magic-link/finish", s.magicLinkFinish)
+	r.Get("/auth/config", s.authConfig)
+	r.Post("/auth/invitations/resolve", s.resolveInvitationSummary)
+	r.With(s.requireAccount).Post("/auth/invitations/accept", s.acceptInvitation)
+	r.Post("/auth/email/start", s.emailStart)
+	r.Post("/auth/email/{id}/resend", s.emailResend)
+	r.Post("/auth/email/{id}/verify", s.emailVerify)
+	r.Post("/auth/passkey/options", s.passkeyOptions)
+	r.Post("/auth/passkey/verify", s.passkeyVerify)
+	s.mountOperatorRoutes(r)
+	s.mountAccountRepairRoutes(r)
+	r.With(s.requireAccount).Get("/me", s.me)
+	r.With(s.requireAccount).Post("/account/activity", s.accountActivity)
+	r.With(s.requireAccount).Get("/organizations", s.organizations)
+	r.With(s.requireAccount).Post("/organizations", s.createOrganization)
+	r.With(s.requireSession).Get("/organization", s.organizationContext)
+	r.With(s.requireAccount).Get("/account/credentials", s.accountCredentials)
+	r.With(s.requireAccount).Post("/account/providers/github/link", s.githubLinkStart)
+	r.With(s.requireAccount).Post("/account/email-change/start", s.emailChangeStart)
+	r.With(s.requireAccount).Post("/account/email-change/resend", s.emailChangeResend)
+	r.With(s.requireAccount).Post("/account/email-change/verify", s.emailChangeVerify)
+	r.With(s.requireAccount).Post("/account/passkeys/options", s.accountPasskeyOptions)
+	r.With(s.requireAccount).Post("/account/passkeys/complete", s.accountPasskeyComplete)
+	r.With(s.requireAccount).Delete("/account/credentials/{id}", s.removeCredential)
+	r.With(s.requireAccount).Post("/account/access/revoke-all", s.revokeAccountAccess)
+	r.With(s.requireAccount).Patch("/account", s.updateAccountProfile)
 	r.Post("/auth/device/start", s.startDeviceCode)
+	r.With(s.requireSession).Post("/auth/device/confirm/start", s.startDeviceCode)
+	r.With(s.requireSession).Post("/auth/device/activity", s.deviceActivity)
 	r.Post("/auth/device/token", s.deviceToken)
 	r.Post("/auth/logout", s.logout)
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireSession)
-		r.Get("/me", s.me)
 		r.Get("/regions", s.listRegions)
-		r.Post("/organizations", s.createOrganization)
 		r.Get("/auth/device/status", s.deviceStatus)
 		r.Post("/auth/device/approve", s.approveDeviceCode)
 		r.Post("/auth/device/deny", s.denyDeviceCode)
@@ -527,6 +545,9 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.With(s.sessionPermission(auth.PermissionAssignmentsDelete)).Delete("/role-grants/{id}", s.removeRoleGrant)
 		r.With(s.sessionPermission(auth.PermissionMembersRead)).Get("/members", s.listMembers)
 		r.With(s.sessionPermission(auth.PermissionMembersRemove)).Delete("/members/{memberID}", s.removeMember)
+		r.With(s.sessionPermission(auth.PermissionMembersRemove)).Post("/members/{memberID}/revoke-sessions", s.revokeMemberSessions)
+		r.With(s.sessionPermission(auth.PermissionMembersRemove)).Post("/members/{memberID}/suspend", s.suspendMember)
+		r.With(s.sessionPermission(auth.PermissionMembersRemove)).Post("/members/{memberID}/resume", s.resumeMember)
 		r.With(s.sessionPermission(auth.PermissionInvitationsRead)).Get("/invitations", s.listInvitations)
 		r.With(s.sessionPermission(auth.PermissionInvitationsCreate)).Post("/invitations", s.createInvitations)
 		r.With(s.sessionPermission(auth.PermissionInvitationsRevoke)).Delete("/invitations/{id}", s.revokeInvitation)
@@ -628,6 +649,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 
 func (s *Server) mountDeveloperRoutes(r chi.Router) {
 	r.Use(limitAPIRequestBody)
+	r.Use(s.browserMutationGuard)
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireAPIKey)
 		r.Get("/audit-events", s.listAuditEvents)

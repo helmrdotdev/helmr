@@ -25,25 +25,30 @@ type browserAuthKind string
 const (
 	browserAuthGitHubInvite browserAuthKind = "github_invite"
 	browserAuthGitHubLogin  browserAuthKind = "github_login"
+	browserAuthGitHubLink   browserAuthKind = "github_link"
 )
 
 type browserAuthFlow struct {
-	ConnectionID      string          `json:"connection_id,omitempty"`
-	AppRegistrationID string          `json:"app_registration_id,omitempty"`
-	EnvironmentID     string          `json:"environment_id,omitempty"`
-	SlackLinkToken    string          `json:"slack_link_token,omitempty"`
-	SlackReturnURL    string          `json:"slack_return_url,omitempty"`
-	Nonce             string          `json:"nonce,omitempty"`
-	SlackTeamID       string          `json:"slack_team_id,omitempty"`
-	SlackUserID       string          `json:"slack_user_id,omitempty"`
-	OrganizationID    string          `json:"org_id,omitempty"`
-	UserID            string          `json:"user_id,omitempty"`
-	InstallationID    string          `json:"installation_id,omitempty"`
-	Kind              browserAuthKind `json:"kind"`
-	State             string          `json:"state"`
-	Verifier          string          `json:"verifier"`
-	TokenHash         string          `json:"token_hash,omitempty"`
-	RedirectAfter     string          `json:"redirect_after,omitempty"`
+	SlackManagementSource *slackManagementSource `json:"slack_management_source,omitempty"`
+	SlackConsentID        string                 `json:"slack_consent_id,omitempty"`
+	SessionHash           string                 `json:"session_hash,omitempty"`
+	StartedAt             time.Time              `json:"started_at"`
+	ConnectionID          string                 `json:"connection_id,omitempty"`
+	AppRegistrationID     string                 `json:"app_registration_id,omitempty"`
+	EnvironmentID         string                 `json:"environment_id,omitempty"`
+	SlackLinkToken        string                 `json:"slack_link_token,omitempty"`
+	SlackReturnURL        string                 `json:"slack_return_url,omitempty"`
+	Nonce                 string                 `json:"nonce,omitempty"`
+	SlackTeamID           string                 `json:"slack_team_id,omitempty"`
+	SlackUserID           string                 `json:"slack_user_id,omitempty"`
+	OrganizationID        string                 `json:"org_id,omitempty"`
+	UserID                string                 `json:"user_id,omitempty"`
+	InstallationID        string                 `json:"installation_id,omitempty"`
+	Kind                  browserAuthKind        `json:"kind"`
+	State                 string                 `json:"state"`
+	Verifier              string                 `json:"verifier"`
+	TokenHash             string                 `json:"token_hash,omitempty"`
+	RedirectAfter         string                 `json:"redirect_after,omitempty"`
 }
 
 type browserAuthEnvelope struct {
@@ -95,9 +100,14 @@ func (s *Server) writeGitHubAuthStart(w http.ResponseWriter, r *http.Request, ki
 	}
 	flow := browserAuthFlow{
 		Kind:          kind,
+		StartedAt:     time.Now(),
 		State:         state,
 		Verifier:      verifier,
 		RedirectAfter: redirectAfter,
+	}
+	if raw := rawBrowserSession(r); raw != "" {
+		h := sha256.Sum256([]byte(raw))
+		flow.SessionHash = base64.RawURLEncoding.EncodeToString(h[:])
 	}
 	if len(tokenHash) > 0 {
 		flow.TokenHash = base64.RawURLEncoding.EncodeToString(tokenHash)
@@ -134,7 +144,7 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if (flow.Kind != browserAuthGitHubLogin && flow.Kind != browserAuthGitHubInvite) || request.State == "" || request.State != flow.State {
+	if (flow.Kind != browserAuthGitHubLogin && flow.Kind != browserAuthGitHubInvite && flow.Kind != browserAuthGitHubLink) || request.State == "" || request.State != flow.State {
 		if !s.refuseOperation(w, r, "authentication_invalid") {
 			return
 		}
@@ -174,23 +184,37 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	setSessionCookie(w, r, rawSession, s.identity.Lifetimes().Session)
+	setSessionCookie(w, r, rawSession, 30*24*time.Hour)
 	writeJSON(w, http.StatusOK, api.GitHubAuthFinishResponse{RedirectAfter: validateRedirectAfter(flow.RedirectAfter)})
 }
 
 func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, external identity.ExternalIdentity) (string, error) {
-	switch flow.Kind {
-	case browserAuthGitHubInvite:
+	raw := rawBrowserSession(r)
+	hash := ""
+	if raw != "" {
+		h := sha256.Sum256([]byte(raw))
+		hash = base64.RawURLEncoding.EncodeToString(h[:])
+	}
+	if hash != flow.SessionHash {
+		return "", identity.ErrWrongAccount
+	}
+	if flow.Kind == browserAuthGitHubLink {
+		return identity.LinkProvider(r.Context(), s.tx, s.identity, s.optionalAccount(r), external, raw)
+	}
+	if flow.Kind == browserAuthGitHubInvite {
 		tokenHash, err := decodeFlowTokenHash(flow)
 		if err != nil {
 			return "", err
 		}
-		return identity.SignInWithInvitation(r.Context(), s.tx, s.identity, tokenHash, external)
-	case browserAuthGitHubLogin:
-		return identity.SignIn(r.Context(), s.tx, s.identity, external)
-	default:
-		return "", errors.New("unknown auth flow")
+		invitation, err := org.PendingInvitationByTokenHash(r.Context(), s.db, tokenHash)
+		if err != nil {
+			return "", err
+		}
+		if !external.Verifies(invitation.InviteeEmail) {
+			return "", identity.ErrWrongAccount
+		}
 	}
+	return identity.SignInBrowserProvider(r.Context(), s.tx, s.identity, external, raw, flow.StartedAt)
 }
 
 // resolveInvitation resolves a raw invitation token for starting an
@@ -306,6 +330,14 @@ func identityError(err error) error {
 	case errors.As(err, &input),
 		errors.Is(err, identity.ErrInvalidDeviceCode):
 		return badRequest(err)
+	case errors.Is(err, identity.ErrRecentProofRequired):
+		return forbidden(codedError{code: "recent_authentication_required", message: "Confirm this account with a retained sign-in method, then retry."})
+	case errors.Is(err, identity.ErrIdentityConflict), errors.Is(err, identity.ErrEnrollmentConflict):
+		return conflict(codedError{code: "identity_conflict", message: err.Error()})
+	case errors.Is(err, identity.ErrAccountProofRequired):
+		return forbidden(codedError{code: "account_authentication_required", message: err.Error()})
+	case errors.Is(err, identity.ErrRateLimited):
+		return tooManyRequests(err)
 	case errors.Is(err, identity.ErrInvalidToken):
 		return badRequest(codedError{code: "invalid_token", message: err.Error()})
 	case errors.Is(err, identity.ErrWrongAccount):
@@ -313,7 +345,7 @@ func identityError(err error) error {
 	case errors.Is(err, identity.ErrAlreadyMember):
 		return conflict(codedError{code: "already_member", message: err.Error()})
 	case errors.Is(err, identity.ErrUserNotFound):
-		return unauthorized(errors.New("authentication is required"))
+		return forbidden(codedError{code: "authentication_required", message: "Sign in to continue."})
 	case errors.Is(err, identity.ErrOrganizationRequired),
 		errors.Is(err, identity.ErrAPIKeyManagementRequired):
 		return forbidden(err)
@@ -335,4 +367,12 @@ func (s *Server) writeIdentityError(w http.ResponseWriter, r *http.Request, err 
 		return
 	}
 	writeError(w, identityError(err))
+}
+
+func (s *Server) githubLinkStart(w http.ResponseWriter, r *http.Request) {
+	if err := identity.RequireRecentAccount(r.Context(), s.tx, principalFromContext(r.Context())); err != nil {
+		s.writeIdentityError(w, r, err)
+		return
+	}
+	s.writeGitHubAuthStart(w, r, browserAuthGitHubLink, nil, "/settings/account")
 }

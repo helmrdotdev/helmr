@@ -3,11 +3,11 @@ package slack
 import (
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"testing"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 

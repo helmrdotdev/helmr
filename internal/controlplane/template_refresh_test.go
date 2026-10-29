@@ -3,6 +3,7 @@ package controlplane
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"testing"
 	"uuid"
 
@@ -25,6 +26,7 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
+	cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}
 	cfg.DB, cfg.TX, cfg.Auth = queries, f.Pool, identity.NewAPIKeyAuthenticator(f.Pool)
 	handler, err := NewServer(cfg)
 	if err != nil {
@@ -34,7 +36,7 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys}
+	h := httpPostgresFixture{pool: f.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 	issuer := f.Principal(t)
 	scope := auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}
 	issue := func(permission auth.Permission) string {

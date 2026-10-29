@@ -1,0 +1,106 @@
+import { expect, test } from "@playwright/test";
+
+// The real local API and PostgreSQL verify credentials signed by Chromium's
+// virtual authenticator. No authentication route is intercepted in this suite.
+test("ordinary passkey registration, sign-in, replay rejection and operator isolation", async ({ page, context, baseURL }) => {
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("WebAuthn.enable");
+  const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options: { protocol: "ctap2", transport: "usb", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+  });
+  try {
+    await page.goto("/dev/login");
+    const original = await (await page.request.get("/api/me")).json();
+    const oldCookies = await context.cookies();
+    expect(original.user_id).toBeTruthy();
+    await page.goto("/settings/account");
+    await page.getByLabel("Passkey name", { exact: true }).fill("Browser acceptance key");
+    await page.getByRole("button", { name: "Add passkey", exact: true }).click();
+    await expect(page.getByText("Passkey added.", { exact: true })).toBeVisible();
+    const credentials = await cdp.send("WebAuthn.getCredentials", { authenticatorId });
+    expect(credentials.credentials).toHaveLength(1);
+    expect(credentials.credentials[0]?.isResidentCredential).toBe(true);
+    expect(credentials.credentials[0]?.rpId).toBe("localhost");
+
+    const logout = await page.request.post("/api/auth/logout", { headers: { Origin: baseURL! }, data: {} });
+    expect(logout.status()).toBe(204);
+    await context.addCookies(oldCookies); // A retained revoked cookie must not block fresh login.
+    await page.goto("/login?next=%2Fsettings%2Faccount");
+    let assertion: unknown;
+    page.on("request", request => {
+      if (new URL(request.url()).pathname === "/api/auth/passkey/verify") assertion = request.postDataJSON();
+    });
+    await page.getByRole("button", { name: "Continue with a passkey" }).click();
+    await expect(page).toHaveURL(/\/settings\/account$/);
+    const signedIn = await (await page.request.get("/api/me")).json();
+    expect(signedIn.user_id).toBe(original.user_id);
+    expect(assertion).toBeTruthy();
+    const replay = await page.request.post("/api/auth/passkey/verify", { headers: { Origin: baseURL! }, data: assertion });
+    expect(replay.ok()).toBe(false);
+
+    await page.goto("/operator/login");
+    await page.getByRole("button", { name: "Sign in with operator key" }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    expect((await page.request.get("/api/operator/me")).status()).toBe(403);
+    expect((await (await page.request.get("/api/me")).json()).user_id).toBe(original.user_id);
+  } finally {
+    await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
+    await cdp.detach();
+  }
+});
+
+test("deployment-local operator enrollment requires registration and a working assertion", async ({ page, context, baseURL }) => {
+  test.skip(Boolean(process.env.HELMR_E2E_BASE_URL), "Enrollment is restricted to this suite's owned local database");
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const directory = mkdtempSync(join(tmpdir(), "helmr-operator-browser-"));
+  const file = join(directory, "enrollment.json");
+  const postgresOptions = readFileSync(".helmr-dev-e2e/postgres/postmaster.opts", "utf8");
+  const socket = postgresOptions.match(/"-k" "([^"]+)"/)?.[1];
+  const port = postgresOptions.match(/"-p" "([0-9]+)"/)?.[1];
+  expect(socket).toBeTruthy(); expect(port).toBeTruthy();
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("WebAuthn.enable");
+  const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options: { protocol: "ctap2", transport: "usb", hasResidentKey: true, hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true },
+  });
+  try {
+    execFileSync("go", ["run", "./cmd/control-plane", "operator", "enroll", "--label", "Browser acceptance operator", "--output-file", file], {
+      env: { ...process.env, DATABASE_URL: `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable` },
+      stdio: "pipe", timeout: 60_000,
+    });
+    const enrollment = JSON.parse(readFileSync(file, "utf8"));
+    await page.goto("/operator/login");
+    await page.getByText("Set up or repair an operator key", { exact: true }).click();
+    await page.getByLabel("Setup or repair capability", { exact: true }).fill(enrollment.capability);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await page.getByRole("button", { name: "Register a key", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Verify this key", exact: true })).toBeVisible();
+    expect((await page.request.get("/api/operator/me")).status()).toBe(403);
+    await page.getByRole("button", { name: "Verify this key", exact: true }).click();
+    await expect(page.getByRole("status")).toHaveText("Your key is ready. Sign in with it above.");
+    expect((await page.request.get("/api/operator/me")).status()).toBe(403);
+    await page.getByRole("button", { name: "Sign in with operator key", exact: true }).click();
+    await expect(page).toHaveURL(/\/setup$/);
+    expect((await page.request.get("/api/operator/me")).status()).toBe(200);
+    execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET expires_at=issued_at+interval '1 millisecond' WHERE channel='operator'"], {
+      env: { ...process.env, PGDATABASE: `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable` }, stdio: "pipe",
+    });
+    await page.goto("/operator/login");
+    await page.getByRole("button", { name: "Sign in with operator key", exact: true }).click();
+    await expect(page).toHaveURL(/\/setup$/);
+    expect((await page.request.get("/api/operator/me")).status()).toBe(200);
+    expect((await page.request.get("/api/me")).status()).toBe(403);
+    await page.goto("/login");
+    await page.getByRole("button", { name: "Continue with a passkey" }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    expect((await page.request.get("/api/me")).status()).toBe(403);
+    expect((await page.request.get("/api/operator/me")).status()).toBe(200);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+    await cdp.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId });
+    await cdp.detach();
+  }
+});

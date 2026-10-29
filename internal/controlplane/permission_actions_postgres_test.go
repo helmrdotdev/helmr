@@ -22,7 +22,7 @@ func TestOrganizationActionsAuthorizeIndependentlyHTTP(t *testing.T) {
 	request := func(t *testing.T, method, path, token, body, revision string, status int, out any) {
 		t.Helper()
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
-		r.Header.Set("Authorization", "Bearer "+token)
+		f.authenticateRequest(r, token)
 		if body != "" {
 			r.Header.Set("Content-Type", "application/json")
 		}

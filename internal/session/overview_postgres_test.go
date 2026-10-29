@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"testing"
 	"uuid"
 
@@ -67,7 +68,7 @@ func TestOverviewKeepsSessionReadBounds(t *testing.T) {
  INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$5 FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherAgent, f.agent, peer.session, viewer)
 	f.enqueue(t, "visible")
 	peer.enqueue(t, "hidden")
-	caller := session.Caller{Kind: "user", ID: viewer, CredentialID: uuid.NewV7()}
+	caller := session.UserCaller((sessiontest.Fixture{Pool: f.pool, User: viewer, Environment: f.env}).Principal(t))
 	if _, err := session.ReadOverview(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("overview without session access", err)
 	}

@@ -110,7 +110,7 @@ func TestNetworkRuntimePoliciesMigration(t *testing.T) {
 		if err := Up(ctx, database.DSN); err != nil {
 			t.Fatalf("upgrade %d: %v", cycle, err)
 		}
-		assertVersion(2)
+		assertVersion(3)
 		if got := existingData(); got != originalData {
 			t.Fatalf("upgrade changed existing data: got %s, want %s", got, originalData)
 		}
@@ -145,7 +145,7 @@ func TestNetworkRuntimePoliciesMigration(t *testing.T) {
 			}
 		}
 		if cycle == 0 {
-			if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Steps(-1) }); err != nil {
+			if err := run(ctx, database.DSN, func(m *migrate.Migrate) error { return m.Migrate(1) }); err != nil {
 				t.Fatal(err)
 			}
 			assertVersion(1)

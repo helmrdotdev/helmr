@@ -60,14 +60,11 @@ export function ProfileMenu() {
           <span class={cx(ui.microLabel, "shrink-0")}>{formatRole(me.data?.is_owner ? "owner" : "member")}</span>
         </div>
         <div class="p-1">
+          <A href="/organizations" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>Switch organization</A>
           <A href="/settings/account" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>
             Account settings
           </A>
-          <Show when={me.data?.admin}>
-            <A href="/admin" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>
-              Admin
-            </A>
-          </Show>
+
           <button
             type="button"
             class={ui.scopeAction}

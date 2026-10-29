@@ -1,3 +1,4 @@
+import { authenticationResponse, isAuthenticationPath } from "./fixtures/authentication";
 import { expect, test } from "@playwright/test";
 
 // This exercises the real Console confirmation with a synthetic API fixture.
@@ -15,7 +16,7 @@ test("Secret revocation explains running Turn interruption and retained pending 
   await page.route("**/api/**", async route => {
     const path = new URL(route.request().url()).pathname;
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", permissions: ["secrets.read", "secrets.revoke"], admin: false, organization_required: false, project_required: false };
+    if (isAuthenticationPath(path)) json = { user_id: "local", display_name: "Local", org_id: "org", permissions: ["secrets.read", "secrets.revoke"], admin: false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === base) json = environment;
@@ -25,7 +26,7 @@ test("Secret revocation explains running Turn interruption and retained pending 
       secret.status = "revoked";
       json = secret;
     } else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(path,json) });
   });
   await page.goto(`/settings/secrets?project=${projectID}&environment=${environmentID}`);
   for (const accept of [false, true]) {

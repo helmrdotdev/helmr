@@ -96,10 +96,6 @@ for filename in sys.argv[1:3]:
             alb = next(r['change']['after'] for r in resources if r['type'] == 'aws_lb')
             assert alb['idle_timeout'] == 240, filename
             expected = plans[run]['variables']['capacity_token_secret_arn']['value']
-            assert any(env['name'] == 'ADMIN_EMAILS' and env['value'] == 'operator@example.test'
-                       for container in tasks['controlplane'] for env in container.get('environment', [])), filename
-            assert all(env['name'] != 'ADMIN_EMAILS'
-                       for container in tasks['dispatcher'] for env in container.get('environment', [])), filename
             assert any(secret['name'] == 'CAPACITY_TOKEN' and secret['valueFrom'] == expected
                        for container in tasks['controlplane'] for secret in container.get('secrets', [])), filename
             assert all(secret['name'] != 'CAPACITY_TOKEN'

@@ -3,50 +3,11 @@ package identity
 import (
 	"bytes"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"testing"
 	"time"
 	"uuid"
-
-	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
 )
-
-func TestSignInPostgres(t *testing.T) {
-	fixture := newIdentityFixture(t)
-	ctx := t.Context()
-
-	admin := ExternalIdentity{Provider: "github", Subject: "1", DisplayName: "admin", Email: "admin@example.test", EmailVerified: true}
-	raw, err := SignIn(ctx, fixture.pool, fixture.cfg, admin)
-	if err != nil {
-		t.Fatal(err)
-	}
-	adminID, isAdmin := fixture.userByEmail(t, "admin@example.test")
-	if !isAdmin {
-		t.Fatal("verified configured address did not become an administrator")
-	}
-	var storedHash []byte
-	if err := fixture.pool.QueryRow(ctx, `SELECT token_hash FROM login_sessions WHERE user_id = $1`, adminID).Scan(&storedHash); err != nil {
-		t.Fatal(err)
-	}
-	if want, _ := auth.HashToken(fixture.keys.Session, raw); !bytes.Equal(storedHash, want) {
-		t.Fatal("login session was not hashed with the session key")
-	}
-	principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw)
-	if err != nil || principal.UserID != adminID || principal.Kind != auth.PrincipalKindSession || !principal.Admin || principal.MemberID != uuid.Nil() {
-		t.Fatalf("principal = %+v, err = %v", principal, err)
-	}
-
-	unverified := ExternalIdentity{Provider: "github", Subject: "2", DisplayName: "unverified", Email: "admin2@example.test"}
-	unverifiedConfig := NewConfig(fixture.keys, Lifetimes{}, []string{"admin2@example.test"}, auditpolicy.Policy{RetentionSeconds: 3600})
-	if _, err := SignIn(ctx, fixture.pool, unverifiedConfig, unverified); err != nil {
-		t.Fatal(err)
-	}
-	var unverifiedAdmin bool
-	if err := fixture.pool.QueryRow(ctx, `SELECT users.admin FROM users JOIN auth_identities ON auth_identities.user_id = users.id WHERE auth_identities.subject = '2'`).Scan(&unverifiedAdmin); err != nil || unverifiedAdmin {
-		t.Fatalf("unverified configured address admin = %t, err = %v", unverifiedAdmin, err)
-	}
-}
 
 func TestSignInPostgresFailedSessionRecordsNothing(t *testing.T) {
 	fixture := newIdentityFixture(t)
@@ -82,155 +43,8 @@ func TestSignInPostgresFailedSessionRecordsNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstID, admin := fixture.userByEmail(t, "admin@example.test")
-	if principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw); err != nil || principal.UserID != firstID || !admin || !principal.Admin {
+	if principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw, uuid.Nil()); err != nil || principal.UserID != firstID || admin {
 		t.Fatalf("retried principal = %+v admin = %t, err = %v", principal, admin, err)
-	}
-}
-
-func TestSignInWithInvitationPostgres(t *testing.T) {
-	fixture := newIdentityFixture(t)
-	ctx := t.Context()
-	orgID := fixture.organization(t, "invited")
-	invitation, rawToken := fixture.invitation(t, orgID, "invitee@example.test", "member")
-
-	resolved, tokenHash, err := ResolveInvitation(ctx, fixture.queries, fixture.cfg, rawToken)
-	if err != nil || resolved.OrgID != orgID || resolved.InviteeEmail != "invitee@example.test" {
-		t.Fatalf("resolved = %+v, err = %v", resolved, err)
-	}
-	if want, _ := auth.HashToken(fixture.keys.Invitation, rawToken); !bytes.Equal(tokenHash, want) {
-		t.Fatal("invitation was not resolved with the invitation key")
-	}
-	if _, _, err := ResolveInvitation(ctx, fixture.queries, fixture.cfg, "unknown"); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("unknown invitation error = %v", err)
-	}
-	if _, _, err := ResolveInvitation(ctx, fixture.queries, fixture.cfg, ""); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("empty invitation error = %v", err)
-	}
-
-	other := ExternalIdentity{Provider: "github", Subject: "other", DisplayName: "other", Email: "other@example.test", EmailVerified: true}
-	if _, err := SignInWithInvitation(ctx, fixture.pool, fixture.cfg, tokenHash, other); !errors.Is(err, ErrWrongAccount) {
-		t.Fatalf("wrong account error = %v", err)
-	}
-	unverified := ExternalIdentity{Provider: "github", Subject: "invitee", DisplayName: "invitee", Email: "invitee@example.test"}
-	if _, err := SignInWithInvitation(ctx, fixture.pool, fixture.cfg, tokenHash, unverified); !errors.Is(err, ErrWrongAccount) {
-		t.Fatalf("unverified invitee error = %v", err)
-	}
-
-	// The invitee verifies the invited address as a secondary address and
-	// already holds a login session, which acceptance revokes.
-	invitee := ExternalIdentity{
-		Provider: "github", Subject: "invitee", DisplayName: "Invitee",
-		Email: "primary@example.test", EmailVerified: true, VerifiedEmails: []string{"primary@example.test", "Invitee@Example.test"},
-	}
-	earlier, err := SignIn(ctx, fixture.pool, fixture.cfg, invitee)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inviteeID, _ := fixture.userByEmail(t, "primary@example.test")
-	raw, err := SignInWithInvitation(ctx, fixture.pool, fixture.cfg, tokenHash, invitee)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, earlier); !errors.Is(err, auth.ErrUnauthenticated) {
-		t.Fatalf("earlier session error = %v", err)
-	}
-	principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw)
-	if err != nil || principal.UserID != inviteeID || principal.OrgID != orgID || principal.IsOwner {
-		t.Fatalf("invitation principal = %+v, err = %v", principal, err)
-	}
-	// Acceptance revokes sessions after writing the membership; the session it
-	// issues afterwards is the only one that survives.
-	if active := fixture.activeSessions(t, inviteeID); active != 1 {
-		t.Fatalf("active sessions after acceptance = %d, want 1", active)
-	}
-	var acceptedBy uuid.UUID
-	if err := fixture.pool.QueryRow(ctx, `SELECT accepted_by_member_id FROM invitations WHERE id = $1`, invitation.ID).Scan(&acceptedBy); err != nil || acceptedBy != principal.MemberID {
-		t.Fatalf("accepted by = %s, err = %v", acceptedBy, err)
-	}
-	if _, err := SignInWithInvitation(ctx, fixture.pool, fixture.cfg, tokenHash, invitee); !errors.Is(err, ErrInvalidToken) {
-		t.Fatalf("reused invitation error = %v", err)
-	}
-
-	// A second invitation to an address the member also verifies is rejected
-	// without accepting it.
-	_, secondToken := fixture.invitation(t, orgID, "second@example.test", "member")
-	_, secondHash, err := ResolveInvitation(ctx, fixture.queries, fixture.cfg, secondToken)
-	if err != nil {
-		t.Fatal(err)
-	}
-	invitee.VerifiedEmails = append(invitee.VerifiedEmails, "second@example.test")
-	if _, err := SignInWithInvitation(ctx, fixture.pool, fixture.cfg, secondHash, invitee); !errors.Is(err, ErrAlreadyMember) {
-		t.Fatalf("already member error = %v", err)
-	}
-	if fixture.activeSessions(t, inviteeID) != 1 {
-		t.Fatal("rejected acceptance revoked sessions")
-	}
-
-	// A disabled membership is re-enabled with the invited role.
-	fixture.exec(t, `UPDATE org_members SET removed_at = now() WHERE org_id = $1 AND user_id = $2`, orgID, inviteeID)
-	raw, err = SignInWithInvitation(ctx, fixture.pool, fixture.cfg, secondHash, invitee)
-	if err != nil {
-		t.Fatal(err)
-	}
-	principal, err = AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, raw)
-	if err != nil || principal.OrgID != orgID || principal.IsOwner {
-		t.Fatalf("re-enabled principal = %+v, err = %v", principal, err)
-	}
-}
-
-func TestLoginSessionPostgresFollowsSelectedMembership(t *testing.T) {
-	fixture := newIdentityFixture(t)
-	ctx := t.Context()
-	userID := fixture.user(t, "Member", "")
-	first, invited := fixture.organization(t, "first"), fixture.organization(t, "invited")
-	fixture.exec(t, `INSERT INTO org_members (id, org_id, user_id, is_owner, created_at) VALUES (uuidv7(), $1, $3, true, now() - interval '1 day'), (uuidv7(), $2, $3, false, now())`, first, invited, userID)
-
-	pinned := fixture.session(t, userID, invited)
-	principal, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, pinned)
-	if err != nil || principal.OrgID != invited || principal.IsOwner {
-		t.Fatalf("pinned principal = %+v, err = %v", principal, err)
-	}
-	unpinned := fixture.session(t, userID, uuid.Nil())
-	principal, err = AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, unpinned)
-	if err != nil || principal.OrgID != first || !principal.IsOwner {
-		t.Fatalf("unpinned principal = %+v, err = %v", principal, err)
-	}
-
-	// A disabled pinned membership invalidates the session instead of falling
-	// through to another organization.
-	fixture.exec(t, `UPDATE org_members SET removed_at = now() WHERE org_id = $1 AND user_id = $2`, invited, userID)
-	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, pinned); !errors.Is(err, auth.ErrUnauthenticated) {
-		t.Fatalf("disabled pinned membership error = %v", err)
-	}
-	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, unpinned); err != nil {
-		t.Fatalf("unpinned session lost its first membership: %v", err)
-	}
-
-	// Authentication extends the session's lifetime.
-	tokenHash, _ := auth.HashToken(fixture.keys.Session, unpinned)
-	fixture.exec(t, `UPDATE login_sessions SET expires_at = now() + interval '1 minute' WHERE token_hash = $1`, tokenHash)
-	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, unpinned); err != nil {
-		t.Fatal(err)
-	}
-	var expiresAt time.Time
-	if err := fixture.pool.QueryRow(ctx, `SELECT expires_at FROM login_sessions WHERE token_hash = $1`, tokenHash).Scan(&expiresAt); err != nil {
-		t.Fatal(err)
-	}
-	if time.Until(expiresAt) < fixture.cfg.Lifetimes().Session-time.Minute {
-		t.Fatalf("session expiry was not extended: %s", expiresAt)
-	}
-
-	if err := RevokeLoginSession(ctx, fixture.pool, fixture.cfg, unpinned); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, unpinned); !errors.Is(err, auth.ErrUnauthenticated) {
-		t.Fatalf("revoked session error = %v", err)
-	}
-	if err := RevokeLoginSession(ctx, fixture.pool, fixture.cfg, " "); err != nil {
-		t.Fatalf("empty token revocation error = %v", err)
-	}
-	if _, err := AuthenticateLoginSession(ctx, fixture.pool, fixture.cfg, ""); !errors.Is(err, auth.ErrUnauthenticated) {
-		t.Fatalf("empty token error = %v", err)
 	}
 }
 
@@ -257,70 +71,93 @@ func TestLoadAccountPostgres(t *testing.T) {
 	}
 }
 
-func TestVerifiedLoginAuditAndInitialAdministratorGrant(t *testing.T) {
+func TestSignInPostgres(t *testing.T) {
 	f := newIdentityFixture(t)
-	orgID := f.organization(t, "audit")
-	invitation, raw := f.invitation(t, orgID, "admin@example.test", "member")
-	_, hash, err := ResolveInvitation(t.Context(), f.queries, f.cfg, raw)
+	ctx := t.Context()
+	external := ExternalIdentity{Provider: "github", Subject: "1", DisplayName: "Original", Email: "admin@example.test", EmailVerified: true}
+	raw, err := SignIn(ctx, f.pool, f.cfg, external)
 	if err != nil {
 		t.Fatal(err)
 	}
-	external := ExternalIdentity{Provider: "github", Subject: "audit-admin", DisplayName: "Audit admin", Email: "admin@example.test", EmailVerified: true}
-	token, err := SignInWithInvitation(t.Context(), f.pool, f.cfg, hash, external)
-	if err != nil {
+	p, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, uuid.Nil())
+	if err != nil || p.OperatorID != uuid.Nil() || p.MemberID != uuid.Nil() {
+		t.Fatal(p, err)
+	}
+	var stored []byte
+	if err = f.pool.QueryRow(ctx, `SELECT token_hash FROM login_sessions WHERE id=$1`, p.SessionID).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
-	principal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, token)
-	if err != nil {
+	want, _ := auth.HashToken(f.keys.Session, raw)
+	if !bytes.Equal(stored, want) {
+		t.Fatal("unhashed session")
+	}
+	external.DisplayName = "Provider changed"
+	external.Email = "new@example.test"
+	if _, err = SignIn(ctx, f.pool, f.cfg, external); err != nil {
 		t.Fatal(err)
 	}
-	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='invitation.accepted' AND actor_user_id IS NOT NULL AND credential_kind='provider_assertion' AND identity_provider='github' AND actor_user_id=$1 AND credential_id IS NULL AND org_id=$2 AND target_id=$3 AND target_user_id=$1 AND details->>'is_owner'='false'`, principal.UserID, orgID, invitation.ID).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("pre-session acceptance actor count=%d err=%v", count, err)
+	var name, email string
+	if err = f.pool.QueryRow(ctx, `SELECT display_name,primary_email FROM users WHERE id=$1`, p.UserID).Scan(&name, &email); err != nil || name != "Original" || email != "admin@example.test" {
+		t.Fatal("provider renamed account", name, email, err)
 	}
-	if _, err := SignIn(t.Context(), f.pool, f.cfg, external); err != nil {
-		t.Fatal(err)
+	external.Subject = "2"
+	external.Email = "ADMIN@example.test"
+	if _, err = SignIn(ctx, f.pool, f.cfg, external); !errors.Is(err, ErrAccountProofRequired) {
+		t.Fatal("email collision linked unrelated identity", err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='platform_admin.granted' AND details='{"basis":"configured_admin_email"}'::jsonb AND actor_component IS NOT NULL AND actor_component='control_plane' AND target_id=$1 AND org_id IS NULL`, principal.UserID).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("initial grant count=%d err=%v", count, err)
+	external.EmailVerified = false
+	external.Email = "unverified@example.test"
+	if _, err = SignIn(ctx, f.pool, f.cfg, external); !errors.Is(err, ErrAccountProofRequired) {
+		t.Fatal("unverified new account", err)
 	}
 }
-
-func TestVerifiedIdentitiesShareCaseInsensitiveEmail(t *testing.T) {
+func TestLoginSessionPostgresExplicitOrganizationAndActivity(t *testing.T) {
 	f := newIdentityFixture(t)
-	var userID uuid.UUID
-	for i, email := range []string{"member@example.test", "MEMBER@example.test"} {
-		raw, err := SignIn(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: email, DisplayName: "Member", Email: email, EmailVerified: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		principal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if i == 0 {
-			userID = principal.UserID
-		} else if principal.UserID != userID {
-			t.Fatal("verified email created a second user")
-		}
+	ctx := t.Context()
+	user := f.user(t, "Member", "")
+	a, b := f.organization(t, "first"), f.organization(t, "second")
+	f.member(t, a, user, "owner")
+	f.member(t, b, user, "member")
+	raw := f.session(t, user, uuid.Nil())
+	p, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, uuid.Nil())
+	if err != nil || p.OrgID != uuid.Nil() {
+		t.Fatal("implicit organization", p, err)
 	}
-	link, created, err := CreateMagicLink(t.Context(), f.pool, f.cfg, MagicLinkRecipient{Purpose: db.MagicLinkPurposeLogin, Email: "member@example.test"}, "/")
-	if err != nil || !created {
-		t.Fatalf("create link: %t %v", created, err)
+	scoped, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, b)
+	if err != nil || scoped.OrgID != b || scoped.IsOwner {
+		t.Fatal(scoped, err)
 	}
-	if err := MarkMagicLinkSent(t.Context(), f.pool, link); err != nil {
+	f.exec(t, `UPDATE org_members SET removed_at=clock_timestamp() WHERE id=$1`, scoped.MemberID)
+	if _, err = AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, b); !errors.Is(err, ErrOrganizationAccessDenied) {
+		t.Fatal("removed scope", err)
+	}
+	if _, err = AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, a); err != nil {
+		t.Fatal("other scope revoked", err)
+	}
+	f.exec(t, `UPDATE login_sessions SET expires_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, p.SessionID)
+	if _, err = AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
-	completed, err := CompleteMagicLink(t.Context(), f.pool, f.cfg, link.Token)
-	if err != nil {
+	var expiry time.Time
+	if err = f.pool.QueryRow(ctx, `SELECT expires_at FROM login_sessions WHERE id=$1`, p.SessionID).Scan(&expiry); err != nil || time.Until(expiry) > time.Minute {
+		t.Fatal("read refreshed inactivity", expiry, err)
+	}
+	if err = RecordHumanActivity(ctx, f.pool, p); err != nil {
 		t.Fatal(err)
 	}
-	principal, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, completed.Session)
-	if err != nil || principal.UserID != userID {
-		t.Fatalf("magic link changed user identity: %v", err)
+	if err = f.pool.QueryRow(ctx, `SELECT expires_at FROM login_sessions WHERE id=$1`, p.SessionID).Scan(&expiry); err != nil || time.Until(expiry) < 29*24*time.Hour {
+		t.Fatal("activity did not extend live session", expiry, err)
 	}
-	var users, identities int
-	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM users WHERE lower(primary_email)='member@example.test'),(SELECT count(*) FROM auth_identities WHERE user_id=$1)`, userID).Scan(&users, &identities); err != nil || users != 1 || identities != 3 {
-		t.Fatalf("users=%d identities=%d: %v", users, identities, err)
+	if err = RevokeLoginSession(ctx, f.pool, f.cfg, raw); err != nil {
+		t.Fatal(err)
+	}
+	if err = RecordHumanActivity(ctx, f.pool, p); err == nil {
+		t.Fatal("activity resurrected revoked session")
+	}
+	if _, err = AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, uuid.Nil()); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Fatal(err)
+	}
+	if err = RevokeLoginSession(ctx, f.pool, f.cfg, " "); err != nil {
+		t.Fatal(err)
 	}
 }

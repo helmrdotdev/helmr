@@ -1,3 +1,4 @@
+import { Credentials } from "../features/account/Credentials";
 import { A } from "@solidjs/router";
 import { memberHref } from "../lib/permissions";
 import { OwnershipSettings } from "../features/access/OwnershipSettings";
@@ -17,16 +18,17 @@ export function AccountSettings() {
     <QueryState query={me} pending={<PageSkeleton label="Loading your account" sections={["Profile", "Your Slack identity"]} />} error={() => "Your account could not be loaded."}>
       {(account) => (
         <div class={ui.sectionStack}>
-          <Panel title="Profile">
+          <Credentials />
+          <Show when={account().membership_id}><Panel title="Organization profile">
             <dl class="m-0 grid grid-cols-3 gap-4 max-sm:grid-cols-1">
               <KeyValue label="Name">{account().display_name?.trim() || undefined}</KeyValue>
               <KeyValue label="Ownership">{account().is_owner ? "Owner" : "Not an owner"}</KeyValue>
               <KeyValue label="Organization">{account().org_name || undefined}</KeyValue>
             </dl>
-          </Panel>
+          </Panel></Show>
           <Show when={account().membership_id}>{membership => <Panel title="My access" actions={<A href={memberHref(membership())} class={ui.compactButton}>View my access</A>}><p class={ui.muted}>The permissions you have and where each one comes from: direct assignments, groups and all members.</p></Panel>}</Show>
           <Show when={account().is_owner}><OwnershipSettings /></Show>
-          <IdentitySettings userID={account().user_id} organizationID={account().org_id ?? ""} />
+          <Show when={account().org_id}>{org => <IdentitySettings userID={account().user_id} organizationID={org()} />}</Show>
         </div>
       )}
     </QueryState>

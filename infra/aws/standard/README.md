@@ -52,12 +52,11 @@ common release index; common releases do not publish the resolver's default AWS 
 Required secret value formats:
 
 - `database_url`: Postgres connection URL for the `helmr_app` application role and `helmr` database with SSL required
-- `setup_token`: high-entropy string used only in self-hosted mode; read it from Secrets Manager for first organization setup
 - `worker_host_credential_signing_key`, `auth_key`, `encryption_key`, `checkpoint_encryption_key`, `computer_fencing_key`: base64-encoded 32-byte keys
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
 The helper script generates `worker_host_credential_signing_key`, `auth_key`, `encryption_key`,
-`computer_fencing_key`, `checkpoint_encryption_key`, and `setup_token` locally and writes them
+`computer_fencing_key` and `checkpoint_encryption_key` locally and writes them
 directly to Secrets Manager:
 
 ```sh
@@ -163,9 +162,9 @@ There is no automatic instance refresh. Keep Control Plane, dispatcher, network,
 storage and keys available throughout drain. Explicit worker capacity and
 disk/cache partitions remain required when workers are created.
 
-Configure `controlplane_environment.ADMIN_EMAILS` before the named operators first log in so they can use
-the separate administrator Pool retirement API. The list does not promote existing
-users. Keep the Capacity credential separate from administrator login sessions.
+Enroll a separate deployment operator through the protected local command in the
+[authentication guide](../../../packages/web/src/content/docs/self-hosting/authentication.md).
+Keep Capacity credentials separate from operator login sessions.
 
 For native maintenance requests, set `capacity_token_secret_arn` to an existing
 Secrets Manager secret containing the deployment Capacity token. For a customer

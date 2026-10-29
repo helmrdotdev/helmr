@@ -110,18 +110,19 @@ test("real API rejects a loaded question after organization scope loss and accep
   await page.goto(f.askURL);
   const data = { answer: "retained draft", answer_id: crypto.randomUUID() };
   const before = await (await page.request.get("/api/me")).json();
-  expect(before.org_id).toBeTruthy();
-  expect(before.is_owner).toBe(true);
+  const organization = await (await page.request.get("/api/organization")).json();
+  expect(organization.id).toBeTruthy();
+  expect(organization.current_member.is_owner).toBe(true);
   try {
     f.seed("remove-member");
     const revoked = await (await page.request.get("/api/me")).json();
-    expect(revoked.org_id).toBeFalsy();
+    expect((await (await page.request.get("/api/organizations")).json()).organizations).toHaveLength(0);
     expect(revoked.user_id).toBe(before.user_id);
     const reply = await page.request.post(`${f.askBase}/answer`, { data });
     // Revoked membership removes the request's organization/environment scope.
-    expect(reply.status()).toBe(400);
+    expect(reply.status()).toBe(403);
     await expect(page.getByLabel("Recorded answer")).toHaveCount(0);
-    expect((await page.request.get(f.askBase)).status()).toBe(400);
+    expect((await page.request.get(f.askBase)).status()).toBe(403);
   } finally {
     f.seed("restore-member");
   }

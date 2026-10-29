@@ -1,3 +1,4 @@
+import "./browser-test-env";
 import { afterEach, expect, test } from "bun:test";
 
 import {

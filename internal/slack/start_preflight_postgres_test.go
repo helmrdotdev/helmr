@@ -6,19 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
@@ -113,7 +112,7 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 				if kind == "target-stopped" {
 					stopped = result.SessionID
 				}
-				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: stopped, Kind: "cancel", IdempotencyKey: "stop-after-start"}); err != nil {
+				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: stopped, Kind: "cancel", IdempotencyKey: "stop-after-start"}); err != nil {
 					t.Fatal(err)
 				}
 				if kind == "source-stopped" {
@@ -177,12 +176,12 @@ func TestCrossAppStartVerifiesBothSendersAndPinsOpening(t *testing.T) {
 						t.Fatal(err)
 					}
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
-					if err = store.DisconnectConnection(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.Environment, f.publication); err != nil {
+					if err = store.DisconnectConnection(t.Context(), f.Principal(t), f.Environment, f.publication); err != nil {
 						t.Fatal(err)
 					}
-					f.link(t)
 					targetFront := peer
 					targetFront.installation = installation
+					targetFront.link(t)
 					gesture := targetFront.newMessage(t, "resolve-disconnected-source-opening", "123.789")
 					message := observedClaim(t, claim)
 					client := NewWebClient(admissionCredentials{}, roundTripFunc(func(r *http.Request) (*http.Response, error) {

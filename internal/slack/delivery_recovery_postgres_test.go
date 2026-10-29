@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"io"
 	"net/http"
 	"strings"
@@ -31,7 +30,7 @@ func (f statusFixture) deliveryManager(t *testing.T) uuid.UUID {
 }
 func (f statusFixture) recoveryInput(t *testing.T, org, post uuid.UUID) DeliveryRecovery {
 	t.Helper()
-	rows, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, 0, 100)
+	rows, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, 0, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +80,7 @@ func TestSlackDeliveryAbandonmentClosesPublicationWithoutReplacingRootOrReplayin
 			}
 			input := f.recoveryInput(t, org, first)
 			for range 2 {
-				if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, first, input, "abandon"); err != nil {
+				if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, first, input, "abandon"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -132,10 +131,10 @@ func TestSlackDeliveryRecoveryRequiresCurrentManagerAndObservedPublication(t *te
 	}
 	input := f.recoveryInput(t, org, post)
 	f.SetPermissions(t, "sessions.read")
-	if _, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, 0, 100); err != nil {
+	if _, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, 0, 100); err != nil {
 		t.Fatal("reader denied", err)
 	}
-	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, errInstallationAuthority) {
+	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("developer changed delivery", err)
 	}
 	for _, action := range []string{"check", "abandon"} {
@@ -144,32 +143,33 @@ func TestSlackDeliveryRecoveryRequiresCurrentManagerAndObservedPublication(t *te
 			permission = "sessions.abandon_delivery"
 		}
 		f.SetPermissions(t, permission)
-		if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, input, action); !errors.Is(err, errInstallationAuthority) {
+		if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, input, action); !errors.Is(err, errInstallationAuthority) {
 			t.Fatalf("%s without Session read: %v", action, err)
 		}
 	}
 	_ = f.deliveryManager(t)
 	wrong := input
 	wrong.AttemptID = uuid.NewV7()
-	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, wrong, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
+	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, wrong, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
 		t.Fatal("stale attempt", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET desired_revision=2 WHERE id=$1`, post)
-	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
+	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
 		t.Fatal("unseen content disposed", err)
 	}
 	input = f.recoveryInput(t, org, post)
-	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, uuid.NewV7(), post, input, "abandon"); !errors.Is(err, ErrDeliveryUnavailable) {
+	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, uuid.NewV7(), post, input, "abandon"); !errors.Is(err, ErrDeliveryUnavailable) {
 		t.Fatal("foreign session", err)
 	}
 	if ok, err := confirmMessage(t.Context(), f.Pool, f.installation, observedClaim(t, claim)); err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
+	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
 		t.Fatal("confirmation lost to stale action", err)
 	}
+	prior := f.Principal(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.User)
-	if _, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, 0, 100); !errors.Is(err, ErrDeliveryUnavailable) {
+	if _, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, prior, f.Environment, f.Session, 0, 100); !errors.Is(err, ErrDeliveryUnavailable) {
 		t.Fatal("disabled member read delivery", err)
 	}
 }
@@ -228,7 +228,7 @@ func TestSlackDeliveryHistoryChecksPauseAndExplicitlyResumeWithoutSending(t *tes
 			if err := f.Pool.QueryRow(t.Context(), `SELECT status='uncertain' AND inflight_payload=$2 AND reconciliation_paused_at IS NOT NULL FROM slack_posts WHERE id=$1`, post, claim.Payload).Scan(&safe); err != nil || !safe {
 				t.Fatal("negative evidence changed outcome", safe, err)
 			}
-			if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, f.recoveryInput(t, org, post), "check"); err != nil {
+			if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, f.recoveryInput(t, org, post), "check"); err != nil {
 				t.Fatal(err)
 			}
 			var accepted bool
@@ -271,7 +271,7 @@ func TestSlackDeliveryAbandonedStreamKeepsProofUntilPositiveEvidenceAndStopsWith
 				t.Fatal(err)
 			}
 			f.reviseStream(t, post, text+" NEVER_PUBLISH")
-			if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, f.recoveryInput(t, org, post), "abandon"); err != nil {
+			if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, f.recoveryInput(t, org, post), "abandon"); err != nil {
 				t.Fatal(err)
 			}
 			f.due(t)
@@ -300,7 +300,7 @@ func TestSlackDeliveryAbandonedStreamKeepsProofUntilPositiveEvidenceAndStopsWith
 			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND error='delivery_abandoned' AND stream_status='stopped' AND delivery_disposed_at IS NOT NULL AND inflight_payload IS NULL FROM slack_posts WHERE id=$1`, post).Scan(&safe); err != nil || !safe {
 				t.Fatal("cleanup reopened disposition", safe, err)
 			}
-			views, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, 0, 100)
+			views, err := ListSessionDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, 0, 100)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -328,15 +328,15 @@ func TestSlackDeliveryAbandonmentWaitsForAcceptedProgressProjection(t *testing.T
 	}
 	input := f.recoveryInput(t, org, post)
 	write(" accepted before abandonment")
-	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
+	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
 		t.Fatalf("unprojected progress escaped observation: %v", err)
 	}
 	f.projectAll(t)
-	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
+	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, input, "abandon"); !errors.Is(err, ErrDeliveryChanged) {
 		t.Fatalf("stale publication observation: %v", err)
 	}
 	input = f.recoveryInput(t, org, post)
-	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, input, "abandon"); err != nil {
+	if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, input, "abandon"); err != nil {
 		t.Fatal(err)
 	}
 	write("new progress after abandonment")
@@ -454,13 +454,13 @@ func TestSlackDeliveryAbandonmentLeavesUnprojectedQuestionsAndResponseIndependen
 					t.Fatal(err)
 				}
 				if kind == "answered" {
-					if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.Caller{Kind: "user", ID: f.User, CredentialID: uuid.NewV7()}, session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: "answer", Answer: json.RawMessage(`"answer"`)}); err != nil {
+					if _, err := session.AnswerAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.AskAnswerRequest{EnvironmentID: f.Environment, SessionID: f.Session, TurnID: turn, AskID: ask, AnswerID: "answer", Answer: json.RawMessage(`"answer"`)}); err != nil {
 						t.Fatal(err)
 					}
 				}
 			}
 			input := f.recoveryInput(t, org, post)
-			if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, input, "abandon"); err != nil {
+			if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, input, "abandon"); err != nil {
 				t.Fatal("independent event blocks disposition", err)
 			}
 			f.projectAll(t)
@@ -552,7 +552,7 @@ func TestSlackDeliveryAbandonmentPreservesEarlierFailureReasons(t *testing.T) {
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status=$3,error='stream_content_rejected:invalid_blocks' WHERE thread_source_id=$1 AND role<>'controls' AND id<>$2`, f.participant, post, state)
-			if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}, f.Environment, f.Session, post, f.recoveryInput(t, org, post), "abandon"); err != nil {
+			if err := RecoverDelivery(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.Environment, f.Session, post, f.recoveryInput(t, org, post), "abandon"); err != nil {
 				t.Fatal(err)
 			}
 			var preserved bool
@@ -574,7 +574,7 @@ func TestSlackDeliveryAuditRollbackAndReadWithholding(t *testing.T) {
 	if err := FinishPost(t.Context(), f.Pool, policy, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
 		t.Fatal(err)
 	}
-	principal := auth.Principal{Kind: auth.PrincipalKindSession, OrgID: org, UserID: f.User, SessionID: uuid.NewV7()}
+	principal := f.Principal(t)
 	input := f.recoveryInput(t, org, post)
 	dbtest.MustExec(t, t.Context(), f.Pool, `ALTER TABLE audit_events ADD CONSTRAINT reject_delivery_read CHECK(action<>'session.content_read') NOT VALID`)
 	rows, err := ListSessionDelivery(t.Context(), policy, f.Pool, principal, f.Environment, f.Session, 0, 100)

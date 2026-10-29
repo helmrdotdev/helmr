@@ -5,14 +5,13 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 	"uuid"
-
-	"github.com/jackc/pgx/v5"
 )
 
 func TestCredentialEnvelopeBindsOwnerInstallationAndRevision(t *testing.T) {

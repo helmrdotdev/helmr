@@ -1,3 +1,4 @@
+import { isAuthenticationPath, authenticationResponse } from "./fixtures/authentication";
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 const project = "scope-tabs";
@@ -21,14 +22,14 @@ async function mockConsole(context: BrowserContext) {
     const detail = projects.find(candidate => path === `/api/projects/${candidate.project}`);
     let json: unknown;
     if (match) scoped.push(`${match[1]}/${match[2]}${match[3] ?? ""}`);
-    if (path === "/api/me") json = { user_id: "user", display_name: "User", org_id: "org", role: "owner", permissions: ["sessions.read"], organization_required: false, project_required: false };
+    if (isAuthenticationPath(path)) json = { user_id: "user", display_name: "User", org_id: "org", role: "owner", permissions: ["sessions.read"], organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects };
     else if (detail) json = detail;
     else if (match?.[3] === "/sessions") json = { sessions: [] };
     else if (match?.[3] === "/agents/support/status" && match[2] === "production") json = { agent: "support", current_deployment_id: null, defined_in_current: false };
     else if (match?.[3] === "/triggers") json = { triggers: [] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(path, json) });
   });
   return scoped;
 }

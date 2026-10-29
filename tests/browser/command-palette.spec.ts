@@ -1,3 +1,4 @@
+import { isAuthenticationPath, authenticationResponse } from "./fixtures/authentication";
 import { expect, test, type Page } from "@playwright/test";
 
 // The command palette: opening by shortcut and button, keyboard choice across
@@ -19,14 +20,14 @@ async function mockConsole(page: Page) {
     const match = path.match(/^\/api\/projects\/([^/]+)\/environments\/([^/]+)(\/.*)?$/);
     const detail = projects.find((candidate) => path === `/api/projects/${candidate.project}`);
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "user", display_name: "User", org_id: "org", is_owner: false, permissions: [], permission_scopes: projects.flatMap(p => p.environments.map(e => ({ project: p.project, environment: e.environment, permissions: ["sessions.read", "computers.read", "templates.read", "deployments.read"] }))), organization_required: false, project_required: false };
+    if (isAuthenticationPath(path)) json = { user_id: "user", display_name: "User", org_id: "org", is_owner: false, permissions: [], permission_scopes: projects.flatMap(p => p.environments.map(e => ({ project: p.project, environment: e.environment, permissions: ["sessions.read", "computers.read", "templates.read", "deployments.read"] }))), organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects };
     else if (detail) json = detail;
     else if (match?.[3] === "/sessions") json = { sessions: [{ id: sessionID, agent: "support", status: "open", holds: [], created_at: now }] };
     else if (match?.[3] === "/agents") json = { agents: [{ agent: "support", current_deployment_id: null, defined_in_current: false }] };
     else if (match?.[3] === "/attention") json = { items: [], counts: { question: 0, hold: 0, failed_turn: 0 } };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(path, json) });
   });
 }
 

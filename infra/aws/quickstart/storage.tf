@@ -53,11 +53,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "cas" {
 }
 
 resource "aws_secretsmanager_secret" "helmr" {
-  for_each = toset([
+  for_each = toset(concat([
     "worker_host_credential_signing_key", "auth_key", "encryption_key",
     "computer_fencing_key", "checkpoint_encryption_key", "computer_wrapping_key",
-    "setup_token", "worker_enrollment_token", "github_oauth_client_secret", "capacity_token"
-  ])
+    "worker_enrollment_token", "capacity_token"
+  ], var.github_oauth_client_id != "" ? ["github_oauth_client_secret"] : []))
   name                    = "${local.name}/${each.key}"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = 0

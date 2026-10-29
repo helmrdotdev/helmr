@@ -9,9 +9,9 @@ import (
 )
 
 type whoamiResponse struct {
-	api.MeResponse
-	AuthSource string `json:"auth_source"`
-	APIURL     string `json:"api_url,omitempty"`
+	Organization *api.OrganizationContextResponse `json:"organization,omitempty"`
+	AuthSource   string                           `json:"auth_source"`
+	APIURL       string                           `json:"api_url,omitempty"`
 }
 
 func whoamiCommand() *cobra.Command {
@@ -43,11 +43,11 @@ func currentAuthSource(cmd *cobra.Command) (whoamiResponse, error) {
 	authSource := "api_key"
 	if controlPlane.UsesSessionScopedRoutes() {
 		authSource = "login"
-		me, err := controlPlane.GetMe(cmd.Context())
+		me, err := controlPlane.GetOrganizationContext(cmd.Context())
 		if err != nil {
 			return whoamiResponse{}, err
 		}
-		return whoamiResponse{MeResponse: me, AuthSource: authSource, APIURL: controlPlane.BaseURL()}, nil
+		return whoamiResponse{Organization: &me, AuthSource: authSource, APIURL: controlPlane.BaseURL()}, nil
 	}
 	return whoamiResponse{AuthSource: authSource, APIURL: strings.TrimRight(controlPlane.BaseURL(), "/")}, nil
 }

@@ -25,6 +25,7 @@ import (
 )
 
 type fixture struct {
+	human                                                          auth.Principal
 	pool                                                           *pgxpool.Pool
 	mcpScope                                                       uuid.UUID
 	env, session, computer, user, worker, agent, deployment, group uuid.UUID
@@ -36,12 +37,12 @@ func newFixture(t *testing.T) fixture {
 }
 func fixtureOf(t *testing.T, f sessiontest.Fixture) fixture {
 	t.Helper()
-	result := fixture{pool: f.Pool, env: f.Environment, session: f.Session, computer: f.Computer, user: f.User, worker: f.Worker, agent: f.Agent, deployment: f.Deployment, group: f.Group}
+	result := fixture{human: f.Principal(t), pool: f.Pool, env: f.Environment, session: f.Session, computer: f.Computer, user: f.User, worker: f.Worker, agent: f.Agent, deployment: f.Deployment, group: f.Group}
 	result.mcpScope = f.MCPScope
 	return result
 }
 func (f fixture) caller() session.Caller {
-	return session.Caller{Kind: "user", ID: f.user, CredentialID: uuid.NewV7()}
+	return session.UserCaller(f.human)
 }
 func (f fixture) execution() session.Execution {
 	return session.Execution{EnvironmentID: f.env, SessionID: f.session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
@@ -86,6 +87,7 @@ func (f fixture) peer(t *testing.T) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	copySessionHuman(t, f, p.session)
 	// Membership tests deliberately create peers while their Computer cannot
 	// admit business work. Seed the pinned maximum as identity fixture data.
 	var raw []byte
@@ -567,10 +569,9 @@ func TestRuntimeBlockedAdmissionDoesNotBlockAuthorityRenewal(t *testing.T) {
 
 func sessiontestPrincipal(t *testing.T, f fixture) auth.Principal {
 	t.Helper()
-	p, err := access.Principal(t.Context(), f.pool, "user", f.user, f.env)
+	p, err := access.HumanInEnvironment(t.Context(), f.pool, f.human, f.env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.SessionID = uuid.NewV7()
 	return p
 }

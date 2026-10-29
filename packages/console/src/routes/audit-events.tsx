@@ -79,7 +79,7 @@ export function AuditEvents(props: { adminView?: boolean }) {
   const scope = props.adminView ? undefined : useScope();
   const projectID = () => scope?.selectedProjectID() ?? "";
   const [params, setParams] = useSearchParams<Params>();
-  const allowed = createMemo(() => (props.adminView ? !!me.data?.admin : canReadAudit(me.data)));
+  const allowed = createMemo(() => (props.adminView ? true : canReadAudit(me.data)));
   const can = (permission: string) => hasPermission(me.data, permission);
 
   const actions = createQuery(() => ({ queryKey: ["audit", "actions", props.adminView ?? false], queryFn: () => listAuditActions(props.adminView), enabled: allowed(), staleTime: Infinity, retry: false }));

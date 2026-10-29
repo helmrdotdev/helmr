@@ -33,14 +33,6 @@ func TestDecodeRootKeyRejectsSurroundingWhitespace(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsSetupTokenWhitespace(t *testing.T) {
-	setDevRegionConfig(t)
-	t.Setenv("SETUP_TOKEN", " dev-setup-token")
-	if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), "SETUP_TOKEN must not have surrounding whitespace") {
-		t.Fatalf("setup token error = %v", err)
-	}
-}
-
 func setDevRegionConfig(t *testing.T) {
 	t.Helper()
 	t.Setenv("ENVIRONMENT_MAX_RESIDENT_COMPUTERS", "10")

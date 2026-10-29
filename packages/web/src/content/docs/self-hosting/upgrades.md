@@ -77,11 +77,10 @@ or `aws-artifacts.json`. Prepare the AMI from those verified bytes and supply
 explicit image/AMI inputs. Do not rebuild different binaries and call that a
 public-artifact installation.
 
-Before the operators' first verified-email login, configure their `controlplane_environment.ADMIN_EMAILS`
-in the reference root. This bootstraps ordinary deployment administrator authority
-for the separate Pool retirement operations below. It does not promote existing
-users or change existing grants; an organization owner is not automatically a
-deployment administrator. Keep this login session separate from the Capacity token.
+Enroll deployment operators through the protected local command in the
+[authentication guide](/docs/self-hosting/authentication). Operator identities are
+separate from ordinary users and organization owners. Keep operator sessions
+separate from the Capacity token.
 
 Use the deployment [Capacity API](/docs/self-hosting/capacity) credential
 through an authorized operator session. Quickstart initializes this secret with

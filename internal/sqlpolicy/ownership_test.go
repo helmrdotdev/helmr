@@ -38,11 +38,20 @@ var dynamicStatementSites = map[string]string{
 // The shared diagnostic protocol's dynamic writes are documented above.
 // Owner names are import paths without the module prefix.
 var tableOwners = map[string]string{
-	"permission_groups": "internal/org", "permission_group_members": "internal/org", "roles": "internal/org", "role_grants": "internal/org", "role_grant_agents": "internal/org",
+	"account_repair_enrollments":     "internal/identity",
+	"account_security_notifications": "internal/identity",
+	"browser_account_proofs":         "internal/identity",
+	"credential_enrollments":         "internal/identity",
+	"email_challenges":               "internal/identity",
+	"passkey_credentials":            "internal/identity",
+	"platform_operators":             "internal/identity",
+	"webauthn_challenges":            "internal/identity",
+	"slack_link_requests":            "internal/slack",
+	"permission_groups":              "internal/org", "permission_group_members": "internal/org", "roles": "internal/org", "role_grants": "internal/org", "role_grant_agents": "internal/org",
 	"audit_events": "internal/audit",
 	// identity
 	"api_keys": "internal/identity", "auth_identities": "internal/identity", "login_sessions": "internal/identity",
-	"device_codes": "internal/identity", "magic_links": "internal/identity", "users": "internal/identity",
+	"device_codes": "internal/identity", "users": "internal/identity",
 	// organizations, projects, environments
 	"environments": "internal/org", "invitations": "internal/org", "org_members": "internal/org",
 	"organizations": "internal/org", "projects": "internal/org",
@@ -99,7 +108,6 @@ var queryFileOwners = map[string]string{
 	"disk_objects.sql":          "internal/computer",
 	"device_codes.sql":          "internal/identity",
 	"invitations.sql":           "internal/org",
-	"magic_links.sql":           "internal/identity",
 	"org_members.sql":           "internal/org",
 	"organizations.sql":         "internal/org",
 	"idempotency_receipts.sql":  "internal/idempotency",
@@ -206,13 +214,23 @@ func TestEveryTableHasAnOwner(t *testing.T) {
 		t.Fatalf("migrations: %v %v", entries, err)
 	}
 	var missing []string
+	live := map[string]bool{}
+	for _, entry := range entries {
+		content, err := os.ReadFile(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, match := range regexp.MustCompile(`(?m)^(CREATE TABLE(?: IF NOT EXISTS)?|DROP TABLE(?: IF EXISTS)?) ([a-z_]+)`).FindAllStringSubmatch(string(content), -1) {
+			live[match[2]] = strings.HasPrefix(match[1], "CREATE")
+		}
+	}
 	for _, entry := range entries {
 		content, err := os.ReadFile(entry)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, match := range sqlcTableName.FindAllStringSubmatch(string(content), -1) {
-			if _, ok := tableOwners[match[1]]; !ok {
+			if _, ok := tableOwners[match[1]]; !ok && live[match[1]] {
 				missing = append(missing, match[1])
 			}
 		}

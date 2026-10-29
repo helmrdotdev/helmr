@@ -146,7 +146,7 @@ func TestSocketDiscardLogsOnlyRedactedReason(t *testing.T) {
 	}
 }
 
-func TestSocketAdmissionRecordsProviderAssertionWithoutInventingSignature(t *testing.T) {
+func TestSocketAdmissionRecordsExactHumanLinkWithoutInventingSignature(t *testing.T) {
 	f, store, _ := socketFixture(t)
 	f.link(t)
 	claim, err := store.acquireSocket(t.Context(), uuid.NewV7())
@@ -173,7 +173,7 @@ func TestSocketAdmissionRecordsProviderAssertionWithoutInventingSignature(t *tes
 		t.Fatal(err)
 	}
 	var valid bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)>0 AND bool_and(actor_user_id=$1 AND authentication_result='verified' AND identity_provider='slack' AND credential_kind='provider_assertion' AND credential_id IS NULL) FROM audit_events WHERE action='turn.admitted'`, f.User).Scan(&valid); err != nil || !valid {
-		t.Fatal("socket admission invented signature", valid, err)
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)>0 AND bool_and(actor_user_id=$1 AND authentication_result='verified' AND identity_provider IS NULL AND credential_kind='slack_link' AND credential_id=(SELECT id FROM slack_user_links WHERE user_id=$1 AND revoked_at IS NULL)) FROM audit_events WHERE action='turn.admitted'`, f.User).Scan(&valid); err != nil || !valid {
+		t.Fatal("socket admission lost exact link provenance", valid, err)
 	}
 }

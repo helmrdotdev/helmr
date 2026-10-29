@@ -1,0 +1,323 @@
+-- Legacy bearers have no authenticated source or proof time. Retain their IDs
+-- for history, but require a new login instead of inventing that provenance.
+UPDATE login_sessions SET revoked_at=COALESCE(revoked_at,clock_timestamp()),org_id=NULL;
+DELETE FROM device_codes;
+DROP TABLE magic_links;
+ALTER TABLE invitations DROP CONSTRAINT invitations_org_id_id_key;
+DROP TYPE magic_link_purpose;
+
+ALTER TABLE users DROP COLUMN admin;
+ALTER TABLE users ADD COLUMN access_epoch bigint NOT NULL DEFAULT 0 CHECK (access_epoch>=0);
+ALTER TABLE users ADD COLUMN reauthenticate_after timestamptz;
+ALTER TABLE users ADD COLUMN webauthn_user_handle bytea NOT NULL DEFAULT uuid_send(gen_random_uuid());
+ALTER TABLE users ADD UNIQUE (webauthn_user_handle);
+-- New account handles also have an opaque, independently random database default.
+UPDATE users SET primary_email=lower(btrim(primary_email)) WHERE primary_email IS NOT NULL;
+
+ALTER TABLE auth_identities RENAME COLUMN email TO observed_email;
+ALTER TABLE auth_identities RENAME COLUMN last_login_at TO last_authenticated_at;
+ALTER TABLE auth_identities ADD COLUMN revoked_at timestamptz;
+ALTER TABLE auth_identities ADD UNIQUE (id,user_id);
+ALTER TABLE auth_identities DROP CONSTRAINT auth_identities_provider_subject_key;
+CREATE UNIQUE INDEX auth_identities_live_subject ON auth_identities(provider,subject) WHERE revoked_at IS NULL;
+-- Existing email aliases do not become additional active credentials.
+UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE provider IN ('email','magic-link');
+ALTER TABLE auth_identities DROP CONSTRAINT auth_identities_user_id_fkey;
+ALTER TABLE auth_identities ADD FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE RESTRICT;
+
+ALTER TABLE org_members ADD COLUMN suspended_at timestamptz;
+ALTER TABLE org_members ADD COLUMN reauthenticate_after timestamptz;
+ALTER TABLE org_members ADD UNIQUE (org_id,id,user_id);
+
+CREATE TABLE platform_operators (
+ id uuid PRIMARY KEY,
+ label text NOT NULL CHECK (btrim(label)<>''),
+ webauthn_user_handle bytea NOT NULL UNIQUE,
+ access_epoch bigint NOT NULL DEFAULT 0 CHECK (access_epoch>=0),
+ disabled_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TABLE passkey_credentials (
+ id uuid PRIMARY KEY,
+ credential_id bytea NOT NULL UNIQUE,
+ public_key bytea NOT NULL,
+ user_id uuid REFERENCES users(id),
+ operator_id uuid REFERENCES platform_operators(id),
+ label text NOT NULL CHECK (btrim(label)<>''),
+ sign_count bigint NOT NULL CHECK (sign_count>=0),
+ backup_eligible boolean NOT NULL,
+ backup_state boolean NOT NULL,
+ transports text[] NOT NULL DEFAULT '{}',
+ aaguid uuid,
+ credential_data jsonb NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ revoked_at timestamptz,
+ last_used_at timestamptz,
+ CHECK (num_nonnulls(user_id,operator_id)=1),
+ UNIQUE (id,user_id), UNIQUE (id,operator_id)
+);
+ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_org_id_fkey;
+ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_user_id_fkey;
+ALTER TABLE login_sessions ALTER COLUMN user_id DROP NOT NULL;
+ALTER TABLE login_sessions ADD FOREIGN KEY (user_id) REFERENCES users(id);
+ALTER TABLE login_sessions RENAME COLUMN created_at TO issued_at;
+ALTER TABLE login_sessions RENAME COLUMN last_seen_at TO last_human_activity_at;
+ALTER TABLE login_sessions ADD COLUMN operator_id uuid REFERENCES platform_operators(id);
+ALTER TABLE login_sessions ADD COLUMN channel text NOT NULL DEFAULT 'browser' CHECK (channel IN ('browser','cli','operator'));
+ALTER TABLE login_sessions ALTER COLUMN channel DROP DEFAULT;
+ALTER TABLE login_sessions ADD COLUMN user_access_epoch bigint CHECK (user_access_epoch>=0);
+UPDATE login_sessions SET user_access_epoch=0;
+ALTER TABLE login_sessions ADD COLUMN member_id uuid;
+ALTER TABLE login_sessions ADD COLUMN cli_identity_id uuid;
+ALTER TABLE login_sessions ADD COLUMN cli_passkey_id uuid;
+ALTER TABLE login_sessions ADD COLUMN cli_authenticated_at timestamptz;
+ALTER TABLE login_sessions ADD COLUMN privileged_key_id uuid;
+ALTER TABLE login_sessions ADD COLUMN privileged_epoch bigint CHECK (privileged_epoch>=0);
+ALTER TABLE login_sessions ADD COLUMN privileged_login_at timestamptz;
+ALTER TABLE login_sessions ADD COLUMN privileged_confirmed_at timestamptz;
+ALTER TABLE login_sessions ADD UNIQUE (id,user_id,channel);
+ALTER TABLE login_sessions ADD FOREIGN KEY (org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id);
+ALTER TABLE login_sessions ADD FOREIGN KEY (cli_identity_id,user_id) REFERENCES auth_identities(id,user_id);
+ALTER TABLE login_sessions ADD FOREIGN KEY (cli_passkey_id,user_id) REFERENCES passkey_credentials(id,user_id);
+ALTER TABLE login_sessions ADD FOREIGN KEY (privileged_key_id,operator_id) REFERENCES passkey_credentials(id,operator_id);
+ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_owner CHECK (num_nonnulls(user_id,operator_id)=1);
+ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_shape CHECK (
+ (channel='browser' AND user_id IS NOT NULL AND user_access_epoch IS NOT NULL
+  AND num_nonnulls(org_id,member_id,cli_identity_id,cli_passkey_id,cli_authenticated_at,
+   privileged_key_id,privileged_epoch,privileged_login_at,privileged_confirmed_at)=0)
+ OR (channel='cli' AND user_id IS NOT NULL AND user_access_epoch IS NOT NULL
+  AND org_id IS NOT NULL AND member_id IS NOT NULL AND cli_authenticated_at IS NOT NULL
+  AND num_nonnulls(cli_identity_id,cli_passkey_id)=1
+  AND num_nonnulls(privileged_key_id,privileged_epoch,privileged_login_at,privileged_confirmed_at)=0)
+ OR (channel='operator' AND operator_id IS NOT NULL AND privileged_key_id IS NOT NULL
+  AND privileged_epoch IS NOT NULL AND privileged_login_at IS NOT NULL AND privileged_confirmed_at IS NOT NULL
+  AND num_nonnulls(user_access_epoch,org_id,member_id,cli_identity_id,cli_passkey_id,cli_authenticated_at)=0
+  AND expires_at<=privileged_login_at+interval '12 hours'
+  AND privileged_confirmed_at>=privileged_login_at AND privileged_confirmed_at<=expires_at)
+);
+CREATE TABLE browser_account_proofs (
+ id uuid PRIMARY KEY,
+ session_id uuid NOT NULL,
+ user_id uuid NOT NULL,
+ session_channel text NOT NULL DEFAULT 'browser' CHECK (session_channel='browser'),
+ identity_id uuid,
+ passkey_id uuid,
+ authenticated_at timestamptz NOT NULL,
+ revoked_at timestamptz,
+ CHECK (num_nonnulls(identity_id,passkey_id)=1),
+ FOREIGN KEY (session_id,user_id,session_channel) REFERENCES login_sessions(id,user_id,channel),
+ FOREIGN KEY (identity_id,user_id) REFERENCES auth_identities(id,user_id),
+ FOREIGN KEY (passkey_id,user_id) REFERENCES passkey_credentials(id,user_id)
+);
+CREATE UNIQUE INDEX browser_account_proofs_identity ON browser_account_proofs(session_id,identity_id) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX browser_account_proofs_passkey ON browser_account_proofs(session_id,passkey_id) WHERE revoked_at IS NULL;
+
+CREATE TABLE email_challenges (
+ id uuid PRIMARY KEY,
+ email text NOT NULL CHECK (email=lower(btrim(email)) AND email<>''),
+ purpose text NOT NULL CHECK (purpose IN ('login','invite','email_change')),
+ code_mac bytea NOT NULL,
+ generation bigint NOT NULL DEFAULT 0 CHECK (generation>=0),
+ failed_attempts integer NOT NULL DEFAULT 0 CHECK (failed_attempts>=0),
+ next_send_at timestamptz NOT NULL,
+ browser_hash bytea NOT NULL,
+ user_id uuid REFERENCES users(id),
+ session_id uuid REFERENCES login_sessions(id),
+ access_epoch bigint CHECK (access_epoch>=0),
+ invitation_id uuid REFERENCES invitations(id),
+ safe_next text NOT NULL DEFAULT '/',
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ sent_at timestamptz,
+ delivery_failed_at timestamptz,
+ expires_at timestamptz NOT NULL,
+ consumed_at timestamptz,
+ revoked_at timestamptz,
+ CHECK ((purpose='login' AND invitation_id IS NULL AND (num_nonnulls(user_id,session_id,access_epoch)=0 OR num_nonnulls(user_id,session_id,access_epoch)=3))
+  OR (purpose='invite' AND invitation_id IS NOT NULL AND (num_nonnulls(user_id,session_id,access_epoch)=0 OR num_nonnulls(user_id,session_id,access_epoch)=3))
+  OR (purpose='email_change' AND user_id IS NOT NULL AND session_id IS NOT NULL AND access_epoch IS NOT NULL AND invitation_id IS NULL))
+);
+CREATE INDEX email_challenges_recent ON email_challenges(email,created_at DESC);
+
+CREATE TABLE credential_enrollments (
+ id uuid PRIMARY KEY,
+ operator_id uuid NOT NULL REFERENCES platform_operators(id),
+ purpose text NOT NULL CHECK (purpose IN ('bootstrap','repair','add_key')),
+ capability_hash bytea UNIQUE,
+ expected_epoch bigint NOT NULL CHECK (expected_epoch>=0),
+ issuer_session_id uuid REFERENCES login_sessions(id),
+ browser_hash bytea,
+ provisional_credential jsonb,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ expires_at timestamptz NOT NULL,
+ consumed_at timestamptz,
+ revoked_at timestamptz
+);
+CREATE TABLE account_repair_enrollments (
+ id uuid PRIMARY KEY,
+ user_id uuid NOT NULL REFERENCES users(id),
+ operator_id uuid NOT NULL REFERENCES platform_operators(id),
+ capability_hash bytea NOT NULL UNIQUE,
+ expected_access_epoch bigint NOT NULL CHECK (expected_access_epoch>=0),
+ browser_hash bytea,
+ provisional_credential jsonb,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ expires_at timestamptz NOT NULL,
+ consumed_at timestamptz,
+ revoked_at timestamptz
+);
+CREATE TABLE webauthn_challenges (
+ id uuid PRIMARY KEY,
+ ceremony text NOT NULL CHECK (ceremony IN ('register','assert')),
+ purpose text NOT NULL CHECK (purpose IN ('login','confirm','renew','register','enroll','repair')),
+ operator_scope boolean NOT NULL DEFAULT false,
+ challenge_hash bytea NOT NULL,
+ verification_state jsonb NOT NULL,
+ browser_hash bytea NOT NULL,
+ user_id uuid REFERENCES users(id),
+ operator_id uuid REFERENCES platform_operators(id),
+ session_id uuid REFERENCES login_sessions(id),
+ credential_enrollment_id uuid REFERENCES credential_enrollments(id),
+ account_repair_enrollment_id uuid REFERENCES account_repair_enrollments(id),
+ security_version bigint CHECK (security_version>=0),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ expires_at timestamptz NOT NULL,
+ consumed_at timestamptz,
+ revoked_at timestamptz,
+ CHECK (num_nonnulls(user_id,operator_id)<=1),
+ CHECK ((purpose='login' AND ceremony='assert' AND num_nonnulls(user_id,operator_id,session_id,credential_enrollment_id,account_repair_enrollment_id,security_version)=0)
+  OR (purpose IN ('confirm','renew','register') AND session_id IS NOT NULL AND security_version IS NOT NULL AND num_nonnulls(user_id,operator_id)=1 AND num_nonnulls(credential_enrollment_id,account_repair_enrollment_id)=0)
+  OR (purpose='enroll' AND operator_scope AND operator_id IS NOT NULL AND credential_enrollment_id IS NOT NULL AND account_repair_enrollment_id IS NULL AND security_version IS NOT NULL)
+  OR (purpose='repair' AND NOT operator_scope AND user_id IS NOT NULL AND account_repair_enrollment_id IS NOT NULL AND credential_enrollment_id IS NULL AND security_version IS NOT NULL))
+);
+ALTER TABLE device_codes ADD COLUMN user_id uuid;
+ALTER TABLE device_codes ADD COLUMN identity_id uuid;
+ALTER TABLE device_codes ADD COLUMN passkey_id uuid;
+ALTER TABLE device_codes ADD COLUMN authenticated_at timestamptz;
+ALTER TABLE device_codes ADD COLUMN user_access_epoch bigint CHECK (user_access_epoch>=0);
+ALTER TABLE device_codes ADD COLUMN browser_session_id uuid REFERENCES login_sessions(id);
+ALTER TABLE device_codes ADD COLUMN replaces_session_id uuid REFERENCES login_sessions(id);
+ALTER TABLE device_codes ADD FOREIGN KEY (org_id,decided_by_member_id,user_id) REFERENCES org_members(org_id,id,user_id);
+ALTER TABLE device_codes ADD FOREIGN KEY (identity_id,user_id) REFERENCES auth_identities(id,user_id);
+ALTER TABLE device_codes ADD FOREIGN KEY (passkey_id,user_id) REFERENCES passkey_credentials(id,user_id);
+ALTER TABLE device_codes ADD CHECK (status NOT IN ('approved','consumed') OR
+ (user_id IS NOT NULL AND authenticated_at IS NOT NULL AND user_access_epoch IS NOT NULL AND browser_session_id IS NOT NULL AND num_nonnulls(identity_id,passkey_id)=1));
+
+-- Prior Slack associations are attribution only until consent establishes a
+-- current organization, membership lifetime and independent source proof.
+ALTER TABLE slack_user_links DROP CONSTRAINT slack_user_links_pkey;
+ALTER TABLE slack_user_links DROP CONSTRAINT slack_user_links_team_id_user_id_key;
+ALTER TABLE slack_user_links ADD COLUMN id uuid NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY;
+ALTER TABLE slack_user_links ALTER COLUMN id DROP DEFAULT;
+ALTER TABLE slack_user_links ADD COLUMN installation_id uuid;
+ALTER TABLE slack_user_links ADD COLUMN org_id uuid;
+ALTER TABLE slack_user_links ADD COLUMN member_id uuid;
+ALTER TABLE slack_user_links ADD COLUMN user_access_epoch bigint CHECK (user_access_epoch>=0);
+ALTER TABLE slack_user_links ADD COLUMN identity_id uuid;
+ALTER TABLE slack_user_links ADD COLUMN passkey_id uuid;
+ALTER TABLE slack_user_links ADD COLUMN authenticated_at timestamptz;
+ALTER TABLE slack_user_links ADD COLUMN revoked_at timestamptz;
+UPDATE slack_user_links SET revoked_at=clock_timestamp();
+ALTER TABLE slack_user_links ADD FOREIGN KEY (installation_id,org_id,team_id) REFERENCES slack_installations(id,org_id,team_id);
+ALTER TABLE slack_user_links ADD FOREIGN KEY (org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id);
+ALTER TABLE slack_user_links ADD FOREIGN KEY (identity_id,user_id) REFERENCES auth_identities(id,user_id);
+ALTER TABLE slack_user_links ADD FOREIGN KEY (passkey_id,user_id) REFERENCES passkey_credentials(id,user_id);
+ALTER TABLE slack_user_links ADD CHECK (revoked_at IS NOT NULL OR
+ (installation_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND user_access_epoch IS NOT NULL AND authenticated_at IS NOT NULL AND num_nonnulls(identity_id,passkey_id)=1));
+CREATE UNIQUE INDEX slack_user_links_live ON slack_user_links(installation_id,team_id,slack_user_id) WHERE revoked_at IS NULL;
+CREATE UNIQUE INDEX slack_user_links_live_account ON slack_user_links(installation_id,user_id) WHERE revoked_at IS NULL;
+CREATE TABLE slack_link_requests (
+ id uuid PRIMARY KEY,
+ user_id uuid NOT NULL REFERENCES users(id),
+ member_id uuid NOT NULL,
+ user_access_epoch bigint NOT NULL CHECK(user_access_epoch>=0),
+ identity_id uuid,
+ passkey_id uuid,
+ authenticated_at timestamptz NOT NULL,
+ CHECK(num_nonnulls(identity_id,passkey_id)=1),
+ FOREIGN KEY(org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id),
+ FOREIGN KEY(identity_id,user_id) REFERENCES auth_identities(id,user_id),
+ FOREIGN KEY(passkey_id,user_id) REFERENCES passkey_credentials(id,user_id),
+ installation_id uuid NOT NULL,
+ org_id uuid NOT NULL,
+ team_id text NOT NULL,
+ slack_user_id text NOT NULL,
+ browser_hash bytea NOT NULL,
+ browser_session_id uuid REFERENCES login_sessions(id),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ expires_at timestamptz NOT NULL,
+ consumed_at timestamptz,
+ revoked_at timestamptz,
+ FOREIGN KEY (installation_id,org_id,team_id) REFERENCES slack_installations(id,org_id,team_id)
+);
+
+-- Operator audit actors are independent of account actors; retained IDs have no live FK.
+ALTER TABLE audit_events ADD COLUMN actor_operator_id uuid;
+DROP INDEX audit_events_actor;
+CREATE INDEX audit_events_actor ON audit_events(org_id,(COALESCE(actor_operator_id,actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id)),recorded_at DESC,id DESC);
+DO $$ DECLARE c record; BEGIN
+ FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='audit_events'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%actor_user_id%' LOOP
+  EXECUTE format('ALTER TABLE audit_events DROP CONSTRAINT %I',c.conname);
+ END LOOP;
+END $$;
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_check_0 CHECK (num_nonnulls(actor_operator_id,actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)<=1);
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_check_1 CHECK ((num_nonnulls(actor_operator_id,actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)=0) = (authentication_result IN ('failed','absent')));
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_check_2 CHECK ((actor_user_id IS NOT NULL OR actor_operator_id IS NOT NULL) = (actor_identity IS NOT NULL));
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_check_3 CHECK (actor_user_id IS NULL OR
+           (actor_identity ?& ARRAY['source','display_name'] AND
+            jsonb_typeof(actor_identity->'source')='string' AND actor_identity->>'source'='account' AND
+            jsonb_typeof(actor_identity->'display_name')='string' AND octet_length(actor_identity->>'display_name')>0));
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_check_4 CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','magic_link','device_code','email_code','passkey','slack_link'));
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_check_5 CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('login_session','device_code','magic_link') OR credential_id IS NOT NULL);
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_check_6 CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('provider_assertion') OR identity_provider IS NOT NULL);
+ALTER TABLE audit_events ADD CONSTRAINT audit_operator_identity CHECK (actor_operator_id IS NULL OR (actor_identity ?& ARRAY['source','display_name'] AND jsonb_typeof(actor_identity->'source')='string' AND actor_identity->>'source'='operator' AND jsonb_typeof(actor_identity->'display_name')='string' AND octet_length(actor_identity->>'display_name')>0 AND credential_kind IN ('login_session','passkey') AND credential_id IS NOT NULL));
+ALTER TABLE audit_events DROP CONSTRAINT audit_events_credential_kind_check;
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_credential_kind_check CHECK (credential_kind IN ('login_session','api_key','worker_host','capacity_token','provider_assertion','magic_link','device_code','email_code','passkey','slack_link'));
+
+-- Security mail is durable in the same transaction as the account mutation.
+CREATE TABLE account_security_notifications (
+ id uuid PRIMARY KEY,
+ user_id uuid NOT NULL,
+ event text NOT NULL CHECK (event IN ('identity.email_changed','identity.credential_added','identity.credential_removed','identity.access_revoked','identity.account_repaired')),
+ recipient text,
+ status text NOT NULL CHECK (status IN ('pending','delivered','unavailable')),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ attempts integer NOT NULL DEFAULT 0 CHECK (attempts>=0),
+ claim_id uuid,
+ lease_until timestamptz,
+ delivered_at timestamptz,
+ CHECK ((status='unavailable')=(recipient IS NULL)),
+ CHECK ((status='delivered')=(delivered_at IS NOT NULL)),
+ CHECK ((claim_id IS NULL)=(lease_until IS NULL))
+);
+CREATE INDEX account_security_notifications_pending ON account_security_notifications(next_attempt_at) WHERE status='pending';
+
+DO $$ DECLARE c record; BEGIN
+ FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='audit_events'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%identity.magic_link_requested%' LOOP
+  EXECUTE format('ALTER TABLE audit_events DROP CONSTRAINT %I',c.conname);
+ END LOOP;
+END $$;
+ALTER TABLE audit_events ADD CONSTRAINT audit_anonymous_operation CHECK (authentication_result NOT IN ('failed','absent') OR outcome IN ('denied','failed') OR (authentication_result='absent' AND action IN ('identity.device_started','identity.magic_link_requested','identity.email_code_requested')));
+
+-- Persist exact human admission, independently of current profile/membership.
+-- Legacy work has no invented proof and is denied when it next needs authority.
+DO $$ DECLARE relation text; BEGIN
+ FOREACH relation IN ARRAY ARRAY['sessions','turns','turn_messages','commands'] LOOP
+  EXECUTE format('ALTER TABLE %I
+   ADD COLUMN human_user_id uuid REFERENCES users(id),
+   ADD COLUMN human_org_id uuid,
+   ADD COLUMN human_member_id uuid,
+   ADD COLUMN human_session_id uuid REFERENCES login_sessions(id),
+   ADD COLUMN human_slack_link_id uuid REFERENCES slack_user_links(id),
+   ADD COLUMN human_identity_id uuid,
+   ADD COLUMN human_passkey_id uuid,
+   ADD COLUMN human_access_epoch bigint,
+   ADD COLUMN human_authenticated_at timestamptz,
+   ADD FOREIGN KEY(human_org_id,human_member_id,human_user_id) REFERENCES org_members(org_id,id,user_id),
+   ADD FOREIGN KEY(human_identity_id,human_user_id) REFERENCES auth_identities(id,user_id),
+   ADD FOREIGN KEY(human_passkey_id,human_user_id) REFERENCES passkey_credentials(id,user_id),
+   ADD CHECK ((num_nonnulls(human_user_id,human_org_id,human_member_id,human_session_id,human_slack_link_id,human_identity_id,human_passkey_id,human_access_epoch,human_authenticated_at)=0) OR
+    (human_user_id IS NOT NULL AND human_org_id IS NOT NULL AND human_member_id IS NOT NULL AND human_access_epoch IS NOT NULL AND human_access_epoch>=0 AND human_authenticated_at IS NOT NULL AND num_nonnulls(human_session_id,human_slack_link_id)=1 AND num_nonnulls(human_identity_id,human_passkey_id)=1))',relation);
+ END LOOP;
+END $$;

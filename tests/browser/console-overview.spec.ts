@@ -1,3 +1,4 @@
+import { isAuthenticationPath, authenticationResponse } from "./fixtures/authentication";
 import { expect, test, type Page } from "@playwright/test";
 
 // The Overview for the people who build and run an Environment's agents,
@@ -82,10 +83,11 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
   const deployment = (did: string, version: string, minutes: number) => ({ id: did, version, bundle_digest: `sha256:${"b".repeat(64)}`, created_at: ago(minutes) });
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if(path === "/api/account/activity") return route.fulfill({status:204});
     const method = route.request().method();
     if (method !== "GET") state.writes.push(`${method} ${path}`);
     let json: unknown;
-    if (path === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", role: "member", permissions: state.permissions, admin: false, organization_required: false, project_required: false };
+    if (isAuthenticationPath(path)) json = { user_id: "local", display_name: "Local", org_id: "org", role: "member", permissions: state.permissions, admin: false, organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [project] };
     else if (path === `/api/projects/${projectID}`) json = project;
     else if (path === base) json = environment;
@@ -120,7 +122,7 @@ async function fixture(page: Page, overrides: Partial<State> = {}): Promise<Stat
     else if (path === `${base}/agents`) json = { deployment_id: deploymentID, agents: state.agents ? [{ agent: "support", template: "support" }] : [] };
     else if (path === `${base}/secrets`) json = { secrets: [] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(path, json) });
   });
   return state;
 }

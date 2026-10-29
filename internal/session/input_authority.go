@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -71,12 +72,13 @@ func checkInputConversation(ctx context.Context, pool db.TxBeginner, host worker
 				return err
 			}
 		}
-		err = authorizeSlackInputActor(ctx, tx, check.request)
+		human, authErr := slackInputPrincipal(ctx, tx, check.request)
+		err = authErr
 		if err == nil {
 			err = authorizeRuntimeOrigin(ctx, tx, e.EnvironmentID, e.SessionID)
 		}
 		if err == nil {
-			err = authorizeTarget(ctx, tx, Caller{Kind: "user", ID: user, SlackThreadID: thread}, e.EnvironmentID, e.SessionID, auth.PermissionSessionsSend)
+			err = authorizeTarget(ctx, tx, func() Caller { c := UserCaller(human); c.SlackThreadID = thread; return c }(), e.EnvironmentID, e.SessionID, auth.PermissionSessionsSend)
 		}
 		if errors.Is(err, ErrDenied) {
 			revoked = true
@@ -106,13 +108,20 @@ func checkInputConversation(ctx context.Context, pool db.TxBeginner, host worker
 // A retained request is attributable to its exact linked Slack actor, not only
 // its Helmr user. Hold the live link through admission so unlink cannot race it.
 func authorizeSlackInputActor(ctx context.Context, tx pgx.Tx, request uuid.UUID) error {
-	var user uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT l.user_id FROM slack_requests r
- JOIN slack_installations i ON i.id=r.installation_id
- JOIN slack_user_links l ON l.team_id=i.team_id AND l.slack_user_id=r.slack_user_id AND l.user_id=r.user_id
- WHERE r.id=$1 AND l.linked_at<=r.source_occurred_at FOR SHARE OF l`, request).Scan(&user)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrDenied
-	}
+	_, err := slackInputPrincipal(ctx, tx, request)
 	return err
+}
+func slackInputPrincipal(ctx context.Context, tx pgx.Tx, request uuid.UUID) (auth.Principal, error) {
+	var link uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT l.id FROM slack_requests r
+ JOIN turns t ON t.environment_id=r.environment_id AND t.id=r.turn_id
+ LEFT JOIN turn_messages m ON m.environment_id=r.environment_id AND m.id=r.message_id
+ JOIN slack_user_links l ON l.id=CASE WHEN r.message_id IS NULL THEN t.human_slack_link_id ELSE m.human_slack_link_id END
+ WHERE r.id=$1 AND l.installation_id=r.installation_id AND l.slack_user_id=r.slack_user_id AND l.user_id=r.user_id
+ AND l.linked_at<=r.source_occurred_at AND l.revoked_at IS NULL`, request).Scan(&link)
+	if err != nil {
+		return auth.Principal{}, accessError(err)
+	}
+	p, err := access.SlackPrincipal(ctx, tx, link)
+	return p, accessError(err)
 }

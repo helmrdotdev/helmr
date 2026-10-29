@@ -102,13 +102,20 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 		if private && (action == "sleep" || action == "close") {
 			var scope session.ExecutionScope
 			var err error
-			var user uuid.UUID
-			if err := tx.QueryRow(ctx, `SELECT l.user_id FROM slack_user_links l JOIN slack_threads t ON t.team_id=l.team_id WHERE t.id=$1 AND l.slack_user_id=$2`, target.Thread, actor).Scan(&user); err != nil {
+			var link uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT l.id FROM slack_user_links l WHERE l.installation_id=$1 AND l.slack_user_id=$2 AND l.revoked_at IS NULL`, target.Installation, actor).Scan(&link); err != nil {
 				return "", nil, err
 			}
-			caller := session.Caller{Kind: "user", ID: user, SlackThreadID: target.Thread}
+			p, err := access.SlackPrincipal(ctx, tx, link)
+			if err == nil {
+				p, err = access.HumanInEnvironment(ctx, tx, p, target.Environment)
+			}
+			if err != nil {
+				return "", nil, err
+			}
+			caller := slackCaller(p, target.Thread)
 			if action == "sleep" && computerID != nil {
-				if err := access.Check(ctx, tx, "user", user, target.Environment, uuid.Nil(), auth.PermissionComputersHibernate); err != nil {
+				if err := auth.Require(p, auth.PermissionComputersHibernate, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}, access.ErrDenied); err != nil {
 					return "", nil, err
 				}
 				scope, err = session.ReadComputerExecutionScope(ctx, tx, target.Environment, *computerID)

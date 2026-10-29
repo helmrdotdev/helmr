@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -23,8 +24,9 @@ func (s *Server) streamSessionUpdates(w http.ResponseWriter, r *http.Request) {
 		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
+	admitted := principalFromContext(r.Context())
 	authorize := func() error {
-		principal, _, err := s.sessionPrincipal(r)
+		principal, err := access.CurrentHuman(r.Context(), s.tx, admitted)
 		if err != nil {
 			return err
 		}

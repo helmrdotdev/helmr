@@ -1,3 +1,4 @@
+import { isAuthenticationPath, authenticationResponse } from "./authentication";
 import type { Page } from "@playwright/test";
 
 // A long-running Session served from memory with the real paging contracts of
@@ -122,14 +123,21 @@ export type Requests = { events: string[]; turns: string[]; asks: string[] };
 
 export async function serveSession(page: Page, data: SessionData, permissions: string[] = ["sessions.read", "sessions.interrupt", "sessions.cancel"]): Promise<Requests> {
   await page.addInitScript(() => {
-    const streams = new Set<EventTarget>();
-    class FixtureEventSource extends EventTarget {
-      constructor(_url: string) { super(); streams.add(this); }
-      close() { streams.delete(this); }
-    }
-    Object.defineProperty(window, "EventSource", { value: FixtureEventSource });
+    const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
+    const fetchOriginal = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!new URL(url, location.href).pathname.endsWith("/updates")) return fetchOriginal(input, init);
+      let current: ReadableStreamDefaultController<Uint8Array>;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) { current = controller; streams.add(controller); },
+        cancel() { streams.delete(current); },
+      });
+      init?.signal?.addEventListener("abort", () => { if (streams.delete(current)) current.close(); }, { once: true });
+      return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+    };
     Object.defineProperty(window, "sessionChanged", { value: () => {
-      for (const stream of streams) stream.dispatchEvent(new Event("change"));
+      for (const stream of streams) stream.enqueue(new TextEncoder().encode("event: change\n data: {}\n\n"));
     } });
   });
   const requests: Requests = { events: [], turns: [], asks: [] };
@@ -140,8 +148,8 @@ export async function serveSession(page: Page, data: SessionData, permissions: s
     const endpoint = url.pathname;
     const query = url.searchParams;
     const limit = Number(query.get("limit") ?? "100");
-    const json = (body: unknown, status = 200) => route.fulfill({ status, json: body });
-    if (endpoint === "/api/me") return json({ user_id: "local", display_name: "Local", org_id: "org", role: "owner", permissions, admin: false, organization_required: false, project_required: false });
+    const json = (body: unknown, status = 200) => route.fulfill({ status, json: authenticationResponse(endpoint, body) });
+    if (isAuthenticationPath(endpoint)) return json({ user_id: "local", display_name: "Local", org_id: "org", role: "owner", permissions, admin: false, organization_required: false, project_required: false });
     if (endpoint === "/api/projects") return json({ projects: [project] });
     if (endpoint === `/api/projects/${projectID}`) return json(project);
     if (endpoint === base) return json(environment);

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"net/http"
 	"strings"
@@ -12,12 +13,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/jackc/pgx/v5"
 )
 
 func credentialFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID) {
@@ -34,7 +33,7 @@ func credentialFixture(t *testing.T) (statusFixture, *CredentialStore, uuid.UUID
 	registration := f.registration
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_app_registrations SET credential_revision=0,client_id=NULL,credential_ciphertext=NULL,credential_nonce=NULL WHERE id=$1`, registration)
-	if err = store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, registration, AppCredentials{ClientID: "client", ClientSecret: "secret", SigningSecret: "signing-secret"}); err != nil {
+	if err = store.StoreAppCredentials(t.Context(), f.Principal(t), registration, AppCredentials{ClientID: "client", ClientSecret: "secret", SigningSecret: "signing-secret"}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET app_registration_id=$2 WHERE id=$1`, f.installation, registration)
@@ -140,11 +139,11 @@ func TestCredentialRefreshLossSuppressesOnlyUnsentAndRejectsLateReplacement(t *t
 
 func (f statusFixture) reauthorize(t *testing.T, store *CredentialStore, org uuid.UUID, grant oauthGrant) (uuid.UUID, error) {
 	t.Helper()
-	observed, err := store.connectionAuthorization(t.Context(), org, f.User, f.publication)
+	observed, err := store.connectionAuthorization(t.Context(), f.Principal(t), f.publication)
 	if err != nil {
 		return uuid.Nil(), err
 	}
-	return store.attachConnectionGrant(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.publication, observed, grant)
+	return store.attachConnectionGrant(t.Context(), f.Principal(t), f.publication, observed, grant)
 }
 
 func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t *testing.T) {
@@ -165,7 +164,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if token, err := store.BotToken(t.Context(), f.installation, 2); err != nil || token != "reauthorized" {
 		t.Fatal("late refresh overwrote reauthorization", err)
 	}
-	if err = store.DisconnectConnection(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.Environment, f.publication); err != nil {
+	if err = store.DisconnectConnection(t.Context(), f.Principal(t), f.Environment, f.publication); err != nil {
 		t.Fatal(err)
 	}
 	var retained bool
@@ -179,11 +178,11 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 		t.Fatal("retired generation resurrected", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
-	setup, err := BeginConnection(t.Context(), f.Pool, org, f.User, f.Environment, f.Agent, TransportHTTP)
+	setup, err := BeginConnection(t.Context(), f.Pool, f.Principal(t), f.Environment, f.Agent, TransportHTTP)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.StoreAppCredentials(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, setup.RegistrationID, AppCredentials{ClientID: "next-client", ClientSecret: "next-secret", SigningSecret: "next-signing"}); err != nil {
+	if err = store.StoreAppCredentials(t.Context(), f.Principal(t), setup.RegistrationID, AppCredentials{ClientID: "next-client", ClientSecret: "next-secret", SigningSecret: "next-signing"}); err != nil {
 		t.Fatal(err)
 	}
 	f.publication = setup.ID
@@ -196,7 +195,7 @@ func TestCredentialReauthorizationFencesRefreshAndDisconnectRetiresGeneration(t 
 	if _, err = f.reauthorize(t, store, org, grant); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("non-manager reauthorized", err)
 	}
-	if err = store.DisconnectConnection(t.Context(), audit.VerifiedLogin(f.User, "fixture"), org, f.User, f.Environment, f.publication); !errors.Is(err, errInstallationAuthority) {
+	if err = store.DisconnectConnection(t.Context(), f.Principal(t), f.Environment, f.publication); !errors.Is(err, errInstallationAuthority) {
 		t.Fatal("non-manager disconnected", err)
 	}
 }

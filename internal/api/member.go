@@ -5,8 +5,9 @@ import "time"
 type MemberStatus string
 
 const (
-	MemberStatusActive  MemberStatus = "active"
-	MemberStatusRemoved MemberStatus = "removed"
+	MemberStatusSuspended MemberStatus = "suspended"
+	MemberStatusActive    MemberStatus = "active"
+	MemberStatusRemoved   MemberStatus = "removed"
 )
 
 type MemberSummary struct {
@@ -18,6 +19,7 @@ type MemberSummary struct {
 	Status       MemberStatus `json:"status"`
 	CreatedAt    time.Time    `json:"created_at"`
 	UpdatedAt    time.Time    `json:"updated_at"`
+	SuspendedAt  *time.Time   `json:"suspended_at,omitempty"`
 	RemovedAt    *time.Time   `json:"removed_at,omitempty"`
 }
 

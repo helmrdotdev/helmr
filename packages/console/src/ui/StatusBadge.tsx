@@ -23,7 +23,7 @@ const TONES = {
   deployment: { current: "active", not_current: "expired" },
   api_key: { active: "succeeded", expired: "expired", revoked: "revoked" },
   secret: { active: "succeeded", revoked: "revoked" },
-  member: { active: "succeeded", removed: "revoked", invited: "waiting" },
+  member: { suspended: "revoked", active: "succeeded", removed: "revoked", invited: "waiting" },
   worker_group: { active: "active", paused: "waiting", draining: "waiting", disabled: "revoked" },
   agent: { defined: "active", not_defined: "expired", deleted: "expired" },
   slack_connection: { configuration_mismatch: "waiting", setup_incomplete: "waiting", connected: "succeeded", reauthorization_required: "waiting", disconnected: "revoked" },

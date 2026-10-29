@@ -12,6 +12,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -70,7 +71,7 @@ type Event struct {
 // error so business changes roll back. Policy is explicit and has no default.
 func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) (resultErr error) {
 	defer func() {
-		if resultErr != nil && !errors.Is(resultErr, ErrCapture) {
+		if resultErr != nil && !errors.Is(resultErr, ErrCapture) && !errors.Is(resultErr, auth.ErrRecentProofRequired) {
 			resultErr = errors.Join(ErrCapture, resultErr)
 		}
 	}()
@@ -98,16 +99,38 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 		return err
 	}
 	if (e.Authentication.Result == "absent" || e.Authentication.Result == "failed") && e.Outcome != "denied" && e.Outcome != "failed" {
-		if e.Authentication.Result != "absent" || !slices.Contains([]string{"identity.device_started", "identity.magic_link_requested"}, e.Action) {
+		if e.Authentication.Result != "absent" || !slices.Contains([]string{"identity.device_started", "identity.magic_link_requested", "identity.email_code_requested"}, e.Action) {
 			return errors.New("established actor required for operation")
 		}
 	}
 	a := e.Actor
+	// Platform mutations cannot commit using authority revoked after request admission.
+	// Hold shared locks through the owner's commit so repair/key removal serializes.
+	if a.OperatorID != uuid.Nil() && e.Authorization.Decision == "allowed" {
+		var id uuid.UUID
+		var confirmed time.Time
+		if err := tx.QueryRow(ctx, `SELECT s.id,s.privileged_confirmed_at FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.privileged_key_id AND k.operator_id=o.id
+   WHERE s.id=$1 AND o.id=$2 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND o.disabled_at IS NULL AND o.access_epoch=s.privileged_epoch AND k.revoked_at IS NULL
+   FOR SHARE OF o,s,k`, e.Authentication.CredentialID, a.OperatorID).Scan(&id, &confirmed); err != nil {
+			return fmt.Errorf("current operator authority: %w", err)
+		}
+		if e.Action != "audit.searched" {
+			if err := auth.RequireRecentProof(auth.Principal{Kind: auth.PrincipalKindOperator, AuthenticatedAt: confirmed}); err != nil {
+				return err
+			}
+		}
+	}
 	var identity *Identity
 	if a.UserID != uuid.Nil() {
 		identity = &Identity{Source: "account"}
 		if err := tx.QueryRow(ctx, `SELECT display_name,COALESCE(primary_email,'') FROM users WHERE id=$1`, a.UserID).Scan(&identity.DisplayName, &identity.Email); err != nil {
 			return fmt.Errorf("read audit actor identity: %w", err)
+		}
+	}
+	if a.OperatorID != uuid.Nil() {
+		identity = &Identity{Source: "operator"}
+		if err := tx.QueryRow(ctx, `SELECT label FROM platform_operators WHERE id=$1`, a.OperatorID).Scan(&identity.DisplayName); err != nil {
+			return fmt.Errorf("read audit operator identity: %w", err)
 		}
 	}
 	// Authoritative live parents are resolved while the operation owns them. No
@@ -193,16 +216,16 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
  actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component,actor_identity,
  authentication_result,authentication_origin,identity_provider,credential_kind,credential_id,credential_version,runtime_generation,process_epoch,
  action,outcome,target_kind,target_id,target_user_id,slack_team_id,slack_user_id,target_resolution,authorization_evidence,
- operation_id,session_id,turn_id,computer_id,deployment_id,cause_event_id,causality,source_ip,channel,details)
+ operation_id,session_id,turn_id,computer_id,deployment_id,cause_event_id,causality,source_ip,channel,details,actor_operator_id)
  VALUES ($1,$2,$3,$4,1,COALESCE($5::timestamptz,statement_timestamp()),statement_timestamp(),$6,
  statement_timestamp()+$6::bigint*interval '1 second',$7,$8,$9,$10,NULLIF($11,''),$12,
  $13,NULLIF($14,''),NULLIF($15,''),NULLIF($16,''),$17,$18,$19,$20,
- $21,$22,$23,$24,$25,NULLIF($26,''),NULLIF($27,''),$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)`,
+ $21,$22,$23,$24,$25,NULLIF($26,''),NULLIF($27,''),$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)`,
 		e.ID, optionalUUID(e.OrgID), optionalUUID(e.ProjectID), optionalUUID(e.EnvironmentID), occurred, policy.RetentionSeconds,
 		optionalUUID(a.UserID), optionalUUID(a.APIKeyID), optionalUUID(a.SessionID), optionalUUID(a.WorkerHostID), a.Component, identityJSON,
 		c.Result, c.Origin, c.Provider, c.CredentialKind, optionalUUID(c.CredentialID), positive(c.CredentialVersion), positive(e.RuntimeGeneration), positive(e.ProcessEpoch),
 		e.Action, e.Outcome, e.TargetKind, optionalUUID(e.TargetID), optionalUUID(e.TargetUserID), e.SlackTeamID, e.SlackUserID, resolution, witness, e.OperationID,
-		optionalUUID(e.SessionID), optionalUUID(e.TurnID), optionalUUID(e.ComputerID), optionalUUID(e.DeploymentID), optionalUUID(e.CauseEventID), causality, ip, channel, details)
+		optionalUUID(e.SessionID), optionalUUID(e.TurnID), optionalUUID(e.ComputerID), optionalUUID(e.DeploymentID), optionalUUID(e.CauseEventID), causality, ip, channel, details, optionalUUID(a.OperatorID))
 
 	if err != nil {
 		return fmt.Errorf("append audit event: %w", err)

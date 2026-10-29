@@ -1,4 +1,3 @@
-import { ME_QUERY_KEY, useMe } from "../lib/me";
 import { A, useSearchParams } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, Match, Show, Switch } from "solid-js";
@@ -36,9 +35,9 @@ function RestartHint() {
 export function Device() {
   const [params] = useSearchParams();
   const queryClient = useQueryClient();
-  const me = useMe();
   const code = createMemo(() => normalizeCode(readParam(params["code"])));
   const [busy, setBusy] = createSignal<"approve" | "deny" | null>(null);
+  const [confirmationRequired,setConfirmationRequired]=createSignal(false);
   const [actionError, setActionError] = createSignal<Failure | null>(null);
 
   const status = createQuery(() => ({
@@ -50,20 +49,19 @@ export function Device() {
 
   async function resolveDevice(approve: boolean) {
     const requestCode = code();
-    const identity = me.data;
+    const identity = status.data?.consent;
     if (!identity?.org_id) return;
-    const consent = { user_id: identity.user_id, org_id: identity.org_id };
+    const consent = { org_id: identity.org_id };
     setActionError(null);
+    setConfirmationRequired(false);
     setBusy(approve ? "approve" : "deny");
     try {
-      const result = approve ? await approveDeviceCode(requestCode, consent) : await denyDeviceCode(requestCode, consent);
+      const result = approve ? await approveDeviceCode(requestCode, consent,identity.proof) : await denyDeviceCode(requestCode, consent,identity.proof);
       queryClient.setQueryData(["device-code", requestCode], result);
     } catch (error) {
       if (code() !== requestCode) return;
+      setConfirmationRequired(error instanceof ApiError && error.code === "recent_authentication_required");
       setActionError(deviceFailure(error, "This device request could not be updated. Try again."));
-      if (error instanceof ApiError && error.code === "device_identity_changed") {
-        await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
-      }
       const refreshed = await status.refetch();
       if (refreshed.data && refreshed.data.status !== "pending") setActionError(null);
     } finally {
@@ -71,7 +69,7 @@ export function Device() {
     }
   }
 
-  const canResolve = createMemo(() => status.data?.status === "pending" && !!me.data?.org_id && !me.isError && !busy());
+  const canResolve = createMemo(() => status.data?.status === "pending" && !!status.data?.consent && !busy());
 
   return (
     <Switch>
@@ -108,16 +106,20 @@ export function Device() {
                 <AuthSuccess title="This request was already used">Check your terminal for the login result.</AuthSuccess>
               </Match>
               <Match when={device().status === "pending"}>
-                <AuthTitle>Authorize CLI</AuthTitle>
+                <AuthTitle>{device().confirmation ? "Confirm CLI access" : "Authorize CLI"}</AuthTitle>
+                <Show when={device().confirmation}><AuthCopy>This replaces the existing CLI login for the same account and organization. Return to your terminal and explicitly retry your command after confirming.</AuthCopy></Show>
                 <AuthCopy>Only approve if you started this login. Check that this code matches your terminal.</AuthCopy>
                 <div class={ui.authCode} aria-label="Device code">{code()}</div>
                 <AuthFacts label="Request">
-                  <AuthFact label="Account">{me.data?.display_name || me.data?.user_id}</AuthFact>
-                  <AuthFact label="Organization">{me.data?.org_name || me.data?.org_id}</AuthFact>
-                  <AuthFact label="Server">{me.data?.app_origin || window.location.origin}</AuthFact>
+                  <AuthFact label="Account">{device().consent?.account_name}</AuthFact>
+                  <AuthFact label="Organization">{device().consent?.org_name}</AuthFact>
+                  <AuthFact label="Device">CLI displaying the code above</AuthFact>
+                  <AuthFact label="Access">Your current permissions in this organization</AuthFact>
+                  <AuthFact label="Server">{window.location.origin}</AuthFact>
                   <AuthFact label="Expires"><RelativeTime value={device().expires_at} /></AuthFact>
                 </AuthFacts>
                 <Show when={actionError()}>{(failure) => <AuthError {...failure()} />}</Show>
+                <Show when={confirmationRequired()}><AuthCopy>Confirm your account in a new tab, then return here and press Approve again. <a class={ui.monoLink} href="/settings/account" target="_blank" rel="noopener">Confirm account</a></AuthCopy></Show>
                 <button type="button" class={ui.button} disabled={!canResolve()} onClick={() => resolveDevice(true)}>
                   {busy() === "approve" ? "Approving…" : "Approve"}
                 </button>

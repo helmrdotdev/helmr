@@ -103,7 +103,7 @@ func admitControl(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 		if gesture.Control.Actor != "" && gesture.Control.Actor != actor {
 			return reject("control_actor_mismatch")
 		}
-		user, code, err := linkedSessionHuman(ctx, tx, team, actor, target.Environment, target.Session, source)
+		human, code, err := linkedSessionHuman(ctx, tx, team, actor, target.Installation, target.Environment, target.Session, source)
 		if err != nil {
 			return err
 		}
@@ -112,7 +112,7 @@ func admitControl(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 		}
 		var askID *uuid.UUID
 		err = db.RunTx(ctx, tx, func(coreTx pgx.Tx) error {
-			caller := session.Caller{CredentialKind: "slack", Kind: "user", ID: user, SlackThreadID: target.Thread}
+			caller := slackCaller(human, target.Thread)
 			if lifecycleAction(gesture.Control.Action) {
 				receipt, err := applyLifecycleControl(ctx, auditPolicy, coreTx, caller, target, gesture.Control, id)
 				if err != nil {
@@ -205,7 +205,7 @@ func admitControl(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$7,ask_id=$8,control_id=$9,payload=$10 WHERE id=$1`, id, user, target.Thread, target.Participant, target.Environment, target.Session, operation, askID, nil, raw)
+		_, err = tx.Exec(ctx, `UPDATE slack_requests SET status='accepted',finished_at=clock_timestamp(),user_id=$2,thread_id=$3,thread_source_id=$4,environment_id=$5,session_id=$6,operation=$7,ask_id=$8,control_id=$9,payload=$10 WHERE id=$1`, id, human.UserID, target.Thread, target.Participant, target.Environment, target.Session, operation, askID, nil, raw)
 		return err
 	})
 }

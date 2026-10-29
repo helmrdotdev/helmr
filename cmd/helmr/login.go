@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/clistate"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
@@ -15,7 +16,7 @@ import (
 const defaultControlPlaneURL = "https://helmr.dev"
 
 func loginCommand() *cobra.Command {
-	var noBrowser bool
+	var noBrowser, confirm bool
 	cmd := &cobra.Command{
 		Use:   "login [URL]",
 		Short: "Authenticate this CLI with Helmr.",
@@ -34,42 +35,67 @@ func loginCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			controlPlane, err := client.New(baseURL)
-			if err != nil {
-				return err
-			}
-			start, err := controlPlane.StartDeviceCode(cmd.Context())
-			if err != nil {
-				return err
-			}
-			verificationURL := start.VerificationURIComplete
-			if verificationURL == "" {
-				verificationURL = start.VerificationURI
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Visit %s\n", verificationURL)
-			fmt.Fprintf(cmd.OutOrStdout(), "Code: %s\n", start.UserCode)
-			if !noBrowser && verificationURL != "" {
-				if err := openURL(cmd.Context(), verificationURL); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Could not open browser: %v\n", err)
-				}
-			}
-			token, err := waitForDeviceToken(cmd, controlPlane, start.DeviceCode, start.IntervalSeconds, start.ExpiresInSeconds)
-			if err != nil {
-				return err
-			}
-			state, err := newCLIStateStore()
-			if err != nil {
-				return err
-			}
-			if err := state.SaveLogin(baseURL, token); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s\n", baseURL)
-			return nil
+			return deviceLogin(cmd, baseURL, confirm, noBrowser, nil)
 		},
 	}
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the login URL without opening a browser.")
+	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm this saved CLI login for sensitive changes.")
 	return cmd
+}
+
+func deviceLogin(cmd *cobra.Command, baseURL string, confirm, noBrowser bool, confirmationClient *client.Client) error {
+	controlPlane, err := client.New(baseURL)
+	if err != nil {
+		return err
+	}
+	var start api.DeviceStartResponse
+	if confirm {
+		if confirmationClient == nil {
+			state, stateErr := newCLIStateStore()
+			if stateErr != nil {
+				return stateErr
+			}
+			token, tokenErr := state.Token(baseURL)
+			if tokenErr != nil {
+				return fmt.Errorf("confirmation requires a saved login: %w", tokenErr)
+			}
+			var clientErr error
+			confirmationClient, clientErr = client.New(baseURL, client.WithBearerToken(token))
+			if clientErr != nil {
+				return clientErr
+			}
+		}
+		start, err = confirmationClient.StartDeviceConfirmation(cmd.Context())
+	} else {
+		start, err = controlPlane.StartDeviceCode(cmd.Context())
+	}
+	if err != nil {
+		return err
+	}
+	verificationURL := start.VerificationURIComplete
+	if verificationURL == "" {
+		verificationURL = start.VerificationURI
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Visit %s\n", verificationURL)
+	fmt.Fprintf(cmd.OutOrStdout(), "Code: %s\n", start.UserCode)
+	if !noBrowser && verificationURL != "" {
+		if err := openURL(cmd.Context(), verificationURL); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Could not open browser: %v\n", err)
+		}
+	}
+	token, err := waitForDeviceToken(cmd, controlPlane, start.DeviceCode, start.IntervalSeconds, start.ExpiresInSeconds)
+	if err != nil {
+		return err
+	}
+	state, err := newCLIStateStore()
+	if err != nil {
+		return err
+	}
+	if err := state.SaveLogin(baseURL, token); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s\n", baseURL)
+	return nil
 }
 
 func logoutCommand() *cobra.Command {

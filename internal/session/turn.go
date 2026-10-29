@@ -44,6 +44,7 @@ var (
 // Caller is transport-authenticated identity. Runtime requests carry the stable
 // Session and its current authority generation; a transport request ID is not identity.
 type Caller struct {
+	Human auth.Principal
 	// Credential provenance is supplied by the authenticated transport.
 	CredentialID      uuid.UUID
 	CredentialKind    string
@@ -378,6 +379,9 @@ func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 		if err != nil {
 			return err
 		}
+		if err = saveTurnHuman(ctx, tx, req.EnvironmentID, result.TurnID, caller); err != nil {
+			return err
+		}
 		if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsSend, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: result.TurnID, Action: "turn.admitted", Outcome: "accepted", TargetKind: "turn", TargetID: result.TurnID, Details: audit.LifecycleDetails{Sequence: result.Sequence}}); err != nil {
 			return err
 		}
@@ -401,7 +405,7 @@ func authorizeSessionInput(ctx context.Context, tx pgx.Tx, caller Caller, env uu
 	var allowed bool
 	switch caller.Kind {
 	case "user", "api_key":
-		_, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+		_, err := callerPrincipal(ctx, tx, caller, env)
 		return accessError(err)
 	case "session":
 		if err := authorizeRuntimeOrigin(ctx, tx, env, caller.ID); err != nil {
@@ -604,6 +608,12 @@ func dispatchTurn(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx
 	var inputCaller Caller
 	if err = tx.QueryRow(ctx, `SELECT caller_kind,caller_id FROM turns WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID).Scan(&inputCaller.Kind, &inputCaller.ID); err != nil {
 		return err
+	}
+	if inputCaller.Kind == "user" {
+		inputCaller.Human, err = access.ReadHuman(tx.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM turns WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID))
+		if err != nil && !errors.Is(err, access.ErrDenied) {
+			return err
+		}
 	}
 	if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller, result.TurnID, false, check); err != nil {
 		if !errors.Is(err, ErrDenied) {

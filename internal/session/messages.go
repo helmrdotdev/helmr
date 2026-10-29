@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -89,6 +90,9 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO turn_messages(environment_id,id,session_id,turn_id,process_epoch,seq,message,caller_kind,caller_id,origin_turn_id,admission_method,target_id,idempotency_key,request_digest)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NULLIF($13,''),$14)`, req.EnvironmentID, result.MessageID, req.SessionID, turn, e.ProcessEpoch, sequence, []byte(req.Input), caller.Kind, caller.ID, nullableID(caller.TurnID), method, target, req.IdempotencyKey, digest[:]); err != nil {
+		return false, err
+	}
+	if err = saveMessageHuman(ctx, tx, req.EnvironmentID, result.MessageID, caller); err != nil {
 		return false, err
 	}
 	if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsSend, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: turn, Action: "message.admitted", Outcome: "accepted", TargetKind: "message", TargetID: result.MessageID, Details: audit.LifecycleDetails{Sequence: sequence}}); err != nil {
@@ -187,6 +191,12 @@ func ClaimRuntimeMessage(ctx context.Context, pool db.TxBeginner, host workergro
 		}
 		if err != nil {
 			return err
+		}
+		if inputCaller.Kind == "user" {
+			inputCaller.Human, err = access.ReadHuman(tx.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM turn_messages WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, pendingID))
+			if err != nil && !errors.Is(err, access.ErrDenied) {
+				return err
+			}
 		}
 		if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller, pendingID, true, check); err != nil {
 			if !errors.Is(err, ErrDenied) {

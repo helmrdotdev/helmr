@@ -21,7 +21,7 @@ type OrganizationInput struct {
 	Name        string
 	OwnerUserID uuid.UUID
 	// InitialSetup admits only the platform's first organization and makes
-	// its owner an administrator. Self-hosted instances create their
+	// its first owner. Self-hosted instances create their
 	// organization this way.
 	InitialSetup bool
 }
@@ -29,7 +29,7 @@ type OrganizationInput struct {
 // CreateOrganization creates an organization with its owner as the first
 // member. Initial setup serializes on the organizations table before counting,
 // so concurrent setups admit one organization. The caller commits the owner
-// membership and any initial administrator grant in this transaction.
+// membership and initial organization role grants in this transaction.
 func CreateOrganization(ctx context.Context, tx pgx.Tx, input OrganizationInput) (db.Organization, error) {
 	if input.Actor.Authorization.Decision == "" {
 		input.Actor.Authorization = audit.NotEvaluated()

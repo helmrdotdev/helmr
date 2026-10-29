@@ -5,7 +5,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -27,7 +26,7 @@ func admissionActor(ctx context.Context, tx pgx.Tx, caller Caller, req StartRequ
 		}
 		return callerRuntimeAuditEvidence(caller), audit.Causality{InitiatorKind: origin.kind(), InitiatorID: origin.id(), SourceID: caller.TurnID}, nil
 	}
-	p, err := access.Principal(ctx, tx, caller.Kind, caller.ID, env)
+	p, err := callerPrincipal(ctx, tx, caller, env)
 	if err != nil {
 		return audit.Evidence{}, audit.Causality{}, err
 	}
@@ -109,7 +108,7 @@ func auditOperation(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, c
 		if err != nil {
 			return err
 		}
-		p, err := access.Principal(ctx, tx, caller.Kind, caller.ID, e.EnvironmentID)
+		p, err := callerPrincipal(ctx, tx, caller, e.EnvironmentID)
 		if err != nil {
 			return err
 		}

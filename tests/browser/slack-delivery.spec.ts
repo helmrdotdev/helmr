@@ -1,3 +1,4 @@
+import { isAuthenticationPath, authenticationResponse } from "./fixtures/authentication";
 import { expect, test, type Page } from "@playwright/test";
 import type { SlackDeliveryPost } from "../../packages/console/src/lib/slack";
 
@@ -21,7 +22,7 @@ async function fixture(page: Page, canRecover = true, supplied?: SlackDeliveryPo
     const environment = { environment: environmentID, project: projectID, name: "Development", color_hex: "#008000", is_default: true, created_at: now, updated_at: now };
     const project = { project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
     let json: unknown;
-    if (endpoint === "/api/me") json = { user_id: "local", display_name: "Local", org_id: "org", is_owner: false, permissions: [], permission_scopes: [{ project: projectID, environment: environmentID, agent: "support", permissions: ["sessions.read", ...(canRecover ? ["sessions.check_delivery", "sessions.abandon_delivery"] : [])] }], admin: false, organization_required: false, project_required: false };
+    if (isAuthenticationPath(endpoint)) json = { user_id: "local", display_name: "Local", org_id: "org", is_owner: false, permissions: [], permission_scopes: [{ project: projectID, environment: environmentID, agent: "support", permissions: ["sessions.read", ...(canRecover ? ["sessions.check_delivery", "sessions.abandon_delivery"] : [])] }], admin: false, organization_required: false, project_required: false };
     else if (endpoint === "/api/projects") json = { projects: [project] };
     else if (endpoint === `/api/projects/${projectID}`) json = project;
     else if (endpoint === base) json = environment;
@@ -38,7 +39,7 @@ async function fixture(page: Page, canRecover = true, supplied?: SlackDeliveryPo
       posts = posts.map(post => endpoint.includes(post.id) ? endpoint.endsWith("/check") ? { ...post, check_paused_at: null } : { ...post, status: "failed", disposed_at: now, disposed_by: "local", check_paused_at: now } : post);
       await route.fulfill({ status: 204 }); return;
     } else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: endpoint } } }); return; }
-    await route.fulfill({ json });
+    await route.fulfill({ json: authenticationResponse(endpoint, json) });
   });
   await page.goto(pageURL);
   await expect(page.getByRole("heading", { name: "Slack delivery", exact: true })).toBeVisible();

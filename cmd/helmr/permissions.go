@@ -23,6 +23,7 @@ func executeCommand(root *cobra.Command, args []string) error {
 	root.SetArgs(args)
 	cmd, err := root.ExecuteC()
 	if err == nil {
+		recordCLIActivity(cmd)
 		return nil
 	}
 	permissionCommand := false
@@ -44,6 +45,9 @@ func executeCommand(root *cobra.Command, args []string) error {
 				jsonOutput = parsed
 			}
 		}
+	}
+	if !jsonOutput {
+		confirmCLIIfNeeded(cmd, err)
 	}
 	if permissionCommand && jsonOutput {
 		var already map[string]json.RawMessage
@@ -91,7 +95,7 @@ func permissionJSONError(err error) error {
 		details = map[string]any{"grants": impact.grants}
 	}
 	raw, _ := json.Marshal(map[string]any{"error": map[string]any{"code": code, "message": err.Error(), "details": details}})
-	return errors.New(string(raw))
+	return &formattedPermissionError{text: string(raw), cause: err}
 }
 func permissionOutput(cmd *cobra.Command, value any) error {
 	jsonOutput, _ := cmd.Flags().GetBool("json")
@@ -289,8 +293,8 @@ func permissionUser(ctx context.Context, c *client.Client, email, id string, sel
 		return "", errors.New("select exactly one --user, --member-id or --self")
 	}
 	if self {
-		me, err := c.GetMe(ctx)
-		return me.MembershipID, err
+		me, err := c.GetOrganizationContext(ctx)
+		return me.CurrentMember.ID, err
 	}
 	if id != "" {
 		return permissionID(id, "member ID")
@@ -937,3 +941,11 @@ func memberCommand() *cobra.Command {
 	root.AddCommand(cmd)
 	return root
 }
+
+type formattedPermissionError struct {
+	text  string
+	cause error
+}
+
+func (e *formattedPermissionError) Error() string { return e.text }
+func (e *formattedPermissionError) Unwrap() error { return e.cause }

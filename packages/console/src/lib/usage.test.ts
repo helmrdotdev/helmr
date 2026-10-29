@@ -1,3 +1,4 @@
+import "./browser-test-env";
 import { expect, test } from "bun:test";
 import { bucketLabels, change, channelLabel, formatDuration } from "./usage";
 

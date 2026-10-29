@@ -23,7 +23,7 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := insertUser(t, d.Pool, "Founder", "founder@example.test")
-	organization, err := identity.CreateOrganization(ctx, d.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "bootstrap", OwnerUserID: user, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}})
+	organization, err := identity.CreateOrganization(ctx, d.Pool, org.OrganizationInput{Actor: audit.Internal(audit.ControlPlane), Slug: "bootstrap", OwnerUserID: user, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, dbtest.BrowserPrincipal(t, d.Pool, uuid.Nil(), user), auth.Principal{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := org.ManagingMember{Actor: audit.VerifiedLogin(user, "fixture"), OrgID: orgID, UserID: user, MemberID: principal.MemberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
+	m := org.ManagingMember{Human: dbtest.BrowserPrincipal(t, d.Pool, orgID, user), Actor: audit.VerifiedLogin(user, "fixture"), OrgID: orgID, UserID: user, MemberID: principal.MemberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
 	roles, err := org.ListPermissionRoles(ctx, d.Pool, m)
 	if err != nil || len(roles) != 17 {
 		t.Fatalf("roles: %d %v", len(roles), err)

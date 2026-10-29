@@ -11,128 +11,88 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createLoginSession = `-- name: CreateLoginSession :one
-INSERT INTO login_sessions (id, org_id, user_id, token_hash, expires_at)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, org_id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at
+const getLoginSession = `-- name: GetLoginSession :one
+SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, user_access_epoch, member_id, cli_identity_id, cli_passkey_id, cli_authenticated_at, privileged_key_id, privileged_epoch, privileged_login_at, privileged_confirmed_at FROM login_sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
 `
 
-type CreateLoginSessionParams struct {
-	ID        pgtype.UUID        `json:"id"`
-	OrgID     pgtype.UUID        `json:"org_id"`
-	UserID    pgtype.UUID        `json:"user_id"`
-	TokenHash []byte             `json:"token_hash"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
-}
-
-func (q *Queries) CreateLoginSession(ctx context.Context, arg CreateLoginSessionParams) (LoginSession, error) {
-	row := q.db.QueryRow(ctx, createLoginSession,
-		arg.ID,
-		arg.OrgID,
-		arg.UserID,
-		arg.TokenHash,
-		arg.ExpiresAt,
-	)
+func (q *Queries) GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSession, error) {
+	row := q.db.QueryRow(ctx, getLoginSession, id)
 	var i LoginSession
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
 		&i.UserID,
 		&i.TokenHash,
-		&i.CreatedAt,
-		&i.LastSeenAt,
+		&i.IssuedAt,
+		&i.LastHumanActivityAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.OperatorID,
+		&i.Channel,
+		&i.UserAccessEpoch,
+		&i.MemberID,
+		&i.CliIdentityID,
+		&i.CliPasskeyID,
+		&i.CliAuthenticatedAt,
+		&i.PrivilegedKeyID,
+		&i.PrivilegedEpoch,
+		&i.PrivilegedLoginAt,
+		&i.PrivilegedConfirmedAt,
 	)
 	return i, err
 }
 
 const getLoginSessionByTokenHash = `-- name: GetLoginSessionByTokenHash :one
-SELECT
-    login_sessions.id,
-    login_sessions.user_id,
-    users.display_name,
-    users.profile_image_url,
-    users.admin,
-    selected_member.org_id,
-    selected_member.id AS member_id,
-    COALESCE(selected_member.is_owner,false)::boolean AS is_owner,
-    COALESCE(selected_member.display_name, users.display_name) AS member_display_name,
-    login_sessions.expires_at
-  FROM login_sessions
-  JOIN users ON users.id = login_sessions.user_id
-  LEFT JOIN LATERAL (
-      SELECT org_members.org_id,
-             org_members.id,
-             org_members.is_owner,
-             org_members.display_name
-        FROM org_members
-       WHERE org_members.user_id = login_sessions.user_id
-         AND (login_sessions.org_id IS NULL OR org_members.org_id = login_sessions.org_id)
-         AND org_members.removed_at IS NULL
-       ORDER BY (org_members.org_id = login_sessions.org_id) DESC, org_members.created_at ASC
-       LIMIT 1
-  ) AS selected_member ON true
- WHERE login_sessions.token_hash = $1
-   AND login_sessions.revoked_at IS NULL
-   AND login_sessions.expires_at > now()
-   AND (login_sessions.org_id IS NULL OR selected_member.org_id IS NOT NULL)
+SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, user_access_epoch, member_id, cli_identity_id, cli_passkey_id, cli_authenticated_at, privileged_key_id, privileged_epoch, privileged_login_at, privileged_confirmed_at FROM login_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
 `
 
-type GetLoginSessionByTokenHashRow struct {
-	ID                pgtype.UUID        `json:"id"`
-	UserID            pgtype.UUID        `json:"user_id"`
-	DisplayName       string             `json:"display_name"`
-	ProfileImageURL   pgtype.Text        `json:"profile_image_url"`
-	Admin             bool               `json:"admin"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	MemberID          pgtype.UUID        `json:"member_id"`
-	IsOwner           bool               `json:"is_owner"`
-	MemberDisplayName string             `json:"member_display_name"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
-}
-
-func (q *Queries) GetLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (GetLoginSessionByTokenHashRow, error) {
+func (q *Queries) GetLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (LoginSession, error) {
 	row := q.db.QueryRow(ctx, getLoginSessionByTokenHash, tokenHash)
-	var i GetLoginSessionByTokenHashRow
+	var i LoginSession
 	err := row.Scan(
 		&i.ID,
-		&i.UserID,
-		&i.DisplayName,
-		&i.ProfileImageURL,
-		&i.Admin,
 		&i.OrgID,
-		&i.MemberID,
-		&i.IsOwner,
-		&i.MemberDisplayName,
+		&i.UserID,
+		&i.TokenHash,
+		&i.IssuedAt,
+		&i.LastHumanActivityAt,
 		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.OperatorID,
+		&i.Channel,
+		&i.UserAccessEpoch,
+		&i.MemberID,
+		&i.CliIdentityID,
+		&i.CliPasskeyID,
+		&i.CliAuthenticatedAt,
+		&i.PrivilegedKeyID,
+		&i.PrivilegedEpoch,
+		&i.PrivilegedLoginAt,
+		&i.PrivilegedConfirmedAt,
 	)
 	return i, err
 }
 
-const refreshLoginSession = `-- name: RefreshLoginSession :exec
-UPDATE login_sessions
-   SET last_seen_at = now(),
-       expires_at = $1
- WHERE id = $2
-   AND revoked_at IS NULL
+const refreshLoginSession = `-- name: RefreshLoginSession :execrows
+UPDATE login_sessions SET last_human_activity_at=clock_timestamp(), expires_at=$2
+WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND channel IN ('browser','cli')
 `
 
 type RefreshLoginSessionParams struct {
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 	ID        pgtype.UUID        `json:"id"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 }
 
-func (q *Queries) RefreshLoginSession(ctx context.Context, arg RefreshLoginSessionParams) error {
-	_, err := q.db.Exec(ctx, refreshLoginSession, arg.ExpiresAt, arg.ID)
-	return err
+func (q *Queries) RefreshLoginSession(ctx context.Context, arg RefreshLoginSessionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, refreshLoginSession, arg.ID, arg.ExpiresAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeLoginSessionByTokenHash = `-- name: RevokeLoginSessionByTokenHash :execrows
-UPDATE login_sessions
-   SET revoked_at = now()
- WHERE token_hash = $1
-   AND revoked_at IS NULL
+UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE token_hash=$1 AND revoked_at IS NULL
 `
 
 func (q *Queries) RevokeLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error) {
@@ -144,27 +104,17 @@ func (q *Queries) RevokeLoginSessionByTokenHash(ctx context.Context, tokenHash [
 }
 
 const revokeLoginSessionsForMembership = `-- name: RevokeLoginSessionsForMembership :exec
-UPDATE login_sessions SET revoked_at = now()
-WHERE user_id = $1
-  AND (org_id = $2 OR org_id IS NULL)
-  AND revoked_at IS NULL
+UPDATE login_sessions SET revoked_at=clock_timestamp()
+WHERE member_id=$1 AND channel='cli' AND revoked_at IS NULL
 `
 
-type RevokeLoginSessionsForMembershipParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	OrgID  pgtype.UUID `json:"org_id"`
-}
-
-func (q *Queries) RevokeLoginSessionsForMembership(ctx context.Context, arg RevokeLoginSessionsForMembershipParams) error {
-	_, err := q.db.Exec(ctx, revokeLoginSessionsForMembership, arg.UserID, arg.OrgID)
+func (q *Queries) RevokeLoginSessionsForMembership(ctx context.Context, memberID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, revokeLoginSessionsForMembership, memberID)
 	return err
 }
 
 const revokeLoginSessionsForUser = `-- name: RevokeLoginSessionsForUser :execrows
-UPDATE login_sessions
-   SET revoked_at = now()
- WHERE user_id = $1
-   AND revoked_at IS NULL
+UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1 AND revoked_at IS NULL
 `
 
 func (q *Queries) RevokeLoginSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error) {

@@ -8,26 +8,29 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // httpPostgresFixture serves the control plane built by NewServer over a test
 // database, authenticating requests with real login sessions.
 type httpPostgresFixture struct {
-	pool    *pgxpool.Pool
-	queries *db.Queries
-	handler http.Handler
-	keys    auth.Keys
+	pool                 *pgxpool.Pool
+	queries              *db.Queries
+	handler              http.Handler
+	keys                 auth.Keys
+	operatorTokens       map[string]bool
+	browserOrganizations map[string]uuid.UUID
+	origin               string
 }
 
 // newHTTPPostgresFixture builds the server from the complete test
@@ -56,7 +59,7 @@ func newHTTPPostgresFixture(t *testing.T, configure ...func(*ServerConfig)) http
 	if err != nil {
 		t.Fatal(err)
 	}
-	return httpPostgresFixture{pool: database.Pool, queries: queries, handler: handler, keys: keys}
+	return httpPostgresFixture{pool: database.Pool, queries: queries, handler: handler, keys: keys, browserOrganizations: map[string]uuid.UUID{}, operatorTokens: map[string]bool{}, origin: cfg.AppOrigin.String()}
 }
 
 // organizationOwner creates an organization with an owner and returns the
@@ -97,41 +100,46 @@ func (f httpPostgresFixture) member(t *testing.T, orgID uuid.UUID, userID uuid.U
 	return pgvalue.MustUUIDValue(record.ID)
 }
 
-// session creates a login session for the user that selects orgID, or no
-// organization when orgID is nil, and returns its token.
+// session creates a browser account proof. orgID is the test client's explicit
+// request selection and is not stored in the browser session.
 func (f httpPostgresFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.UUID) string {
 	t.Helper()
 	token, err := auth.GenerateOpaque(32)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tokenHash, err := auth.HashToken(f.keys.Session, token)
+	hash, err := auth.HashToken(f.keys.Session, token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgRef := pgtype.UUID{}
-	if orgID != uuid.Nil() {
-		orgRef = pgvalue.UUID(orgID)
-	}
-	if _, err := f.queries.CreateLoginSession(t.Context(), db.CreateLoginSessionParams{
-		ID: pgvalue.UUID(uuid.NewV7()), OrgID: orgRef, UserID: pgvalue.UUID(userID),
-		TokenHash: tokenHash, ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-	}); err != nil {
+	source, session := uuid.NewV7(), uuid.NewV7()
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'fixture',$1::uuid::text,clock_timestamp())`, source, userID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO login_sessions(id,user_id,channel,user_access_epoch,token_hash,expires_at) SELECT $1,id,'browser',access_epoch,$3,clock_timestamp()+interval '1 hour' FROM users WHERE id=$2`, session, userID, hash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,authenticated_at) VALUES($1,$2,$3,$4,clock_timestamp())`, uuid.NewV7(), session, userID, source); err != nil {
+		t.Fatal(err)
+	}
+	f.browserOrganizations[token] = orgID
 	return token
 }
 
-// request serves a request authenticated by a bearer session token, or
-// unauthenticated when token is empty.
-func (f httpPostgresFixture) request(t *testing.T, method string, path string, token string, body string) *httptest.ResponseRecorder {
+// request uses cookies for fixture browsers and bearer authorization for other tokens.
+func (f httpPostgresFixture) request(t *testing.T, method string, path string, token string, body string, headers ...http.Header) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
-	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
-	}
+	f.authenticateRequest(request, token)
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
+	}
+	for _, values := range headers {
+		for key, items := range values {
+			for _, value := range items {
+				request.Header.Add(key, value)
+			}
+		}
 	}
 	recorder := httptest.NewRecorder()
 	f.handler.ServeHTTP(recorder, request)
@@ -152,6 +160,17 @@ type testAPIKeyInput struct {
 
 func issueAPIKeyWithRole(t *testing.T, ctx context.Context, database db.TxDB, issuer auth.Principal, scope auth.Scope, input testAPIKeyInput) (identity.IssuedAPIKey, error) {
 	t.Helper()
+	if issuer.Channel == "" {
+		source, session := uuid.NewV7(), uuid.NewV7()
+		dbtest.MustExec(t, ctx, database, `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'fixture',$1::uuid::text,clock_timestamp())`, source, issuer.UserID)
+		dbtest.MustExec(t, ctx, database, `INSERT INTO login_sessions(id,user_id,channel,user_access_epoch,token_hash,expires_at) SELECT $1,id,'browser',access_epoch,uuid_send($1::uuid),clock_timestamp()+interval '1 hour' FROM users WHERE id=$2`, session, issuer.UserID)
+		dbtest.MustExec(t, ctx, database, `INSERT INTO browser_account_proofs(id,session_id,user_id,identity_id,authenticated_at) VALUES($1,$2,$3,$4,clock_timestamp())`, uuid.NewV7(), session, issuer.UserID, source)
+		var err error
+		issuer, err = access.SessionPrincipal(ctx, database, session, scope.OrgID)
+		if err != nil {
+			return identity.IssuedAPIKey{}, err
+		}
+	}
 	issued, err := identity.IssueAPIKey(ctx, database, auditpolicy.Policy{RetentionSeconds: 3600}, issuer, scope, identity.APIKeyInput{Name: input.Name})
 	if err != nil {
 		return issued, err
@@ -162,4 +181,43 @@ func issueAPIKeyWithRole(t *testing.T, ctx context.Context, database db.TxDB, is
 	}
 	dbtest.SetAPIKeyRole(t, database, pgvalue.MustUUIDValue(issued.Record.ID), values...)
 	return issued, nil
+}
+
+func (f httpPostgresFixture) authenticateRequest(request *http.Request, token string) {
+	request.Header.Set("Origin", f.origin)
+	if token != "" {
+		if f.operatorTokens[token] {
+			request.AddCookie(&http.Cookie{Name: operatorCookieName(request), Value: token})
+		} else if orgID, browser := f.browserOrganizations[token]; browser {
+			request.AddCookie(&http.Cookie{Name: sessionCookieName(request), Value: token})
+			if orgID != uuid.Nil() {
+				request.Header.Set("X-Helmr-Organization", orgID.String())
+			}
+		} else {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
+}
+
+// cliSession exercises the consent/exchange route for bearer-only clients.
+func (f httpPostgresFixture) cliSession(t *testing.T, user, organization uuid.UUID) string {
+	t.Helper()
+	cfg := identity.NewConfig(f.keys, identity.Lifetimes{}, auditpolicy.Policy{RetentionSeconds: 3600})
+	raw := f.session(t, user, organization)
+	p, err := identity.AuthenticateLoginSession(t.Context(), f.pool, cfg, raw, organization)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := identity.StartDeviceCode(t.Context(), f.pool, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = identity.ApproveDeviceCode(t.Context(), f.pool, cfg, p, identity.DeviceConsent{OrgID: organization.String()}, device.UserCode); err != nil {
+		t.Fatal(err)
+	}
+	result, err := identity.ExchangeDeviceCode(t.Context(), f.pool, cfg, device.DeviceCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }

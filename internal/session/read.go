@@ -122,8 +122,9 @@ func authorizeRead(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID)
 
 func readTransaction(ctx context.Context, pool db.TxBeginner, caller Caller, env uuid.UUID, read func(pgx.Tx) error) error {
 	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		// Holds and outcomes must describe the same snapshot as the Session row.
-		if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`); err != nil {
+		// Holds and outcomes share the Session snapshot. Authority checks take
+		// row locks so source retirement cannot race an authorized read.
+		if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`); err != nil {
 			return err
 		}
 		if err := authorizeRead(ctx, tx, caller, env); err != nil {
