@@ -6,7 +6,7 @@ import { Dialog } from "../ui/Dialog";
 import { ui } from "../ui/styles";
 import { EmailSignIn } from "./EmailSignIn";
 
-function AccountConfirmation(props: { onClose: () => void; removingCredential: boolean }) {
+function AccountConfirmation(props: { onClose: () => void; reason?: string }) {
   const queries = useQueryClient();
   const knownAccount = queries.getQueryData<Me>(["me"]);
   const [config] = createResource(getAuthConfig);
@@ -57,7 +57,7 @@ function AccountConfirmation(props: { onClose: () => void; removingCredential: b
   return <Dialog title="Confirm your sign-in" onClose={props.onClose} closeDisabled={busy()} bodyClass="space-y-3 p-3">
     <Show when={complete()} fallback={<>
       <p class={ui.muted}>Confirm your identity to continue. Then review and submit your action.</p>
-      <Show when={props.removingCredential}><p class={ui.muted}>Use a different sign-in method or passkey from the one you are removing.</p></Show>
+      <Show when={props.reason}><p class={ui.muted}>{props.reason}</p></Show>
       <Show when={error() || config.error}><p role="alert">{error() || "Sign-in methods could not be loaded. Close and try again."}</p></Show>
       <Show when={!verified()} fallback={<button type="button" class={ui.button} disabled={busy()} onClick={() => void run(confirmed)}>Retry confirmation</button>}>
       <div class="flex flex-wrap gap-2">
@@ -76,9 +76,9 @@ function AccountConfirmation(props: { onClose: () => void; removingCredential: b
 
 // Keep the original page and any form dialog mounted throughout authentication.
 export function AuthenticationNotice() {
-  const [request, setRequest] = createSignal<{ operator: boolean; removingCredential?: boolean }>();
+  const [request, setRequest] = createSignal<{ operator: boolean; reason?: string }>();
   const show = (event: Event) => {
-    if (!request()) setRequest((event as CustomEvent<{ operator: boolean; removingCredential?: boolean }>).detail);
+    if (!request()) setRequest((event as CustomEvent<{ operator: boolean; reason?: string }>).detail);
   };
   onMount(() => window.addEventListener("helmr-confirmation-required", show));
   onCleanup(() => window.removeEventListener("helmr-confirmation-required", show));
@@ -88,5 +88,5 @@ export function AuthenticationNotice() {
       <a href="/admin/login" target="_blank" rel="noopener noreferrer" class={ui.button}>Confirm sign-in</a>
       <button type="button" class={ui.secondaryButton} onClick={() => setRequest(undefined)}>Return to form</button>
     </Dialog>
-  }><AccountConfirmation removingCredential={!!value.removingCredential} onClose={() => setRequest(undefined)} /></Show>}</Show>;
+  }><AccountConfirmation {...(value.reason ? {reason:value.reason} : {})} onClose={() => setRequest(undefined)} /></Show>}</Show>;
 }

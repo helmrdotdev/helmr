@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 // The real local API and PostgreSQL verify credentials signed by Chromium's
-// virtual authenticator. No authentication route is intercepted in this suite.
+// virtual authenticator. One registration-options response requests confirmation;
+// the ensuing authentication and registration use the real server.
 test("ordinary passkey registration, sign-in, replay rejection and operator isolation", async ({ page, context, baseURL }) => {
   const cdp = await context.newCDPSession(page);
   await cdp.send("WebAuthn.enable");
@@ -22,6 +23,27 @@ test("ordinary passkey registration, sign-in, replay rejection and operator isol
     expect(credentials.credentials).toHaveLength(1);
     expect(credentials.credentials[0]?.isResidentCredential).toBe(true);
     expect(credentials.credentials[0]?.rpId).toBe("localhost");
+
+    let optionsAttempts = 0;
+    await page.route("**/api/account/passkeys/options", route => {
+      if (++optionsAttempts === 1) return route.fulfill({status:403,json:{error:{code:"recent_authentication_required",message:"Confirm your account"}}});
+      return route.fallback();
+    });
+    await page.getByLabel("Passkey name", {exact:true}).fill("Work laptop");
+    await page.getByRole("button", {name:"Add passkey",exact:true}).click();
+    const confirmation = page.getByRole("dialog", {name:"Confirm your sign-in"});
+    await confirmation.getByRole("button", {name:"Confirm with a passkey"}).click();
+    await expect(confirmation.getByRole("status")).toContainText("Sign-in confirmed");
+    expect((await cdp.send("WebAuthn.getCredentials", {authenticatorId})).credentials).toHaveLength(1);
+    expect(optionsAttempts).toBe(1);
+    await confirmation.getByRole("button", {name:"Return to your action"}).click();
+    await expect(page.getByLabel("Passkey name", {exact:true})).toHaveValue("Work laptop");
+    await page.getByRole("button", {name:"Add passkey",exact:true}).click();
+    await expect(page.getByText("Passkey added.", {exact:true})).toBeVisible();
+    const registered = await (await page.request.get("/api/account/credentials")).json();
+    expect(registered.credentials).toEqual(expect.arrayContaining([expect.objectContaining({method:"passkey",label:"Work laptop"})]));
+    expect(optionsAttempts).toBe(2);
+    await page.unroute("**/api/account/passkeys/options");
 
     const logout = await page.request.post("/api/auth/logout", { headers: { Origin: baseURL! }, data: {} });
     expect(logout.status()).toBe(204);

@@ -338,7 +338,7 @@ test("credential removal preserves its target and edited passkey name through co
  await page.getByRole("button",{name:"Remove",exact:true}).click();
  await page.getByRole("button",{name:"Remove method",exact:true}).click();
  const dialog=page.getByRole("dialog",{name:"Confirm your sign-in"});
- await expect(dialog).toContainText("Use a different sign-in method or passkey");
+ await expect(dialog).toContainText("Use a retained method");
  await page.screenshot({path:testInfo.outputPath("account-confirmation.png"),fullPage:true});
  await dialog.getByRole("button",{name:"Cancel",exact:true}).click();
  await expect(name).toHaveValue("My laptop");expect(removals).toBe(1);
