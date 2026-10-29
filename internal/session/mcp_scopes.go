@@ -151,7 +151,7 @@ func runtimeMCPMaximum(ctx context.Context, q db.DBTX, caller Caller) (mcppolicy
 		return mcppolicy.Policy{}, hideMissing(err)
 	}
 	p, err := mcppolicy.Decode(raw)
-	if err != nil {
+	if err != nil || p.Kind != "allow" {
 		return p, ErrRuntimeMCPDenied
 	}
 	return p, nil

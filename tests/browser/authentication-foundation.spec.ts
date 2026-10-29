@@ -72,13 +72,18 @@ test("deployment-local operator enrollment requires registration and a working a
       stdio: "pipe", timeout: 60_000,
     });
     const enrollment = JSON.parse(readFileSync(file, "utf8"));
+    await page.goto("/dev/login");
     await page.goto("/admin/login");
     await page.getByText("Set up or repair an operator key", { exact: true }).click();
     await page.getByLabel("Setup or repair capability", { exact: true }).fill(enrollment.capability);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Register a key", exact: true })).toBeVisible();
+    expect((await page.request.post("/api/auth/logout", {headers:{Origin:baseURL!},data:{}})).status()).toBe(204);
+    await page.reload();
     await page.getByRole("button", { name: "Register a key", exact: true }).click();
     await expect(page.getByRole("button", { name: "Verify this key", exact: true })).toBeVisible();
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(403);
+    await page.reload();
     await page.getByRole("button", { name: "Verify this key", exact: true }).click();
     await expect(page.getByRole("status")).toHaveText("Your key is ready. Sign in with it above.");
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(403);
@@ -122,6 +127,8 @@ test("deployment-local operator enrollment requires registration and a working a
     await page.goto("/admin/security");
     await page.getByLabel("Account repair capability", { exact: true }).fill(JSON.parse(readFileSync(repairFile, "utf8")).capability);
     await page.getByRole("button", { name: "Review repair target", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Account holder: register your key and complete repair", exact: true })).toBeVisible();
+    await page.reload();
     let completion: { url: string; body: unknown } | undefined;
     page.on("request", request => {
       if (/\/account-repairs\/[^/]+\/complete$/.test(new URL(request.url()).pathname)) completion = { url: request.url(), body: request.postDataJSON() };

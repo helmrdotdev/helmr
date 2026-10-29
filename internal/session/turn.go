@@ -20,7 +20,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
@@ -44,9 +43,7 @@ var (
 // Caller is transport-authenticated identity. Runtime requests carry the stable
 // Session and its current authority generation; a transport request ID is not identity.
 type Caller struct {
-	// admitted is set only when loading accepted work, never by transports.
-	admitted bool
-	Human    auth.Principal
+	Human auth.Principal
 	// Credential provenance is supplied by the authenticated transport.
 	CredentialID      uuid.UUID
 	CredentialKind    string
@@ -581,7 +578,7 @@ func newTurnReady(ctx context.Context, tx pgx.Tx, e Execution, o owners) error {
 	return nil
 }
 
-func dispatchTurn(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, e Execution, result *TurnDispatch, check inputAuthorityCheck) error {
+func dispatchTurn(ctx context.Context, tx pgx.Tx, e Execution, result *TurnDispatch) error {
 	o, err := dispatchReady(ctx, tx, e)
 	if err != nil {
 		return err
@@ -606,31 +603,6 @@ func dispatchTurn(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx
 	}
 	if err != nil {
 		return err
-	}
-	var inputCaller Caller
-	if err = tx.QueryRow(ctx, `SELECT caller_kind,caller_id FROM turns WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID).Scan(&inputCaller.Kind, &inputCaller.ID); err != nil {
-		return err
-	}
-	if inputCaller.Kind == "user" {
-		inputCaller.Human, err = access.ReadHuman(tx.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM turns WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID))
-		if err != nil && !errors.Is(err, access.ErrDenied) {
-			return err
-		}
-	}
-	if err = authorizeDeferredInput(ctx, tx, e.EnvironmentID, e.SessionID, inputCaller, result.TurnID, false, check); err != nil {
-		if !errors.Is(err, ErrDenied) {
-			return err
-		}
-		if _, err = tx.Exec(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp(),error_code='permission_revoked',error_message=$3 WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, result.TurnID, []byte("Permission was revoked before dispatch")); err != nil {
-			return err
-		}
-		if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: result.TurnID, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: result.TurnID, Details: audit.FailureDetails{Reason: "permission_denied"}}); err != nil {
-			return err
-		}
-		if err = eventData(ctx, tx, e.EnvironmentID, e.SessionID, result.TurnID, "turn.failed", []byte(`{"code":"permission_revoked"}`)); err != nil {
-			return err
-		}
-		return ErrNotReady
 	}
 	_, err = tx.Exec(ctx, `UPDATE turns SET status='running',process_epoch=$3,started_at=clock_timestamp(),
           deadline_at=CASE WHEN d.max_turn_duration_ms IS NOT NULL THEN clock_timestamp()+d.max_turn_duration_ms*interval '1 millisecond' END

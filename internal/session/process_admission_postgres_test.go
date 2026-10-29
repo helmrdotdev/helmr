@@ -247,7 +247,7 @@ func acknowledgeAdmissionControl(t *testing.T, f fixture, e session.Execution, a
 	}
 }
 
-func TestProcessAdmissionCommitsQueuedRevocationOnLiveComputer(t *testing.T) {
+func TestProcessAdmissionPreservesAcceptedWorkAfterAccessRevocation(t *testing.T) {
 	f, a, e := startingSessionFixture(t)
 	attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
 	if err != nil {
@@ -274,28 +274,28 @@ func TestProcessAdmissionCommitsQueuedRevocationOnLiveComputer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if _, err = a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2); !errors.Is(err, session.ErrNotReady) {
+		if _, err = a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2); err != nil {
 			t.Fatal("revoked process admitted", err)
 		}
 	}
 	var settled bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)>0 AND bool_and(status='failed' AND error_code='permission_revoked' AND processing_closed_at IS NOT NULL) FROM turns WHERE session_id=$1`, e.SessionID).Scan(&settled); err != nil || !settled {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)>0 AND bool_and(status='queued' AND processing_closed_at IS NULL) FROM turns WHERE session_id=$1`, e.SessionID).Scan(&settled); err != nil || !settled {
 		t.Fatal("revocation settlement rolled back", settled, err)
 	}
 	var processes, events int
-	if err = f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_processes WHERE session_id=$1 AND epoch=2),(SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='turn.failed')`, e.SessionID).Scan(&processes, &events); err != nil || processes != 0 || events != 1 {
+	if err = f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_processes WHERE session_id=$1 AND epoch=2),(SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='turn.failed')`, e.SessionID).Scan(&processes, &events); err != nil || processes != 1 || events != 0 {
 		t.Fatal("invalid process or duplicate failure event", processes, events, err)
 	}
 }
 
-func TestInitialAllocationRevocationSettlesWithoutLease(t *testing.T) {
+func TestInitialAllocationPreservesAcceptedWorkAfterAccessRevocation(t *testing.T) {
 	f, a, computerID := freshComputerAllocationFixture(t)
 	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
-	if _, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 1, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
-		t.Fatalf("revoked allocation: %v", err)
+	if _, err := a.AllocateFreshLease(t.Context(), f.env, computerID, 1, f.worker); err != nil {
+		t.Fatalf("accepted allocation denied: %v", err)
 	}
 	var settled bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2) AND EXISTS(SELECT 1 FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) WHERE s.environment_id=$1 AND s.computer_id=$2 AND t.status='failed' AND t.error_code='permission_revoked')`, f.env, computerID).Scan(&settled); err != nil || !settled {
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2) AND EXISTS(SELECT 1 FROM turns t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.session_id) WHERE s.environment_id=$1 AND s.computer_id=$2 AND t.status='queued' AND t.processing_closed_at IS NULL)`, f.env, computerID).Scan(&settled); err != nil || !settled {
 		t.Fatalf("revoked work did not settle without allocation: %v %v", settled, err)
 	}
 }

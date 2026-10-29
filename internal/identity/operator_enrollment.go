@@ -61,6 +61,31 @@ func lockOperatorEnrollment(ctx context.Context, tx pgx.Tx, id uuid.UUID, bindin
 	}
 	return e, user, nil
 }
+
+type OperatorEnrollmentState struct {
+	ID        uuid.UUID `json:"enrollment_id"`
+	Stage     string    `json:"stage"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// ReadOperatorEnrollment resumes the browser-bound flow without its spent capability.
+func ReadOperatorEnrollment(ctx context.Context, database db.TxBeginner, id uuid.UUID, binding []byte) (OperatorEnrollmentState, error) {
+	var result OperatorEnrollmentState
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		e, _, err := lockOperatorEnrollment(ctx, tx, id, binding)
+		if err != nil {
+			return err
+		}
+		stage := "register"
+		if len(e.provisional) > 0 {
+			stage = "assert"
+		}
+		result = OperatorEnrollmentState{ID: id, Stage: stage, ExpiresAt: e.expires}
+		return nil
+	})
+	return result, err
+}
+
 func BeginOperatorRegistration(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, id uuid.UUID, binding []byte) (RegistrationOptions, error) {
 	var result RegistrationOptions
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {

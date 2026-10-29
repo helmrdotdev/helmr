@@ -52,7 +52,8 @@ func slackCaller(p auth.Principal, thread uuid.UUID) session.Caller {
 	return c
 }
 
-// Direct output remains bound to its original linked recipient and current use
+// Direct output requires its original recipient, explicit consent on a replacement
+// link to resume prior delivery, and current use
 // permission. A route that remains connected does not preserve a revoked user's
 // access. Public channel output follows the configured shared publication route.
 func directRecipient(ctx context.Context, tx pgx.Tx, thread uuid.UUID) (bool, auth.Principal, uuid.UUID, error) {
@@ -61,7 +62,9 @@ func directRecipient(ctx context.Context, tx pgx.Tx, thread uuid.UUID) (bool, au
 	var env uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT left(t.slack_channel_id,1)='D',l.id,s.environment_id
  FROM slack_threads t JOIN sessions s ON (s.environment_id,s.id)=(t.environment_id,t.front_session_id)
- LEFT JOIN slack_user_links l ON l.id=s.human_slack_link_id AND l.user_id=s.origin_user_id
+ LEFT JOIN slack_user_links l ON l.user_id=s.origin_user_id AND l.org_id=t.org_id
+ AND l.installation_id=(SELECT installation_id FROM slack_channel_bindings WHERE id=t.slack_channel_binding_id)
+ AND l.revoked_at IS NULL AND (l.id=s.human_slack_link_id OR l.resume_previous_delivery)
  AND l.team_id=t.recipient_team_id AND l.slack_user_id=t.recipient_user_id
  WHERE t.id=$1 AND (s.origin_slack_connection_id IS NULL OR left(t.slack_channel_id,1)<>'D')`, thread).Scan(&direct, &link, &env)
 	if err != nil {

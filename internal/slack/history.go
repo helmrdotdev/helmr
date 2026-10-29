@@ -117,7 +117,7 @@ func (c *WebClient) readMessages(ctx context.Context, installation uuid.UUID, cr
 // outside the transaction. Pagination survives restarts without retaining a copied
 // transcript. No negative observation changes the uncertain delivery disposition.
 func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebClient, post uuid.UUID) (bool, error) {
-	var installation, sender, organization uuid.UUID
+	var installation, organization uuid.UUID
 	var team string
 	var credential int64
 	var channel, cursor string
@@ -126,25 +126,23 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
 	var digest []byte
 	reserved := false
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		var env, sourceChannel, targetChannel uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT p.environment_id,t.slack_channel_binding_id,source.slack_channel_binding_id,c.installation_id,c.org_id,c.team_id
- FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads source ON source.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=source.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&env, &targetChannel, &sourceChannel, &sender, &organization, &team)
+		var env, targetChannel uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT p.environment_id,t.slack_channel_binding_id,c.installation_id,c.org_id,c.team_id
+ FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id  JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&env, &targetChannel, &installation, &organization, &team)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		// Lock both exact generations before selecting a currently authorized
-		// reader. A retired sender does not prevent the target proving its post.
-		if _, err = slackroute.LockChannelsForDelivery(ctx, tx, env, []uuid.UUID{sourceChannel, targetChannel}); err != nil {
+		// Lock the exact destination generation before selecting its authorized reader.
+		if _, err = slackroute.LockChannelsForDelivery(ctx, tx, env, []uuid.UUID{targetChannel}); err != nil {
 			return err
 		}
 		var ready bool
 		err = tx.QueryRow(ctx, `SELECT i.id,i.credential_revision,i.history_next_at<=clock_timestamp() FROM slack_channel_bindings c
  JOIN slack_connections p ON p.id=c.connection_id JOIN slack_installations i ON i.id=c.installation_id JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id
- WHERE c.id=ANY($1::uuid[]) AND p.revoked_at IS NULL AND r.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.credential_ciphertext IS NOT NULL
- ORDER BY (i.history_next_at<=clock_timestamp()) DESC,(i.id=$2) DESC,i.id LIMIT 1`, []uuid.UUID{sourceChannel, targetChannel}, sender).Scan(&installation, &credential, &ready)
+ WHERE c.id=$1 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.credential_ciphertext IS NOT NULL`, targetChannel).Scan(&installation, &credential, &ready)
 		if errors.Is(err, pgx.ErrNoRows) {
 			_, err = tx.Exec(ctx, `UPDATE slack_posts SET reconciliation_paused_at=clock_timestamp(),error='delivery_unverifiable' WHERE id=$1 AND status IN ('uncertain','failed') AND inflight_attempt_id IS NOT NULL`, post)
 			return err
@@ -183,7 +181,7 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
 		} else if matched {
 			continue
 		}
-		if _, err = confirmMessage(ctx, pool, sender, message); err != nil {
+		if _, err = confirmMessage(ctx, pool, installation, message); err != nil {
 			return true, err
 		}
 	}

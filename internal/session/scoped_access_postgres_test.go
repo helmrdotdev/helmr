@@ -127,25 +127,25 @@ func TestScopedRuntimeRelationsAndQueuedRevocation(t *testing.T) {
 	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("same-origin peer readable", err)
 	}
-	if _, _, err := session.RuntimeListComputers(ctx, f.pool, caller, computer.ListPage{Limit: 10}); !errors.Is(err, session.ErrDenied) {
+	if _, _, err := session.RuntimeListComputers(ctx, f.pool, caller, computer.ListPage{Limit: 10}); err != nil {
 		t.Fatal("scoped runtime listed Computers", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET requester_session_id=$1,causal_depth=1 WHERE id=$2`, f.session, peer.session)
 	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); err != nil {
 		t.Fatal("direct requested root denied", err)
 	}
-	// Revoking the origin prevents a fresh queued Turn and records its failure.
+	// Accepted input and runtime reads survive the original user losing access.
 	queued := peer.enqueue(t, "queued")
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
-	if _, err := dispatchTurnForTest(ctx, f.pool, peer.execution()); !errors.Is(err, session.ErrNotReady) {
+	if _, err := dispatchTurnForTest(ctx, f.pool, peer.execution()); err != nil {
 		t.Fatal("revoked Turn dispatched", err)
 	}
 	var failed bool
-	if err := f.pool.QueryRow(ctx, `SELECT status='failed' AND error_code='permission_revoked' AND processing_closed_at IS NOT NULL FROM turns WHERE id=$1`, queued.TurnID).Scan(&failed); err != nil || !failed {
+	if err := f.pool.QueryRow(ctx, `SELECT status='running' AND processing_closed_at IS NULL FROM turns WHERE id=$1`, queued.TurnID).Scan(&failed); err != nil || !failed {
 		t.Fatal("denied queue not settled", failed, err)
 	}
-	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
-		t.Fatal("revoked runtime read accepted", err)
+	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); err != nil {
+		t.Fatal("accepted runtime read denied", err)
 	}
 }
 
@@ -229,8 +229,8 @@ func TestScopedRuntimeCreationPreservesOriginAndComputerBoundary(t *testing.T) {
 		t.Fatalf("ungranted helper admitted: %v", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user)
-	if _, err := session.Spawn(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("revoked")); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("revoked origin spawned: %v", err)
+	if _, err := session.Spawn(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("revoked")); err != nil {
+		t.Fatalf("accepted runtime could not spawn: %v", err)
 	}
 }
 
@@ -265,7 +265,7 @@ func TestAPIKeySelectedAgentSessionVisibilityAndRevocation(t *testing.T) {
 	}
 }
 
-func TestAcceptedRuntimeCanContinueChildrenAfterLogoutButNotIncident(t *testing.T) {
+func TestAcceptedRuntimeCanContinueChildrenAfterAccessRevocation(t *testing.T) {
 	for _, method := range []string{"create", "spawn"} {
 		t.Run(method, func(t *testing.T) {
 			f := newAdmissionFixture(t)
@@ -284,8 +284,8 @@ func TestAcceptedRuntimeCanContinueChildrenAfterLogoutButNotIncident(t *testing.
 				t.Fatal("logged-out human started new work", err)
 			}
 			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.user)
-			if _, err = session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("after-incident"), method); !errors.Is(err, session.ErrDenied) {
-				t.Fatal("incident runtime continued children", err)
+			if _, err = session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("after-incident"), method); err != nil {
+				t.Fatal("account revocation blocked accepted runtime", err)
 			}
 		})
 	}

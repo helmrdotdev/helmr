@@ -40,20 +40,3 @@ func HumanInEnvironment(ctx context.Context, q db.DBTX, p auth.Principal, env uu
 	}
 	return Current(ctx, q, p, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: env.String()})
 }
-
-// WorkInEnvironment checks retained work without depending on a login session.
-func WorkInEnvironment(ctx context.Context, q db.DBTX, prior auth.Principal, env uuid.UUID) (auth.Principal, error) {
-	p, err := CurrentWork(ctx, q, prior)
-	if err != nil {
-		return p, err
-	}
-	var org, project uuid.UUID
-	if err = q.QueryRow(ctx, `SELECT org_id,project_id FROM environments WHERE id=$1`, env).Scan(&org, &project); err != nil {
-		return p, humanReadError(err)
-	}
-	if p.OrgID != org {
-		return p, ErrDenied
-	}
-	p.ProjectID, p.EnvironmentID = project.String(), env.String()
-	return p, nil
-}

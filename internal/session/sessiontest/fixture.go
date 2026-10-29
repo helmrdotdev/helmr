@@ -85,7 +85,16 @@ func New(t *testing.T) Fixture {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp(),epoch_guest_ephemeral_disk_bytes=1073741824,resource_observation_sequence=1,resource_policy_revision=1,resource_observed_at=clock_timestamp(),local_optional_cpu_millis=0,local_optional_memory_bytes=0,optional_disk_bytes=0,local_optional_vm_slots=0,local_optional_tasks=0,optional_reclaim_pending=false,disk_slots_for_real_work=1,ready_leaf_keys='[]' WHERE id=$1`, f.Worker)
 	// This fixture seeds identity records directly. Keep its default scope pure
 	// so same-package tests of Session dependencies can use it without a cycle.
-	maximum := mcppolicy.Policy{Kind: "unrestricted"}
+	maximum, err := mcppolicy.Resolve(nil, []string{"agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	maximum.Rules = append(maximum.Rules, mcppolicy.Rule{Operation: "start", Agents: []string{"agent"}, Computer: "caller"}, mcppolicy.Rule{Operation: "spawn", Agents: []string{"agent"}, Computer: "caller"})
+	maximum, err = mcppolicy.Normalize(maximum.Public(), []string{"agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_definitions SET runtime_mcp_policy=$2 WHERE environment_id=$1`, f.Environment, maximum.Bytes())
 	digest := maximum.Digest()
 	f.MCPScope = uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_mcp_scopes(environment_id,session_id,process_epoch,id,slot,policy,policy_digest) VALUES($1,$2,1,$3,0,$4,$5)`, f.Environment, f.Session, f.MCPScope, maximum.Bytes(), digest[:])
@@ -138,4 +147,23 @@ func (f Fixture) Principal(t *testing.T) auth.Principal {
 func (f Fixture) SetPermissions(t *testing.T, permissions ...string) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE roles SET permissions=$2 WHERE id IN (SELECT role_id FROM role_grants WHERE environment_id=$1)`, f.Environment, permissions)
+}
+
+// PublishRuntimeAgentSet makes a synthetic deployment's delegation explicit.
+// Call this after adding fixture definitions, before exercising its runtime.
+func PublishRuntimeAgentSet(t *testing.T, f Fixture, keys ...string) {
+	t.Helper()
+	maximum, err := mcppolicy.Resolve(nil, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range []string{"start", "spawn"} {
+		maximum.Rules = append(maximum.Rules, mcppolicy.Rule{Operation: op, Agents: keys, Computer: "caller"})
+	}
+	maximum, err = mcppolicy.Normalize(maximum.Public(), keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := maximum.Digest()
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE agent_definitions SET runtime_mcp_policy=$3 WHERE environment_id=$1 AND deployment_id=$2; UPDATE session_mcp_scopes SET policy=$3,policy_digest=$4 WHERE environment_id=$1 AND session_id IN (SELECT id FROM sessions WHERE environment_id=$1 AND deployment_id=$2) AND slot=0`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, string(maximum.Bytes()), hash[:])
 }

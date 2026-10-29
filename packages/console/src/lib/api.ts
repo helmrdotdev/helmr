@@ -1,6 +1,28 @@
 import { locationDestination, returnPath, withNext } from "./continuation";
 
 
+// A mounted page keeps its original identity. Only a full navigation may adopt
+// another account; the server checks this expectation against each request cookie.
+const pageIdentities = new Map<string, string>();
+
+// Only an explicit account-switch flow may release a page's identity; ordinary
+// expired forms keep theirs until a full reload.
+export function releasePageIdentity(): void {
+  pageIdentities.delete("helmr.account");
+  sessionStorage.removeItem("helmr.account");
+}
+
+export function expectedActorHeaders(operator = false): Record<string, string> {
+  const key = operator ? "helmr.operator" : "helmr.account";
+  const id = pageIdentities.get(key) ?? sessionStorage.getItem(key);
+  return id ? { "X-Helmr-Actor": id } : {};
+}
+
+function establishesAuthentication(path: string): boolean {
+  return /^\/api\/auth\/(github\/(start|finish)|passkey\/(options|verify)|email\/(start|[^/]+\/(resend|verify)))$/.test(path)
+    || /^\/admin\/api\/v1\/auth\/(options|verify)$/.test(path);
+}
+
 type RequestOptions = RequestInit & {
   redirectOnUnauthorized?: boolean;
 };
@@ -88,12 +110,19 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
   const loginPath = operator ? "/admin/login" : "/login";
   const organization = operator ? "" : selectedOrganization();
   if (organization) headers.set("X-Helmr-Organization", organization);
-  const account = sessionStorage.getItem(identityKey) ?? "";
+  const account = pageIdentities.get(identityKey) ?? sessionStorage.getItem(identityKey) ?? "";
+  if (account && path !== identityPath && !establishesAuthentication(path)) headers.set("X-Helmr-Actor", account);
   const send = () => fetch(path, { ...fetchInit, credentials: "include", headers });
   let response = await send();
   let result: T;
   try { result = await handleResponse<T>(response); }
   catch (error) {
+    if (error instanceof ApiError && error.code === "account_changed") {
+      sessionStorage.removeItem(identityKey);
+      if (!operator) setOrganization("");
+      window.location.reload();
+      throw error;
+    }
     if (error instanceof ApiError && error.code === "recent_authentication_required") {
       window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator } }));
     }
@@ -116,7 +145,11 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
       response = await send();
       result = await handleResponse<T>(response);
     } else {
-      if (redirectOnUnauthorized && window.location.pathname !== loginPath) window.location.href = withNext(loginPath, locationDestination(window.location));
+      if (redirectOnUnauthorized && window.location.pathname !== loginPath) {
+        if (account) {
+          window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator, signIn: true } }));
+        } else window.location.href = withNext(loginPath, locationDestination(window.location));
+      }
       throw error;
     }
   }
@@ -124,6 +157,14 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
     const identity = result as { id?: string; user_id?: string };
     const user = operator ? identity.id : identity.user_id;
     if (user) {
+      const pinned = pageIdentities.get(identityKey);
+      if (pinned && pinned !== user) {
+        sessionStorage.removeItem(identityKey);
+        if (!operator) setOrganization("");
+        window.location.reload();
+        throw new ApiError("account_changed", "Your account changed. Reloading this page.", 409);
+      }
+      pageIdentities.set(identityKey, user);
       if (!operator && account && account !== user) setOrganization("");
       sessionStorage.setItem(identityKey, user);
     }

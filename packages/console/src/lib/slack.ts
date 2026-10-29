@@ -54,8 +54,8 @@ export function startSlackUserLink(installationID: string): Promise<{ redirect_u
 export function verifySlackUserLink(input: { state: string; code: string; error: string }): Promise<SlackIdentityProof> {
   return postJson("/api/slack/user-links/verify", input, { redirectOnUnauthorized: false });
 }
-export function confirmSlackUserLink(confirmation: string): Promise<void> {
-  return postJson("/api/slack/user-links/confirm", { confirmation, confirmed: true }, { redirectOnUnauthorized: false });
+export function confirmSlackUserLink(confirmation: string, resumePreviousDelivery: boolean): Promise<void> {
+  return postJson("/api/slack/user-links/confirm", { confirmation, confirmed: true, resume_previous_delivery: resumePreviousDelivery }, { redirectOnUnauthorized: false });
 }
 export function unlinkSlackUser(link: SlackUserLink): Promise<void> {
   return request(`/api/slack/user-links/${encodeURIComponent(link.team_id)}/${encodeURIComponent(link.slack_user_id)}`, { method: "DELETE" });

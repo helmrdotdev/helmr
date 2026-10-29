@@ -9,8 +9,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/access"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -154,25 +152,8 @@ func claimNext(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, w
 		if c.Status != "pending" && c.Status != "starting" && c.Status != "running" {
 			continue
 		}
-		// Running commands retain their durable dispatch receipt, including when
-		// delivery is uncertain. Queued commands need current caller authority.
-		if c.Status != "running" {
-			if err = currentCommandAuthority(ctx, tx, c, request.EnvironmentID); err != nil {
-				if !errors.Is(err, access.ErrDenied) {
-					return ClaimResult{}, err
-				}
-				if _, err = tx.Exec(ctx, `UPDATE commands SET status='failed',failure_reason='dispatch_failed',
- error='{"code":"permission_revoked","message":"Permission was revoked before execution"}',
- terminal_at=clock_timestamp(),terminal_reason_code='permission_revoked',result_expires_at=clock_timestamp()+interval '30 days',
- revision=revision+1,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, request.EnvironmentID, id); err != nil {
-					return ClaimResult{}, err
-				}
-				if err = auditServiceFailure(ctx, tx, auditPolicy, c, audit.ControlPlane, "failed", "permission_denied"); err != nil {
-					return ClaimResult{}, err
-				}
-				continue
-			}
-		}
+		// Admission is durable. Claim checks resource availability and physical
+		// ownership without reauthorizing the original requester.
 		if err = launchAvailable(ctx, tx, worker, lease, c.Status != "running"); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
@@ -352,22 +333,4 @@ func recordExposure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 		}
 	}
 	return result, protected, nil
-}
-
-func currentCommandAuthority(ctx context.Context, tx pgx.Tx, c db.Command, env uuid.UUID) error {
-	if c.CallerKind != "user" {
-		return access.Check(ctx, tx, c.CallerKind, uuid.UUID(c.CallerID.Bytes), env, uuid.Nil(), auth.PermissionComputersExecute)
-	}
-	p, err := access.ReadHuman(tx.QueryRow(ctx, `SELECT `+access.HumanColumns+` FROM commands WHERE environment_id=$1 AND id=$2`, env, c.ID))
-	if err != nil {
-		return err
-	}
-	if p.UserID != uuid.UUID(c.CallerID.Bytes) {
-		return access.ErrDenied
-	}
-	p, err = access.WorkInEnvironment(ctx, tx, p, env)
-	if err != nil {
-		return err
-	}
-	return auth.Require(p, auth.PermissionComputersExecute, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}, access.ErrDenied)
 }

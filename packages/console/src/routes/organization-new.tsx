@@ -1,7 +1,7 @@
-import { ME_QUERY_KEY, useMe } from "../lib/me";
+import { useMe } from "../lib/me";
 import { locationDestination, withNext } from "../lib/continuation";
 import { useNavigate, useLocation } from "@solidjs/router";
-import { useQueryClient } from "@tanstack/solid-query";
+import { chooseOrganization } from "../lib/api";
 import { createEffect, createSignal, Show } from "solid-js";
 import { createSignOut } from "../features/projects/onboarding";
 import { errorDetails, errorMessage } from "../lib/error";
@@ -13,7 +13,6 @@ import { ui } from "../ui/styles";
 export function OrganizationNew() {
   const navigate = useNavigate();
   const location = useLocation();
-  const queryClient = useQueryClient();
   const [name, setName] = createSignal("");
   const slug = createDerivedSlug(name);
   const [submitting, setSubmitting] = createSignal(false);
@@ -30,13 +29,11 @@ export function OrganizationNew() {
     setSubmitting(true);
     setError(null);
     try {
-      await createOrganization({
+      const organization = await createOrganization({
         name: name().trim(),
         slug: slug.value().trim(),
       });
-      await queryClient.invalidateQueries({ queryKey: ME_QUERY_KEY });
-      await queryClient.invalidateQueries({ queryKey: ["projects"] });
-      navigate(locationDestination(location), { replace: true });
+      chooseOrganization(organization.id, locationDestination(location));
     } catch (e) {
       setError({ message: errorMessage(e, "The organization could not be created. Try again."), details: errorDetails(e) });
     } finally {

@@ -2,7 +2,6 @@ package session_test
 
 import (
 	"encoding/json"
-	"errors"
 	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -36,7 +35,7 @@ func TestQueuedHumanInputSurvivesRoutineAuthenticationChanges(t *testing.T) {
 	}
 }
 
-func TestQueuedHumanInputStillRejectsIncidentRevocation(t *testing.T) {
+func TestQueuedHumanInputSurvivesAccessRevocation(t *testing.T) {
 	for _, change := range []string{"account", "source", "member"} {
 		t.Run(change, func(t *testing.T) {
 			f := newFixture(t)
@@ -49,31 +48,28 @@ func TestQueuedHumanInputStillRejectsIncidentRevocation(t *testing.T) {
 			case "member":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET reauthenticate_after=clock_timestamp() WHERE user_id=$1`, f.user)
 			}
-			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, session.ErrNotReady) && !errors.Is(err, session.ErrDenied) {
-				t.Fatal(err)
+			result, err := dispatchTurnForTest(t.Context(), f.pool, f.execution())
+			if err != nil || result.TurnID != pending.TurnID {
+				t.Fatal(result, err)
 			}
-			var failed bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT status='failed' AND error_code='permission_revoked' AND terminal_at IS NOT NULL FROM turns WHERE id=$1`, pending.TurnID).Scan(&failed); err != nil || !failed {
-				t.Fatal(failed, err)
-			}
+
 		})
 	}
 }
 
-func TestRuntimeOriginKeepsOriginalMembershipAndSource(t *testing.T) {
+func TestCurrentParticipantCanContinueAfterOriginalSourceRetires(t *testing.T) {
 	f := newFixture(t)
 	var source uuid.UUID
 	if err := f.pool.QueryRow(t.Context(), `SELECT human_identity_id FROM sessions WHERE id=$1`, f.session).Scan(&source); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, source)
-	// A separate current login still reads retained history, but cannot restart
-	// execution whose original credential was retired.
+	// A separate current login can read and continue organization-owned work.
 	if _, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, f.session); err != nil {
 		t.Fatal("lost retained history", err)
 	}
-	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "retired-origin", Input: json.RawMessage(`[]`)}); !errors.Is(err, session.ErrDenied) {
-		t.Fatal("new login revived retired runtime source", err)
+	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "retired-origin", Input: json.RawMessage(`[]`)}); err != nil {
+		t.Fatal("current participant could not continue", err)
 	}
 }
 
@@ -82,29 +78,28 @@ func copySessionHuman(t *testing.T, f fixture, target uuid.UUID) {
 	t.Helper()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET (`+access.HumanColumns+`)= (SELECT `+access.HumanColumns+` FROM sessions WHERE id=$1) WHERE id=$2`, f.session, target)
 }
-func TestRuntimeAgentDiscoveryRetainsHumanSource(t *testing.T) {
+func TestRuntimeAgentScopeIsPublishedAndIndependentOfHumanSource(t *testing.T) {
 	f := newFixture(t)
 	caller := runtimeReadCaller(t, f)
-	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		all, _, err := session.RuntimeAgentScope(t.Context(), tx, caller)
-		if err == nil && !all {
-			t.Fatal("live user lost all-agent scope")
+	read := func() []byte {
+		t.Helper()
+		var raw []byte
+		err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+			if err := session.LockRuntimeCaller(t.Context(), tx, caller); err != nil {
+				return err
+			}
+			policy, err := session.RuntimeMCPPolicy(t.Context(), tx, caller)
+			raw = policy.Bytes()
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
+		return raw
 	}
-	var source uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT human_identity_id FROM sessions WHERE id=$1`, f.session).Scan(&source); err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, source)
-	err = db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		_, _, err := session.RuntimeAgentScope(t.Context(), tx, caller)
-		return err
-	})
-	if !errors.Is(err, session.ErrDenied) {
-		t.Fatal("retired source retained discovery", err)
+	before := read()
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1; UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE user_id=$1; DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, pgx.QueryExecModeSimpleProtocol, f.user)
+	if string(read()) != string(before) {
+		t.Fatal("published scope changed with requester authority")
 	}
 }

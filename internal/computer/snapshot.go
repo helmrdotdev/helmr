@@ -181,6 +181,19 @@ func FindByKey(ctx context.Context, database db.DBTX, scope Scope, key string) (
 	return items[0], nil
 }
 func List(ctx context.Context, database db.DBTX, scope Scope, page ListPage) (Listing, error) {
+	return list(ctx, database, scope, page, uuid.Nil())
+}
+
+// ListForSession exposes only Computers attached to this workload's own Session,
+// descendants and directly requested roots. The caller authorizes the Session.
+func ListForSession(ctx context.Context, database db.DBTX, scope Scope, page ListPage, session uuid.UUID) (Listing, error) {
+	if session == uuid.Nil() {
+		return Listing{}, ErrDenied
+	}
+	return list(ctx, database, scope, page, session)
+}
+
+func list(ctx context.Context, database db.DBTX, scope Scope, page ListPage, session uuid.UUID) (Listing, error) {
 	if page.Limit < 1 || page.Limit > 100 {
 		return Listing{}, invalidInput("Computer page limit must be between 1 and 100")
 	}
@@ -189,7 +202,7 @@ func List(ctx context.Context, database db.DBTX, scope Scope, page ListPage) (Li
 	if page.After != nil {
 		afterTime, afterID = page.After.CreatedAt, page.After.ID
 	}
-	rows, err := database.Query(ctx, computerProjection+` AND (NOT $4 OR (c.created_at,c.id)<($5,$6)) ORDER BY c.created_at DESC,c.id DESC LIMIT $7`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, page.After != nil, afterTime, afterID, page.Limit+1)
+	rows, err := database.Query(ctx, computerProjection+` AND ($8::uuid='00000000-0000-0000-0000-000000000000' OR c.id IN (WITH RECURSIVE lineage AS (SELECT id,computer_id FROM sessions WHERE environment_id=$3 AND id=$8 UNION ALL SELECT s.id,s.computer_id FROM sessions s JOIN lineage l ON s.parent_session_id=l.id WHERE s.environment_id=$3) SELECT computer_id FROM lineage UNION SELECT computer_id FROM sessions WHERE environment_id=$3 AND parent_session_id IS NULL AND requester_session_id=$8)) AND (NOT $4 OR (c.created_at,c.id)<($5,$6)) ORDER BY c.created_at DESC,c.id DESC LIMIT $7`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, page.After != nil, afterTime, afterID, page.Limit+1, session)
 	if err != nil {
 		return Listing{}, err
 	}

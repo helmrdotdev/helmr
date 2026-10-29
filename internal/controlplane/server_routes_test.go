@@ -68,9 +68,11 @@ DELETE /api/role-grants/{id}
 DELETE /api/roles/{id}
 DELETE /api/slack/user-links/{teamID}/{slackUserID}
 DELETE /v1/computers/{computerID}
+GET /admin/api/v1/account-repairs/{id}
 GET /admin/api/v1/audit-events
 GET /admin/api/v1/audit-events/actions
 GET /admin/api/v1/credentials
+GET /admin/api/v1/enrollment/{id}
 GET /admin/api/v1/me
 GET /admin/api/v1/regions
 GET /admin/api/v1/regions/{regionID}
@@ -118,6 +120,7 @@ GET /api/projects/{project}/environments/{environment}/deployments/current
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}
 GET /api/projects/{project}/environments/{environment}/deployments/{deploymentID}/events
 GET /api/projects/{project}/environments/{environment}/overview
+GET /api/projects/{project}/environments/{environment}/related-commands
 GET /api/projects/{project}/environments/{environment}/secrets
 GET /api/projects/{project}/environments/{environment}/secrets/{secret}
 GET /api/projects/{project}/environments/{environment}/sessions

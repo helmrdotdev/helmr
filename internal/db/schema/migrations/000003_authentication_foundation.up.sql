@@ -186,6 +186,7 @@ ALTER TABLE slack_user_links ADD COLUMN identity_id uuid;
 ALTER TABLE slack_user_links ADD COLUMN passkey_id uuid;
 ALTER TABLE slack_user_links ADD COLUMN authenticated_at timestamptz;
 ALTER TABLE slack_user_links ADD COLUMN revoked_at timestamptz;
+ALTER TABLE slack_user_links ADD COLUMN resume_previous_delivery boolean NOT NULL DEFAULT false;
 UPDATE slack_user_links SET revoked_at=clock_timestamp();
 ALTER TABLE slack_user_links ADD FOREIGN KEY (installation_id,org_id,team_id) REFERENCES slack_installations(id,org_id,team_id);
 ALTER TABLE slack_user_links ADD FOREIGN KEY (org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id);
@@ -269,15 +270,15 @@ END $$;
 ALTER TABLE audit_events ADD CONSTRAINT audit_anonymous_operation CHECK (authentication_result NOT IN ('failed','absent') OR outcome IN ('denied','failed') OR (authentication_result='absent' AND action IN ('identity.device_started','identity.magic_link_requested','identity.email_code_requested')));
 
 -- Persist exact human admission, independently of current profile/membership.
--- Legacy work has no invented proof and is denied when it next needs authority.
+-- Historical source IDs do not keep disposable authentication records alive.
 DO $$ DECLARE relation text; BEGIN
  FOREACH relation IN ARRAY ARRAY['sessions','turns','turn_messages','commands'] LOOP
   EXECUTE format('ALTER TABLE %I
    ADD COLUMN human_user_id uuid REFERENCES users(id),
    ADD COLUMN human_org_id uuid,
    ADD COLUMN human_member_id uuid,
-   ADD COLUMN human_session_id uuid REFERENCES login_sessions(id),
-   ADD COLUMN human_slack_link_id uuid REFERENCES slack_user_links(id),
+   ADD COLUMN human_session_id uuid,
+   ADD COLUMN human_slack_link_id uuid,
    ADD COLUMN human_identity_id uuid,
    ADD COLUMN human_passkey_id uuid,
    ADD COLUMN human_access_epoch bigint,
@@ -289,3 +290,13 @@ DO $$ DECLARE relation text; BEGIN
     (human_user_id IS NOT NULL AND human_org_id IS NOT NULL AND human_member_id IS NOT NULL AND human_access_epoch IS NOT NULL AND human_access_epoch>=0 AND human_authenticated_at IS NOT NULL AND num_nonnulls(human_session_id,human_slack_link_id)=1 AND num_nonnulls(human_identity_id,human_passkey_id)=1))',relation);
  END LOOP;
 END $$;
+
+-- Related-work lookup retains initiator/contributor provenance independently of access.
+CREATE INDEX sessions_related_user ON sessions(environment_id,origin_user_id,id) WHERE origin_user_id IS NOT NULL AND parent_session_id IS NULL AND requester_session_id IS NULL;
+CREATE INDEX turns_related_user ON turns(environment_id,caller_id,session_id) WHERE caller_kind='user';
+CREATE INDEX turn_messages_related_user ON turn_messages(environment_id,caller_id,session_id) WHERE caller_kind='user';
+CREATE INDEX commands_related_user ON commands(environment_id,caller_id,id) WHERE caller_kind='user' AND (terminal_at IS NULL OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL));
+
+CREATE INDEX turn_asks_related_user ON turn_asks(environment_id,answered_by_user_id,session_id) WHERE answered_by_user_id IS NOT NULL;
+
+ALTER TABLE slack_posts DROP COLUMN source_thread_id;

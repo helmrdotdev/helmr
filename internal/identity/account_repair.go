@@ -115,6 +115,31 @@ func lockAccountRepair(ctx context.Context, tx pgx.Tx, p auth.Principal, id uuid
 	}
 	return result, user, nil
 }
+
+type AccountRepairState struct {
+	ID        uuid.UUID `json:"enrollment_id"`
+	Target    string    `json:"target"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// ReadAccountRepair requires the same browser and currently authorized operator.
+func ReadAccountRepair(ctx context.Context, database db.TxBeginner, p auth.Principal, id uuid.UUID, binding []byte) (AccountRepairState, error) {
+	var result AccountRepairState
+	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		repair, _, err := lockAccountRepair(ctx, tx, p, id, binding)
+		if err != nil {
+			return err
+		}
+		var target string
+		if err = tx.QueryRow(ctx, `SELECT display_name||' ('||COALESCE(primary_email,'')||', '||id::text||')' FROM users WHERE id=$1`, repair.user).Scan(&target); err != nil {
+			return err
+		}
+		result = AccountRepairState{ID: id, Target: target, ExpiresAt: repair.expires}
+		return nil
+	})
+	return result, err
+}
+
 func BeginAccountRepairRegistration(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, p auth.Principal, id uuid.UUID, binding []byte) (RegistrationOptions, error) {
 	var result RegistrationOptions
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {

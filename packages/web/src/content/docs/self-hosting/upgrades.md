@@ -48,7 +48,9 @@ Node release.
 Migration `000002_network_and_runtime_policies` adds definition policies and
 process-owned MCP scopes. It preserves existing definition rows with ordinary
 network access, ordinary preparation access when a callback exists (blocking
-otherwise), and unrestricted MCP access subject to base authorization.
+otherwise), and the previous symbolic MCP policy. The current runtime requires
+a finite contract generated when publishing a Deployment; historical symbolic
+policies are not converted. Republish applications before starting new work.
 
 Before switching to this release, finish existing work and delete its Computers,
 including hibernated Computers. Redeploy applications with the new release before

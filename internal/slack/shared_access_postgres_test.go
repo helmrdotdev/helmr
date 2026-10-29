@@ -1,7 +1,6 @@
 package slack
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,36 +97,13 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 	}
 }
 
-func TestSlackQueuedInputRejectsRemovedChannelParticipant(t *testing.T) {
-	f := newStatusFixture(t)
-	ctx := t.Context()
-	f.link(t)
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET origin_slack_connection_id=$2 WHERE id=$1; UPDATE roles SET permissions=ARRAY['agents.use']`, pgx.QueryExecModeSimpleProtocol, f.Session, f.publication)
-	request := f.reply(t, "queued-participant", false)
-	if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
-		t.Fatal(err)
-	}
-	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
-	host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-	result, err := session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{
-		RetentionSeconds: 3600,
-	}, f.Pool, host, e, 1, fixtureConversationVerifier(false))
-	if err != nil || result != nil {
-		t.Fatalf("removed participant dispatched: %+v %v", result, err)
-	}
-	var rejected bool
-	if err := f.Pool.QueryRow(ctx, `SELECT t.status='failed' AND t.error_code='permission_revoked' FROM turns t JOIN slack_requests r ON r.turn_id=t.id WHERE r.id=$1`, request).Scan(&rejected); err != nil || !rejected {
-		t.Fatal("pending input not rejected", rejected, err)
-	}
-}
-
-func TestSharedRuntimeCannotAttachToExistingComputer(t *testing.T) {
+func TestSharedRuntimeCannotAttachToUnrelatedComputer(t *testing.T) {
 	f := newSlackAdmissionFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET origin_slack_connection_id=$2 WHERE id=$1`, f.Session, f.publication)
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.MCPScope, ID: f.Session, Execution: e, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
 	for _, method := range []string{"create", "spawn"} {
-		req := session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: f.Computer, IdempotencyKey: method, Input: json.RawMessage(`[]`)}
+		req := session.StartRequest{EnvironmentID: f.Environment, Agent: "agent", ComputerID: uuid.NewV7(), IdempotencyKey: method, Input: json.RawMessage(`[]`)}
 		start := session.Start
 		if method == "spawn" {
 			start = session.Spawn
@@ -138,64 +114,43 @@ func TestSharedRuntimeCannotAttachToExistingComputer(t *testing.T) {
 	}
 }
 
-type callbackConversationVerifier func() (bool, error)
-
-func (v callbackConversationVerifier) VerifyInputConversation(context.Context, uuid.UUID, int64, string, string, string) (bool, error) {
-	return v()
-}
-
-func TestSlackQueuedInputSeparatesUnlinkFromIncidentRevocation(t *testing.T) {
-	for _, mode := range []string{"scoped-unlink", "shared-unlink", "scoped-source", "shared-source", "scoped-account", "shared-account"} {
-		t.Run(mode, func(t *testing.T) {
-			f := newStatusFixture(t)
-			f.link(t)
-			if strings.HasPrefix(mode, "shared") {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET origin_slack_connection_id=$2 WHERE id=$1`, f.Session, f.publication)
-			}
-			request := f.reply(t, "queued-unlinked", false)
-			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
-				t.Fatal(err)
-			}
-			verifier := callbackConversationVerifier(func() (bool, error) {
-				switch {
-				case strings.HasSuffix(mode, "source"):
-					_, err := f.Pool.Exec(t.Context(), `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
-					return true, err
-				case strings.HasSuffix(mode, "account"):
-					_, err := f.Pool.Exec(t.Context(), `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.User)
-					return true, err
-				default:
-					_, err := f.Pool.Exec(t.Context(), `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
-					return true, err
+func TestSlackAcceptedInputSurvivesAccessRevocation(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		for _, mutation := range []string{
+			"UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE user_id=$1",
+			"UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1",
+			"UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1",
+			"UPDATE org_members SET suspended_at=clock_timestamp() WHERE user_id=$1",
+			"UPDATE slack_installations SET authorization_lost_at=clock_timestamp()",
+		} {
+			t.Run(fmt.Sprintf("shared=%v/%s", shared, mutation), func(t *testing.T) {
+				f := newStatusFixture(t)
+				f.link(t)
+				if shared {
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET origin_slack_connection_id=$2 WHERE id=$1`, f.Session, f.publication)
 				}
-			})
-			e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
-			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-			result, err := session.DispatchRuntimeTurn(t.Context(), auditpolicy.Policy{
-				RetentionSeconds: 3600,
-			}, f.Pool, host, e, 1, verifier)
-			if strings.HasSuffix(mode, "unlink") {
-				if err != nil || result == nil {
-					t.Fatal("unlink cancelled accepted work", result, err)
-				}
-			} else {
-				if result != nil {
-					t.Fatal("incident work dispatched", result, err)
-				}
-				if err != nil && !errors.Is(err, session.ErrDenied) && !errors.Is(err, session.ErrNotReady) {
+				request := f.reply(t, "accepted-revocation", false)
+				if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
 					t.Fatal(err)
 				}
-				var failed bool
-				if err := f.Pool.QueryRow(t.Context(), `SELECT t.status='failed' AND t.error_code='permission_revoked' AND t.terminal_at IS NOT NULL FROM turns t JOIN slack_requests r ON r.turn_id=t.id WHERE r.id=$1`, request).Scan(&failed); err != nil || !failed {
-					t.Fatal(failed, err)
+				if strings.Contains(mutation, "$1") {
+					dbtest.MustExec(t, t.Context(), f.Pool, mutation, f.User)
+				} else {
+					dbtest.MustExec(t, t.Context(), f.Pool, mutation)
 				}
-			}
-		})
+				e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
+				host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
+				result, err := session.DispatchRuntimeTurn(t.Context(), f.Pool, host, e, 1)
+				if err != nil || result == nil {
+					t.Fatalf("accepted input lost: %+v %v", result, err)
+				}
+			})
+		}
 	}
 }
 
-func TestSlackQueuedInputWaitsBeforeExternalVerification(t *testing.T) {
-	for _, blocked := range []string{"hold", "storage", "control", "attachment", "temporary", "unconfigured"} {
+func TestSlackAcceptedInputRespectsWorkAndPhysicalControls(t *testing.T) {
+	for _, blocked := range []string{"hold", "storage", "control", "attachment"} {
 		t.Run(blocked, func(t *testing.T) {
 			f := newStatusFixture(t)
 			ctx := t.Context()
@@ -217,39 +172,16 @@ func TestSlackQueuedInputWaitsBeforeExternalVerification(t *testing.T) {
 			case "attachment":
 				attachment = 2
 			}
-			calls := 0
-			verifier := callbackConversationVerifier(func() (bool, error) { calls++; return false, errors.New("provider rate limited") })
-			var inputVerifier session.ConversationVerifier = verifier
-			if blocked == "unconfigured" {
-				inputVerifier = nil
-			}
-			result, err := session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{
-				RetentionSeconds: 3600,
-			}, f.Pool, host, e, attachment, inputVerifier)
-			if blocked == "unconfigured" && !errors.Is(err, session.ErrConversationVerificationUnavailable) {
-				t.Fatal("missing configuration diagnostic", err)
-			}
-			if result != nil || !(errors.Is(err, session.ErrNotReady) || errors.Is(err, session.ErrDenied)) {
+			result, err := session.DispatchRuntimeTurn(ctx, f.Pool, host, e, attachment)
+			if result != nil || (err != nil && !errors.Is(err, session.ErrNotReady) && !errors.Is(err, session.ErrDenied)) {
 				t.Fatalf("wait: %+v %v", result, err)
-			}
-			wantCalls := 0
-			if blocked == "temporary" {
-				wantCalls = 1
-				if !errors.Is(err, session.ErrNotReady) {
-					t.Fatal("temporary failure must be retryable", err)
-				}
-			}
-			if calls != wantCalls {
-				t.Fatalf("verification calls=%d want %d", calls, wantCalls)
 			}
 			var queued bool
 			if err := f.Pool.QueryRow(ctx, `SELECT t.status='queued' FROM turns t JOIN slack_requests r ON r.turn_id=t.id WHERE r.id=$1`, request).Scan(&queued); err != nil || !queued {
 				t.Fatal("input lost while waiting", queued, err)
 			}
 			dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM session_holds WHERE session_id=$1; UPDATE session_processes SET control_acknowledged_at=clock_timestamp() WHERE session_id=$1; UPDATE computer_leases SET storage_pressure_since=NULL WHERE computer_id=$2`, pgx.QueryExecModeSimpleProtocol, f.Session, f.Computer)
-			result, err = session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{
-				RetentionSeconds: 3600,
-			}, f.Pool, host, e, 1, fixtureConversationVerifier(true))
+			result, err = session.DispatchRuntimeTurn(ctx, f.Pool, host, e, 1)
 			if err != nil || result == nil {
 				t.Fatalf("retry did not dispatch: %+v %v", result, err)
 			}
@@ -307,82 +239,5 @@ func TestSharedRuntimeDiscoveryKeepsRelationshipsAndScheduleIsolation(t *testing
 		if err != nil || len(page.Sessions) != 0 {
 			t.Fatalf("schedule listed unrelated channel: %+v %v", page, err)
 		}
-	}
-}
-
-func TestSlackDeferredAdmissionSerializesInstallationLoss(t *testing.T) {
-	for _, mode := range []string{"scoped", "shared"} {
-		t.Run(mode, func(t *testing.T) {
-			f := newStatusFixture(t)
-			f.link(t)
-			if mode == "shared" {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET origin_slack_connection_id=$2 WHERE id=$1`, f.Session, f.publication)
-			}
-			request := f.reply(t, "installation-race", false)
-			if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), request); err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			retirement, err := f.Pool.Begin(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer retirement.Rollback(t.Context())
-			var blocker int
-			if err = retirement.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blocker); err != nil {
-				t.Fatal(err)
-			}
-			ready := make(chan struct{})
-			verifier := callbackConversationVerifier(func() (bool, error) {
-				_, err := retirement.Exec(ctx, `SELECT id FROM slack_installations WHERE id=$1 FOR UPDATE`, f.installation)
-				close(ready)
-				return true, err
-			})
-			e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
-			host := workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
-			done := make(chan error, 1)
-			go func() {
-				result, err := session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, host, e, 1, verifier)
-				if result != nil {
-					err = fmt.Errorf("dispatched before installation retirement committed")
-				}
-				done <- err
-			}()
-			select {
-			case <-ready:
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			}
-			for {
-				var waiting bool
-				if err = f.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))`, blocker).Scan(&waiting); err != nil {
-					t.Fatal(err)
-				}
-				if waiting {
-					break
-				}
-				select {
-				case err := <-done:
-					t.Fatalf("dispatch did not serialize with installation: %v", err)
-				case <-ctx.Done():
-					t.Fatal(ctx.Err())
-				case <-time.After(time.Millisecond):
-				}
-			}
-			if _, err = retirement.Exec(ctx, `UPDATE slack_installations SET authorization_lost_at=clock_timestamp() WHERE id=$1`, f.installation); err != nil {
-				t.Fatal(err)
-			}
-			if err = retirement.Commit(ctx); err != nil {
-				t.Fatal(err)
-			}
-			if err = <-done; err != nil && !errors.Is(err, session.ErrDenied) && !errors.Is(err, session.ErrNotReady) {
-				t.Fatal(err)
-			}
-			var failed bool
-			if err = f.Pool.QueryRow(ctx, `SELECT t.status='failed' AND t.error_code='permission_revoked' AND t.terminal_at IS NOT NULL FROM turns t JOIN slack_requests r ON r.turn_id=t.id WHERE r.id=$1`, request).Scan(&failed); err != nil || !failed {
-				t.Fatal(failed, err)
-			}
-		})
 	}
 }

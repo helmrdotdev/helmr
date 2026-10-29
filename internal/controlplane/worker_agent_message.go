@@ -23,11 +23,8 @@ func (server *Server) workerAgentMessage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	e.AuthorityGeneration = request.AuthorityGeneration
-	var verifier session.ConversationVerifier
-	if server.slackConfig != nil && server.slackConfig.Client != nil {
-		verifier = server.slackConfig.Client
-	}
-	next, err := session.ClaimRuntimeMessage(r.Context(), server.tx, host, e, request.AttachmentSequence, turn, verifier)
+
+	next, err := session.ClaimRuntimeMessage(r.Context(), server.tx, host, e, request.AttachmentSequence, turn)
 	if err != nil {
 		server.writeAgentWorkerError(w, r, err)
 		return

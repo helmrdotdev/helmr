@@ -6,7 +6,7 @@ import { expect, test, type Page, type BrowserContext } from "@playwright/test";
 async function fixture(context: BrowserContext, options: { loggedIn?: boolean; newUser?: boolean; status?: string; meError?: number } = {}) {
   const state = {
     loggedIn: options.loggedIn ?? false,
-    userID:"user-1", name:"Developer", orgID:"org-1", orgName:"Example org",
+    userID:"user-1", primaryEmail:"fixture@example.test", name:"Developer", orgID:"org-1", orgName:"Example org",
     orgRequired: options.newUser ?? false,
     projectRequired: true,
     status: options.status ?? "pending",
@@ -20,7 +20,7 @@ async function fixture(context: BrowserContext, options: { loggedIn?: boolean; n
     const url = new URL(request.url());
     const body = request.method() === "POST" ? request.postDataJSON() ?? {} : {};
     const json = (value: unknown, status = 200) => route.fulfill({ status, json: value });
-    const account = {user_id:state.userID,display_name:state.name,org_id:state.orgRequired?null:state.orgID,org_name:state.orgName,permissions:[],organization_required:state.orgRequired,project_required:state.projectRequired,app_origin:url.origin};
+    const account = {primary_email:state.primaryEmail,user_id:state.userID,display_name:state.name,org_id:state.orgRequired?null:state.orgID,org_name:state.orgName,permissions:[],organization_required:state.orgRequired,project_required:state.projectRequired,app_origin:url.origin};
     if(request.method()==="GET" && ["/api/auth/config","/api/organizations","/api/organization"].includes(url.pathname))return json(authenticationResponse(url.pathname,account));
     if(/^\/api\/auth\/email\/[^/]+\/verify$/.test(url.pathname)) {
       state.loggedIn=true;
@@ -238,3 +238,54 @@ for(const membership of ["none","denied"]){
  }
  });
 }
+
+test("creating another organization selects it before project onboarding",async({page,context})=>{
+ const state=await fixture(context,{loggedIn:true});
+ await page.goto("/auth/device?code=EXISTING");
+ await expect(detail(page,"Organization")).toHaveText("Example org");
+ expect(await page.evaluate(()=>sessionStorage.getItem("helmr.organization"))).toBe("org-1");
+ await context.route("**/api/organizations",async route=>{
+  if(route.request().method()!=="POST")return route.fallback();
+  state.orgID="org-2";state.orgName="New organization";state.projectRequired=true;
+  return route.fulfill({status:201,json:{id:"org-2",name:"New organization",slug:"new-organization"}});
+ });
+ await page.goto("/organizations/new");
+ await page.getByLabel("Name",{exact:true}).fill("New organization");
+ await page.getByRole("button",{name:"Create organization",exact:true}).click();
+ await expect(page).toHaveURL(/\/projects\/new$/);
+ expect(await page.evaluate(()=>sessionStorage.getItem("helmr.organization"))).toBe("org-2");
+});
+
+test("email confirmation follows a changed login address without reload",async({page,context})=>{
+ const state=await fixture(context,{loggedIn:true});
+ await context.route("**/api/account/credentials",route=>route.fulfill({json:{credentials:[]}}));
+ await context.route("**/api/account/email-change/start",route=>route.fulfill({json:{challenge_id:"change",expires_at:new Date(Date.now()+600000).toISOString(),resend_after:new Date(Date.now()+60000).toISOString()}}));
+ await context.route("**/api/account/email-change/verify",route=>{state.primaryEmail="changed@example.test";return route.fulfill({status:204});});
+ await page.goto("/settings/account");
+ await page.getByLabel("New email",{exact:true}).fill("changed@example.test");
+ await page.getByRole("button",{name:"Verify new email",exact:true}).click();
+ await page.getByLabel("Verification code",{exact:true}).fill("12345678");
+ await page.getByRole("button",{name:"Verify and change email",exact:true}).click();
+ await expect(page.getByLabel("Email",{exact:true})).toHaveValue("changed@example.test");
+ const sent=page.waitForRequest(request=>new URL(request.url()).pathname==="/api/auth/email/start");
+ await page.getByRole("button",{name:"Send verification code",exact:true}).click();
+ expect((await sent).postDataJSON().email).toBe("changed@example.test");
+});
+
+test("invitation survives switching out of a different account",async({page,context})=>{
+ const state=await fixture(context,{loggedIn:true});
+ await context.route("**/api/auth/invitations/resolve",route=>route.fulfill({json:{organization_id:"invited-org",organization_name:"Invited organization",email:"invited@example.test",expires_at:new Date(Date.now()+600000).toISOString()}}));
+ await context.route("**/api/auth/logout",route=>{state.loggedIn=false;return route.fulfill({status:204});});
+ await page.goto("/invite?token=private-invitation");
+ await expect(page).toHaveURL(/\/invite$/);
+ await page.getByRole("button",{name:"Sign out to use another account",exact:true}).click();
+ await expect(page.getByLabel("Email",{exact:true})).toHaveValue("invited@example.test");
+ const sent=page.waitForRequest(request=>new URL(request.url()).pathname==="/api/auth/email/start");
+ await page.getByRole("button",{name:"Send verification code",exact:true}).click();
+ expect((await sent).postDataJSON().invitation_token).toBe("private-invitation");
+ await context.route("**/api/auth/email/*/verify",route=>{state.loggedIn=true;state.userID="invited-user";state.primaryEmail="invited@example.test";return route.fulfill({json:{redirect_after:"/"}});});
+ await page.getByLabel("Verification code",{exact:true}).fill("12345678");
+ await page.getByRole("button",{name:"Verify email",exact:true}).click();
+ await expect(page.getByRole("button",{name:"Accept invitation",exact:true})).toBeEnabled();
+ await expect(page).toHaveURL(/\/invite$/);
+});

@@ -14,9 +14,24 @@ func (s *Server) mountAccountRepairRoutes(r chi.Router) {
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireOperator)
 		r.Post("/account-repairs/redeem", s.redeemAccountRepair)
+		r.Get("/account-repairs/{id}", s.accountRepairState)
 		r.Post("/account-repairs/{id}/options", s.accountRepairRegisterOptions)
 		r.Post("/account-repairs/{id}/complete", s.accountRepairRegisterComplete)
 	})
+}
+func (s *Server) accountRepairState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	id, binding, err := enrollmentRequest(w, r)
+	if err != nil {
+		s.writeIdentityError(w, r, err)
+		return
+	}
+	result, err := identity.ReadAccountRepair(r.Context(), s.tx, principalFromContext(r.Context()), id, binding)
+	if err != nil {
+		s.writeIdentityError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 func (s *Server) redeemAccountRepair(w http.ResponseWriter, r *http.Request) {
 	var input struct {

@@ -49,21 +49,26 @@ To replace an operator's lost keys, use the same deployment command with `repair
 and `--operator-id`. For self-hosted ordinary account repair, use `repair-account`
 with `--operator-id`, `--user-id` and a new protected `--output-file`; the operation
 requires explicit `DEPLOYMENT_MODE=self-hosted`. Ordinary account repair completes
-when the account holder registers a new key. Existing sessions and accepted work
-lose access, while existing sign-in methods remain for the holder to review.
+when the account holder registers a new key. Existing browser, CLI and Slack access is revoked; accepted work continues.
+Existing sign-in methods remain for the holder to review.
 Operator key replacement additionally verifies an assertion with the new key
 before retiring old keys. Neither operation is an email reset.
 
-Ordinary logout, session expiry and CLI session renewal do not cancel accepted
-background work, including tool calls and child work performed by an already
-accepted agent under its original authority. New human requests and streams
-require live authentication. Cancel
-work explicitly to stop it; revoke all account access for incident containment.
-Accepted work still checks its original credential, exact organization membership,
-current permissions and account revocation generation. Removing its credential or
-revoking its membership prevents further authorized execution. A valid anonymous
-sign-in can establish new access after revoke-all; revoke compromised credentials
-as well when responding to compromise.
+Accepted Sessions, Turns and Commands continue after logout, credential removal,
+account revocation, membership removal or API-key expiration. New requests,
+human answers, management actions and result disclosure require current access.
+An Agent executes within its published Deployment contract, pinned when the
+Session starts; it does not borrow the current permissions of its original caller
+or a later participant. A currently authorized colleague can continue the existing
+conversation.
+
+Revoke account or member access to prevent new operations and disclosure. Stop
+unwanted work separately with Session and Command controls. **View related work**
+in Account settings or Members shows visible work initiated by or involving that
+person, plus descendants, in the selected Environment. It does not include work
+you cannot view or turn revocation into automatic cancellation. Schedules and
+organization-owned resources remain independently managed. A valid sign-in can
+establish new access after revoke-all; retire compromised credentials as well.
 
 Each browser session retains one current authentication source. Before removing
 that source, confirm with a sign-in method you will keep.
@@ -105,8 +110,9 @@ prove mailbox ownership. A provider's reported email does not silently change
 an account's login email or merge accounts.
 
 Browser, CLI and Slack access have separate lifetimes. Logging out of one channel
-does not log out the others. Removing a sign-in method retires access derived from
-that method; account-wide revocation retires all channels. Browser and CLI sessions
+does not log out the others. Removing a sign-in method retires browser proof from
+that method; already-issued CLI and Slack access remains independent. Account-wide
+revocation retires all channels. Browser and CLI sessions
 expire after thirty days without explicit human activity. Background polling does
 not extend them. Removing an organization membership preserves the account and
 other organizations, and reinvitation creates a new membership lifetime.
@@ -115,8 +121,8 @@ Use `helmr login` to authorize a CLI for the displayed account and organization.
 Sensitive CLI commands request browser confirmation; `helmr login --confirm` starts
 it explicitly. After confirmation, retry the original command yourself. A CLI token
 cannot switch to another organization by adding a request header. Confirmation replaces
-the old CLI session: queued work and open streams authorized by that session lose
-access at their next authority check. Retry new work explicitly after confirmation.
+the old CLI session: open streams lose access, while accepted work continues.
+Retry the intended new operation explicitly after confirmation.
 
 Members with `members.remove` can revoke a member's sessions or suspend/resume the
 member from **Members**. These operations affect only that organization, preserve
@@ -125,9 +131,12 @@ Owners cannot be suspended; resume a member before granting ownership. Account
 settings and sign-in confirmation remain available when organization access ends.
 
 A disconnected Slack installation is not an explicit unlink. Reauthorizing the
-same installation can restore a still-valid link. Account or member revocation,
-source removal and explicit unlink retire the old link; relinking creates new
-authority and cannot revive work associated with the retired link.
+same installation can restore a still-valid link. Account or member revocation
+and explicit unlink retire the old link. Relinking creates new access. Resuming
+private delivery to earlier conversations requires explicit consent, the same
+Helmr account and Slack recipient, and current access. Removing a sign-in method
+does not revoke an issued link. Disconnecting Slack stops input and delivery;
+accepted computation and result storage continue.
 
 ## Invite members
 

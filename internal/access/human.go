@@ -40,8 +40,10 @@ func SessionPrincipal(ctx context.Context, database db.DBTX, sessionID, target u
 	} else {
 		p.OrgID = target
 	}
-	if err = validateSource(ctx, database, p); err != nil {
-		return p, err
+	if p.Channel == "browser" {
+		if err = validateSource(ctx, database, p); err != nil {
+			return p, err
+		}
 	}
 	if p.OrgID != uuid.Nil() {
 		return attachMembership(ctx, database, p)
@@ -102,10 +104,8 @@ func attachMembership(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Pr
 	return p, nil
 }
 
-// CurrentWork rechecks accepted work against incident revocation, its original
-// credential and exact membership. Ordinary logout and transport expiry do not
-// cancel work that was already admitted.
-func CurrentWork(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Principal, error) {
+// currentMember checks current account and organization access for a new human operation.
+func currentMember(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Principal, error) {
 	if prior.Kind != auth.PrincipalKindSession || prior.UserID == uuid.Nil() || prior.MemberID == uuid.Nil() || prior.AuthenticatedAt.IsZero() {
 		return auth.Principal{}, ErrDenied
 	}
@@ -116,9 +116,6 @@ func CurrentWork(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Pri
 	if err := q.QueryRow(ctx, `SELECT id FROM org_members WHERE id=$1 AND org_id=$2 AND user_id=$3 AND removed_at IS NULL AND suspended_at IS NULL FOR SHARE`, prior.MemberID, prior.OrgID, prior.UserID).Scan(&locked); err != nil {
 		return prior, humanReadError(err)
 	}
-	if err := validateSource(ctx, q, prior); err != nil {
-		return prior, err
-	}
 	return attachMembership(ctx, q, prior)
 }
 
@@ -126,7 +123,7 @@ func CurrentWork(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Pri
 // operations, pending consent and streams. A later proof cannot substitute for
 // the source that authorized an in-flight operation.
 func CurrentHuman(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Principal, error) {
-	current, err := CurrentWork(ctx, q, prior)
+	current, err := currentMember(ctx, q, prior)
 	if err != nil {
 		return prior, err
 	}
@@ -143,8 +140,14 @@ func CurrentHuman(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Pr
  AND l.access_epoch=$5 AND l.authenticated_at=$6
  AND l.identity_id IS NOT DISTINCT FROM $7 AND l.passkey_id IS NOT DISTINCT FROM $8)`, prior.SlackLinkID, prior.UserID, prior.OrgID, prior.MemberID, prior.AccessEpoch, prior.AuthenticatedAt, optionalID(prior.IdentityID), optionalID(prior.PasskeyID)).Scan(&active)
 	} else {
-		if err := q.QueryRow(ctx, `SELECT id FROM login_sessions WHERE id=$1 FOR SHARE`, prior.SessionID).Scan(&locked); err != nil {
+		var channel string
+		if err := q.QueryRow(ctx, `SELECT id,channel FROM login_sessions WHERE id=$1 FOR SHARE`, prior.SessionID).Scan(&locked, &channel); err != nil {
 			return prior, humanReadError(err)
+		}
+		if channel == "browser" {
+			if err := validateSource(ctx, q, prior); err != nil {
+				return prior, err
+			}
 		}
 		err = q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions s
  WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp()

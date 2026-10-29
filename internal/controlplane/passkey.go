@@ -175,11 +175,15 @@ func (s *Server) requireOperator(next http.Handler) http.Handler {
 			writeCookieAuthError(w, s.log, err)
 			return
 		}
+		if !s.acceptExpectedActor(w, r, p) {
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, p)))
 	})
 }
 func (s *Server) mountOperatorRoutes(r chi.Router) {
 	r.Post("/enrollment/redeem", s.operatorRedeem)
+	r.Get("/enrollment/{id}", s.operatorEnrollmentState)
 	r.Post("/enrollment/{id}/options", s.operatorRegisterOptions)
 	r.Post("/enrollment/{id}/complete", s.operatorRegisterComplete)
 	r.Post("/enrollment/{id}/assert/options", s.operatorAssertOptions)
@@ -194,6 +198,20 @@ func (s *Server) mountOperatorRoutes(r chi.Router) {
 	r.With(s.requireOperator).Delete("/credentials/{id}", s.operatorRemoveKey)
 	r.With(s.requireOperator).Get("/me", s.operatorMe)
 	r.With(s.requireOperator).Get("/setup", s.operatorSetup)
+}
+func (s *Server) operatorEnrollmentState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	id, binding, err := enrollmentRequest(w, r)
+	if err != nil {
+		s.writeIdentityError(w, r, err)
+		return
+	}
+	result, err := identity.ReadOperatorEnrollment(r.Context(), s.tx, id, binding)
+	if err != nil {
+		s.writeIdentityError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 func (s *Server) operatorRedeem(w http.ResponseWriter, r *http.Request) {
 	var request struct {

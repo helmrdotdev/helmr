@@ -211,6 +211,11 @@ func ReconcileStatus(ctx context.Context, pool db.TxBeginner, policy auditpolicy
 func statusClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim StatusClaim) (bool, error) {
 	var allowed bool
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		var err error
+		allowed, err = directRecipientAuthorized(ctx, tx, claim.ThreadID)
+		if err != nil || !allowed {
+			return err
+		}
 		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
  JOIN slack_installations i ON i.id=c.installation_id JOIN environments e ON e.id=c.environment_id
  JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id

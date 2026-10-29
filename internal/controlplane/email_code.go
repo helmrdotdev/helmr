@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 	"uuid"
 
@@ -21,6 +22,12 @@ func (s *Server) emailConfigured() bool {
 	return s.mailer != nil && !disabled
 }
 func bindingCookieName(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/admin/") {
+		if isSecureRequest(r) {
+			return "__Host-helmr_operator_binding"
+		}
+		return "helmr_operator_binding_dev"
+	}
 	if isSecureRequest(r) {
 		return "__Host-helmr_binding"
 	}

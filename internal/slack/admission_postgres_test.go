@@ -376,14 +376,14 @@ func TestSlackInputSourceBelongsToEachAcceptedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID, fixtureConversationVerifier(true))
+	message, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
 	if err != nil || message == nil {
 		t.Fatalf("message: %+v %v", message, err)
 	}
 	if message.Source.Kind != "user" || message.Source.Slack == nil || message.Source.Slack.UserID != "second-human" || message.Source.Slack.MessageTS == turn.Source.Slack.MessageTS {
 		t.Fatalf("message reused Turn author: %+v", message.Source)
 	}
-	repeated, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID, fixtureConversationVerifier(true))
+	repeated, err := session.ClaimRuntimeMessage(ctx, f.Pool, host, e, attachment.Sequence, turn.TurnID)
 	if err != nil || repeated == nil || repeated.ID != message.ID || *repeated.Source.Slack != *message.Source.Slack {
 		t.Fatalf("replay lost attribution: %+v %v", repeated, err)
 	}

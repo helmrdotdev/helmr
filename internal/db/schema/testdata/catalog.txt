@@ -1006,7 +1006,6 @@ column slack_posts.source_end_offset bigint
 column slack_posts.source_end_seq bigint
 column slack_posts.source_start_offset bigint
 column slack_posts.source_start_seq bigint
-column slack_posts.source_thread_id uuid
 column slack_posts.status text not null default 'pending'::text
 column slack_posts.stream_status text not null default 'none'::text
 column slack_posts.suppressed_revision bigint not null default 0
@@ -1094,6 +1093,7 @@ column slack_user_links.linked_at timestamp with time zone not null default cloc
 column slack_user_links.member_id uuid
 column slack_user_links.org_id uuid
 column slack_user_links.passkey_id uuid
+column slack_user_links.resume_previous_delivery boolean not null default false
 column slack_user_links.revoked_at timestamp with time zone
 column slack_user_links.slack_user_id text not null
 column slack_user_links.team_id text not null
@@ -1590,8 +1590,6 @@ constraint commands f FOREIGN KEY (environment_id, computer_id, computer_lease_e
 constraint commands f FOREIGN KEY (human_identity_id, human_user_id) REFERENCES auth_identities(id, user_id)
 constraint commands f FOREIGN KEY (human_org_id, human_member_id, human_user_id) REFERENCES org_members(org_id, id, user_id)
 constraint commands f FOREIGN KEY (human_passkey_id, human_user_id) REFERENCES passkey_credentials(id, user_id)
-constraint commands f FOREIGN KEY (human_session_id) REFERENCES login_sessions(id)
-constraint commands f FOREIGN KEY (human_slack_link_id) REFERENCES slack_user_links(id)
 constraint commands f FOREIGN KEY (human_user_id) REFERENCES users(id)
 constraint commands p PRIMARY KEY (environment_id, id)
 constraint commands u UNIQUE (environment_id, computer_id, id)
@@ -2121,8 +2119,6 @@ constraint sessions f FOREIGN KEY (environment_id, root_session_id) REFERENCES s
 constraint sessions f FOREIGN KEY (human_identity_id, human_user_id) REFERENCES auth_identities(id, user_id)
 constraint sessions f FOREIGN KEY (human_org_id, human_member_id, human_user_id) REFERENCES org_members(org_id, id, user_id)
 constraint sessions f FOREIGN KEY (human_passkey_id, human_user_id) REFERENCES passkey_credentials(id, user_id)
-constraint sessions f FOREIGN KEY (human_session_id) REFERENCES login_sessions(id)
-constraint sessions f FOREIGN KEY (human_slack_link_id) REFERENCES slack_user_links(id)
 constraint sessions f FOREIGN KEY (human_user_id) REFERENCES users(id)
 constraint sessions f FOREIGN KEY (origin_user_id) REFERENCES users(id)
 constraint sessions p PRIMARY KEY (environment_id, id)
@@ -2223,7 +2219,6 @@ constraint slack_posts c CHECK (presentation_path <> 'stream'::text OR recipient
 constraint slack_posts c CHECK (presentation_path = ANY (ARRAY['post'::text, 'stream'::text]))
 constraint slack_posts c CHECK (reconciliation_pages >= 0)
 constraint slack_posts c CHECK (role <> 'opening'::text OR source_start_seq IS NULL AND continuation_ordinal = 0 AND presentation_path = 'post'::text)
-constraint slack_posts c CHECK (role = 'opening'::text OR source_thread_id IS NULL)
 constraint slack_posts c CHECK (role = ANY (ARRAY['intermediate'::text, 'question'::text, 'response'::text, 'lifecycle'::text, 'request_feedback'::text, 'opening'::text, 'controls'::text]))
 constraint slack_posts c CHECK (seq > 0)
 constraint slack_posts c CHECK (source_end_offset >= 0)
@@ -2240,7 +2235,6 @@ constraint slack_posts f FOREIGN KEY (environment_id, session_id, request_id) RE
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, thread_source_id) REFERENCES slack_thread_sources(environment_id, session_id, id)
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, turn_id, ask_id) REFERENCES turn_asks(environment_id, session_id, turn_id, id)
-constraint slack_posts f FOREIGN KEY (source_thread_id, environment_id) REFERENCES slack_threads(id, environment_id)
 constraint slack_posts f FOREIGN KEY (thread_id, environment_id, thread_source_id) REFERENCES slack_thread_sources(thread_id, environment_id, id)
 constraint slack_posts p PRIMARY KEY (id)
 constraint slack_posts u UNIQUE (id, thread_id, environment_id)
@@ -2379,8 +2373,6 @@ constraint turn_messages f FOREIGN KEY (environment_id, session_id, turn_id, pro
 constraint turn_messages f FOREIGN KEY (human_identity_id, human_user_id) REFERENCES auth_identities(id, user_id)
 constraint turn_messages f FOREIGN KEY (human_org_id, human_member_id, human_user_id) REFERENCES org_members(org_id, id, user_id)
 constraint turn_messages f FOREIGN KEY (human_passkey_id, human_user_id) REFERENCES passkey_credentials(id, user_id)
-constraint turn_messages f FOREIGN KEY (human_session_id) REFERENCES login_sessions(id)
-constraint turn_messages f FOREIGN KEY (human_slack_link_id) REFERENCES slack_user_links(id)
 constraint turn_messages f FOREIGN KEY (human_user_id) REFERENCES users(id)
 constraint turn_messages p PRIMARY KEY (environment_id, id)
 constraint turn_messages u UNIQUE (environment_id, caller_kind, caller_id, admission_method, target_id, idempotency_key)
@@ -2414,8 +2406,6 @@ constraint turns f FOREIGN KEY (environment_id, session_id, process_epoch) REFER
 constraint turns f FOREIGN KEY (human_identity_id, human_user_id) REFERENCES auth_identities(id, user_id)
 constraint turns f FOREIGN KEY (human_org_id, human_member_id, human_user_id) REFERENCES org_members(org_id, id, user_id)
 constraint turns f FOREIGN KEY (human_passkey_id, human_user_id) REFERENCES passkey_credentials(id, user_id)
-constraint turns f FOREIGN KEY (human_session_id) REFERENCES login_sessions(id)
-constraint turns f FOREIGN KEY (human_slack_link_id) REFERENCES slack_user_links(id)
 constraint turns f FOREIGN KEY (human_user_id) REFERENCES users(id)
 constraint turns p PRIMARY KEY (environment_id, id)
 constraint turns u UNIQUE (environment_id, caller_kind, caller_id, admission_method, target_id, idempotency_key)
@@ -2563,6 +2553,7 @@ index CREATE INDEX audit_events_time ON public.audit_events USING btree (org_id,
 index CREATE INDEX boot_seed_builds_host ON public.boot_seed_builds USING btree (worker_host_id, worker_epoch) WHERE ((worker_host_id IS NOT NULL) AND (fenced_at IS NULL))
 index CREATE INDEX boot_seed_builds_image ON public.boot_seed_builds USING btree (environment_id, image_id)
 index CREATE INDEX commands_pending ON public.commands USING btree (created_at, id) WHERE (status = 'pending'::text)
+index CREATE INDEX commands_related_user ON public.commands USING btree (environment_id, caller_id, id) WHERE ((caller_kind = 'user'::text) AND ((terminal_at IS NULL) OR ((computer_lease_epoch IS NOT NULL) AND (process_reconciled_at IS NULL))))
 index CREATE INDEX commands_unreconciled ON public.commands USING btree (environment_id, computer_id, computer_lease_epoch) WHERE ((computer_lease_epoch IS NOT NULL) AND (process_reconciled_at IS NULL))
 index CREATE INDEX computer_leases_expiring ON public.computer_leases USING btree (expires_at, environment_id, computer_id, epoch) WHERE ((fenced_at IS NULL) AND (status = ANY (ARRAY['active'::text, 'acquiring'::text, 'releasing'::text])))
 index CREATE INDEX computer_leases_host_unfenced ON public.computer_leases USING btree (worker_host_id, worker_epoch) WHERE (fenced_at IS NULL)
@@ -2611,6 +2602,7 @@ index CREATE INDEX sessions_children ON public.sessions USING btree (environment
 index CREATE INDEX sessions_closing ON public.sessions USING btree (environment_id, id) WHERE (status = 'closing'::text)
 index CREATE INDEX sessions_idle_policy ON public.sessions USING btree (environment_id, id) WHERE ((status = 'open'::text) AND (close_after_idle_ms IS NOT NULL))
 index CREATE INDEX sessions_key_origin ON public.sessions USING btree (environment_id, origin_api_key_id, id) WHERE (origin_api_key_id IS NOT NULL)
+index CREATE INDEX sessions_related_user ON public.sessions USING btree (environment_id, origin_user_id, id) WHERE ((origin_user_id IS NOT NULL) AND (parent_session_id IS NULL) AND (requester_session_id IS NULL))
 index CREATE INDEX sessions_user_origin ON public.sessions USING btree (environment_id, origin_user_id, id) WHERE ((origin_user_id IS NOT NULL) AND (origin_slack_connection_id IS NULL))
 index CREATE INDEX slack_channel_bindings_environment ON public.slack_channel_bindings USING btree (environment_id, id)
 index CREATE INDEX slack_posts_claims ON public.slack_posts USING btree (claimed_until, id) WHERE (status = 'sending'::text)
@@ -2630,11 +2622,14 @@ index CREATE INDEX trigger_activations_due ON public.trigger_activations USING b
 index CREATE INDEX trigger_occurrences_activation ON public.trigger_occurrences USING btree (environment_id, activation_id)
 index CREATE INDEX trigger_occurrences_turn ON public.trigger_occurrences USING btree (environment_id, session_id, turn_id)
 index CREATE INDEX turn_asks_pending ON public.turn_asks USING btree (environment_id, session_id, turn_id) WHERE (status = 'pending'::text)
+index CREATE INDEX turn_asks_related_user ON public.turn_asks USING btree (environment_id, answered_by_user_id, session_id) WHERE (answered_by_user_id IS NOT NULL)
 index CREATE INDEX turn_messages_pending ON public.turn_messages USING btree (environment_id, session_id, turn_id, seq) WHERE (status = ANY (ARRAY['admitted'::text, 'started'::text]))
+index CREATE INDEX turn_messages_related_user ON public.turn_messages USING btree (environment_id, caller_id, session_id) WHERE (caller_kind = 'user'::text)
 index CREATE INDEX turns_created ON public.turns USING btree (environment_id, created_at)
 index CREATE INDEX turns_deadlines ON public.turns USING btree (deadline_at, environment_id, session_id) WHERE ((status = 'running'::text) AND (deadline_at IS NOT NULL))
 index CREATE INDEX turns_failed ON public.turns USING btree (environment_id, terminal_at) WHERE (status = 'failed'::text)
 index CREATE INDEX turns_queue ON public.turns USING btree (environment_id, session_id, seq) WHERE (status = 'queued'::text)
+index CREATE INDEX turns_related_user ON public.turns USING btree (environment_id, caller_id, session_id) WHERE (caller_kind = 'user'::text)
 index CREATE INDEX worker_groups_active_dispatch_idx ON public.worker_groups USING btree (region_id, id) WHERE (status = 'active'::text)
 index CREATE INDEX worker_hosts_active_dispatch_idx ON public.worker_hosts USING btree (worker_group_id, id) WHERE (status = 'active'::text)
 index CREATE INDEX worker_hosts_resource ON public.worker_hosts USING btree (worker_group_id, resource_id)

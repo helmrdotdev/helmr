@@ -55,19 +55,19 @@ func TestSlackConsentIsOneUseAndLinkHasIndependentLifetime(t *testing.T) {
 		t.Fatal("browser logout revoked independent link", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, p.IdentityID)
-	if _, err = access.SlackPrincipal(t.Context(), f.Pool, link); !errors.Is(err, access.ErrDenied) {
-		t.Fatal("retired source retained link authority", err)
+	if _, err = access.SlackPrincipal(t.Context(), f.Pool, link); err != nil {
+		t.Fatal("source retirement revoked independent link", err)
 	}
 	fresh := audit.FromPrincipal(f.Principal(t))
 	next, err := PrepareUserLink(t.Context(), f.Pool, fresh, org, f.User, f.installation, who, binding)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = LinkUser(t.Context(), f.Pool, policy, fresh, org, f.User, f.installation, who, LinkConsent{ID: next, BrowserHash: binding}); !errors.Is(err, ErrUserLinkConflict) {
-		t.Fatal("invalid existing link reported success", err)
+	if err = LinkUser(t.Context(), f.Pool, policy, fresh, org, f.User, f.installation, who, LinkConsent{ID: next, BrowserHash: binding}); err != nil {
+		t.Fatal("existing independent link denied", err)
 	}
-	if _, err = access.SlackPrincipal(t.Context(), f.Pool, link); !errors.Is(err, access.ErrDenied) {
-		t.Fatal("new consent revived retired link", err)
+	if _, err = access.SlackPrincipal(t.Context(), f.Pool, link); err != nil {
+		t.Fatal("existing independent link lost", err)
 	}
 
 }
@@ -139,11 +139,11 @@ func TestRetiredSlackAuthorizationCanRelinkWithoutRevivingOldWork(t *testing.T) 
 			if err = linkTestUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who); err != nil {
 				t.Fatal("fresh relink", err)
 			}
-			if _, err = access.SlackPrincipal(t.Context(), f.Pool, old); !errors.Is(err, access.ErrDenied) {
-				t.Fatal("old authority revived", err)
+			if _, err = access.SlackPrincipal(t.Context(), f.Pool, old); scope == "source" && err != nil || scope != "source" && !errors.Is(err, access.ErrDenied) {
+				t.Fatal("unexpected old link lifetime", err)
 			}
 			var fresh uuid.UUID
-			if err = f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_user_links WHERE user_id=$1 AND revoked_at IS NULL`, f.User).Scan(&fresh); err != nil || fresh == old {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_user_links WHERE user_id=$1 AND revoked_at IS NULL`, f.User).Scan(&fresh); err != nil || (scope == "source") != (fresh == old) {
 				t.Fatal(fresh, err)
 			}
 			if _, err = access.SlackPrincipal(t.Context(), f.Pool, fresh); err != nil {

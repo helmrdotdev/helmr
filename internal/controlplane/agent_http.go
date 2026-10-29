@@ -316,20 +316,10 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, r *http.Request, err
 		s.writeOperationError(w, r, badRequest(errors.New("invalid Agent or Session request")))
 	case errors.Is(err, slackroute.ErrChannelUnavailable):
 		s.writeOperationError(w, r, notFound(codedError{code: "channel_unavailable", message: err.Error()}))
-	case errors.Is(err, slack.ErrSourceConversationPending):
-		s.writeOperationError(w, r, conflict(codedError{code: "source_conversation_pending", message: err.Error()}))
-	case errors.Is(err, slack.ErrSourceConversationUnavailable):
-		s.writeOperationError(w, r, conflict(codedError{code: "source_conversation_unavailable", message: err.Error()}))
 	case errors.Is(err, slackroute.ErrTargetNotPublished):
 		s.writeOperationError(w, r, conflict(codedError{code: "target_not_published", message: err.Error()}))
-	case errors.Is(err, slack.ErrTargetWorkspaceMismatch):
-		s.writeOperationError(w, r, conflict(codedError{code: "target_workspace_mismatch", message: err.Error()}))
-	case errors.Is(err, slack.ErrStartMessageTooLarge):
-		s.writeOperationError(w, r, conflict(codedError{code: "start_message_too_large", message: err.Error()}))
 	case errors.Is(err, slackroute.ErrConversationChanged):
 		s.writeOperationError(w, r, conflict(codedError{code: "conversation_changed", message: err.Error()}))
-	case errors.Is(err, slack.ErrSlackDestinationConflict):
-		s.writeOperationError(w, r, conflict(codedError{code: "slack_destination_conflict", message: "session Slack destination conflicts"}))
 	case errors.Is(err, session.ErrAgentDeleted):
 		s.writeOperationError(w, r, conflict(codedError{code: "agent_deleted", message: err.Error()}))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, agent.ErrDenied):

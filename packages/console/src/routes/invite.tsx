@@ -1,7 +1,7 @@
 import { A,useSearchParams } from "@solidjs/router";
 import { createSignal,onMount,Show } from "solid-js";
-import { getAccount,getAuthConfig,logout,type Account,type AuthConfig } from "../lib/auth";
-import { postJson,chooseOrganization } from "../lib/api";
+import { getAccount,getAuthConfig,type Account,type AuthConfig } from "../lib/auth";
+import { postJson,chooseOrganization,setOrganization,releasePageIdentity } from "../lib/api";
 import { assertPasskey } from "../lib/passkey";
 import { EmailSignIn } from "../components/EmailSignIn";
 import { AuthCopy,AuthError,AuthWindow,AuthTitle } from "../ui/AuthWindow";
@@ -22,7 +22,7 @@ export function Invite(){
   </>}>{a=><>
    <AuthCopy>Signed in as {a().primary_email}.</AuthCopy>
    <button class={ui.button} disabled={busy()||a().primary_email.toLowerCase()!==s().email.toLowerCase()} onClick={()=>void run(async()=>{const accepted=await postJson<{token:string},{organization_id:string}>("/api/auth/invitations/accept",{token:token()},{redirectOnUnauthorized:false});chooseOrganization(accepted.organization_id);})}>Accept invitation</button>
-   <button class={ui.secondaryButton} disabled={busy()} onClick={()=>void run(async()=>{await logout();setAccount(undefined);})}>Sign out to use another account</button>
+   <button class={ui.secondaryButton} disabled={busy()} onClick={()=>void run(async()=>{await postJson("/api/auth/logout",{}, {redirectOnUnauthorized:false});setOrganization("");setAccount(undefined);releasePageIdentity();})}>Sign out to use another account</button>
   </>}</Show>
  </>}</Show></AuthWindow>;
 }

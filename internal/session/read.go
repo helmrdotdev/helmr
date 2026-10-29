@@ -16,6 +16,7 @@ import (
 // SessionView reports retained work independently of current execution eligibility.
 // A revoked Computer does not revoke a human's authority to inspect its Sessions.
 type SessionView struct {
+	RelatedVia           string
 	Permissions          []string
 	AgentDefinitionID    string
 	TemplateDefinitionID string
@@ -88,6 +89,7 @@ type TurnView struct {
 }
 
 type SessionListRequest struct {
+	RelatedUserID      uuid.UUID
 	Agent              string
 	EnvironmentID      uuid.UUID
 	Before             uuid.UUID
@@ -146,10 +148,11 @@ const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=s
   FROM session_holds h JOIN ancestors a ON a.id=h.session_id
   WHERE h.environment_id=sessions.environment_id AND h.released_at IS NULL AND (h.session_id=sessions.id OR h.scope='subtree')) AS effective_holds,(SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(sessions.environment_id,sessions.agent_id,sessions.deployment_id)),close_after_idle_ms,idle_since,` + sessionActivityColumn
 
-func scanSession(row pgx.Row) (SessionView, error) {
+func scanSession(row pgx.Row, extra ...any) (SessionView, error) {
 	var v SessionView
 	var holds, activity []byte
-	err := row.Scan(&v.AgentDefinitionID, &v.TemplateDefinitionID, &v.ID, &v.AgentID, &v.DeploymentID, &v.ComputerID, &v.RootSessionID, &v.ParentSessionID, &v.Key, &v.Status, &v.CreatedAt, &v.SlackChannelID, &v.RequesterSessionID, &v.InitialTurnID, &v.InitialTurnStatus, &holds, &v.Suspension, &v.CloseAfterIdleMs, &v.IdleSince, &activity)
+	dest := []any{&v.AgentDefinitionID, &v.TemplateDefinitionID, &v.ID, &v.AgentID, &v.DeploymentID, &v.ComputerID, &v.RootSessionID, &v.ParentSessionID, &v.Key, &v.Status, &v.CreatedAt, &v.SlackChannelID, &v.RequesterSessionID, &v.InitialTurnID, &v.InitialTurnStatus, &holds, &v.Suspension, &v.CloseAfterIdleMs, &v.IdleSince, &activity}
+	err := row.Scan(append(dest, extra...)...)
 	if err == nil {
 		err = json.Unmarshal(holds, &v.Holds)
 	}
@@ -233,18 +236,28 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter
 	if req.Key != nil && (req.Agent == "" || *req.Key == "") {
 		return result, ErrInvalidInput
 	}
-	rows, err := tx.Query(ctx, `SELECT `+sessionViewColumns+` FROM sessions WHERE environment_id=$1 AND `+sessionReadPredicate+`
+	rows, err := tx.Query(ctx, `WITH RECURSIVE seeds(id,priority) AS (
+ SELECT id,1 FROM sessions WHERE environment_id=$1 AND origin_user_id=$17 AND parent_session_id IS NULL AND requester_session_id IS NULL
+ UNION ALL SELECT session_id,2 FROM turns WHERE environment_id=$1 AND caller_kind='user' AND caller_id=$17
+ UNION ALL SELECT session_id,2 FROM turn_messages WHERE environment_id=$1 AND caller_kind='user' AND caller_id=$17
+ UNION ALL SELECT session_id,3 FROM turn_asks WHERE environment_id=$1 AND answered_by_user_id=$17
+ ), direct AS (
+ SELECT id,CASE min(priority) WHEN 1 THEN 'initiated' WHEN 2 THEN 'contributed' ELSE 'answered' END AS relation FROM seeds GROUP BY id
+ ), related(id) AS (SELECT id FROM direct UNION SELECT s.id FROM sessions s JOIN related p ON (s.parent_session_id=p.id OR s.requester_session_id=p.id) WHERE s.environment_id=$1)
+ SELECT `+sessionViewColumns+`,CASE WHEN $17::uuid IS NULL THEN '' ELSE COALESCE((SELECT relation FROM direct WHERE direct.id=sessions.id),'descendant') END FROM sessions WHERE environment_id=$1 AND ($17::uuid IS NULL OR id IN(SELECT id FROM related)) AND `+sessionReadPredicate+`
  AND ($9::uuid IS NULL OR id<$9) AND ($11::text IS NULL OR key=$11)
  AND (cardinality($12::text[]) IS NULL OR cardinality($12::text[])=0 OR status=ANY($12))
  AND ($13::uuid IS NULL OR parent_session_id=$13) AND ($14::uuid IS NULL OR requester_session_id=$14)
  AND ($15::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$15))
  AND ($16::text[] IS NULL OR agent_id IN (SELECT id FROM agents WHERE environment_id=$1 AND key=ANY($16::text[])))
- ORDER BY id DESC LIMIT $10`, req.EnvironmentID, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent, filter.MCPAgentKeys)
+ ORDER BY id DESC LIMIT $10`, req.EnvironmentID, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent, filter.MCPAgentKeys, nullableID(req.RelatedUserID))
 	if err != nil {
 		return result, err
 	}
 	for rows.Next() {
-		v, err := scanSession(rows)
+		var relatedVia string
+		v, err := scanSession(rows, &relatedVia)
+		v.RelatedVia = relatedVia
 		if err != nil {
 			rows.Close()
 			return result, err

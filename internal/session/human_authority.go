@@ -22,9 +22,6 @@ func callerPrincipal(ctx context.Context, q db.DBTX, c Caller, env uuid.UUID) (a
 		if c.Human.UserID != c.ID {
 			return auth.Principal{}, access.ErrDenied
 		}
-		if c.admitted {
-			return access.WorkInEnvironment(ctx, q, c.Human, env)
-		}
 		return access.HumanInEnvironment(ctx, q, c.Human, env)
 	}
 	return access.Principal(ctx, q, c.Kind, c.ID, env)

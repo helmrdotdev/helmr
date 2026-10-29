@@ -12,9 +12,13 @@ export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRe
   const navigate = useNavigate();
   const location = useLocation();
   const me = useMe();
+  const authenticationLost = createMemo(() => me.error instanceof ApiError && (me.error.status === 401 || me.error.code === "authentication_required"));
+  createEffect(() => {
+    if (authenticationLost() && me.data) window.dispatchEvent(new CustomEvent("helmr-confirmation-required", {detail:{operator:false,signIn:true}}));
+  });
   const redirectPath = createMemo(() => {
     const next = locationDestination(location);
-    if (me.error instanceof ApiError && (me.error.status === 401 || me.error.code === "authentication_required")) return withNext("/login", next);
+    if (authenticationLost()) return me.data ? null : withNext("/login", next);
     if (!me.data || me.isError) return null;
     const path = onboardingRedirectPath(me.data, props.requirement ?? "project");
     return path ? withNext(path, next) : null;
@@ -25,7 +29,7 @@ export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRe
   });
   return (
     <Show when={!me.isPending && !redirectPath()}>
-      <Show when={!me.isError} fallback={
+      <Show when={!me.isError || (authenticationLost() && !!me.data)} fallback={
         <AuthWindow>
           <AuthError
             title="Could not load your account"

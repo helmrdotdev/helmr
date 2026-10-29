@@ -552,7 +552,7 @@ test("members and pending invitations share one table told apart by status", asy
   await expect(rows.nth(1)).toContainText("you");
   // Owners cannot be removed; ownership changes separately from ordinary roles.
   await page.getByRole("button", { name: "Actions for Local", exact: true }).click();
-  await expect(page.getByRole("menuitem")).toHaveText(["Grant access", "Change ownership", "Revoke sessions"]);
+  await expect(page.getByRole("menuitem")).toHaveText(["View related work", "Grant access", "Change ownership", "Revoke sessions"]);
   await page.keyboard.press("Escape");
   await expect(rows.nth(1).getByRole("cell").nth(3)).toHaveText("Active");
   await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Member");
@@ -840,4 +840,22 @@ test("member suspension, resumption and session revocation require confirmation"
  await dialog.getByRole("button",{name:"Confirm",exact:true}).click();await expect(dialog).toHaveCount(0);
  expect(writes).toContain(`/api/members/membership-2/${action}`);
  }
+});
+
+test("related work exposes an independent command stop action",async({page})=>{
+ const state=await fixture(page,true);
+ const user="00000000-0000-7000-8000-000000000777";
+ const command="00000000-0000-7000-8000-000000000778";
+ let cancelled=0;let filtered=false;
+ await page.route(`**${base}/sessions*`,route=>{filtered=new URL(route.request().url()).searchParams.get("related_user_id")===user;return route.fulfill({json:{sessions:[{id:"00000000-0000-7000-8000-000000000601",agent:"assistant",template:"browser",deployment_id:deploymentID,computer_id:null,status:"open",holds:[],created_at:now,related_via:"descendant"}]}});});
+ await page.route(`**${base}/related-commands*`,route=>route.fulfill({json:{can_cancel:true,commands:cancelled?[]:[{id:command,computer_id:"00000000-0000-7000-8000-000000000779",status:"running",created_at:now}]}}));
+ await page.route(`**${base}/commands/${command}/cancel`,route=>{cancelled++;return route.fulfill({status:204});});
+ await page.goto(`/sessions?related_user_id=${user}`);
+ await expect(page.getByText("Started by related work",{exact:true})).toBeVisible();
+ expect(filtered).toBe(true);
+ await page.getByRole("button",{name:"Stop command…",exact:true}).click();
+ expect(cancelled).toBe(0);
+ await page.getByRole("dialog",{name:"Stop command",exact:true}).getByRole("button",{name:"Stop command",exact:true}).click();
+ await expect(page.getByText("No active direct commands in this environment.",{exact:true})).toBeVisible();
+ expect(cancelled).toBe(1);expect(state.revocations).toBe(0);
 });

@@ -44,7 +44,7 @@ func TestRegisterAndPromotePinCronSlackConfiguration(t *testing.T) {
 			calls := 0
 			preflight := triggerPreflightFunc(func(ctx context.Context, value slackroute.StartContext) (json.RawMessage, error) {
 				calls++
-				if value.Route.Target.InstallationID != installation || value.Route.Target.ChannelID != "C1" || value.Route.Source != nil {
+				if value.Route.Target.InstallationID != installation || value.Route.Target.ChannelID != "C1" {
 					t.Fatal("wrong scheduled preflight", value)
 				}
 				// An independent write proves the remote-access stage holds no SQL gate.

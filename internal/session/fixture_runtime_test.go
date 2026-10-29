@@ -59,9 +59,7 @@ func dispatchTurnForTest(ctx context.Context, pool db.TxBeginner, e session.Exec
 	if err != nil {
 		return session.TurnDispatch{}, fmt.Errorf("acquire attachment: %w", err)
 	}
-	dispatch, err := session.DispatchRuntimeTurn(ctx, auditpolicy.Policy{
-		RetentionSeconds: 3600,
-	}, pool, host, e, attachment, nil)
+	dispatch, err := session.DispatchRuntimeTurn(ctx, pool, host, e, attachment)
 	if err != nil {
 		return session.TurnDispatch{}, fmt.Errorf("dispatch: %w", err)
 	}

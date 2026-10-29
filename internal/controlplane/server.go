@@ -629,6 +629,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{project}/environments/{environment}/computers", s.listComputersHTTP)
 		r.With(limitRequestBody(computerCommandBodyMaxBytes)).
 			Post("/projects/{project}/environments/{environment}/computers/{computerID}/exec", s.executeComputerHTTP)
+		r.Get("/projects/{project}/environments/{environment}/related-commands", s.listRelatedCommandsHTTP)
 		r.Get("/projects/{project}/environments/{environment}/commands/{commandID}", s.getComputerCommandHTTP)
 		r.Post("/projects/{project}/environments/{environment}/commands/{commandID}/cancel", s.cancelCommandHTTP)
 		r.Get("/projects/{project}/environments/{environment}/commands/{commandID}/logs", s.listCommandLogsHTTP)

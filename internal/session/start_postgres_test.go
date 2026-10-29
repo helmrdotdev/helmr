@@ -122,7 +122,7 @@ func TestCreateSessionKeyNeverContinuesExistingSession(t *testing.T) {
 	}
 }
 
-func TestRuntimeCreationSelectsCurrentStartAndPinnedSpawn(t *testing.T) {
+func TestRuntimeCreationPinsBothStartAndSpawn(t *testing.T) {
 	f := newAdmissionFixture(t)
 	admitted := f.enqueue(t, "caller")
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
@@ -142,9 +142,6 @@ func TestRuntimeCreationSelectsCurrentStartAndPinnedSpawn(t *testing.T) {
 			t.Fatal(err)
 		}
 		expected := f.deployment
-		if method == "create" {
-			expected = promoted
-		}
 		var valid bool
 		if err := f.pool.QueryRow(t.Context(), `SELECT deployment_id=$3 AND requester_session_id=$4 AND origin_turn_id=$5 AND causal_depth=1 AND CASE WHEN $6='spawn' THEN parent_session_id=$4 AND root_session_id=$4 ELSE parent_session_id IS NULL AND root_session_id=id END FROM sessions WHERE environment_id=$1 AND id=$2`, f.env, a.SessionID, expected, f.session, admitted.TurnID, method).Scan(&valid); err != nil || !valid {
 			t.Fatalf("creation ownership: %v %v", valid, err)

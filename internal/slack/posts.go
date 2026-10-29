@@ -46,17 +46,17 @@ type PostClaim struct {
 func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostClaim, error) {
 	var claim *PostClaim
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		var installation, channel, targetChannel, env, thread, sourceThread uuid.UUID
+		var installation, channel, env, thread uuid.UUID
 		var team, slackChannel, peer string
-		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,t.slack_channel_binding_id,p.thread_id,c.team_id,c.slack_channel_id,CASE WHEN sender.recipient_team_id=c.team_id THEN COALESCE(sender.recipient_user_id,'') ELSE '' END,sender.id
- FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id) JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &targetChannel, &thread, &team, &slackChannel, &peer, &sourceThread)
+		err := tx.QueryRow(ctx, `SELECT c.installation_id,c.id,p.environment_id,p.thread_id,c.team_id,c.slack_channel_id,CASE WHEN t.recipient_team_id=c.team_id THEN COALESCE(t.recipient_user_id,'') ELSE '' END
+ FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id  JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE p.id=$1`, post).Scan(&installation, &channel, &env, &thread, &team, &slackChannel, &peer)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		active, err := slackroute.LockChannelsForDelivery(ctx, tx, env, []uuid.UUID{channel, targetChannel})
+		active, err := slackroute.LockChannelsForDelivery(ctx, tx, env, []uuid.UUID{channel})
 		if err != nil {
 			return err
 		}
@@ -65,13 +65,6 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 			return err
 		}
 		active = active && recipient
-		if sourceThread != thread {
-			recipient, err = directRecipientPostAuthorized(ctx, tx, sourceThread, post)
-			if err != nil {
-				return err
-			}
-			active = active && recipient
-		}
 		var credential int64
 		var authorized time.Time
 		if err = tx.QueryRow(ctx, `SELECT credential_revision,authorized_at FROM slack_installations WHERE id=$1`, installation).Scan(&credential, &authorized); err != nil {
@@ -357,17 +350,18 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, 
 func postClaimAuthorized(ctx context.Context, pool db.TxBeginner, claim PostClaim) (bool, error) {
 	var allowed bool
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
+		var err error
+		allowed, err = directRecipientPostAuthorized(ctx, tx, claim.ThreadID, claim.PostID)
+		if err != nil || !allowed {
+			return err
+		}
 		return tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p
  JOIN slack_threads t ON t.id=p.thread_id AND (t.deleted_at IS NULL OR (p.inflight_method='chat.stopStream' AND p.message_ts IS NOT NULL AND p.closed_at IS NOT NULL))
- JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id)
- JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id JOIN slack_installations i ON i.id=c.installation_id
+
+ JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_installations i ON i.id=c.installation_id
  JOIN slack_connections publication ON publication.id=c.connection_id JOIN slack_app_registrations registration ON registration.id=publication.slack_app_registration_id
- JOIN slack_channel_bindings target_channel ON target_channel.id=t.slack_channel_binding_id JOIN slack_connections target_publication ON target_publication.id=target_channel.connection_id
- JOIN slack_installations target_installation ON target_installation.id=target_channel.installation_id
- JOIN slack_app_registrations target_registration ON target_registration.id=target_publication.slack_app_registration_id
  WHERE p.id=$1 AND p.status='sending' AND p.attempt_count=$2 AND p.inflight_attempt_id=$3 AND p.claimed_until>clock_timestamp()
  AND publication.revoked_at IS NULL AND registration.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL
- AND target_publication.revoked_at IS NULL AND target_registration.retired_at IS NULL AND target_installation.disconnected_at IS NULL AND target_installation.authorization_lost_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=t.id AND opening.role='opening' AND (opening.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND opening.status IN ('failed','suppressed'))))
  AND i.id=$4 AND i.authorized_at=$5)`, claim.PostID, claim.AttemptCount, claim.AttemptID, claim.InstallationID, claim.AuthorizedAt).Scan(&allowed)
 	})

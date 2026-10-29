@@ -21,19 +21,10 @@ type Connection struct {
 	AuthorizedAt                                                                time.Time
 }
 
-// StartSource is the Slack conversation of the runtime caller whose Session
-// starts another one.
-type StartSource struct {
-	Connection                   Connection
-	ThreadID, SessionID, RouteID uuid.UUID
-	ThreadTS                     string
-}
-
 // StartRoute is a preflighted Slack destination for a new root Session.
 type StartRoute struct {
 	Target                    Connection
 	DeploymentID              uuid.UUID
-	Source                    *StartSource
 	Opening                   json.RawMessage
 	HumanThreadTS, HumanActor string
 }

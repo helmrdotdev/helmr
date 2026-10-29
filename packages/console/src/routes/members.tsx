@@ -254,7 +254,7 @@ function MemberRow(props: {
           }).concat(props.canRemove ? [
  {label:"Revoke sessions",onSelect:()=>props.onAccess(props.member,"revoke-sessions")},
  ...(!isOwner() ? [{label:props.member.status === "suspended" ? "Resume member" : "Suspend member",onSelect:()=>props.onAccess(props.member,props.member.status === "suspended" ? "resume":"suspend")}] : []),
- ] : []).concat(auditItem({ actor: props.member.user_id })) : auditItem({ actor: props.member.user_id })}
+ ] : []).concat([{label:"View related work",href:`/sessions?related_user_id=${encodeURIComponent(props.member.user_id)}`}],auditItem({ actor: props.member.user_id })) : [{label:"View related work",href:`/sessions?related_user_id=${encodeURIComponent(props.member.user_id)}`},...auditItem({ actor: props.member.user_id })]}
         />
       </tr>
     </>
@@ -463,7 +463,7 @@ export function Members() {
         {(member) => <ChangeRoleDialog member={member()} roles={assignableRoles(me.data?.is_owner, isCurrentUser(member()))} onClose={() => setChangingRoleID(null)} onSave={(role) => changeOwnershipChoice(member(), role)} />}
       </Show>
 
-      <Show when={accessChange()}>{change => <ConfirmDialog title={change().action === "resume" ? "Resume member" : change().action === "suspend" ? "Suspend member" : "Revoke sessions"} confirmLabel="Confirm" busyLabel="Updating…" tone="danger" target={memberName(change().member)} errorMessage={membersErrorMessage} onClose={()=>setAccessChange(undefined)} onConfirm={async()=>{await changeMemberAccess(change().member.membership_id,change().action);await queryClient.invalidateQueries({queryKey:["members"]});}}>Existing access to this organization will end. Resuming membership requires fresh authentication. Other organizations and account credentials are preserved.</ConfirmDialog>}</Show>
+      <Show when={accessChange()}>{change => <ConfirmDialog title={change().action === "resume" ? "Resume member" : change().action === "suspend" ? "Suspend member" : "Revoke sessions"} confirmLabel="Confirm" busyLabel="Updating…" tone="danger" target={memberName(change().member)} errorMessage={membersErrorMessage} onClose={()=>setAccessChange(undefined)} onConfirm={async()=>{await changeMemberAccess(change().member.membership_id,change().action);await queryClient.invalidateQueries({queryKey:["members"]});}}>Existing access to this organization will end. Resuming membership requires fresh authentication. Other organizations and account credentials are preserved. Accepted work continues; use separate work controls to stop it.</ConfirmDialog>}</Show>
       <Show when={removing()}>
         {(member) => <RemoveMemberDialog member={member()} onClose={() => setRemoving(null)} onRemoved={() => queryClient.invalidateQueries({ queryKey: ["members"] })} />}
       </Show>

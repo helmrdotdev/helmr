@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 	"github.com/jackc/pgx/v5"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agents(environment_id,id,key,deleted_at) VALUES($1,$2,'child-agent',clock_timestamp());
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,false,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
  INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,status) VALUES($1,$4,$2,$5,$6,$6,$6,1,$7,'closed');`, pgx.QueryExecModeSimpleProtocol, f.env, target, f.agent, child, f.deployment, f.session, f.user)
+	sessiontest.PublishRuntimeAgentSet(t, sessiontest.Fixture{Pool: f.pool, Environment: f.env, Deployment: f.deployment}, "agent", "child-agent")
 	copySessionHuman(t, f, child)
 	turn := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET computer_id=$3 WHERE environment_id=$1 AND id=$2; INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,request_digest,terminal_at,processing_closed_at) VALUES($1,$4,$2,$3,1,'cancelled','session',$5,'spawn',$2,decode(repeat('00',32),'hex'),clock_timestamp(),clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, f.env, child, f.computer, turn, f.session)

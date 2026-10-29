@@ -3,9 +3,11 @@ import { HelmrClient } from "../src/client"
 const config = JSON.parse(await Bun.stdin.text()) as { url: string; apiKey: string; deploymentId: string }
 const client = new HelmrClient(config)
 const agent = await client.agents.get("agent", { deploymentId: config.deploymentId })
-assert.deepEqual(agent, { agent: "agent", template: "fixture-computer", deploymentId: config.deploymentId, inputKind: "text" })
+assert.ok(agent.runtimeMcp?.allow.some(rule => rule.operation === "spawn" && rule.agents?.includes("agent")))
+const {runtimeMcp, ...agentMetadata} = agent
+assert.deepEqual(agentMetadata, { agent: "agent", template: "fixture-computer", deploymentId: config.deploymentId, inputKind: "text" })
 const agents = await client.agents.list({ deploymentId: config.deploymentId, limit: 1 })
-assert.deepEqual(agents.items, [{ agent: "agent", template: "fixture-computer", inputKind: "text" }])
+assert.deepEqual(agents.items.map(({runtimeMcp, ...item}) => { assert.ok(runtimeMcp); return item }), [{ agent: "agent", template: "fixture-computer", inputKind: "text" }])
 assert.equal(agents.deploymentId, config.deploymentId)
 assert.equal("agentDefinitions" in client, false)
 const page = await client.templates.list({ deploymentId: config.deploymentId, limit: 1 })

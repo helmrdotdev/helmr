@@ -1,3 +1,11 @@
+ALTER TABLE slack_posts ADD COLUMN source_thread_id uuid,
+ ADD FOREIGN KEY (source_thread_id,environment_id) REFERENCES slack_threads(id,environment_id),
+ ADD CHECK (role='opening' OR source_thread_id IS NULL);
+DROP INDEX turn_asks_related_user;
+DROP INDEX commands_related_user;
+DROP INDEX turn_messages_related_user;
+DROP INDEX turns_related_user;
+DROP INDEX sessions_related_user;
 DO $$ DECLARE relation text; retained boolean; BEGIN
  FOREACH relation IN ARRAY ARRAY['sessions','turns','turn_messages','commands'] LOOP
   EXECUTE format('SELECT EXISTS(SELECT 1 FROM %I WHERE human_user_id IS NOT NULL)',relation) INTO retained;
@@ -65,7 +73,7 @@ ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_user_id_fkey;
 ALTER TABLE login_sessions ADD FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 -- Revoked old links convey no usable authorization in the previous application.
 DELETE FROM slack_user_links;
-ALTER TABLE slack_user_links DROP COLUMN id, DROP COLUMN installation_id, DROP COLUMN org_id, DROP COLUMN member_id,
+ALTER TABLE slack_user_links DROP COLUMN resume_previous_delivery, DROP COLUMN id, DROP COLUMN installation_id, DROP COLUMN org_id, DROP COLUMN member_id,
  DROP COLUMN access_epoch, DROP COLUMN identity_id, DROP COLUMN passkey_id, DROP COLUMN authenticated_at, DROP COLUMN revoked_at;
 ALTER TABLE slack_user_links ADD PRIMARY KEY (team_id,slack_user_id);
 ALTER TABLE slack_user_links ADD UNIQUE (team_id,user_id);

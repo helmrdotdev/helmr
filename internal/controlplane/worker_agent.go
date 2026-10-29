@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/session"
-	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -161,18 +160,10 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, r *http.Re
 		code = "runtime_mcp_scope_limit"
 	case errors.Is(err, session.ErrRuntimeMCPDenied):
 		code = "runtime_mcp_denied"
-	case errors.Is(err, slack.ErrSourceConversationPending):
-		code = "source_conversation_pending"
-	case errors.Is(err, slack.ErrSourceConversationUnavailable):
-		code = "source_conversation_unavailable"
 	case errors.Is(err, slackroute.ErrTargetNotPublished):
 		code = "target_not_published"
-	case errors.Is(err, slack.ErrTargetWorkspaceMismatch):
-		code = "target_workspace_mismatch"
 	case errors.Is(err, slackroute.ErrChannelUnavailable):
 		code = "channel_unavailable"
-	case errors.Is(err, slack.ErrStartMessageTooLarge):
-		code = "start_message_too_large"
 	case errors.Is(err, slackroute.ErrConversationChanged):
 		code = "conversation_changed"
 	case errors.Is(err, session.ErrAgentDeleted):
@@ -208,7 +199,7 @@ func (server *Server) writeAgentAdmissionError(w http.ResponseWriter, r *http.Re
 		}
 	}
 	message := "Operation was not newly admitted; preserve the original arguments and idempotency key when reconciling an uncertain outcome"
-	if errors.Is(err, mcppolicy.ErrInvalid) || errors.Is(err, session.ErrRuntimeMCPDenied) || errors.Is(err, session.ErrRuntimeMCPScopeLimit) || errors.Is(err, session.ErrAgentDeleted) || errors.Is(err, slack.ErrSourceConversationPending) || errors.Is(err, slack.ErrSourceConversationUnavailable) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slack.ErrTargetWorkspaceMismatch) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slack.ErrStartMessageTooLarge) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, session.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, session.ErrResponseAlreadyStaged) {
+	if errors.Is(err, mcppolicy.ErrInvalid) || errors.Is(err, session.ErrRuntimeMCPDenied) || errors.Is(err, session.ErrRuntimeMCPScopeLimit) || errors.Is(err, session.ErrAgentDeleted) || errors.Is(err, slackroute.ErrTargetNotPublished) || errors.Is(err, slackroute.ErrChannelUnavailable) || errors.Is(err, slackroute.ErrConversationChanged) || errors.Is(err, session.ErrRootSessionRequired) || errors.Is(err, content.ErrLimit) || errors.Is(err, content.ErrUnsupported) || errors.Is(err, session.ErrResponseAlreadyStaged) {
 		message = err.Error()
 	}
 	writeJSON(w, http.StatusOK, agentOperationFailure(id, code, message))
@@ -223,9 +214,6 @@ func (server *Server) writeAgentWorkerError(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	switch {
-	case errors.Is(err, session.ErrConversationVerificationUnavailable):
-		server.log.Warn("Slack input is waiting because conversation verification is not configured")
-		server.writeOperationError(w, r, conflict(errors.New("session execution authority is unavailable")))
 	case errors.Is(err, session.ErrInvalidInput), errors.Is(err, computer.ErrInvalidInput), errors.Is(err, dispatch.ErrInvalidInput):
 		writeError(w, badRequest(errors.New("invalid Session worker operation")))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict), errors.Is(err, dispatch.ErrConflict):

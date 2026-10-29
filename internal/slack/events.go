@@ -285,8 +285,8 @@ func (h EventHandler) observeEvent(ctx context.Context, team string, message obs
 	}
 	var installation uuid.UUID
 	err := db.RunTx(ctx, h.Database, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT i.id FROM slack_posts p JOIN slack_threads sender ON sender.id=COALESCE(p.source_thread_id,p.thread_id)
- JOIN slack_channel_bindings c ON c.id=sender.slack_channel_binding_id JOIN slack_installations i ON i.id=c.installation_id
+		return tx.QueryRow(ctx, `SELECT i.id FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id
+ JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_installations i ON i.id=c.installation_id
  WHERE p.id=$1 AND i.app_id=$2 AND i.team_id=$3 AND i.bot_user_id=$4 AND c.slack_channel_id=$5`, post, h.AppID, team, message.User, message.Channel).Scan(&installation)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

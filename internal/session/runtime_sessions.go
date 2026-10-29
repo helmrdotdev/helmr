@@ -70,22 +70,7 @@ func RuntimeListSessions(ctx context.Context, policy auditpolicy.Policy, databas
 			query.RequesterSessionID = caller.ID
 		}
 		var err error
-		source, err := loadSessionOrigin(ctx, tx, caller.Execution.EnvironmentID, caller.ID)
-		if err != nil {
-			return err
-		}
-		filter := sessionReadScope{All: source.mode() == "environment", Agents: []uuid.UUID{}}
-		if source.mode() == "shared" && source.Connection != nil {
-			filter.SharedConnection = *source.Connection
-		}
-		if source.mode() == "scoped" {
-			filter, err = readScopeFor(ctx, tx, Caller{Kind: source.kind(), ID: source.id(), Human: source.Human, admitted: source.admitted}, caller.Execution.EnvironmentID)
-			if err != nil {
-				return err
-			}
-			filter.All = false
-			filter.ViewAgents = []uuid.UUID{}
-		}
+		filter := sessionReadScope{All: true, Agents: []uuid.UUID{}}
 		descriptor, err := RuntimeMCPPolicy(ctx, tx, caller)
 		if err != nil {
 			return err

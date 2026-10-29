@@ -59,6 +59,7 @@ type CreateSessionResponse struct {
 
 // AgentSession is a retained conversation, independent of a physical process.
 type AgentSession struct {
+	RelatedVia           string                   `json:"related_via,omitempty"`
 	Permissions          []string                 `json:"permissions,omitempty"`
 	Suspension           string                   `json:"suspension"`
 	AgentDefinitionID    string                   `json:"agent"`

@@ -2,7 +2,6 @@ package session_test
 
 import (
 	"encoding/json"
-	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
@@ -14,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
+func TestSlackRevokedSourceDoesNotBlockIndependentWork(t *testing.T) {
 	for _, kind := range []string{"publication", "authorization"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newAdmissionFixture(t)
@@ -32,7 +31,7 @@ func TestSlackRevokedSourceCannotOpenReplacementRoot(t *testing.T) {
 			caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: parent.TurnID, Execution: f.execution(), Host: f.host()}
 			req := f.startRequest("independent")
 			req.ComputerID = f.computer
-			if _, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, nil, caller, req); !errors.Is(err, slack.ErrSourceConversationUnavailable) {
+			if _, err := slack.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, nil, caller, req); err != nil {
 				t.Fatal(err)
 			}
 			req.IdempotencyKey = "child"

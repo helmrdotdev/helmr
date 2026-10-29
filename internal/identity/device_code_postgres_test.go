@@ -278,7 +278,7 @@ func TestDeviceConfirmationReplacesOnlyExactLiveCLI(t *testing.T) {
 				f.exec(t, `UPDATE org_members SET suspended_at=clock_timestamp() WHERE id=$1`, old.MemberID)
 			}
 			token, err := ExchangeDeviceCode(ctx, f.pool, f.cfg, confirmation.DeviceCode)
-			if change != "success" {
+			if change != "success" && change != "source" {
 				if !errors.Is(err, ErrInvalidDeviceCode) {
 					t.Fatal("retired CLI replaced", err)
 				}

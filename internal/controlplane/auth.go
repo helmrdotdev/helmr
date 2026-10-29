@@ -44,6 +44,9 @@ func (s *Server) requireAPIKeyWithErrorWriter(
 			writeAuthError(w, s.log, err)
 			return
 		}
+		if !s.acceptExpectedActor(w, r, principal) {
+			return
+		}
 		if !s.admitPrincipal(w, r, principal) {
 			return
 		}
@@ -149,6 +152,9 @@ func (s *Server) requireSessionWithErrorWriter(
 				writeAuthError(w, s.log, err)
 				return
 			}
+			if !s.acceptExpectedActor(w, r, principal) {
+				return
+			}
 			if !s.admitPrincipal(w, r, principal) {
 				return
 			}
@@ -161,6 +167,9 @@ func (s *Server) requireSessionWithErrorWriter(
 				return
 			}
 			writeAuthError(w, s.log, err)
+			return
+		}
+		if !s.acceptExpectedActor(w, r, principal) {
 			return
 		}
 		if !s.admitPrincipal(w, r, principal) {
@@ -401,4 +410,25 @@ func writeStaleWorkerClaims(w http.ResponseWriter, err error) bool {
 	}
 	writeError(w, unauthorized(errors.New("worker authentication is required")))
 	return true
+}
+
+// acceptExpectedActor binds a mounted Console form to its original account.
+// It is an expectation, never an authentication credential or authority grant.
+func (s *Server) acceptExpectedActor(w http.ResponseWriter, r *http.Request, p auth.Principal) bool {
+	values := r.Header.Values("X-Helmr-Actor")
+	if len(values) == 0 {
+		return true
+	}
+	actor := p.UserID
+	if p.Channel == "operator" {
+		actor = p.OperatorID
+	}
+	if (p.Channel == "browser" || p.Channel == "operator") && len(values) == 1 && values[0] == actor.String() {
+		return true
+	}
+	if !s.refuseOperation(w, r, "authentication_invalid") {
+		return false
+	}
+	writeError(w, conflict(codedError{code: "account_changed", message: "Your account changed. Refresh before retrying."}))
+	return false
 }

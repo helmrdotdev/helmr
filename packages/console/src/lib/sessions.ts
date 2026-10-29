@@ -1,10 +1,11 @@
 import { parseAsk, parseAskPage } from "../../../../sdk/typescript/src/internal/asks";
 import type { JsonValue } from "../../../../sdk/typescript/src/contract";
-import { postJson, request, selectedOrganization } from "./api";
+import { postJson, request, selectedOrganization, expectedActorHeaders } from "./api";
 
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled";
 type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
 export type Session = {
+  related_via?: "initiated" | "contributed" | "answered" | "descendant";
   permissions?: string[];
   agent: string;
   template: string;
@@ -94,6 +95,7 @@ type ListSessionsResponse = {
 };
 
 export async function listSessions(options: {
+  relatedUserID?: string | undefined;
   projectID: string;
   environmentID: string;
   agent?: string | undefined;
@@ -105,6 +107,7 @@ export async function listSessions(options: {
     throw new Error("Session project and environment are required");
   }
   const params = new URLSearchParams();
+  if (options.relatedUserID) params.set("related_user_id",options.relatedUserID);
   if (options.agent) params.set("agent", options.agent);
   for (const status of options.statuses ?? []) params.append("status", status);
   if (options.cursor) params.set("cursor", options.cursor);
@@ -216,15 +219,16 @@ export function interruptTurn(address: SessionAddress, turnID: string, input: { 
 export function watchSession(address: SessionAddress, changed: () => void): () => void {
   const controller = new AbortController();
   const organization = selectedOrganization();
+  const actor = expectedActorHeaders();
   let retry: ReturnType<typeof setTimeout> | undefined;
   const connect = async () => {
     try {
       const response = await fetch(`${sessionAPIPath(address)}/updates`, {
         credentials: "same-origin", signal: controller.signal,
-        headers: { Accept: "text/event-stream", "X-Helmr-Organization": organization },
+        headers: { Accept: "text/event-stream", "X-Helmr-Organization": organization, ...actor },
         cache: "no-store",
       });
-      if (response.status === 401 || response.status === 403 || response.status === 404) {
+      if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 409) {
         changed(); // Refresh the authoritative view and its actionable auth state.
         return;
       }
