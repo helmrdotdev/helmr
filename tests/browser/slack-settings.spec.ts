@@ -275,7 +275,7 @@ test("Slack identity proof needs explicit account confirmation and clears callba
   await page.screenshot({ path: testInfo.outputPath("slack-identity-confirmation.png"), fullPage: true });
   await page.getByRole("button", { name: "Confirm these accounts are mine" }).click();
   await expect(page).toHaveURL("/settings/account");
-  expect(confirms).toEqual([{ confirmation: "proof-state", confirmed: true }]);
+  expect(confirms).toEqual([{ confirmation: "proof-state", confirmed: true, resume_previous_delivery: false }]);
 });
 
 test("Slack identity verification cannot redirect an expired account or silently link it", async ({ page }) => {
