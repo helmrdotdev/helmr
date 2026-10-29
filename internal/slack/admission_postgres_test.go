@@ -404,7 +404,6 @@ func (f statusFixture) bindLinkedSource(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_user_links WHERE installation_id=$1 AND user_id=$2 AND revoked_at IS NULL`, f.installation, f.User).Scan(&link); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET initial_recipient_link_id=$2 WHERE id=$1`, f.thread, link)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_requests(id,installation_id,request_key,request_digest,source_occurred_at,slack_user_id,user_id,thread_id,environment_id,session_id,thread_source_id,operation,payload_expired_at,status,expires_at,turn_id,finished_at,source_link_id)
  SELECT gen_random_uuid(),$3,'fixture:'||t.id::text,decode(repeat('01',32),'hex'),clock_timestamp(),l.slack_user_id,t.caller_id,$4,t.environment_id,t.session_id,s.id,'enqueue',clock_timestamp(),'accepted',clock_timestamp()+interval '10 minutes',t.id,clock_timestamp(),l.id
  FROM turns t JOIN slack_thread_sources s ON s.environment_id=t.environment_id AND s.session_id=t.session_id JOIN slack_user_links l ON l.id=$2 WHERE t.session_id=$1 AND t.caller_kind='user' ON CONFLICT DO NOTHING`, f.Session, link, f.installation, f.thread)

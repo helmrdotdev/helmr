@@ -8,7 +8,6 @@ DROP INDEX turns_related_user;
 DROP INDEX sessions_related_user;
 DROP INDEX slack_requests_turn_admission;
 ALTER TABLE slack_requests DROP COLUMN source_link_id;
-ALTER TABLE slack_threads DROP COLUMN initial_recipient_link_id;
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM account_security_notifications) THEN
   RAISE EXCEPTION 'undelivered account security notifications require disposition before rollback';
@@ -60,7 +59,7 @@ ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_user_id_fkey;
 ALTER TABLE login_sessions ADD FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 -- Revoked old links convey no usable authorization in the previous application.
 DELETE FROM slack_user_links;
-ALTER TABLE slack_user_links DROP COLUMN resume_previous_delivery, DROP COLUMN id, DROP COLUMN installation_id, DROP COLUMN org_id, DROP COLUMN member_id,
+ALTER TABLE slack_user_links DROP COLUMN id, DROP COLUMN installation_id, DROP COLUMN org_id, DROP COLUMN member_id,
  DROP COLUMN access_epoch, DROP COLUMN identity_id, DROP COLUMN passkey_id, DROP COLUMN authenticated_at, DROP COLUMN revoked_at;
 ALTER TABLE slack_user_links ADD PRIMARY KEY (team_id,slack_user_id);
 ALTER TABLE slack_user_links ADD UNIQUE (team_id,user_id);

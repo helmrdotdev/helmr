@@ -32,6 +32,11 @@ export function IdentitySettings(props: { userID: string; organizationID: string
   const allWorkspaces = createMemo(() => workspaces.data?.pages.flatMap((p) => p.workspaces) ?? []);
   const workspaceName = (teamID: string) => allWorkspaces().find((w) => w.team_id === teamID)?.workspace_name || undefined;
   const [workspace, setWorkspace] = createSignal("");
+  createEffect(() => {
+    if (!workspace() && workspaces.isSuccess && !workspaces.hasNextPage && !workspaces.isFetching && allWorkspaces().length === 1) {
+      setWorkspace(allWorkspaces()[0]!.installation_id);
+    }
+  });
   const [unlinking, setUnlinking] = createSignal<SlackUserLink | null>(null);
   const [busy, setBusy] = createSignal(false), [error, setError] = createSignal<Failure | null>(null);
   let mounted = true; onCleanup(() => { mounted = false; });

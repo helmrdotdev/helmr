@@ -258,6 +258,43 @@ test("Members manage only their Slack identity and explicitly unlink it", async 
   expect(deletions).toEqual(["/api/slack/user-links/T1/U1"]);
 });
 
+for (const paginated of [false, true]) {
+  test(`Slack identity workspace selection ${paginated ? "waits for all pages" : "defaults to its only workspace"}`, async ({ page }) => {
+    const starts: unknown[] = [];
+    await page.route("**/api/slack/user-links**", async route => {
+      if (route.request().method() === "POST") {
+        starts.push(route.request().postDataJSON());
+        await route.fulfill({ json: { redirect_url: "https://slack.com/oauth/v2/authorize?state=identity" } });
+      } else await route.fulfill({ json: { links: [] } });
+    });
+    await page.route("https://slack.com/oauth/v2/authorize?**", route => route.fulfill({ contentType: "text/html", body: "<p>Slack</p>" }));
+    await page.route("**/api/slack/link-workspaces**", async route => {
+      const second = new URL(route.request().url()).searchParams.has("cursor");
+      await route.fulfill({ json: { configured: true, workspaces: [{ installation_id: second ? "I2" : "I1", team_id: second ? "T2" : "T1", workspace_name: second ? "Second workspace" : "Research workspace" }], ...(paginated && !second ? { next_cursor: "next" } : {}) } });
+    });
+    await page.goto("/dev/login"); await page.goto("/settings/account");
+    const picker = page.getByRole("combobox", { name: "Workspace for your identity" });
+    const connect = page.getByRole("button", { name: "Verify Slack identity", exact: true });
+    if (paginated) {
+      await expect(picker).toHaveText("Select workspace");
+      await expect(connect).toBeDisabled();
+      await picker.click();
+      await page.getByRole("option", { name: "Second workspace", exact: true }).click();
+      await expect(picker).toHaveText("Second workspace");
+    } else {
+      await expect(picker).toHaveText("Research workspace");
+      await picker.click();
+      await expect(page.getByRole("option", { name: "Research workspace", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
+    }
+    expect(starts).toEqual([]);
+    await expect(connect).toBeEnabled();
+    await connect.click();
+    await expect(page).toHaveURL("https://slack.com/oauth/v2/authorize?state=identity");
+    expect(starts).toEqual([{ installation_id: paginated ? "I2" : "I1" }]);
+  });
+}
+
 test("Slack identity proof needs explicit account confirmation and clears callback fragments", async ({ page }, testInfo) => {
   const verifies: unknown[] = [], confirms: unknown[] = [];
   await page.route("**/api/slack/user-links/verify", async route => {
@@ -272,10 +309,11 @@ test("Slack identity proof needs explicit account confirmation and clears callba
   await expect(page.getByLabel("Accounts")).toContainText("Helmr Person in Research");
   expect(verifies).toEqual([{ state: "flow-state", code: "temporary-code", error: "" }]);
   expect(confirms).toEqual([]);
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("slack-identity-confirmation.png"), fullPage: true });
   await page.getByRole("button", { name: "Confirm these accounts are mine" }).click();
   await expect(page).toHaveURL("/settings/account");
-  expect(confirms).toEqual([{ confirmation: "proof-state", confirmed: true, resume_previous_delivery: false }]);
+  expect(confirms).toEqual([{ confirmation: "proof-state", confirmed: true }]);
 });
 
 test("Slack identity verification cannot redirect an expired account or silently link it", async ({ page }) => {
