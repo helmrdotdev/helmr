@@ -47,16 +47,15 @@ func (q *Queries) CreateAccount(ctx context.Context, arg CreateAccountParams) (U
 }
 
 const createAuthIdentity = `-- name: CreateAuthIdentity :one
-INSERT INTO auth_identities(id,user_id,provider,subject,observed_email,last_authenticated_at)
-VALUES ($1,$2,$3,$4,$5,clock_timestamp()) RETURNING id, user_id, provider, subject, observed_email, created_at, updated_at, last_authenticated_at, revoked_at
+INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at)
+VALUES ($1,$2,$3,$4,clock_timestamp()) RETURNING id, user_id, provider, subject, created_at, updated_at, last_authenticated_at, revoked_at
 `
 
 type CreateAuthIdentityParams struct {
-	ID            pgtype.UUID `json:"id"`
-	UserID        pgtype.UUID `json:"user_id"`
-	Provider      string      `json:"provider"`
-	Subject       string      `json:"subject"`
-	ObservedEmail pgtype.Text `json:"observed_email"`
+	ID       pgtype.UUID `json:"id"`
+	UserID   pgtype.UUID `json:"user_id"`
+	Provider string      `json:"provider"`
+	Subject  string      `json:"subject"`
 }
 
 func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentityParams) (AuthIdentity, error) {
@@ -65,7 +64,6 @@ func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentity
 		arg.UserID,
 		arg.Provider,
 		arg.Subject,
-		arg.ObservedEmail,
 	)
 	var i AuthIdentity
 	err := row.Scan(
@@ -73,7 +71,6 @@ func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentity
 		&i.UserID,
 		&i.Provider,
 		&i.Subject,
-		&i.ObservedEmail,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastAuthenticatedAt,
@@ -123,7 +120,7 @@ func (q *Queries) GetAccountByEmail(ctx context.Context, lower string) (User, er
 }
 
 const getAuthIdentity = `-- name: GetAuthIdentity :one
-SELECT id, user_id, provider, subject, observed_email, created_at, updated_at, last_authenticated_at, revoked_at FROM auth_identities WHERE provider=$1 AND subject=$2 ORDER BY created_at DESC LIMIT 1
+SELECT id, user_id, provider, subject, created_at, updated_at, last_authenticated_at, revoked_at FROM auth_identities WHERE provider=$1 AND subject=$2 ORDER BY created_at DESC LIMIT 1
 `
 
 type GetAuthIdentityParams struct {
@@ -139,7 +136,6 @@ func (q *Queries) GetAuthIdentity(ctx context.Context, arg GetAuthIdentityParams
 		&i.UserID,
 		&i.Provider,
 		&i.Subject,
-		&i.ObservedEmail,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.LastAuthenticatedAt,

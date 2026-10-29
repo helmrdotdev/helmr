@@ -172,24 +172,22 @@ development, use `http://localhost:<port>`; the server may still listen on loopb
 The control plane rejects an unsupported origin at startup rather than starting
 without its required operator authentication path.
 
-## Upgrade an existing installation
+## Database initialization and retained installations
 
-The authentication migration preserves account, membership and audit attribution
-IDs. It retires legacy browser/CLI sessions, pending device approvals, magic-link
-credentials and Slack links that have no recorded proof source. Users must sign
-in again and explicitly authorize CLI and Slack access. Existing organization
-owners remain owners; the old account administrator flag never creates a deployment
-operator or operator credential.
+These pre-release schema sources are revised together and require a freshly
+initialized database. In-place upgrades from earlier pre-release schemas are not
+supported. Migration tests against earlier versions of the current source do not
+qualify databases created by an older release.
 
-Before applying this upgrade, inventory the retained accounts, verified provider
-subjects and login email addresses; resolve known historical account-correlation
-errors separately. Back up the database and record the matching application and
-worker artifact revisions. Quiesce human-authenticated work and prepare the
-protected operator enrollment path before the coordinated cutover. Verify the
-canonical browser origin and configured email/provider delivery on the target
-installation, then test operator enrollment and ordinary owner access separately.
+A retained installation needs a separately qualified migration and recovery plan.
+Inventory its accounts, provider subjects, login addresses and Slack history;
+retain a backup and matching application and worker artifacts before any data
+operation. Existing Slack threads and accepted inputs do not have the required
+consent/source references, and existing constraint names can differ. No automatic
+backfill or reset is provided. Existing organization ownership never creates a
+deployment operator credential.
 
-A rollback after new passkeys have been enrolled requires the pre-upgrade database
-backup and its matching application artifacts. The down migration deliberately
-refuses to discard those credentials. Do not treat a successful empty-database
-round trip as approval to erase newly enrolled credentials or retained user work.
+The down migration refuses to discard enrolled passkeys or undelivered security
+notifications. A successful empty-database round trip does not authorize erasing
+credentials, pending delivery or retained user work. Qualify recovery with the
+installation's data and matching application artifacts.

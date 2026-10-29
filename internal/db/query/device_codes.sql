@@ -26,7 +26,6 @@ UPDATE device_codes
        identity_id=sqlc.narg(identity_id),
        passkey_id=sqlc.narg(passkey_id),
        authenticated_at=sqlc.arg(authenticated_at),
-       access_epoch=sqlc.arg(access_epoch),
        browser_session_id=sqlc.arg(browser_session_id),
        org_id = sqlc.arg(org_id),
        decided_by_member_id = sqlc.arg(member_id),

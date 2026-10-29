@@ -103,7 +103,7 @@ func BeginOperatorRegistration(ctx context.Context, database db.TxBeginner, wa *
 		if state.Expires.After(e.expires) {
 			state.Expires = e.expires
 		}
-		challenge, err := storeCeremony(ctx, tx, state, "register", keyTarget{operator: e.operator, enrollment: id, epoch: e.epoch, purpose: "enroll", operatorScope: true}, binding)
+		challenge, err := storeCeremony(ctx, tx, state, "register", keyTarget{enrollment: id, purpose: "enroll", operatorScope: true}, binding)
 		result = RegistrationOptions{ChallengeID: challenge, PublicKey: options.Response}
 		return err
 	})
@@ -166,7 +166,7 @@ func BeginOperatorEnrollmentAssertion(ctx context.Context, database db.TxBeginne
 		if state.Expires.After(e.expires) {
 			state.Expires = e.expires
 		}
-		challenge, err := storeCeremony(ctx, tx, state, "assert", keyTarget{operator: e.operator, enrollment: id, epoch: e.epoch, purpose: "enroll", operatorScope: true}, binding)
+		challenge, err := storeCeremony(ctx, tx, state, "assert", keyTarget{enrollment: id, purpose: "enroll", operatorScope: true}, binding)
 		result = AssertionOptions{ChallengeID: challenge, PublicKey: options.Response}
 		return err
 	})

@@ -29,7 +29,6 @@ type AuthIdentity struct {
 	UserID              pgtype.UUID        `json:"user_id"`
 	Provider            string             `json:"provider"`
 	Subject             string             `json:"subject"`
-	ObservedEmail       pgtype.Text        `json:"observed_email"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 	LastAuthenticatedAt pgtype.Timestamptz `json:"last_authenticated_at"`
@@ -115,7 +114,6 @@ type DeviceCode struct {
 	IdentityID          pgtype.UUID        `json:"identity_id"`
 	PasskeyID           pgtype.UUID        `json:"passkey_id"`
 	AuthenticatedAt     pgtype.Timestamptz `json:"authenticated_at"`
-	AccessEpoch         pgtype.Int8        `json:"access_epoch"`
 	BrowserSessionID    pgtype.UUID        `json:"browser_session_id"`
 	ReplacesSessionID   pgtype.UUID        `json:"replaces_session_id"`
 }
@@ -206,7 +204,7 @@ type LoginSession struct {
 	RevokedAt           pgtype.Timestamptz `json:"revoked_at"`
 	OperatorID          pgtype.UUID        `json:"operator_id"`
 	Channel             string             `json:"channel"`
-	AccessEpoch         pgtype.Int8        `json:"access_epoch"`
+	AccessEpoch         int64              `json:"access_epoch"`
 	MemberID            pgtype.UUID        `json:"member_id"`
 	IdentityID          pgtype.UUID        `json:"identity_id"`
 	PasskeyID           pgtype.UUID        `json:"passkey_id"`

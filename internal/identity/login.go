@@ -148,7 +148,7 @@ func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external
 			return signedInUser{}, err
 		}
 		var at time.Time
-		if err = tx.QueryRow(ctx, `UPDATE auth_identities SET observed_email=$2,last_authenticated_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL RETURNING last_authenticated_at`, existing.ID, external.Email).Scan(&at); err != nil {
+		if err = tx.QueryRow(ctx, `UPDATE auth_identities SET last_authenticated_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL RETURNING last_authenticated_at`, existing.ID).Scan(&at); err != nil {
 			return signedInUser{}, err
 		}
 		return provedExternal(pgvalue.MustUUIDValue(existing.UserID), pgvalue.MustUUIDValue(existing.ID), epoch, at, external), nil
@@ -182,7 +182,7 @@ func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external
 	if err != nil {
 		return signedInUser{}, err
 	}
-	credential, err := q.CreateAuthIdentity(ctx, db.CreateAuthIdentityParams{ID: pgvalue.UUID(uuid.NewV7()), UserID: user.ID, Provider: external.Provider, Subject: external.Subject, ObservedEmail: pgtype.Text{String: email, Valid: true}})
+	credential, err := q.CreateAuthIdentity(ctx, db.CreateAuthIdentityParams{ID: pgvalue.UUID(uuid.NewV7()), UserID: user.ID, Provider: external.Provider, Subject: external.Subject})
 	if err != nil {
 		return signedInUser{}, err
 	}

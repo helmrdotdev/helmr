@@ -47,8 +47,8 @@ func TestAccountSecurityAuditAndNotificationAtomicity(t *testing.T) {
 	if err = CompleteSecurityNotification(t.Context(), f.pool, stale, true); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM account_security_notifications WHERE status='delivered'`).Scan(&count); err != nil || count != 0 {
-		t.Fatal("stale claim delivered", count, err)
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM account_security_notifications`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("stale claim removed pending delivery", count, err)
 	}
 	if err = CompleteSecurityNotification(t.Context(), f.pool, first, false); err != nil {
 		t.Fatal(err)
@@ -67,4 +67,8 @@ func TestAccountSecurityAuditAndNotificationAtomicity(t *testing.T) {
 	if _, found, err = ClaimSecurityNotification(t.Context(), f.pool); err != nil || found {
 		t.Fatal("delivered mail retried", found, err)
 	}
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM account_security_notifications`).Scan(&count); err != nil || count != 0 {
+		t.Fatal("completed delivery retained", count, err)
+	}
+
 }

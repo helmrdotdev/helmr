@@ -70,7 +70,7 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 	if _, err = tx.Exec(ctx, `UPDATE users SET primary_email=$2,updated_at=clock_timestamp() WHERE id=$1`, user, email); err != nil {
 		return "", err
 	}
-	credential, err := db.New(tx).CreateAuthIdentity(ctx, db.CreateAuthIdentityParams{ID: pgvalue.UUID(uuid.NewV7()), UserID: user, Provider: "email", Subject: pgvalue.MustUUIDValue(user).String(), ObservedEmail: pgtype.Text{String: email, Valid: true}})
+	credential, err := db.New(tx).CreateAuthIdentity(ctx, db.CreateAuthIdentityParams{ID: pgvalue.UUID(uuid.NewV7()), UserID: user, Provider: "email", Subject: pgvalue.MustUUIDValue(user).String()})
 	if err != nil {
 		return "", err
 	}
@@ -83,13 +83,13 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 		return "", err
 	}
 	// Other mailbox-change requests were bound to the old address and must restart.
-	if _, err = tx.Exec(ctx, `UPDATE email_challenges SET revoked_at=clock_timestamp() WHERE user_id=$1 AND id<>$2 AND consumed_at IS NULL AND revoked_at IS NULL`, user, challenge); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE email_challenges c SET revoked_at=clock_timestamp() FROM login_sessions s WHERE s.id=c.session_id AND s.user_id=$1 AND c.id<>$2 AND c.consumed_at IS NULL AND c.revoked_at IS NULL`, user, challenge); err != nil {
 		return "", err
 	}
 	if err = accountSecurityEvent(ctx, tx, cfg, p, "identity.email_changed", nullableUUID(credential.ID), "email"); err != nil {
 		return "", err
 	}
-	if err = enqueueSecurityNotification(ctx, tx, p.UserID, "identity.email_changed", old); err != nil {
+	if err = enqueueSecurityNotification(ctx, tx, "identity.email_changed", old); err != nil {
 		return "", err
 	}
 	return token, nil
@@ -97,7 +97,7 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 
 func CheckEmailChangeChallenge(ctx context.Context, q db.DBTX, p auth.Principal, id uuid.UUID, binding []byte) error {
 	var matches bool
-	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM email_challenges WHERE id=$1 AND browser_hash=$2 AND purpose='email_change' AND user_id=$3 AND session_id=$4 AND access_epoch=$5 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp())`, id, binding, p.UserID, p.SessionID, p.AccessEpoch).Scan(&matches)
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM email_challenges c JOIN login_sessions s ON s.id=c.session_id WHERE c.id=$1 AND c.browser_hash=$2 AND c.purpose='email_change' AND s.user_id=$3 AND c.session_id=$4 AND s.access_epoch=$5 AND c.consumed_at IS NULL AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp())`, id, binding, p.UserID, p.SessionID, p.AccessEpoch).Scan(&matches)
 	if err != nil {
 		return err
 	}

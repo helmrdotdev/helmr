@@ -186,7 +186,6 @@ func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, a
 				UserID:     pgvalue.UUID(approver.UserID),
 				IdentityID: optionalUUID(approver.IdentityID), PasskeyID: optionalUUID(approver.PasskeyID),
 				AuthenticatedAt:  pgvalue.Timestamptz(approver.AuthenticatedAt),
-				AccessEpoch:      pgtype.Int8{Int64: approver.AccessEpoch, Valid: true},
 				BrowserSessionID: pgvalue.UUID(approver.SessionID),
 				OrgID:            pgvalue.UUID(approver.OrgID),
 				MemberID:         pgvalue.UUID(approver.MemberID),
@@ -262,7 +261,11 @@ func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, devi
 		if err != nil {
 			return fmt.Errorf("consume device code: %w", err)
 		}
-		prior := auth.Principal{Kind: auth.PrincipalKindSession, Channel: "browser", UserID: pgvalue.MustUUIDValue(consumed.UserID), OrgID: pgvalue.MustUUIDValue(consumed.OrgID), MemberID: pgvalue.MustUUIDValue(consumed.DecidedByMemberID), SessionID: pgvalue.MustUUIDValue(consumed.BrowserSessionID), IdentityID: nullableUUID(consumed.IdentityID), PasskeyID: nullableUUID(consumed.PasskeyID), AccessEpoch: consumed.AccessEpoch.Int64, AuthenticatedAt: consumed.AuthenticatedAt.Time}
+		var epoch int64
+		if err = tx.QueryRow(ctx, `SELECT access_epoch FROM login_sessions WHERE id=$1`, consumed.BrowserSessionID).Scan(&epoch); err != nil {
+			return err
+		}
+		prior := auth.Principal{Kind: auth.PrincipalKindSession, Channel: "browser", UserID: pgvalue.MustUUIDValue(consumed.UserID), OrgID: pgvalue.MustUUIDValue(consumed.OrgID), MemberID: pgvalue.MustUUIDValue(consumed.DecidedByMemberID), SessionID: pgvalue.MustUUIDValue(consumed.BrowserSessionID), IdentityID: nullableUUID(consumed.IdentityID), PasskeyID: nullableUUID(consumed.PasskeyID), AccessEpoch: epoch, AuthenticatedAt: consumed.AuthenticatedAt.Time}
 		current, err := access.CurrentHuman(ctx, tx, prior)
 		if err != nil {
 			return ErrInvalidDeviceCode

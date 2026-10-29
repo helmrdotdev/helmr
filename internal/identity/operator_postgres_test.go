@@ -106,7 +106,7 @@ func TestAuthenticationOwnerShapeConstraints(t *testing.T) {
 	}
 	user := f.user(t, "Account", "")
 	for _, mutation := range []string{
-		`user_id=$2`, `org_id=$2`, `channel='browser'`, `expires_at=issued_at+interval '13 hours'`,
+		`user_id=$2`, `org_id=$2`, `channel='browser'`, `authenticated_at=issued_at-interval '1 second'`, `authenticated_at=expires_at+interval '1 second'`,
 	} {
 		_, err = f.pool.Exec(t.Context(), `UPDATE login_sessions SET `+mutation+` WHERE id=$1 AND $2::uuid IS NOT NULL`, p.SessionID, user)
 		var pe *pgconn.PgError

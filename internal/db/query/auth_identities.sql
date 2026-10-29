@@ -2,8 +2,8 @@
 SELECT * FROM auth_identities WHERE provider=$1 AND subject=$2 ORDER BY created_at DESC LIMIT 1;
 
 -- name: CreateAuthIdentity :one
-INSERT INTO auth_identities(id,user_id,provider,subject,observed_email,last_authenticated_at)
-VALUES ($1,$2,$3,$4,$5,clock_timestamp()) RETURNING *;
+INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at)
+VALUES ($1,$2,$3,$4,clock_timestamp()) RETURNING *;
 
 -- name: GetAccount :one
 SELECT * FROM users WHERE id=$1;

@@ -23,7 +23,7 @@ func SessionPrincipal(ctx context.Context, database db.DBTX, sessionID, target u
 	if row.Channel != "browser" && row.Channel != "cli" {
 		return auth.Principal{}, ErrDenied
 	}
-	p := auth.Principal{Kind: auth.PrincipalKindSession, SessionID: sessionID, UserID: pgvalue.MustUUIDValue(row.UserID), AccessEpoch: row.AccessEpoch.Int64, Channel: row.Channel}
+	p := auth.Principal{Kind: auth.PrincipalKindSession, SessionID: sessionID, UserID: pgvalue.MustUUIDValue(row.UserID), AccessEpoch: row.AccessEpoch, Channel: row.Channel}
 	var epoch int64
 	if err = database.QueryRow(ctx, `SELECT access_epoch FROM users WHERE id=$1`, p.UserID).Scan(&epoch); err != nil {
 		return p, humanReadError(err)

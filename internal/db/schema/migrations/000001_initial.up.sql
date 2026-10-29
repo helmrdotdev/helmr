@@ -2394,10 +2394,10 @@ CREATE TABLE audit_events (
            (target_id IS NULL AND target_user_id IS NOT NULL AND slack_team_id IS NOT NULL AND slack_user_id IS NOT NULL)),
     CHECK (project_id IS NULL OR org_id IS NOT NULL),
     CHECK (environment_id IS NULL OR project_id IS NOT NULL),
-    CHECK (num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)<=1),
-    CHECK ((num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)=0) = (authentication_result IN ('failed','absent'))),
-    CHECK ((actor_user_id IS NOT NULL) = (actor_identity IS NOT NULL)),
-    CHECK (actor_user_id IS NULL OR
+    CONSTRAINT audit_actor_count CHECK (num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)<=1),
+    CONSTRAINT audit_actor_authentication CHECK ((num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)=0) = (authentication_result IN ('failed','absent'))),
+    CONSTRAINT audit_actor_identity_presence CHECK ((actor_user_id IS NOT NULL) = (actor_identity IS NOT NULL)),
+    CONSTRAINT audit_user_identity_shape CHECK (actor_user_id IS NULL OR
            (actor_identity ?& ARRAY['source','display_name'] AND
             jsonb_typeof(actor_identity->'source')='string' AND actor_identity->>'source'='account' AND
             jsonb_typeof(actor_identity->'display_name')='string' AND octet_length(actor_identity->>'display_name')>0)),
@@ -2410,11 +2410,11 @@ CREATE TABLE audit_events (
     CHECK (actor_worker_host_id IS NULL OR (credential_kind='worker_host' AND credential_id IS NOT NULL AND credential_id=actor_worker_host_id AND credential_version IS NOT NULL)),
     CHECK (actor_session_id IS NULL OR (credential_kind='worker_host' AND credential_id IS NOT NULL AND credential_version IS NOT NULL AND runtime_generation IS NOT NULL)),
     CHECK (authentication_result NOT IN ('failed','absent') OR authorization_evidence->>'decision'='not_evaluated'),
-    CHECK (authentication_result NOT IN ('failed','absent') OR outcome IN ('denied','failed') OR
+    CONSTRAINT audit_anonymous_operation CHECK (authentication_result NOT IN ('failed','absent') OR outcome IN ('denied','failed') OR
       (authentication_result='absent' AND action IN ('identity.device_started','identity.magic_link_requested'))),
-    CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','magic_link','device_code')),
-    CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('login_session','device_code','magic_link') OR credential_id IS NOT NULL),
-    CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('provider_assertion') OR identity_provider IS NOT NULL),
+    CONSTRAINT audit_user_credential_kind CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','magic_link','device_code')),
+    CONSTRAINT audit_user_credential_id CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('login_session','device_code','magic_link') OR credential_id IS NOT NULL),
+    CONSTRAINT audit_user_provider CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('provider_assertion') OR identity_provider IS NOT NULL),
     CHECK (actor_component IS NULL OR authentication_result<>'verified' OR (actor_component='capacity_controller' AND credential_kind='capacity_token')),
     CHECK (actor_session_id IS NOT NULL OR (runtime_generation IS NULL AND process_epoch IS NULL))
 );

@@ -5,7 +5,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
 	"testing"
 	"uuid"
 )
@@ -18,7 +17,7 @@ func TestAuthIdentityCreationDoesNotCorrelateOrOverwriteAccountByEmail(t *testin
 	q := db.New(d.Pool)
 	first, second := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name,primary_email) VALUES($1,'Original','original@example.test'),($2,'Other','other@example.test')`, first, second)
-	source, err := q.CreateAuthIdentity(t.Context(), db.CreateAuthIdentityParams{ID: pgvalue.NewUUIDv7(), UserID: pgvalue.UUID(first), Provider: "github", Subject: "123", ObservedEmail: pgtype.Text{String: "other@example.test", Valid: true}})
+	source, err := q.CreateAuthIdentity(t.Context(), db.CreateAuthIdentityParams{ID: pgvalue.NewUUIDv7(), UserID: pgvalue.UUID(first), Provider: "github", Subject: "123"})
 	if err != nil {
 		t.Fatal(err)
 	}

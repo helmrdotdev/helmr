@@ -95,12 +95,8 @@ func StartEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Config
 				return ErrInvalidToken
 			}
 		}
-		var epoch pgtype.Int8
-		if input.Session.UserID != uuid.Nil() {
-			epoch = pgtype.Int8{Int64: input.Session.AccessEpoch, Valid: true}
-		}
-		if err := tx.QueryRow(ctx, `INSERT INTO email_challenges(id,email,purpose,code_mac,next_send_at,browser_hash,user_id,session_id,access_epoch,invitation_id,safe_next,expires_at)
-  VALUES($1,$2,$3,$4,clock_timestamp()+interval '60 seconds',$5,$6,$7,$8,$9,$10,clock_timestamp()+interval '10 minutes') RETURNING expires_at,next_send_at`, result.ID, email, purpose, codeMAC(cfg, result.ID, 0, result.Code), input.BrowserHash, optionalUUID(input.Session.UserID), optionalUUID(input.Session.SessionID), epoch, optionalUUID(input.InvitationID), input.Next).Scan(&result.ExpiresAt, &result.ResendAfter); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO email_challenges(id,email,purpose,code_mac,next_send_at,browser_hash,session_id,safe_next,expires_at)
+  VALUES($1,$2,$3,$4,clock_timestamp()+interval '60 seconds',$5,$6,$7,clock_timestamp()+interval '10 minutes') RETURNING expires_at,next_send_at`, result.ID, email, purpose, codeMAC(cfg, result.ID, 0, result.Code), input.BrowserHash, optionalUUID(input.Session.SessionID), input.Next).Scan(&result.ExpiresAt, &result.ResendAfter); err != nil {
 			return err
 		}
 		return audit.Append(ctx, tx, cfg.auditPolicy, audit.Event{Evidence: audit.Unauthenticated("absent", ""), Action: "identity.email_code_requested", TargetKind: "email_challenge", TargetID: result.ID, Details: audit.AuthenticationDetails{Method: "email_code"}})
@@ -172,11 +168,12 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "email:"+ownerEmail); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE lower(primary_email)=$1 OR id=(SELECT user_id FROM email_challenges WHERE id=$2) ORDER BY id FOR UPDATE`, ownerEmail, id); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE lower(primary_email)=$1 OR id=(SELECT s.user_id FROM email_challenges c JOIN login_sessions s ON s.id=c.session_id WHERE c.id=$2) ORDER BY id FOR UPDATE`, ownerEmail, id); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT email,safe_next,generation,failed_attempts,code_mac,user_id,session_id,access_epoch FROM email_challenges
-   WHERE id=$1 AND browser_hash=$2 AND purpose=$3 AND consumed_at IS NULL AND revoked_at IS NULL AND sent_at IS NOT NULL AND expires_at>clock_timestamp() FOR UPDATE`, id, binding, purpose).Scan(&email, &next, &generation, &attempts, &mac, &userID, &sessionID, &epoch)
+		err := tx.QueryRow(ctx, `SELECT c.email,c.safe_next,c.generation,c.failed_attempts,c.code_mac,s.user_id,c.session_id,s.access_epoch
+ FROM email_challenges c LEFT JOIN login_sessions s ON s.id=c.session_id
+ WHERE c.id=$1 AND c.browser_hash=$2 AND c.purpose=$3 AND c.consumed_at IS NULL AND c.revoked_at IS NULL AND c.sent_at IS NOT NULL AND c.expires_at>clock_timestamp() FOR UPDATE OF c`, id, binding, purpose).Scan(&email, &next, &generation, &attempts, &mac, &userID, &sessionID, &epoch)
 		if isNoRows(err) {
 			return ErrInvalidToken
 		}
@@ -272,7 +269,7 @@ func emailUser(ctx context.Context, tx pgx.Tx, email string) (signedInUser, erro
 	}
 	identity, err := q.GetAuthIdentity(ctx, db.GetAuthIdentityParams{Provider: "email", Subject: pgvalue.MustUUIDValue(user.ID).String()})
 	if isNoRows(err) || err == nil && identity.RevokedAt.Valid {
-		identity, err = q.CreateAuthIdentity(ctx, db.CreateAuthIdentityParams{ID: pgvalue.UUID(uuid.NewV7()), UserID: user.ID, Provider: "email", Subject: pgvalue.MustUUIDValue(user.ID).String(), ObservedEmail: user.PrimaryEmail})
+		identity, err = q.CreateAuthIdentity(ctx, db.CreateAuthIdentityParams{ID: pgvalue.UUID(uuid.NewV7()), UserID: user.ID, Provider: "email", Subject: pgvalue.MustUUIDValue(user.ID).String()})
 	}
 	if err != nil {
 		return signedInUser{}, err

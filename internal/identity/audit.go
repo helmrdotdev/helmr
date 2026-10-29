@@ -46,7 +46,7 @@ func accountSecurityEvent(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Pri
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(primary_email,'') FROM users WHERE id=$1`, p.UserID).Scan(&recipient); err != nil {
 		return err
 	}
-	return enqueueSecurityNotification(ctx, tx, p.UserID, action, recipient)
+	return enqueueSecurityNotification(ctx, tx, action, recipient)
 }
 func operatorSecurityEvent(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principal, action string, credential uuid.UUID) error {
 	target, kind := p.OperatorID, "operator"

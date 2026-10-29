@@ -43,12 +43,8 @@ func storeCeremony(ctx context.Context, tx pgx.Tx, session *webauthn.SessionData
 		return uuid.Nil(), err
 	}
 	id := uuid.NewV7()
-	var epoch pgtype.Int8
-	if target.purpose != "login" {
-		epoch = pgtype.Int8{Int64: target.epoch, Valid: true}
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO webauthn_challenges(id,ceremony,purpose,operator_scope,verification_state,browser_hash,user_id,operator_id,session_id,operator_passkey_enrollment_id,account_repair_enrollment_id,expected_access_epoch,expires_at)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, id, ceremony, target.purpose, target.operatorScope, data, binding, optionalUUID(target.user), optionalUUID(target.operator), optionalUUID(target.session), optionalUUID(target.enrollment), optionalUUID(target.repair), epoch, session.Expires)
+	_, err = tx.Exec(ctx, `INSERT INTO webauthn_challenges(id,ceremony,purpose,operator_scope,verification_state,browser_hash,session_id,operator_passkey_enrollment_id,account_repair_enrollment_id,expires_at)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, ceremony, target.purpose, target.operatorScope, data, binding, optionalUUID(target.session), optionalUUID(target.enrollment), optionalUUID(target.repair), session.Expires)
 	return id, err
 }
 func loadCeremony(ctx context.Context, tx pgx.Tx, id uuid.UUID, binding []byte, ceremony string) (webauthn.SessionData, keyTarget, error) {
@@ -57,7 +53,12 @@ func loadCeremony(ctx context.Context, tx pgx.Tx, id uuid.UUID, binding []byte, 
 	var epoch pgtype.Int8
 	var target keyTarget
 	var state webauthn.SessionData
-	err := tx.QueryRow(ctx, `SELECT verification_state,purpose,operator_scope,user_id,operator_id,session_id,operator_passkey_enrollment_id,account_repair_enrollment_id,expected_access_epoch FROM webauthn_challenges WHERE id=$1 AND browser_hash=$2 AND ceremony=$3 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE`, id, binding, ceremony).Scan(&data, &target.purpose, &target.operatorScope, &user, &operator, &session, &enrollment, &repair, &epoch)
+	err := tx.QueryRow(ctx, `SELECT c.verification_state,c.purpose,c.operator_scope,COALESCE(s.user_id,r.user_id),COALESCE(s.operator_id,e.operator_id),c.session_id,c.operator_passkey_enrollment_id,c.account_repair_enrollment_id,COALESCE(s.access_epoch,e.expected_access_epoch,r.expected_access_epoch)
+ FROM webauthn_challenges c
+ LEFT JOIN login_sessions s ON s.id=c.session_id
+ LEFT JOIN operator_passkey_enrollments e ON e.id=c.operator_passkey_enrollment_id
+ LEFT JOIN account_repair_enrollments r ON r.id=c.account_repair_enrollment_id
+ WHERE c.id=$1 AND c.browser_hash=$2 AND c.ceremony=$3 AND c.consumed_at IS NULL AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp() FOR UPDATE OF c`, id, binding, ceremony).Scan(&data, &target.purpose, &target.operatorScope, &user, &operator, &session, &enrollment, &repair, &epoch)
 	if isNoRows(err) {
 		return state, target, ErrInvalidToken
 	}
@@ -123,7 +124,7 @@ func beginPasskeyLogin(ctx context.Context, database db.TxBeginner, wa *webauthn
 	}
 	target := keyTarget{purpose: "login", operatorScope: operator}
 	if existing.SessionID != uuid.Nil() {
-		target = keyTarget{purpose: "confirm", operatorScope: operator, user: existing.UserID, operator: existing.OperatorID, session: existing.SessionID, epoch: existing.AccessEpoch}
+		target = keyTarget{purpose: "confirm", operatorScope: operator, session: existing.SessionID}
 	}
 	if renew {
 		target.purpose = "renew"
@@ -262,7 +263,7 @@ func finishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config,
 func BeginAccountPasskey(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, p auth.Principal, binding []byte) (RegistrationOptions, error) {
 	var result RegistrationOptions
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		user, epoch, err := loadKeyUser(ctx, tx, p.UserID, uuid.Nil())
+		user, _, err := loadKeyUser(ctx, tx, p.UserID, uuid.Nil())
 		if err != nil {
 			return err
 		}
@@ -273,7 +274,7 @@ func BeginAccountPasskey(ctx context.Context, database db.TxBeginner, wa *webaut
 		if err != nil {
 			return err
 		}
-		id, err := storeCeremony(ctx, tx, state, "register", keyTarget{user: p.UserID, session: p.SessionID, epoch: epoch, purpose: "register"}, binding)
+		id, err := storeCeremony(ctx, tx, state, "register", keyTarget{session: p.SessionID, purpose: "register"}, binding)
 		result = RegistrationOptions{ChallengeID: id, PublicKey: options.Response}
 		return err
 	})

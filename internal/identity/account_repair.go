@@ -154,7 +154,7 @@ func BeginAccountRepairRegistration(ctx context.Context, database db.TxBeginner,
 		if state.Expires.After(repair.expires) {
 			state.Expires = repair.expires
 		}
-		challenge, err := storeCeremony(ctx, tx, state, "register", keyTarget{user: repair.user, repair: id, epoch: repair.epoch, purpose: "repair"}, binding)
+		challenge, err := storeCeremony(ctx, tx, state, "register", keyTarget{repair: id, purpose: "repair"}, binding)
 		result = RegistrationOptions{ChallengeID: challenge, PublicKey: options.Response}
 		return err
 	})
@@ -202,6 +202,6 @@ func CompleteAccountRepairRegistration(ctx context.Context, database db.TxBeginn
 		if err = tx.QueryRow(ctx, `SELECT COALESCE(primary_email,'') FROM users WHERE id=$1`, repair.user).Scan(&recipient); err != nil {
 			return err
 		}
-		return enqueueSecurityNotification(ctx, tx, repair.user, "identity.account_repaired", recipient)
+		return enqueueSecurityNotification(ctx, tx, "identity.account_repaired", recipient)
 	})
 }

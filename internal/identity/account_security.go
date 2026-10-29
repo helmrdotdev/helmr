@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type CredentialSummary struct {
@@ -66,10 +65,12 @@ func invalidateAccount(ctx context.Context, tx pgx.Tx, user uuid.UUID) error {
 	if _, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1 AND revoked_at IS NULL`, user); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE email_challenges SET revoked_at=clock_timestamp() WHERE user_id=$1 AND consumed_at IS NULL`, user); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE email_challenges c SET revoked_at=clock_timestamp() FROM login_sessions s WHERE s.id=c.session_id AND s.user_id=$1 AND c.consumed_at IS NULL`, user); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE webauthn_challenges SET revoked_at=clock_timestamp() WHERE user_id=$1 AND consumed_at IS NULL`, user); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE webauthn_challenges c SET revoked_at=clock_timestamp() WHERE c.consumed_at IS NULL AND
+ (EXISTS(SELECT 1 FROM login_sessions s WHERE s.id=c.session_id AND s.user_id=$1)
+ OR EXISTS(SELECT 1 FROM account_repair_enrollments r WHERE r.id=c.account_repair_enrollment_id AND r.user_id=$1))`, user); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE device_codes SET status='denied',consumed_at=NULL WHERE user_id=$1 AND status='approved'`, user); err != nil {
@@ -152,7 +153,7 @@ func LinkProvider(ctx context.Context, database db.TxBeginner, cfg Config, p aut
 		}
 		added := isNoRows(err) || existing.RevokedAt.Valid
 		if added {
-			existing, err = q.CreateAuthIdentity(ctx, db.CreateAuthIdentityParams{ID: optionalUUID(uuid.NewV7()), UserID: optionalUUID(p.UserID), Provider: external.Provider, Subject: external.Subject, ObservedEmail: pgtype.Text{String: external.Email, Valid: external.Email != ""}})
+			existing, err = q.CreateAuthIdentity(ctx, db.CreateAuthIdentityParams{ID: optionalUUID(uuid.NewV7()), UserID: optionalUUID(p.UserID), Provider: external.Provider, Subject: external.Subject})
 		}
 		if err != nil {
 			return err

@@ -7,11 +7,11 @@ import (
 	"uuid"
 )
 
-func enqueueSecurityNotification(ctx context.Context, q db.DBTX, user uuid.UUID, event, recipient string) error {
+func enqueueSecurityNotification(ctx context.Context, q db.DBTX, event, recipient string) error {
 	if recipient == "" {
 		return nil
 	}
-	_, err := q.Exec(ctx, `INSERT INTO account_security_notifications(id,user_id,event,recipient,status) VALUES($1,$2,$3,$4,'pending')`, uuid.NewV7(), user, event, recipient)
+	_, err := q.Exec(ctx, `INSERT INTO account_security_notifications(id,event,recipient) VALUES($1,$2,$3)`, uuid.NewV7(), event, recipient)
 	return err
 }
 
@@ -25,7 +25,7 @@ type SecurityNotification struct {
 func ClaimSecurityNotification(ctx context.Context, q db.DBTX) (SecurityNotification, bool, error) {
 	n := SecurityNotification{ClaimID: uuid.NewV7()}
 	err := q.QueryRow(ctx, `UPDATE account_security_notifications SET claim_id=$1,lease_until=clock_timestamp()+interval '2 minutes',attempts=attempts+1
- WHERE id=(SELECT id FROM account_security_notifications WHERE status='pending' AND next_attempt_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<=clock_timestamp()) ORDER BY next_attempt_at,id FOR UPDATE SKIP LOCKED LIMIT 1)
+ WHERE id=(SELECT id FROM account_security_notifications WHERE next_attempt_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<=clock_timestamp()) ORDER BY next_attempt_at,id FOR UPDATE SKIP LOCKED LIMIT 1)
  RETURNING id,event,recipient`, n.ClaimID).Scan(&n.ID, &n.Event, &n.Recipient)
 	if isNoRows(err) {
 		return n, false, nil
@@ -35,10 +35,10 @@ func ClaimSecurityNotification(ctx context.Context, q db.DBTX) (SecurityNotifica
 
 func CompleteSecurityNotification(ctx context.Context, q db.DBTX, n SecurityNotification, delivered bool) error {
 	if delivered {
-		_, err := q.Exec(ctx, `UPDATE account_security_notifications SET status='delivered',delivered_at=clock_timestamp(),claim_id=NULL,lease_until=NULL WHERE id=$1 AND claim_id=$2 AND status='pending'`, n.ID, n.ClaimID)
+		_, err := q.Exec(ctx, `DELETE FROM account_security_notifications WHERE id=$1 AND claim_id=$2`, n.ID, n.ClaimID)
 		return err
 	}
-	_, err := q.Exec(ctx, `UPDATE account_security_notifications SET next_attempt_at=clock_timestamp()+LEAST(attempts,60)*interval '1 minute',claim_id=NULL,lease_until=NULL WHERE id=$1 AND claim_id=$2 AND status='pending'`, n.ID, n.ClaimID)
+	_, err := q.Exec(ctx, `UPDATE account_security_notifications SET next_attempt_at=clock_timestamp()+LEAST(attempts,60)*interval '1 minute',claim_id=NULL,lease_until=NULL WHERE id=$1 AND claim_id=$2`, n.ID, n.ClaimID)
 	return err
 }
 

@@ -10,18 +10,11 @@ import (
 
 func TestEmailChallengePurposeConstraints(t *testing.T) {
 	f := newIdentityFixture(t)
-	org := f.organization(t, "challenge")
-	inv, _ := f.invitation(t, org, "join@example.test", "member")
-	for _, tc := range []struct {
-		purpose    string
-		invitation any
-	}{
-		{"invite", nil}, {"login", inv.ID}, {"email_change", nil}, {"unknown", nil},
-	} {
-		_, err := f.pool.Exec(t.Context(), `INSERT INTO email_challenges(id,email,purpose,code_mac,next_send_at,browser_hash,invitation_id,expires_at) VALUES($1,'join@example.test',$2,$3,clock_timestamp(),$3,$4,clock_timestamp()+interval '10 minutes')`, uuid.NewV7(), tc.purpose, bytes.Repeat([]byte{1}, 32), tc.invitation)
+	for _, purpose := range []string{"email_change", "unknown"} {
+		_, err := f.pool.Exec(t.Context(), `INSERT INTO email_challenges(id,email,purpose,code_mac,next_send_at,browser_hash,expires_at) VALUES($1,'join@example.test',$2,$3,clock_timestamp(),$3,clock_timestamp()+interval '10 minutes')`, uuid.NewV7(), purpose, bytes.Repeat([]byte{1}, 32))
 		var pe *pgconn.PgError
 		if !errors.As(err, &pe) || pe.Code != "23514" {
-			t.Fatal(tc, err)
+			t.Fatal(purpose, err)
 		}
 	}
 	c, b := emailChallenge(t, f, "history@example.test")

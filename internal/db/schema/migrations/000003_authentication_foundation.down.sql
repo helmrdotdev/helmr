@@ -11,7 +11,7 @@ ALTER TABLE slack_requests DROP COLUMN source_link_id;
 ALTER TABLE slack_threads DROP COLUMN initial_recipient_link_id;
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM account_security_notifications) THEN
-  RAISE EXCEPTION 'account security notification history requires backup before rollback';
+  RAISE EXCEPTION 'undelivered account security notifications require disposition before rollback';
  END IF;
 END $$;
 DROP TABLE account_security_notifications;
@@ -19,28 +19,18 @@ DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM audit_events WHERE action='identity.email_code_requested' OR actor_operator_id IS NOT NULL OR credential_kind IN ('email_code','passkey','slack_link')) THEN
  RAISE EXCEPTION 'authentication downgrade requires a pre-cutover backup'; END IF;
 END $$;
-ALTER TABLE audit_events DROP CONSTRAINT audit_anonymous_operation;
-ALTER TABLE audit_events ADD CHECK (authentication_result NOT IN ('failed','absent') OR outcome IN ('denied','failed') OR (authentication_result='absent' AND action IN ('identity.device_started','identity.magic_link_requested')));
-ALTER TABLE audit_events DROP CONSTRAINT audit_actor_check_0;
-ALTER TABLE audit_events DROP CONSTRAINT audit_actor_check_1;
-ALTER TABLE audit_events DROP CONSTRAINT audit_actor_check_2;
-ALTER TABLE audit_events DROP CONSTRAINT audit_actor_check_3;
-ALTER TABLE audit_events DROP CONSTRAINT audit_actor_check_4;
-ALTER TABLE audit_events DROP CONSTRAINT audit_actor_check_5;
-ALTER TABLE audit_events DROP CONSTRAINT audit_actor_check_6;
+ALTER TABLE audit_events DROP CONSTRAINT audit_actor_count,
+ DROP CONSTRAINT audit_actor_authentication,
+ DROP CONSTRAINT audit_actor_identity_presence,
+ DROP CONSTRAINT audit_user_credential_kind;
 DROP INDEX audit_events_actor;
 ALTER TABLE audit_events DROP COLUMN actor_operator_id;
 CREATE INDEX audit_events_actor ON audit_events(org_id,(COALESCE(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id)),recorded_at DESC,id DESC);
-ALTER TABLE audit_events ADD CHECK (num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)<=1);
-ALTER TABLE audit_events ADD CHECK ((num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)=0) = (authentication_result IN ('failed','absent')));
-ALTER TABLE audit_events ADD CHECK ((actor_user_id IS NOT NULL) = (actor_identity IS NOT NULL));
-ALTER TABLE audit_events ADD CHECK (actor_user_id IS NULL OR
-           (actor_identity ?& ARRAY['source','display_name'] AND
-            jsonb_typeof(actor_identity->'source')='string' AND actor_identity->>'source'='account' AND
-            jsonb_typeof(actor_identity->'display_name')='string' AND octet_length(actor_identity->>'display_name')>0));
-ALTER TABLE audit_events ADD CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','magic_link','device_code'));
-ALTER TABLE audit_events ADD CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('login_session','device_code','magic_link') OR credential_id IS NOT NULL);
-ALTER TABLE audit_events ADD CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('provider_assertion') OR identity_provider IS NOT NULL);
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_count CHECK (num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)<=1);
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_authentication CHECK ((num_nonnulls(actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)=0) = (authentication_result IN ('failed','absent')));
+ALTER TABLE audit_events ADD CONSTRAINT audit_actor_identity_presence CHECK ((actor_user_id IS NOT NULL) = (actor_identity IS NOT NULL));
+ALTER TABLE audit_events ADD CONSTRAINT audit_user_credential_kind CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','magic_link','device_code'));
+ALTER TABLE audit_events ADD CONSTRAINT audit_anonymous_operation CHECK (authentication_result NOT IN ('failed','absent') OR outcome IN ('denied','failed') OR (authentication_result='absent' AND action IN ('identity.device_started','identity.magic_link_requested')));
 ALTER TABLE audit_events DROP CONSTRAINT audit_events_credential_kind_check;
 ALTER TABLE audit_events ADD CONSTRAINT audit_events_credential_kind_check CHECK (credential_kind IN ('login_session','api_key','worker_host','capacity_token','provider_assertion','magic_link','device_code'));
 -- Downgrade cannot restore proofless credentials or operator authority. Refuse
@@ -56,7 +46,7 @@ DROP TABLE account_repair_enrollments;
 DROP TABLE operator_passkey_enrollments;
 DROP TABLE email_challenges;
 ALTER TABLE device_codes DROP COLUMN user_id, DROP COLUMN identity_id, DROP COLUMN passkey_id,
- DROP COLUMN authenticated_at, DROP COLUMN access_epoch, DROP COLUMN browser_session_id, DROP COLUMN replaces_session_id;
+ DROP COLUMN authenticated_at, DROP COLUMN browser_session_id, DROP COLUMN replaces_session_id;
 ALTER TABLE device_codes ADD FOREIGN KEY (org_id,decided_by_member_id) REFERENCES org_members(org_id,id) ON DELETE SET NULL (decided_by_member_id);
 DELETE FROM login_sessions WHERE user_id IS NULL;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_shape, DROP CONSTRAINT login_sessions_owner;
@@ -92,7 +82,7 @@ ALTER TABLE auth_identities DROP CONSTRAINT auth_identities_user_id_fkey;
 ALTER TABLE auth_identities ADD FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
 ALTER TABLE auth_identities DROP CONSTRAINT auth_identities_id_user_id_key;
 ALTER TABLE auth_identities ADD UNIQUE (provider,subject);
-ALTER TABLE auth_identities RENAME COLUMN observed_email TO email;
+ALTER TABLE auth_identities ADD COLUMN email text;
 ALTER TABLE auth_identities RENAME COLUMN last_authenticated_at TO last_login_at;
 CREATE TYPE magic_link_purpose AS ENUM ('login','invite_accept');
 ALTER TABLE invitations ADD UNIQUE (org_id,id);
