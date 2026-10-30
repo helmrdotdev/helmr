@@ -124,7 +124,7 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
       throw error;
     }
     if (error instanceof ApiError && error.code === "recent_authentication_required") {
-      window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator } }));
+      window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator, reason: error.message } }));
     }
     const needsLogin = error instanceof ApiError && (error.code === "authentication_required" || (error.status === 401 && error.code === "unauthorized"));
     if (!needsLogin) throw error;
@@ -147,7 +147,7 @@ export async function request<T>(path: string, init: RequestOptions = {}): Promi
     } else {
       if (redirectOnUnauthorized && window.location.pathname !== loginPath) {
         if (account) {
-          window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator, signIn: true } }));
+          window.dispatchEvent(new CustomEvent("helmr-confirmation-required", { detail: { operator } }));
         } else window.location.href = withNext(loginPath, locationDestination(window.location));
       }
       throw error;

@@ -14,7 +14,7 @@ export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRe
   const me = useMe();
   const authenticationLost = createMemo(() => me.error instanceof ApiError && (me.error.status === 401 || me.error.code === "authentication_required"));
   createEffect(() => {
-    if (authenticationLost() && me.data) window.dispatchEvent(new CustomEvent("helmr-confirmation-required", {detail:{operator:false,signIn:true}}));
+    if (authenticationLost() && me.data) window.dispatchEvent(new CustomEvent("helmr-confirmation-required", {detail:{operator:false}}));
   });
   const redirectPath = createMemo(() => {
     const next = locationDestination(location);
@@ -39,7 +39,7 @@ export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRe
           />
         </AuthWindow>
       }>
-        <Show when={props.requirement === "session" || !me.data?.organization_access_denied} fallback={<AuthWindow><AuthError title="Organization access is unavailable" message="Confirm your sign-in to refresh access. If your membership is suspended, an administrator must resume it."/><A class={ui.button} href="/settings/account">Confirm sign-in</A><A class={ui.secondaryButton} href={withNext("/organizations",locationDestination(location))}>Choose another organization</A><button class={ui.secondaryButton} onClick={()=>void me.refetch()}>Retry</button></AuthWindow>}><div data-account-active style={{display:"contents"}}>{props.children}</div></Show>
+        <Show when={props.requirement === "session" || !me.data?.organization_access_denied} fallback={<AuthWindow><AuthError title="Organization access is unavailable" message="Confirm your sign-in to refresh access. If your membership is suspended, an administrator must resume it."/><button class={ui.button} onClick={() => window.dispatchEvent(new CustomEvent("helmr-confirmation-required", {detail:{operator:false}}))}>Confirm sign-in</button><A class={ui.secondaryButton} href={withNext("/organizations",locationDestination(location))}>Choose another organization</A><button class={ui.secondaryButton} onClick={()=>void me.refetch()}>Retry</button></AuthWindow>}><div data-account-active style={{display:"contents"}}>{props.children}</div></Show>
       </Show>
     </Show>
   );

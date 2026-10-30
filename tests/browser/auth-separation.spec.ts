@@ -3,18 +3,25 @@ import { authenticationResponse, isAuthenticationPath } from "./fixtures/authent
 
 // Real Console components and routing; deterministic HTTP responses isolate
 // interruption behavior from server authorization, covered by PostgreSQL tests.
-for (const interruption of ["confirmation", "expired", "background-expiry"] as const) {
+for (const interruption of ["confirmation", "expired", "background-expiry", "refresh-failure"] as const) {
   test(`secret form survives ${interruption} and only saves on explicit retry`, async ({ page, context }) => {
     let authenticated = true;
     let confirmed = false;
     let attempts = 0;
+    let refreshFailed = false;
     const now = new Date().toISOString();
     const environment = { environment: "production", project: "project", name: "Production", color_hex: "#1f7a4d", is_default: true, created_at: now, updated_at: now };
     const project = { project: "project", name: "Project", is_default: true, environments: [environment], created_at: now, updated_at: now };
     await context.route("**/api/**", async route => {
       const request = route.request();
       const path = new URL(request.url()).pathname;
+      if (path === "/api/auth/email/start") return route.fulfill({json:{challenge_id:"confirm",expires_at:new Date(Date.now()+600000).toISOString(),resend_after:new Date(Date.now()+60000).toISOString()}});
+      if (path === "/api/auth/email/confirm/verify") {authenticated=true;confirmed=true;return route.fulfill({json:{redirect_after:"/"}});}
       if (path === "/api/me" && !authenticated) return route.fulfill({ status: 403, json: { error: { code: "authentication_required", message: "Sign in" } } });
+      if (interruption === "refresh-failure" && confirmed && path === "/api/organizations" && !refreshFailed) {
+        refreshFailed=true;
+        return route.fulfill({status:500,json:{error:{code:"internal_error",message:"Context temporarily unavailable"}}});
+      }
       if (isAuthenticationPath(path)) return route.fulfill({ json: authenticationResponse(path, { user_id: "original-user", display_name: "Original", org_id: "org", permissions: ["secrets.read", "secrets.create"], project_required: false }) });
       if (path === "/api/projects") return route.fulfill({ json: { projects: [project] } });
       if (path === "/api/projects/project") return route.fulfill({ json: project });
@@ -45,16 +52,19 @@ for (const interruption of ["confirmation", "expired", "background-expiry"] as c
     }else await form.getByRole("button", { name: "Save", exact: true }).click();
     const notice = page.getByRole("dialog", { name: "Confirm your sign-in", exact: true });
     await expect(notice).toBeVisible();
-    const link = notice.getByRole("link", { name: "Confirm sign-in", exact: true });
-    await expect(link).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(notice.getByRole("button", { name: "Return to form", exact: true })).toBeFocused();
-    const [confirmation] = await Promise.all([context.waitForEvent("page"), link.click()]);
-    await confirmation.waitForLoadState();
-    authenticated = true; confirmed = true;
-    await confirmation.close();
-    await page.bringToFront();
-    await notice.getByRole("button", { name: "Return to form", exact: true }).click();
+    await notice.getByRole("button", { name: "Send verification code" }).click();
+    await notice.getByLabel("Verification code").fill("12345678");
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("helmr-confirmation-required", {detail:{operator:false}})));
+    await expect(notice.getByLabel("Verification code")).toHaveValue("12345678");
+    await notice.getByRole("button", { name: "Verify email", exact: true }).click();
+    if (interruption === "refresh-failure") {
+      await expect(notice.getByRole("alert")).toContainText("Context temporarily unavailable");
+      await expect(form.getByLabel("Value", {exact:true})).toHaveValue("form-only-private-value");
+      expect(attempts).toBe(1);
+      await notice.getByRole("button", {name:"Retry confirmation",exact:true}).click();
+    }
+    await expect(notice.getByRole("status")).toContainText("Sign-in confirmed");
+    await notice.getByRole("button", { name: "Return to your action", exact: true }).click();
     await expect(form.getByLabel("Secret ID", { exact: true })).toHaveValue("retained-secret");
     await expect(form.getByLabel("Value", { exact: true })).toHaveValue("form-only-private-value");
     expect(attempts).toBe(interruption==="background-expiry"?0:1);

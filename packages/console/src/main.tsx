@@ -18,7 +18,7 @@ window.addEventListener("storage",event=>{
   if(account && account.user_id!==sessionStorage.getItem("helmr.account")) {
    sessionStorage.removeItem("helmr.organization");window.location.reload();
   } else if(!account) {
-   window.dispatchEvent(new CustomEvent("helmr-confirmation-required",{detail:{operator:false,signIn:true}}));
+   window.dispatchEvent(new CustomEvent("helmr-confirmation-required",{detail:{operator:false}}));
   }
  }).catch(()=>{});
 });
