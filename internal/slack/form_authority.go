@@ -69,7 +69,7 @@ func readFormQuestion(ctx context.Context, tx pgx.Tx, app, team, actor string, c
 		}
 		return empty, 0, errControlInvalid
 	}
-	if err := session.AuthorizeSessionOperation(ctx, tx, slackCaller(human, target.Thread), target.Environment, target.Session, auth.PermissionSessionsAnswer); err != nil {
+	if err := session.AuthorizeSessionOperation(ctx, tx, session.UserCaller(human), target.Environment, target.Session, auth.PermissionSessionsAnswer); err != nil {
 		return empty, 0, err
 	}
 	var view session.AskView

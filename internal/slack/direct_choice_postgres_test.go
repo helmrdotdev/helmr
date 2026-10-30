@@ -38,7 +38,7 @@ func TestDirectChoiceUsesVerifiedActorAndExactQuestion(t *testing.T) {
 			}
 			turn, ask := f.choiceAsk(t)
 			if linked {
-				f.SetPermissions(t, "agents.use", "sessions.send")
+				f.SetPermissions(t, "sessions.answer")
 			}
 			c := f.control("choose")
 			c.Target.Turn, c.Target.Ask, c.OptionID = turn, ask, "yes"

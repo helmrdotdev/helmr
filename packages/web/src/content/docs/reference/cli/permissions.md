@@ -18,7 +18,7 @@ Creating a Role or Group alone grants no access.
 ```sh
 helmr role list
 helmr role get --builtin agent_user
-helmr role create "Operators" --permission sessions.send --permission agents.use
+helmr role create "Operators" --permission sessions.send --permission sessions.create
 helmr role copy --builtin session_viewer --name "Observers"
 helmr role update "Observers" --description "Read production sessions"
 helmr role delete "Observers" --yes
@@ -71,13 +71,14 @@ helmr role grant delete --id GRANT_ID --yes
 Workload creation requires an explicit Project and environment. If the Role
 contains Agent actions, supply one or more `--agent` flags or explicitly choose
 `--all-agents` to include future Agents. Other resource types automatically use
-the entire selected environment. For example, a Role containing `agents.use`
+the entire selected environment. For example, a Role containing `sessions.create`
 and `secrets.rotate` can use only invoice-checker while rotating secrets throughout
 Production. Assign that same Role separately for Staging to choose another Agent.
 Roles without explicit Agent actions accept no Agent-selection flags.
 
-All members is the logical set of active organization members and accepts only
-selected-Agent assignments containing `agents.use`. It is not a Group name or ID.
+All members is the logical set of active organization members. Like a human Group,
+it accepts organization Roles and environment Roles with selected or all Agents.
+It is not a Group name or ID.
 Organization assignments use `--organization` and no workload flags.
 API-key recipients use `--api-key-id` with the stable identity ID, never the
 secret. They require their own environment and a machine-assignable workload Role;

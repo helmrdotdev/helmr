@@ -49,7 +49,6 @@ type Caller struct {
 	CredentialKind    string
 	CredentialVersion int64
 	// Slack route provenance is supplied only by verified Slack admission, never request JSON.
-	SlackThreadID     uuid.UUID
 	SlackConnectionID uuid.UUID
 	Kind              string
 	ID                uuid.UUID

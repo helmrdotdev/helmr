@@ -24,7 +24,7 @@ export async function createAgentCatalog(page: Page, environmentPermissions: str
   expect(meResponse.ok(), await meResponse.text()).toBeTruthy();
   const { current_member: me } = await meResponse.json() as { current_member: { id: string } };
   const roleResponse = await page.request.post("/api/roles", { data: {
-    name: slug, description: "Browser conversation fixture", permissions: ["agents.read", "agents.use", "sessions.read", "sessions.create_keyed", "sessions.send", "sessions.answer", "sessions.resume", "sessions.interrupt", "sessions.cancel", "sessions.close", "triggers.read"],
+    name: slug, description: "Browser conversation fixture", permissions: ["agents.read", "sessions.create", "sessions.read", "sessions.create", "sessions.send", "sessions.answer", "sessions.resume", "sessions.interrupt", "sessions.cancel", "sessions.close", "triggers.read"],
   } });
   expect(roleResponse.ok(), await roleResponse.text()).toBeTruthy();
   const role = await roleResponse.json() as { id: string; revision: number };

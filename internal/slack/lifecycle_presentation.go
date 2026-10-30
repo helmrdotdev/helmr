@@ -113,7 +113,7 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 			if err != nil {
 				return "", nil, err
 			}
-			caller := slackCaller(p, target.Thread)
+			caller := session.UserCaller(p)
 			if action == "sleep" && computerID != nil {
 				if err := auth.Require(p, auth.PermissionComputersHibernate, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}, access.ErrDenied); err != nil {
 					return "", nil, err

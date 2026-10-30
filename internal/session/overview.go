@@ -111,7 +111,7 @@ const overviewActiveCTE = `WITH candidates AS (
 
 const overviewActiveSQL = overviewActiveCTE + `SELECT id,agent,state,since,origin,
  (SELECT c.slack_channel_id FROM slack_threads st JOIN slack_channel_bindings c ON c.id=st.slack_channel_binding_id WHERE st.environment_id=$1 AND st.front_session_id=active.id)
- FROM active ORDER BY CASE state WHEN 'held' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,since DESC,id LIMIT $9::int`
+ FROM active ORDER BY CASE state WHEN 'held' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,since DESC,id LIMIT $4::int`
 
 const overviewActiveCountsSQL = overviewActiveCTE + `SELECT agent,count(*) FILTER (WHERE state='running'),count(*) FILTER (WHERE state='queued'),count(*) FILTER (WHERE state='held') FROM active GROUP BY agent`
 
@@ -119,7 +119,7 @@ const overviewFailuresSQL = `SELECT a.key,COALESCE(t.error_code,''),count(*),cou
  (array_agg(t.session_id ORDER BY t.terminal_at DESC,t.id DESC))[1],(array_agg(t.id ORDER BY t.terminal_at DESC,t.id DESC))[1],(array_agg(t.seq ORDER BY t.terminal_at DESC,t.id DESC))[1]
  FROM turns t JOIN (SELECT id,agent_id FROM sessions WHERE ` + overviewReadable + `) v ON v.id=t.session_id JOIN agents a ON (a.environment_id,a.id)=(t.environment_id,v.agent_id)
  WHERE t.environment_id=$1 AND t.status='failed' AND t.created_at>=` + overviewWindow + `
- GROUP BY 1,2 ORDER BY 4 DESC,3 DESC,6 DESC LIMIT $9::int`
+ GROUP BY 1,2 ORDER BY 4 DESC,3 DESC,6 DESC LIMIT $4::int`
 
 // ReadOverview summarizes the Environment with the same authority as listing
 // its Sessions, in one snapshot.
@@ -136,11 +136,11 @@ func ReadOverview(ctx context.Context, policy auditpolicy.Policy, pool db.TxBegi
 		if err != nil {
 			return err
 		}
-		if !filter.All && !filter.AllAgents && len(filter.Agents) == 0 && len(filter.ViewAgents) == 0 {
+		if !filter.All && len(filter.Agents) == 0 {
 			return ErrDenied
 		}
 		args := func(extra ...any) []any {
-			return append([]any{env, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection)}, extra...)
+			return append([]any{env, filter.All, filter.Agents}, extra...)
 		}
 		if err := tx.QueryRow(ctx, overviewTotalsSQL, args()...).Scan(&result.Turns, &result.Failed, &result.PreviousTurns, &result.PreviousFailed); err != nil {
 			return err

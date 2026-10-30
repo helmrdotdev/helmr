@@ -92,8 +92,8 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 		return key.Raw, id
 	}
 	reader, _ := issue("reader", auth.PermissionSessionsRead)
-	responder, responderID := issue("responder", auth.PermissionAgentsUse, auth.PermissionSessionsRead, auth.PermissionSessionsAnswer)
-	both, _ := issue("sdk", auth.PermissionAgentsUse, auth.PermissionSessionsRead, auth.PermissionSessionsAnswer)
+	responder, responderID := issue("responder", auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsAnswer)
+	both, _ := issue("sdk", auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsAnswer)
 	base := fmt.Sprintf("/v1/sessions/%s/turns/%s/asks", f.Session, admission.TurnID)
 	call := func(method, path, token, body string, want int) map[string]json.RawMessage {
 		t.Helper()
@@ -154,7 +154,7 @@ func TestWorkerAgentAskHTTPAndSDK(t *testing.T) {
 		t.Fatal(result.Error)
 	}
 	// A human operator can answer with explicit run permissions.
-	f.SetPermissions(t, "agents.use", "sessions.read", "sessions.answer")
+	f.SetPermissions(t, "sessions.create", "sessions.read", "sessions.answer")
 	login := hf.session(t, f.User, org)
 	humanPath := fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/turns/%s/asks/%s", f.Session, admission.TurnID, ids[1])
 	call(http.MethodGet, humanPath, login, "", http.StatusOK)

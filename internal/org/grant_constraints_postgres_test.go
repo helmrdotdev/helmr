@@ -56,7 +56,7 @@ func TestGrantSchemaRejectsInvalidSubjectAndTenant(t *testing.T) {
 	}{
 		{name: "no subject", code: "23514"},
 		{name: "multiple subjects", member: &f.member.MemberID, group: &group.ID, code: "23514"},
-		{name: "audience organization scope", all: true, code: "23514"},
+		{name: "audience and member", all: true, member: &f.member.MemberID, code: "23514"},
 		{name: "agent without environment", member: &f.member.MemberID, agent: new(uuid.NewV7()), code: "23502"},
 		{name: "foreign group", group: &foreignGroup, code: "23503"},
 		{name: "foreign environment with null agent", member: &f.member.MemberID, environment: &foreignEnvironment, code: "23503"},

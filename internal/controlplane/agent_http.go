@@ -70,7 +70,7 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		slackChannelID = &route.ChannelID
 	}
-	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionAgentsUse)
+	caller, environment, err := s.agentRequestAuthority(r, auth.PermissionSessionsCreate)
 	if err != nil {
 		if slackChannelID != nil && errors.Is(err, session.ErrDenied) {
 			err = slackroute.ErrChannelUnavailable

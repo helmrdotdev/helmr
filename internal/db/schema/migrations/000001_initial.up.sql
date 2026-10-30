@@ -2498,7 +2498,6 @@ CREATE TABLE role_grants (
   CHECK (num_nonnulls(member_id,group_id,api_key_id) + all_members::int = 1),
   CHECK (NOT all_agents OR environment_id IS NOT NULL),
   CHECK (api_key_id IS NULL OR environment_id IS NOT NULL),
-  CHECK (NOT all_members OR (environment_id IS NOT NULL AND NOT all_agents)),
   FOREIGN KEY (org_id,member_id) REFERENCES org_members(org_id,id) ON DELETE CASCADE,
   FOREIGN KEY (org_id,group_id) REFERENCES permission_groups(org_id,id) ON DELETE CASCADE,
   FOREIGN KEY (org_id,role_id) REFERENCES roles(org_id,id) ON DELETE RESTRICT,

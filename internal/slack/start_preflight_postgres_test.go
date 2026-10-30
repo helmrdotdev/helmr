@@ -43,6 +43,7 @@ func TestExplicitSlackStartChecksDestination(t *testing.T) {
 				raw, _ := json.Marshal(map[string]any{"ok": true, "channel": map[string]any{"id": "C1", "name": "work", "context_team_id": "team", "is_channel": true, "is_member": mode != "target-denied"}})
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
 			}))
+			f.SetPermissions(t, "sessions.create")
 			caller := session.UserCaller(f.Principal(t))
 			channel := "C1"
 			result, err := Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, client, caller, session.StartRequest{EnvironmentID: f.Environment, Agent: "target", SlackChannelID: &channel, IdempotencyKey: "explicit-target", Input: json.RawMessage(`[{"type":"text","text":"private input"}]`)})

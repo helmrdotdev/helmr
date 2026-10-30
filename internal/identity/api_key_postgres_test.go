@@ -134,7 +134,7 @@ func TestAPIKeyPostgresAuthenticatesActiveKeys(t *testing.T) {
 func TestAPIKeyDuplicateNameAndRotation(t *testing.T) {
 	f := newAPIKeyFixture(t)
 	ctx := t.Context()
-	original := f.issue(t, "automation", auth.PermissionAgentsUse)
+	original := f.issue(t, "automation", auth.PermissionSessionsCreate)
 	if _, err := IssueAPIKey(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.owner, f.scope, APIKeyInput{Name: "automation"}); err == nil {
 		t.Fatal("reserved name accepted")
 	}
@@ -162,7 +162,7 @@ func TestAPIKeyDuplicateNameAndRotation(t *testing.T) {
 	if err := RevokeAPIKey(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.owner, f.scope, pgvalue.MustUUIDValue(original.Record.ID)); err != nil {
 		t.Fatal(err)
 	}
-	replacement := f.issue(t, "automation", auth.PermissionAgentsUse)
+	replacement := f.issue(t, "automation", auth.PermissionSessionsCreate)
 	if replacement.Record.ID == original.Record.ID {
 		t.Fatal("replacement reused identity")
 	}
@@ -330,7 +330,7 @@ func (q *apiKeyCountingQuerier) Query(ctx context.Context, sql string, args ...a
 func TestAPIKeyEditsAndRotationAuditRollback(t *testing.T) {
 	f := newAPIKeyFixture(t)
 	ctx := t.Context()
-	first := f.issue(t, "automation", auth.PermissionAgentsUse)
+	first := f.issue(t, "automation", auth.PermissionSessionsCreate)
 	id := pgvalue.MustUUIDValue(first.Record.ID)
 	expires := time.Now().Add(time.Hour)
 	edited, err := UpdateAPIKey(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.owner, f.scope, id, APIKeyUpdate{Name: "renamed", ExpiresAt: &expires})
@@ -356,7 +356,7 @@ func TestAPIKeyEditsAndRotationAuditRollback(t *testing.T) {
 		t.Fatal("revoke ignored audit failure")
 	}
 	current, err := NewAPIKeyAuthenticator(f.pool).Authenticate(ctx, first.Raw)
-	if err != nil || !current.HasPermission(auth.PermissionAgentsUse, f.scope) {
+	if err != nil || !current.HasPermission(auth.PermissionSessionsCreate, f.scope) {
 		t.Fatal("rollback lost original active token or edited policy", err)
 	}
 	var count int
@@ -368,10 +368,10 @@ func TestAPIKeyEditsAndRotationAuditRollback(t *testing.T) {
 func TestMachinePrincipalSurvivesCreatorOffboardingAndRejectsStaleManager(t *testing.T) {
 	f := newAPIKeyFixture(t)
 	ctx := t.Context()
-	key := f.issue(t, "service", auth.PermissionAgentsUse)
+	key := f.issue(t, "service", auth.PermissionSessionsCreate)
 	f.exec(t, `UPDATE org_members SET is_owner=false,removed_at=now() WHERE org_id=$1 AND user_id=$2`, f.owner.OrgID, f.owner.UserID)
 	p, err := NewAPIKeyAuthenticator(f.pool).Authenticate(ctx, key.Raw)
-	if err != nil || !p.HasPermission(auth.PermissionAgentsUse, f.scope) {
+	if err != nil || !p.HasPermission(auth.PermissionSessionsCreate, f.scope) {
 		t.Fatal("creator offboarding revoked machine identity", err)
 	}
 	if _, err := RotateAPIKey(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.owner, f.scope, pgvalue.MustUUIDValue(key.Record.ID)); !errors.Is(err, ErrAPIKeyManagementRequired) {
@@ -391,7 +391,7 @@ func TestAPIKeyRotateRacesRevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 4 {
-		key := f.issue(t, fmt.Sprintf("race-%d", i), auth.PermissionAgentsUse)
+		key := f.issue(t, fmt.Sprintf("race-%d", i), auth.PermissionSessionsCreate)
 		id := pgvalue.MustUUIDValue(key.Record.ID)
 		start := make(chan struct{})
 		revoked := make(chan error, 1)
@@ -443,14 +443,14 @@ func TestAPIKeyRotateRacesRevoke(t *testing.T) {
 func TestAPIKeyRoleIssuanceIsAtomicAndRequiresAccessManagement(t *testing.T) {
 	f := newAPIKeyFixture(t)
 	ctx := t.Context()
-	role := f.role(t, auth.PermissionAgentsUse)
+	role := f.role(t, auth.PermissionSessionsCreate)
 	f.exec(t, `DELETE FROM role_grants WHERE member_id=$1 AND environment_id IS NULL`, f.owner.MemberID)
 	plain, err := IssueAPIKey(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.owner, f.scope, APIKeyInput{Name: "unassigned"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	p, err := NewAPIKeyAuthenticator(f.pool).Authenticate(ctx, plain.Raw)
-	if err != nil || len(p.Grants) != 0 || p.HasPermission(auth.PermissionAgentsUse, f.scope) {
+	if err != nil || len(p.Grants) != 0 || p.HasPermission(auth.PermissionSessionsCreate, f.scope) {
 		t.Fatal("unassigned key acquired access", err)
 	}
 	if _, err := IssueAPIKey(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, f.owner, f.scope, APIKeyInput{Name: "cannot-assign", Role: role}); !errors.Is(err, org.ErrMemberManagementRequired) {
@@ -471,7 +471,7 @@ func TestAPIKeyRoleIssuanceIsAtomicAndRequiresAccessManagement(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err = NewAPIKeyAuthenticator(f.pool).Authenticate(ctx, key.Raw)
-	if err != nil || !p.HasPermission(auth.PermissionAgentsUse, f.scope) {
+	if err != nil || !p.HasPermission(auth.PermissionSessionsCreate, f.scope) {
 		t.Fatal("Role not effective", err)
 	}
 }

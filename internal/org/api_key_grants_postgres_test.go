@@ -53,14 +53,14 @@ func (f machineGrantFixture) check(t *testing.T, key, agent, env uuid.UUID, perm
 func TestAPIKeyRoleGrantsUseCurrentSelectedTargets(t *testing.T) {
 	f := newMachineGrantFixture(t)
 	ctx := t.Context()
-	role := f.role(t, "agents.use")
+	role := f.role(t, "sessions.create")
 	// A human sharing assignment cannot give an unassigned machine access.
 	human := f.input(role)
 	human.Subject = org.GrantSubject{Type: "all_members"}
 	if _, err := org.AssignRole(ctx, f.pool, f.owner, human); err != nil {
 		t.Fatal(err)
 	}
-	f.check(t, f.key, f.agent, f.env, auth.PermissionAgentsUse, false)
+	f.check(t, f.key, f.agent, f.env, auth.PermissionSessionsCreate, false)
 	input := f.input(role)
 	rows, err := org.AssignRole(ctx, f.pool, f.owner, input)
 	if err != nil {
@@ -74,15 +74,15 @@ func TestAPIKeyRoleGrantsUseCurrentSelectedTargets(t *testing.T) {
 	if err != nil || again[0].ID != grant.ID || again[0].Created {
 		t.Fatal("duplicate assignment", err)
 	}
-	f.check(t, f.key, f.agent, f.env, auth.PermissionAgentsUse, true)
-	f.check(t, f.key, f.otherAgent, f.env, auth.PermissionAgentsUse, false)
-	f.check(t, f.key, f.agent, f.otherEnv, auth.PermissionAgentsUse, false)
+	f.check(t, f.key, f.agent, f.env, auth.PermissionSessionsCreate, true)
+	f.check(t, f.key, f.otherAgent, f.env, auth.PermissionSessionsCreate, false)
+	f.check(t, f.key, f.agent, f.otherEnv, auth.PermissionSessionsCreate, false)
 	// The same Role, assigned directly to a human, has the same operations/targets.
 	human.Subject = org.GrantSubject{Type: "member", MemberID: &f.member.MemberID}
 	if _, err := org.AssignRole(ctx, f.pool, f.owner, human); err != nil {
 		t.Fatal(err)
 	}
-	if err := access.Check(ctx, f.pool, "user", f.member.UserID, f.env, f.agent, auth.PermissionAgentsUse); err != nil {
+	if err := access.Check(ctx, f.pool, "user", f.member.UserID, f.env, f.agent, auth.PermissionSessionsCreate); err != nil {
 		t.Fatal(err)
 	}
 	// Remove All members before changing the shared Role to view+secrets.
@@ -97,7 +97,7 @@ func TestAPIKeyRoleGrantsUseCurrentSelectedTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.check(t, f.key, f.agent, f.env, auth.PermissionAgentsUse, false)
+	f.check(t, f.key, f.agent, f.env, auth.PermissionSessionsCreate, false)
 	f.check(t, f.key, f.agent, f.env, auth.PermissionSessionsRead, true)
 	f.check(t, f.key, f.otherAgent, f.env, auth.PermissionSessionsRead, false)
 	f.check(t, f.key, f.otherAgent, f.env, auth.PermissionSecretsCreate, true)
@@ -137,7 +137,7 @@ func TestAPIKeyRoleGrantsUseCurrentSelectedTargets(t *testing.T) {
 func TestAPIKeyRoleCompatibilityAndScopeConstraints(t *testing.T) {
 	f := newMachineGrantFixture(t)
 	ctx := t.Context()
-	role := f.role(t, "agents.use")
+	role := f.role(t, "sessions.create")
 	input := f.input(role)
 	for _, permission := range []string{"api_keys.create", "agents.delete", "assignments.create", "projects.create"} {
 		incompatible := f.role(t, permission)
@@ -154,11 +154,11 @@ func TestAPIKeyRoleCompatibilityAndScopeConstraints(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, permission := range []string{"api_keys.create", "agents.delete"} {
-		if _, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"agents.use", permission}}); !errors.Is(err, org.ErrRoleTarget) {
+		if _, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"sessions.create", permission}}); !errors.Is(err, org.ErrRoleTarget) {
 			t.Fatalf("edited incompatible Role %s: %v", permission, err)
 		}
 	}
-	f.check(t, f.key, f.agent, f.env, auth.PermissionAgentsUse, true)
+	f.check(t, f.key, f.agent, f.env, auth.PermissionSessionsCreate, true)
 	bad := input
 	bad.EnvironmentID = &f.otherEnv
 	bad.AgentsMode = "all"
@@ -184,7 +184,7 @@ func TestAPIKeyRoleCompatibilityAndScopeConstraints(t *testing.T) {
 		}
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE api_keys SET revoked_at=now() WHERE id=$1`, f.key)
-	f.check(t, f.key, f.agent, f.env, auth.PermissionAgentsUse, false)
+	f.check(t, f.key, f.agent, f.env, auth.PermissionSessionsCreate, false)
 	if _, err := org.AssignRole(ctx, f.pool, f.owner, input); !errors.Is(err, org.ErrAccessNotFound) {
 		t.Fatal("assigned revoked key", err)
 	}
@@ -194,7 +194,7 @@ func TestAPIKeyRoleAssignmentRacesIncompatibleRoleEdit(t *testing.T) {
 	f := newMachineGrantFixture(t)
 	ctx := t.Context()
 	for range 4 {
-		role := f.role(t, "agents.use")
+		role := f.role(t, "sessions.create")
 		input := f.input(role)
 		start := make(chan struct{})
 		assigned := make(chan error, 1)
@@ -202,7 +202,7 @@ func TestAPIKeyRoleAssignmentRacesIncompatibleRoleEdit(t *testing.T) {
 		go func() { <-start; _, err := org.AssignRole(ctx, f.pool, f.owner, input); assigned <- err }()
 		go func() {
 			<-start
-			_, err := org.SavePermissionRole(ctx, f.pool, f.admin, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"agents.use", "api_keys.create"}})
+			_, err := org.SavePermissionRole(ctx, f.pool, f.admin, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"sessions.create", "api_keys.create"}})
 			edited <- err
 		}()
 		close(start)
@@ -248,9 +248,8 @@ func TestEveryActionAPIKeyAssignmentEligibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// No use grant is supplied for execution actions in this isolated Role.
-			want := !auth.SessionExecutionOperation(definition.ID)
-			if principal.HasPermission(definition.ID, scope) != want {
+			// Each action works independently within its assigned scope.
+			if !principal.HasPermission(definition.ID, scope) {
 				t.Fatal("assignment did not preserve exact operation semantics")
 			}
 			if err := org.RemoveRoleGrant(t.Context(), f.pool, f.owner, rows[0].ID, strconv.FormatInt(rows[0].Revision, 10)); err != nil {

@@ -28,14 +28,10 @@ const KINDS: { value: AccessKind; label: string }[] = [
 const lowerFirst = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
 const joinAnd = (parts: string[]) => parts.length < 2 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 
-// Whether a role may be granted here: API keys take only workload roles, all
-// members only agent use on selected agents, an agent's page only roles with
-// agent permissions, and a fixed environment no organization role.
-function eligible(role: PermissionRole, kind: AccessKind, catalog: readonly PermissionDefinition[], place: { agent: boolean; environment: boolean }): boolean {
+// Context may fix the Environment; it never changes a Role's resource scopes.
+function eligible(role: PermissionRole, kind: AccessKind, environment: boolean): boolean {
   if (kind === "api_key" && !role.api_key_assignable) return false;
-  if (kind === "all_members" && !(role.permissions.length === 1 && role.permissions[0] === "agents.use")) return false;
-  if (place.agent && !role.permissions.some(p => permissionHasScope(p, "agent", catalog))) return false;
-  return !(place.agent || place.environment || kind === "api_key") || role.assignment_levels.includes("environment");
+  return !(environment || kind === "api_key") || role.assignment_levels.includes("environment");
 }
 
 // The one place access is granted or its targets edited: who, which role, where,
@@ -83,17 +79,17 @@ export function GrantAccessDialog(props: {
 
   // The organization's own roles first, then the ones Helmr maintains.
   const options = createMemo(() => {
-    const all = (roles.data?.roles ?? []).filter(r => existing ? r.id === existing.role_id : eligible(r, kind(), catalog(), { agent: !!props.agentID, environment: !!props.environment }));
+    const all = (roles.data?.roles ?? []).filter(r => existing ? r.id === existing.role_id : eligible(r, kind(), !!props.environment));
     return [...all.filter(r => !r.builtin_key), ...all.filter(r => r.builtin_key)];
   });
   const hidden = () => existing ? 0 : (roles.data?.roles.length ?? 0) - options().length;
   const role = () => options().find(r => r.id === roleID());
-  const availableLevels = () => (role()?.assignment_levels ?? []).filter(level => level === "environment" || kind() !== "api_key" && !props.environment && !props.agentID);
+  const availableLevels = () => (role()?.assignment_levels ?? []).filter(level => level === "environment" || kind() !== "api_key" && !props.environment);
   const organizationRole = () => existing ? existing.target_kind === "organization" : availableLevels().length === 1 ? availableLevels()[0] === "organization" : assignmentLevel() === "organization";
   const resources = () => permissionResources(role()?.permissions ?? [], catalog());
   const hasAgents = () => (role()?.permissions ?? []).some(p => permissionHasScope(p, "agent", catalog()));
   const allMembers = () => kind() === "all_members";
-  const agentMode = () => allMembers() ? "selected" : mode();
+  const agentMode = mode;
 
   const activeMembers = () => (members.data?.members ?? []).filter(m => m.status === "active");
   const recipientName = () => {
@@ -221,7 +217,7 @@ export function GrantAccessDialog(props: {
         </Show>
 
         <Show when={!existing} fallback={<Field label="Role"><span class="text-body">{role()?.name}</span></Field>}>
-          <Field label="Role" hint={role() ? role()!.permissions.map(p => permissionName(p, catalog())).join(" · ") : hidden() > 0 ? `${hidden()} ${hidden() === 1 ? "role can’t" : "roles can’t"} be granted ${allMembers() ? "to all members" : kind() === "api_key" ? "to API keys" : props.agentID ? "for a single agent" : "in a single environment"}.` : undefined}>
+          <Field label="Role" hint={role() ? role()!.permissions.map(p => permissionName(p, catalog())).join(" · ") : hidden() > 0 ? `${hidden()} ${hidden() === 1 ? "role can’t" : "roles can’t"} be granted ${kind() === "api_key" ? "to API keys" : "in a single environment"}.` : undefined}>
             <Select
               value={role()?.id ?? ""}
               options={options().map(r => ({ value: r.id, label: r.name }))}
@@ -260,9 +256,7 @@ export function GrantAccessDialog(props: {
           <fieldset class={ui.fieldSet}>
             <legend class={ui.fieldLabel}>Agents</legend>
             <div class="mt-1 grid justify-items-start gap-2">
-              <Show when={!allMembers()}>
-                <Segmented label="Agent targets" value={mode()} options={[{ value: "selected" as const, label: "Selected" }, { value: "all" as const, label: "All, including new ones" }]} onChange={setMode} disabled={busy()} />
-              </Show>
+              <Segmented label="Agent targets" value={mode()} options={[{ value: "selected" as const, label: "Selected" }, { value: "all" as const, label: "All, including new ones" }]} onChange={setMode} disabled={busy()} />
               <Show when={agentMode() === "selected"}>
                 <div class="flex max-h-40 w-full flex-wrap gap-x-5 gap-y-1.5 overflow-y-auto border border-console-border px-2.5 py-2">
                   <For each={target()?.agents ?? []} fallback={<span class={ui.fieldHint}>{target() ? "This environment has no agents." : "Choose an environment to see its agents."}</span>}>
@@ -292,7 +286,7 @@ export function GrantAccessDialog(props: {
           <Notice tone="info" class="mt-3">{heldNote()}</Notice>
         </Show>
         <Show when={readsSessions()}>
-          <Notice tone="warning" class="mt-3">This includes other people’s personal conversations with these agents.</Notice>
+          <Notice tone="warning" class="mt-3">This includes all conversations with these agents, including other members’ sessions and conversations from private Slack channels and DMs.</Notice>
         </Show>
       </Show>
     </FormDialog>

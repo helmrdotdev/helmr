@@ -101,11 +101,13 @@ the diagnostic rule above; do not report the Agent as ready from local files alo
 Agent name and URL-encoding all values:
 `<server>/agents/<agent>/slack?project=<project>&environment=<environment>`.
 Ask them to connect Slack there and say "done". If their role cannot connect it,
-ask them to involve someone with Manage agents on this Agent; do not change their permissions.
+ask them to involve someone with `agent_connections.configure` on this Agent; do not change their permissions.
 
 **HAND-OFF:** Explain that Slack conversations, including DMs, create Sessions
-readable by members with View all sessions in this environment. Members with Manage all sessions
-can continue or control the work and answer Agent questions.
+readable by members with `sessions.read` for the assigned Agent. Creating, sending,
+answering, resuming and stopping each require their corresponding Session permission.
+The Agent User Role includes these conversation actions; creation alone does not
+grant access to history or subsequent controls.
 Other authorized input can produce replies in the original Slack DM. The human can open the app’s
 Messages tab and send a new message without a mention, then reply in its thread
 to continue. If linking is requested, link the account and send a new top-level

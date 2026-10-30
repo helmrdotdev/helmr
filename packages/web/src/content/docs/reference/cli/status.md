@@ -61,7 +61,7 @@ For API keys, this is a bounded view, not
 an Environment-wide health guarantee. Questions awaiting a reply are reported as
 state, not failures.
 
-Members with Manage agents using a saved login can inspect Slack connections for
+Members with `agent_connections.read` using a saved login can inspect Slack connections for
 permitted retained Agents, including Agents absent from the current deployment. Existing incomplete, disconnected or unauthorized connections need a
 human to complete or repair them. A missing connection is not a failure. Where a
 workspace connection exists, `doctor` reports the caller's Slack identity link.

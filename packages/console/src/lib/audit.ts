@@ -60,9 +60,7 @@ type PermissionWitness = { permission: string; scope: PermissionScope; assignmen
 export type AuditCheck =
   | { type: "permission"; subject_user_id?: string; subject_api_key_id?: string; permission: string; scope?: PermissionScope; result: string; reason?: string; evidence?: PermissionWitness }
   | { type: "membership_attribute"; member_id: string; attribute: string; expected: boolean; observed: boolean; scope: CheckScope; result: string }
-  | { type: "principal_currency"; subject_user_id?: string; subject_api_key_id?: string; scope: CheckScope; observation_source: string; result: string; reason: string; presented_version?: number; observed_version?: number }
-  | { type: "session_origin"; session_id: string; initiator_kind: string; initiator_id: string; result: string }
-  | { type: "slack_thread"; session_id: string; thread_id: string; user_id: string; result: string };
+  | { type: "principal_currency"; subject_user_id?: string; subject_api_key_id?: string; scope: CheckScope; observation_source: string; result: string; reason: string; presented_version?: number; observed_version?: number };
 
 type AccessSnapshot = {
   api_key_id?: string; api_key_name?: string; grant_id?: string; agents_mode?: string; agent_ids?: string[]; revision?: number;

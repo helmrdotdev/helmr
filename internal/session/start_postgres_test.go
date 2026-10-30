@@ -319,7 +319,7 @@ func TestStartAPIKeyCreationAndContinuationPermissions(t *testing.T) {
 	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("view grant created work: %v", err)
 	}
-	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.create_keyed", "sessions.send", "computers.execute")
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.create", "computers.execute")
 	first, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req)
 	if err != nil {
 		t.Fatal(err)
@@ -328,7 +328,7 @@ func TestStartAPIKeyCreationAndContinuationPermissions(t *testing.T) {
 	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("duplicate creation reused a Session: %v", err)
 	}
-	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.create_keyed", "sessions.send", "computers.execute")
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.create", "sessions.send", "computers.execute")
 	if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("send permission bypassed key conflict: %v", err)
 	}

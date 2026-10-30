@@ -30,7 +30,7 @@ func TestPermissionCLIHumanIdentityAndConditionalPatch(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/roles/" + role:
-			json.NewEncoder(w).Encode(map[string]any{"id": role, "name": "Existing", "description": "Preserved", "permissions": []string{"agents.use"}, "revision": 123})
+			json.NewEncoder(w).Encode(map[string]any{"id": role, "name": "Existing", "description": "Preserved", "permissions": []string{"sessions.create"}, "revision": 123})
 		case "GET /api/role-grants":
 			w.Write([]byte(`{"grants":[]}`))
 		case "PATCH /api/roles/" + role:
@@ -76,7 +76,7 @@ func TestPermissionCLIGrantScopeAndContext(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/roles/" + role:
-			json.NewEncoder(w).Encode(map[string]any{"id": role, "name": "Users", "permissions": []string{"agents.use"}, "revision": 4})
+			json.NewEncoder(w).Encode(map[string]any{"id": role, "name": "Users", "permissions": []string{"sessions.create"}, "revision": 4})
 		case "GET /api/groups/" + group:
 			json.NewEncoder(w).Encode(map[string]any{"id": group, "name": "Team"})
 		case "GET /api/projects/work":
@@ -289,10 +289,10 @@ func TestPermissionCLIGrantPreviewUsesInspectedRoleRevision(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/role-grants/" + grant:
-			json.NewEncoder(w).Encode(map[string]any{"id": grant, "revision": 3, "role_revision": 8, "subject_kind": "group", "group_id": group, "group_name": "Team", "role_id": role, "role_name": "Tools", "environment_id": env, "project": "work", "environment": "production", "target_kind": "environment", "agents_mode": "selected", "agent_ids": []string{agent}, "agent_keys": []string{"invoice"}, "permissions": []string{"agents.use"}, "targets": []any{map[string]any{"resource_type": "agents", "mode": "selected", "permissions": []string{"agents.use"}}}})
+			json.NewEncoder(w).Encode(map[string]any{"id": grant, "revision": 3, "role_revision": 8, "subject_kind": "group", "group_id": group, "group_name": "Team", "role_id": role, "role_name": "Tools", "environment_id": env, "project": "work", "environment": "production", "target_kind": "environment", "agents_mode": "selected", "agent_ids": []string{agent}, "agent_keys": []string{"invoice"}, "permissions": []string{"sessions.create"}, "targets": []any{map[string]any{"resource_type": "sessions", "mode": "selected", "permissions": []string{"sessions.create"}}}})
 		case "GET /api/roles/" + role:
 			// The Role changed after the assignment response was read.
-			json.NewEncoder(w).Encode(map[string]any{"id": role, "revision": 9, "name": "Tools", "permissions": []string{"agents.use", "sessions.send", "secrets.create"}})
+			json.NewEncoder(w).Encode(map[string]any{"id": role, "revision": 9, "name": "Tools", "permissions": []string{"sessions.create", "sessions.send", "secrets.create"}})
 		case "GET /api/projects/work":
 			w.Write([]byte(`{"project":"work","name":"Work"}`))
 		case "GET /api/projects/work/access-targets":
@@ -316,7 +316,7 @@ func TestPermissionCLIGrantPreviewUsesInspectedRoleRevision(t *testing.T) {
 	t.Setenv(helmrAPIURLEnv, "")
 	args := []string{"role", "grant", "update", "--id", grant, "--agent", "invoice"}
 	_, stderr, err := runPermissionCLI(args...)
-	if err == nil || writes != 0 || !strings.Contains(stderr, "secrets: environment") || !strings.Contains(stderr, "sessions.send") || !strings.Contains(stderr, "agents.use") || !strings.Contains(stderr, "Role revision: 9") {
+	if err == nil || writes != 0 || !strings.Contains(stderr, "secrets: environment") || !strings.Contains(stderr, "sessions.send") || !strings.Contains(stderr, "sessions.create") || !strings.Contains(stderr, "Role revision: 9") {
 		t.Fatalf("incomplete or mutating preview: %s %v writes=%d", stderr, err, writes)
 	}
 	_, _, err = runPermissionCLI(append(args, "--json")...)

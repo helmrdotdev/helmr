@@ -223,7 +223,7 @@ export function AgentDetail(props: { children?: JSX.Element }) {
   const definition = createQuery(() => ({
     queryKey: ["agents", "definition", scope().projectID, scope().environmentID, currentDeploymentID(), name()],
     queryFn: () => getAgentDefinition(name(), { ...scope(), deploymentID: currentDeploymentID() }),
-    enabled: !!currentDeploymentID() && (hasPermission(me.data, "agents.read", {...scope(), agent: name()}) || hasPermission(me.data, "agents.use", {...scope(), agent: name()})), retry: false,
+    enabled: !!currentDeploymentID() && (hasPermission(me.data, "agents.read", {...scope(), agent: name()}) || hasPermission(me.data, "sessions.create", {...scope(), agent: name()})), retry: false,
   }));
   const accessTargets=createQuery(()=>({queryKey:["access","targets",scope().projectID],queryFn:()=>listAccessTargets(scope().projectID),enabled:enabled() && hasPermission(me.data,"assignments.read")}));
   const accessIdentity=()=>accessTargets.data?.targets.find(t=>t.environment===scope().environmentID)?.agents.find(a=>a.key===name());

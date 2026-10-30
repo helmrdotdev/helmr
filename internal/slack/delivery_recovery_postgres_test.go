@@ -21,7 +21,7 @@ import (
 
 func (f statusFixture) deliveryManager(t *testing.T) uuid.UUID {
 	t.Helper()
-	f.SetPermissions(t, "agents.use", "sessions.read", "sessions.send", "sessions.check_delivery", "sessions.abandon_delivery")
+	f.SetPermissions(t, "sessions.create", "sessions.read", "sessions.send", "sessions.answer", "sessions.check_delivery", "sessions.abandon_delivery")
 	var org uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `UPDATE org_members SET is_owner=true WHERE user_id=$1 RETURNING org_id`, f.User).Scan(&org); err != nil {
 		t.Fatal(err)

@@ -144,24 +144,6 @@ func (c RuntimeBindingCheck) validate() error {
 	return nil
 }
 
-// OriginCheck records a verified initiating-principal relationship used by an owner.
-type OriginCheck struct {
-	Type          string    `json:"type"`
-	SessionID     uuid.UUID `json:"session_id"`
-	InitiatorKind string    `json:"initiator_kind"`
-	InitiatorID   uuid.UUID `json:"initiator_id"`
-	Result        string    `json:"result"`
-}
-
-func (OriginCheck) auditCheck()      {}
-func (c OriginCheck) result() string { return c.Result }
-func (c OriginCheck) validate() error {
-	if c.Type != "session_origin" || c.SessionID == uuid.Nil() || !slices.Contains([]string{"user", "api_key", "session"}, c.InitiatorKind) || c.InitiatorID == uuid.Nil() || c.Result != "passed" {
-		return errors.New("invalid session origin check")
-	}
-	return nil
-}
-
 func checkResult(ok bool) string {
 	if ok {
 		return "passed"
@@ -405,23 +387,6 @@ func VerifiedDevice(user, device uuid.UUID) Evidence {
 }
 func VerifiedMagicLink(user, link uuid.UUID, provider string) Evidence {
 	return Evidence{Actor: Actor{UserID: user}, Authentication: Authentication{Origin: "request", Result: "verified", CredentialKind: "magic_link", CredentialID: link, Provider: provider}, Authorization: NotEvaluated()}
-}
-
-type SlackThreadCheck struct {
-	Type      string    `json:"type"`
-	SessionID uuid.UUID `json:"session_id"`
-	ThreadID  uuid.UUID `json:"thread_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Result    string    `json:"result"`
-}
-
-func (SlackThreadCheck) auditCheck()      {}
-func (c SlackThreadCheck) result() string { return c.Result }
-func (c SlackThreadCheck) validate() error {
-	if c.Type != "slack_thread" || c.SessionID == uuid.Nil() || c.ThreadID == uuid.Nil() || c.UserID == uuid.Nil() || c.Result != "passed" {
-		return errors.New("invalid Slack thread check")
-	}
-	return nil
 }
 
 // PrincipalCurrencyCheck records a failed transaction-time principal refresh.

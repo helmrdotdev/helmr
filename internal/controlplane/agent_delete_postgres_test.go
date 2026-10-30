@@ -93,8 +93,8 @@ func TestAgentDeleteRestoreHTTP(t *testing.T) {
 	f := newAgentDeleteFixture(t)
 	sibling := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'sibling')`, f.env, sibling)
-	pure := f.selectedGrant(t, []string{"agents.use"}, f.agent)
-	mixed := f.selectedGrant(t, []string{"agents.use", "computers.execute"}, f.agent)
+	pure := f.selectedGrant(t, []string{"sessions.create"}, f.agent)
+	mixed := f.selectedGrant(t, []string{"sessions.create", "computers.execute"}, f.agent)
 	multi := f.selectedGrant(t, []string{"sessions.read"}, f.agent, sibling)
 	registration, connection := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO slack_app_registrations(id,org_id,created_by_user_id,transport) VALUES($1,$2,$3,'http'); INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,created_by_user_id,org_id) VALUES($4,$5,$6,$1,$3,(SELECT org_id FROM slack_app_registrations WHERE id=$1))`, pgx.QueryExecModeSimpleProtocol, registration, f.org, f.user, connection, f.env, f.agent)
@@ -154,7 +154,7 @@ func TestAgentDeletePrerequisitesAndRollback(t *testing.T) {
 	}
 	f.change(t, false, false, "1", 409)
 	dbtest.MustExec(t, t.Context(), f.h.pool, `UPDATE sessions SET status='closed' WHERE id=$1`, sess)
-	grant := f.selectedGrant(t, []string{"agents.use"}, f.agent)
+	grant := f.selectedGrant(t, []string{"sessions.create"}, f.agent)
 	dbtest.MustExec(t, t.Context(), f.h.pool, `CREATE FUNCTION reject_agent_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='agent.deleted' THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_agent_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_agent_audit()`)
 	f.change(t, false, false, "1", 500)
 	var intact bool
@@ -302,7 +302,7 @@ func TestAgentDeleteRechecksNewDependencies(t *testing.T) {
 			if dependency == "grant" {
 				user := f.h.user(t, "Other access manager")
 				member := f.h.member(t, f.org, user, "admin")
-				role, _ := dbtest.CreateRole(t, f.h.pool, f.org, "agents.use")
+				role, _ := dbtest.CreateRole(t, f.h.pool, f.org, "sessions.create")
 				input := map[string]any{"role_id": role, "expected_role_revision": 1, "subject": map[string]any{"type": "member", "member_id": member}, "project_id": f.project, "environment_id": f.env, "agents_mode": "selected", "agent_ids": []uuid.UUID{f.agent}}
 				body, _ := json.Marshal(input)
 				f.request(t, http.MethodPost, "/api/role-grants", f.h.session(t, user, f.org), string(body), "", 201)
@@ -328,7 +328,7 @@ func TestAgentDeleteRechecksNewDependencies(t *testing.T) {
 
 func TestAgentDeleteInvalidatesGrantEditorsAndPreservesEmptyMixedGrant(t *testing.T) {
 	f := newAgentDeleteFixture(t)
-	grant := f.selectedGrant(t, []string{"agents.use", "computers.execute"}, f.agent)
+	grant := f.selectedGrant(t, []string{"sessions.create", "computers.execute"}, f.agent)
 	var role uuid.UUID
 	if err := f.h.pool.QueryRow(t.Context(), `SELECT role_id FROM role_grants WHERE id=$1`, grant).Scan(&role); err != nil {
 		t.Fatal(err)
@@ -345,7 +345,7 @@ func TestAgentDeleteInvalidatesGrantEditorsAndPreservesEmptyMixedGrant(t *testin
 
 func TestAgentDeleteReadsRoleAfterConcurrentEdit(t *testing.T) {
 	f := newAgentDeleteFixture(t)
-	grant := f.selectedGrant(t, []string{"agents.use"}, f.agent)
+	grant := f.selectedGrant(t, []string{"sessions.create"}, f.agent)
 	tx, err := f.h.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -382,7 +382,7 @@ func TestAgentDeleteReadsRoleAfterConcurrentEdit(t *testing.T) {
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE roles SET permissions=ARRAY['agents.use','computers.execute'],revision=revision+1 WHERE id=$1`, role); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE roles SET permissions=ARRAY['sessions.create','computers.execute'],revision=revision+1 WHERE id=$1`, role); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(ctx); err != nil {

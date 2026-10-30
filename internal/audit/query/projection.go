@@ -170,10 +170,6 @@ func projectAuthorization(event *api.AuditEvent, z audit.Authorization, scope re
 				continue
 			}
 			event.Authorization.Checks = append(event.Authorization.Checks, api.AuditPrincipalCurrencyCheck{Type: c.Type, SubjectUserID: c.SubjectUserID, SubjectAPIKeyID: c.SubjectAPIKeyID, Scope: api.AuditCheckScope(c.Scope), ObservationSource: c.ObservationSource, Result: c.Result, Reason: c.Reason, PresentedVersion: c.PresentedVersion, ObservedVersion: c.ObservedVersion})
-		case *audit.OriginCheck:
-			event.Authorization.Checks = append(event.Authorization.Checks, api.AuditOriginCheck(*c))
-		case *audit.SlackThreadCheck:
-			event.Authorization.Checks = append(event.Authorization.Checks, api.AuditSlackThreadCheck(*c))
 		default:
 			return errors.New("audit check has no organization projection")
 		}

@@ -173,7 +173,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	get("/v1/agents"+selected, reader, http.StatusOK)
 	get("/v1/agents/agent"+selected, reader, http.StatusOK)
 	var inaccessible api.ListAgentDefinitionsResponse
-	if err := json.Unmarshal(get("/v1/agents"+selected, issue(auth.PermissionAgentsUse), http.StatusOK), &inaccessible); err != nil || len(inaccessible.AgentDefinitions) != 0 {
+	if err := json.Unmarshal(get("/v1/agents"+selected, issue(auth.PermissionSessionsCreate), http.StatusOK), &inaccessible); err != nil || len(inaccessible.AgentDefinitions) != 0 {
 		t.Fatalf("use exposed history: %+v %v", inaccessible, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `
@@ -181,7 +181,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
  UPDATE image_specs SET seed=jsonb_build_object('profile',$3::text) WHERE environment_id=$1;
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile)
-	consumer := issue(auth.PermissionAgentsUse)
+	consumer := issue(auth.PermissionSessionsCreate)
 	closePath := "/v1/sessions/" + f.Session.String() + "/close-scope"
 	get(closePath, consumer, http.StatusForbidden)
 	get("/v1/sessions/"+uuid.NewV7().String()+"/close-scope", consumer, http.StatusForbidden)
@@ -231,7 +231,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 		t.Fatalf("definition resources: %+v %v", resources, err)
 	}
 	get("/v1/sandboxes", reader, http.StatusNotFound)
-	get("/v1/templates", issue(auth.PermissionAgentsUse), http.StatusForbidden)
+	get("/v1/templates", issue(auth.PermissionSessionsCreate), http.StatusForbidden)
 	denied := h.request(t, http.MethodPost, "/v1/computers", reader, `{"template":"fixture-computer"}`)
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("read key created Computer: %d %s", denied.Code, denied.Body.String())

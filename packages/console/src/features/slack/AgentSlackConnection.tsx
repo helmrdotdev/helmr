@@ -285,7 +285,7 @@ function InstalledConnection(props: {
       <Show when={props.connection.status === "connected" && !props.connection.direct_messages_authorized}>
         <Notice tone="warning">Direct messages need additional Slack permissions. Update this app’s manifest below, then choose Reauthorize in Slack for the same workspace. Channel conversations remain available.</Notice>
       </Show>
-      <p class={ui.muted}>Channel conversations are shared with linked members who can use this agent and participate in the channel. DMs are personal conversations. Members assigned View all sessions or Manage all sessions for this agent can access their history. Sending input, answering questions or resuming another person’s session also requires Use agents. Authorized input can produce replies in the original DM. The app’s online indicator shows availability in Slack, not server health.</p>
+      <p class={ui.muted}>Starting a conversation requires Create sessions for this agent. Reading sessions includes every conversation for the assigned agent, including private channels and DMs. Sending input, answering questions, resuming and stopping each require their own permission. Channel input also requires channel membership; DM delivery requires the original recipient to retain session read access. Authorized input can produce replies in the original DM. The app’s online indicator shows availability in Slack, not server health.</p>
       <Show when={props.connection.status === "reauthorization_required"}>
         <Notice tone="warning" action={reauthorize()}>Slack authorization needs repair. Update this app’s manifest below first. Reauthorize this same app and workspace to continue. Earlier unsent output will not be backfilled.</Notice>
       </Show>

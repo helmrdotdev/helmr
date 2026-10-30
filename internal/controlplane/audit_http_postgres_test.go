@@ -94,7 +94,7 @@ func TestAuditHTTPTransactionCredentialRefusalsKeepAdmissionIdentity(t *testing.
 		t.Run(operation, func(t *testing.T) {
 			f := sessiontest.New(t)
 			p := dbtest.SecretManager(t, f.Pool, f.Environment)
-			dbtest.SetAPIKeyRole(t, f.Pool, p.APIKeyID, "secrets.create", "agents.use", "sessions.read")
+			dbtest.SetAPIKeyRole(t, f.Pool, p.APIKeyID, "secrets.create", "sessions.create", "sessions.read")
 			token := auth.APIKeyPrefix + uuid.NewV7().String()
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET token_hash=$2 WHERE id=$1`, p.APIKeyID, auth.HashAPIKey(token))
 			store, err := secret.New(db.New(f.Pool), f.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})

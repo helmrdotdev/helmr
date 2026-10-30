@@ -35,26 +35,6 @@ type AuditPrincipalCurrencyCheck struct {
 
 func (AuditPrincipalCurrencyCheck) auditCheck() {}
 
-type AuditOriginCheck struct {
-	Type          string    `json:"type"`
-	SessionID     uuid.UUID `json:"session_id"`
-	InitiatorKind string    `json:"initiator_kind"`
-	InitiatorID   uuid.UUID `json:"initiator_id"`
-	Result        string    `json:"result"`
-}
-
-func (AuditOriginCheck) auditCheck() {}
-
-type AuditSlackThreadCheck struct {
-	Type      string    `json:"type"`
-	SessionID uuid.UUID `json:"session_id"`
-	ThreadID  uuid.UUID `json:"thread_id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Result    string    `json:"result"`
-}
-
-func (AuditSlackThreadCheck) auditCheck() {}
-
 type AuditPermissionScope struct {
 	OrgID         uuid.UUID `json:"org_id"`
 	AgentID       string    `json:"agent_id,omitempty"`

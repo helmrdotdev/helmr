@@ -190,7 +190,7 @@ func ListDefinitions(ctx context.Context, q db.DBTX, principal auth.Principal, s
 		return DefinitionPage{}, err
 	}
 	allAgents, agentIDs := agentReadScope(principal, scope)
-	allUse, useIDs := principal.AgentPermissionScope(auth.PermissionAgentsUse, scope)
+	allUse, useIDs := principal.AgentPermissionScope(auth.PermissionSessionsCreate, scope)
 	if kind == definition.KindTemplate && !principal.HasPermission(auth.PermissionTemplatesRead, scope) {
 		return DefinitionPage{}, ErrPermissionRequired
 	}
@@ -245,7 +245,7 @@ func GetDefinition(ctx context.Context, q db.DBTX, principal auth.Principal, sco
 		return uuid.Nil(), DefinitionRecord{}, err
 	}
 	allAgents, agentIDs := agentReadScope(principal, scope)
-	allUse, useIDs := principal.AgentPermissionScope(auth.PermissionAgentsUse, scope)
+	allUse, useIDs := principal.AgentPermissionScope(auth.PermissionSessionsCreate, scope)
 	if kind == definition.KindTemplate && !principal.HasPermission(auth.PermissionTemplatesRead, scope) {
 		return uuid.Nil(), DefinitionRecord{}, ErrPermissionRequired
 	}

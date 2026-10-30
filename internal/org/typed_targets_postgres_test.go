@@ -35,7 +35,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	prod, stage := pgvalue.MustUUIDValue(envs[0].ID), pgvalue.MustUUIDValue(envs[1].ID)
 	faq, invoice, stageInvoice := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(id,environment_id,key) VALUES($1,$2,'faq'),($3,$2,'invoice'),($4,$5,'invoice')`, faq, prod, invoice, stageInvoice, stage)
-	role, err := org.SavePermissionRole(ctx, f.pool, m, uuid.Nil(), org.RoleInput{Name: "Scoped tools", Permissions: []string{"agents.use"}})
+	role, err := org.SavePermissionRole(ctx, f.pool, m, uuid.Nil(), org.RoleInput{Name: "Scoped tools", Permissions: []string{"sessions.create"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 		}
 	}
 	// Adding an environment-only action preserves the existing Agent target.
-	role, err = org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"agents.use", "secrets.create"}})
+	role, err = org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"sessions.create", "secrets.create"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +63,11 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 		t.Fatal(err)
 	}
 	grant = refreshed[0]
-	check(prod, faq, auth.PermissionAgentsUse, true)
-	check(prod, invoice, auth.PermissionAgentsUse, false)
+	check(prod, faq, auth.PermissionSessionsCreate, true)
+	check(prod, invoice, auth.PermissionSessionsCreate, false)
 	check(prod, uuid.Nil(), auth.PermissionSecretsCreate, true)
-	check(stage, stageInvoice, auth.PermissionAgentsUse, false)
-	if len(grant.Targets) != 2 || grant.Targets[0].ResourceType != "agents" || grant.Targets[0].Mode != "selected" || grant.Targets[1].Mode != "environment" {
+	check(stage, stageInvoice, auth.PermissionSessionsCreate, false)
+	if len(grant.Targets) != 2 || grant.Targets[0].ResourceType != "secrets" || grant.Targets[0].Mode != "environment" || grant.Targets[1].ResourceType != "sessions" || grant.Targets[1].Mode != "selected" {
 		t.Fatalf("incorrect grouped targets: %+v", grant.Targets)
 	}
 	again, err := org.AssignRole(ctx, f.pool, m, input)
@@ -90,16 +90,16 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	if _, err := org.AssignRole(ctx, f.pool, m, input); err != nil {
 		t.Fatal(err)
 	}
-	check(stage, stageInvoice, auth.PermissionAgentsUse, true)
+	check(stage, stageInvoice, auth.PermissionSessionsCreate, true)
 	// Independent Agent and Session read actions retain the same Agent targets.
 	role, err = org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"agents.delete", "sessions.read", "secrets.create"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	check(prod, invoice, auth.PermissionAgentsUse, false)
+	check(prod, invoice, auth.PermissionSessionsCreate, false)
 	check(prod, faq, auth.PermissionSessionsRead, true)
 	check(prod, invoice, auth.PermissionSessionsRead, false)
-	check(prod, faq, auth.PermissionAgentsUse, false)
+	check(prod, faq, auth.PermissionSessionsCreate, false)
 	check(prod, faq, auth.PermissionAgentsDelete, true)
 	check(prod, invoice, auth.PermissionAgentsDelete, false)
 	principal, err := access.OrganizationPrincipal(ctx, f.pool, m.OrgID, m.UserID)
@@ -131,14 +131,14 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	if current[0].AgentsMode != "none" || len(current[0].AgentIDs) != 0 || current[0].Revision != grant.Revision+1 {
 		t.Fatalf("latent targets: %+v", current[0])
 	}
-	if _, err := org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"agents.use", "secrets.create"}}); !errors.Is(err, org.ErrRoleTarget) {
+	if _, err := org.SavePermissionRole(ctx, f.pool, m, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(role.Revision, 10), Permissions: []string{"sessions.create", "secrets.create"}}); !errors.Is(err, org.ErrRoleTarget) {
 		t.Fatalf("Agent targets resurrected: %v", err)
 	}
 	var targetAudit bool
 	if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='role_grant.updated' AND target_id=$1 AND environment_id IS NOT NULL AND details->'before' @> $2::jsonb AND details->'after' @> $3::jsonb)`, grant.ID, `{"grant_id":"`+grant.ID.String()+`","agent_ids":["`+faq.String()+`"]}`, `{"grant_id":"`+grant.ID.String()+`","agents_mode":"none"}`).Scan(&targetAudit); err != nil || !targetAudit {
 		t.Fatalf("role target audit missing: %v", err)
 	}
-	check(prod, faq, auth.PermissionAgentsUse, false)
+	check(prod, faq, auth.PermissionSessionsCreate, false)
 	check(prod, uuid.Nil(), auth.PermissionSecretsCreate, true)
 	if err := org.RemoveRoleGrant(ctx, f.pool, m, grant.ID, strconv.FormatInt(grant.Revision, 10)); !errors.Is(err, org.ErrStaleRevision) {
 		t.Fatalf("stale delete: %v", err)
@@ -150,7 +150,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 		t.Fatalf("absent delete: %v", err)
 	}
 	// A targeted Agent cannot be physically deleted without an explicit assignment change.
-	selectedRole, err := org.SavePermissionRole(ctx, f.pool, m, uuid.Nil(), org.RoleInput{Name: "Deletion", Permissions: []string{"agents.use", "secrets.create"}})
+	selectedRole, err := org.SavePermissionRole(ctx, f.pool, m, uuid.Nil(), org.RoleInput{Name: "Deletion", Permissions: []string{"sessions.create", "secrets.create"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	if len(current[0].AgentIDs) != 1 || current[0].AgentIDs[0] != faq || current[0].Revision != grant.Revision {
 		t.Fatalf("rejected delete changed targets: %+v", current[0])
 	}
-	check(prod, faq, auth.PermissionAgentsUse, true)
+	check(prod, faq, auth.PermissionSessionsCreate, true)
 	// No product mutation currently creates an empty selection. Construct one to
 	// retain the fail-closed read/repair contract without a deletion side effect.
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM role_grant_agents WHERE grant_id=$1`, grant.ID)
@@ -187,8 +187,8 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	if current[0].AgentsMode != "selected" || len(current[0].AgentIDs) != 0 || current[0].Revision != grant.Revision {
 		t.Fatalf("empty target was broadened: %+v", current[0])
 	}
-	check(prod, faq, auth.PermissionAgentsUse, false)
-	check(prod, invoice, auth.PermissionAgentsUse, false)
+	check(prod, faq, auth.PermissionSessionsCreate, false)
+	check(prod, invoice, auth.PermissionSessionsCreate, false)
 	check(prod, uuid.Nil(), auth.PermissionSecretsCreate, true)
 	input.AgentIDs = []uuid.UUID{invoice}
 	input.ExpectedRevision = strconv.FormatInt(current[0].Revision, 10)
@@ -203,7 +203,7 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	if _, err := org.UpdateRoleGrant(ctx, f.pool, m, grant.ID, input); !errors.Is(err, org.ErrStaleRevision) {
 		t.Fatalf("stale repair: %v", err)
 	}
-	check(prod, invoice, auth.PermissionAgentsUse, true)
+	check(prod, invoice, auth.PermissionSessionsCreate, true)
 	// Concurrent complete replacements permit exactly one writer at an observed revision.
 	input.ExpectedRevision = strconv.FormatInt(repaired.Revision, 10)
 	start := make(chan struct{})
@@ -264,17 +264,17 @@ func TestAssignmentTargetsRemainIndependent(t *testing.T) {
 	}
 	future := uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(id,environment_id,key) VALUES($1,$2,'future')`, future, prod)
-	if err := access.Check(ctx, f.pool, "user", f.admin.UserID, prod, future, auth.PermissionAgentsUse); err != nil {
+	if err := access.Check(ctx, f.pool, "user", f.admin.UserID, prod, future, auth.PermissionSessionsCreate); err != nil {
 		t.Fatalf("all did not include future Agent: %v", err)
 	}
-	check(prod, future, auth.PermissionAgentsUse, false)
+	check(prod, future, auth.PermissionSessionsCreate, false)
 	input.ExpectedRevision = strconv.FormatInt(all[0].Revision, 10)
 	input.AgentsMode = "selected"
 	input.AgentIDs = []uuid.UUID{invoice}
 	if _, err := org.UpdateRoleGrant(ctx, f.pool, m, all[0].ID, input); err != nil {
 		t.Fatal(err)
 	}
-	if err := access.Check(ctx, f.pool, "user", f.admin.UserID, prod, future, auth.PermissionAgentsUse); !errors.Is(err, access.ErrDenied) {
+	if err := access.Check(ctx, f.pool, "user", f.admin.UserID, prod, future, auth.PermissionSessionsCreate); !errors.Is(err, access.ErrDenied) {
 		t.Fatalf("selected included future Agent: %v", err)
 	}
 
@@ -301,7 +301,7 @@ func TestCatalogAgentTargetsAndInspectionVisibility(t *testing.T) {
 	selected, other := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(id,environment_id,key) VALUES($1,$2,'selected'),($3,$2,'other')`, selected, env, other)
 	for _, definition := range auth.PermissionCatalog() {
-		if definition.ResourceType != "agents" {
+		if !auth.SupportsScope(definition.ID, auth.ScopeAgent) {
 			continue
 		}
 		t.Run(string(definition.ID), func(t *testing.T) {

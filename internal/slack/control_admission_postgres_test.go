@@ -68,7 +68,7 @@ func TestSlackAnswerAllowsLinkedOperatorAndKeepsExactAskOnlyReceipt(t *testing.T
 	f := newStatusFixture(t)
 	f.link(t)
 	turn, ask := f.pendingQuestion(t)
-	f.SetPermissions(t, "agents.use", "sessions.send")
+	f.SetPermissions(t, "sessions.answer")
 	c := f.control("answer")
 	c.Target.Turn, c.Target.Ask = turn, ask
 	first := f.controlReceipt(t, c, json.RawMessage(`"yes"`))

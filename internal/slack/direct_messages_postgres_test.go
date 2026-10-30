@@ -474,7 +474,7 @@ func TestSlackDirectIngressIgnoresNonHumanAndWrongConversationEvents(t *testing.
 	}
 }
 
-func TestDirectDeliveryRechecksRecipientUseAndIdentity(t *testing.T) {
+func TestDirectDeliveryRechecksRecipientReadAndIdentity(t *testing.T) {
 	for _, revoke := range []string{"permission", "link", "membership"} {
 		t.Run(revoke, func(t *testing.T) {
 			f := newSlackAdmissionFixture(t)
@@ -503,7 +503,7 @@ func TestDirectDeliveryRechecksRecipientUseAndIdentity(t *testing.T) {
 			check(true)
 			switch revoke {
 			case "permission":
-				f.SetPermissions(t, "sessions.read")
+				f.SetPermissions(t, "sessions.create")
 			case "link":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			case "membership":
@@ -587,7 +587,7 @@ func TestDirectDeliveryRevocationDuringConversationCheck(t *testing.T) {
 					case "membership":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET suspended_at=clock_timestamp() WHERE user_id=$1`, f.User)
 					case "permission":
-						f.SetPermissions(t, "sessions.read")
+						f.SetPermissions(t, "sessions.create")
 					}
 				}}
 				var sent bool

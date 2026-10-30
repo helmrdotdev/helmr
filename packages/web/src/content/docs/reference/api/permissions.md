@@ -60,8 +60,9 @@ includes current and future Agents. `none` is required when the Role has no
 explicit Agent actions. Only `selected` accepts IDs. Other resource types apply
 to the entire environment. Organization Roles use `none` without Project or
 Environment IDs. A Role must have at least one assignment level supported by
-every included permission. All members accepts only
-`agents.use` with selected Agents, and starts with no assignments.
+every included permission. All members supports the same Roles and targets as a
+human Group, including organization assignments and all current and future Agents.
+It includes active organization members and starts with no assignments.
 
 The catalog supplies `resource_type`, `scope_types`, `assignment_levels` and
 `api_key_assignable` for each action. `scope_types` describes the resource scopes
@@ -78,10 +79,14 @@ actions requires Organization assignment; mixing it with Environment/Agent actio
 requires Environment assignment and preserves the Agent selection. See
 [audit events](/docs/reference/api/audit-events) for disclosure and reader boundaries.
 
-Sending input, answering questions or resuming somebody else's Session requires
-the corresponding `sessions.send`, `sessions.answer` or `sessions.resume` action
-and `agents.use` for that Agent. Existing personal Session origin rules still
-apply. Use separate Roles and assignments when actions need different targets.
+`sessions.create` accepts initial input, an optional Session key and Slack destination,
+and returns a creation receipt. It grants no history or subsequent control, even
+for the creator. Reading and controlling any Session requires the corresponding
+`sessions.read`, `sessions.send`, `sessions.answer`, `sessions.resume`,
+`sessions.interrupt`, `sessions.cancel` or `sessions.close` action for its Agent.
+These actions do not require creation permission. Agent selection applies across
+all its Sessions, including other members' conversations and private Slack or DM
+history. Use separate Roles and assignments when actions need different targets.
 
 POST returns `{"grants":[...]}` with one header and `created: true|false`.
 There is one assignment per recipient, Role and environment. Equivalent normalized
@@ -129,17 +134,16 @@ Agents or all current and future Agents in that environment.
 | Permission | Scope | API keys | Meaning |
 | --- | --- | --- | --- |
 | `agents.read` | Agent | Yes | List/read the authorized Agent's definition and retained status, including deleted status; not other Agents or full deployment catalogs. |
-| `agents.use` | Agent | Yes | Start ordinary own-origin conversations and perform the established own-session operations; participate in authorized connected shared conversations. Includes only identity/definition needed to use the target Agent. |
+| `sessions.create` | Agent | Yes | Create a Session with initial input, an optional key and Slack destination. Returns a receipt without granting history or control. |
 | `agents.delete` | Agent | No | Preview and apply explicit Agent deletion, including its fixed cleanup effects; current-deployment and unsettled-work blockers remain. |
 | `agents.restore` | Agent | No | Preview and restore a deleted Agent identity. Does not restore removed selected grants or Slack connections; broad grants apply again and existing parent Sessions may create children immediately, before another deployment includes the Agent. |
 | `agent_connections.read` | Agent | No | Read the Agent's Slack connection status/setup metadata, without credential values. |
 | `agent_connections.configure` | Agent | No | Register the Agent's connection, replace supplied app credentials and authorize or reauthorize installation through verified OAuth. Does not grant credential export or disconnection. |
 | `agent_connections.delete` | Agent | No | Disconnect the Agent's connection and perform its fixed cleanup. |
 | `sessions.read` | Agent | Yes | Read/list matching Sessions, Turns, events, Asks, updates and execution history. Includes conversation contents and the existing human delivery-record view. |
-| `sessions.create_keyed` | Agent | Yes | Supply a caller-defined Session key or the existing administrative channel identifier on scoped Session creation; also requires agents.use. Does not grant somebody else's origin. |
-| `sessions.send` | Agent | Yes | Enqueue input or send a message to a matching Session/Turn; also requires agents.use. |
-| `sessions.answer` | Agent | Yes | Answer an Ask; also requires agents.use. |
-| `sessions.resume` | Agent | Yes | Resume matching suspended work; also requires agents.use. |
+| `sessions.send` | Agent | Yes | Enqueue input or send a message to a matching Session/Turn. |
+| `sessions.answer` | Agent | Yes | Answer an Ask. |
+| `sessions.resume` | Agent | Yes | Resume matching suspended work. |
 | `sessions.interrupt` | Agent | Yes | Interrupt the addressed Session/Turn using existing interruption semantics. |
 | `sessions.cancel` | Agent | Yes | Cancel the addressed Session using existing cancellation semantics. |
 | `sessions.close` | Agent | Yes | Inspect the close-scope preview and request Session closure using existing child/settlement constraints. |

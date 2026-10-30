@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
+func TestSessionPermissionsKeepSelectedAgentBounds(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	peer := f.peer(t)
@@ -50,22 +50,16 @@ func TestSessionPermissionsKeepSelectedAgentAndOriginBounds(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `DELETE FROM session_holds WHERE environment_id=$1`, f.env)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=ARRAY['sessions.send','sessions.read','sessions.close'] WHERE id IN (SELECT role_id FROM role_grants WHERE member_id=$1)`, member)
 	input := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "management-input", Input: json.RawMessage(`[]`)}
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, input); !errors.Is(err, session.ErrDenied) {
-		t.Fatal("management alone executed", err)
-	}
-	// A separate assignment combines only on the same Agent.
-	dbtest.GrantMember(t, f.pool, org, viewer, &f.env, "agents.use")
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id=$1 AND all_agents;
- INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.member_id=$1 AND p.permission='agents.use'`, pgx.QueryExecModeSimpleProtocol, member, otherAgent)
-	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, input); !errors.Is(err, session.ErrDenied) {
-		t.Fatal("other Agent use was borrowed", err)
-	}
-	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.member_id=$1 AND p.permission='agents.use'`, member, f.agent)
 	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, input); err != nil {
-		t.Fatal("matching grants did not combine", err)
+		t.Fatal("send-only action required creation", err)
+	}
+	otherInput := input
+	otherInput.SessionID, otherInput.IdempotencyKey = peer.session, "other-agent-input"
+	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, otherInput); !errors.Is(err, session.ErrDenied) {
+		t.Fatal("send escaped selected Agent", err)
 	}
 	// Current matching permissions allow continuing after the original owner loses access.
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=array_remove(permissions,'agents.use') WHERE id IN (SELECT g.role_id FROM role_grants g JOIN permission_group_members gm ON gm.group_id=g.group_id JOIN org_members m ON m.id=gm.member_id WHERE m.user_id=$1)`, f.user)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE roles SET permissions=array_remove(permissions,'sessions.create') WHERE id IN (SELECT g.role_id FROM role_grants g JOIN permission_group_members gm ON gm.group_id=g.group_id JOIN org_members m ON m.id=gm.member_id WHERE m.user_id=$1)`, f.user)
 	input.IdempotencyKey = "revoked-origin"
 	if _, err := session.Enqueue(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, input); err != nil {
 		t.Fatal("current participant could not continue", err)

@@ -35,7 +35,7 @@ func admitLifecycleMessage(ctx context.Context, auditPolicy auditpolicy.Policy, 
 	}
 	target := controlTarget{Installation: p.installation, Thread: p.thread, Participant: p.source, Environment: p.route.Target.EnvironmentID, Session: p.session}
 	err := db.RunTx(ctx, tx, func(core pgx.Tx) error {
-		_, err := applyLifecycleControl(ctx, auditPolicy, core, slackCaller(p.human, p.thread), target, controlEnvelope{Action: action}, id)
+		_, err := applyLifecycleControl(ctx, auditPolicy, core, session.UserCaller(p.human), target, controlEnvelope{Action: action}, id)
 		if err != nil {
 			return err
 		}

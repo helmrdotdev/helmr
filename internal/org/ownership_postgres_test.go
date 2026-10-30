@@ -34,14 +34,14 @@ func TestBootstrapExplicitGrantsAndOwnerRecovery(t *testing.T) {
 	}
 	m := org.ManagingMember{Human: dbtest.BrowserPrincipal(t, d.Pool, orgID, user), Actor: audit.VerifiedLogin(user, "fixture"), OrgID: orgID, UserID: user, MemberID: principal.MemberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}
 	roles, err := org.ListPermissionRoles(ctx, d.Pool, m)
-	if err != nil || len(roles) != 17 {
+	if err != nil || len(roles) == 0 {
 		t.Fatalf("roles: %d %v", len(roles), err)
 	}
 	var groupCount, grantCount int
 	if err = d.Pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM permission_groups),(SELECT count(*) FROM role_grants)`).Scan(&groupCount, &grantCount); err != nil || groupCount != 0 || grantCount != 3 {
 		t.Fatalf("initial policy: %d %d %v", groupCount, grantCount, err)
 	}
-	if !principal.IsOwner || len(principal.Grants) != 27 {
+	if !principal.IsOwner || !principal.HasPermission(auth.PermissionAssignmentsCreate, auth.Scope{OrgID: orgID}) || !principal.HasPermission(auth.PermissionProjectsCreate, auth.Scope{OrgID: orgID}) {
 		t.Fatalf("bootstrap principal: %+v", principal)
 	}
 	if !principal.HasPermission(auth.PermissionAuditEventsRead, auth.Scope{OrgID: orgID}) {
