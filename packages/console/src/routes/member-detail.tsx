@@ -81,8 +81,8 @@ function AreaRows(props: { areas: Area[] }) {
             <ul class="m-0 flex list-none flex-wrap gap-x-1.5 gap-y-0.5 p-0">
               <For each={area.permissions}>
                 {permission => (
-                  <li class={cx("inline-flex items-center gap-1 rounded-xs px-1.5 text-body leading-5.5", permission.granted ? "bg-console-success-bg font-medium text-console-text" : "text-console-subtle")}>
-                    <Show when={permission.granted}><span class="text-console-success" aria-hidden="true"><Icon name="check" /></span></Show>
+                  <li class={cx("inline-flex items-center gap-1 rounded-xs border px-1.5 text-body leading-5", permission.granted ? "border-transparent bg-console-success-bg font-medium text-console-text" : "border-dashed border-console-border-strong text-console-muted")}>
+                    <span class={permission.granted ? "text-console-success" : "text-console-subtle"} aria-hidden="true"><Icon name={permission.granted ? "check" : "cross"} /></span>
                     {permission.name}
                     <Show when={!permission.granted}><span class="sr-only"> (not granted)</span></Show>
                   </li>
@@ -93,6 +93,29 @@ function AreaRows(props: { areas: Area[] }) {
         </tr>
       )}
     </For>
+  );
+}
+
+// The opened row: its own component, so a data refresh keeps the "show all" choice.
+function ExpandedAccess(props: { id: string; scope: MemberPermissions["scopes"][number]; catalog: readonly PermissionDefinition[]; names: (id: string) => string }) {
+  const areas = createMemo(() => permissionAreas(props.scope, props.catalog, props.names));
+  const [showAll, setShowAll] = createSignal(false);
+  return (
+    <tr id={props.id} class="hover:bg-transparent">
+      <td colSpan={EFFECTIVE_COLUMNS.length} class="h-auto! whitespace-normal bg-console-accent-soft/40 py-2.5! pl-9!">
+        <table class="w-full border-collapse overflow-hidden rounded-xs border border-console-border-soft bg-console-surface">
+          <tbody>
+            <AreaRows areas={areas().withAccess} />
+            <Show when={showAll()}><AreaRows areas={areas().withoutAccess} /></Show>
+          </tbody>
+        </table>
+        <Show when={areas().withoutAccess.length > 0}>
+          <button type="button" class={cx(ui.monoLink, "mt-2 border-0 bg-transparent p-0")} onClick={() => setShowAll(!showAll())}>
+            {showAll() ? "Hide areas with no access" : `Show ${areas().withoutAccess.length} ${areas().withoutAccess.length === 1 ? "area" : "areas"} with no access`}
+          </button>
+        </Show>
+      </td>
+    </tr>
   );
 }
 
@@ -130,27 +153,7 @@ function EffectiveAccessTable(props: { access: MemberPermissions; catalog: reado
                 <td><span class="flex flex-wrap items-center gap-x-3.5 gap-y-1"><For each={sources(scope)}>{source => <SourceLabel source={source} roleID={props.roleID} />}</For></span></td>
               </tr>
               <Show when={expanded()}>
-                {(() => {
-                  const areas = permissionAreas(scope, props.catalog, props.names);
-                  const [showAll, setShowAll] = createSignal(false);
-                  return (
-                    <tr id={panel} class="hover:bg-transparent">
-                      <td colSpan={EFFECTIVE_COLUMNS.length} class="h-auto! whitespace-normal bg-console-accent-soft/40 py-2.5! pl-9!">
-                        <table class="w-full border-collapse overflow-hidden rounded-xs border border-console-border-soft bg-console-surface">
-                          <tbody>
-                            <AreaRows areas={areas.withAccess} />
-                            <Show when={showAll()}><AreaRows areas={areas.withoutAccess} /></Show>
-                          </tbody>
-                        </table>
-                        <Show when={areas.withoutAccess.length > 0}>
-                          <button type="button" class={cx(ui.monoLink, "mt-2 border-0 bg-transparent p-0")} onClick={() => setShowAll(!showAll())}>
-                            {showAll() ? "Hide areas with no access" : `Show ${areas.withoutAccess.length} ${areas.withoutAccess.length === 1 ? "area" : "areas"} with no access`}
-                          </button>
-                        </Show>
-                      </td>
-                    </tr>
-                  );
-                })()}
+                <ExpandedAccess id={panel} scope={scope} catalog={props.catalog} names={props.names} />
               </Show>
             </>;
           }}
