@@ -32,7 +32,7 @@ func BeginConnection(ctx context.Context, pool db.TxBeginner, prior auth.Princip
 	}
 	setup := ConnectionSetup{ID: uuid.NewV7(), RegistrationID: uuid.NewV7()}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if err := lockAgentManager(ctx, tx, prior, environment, agent, auth.PermissionAgentConnectionsCreate); err != nil {
+		if err := lockAgentManager(ctx, tx, prior, environment, agent, auth.PermissionAgentConnectionsConfigure); err != nil {
 			return err
 		}
 		var id uuid.UUID

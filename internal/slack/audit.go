@@ -28,5 +28,5 @@ func registrationAuditActor(ctx context.Context, tx pgx.Tx, prior auth.Principal
 	if err := tx.QueryRow(ctx, `SELECT id FROM slack_connections WHERE slack_app_registration_id=$1`, registration).Scan(&connection); err != nil {
 		return audit.Evidence{}, err
 	}
-	return connectionAuditActor(ctx, tx, prior, connection, auth.PermissionAgentConnectionsUpdateCredentials)
+	return connectionAuditActor(ctx, tx, prior, connection, auth.PermissionAgentConnectionsConfigure)
 }
