@@ -9,20 +9,17 @@
   },
   "dependencies": {
     "@helmr/sdk": "file:../../dist/npm/sdk/package",
-    "@opencode/sdk": "2.0.31",
-    "@opencode/core": "2.0.31",
-    "@opencode/schema": "2.0.31",
-    "effect": "4.0.1",
-    "@opencode/util": "2.0.31"
+    "@opencode/sdk": "2.2.2",
+    "@opencode/core": "2.2.2",
+    "@opencode/schema": "2.2.2",
+    "effect": "4.0.6",
+    "@opencode/util": "2.2.2"
   },
   "devDependencies": {
-    "@types/node": "^24.7.2",
+    "@types/node": "^24.19.2",
     "typescript": "7.0.2"
   },
   "overrides": {
-    "@helmr/proto": "file:../../dist/npm/proto/package",
-    "@modelcontextprotocol/client": "2.3.0",
-    "@modelcontextprotocol/core": "2.3.0",
-    "@ai-sdk/provider-utils": "4.0.33"
+    "@helmr/proto": "file:../../dist/npm/proto/package"
   }
 }

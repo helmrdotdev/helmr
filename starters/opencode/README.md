@@ -27,9 +27,11 @@ configuration remain application-owned; custom autonomous startup behavior needs
 its own qualification. The bridge does not undo external effects or guarantee
 termination of arbitrary detached programs.
 
-The SDK and recovery composition are pinned to OpenCode 2.0.31. Change the package
+The SDK and recovery composition are pinned to OpenCode 2.2.2. Change the package
 versions together and verify recovery before upgrading. Source and mock-model
 tests do not establish live provider or protected WebSocket compatibility.
+The embedded SDK is tested on Helmr's pinned Node runtime; the transitive
+OpenTUI simulation frontend requires Node 26.4 or newer and is not qualified here.
 
 The default main model is `anthropic/claude-opus-5-5`; OpenAI selects
 `openai/gpt-6.1-sol`, and OpenCode Go selects `opencode-go/glm-5.3`.
