@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "@solidjs/router";
+import { A, useNavigate, useParams } from "@solidjs/router";
 import { assignableRoles, ChangeRoleDialog, memberMenu, RemoveMemberDialog, type OwnershipChoice } from "./members";
 import { Tag } from "../ui/Tag";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
@@ -12,7 +12,9 @@ import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { listMembers, memberResourceID, updateMemberOwnership } from "../lib/members";
 import { useScope } from "../lib/scope";
-import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionGroup } from "../lib/permissions";
+import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, resourceLabel, resourceRank, roleHref, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionDefinition, type PermissionGroup } from "../lib/permissions";
+import { Icon } from "../ui/Icon";
+import { cx, ui } from "../ui/styles";
 import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
 import { ConfirmDialog } from "../ui/Dialog";
 import { PageHeader } from "../ui/PageHeader";
@@ -22,17 +24,106 @@ import { TabPanel, Tabs } from "../ui/Tabs";
 import { useAuditItem } from "../features/audit/auditLink";
 
 type Tab = "effective" | "assignments" | "groups";
-const EFFECTIVE_COLUMNS = ["Environment", "Agent", "Permissions", "Granted through"] as const;
+const EFFECTIVE_COLUMNS = [{ label: "Details", srOnly: true }, "Environment", "Agent", "Granted through"] as const;
 
-type Source = { kind: MemberPermissionSource["subject_kind"]; label: string };
+type Source = { kind: MemberPermissionSource["subject_kind"]; subject: string; groupID: string | undefined; role: string | undefined };
+// A source names who received the role and the role itself, so a row says how access arrived.
 const sourceOf = (source: MemberPermissionSource): Source => ({
   kind: source.subject_kind,
-  label: source.subject_kind === "member" ? "Direct" : source.subject_kind === "all_members" ? "All members" : source.group_name || "Group",
+  subject: source.subject_kind === "member" ? "Direct" : source.subject_kind === "all_members" ? "All members" : source.group_name || "Group",
+  groupID: source.subject_kind === "group" ? source.group_id : undefined,
+  role: source.role_name,
 });
 
-// Where each permission comes from, one row per scope.
-function EffectiveAccessTable(props: { access: MemberPermissions; names: (id: string) => string; empty: string }) {
+// A source's group and role open their own pages, where the access is changed.
+// Links stop the click so it does not also open or close the row.
+function SourceLabel(props: { source: Source; roleID: (name: string) => string | undefined }) {
+  const stop = (event: MouseEvent) => event.stopPropagation();
+  return (
+    <AccessLabel kind={props.source.kind}>
+      <Show when={props.source.groupID} fallback={props.source.subject}>{id => <A href={groupHref(id())} class={ui.monoLink} onClick={stop}>{props.source.subject}</A>}</Show>
+      <Show when={props.source.role}>
+        {role => <>
+          <span class="text-console-subtle"> › </span>
+          <Show when={props.roleID(role())} fallback={role()}>{id => <A href={roleHref(id())} class={ui.monoLink} onClick={stop}>{role()}</A>}</Show>
+        </>}
+      </Show>
+    </AccessLabel>
+  );
+}
+
+type AreaPermission = { id: string; name: string; granted: boolean };
+type Area = { label: string; permissions: AreaPermission[] };
+
+// Every permission that applies at this scope, by area in the role editor's order
+// and with the role editor's names; areas without any granted permission come apart.
+function permissionAreas(scope: MemberPermissions["scopes"][number], catalog: readonly PermissionDefinition[], names: (id: string) => string) {
+  const granted = new Set(scope.permissions);
+  // Agent rows also carry the environment's own permissions, so applicability follows the assignment level.
+  const level = scope.type === "organization" ? "organization" : "environment";
+  const applicable = catalog.filter(c => c.assignment_levels.includes(level));
+  const byResource = new Map<string, AreaPermission[]>();
+  for (const permission of applicable) byResource.set(permission.resource_type, [...(byResource.get(permission.resource_type) ?? []), { id: permission.id, name: permission.name, granted: granted.has(permission.id) }]);
+  // Without the catalog (no Read roles permission) only the granted names are known.
+  const unknown = scope.permissions.filter(id => !applicable.some(c => c.id === id)).map(id => ({ id, name: names(id), granted: true }));
+  const areas: Area[] = [...byResource].sort(([a], [b]) => resourceRank(a) - resourceRank(b)).map(([resource, permissions]) => ({ label: resourceLabel(resource), permissions }));
+  if (unknown.length) areas.push({ label: "Permissions", permissions: unknown });
+  return { withAccess: areas.filter(a => a.permissions.some(p => p.granted)), withoutAccess: areas.filter(a => !a.permissions.some(p => p.granted)) };
+}
+
+function AreaRows(props: { areas: Area[] }) {
+  return (
+    <For each={props.areas}>
+      {area => (
+        <tr class="group/area h-auto! hover:bg-transparent!">
+          <th scope="row" class="h-auto! w-36 border-b border-console-border-soft px-2.5! group-last/area:border-b-0 py-1.5! text-left align-top text-body font-medium leading-5.5 text-console-text">{area.label}</th>
+          <td class="h-auto! whitespace-normal! px-2.5! py-1.5! align-top">
+            <ul class="m-0 flex list-none flex-wrap gap-x-1.5 gap-y-0.5 p-0">
+              <For each={area.permissions}>
+                {permission => (
+                  <li class={cx("inline-flex items-center gap-1 rounded-xs border px-1.5 text-body leading-5", permission.granted ? "border-transparent bg-console-success-bg font-medium text-console-text" : "border-dashed border-console-border-strong text-console-muted")}>
+                    <span class={permission.granted ? "text-console-success" : "text-console-subtle"} aria-hidden="true"><Icon name={permission.granted ? "check" : "cross"} /></span>
+                    {permission.name}
+                    <Show when={!permission.granted}><span class="sr-only"> (not granted)</span></Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </td>
+        </tr>
+      )}
+    </For>
+  );
+}
+
+// The opened row: its own component, so a data refresh keeps the "show all" choice.
+function ExpandedAccess(props: { id: string; scope: MemberPermissions["scopes"][number]; catalog: readonly PermissionDefinition[]; names: (id: string) => string }) {
+  const areas = createMemo(() => permissionAreas(props.scope, props.catalog, props.names));
+  const [showAll, setShowAll] = createSignal(false);
+  return (
+    <tr id={props.id} class="hover:bg-transparent">
+      <td colSpan={EFFECTIVE_COLUMNS.length} class="h-auto! whitespace-normal bg-console-accent-soft/40 py-2.5! pl-9!">
+        <table class="w-full border-collapse overflow-hidden rounded-xs border border-console-border-soft bg-console-surface">
+          <tbody>
+            <AreaRows areas={areas().withAccess} />
+            <Show when={showAll()}><AreaRows areas={areas().withoutAccess} /></Show>
+          </tbody>
+        </table>
+        <Show when={areas().withoutAccess.length > 0}>
+          <button type="button" class={cx(ui.monoLink, "mt-2 border-0 bg-transparent p-0")} onClick={() => setShowAll(!showAll())}>
+            {showAll() ? "Hide areas with no access" : `Show ${areas().withoutAccess.length} ${areas().withoutAccess.length === 1 ? "area" : "areas"} with no access`}
+          </button>
+        </Show>
+      </td>
+    </tr>
+  );
+}
+
+// Where access comes from, one row per scope. A row summarizes; opening it lists
+// the permissions by area, so long permission sets stay readable.
+function EffectiveAccessTable(props: { access: MemberPermissions; catalog: readonly PermissionDefinition[]; names: (id: string) => string; roleID: (name: string) => string | undefined; empty: string }) {
   const scopeState = useScope();
+  const [open, setOpen] = createSignal<number>();
   const projects = () => new Set(props.access.scopes.filter(s => s.type !== "organization").map(s => s.project));
   // Scopes name projects and environments by ID; show their names where the tab knows them.
   const environmentName = (project: string, environment: string) => [scopeState.selectedProject(), ...scopeState.projects()].find(p => p?.project === project && p.environments)?.environments?.find(e => e.environment === environment)?.name ?? environment;
@@ -40,21 +131,32 @@ function EffectiveAccessTable(props: { access: MemberPermissions; names: (id: st
   const where = (scope: MemberPermissions["scopes"][number]) => scope.type === "organization" ? "Organization" : projects().size > 1 ? `${projectName(scope.project)} / ${environmentName(scope.project, scope.environment)}` : environmentName(scope.project, scope.environment);
   const sources = (scope: MemberPermissions["scopes"][number]) => {
     const seen = new Map<string, Source>();
-    for (const source of scope.sources) { const s = sourceOf(source); seen.set(`${s.kind}:${s.label}`, s); }
+    for (const source of scope.sources) { const s = sourceOf(source); seen.set(`${s.kind}:${s.subject}:${s.role ?? ""}`, s); }
     return [...seen.values()];
   };
   return (
     <Show when={props.access.scopes.length > 0} fallback={<EmptyState title={props.empty} />}>
       <DataTable columns={EFFECTIVE_COLUMNS} minWidth="min-w-180" footer={<TableCount count={props.access.scopes.length} noun={{ one: "scope", other: "scopes" }} />}>
         <For each={props.access.scopes}>
-          {scope => (
-            <tr>
-              <td class={scope.type === "organization" ? "text-console-muted!" : "font-mono text-chrome!"}>{where(scope)}</td>
-              <td><Show when={scope.agent} fallback={<EmptyCell />}>{agent => <span class="font-mono text-chrome">{agent()}</span>}</Show></td>
-              <td>{scope.permissions.map(props.names).join(" · ")}</td>
-              <td><span class="flex items-center gap-3.5"><For each={sources(scope)}>{source => <AccessLabel kind={source.kind}>{source.label}</AccessLabel>}</For></span></td>
-            </tr>
-          )}
+          {(scope, index) => {
+            const expanded = () => open() === index();
+            const panel = `effective-access-${index()}`;
+            return <>
+              <tr class={cx("cursor-pointer", expanded() && "bg-console-accent-soft/40 [&>td]:border-b-transparent")} onClick={() => setOpen(expanded() ? undefined : index())}>
+                <td class="w-6 pr-0!">
+                  <button type="button" class="flex cursor-pointer items-center border-0 bg-transparent p-0 text-console-subtle hover:text-console-text" aria-expanded={expanded()} aria-controls={expanded() ? panel : undefined} aria-label={`${expanded() ? "Hide" : "Show"} permissions in ${where(scope)}`} onClick={event => { event.stopPropagation(); setOpen(expanded() ? undefined : index()); }}>
+                    <Icon name={expanded() ? "chevron-down" : "chevron-right"} />
+                  </button>
+                </td>
+                <td class={scope.type === "organization" ? "text-console-muted!" : "font-mono text-chrome!"}>{where(scope)}</td>
+                <td><Show when={scope.agent} fallback={<EmptyCell />}>{agent => <span class="font-mono text-chrome">{agent()}</span>}</Show></td>
+                <td><span class="flex flex-wrap items-center gap-x-3.5 gap-y-1"><For each={sources(scope)}>{source => <SourceLabel source={source} roleID={props.roleID} />}</For></span></td>
+              </tr>
+              <Show when={expanded()}>
+                <ExpandedAccess id={panel} scope={scope} catalog={props.catalog} names={props.names} />
+              </Show>
+            </>;
+          }}
         </For>
       </DataTable>
     </Show>
@@ -94,7 +196,7 @@ export function MemberDetail() {
   return <>
     <PageHeader
       title={missing() ? "Member not found" : name()}
-      breadcrumb={canManage() ? [{ href: "/settings/members", label: "Members" }] : [{ href: "/settings/account", label: "My account" }]}
+      breadcrumb={canManage() ? [{ href: "/settings/members", label: "Members" }] : [{ href: "/settings/account", label: "Profile" }]}
       badge={<Show when={member()?.is_owner || (self() && me.data?.is_owner)}><Tag title="Can appoint owners and recover access administration">owner</Tag></Show>}
       subtitle={member()?.email && member()?.email !== name() ? member()?.email : undefined}
       menu={member()?.status === "active" ? memberMenu({
@@ -109,7 +211,7 @@ export function MemberDetail() {
         <Tabs id="member-tabs" label="Member" items={tabs()} selected={tab()} onSelect={setTab} />
         <TabPanel tabs="member-tabs" value="effective" selected={tab()}>
           <Show when={canReadAccess()} fallback={<DeniedState message="You need Read assignments permission to view effective access." />}><QueryState query={access} pending={<TableSkeleton label="Loading access" columns={EFFECTIVE_COLUMNS} />} error={error => loadError(error, "Could not load access.")}>
-            {data => <EffectiveAccessTable access={data()} names={names} empty="No access yet" />}
+            {data => <EffectiveAccessTable access={data()} catalog={roles.data?.catalog ?? []} names={names} roleID={name => roles.data?.roles.find(role => role.name === name)?.id} empty="No access yet" />}
           </QueryState></Show>
         </TabPanel>
         <TabPanel tabs="member-tabs" value="assignments" selected={tab()}>

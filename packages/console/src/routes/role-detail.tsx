@@ -7,7 +7,7 @@ import { GrantAccessDialog } from "../features/access/GrantAccessDialog";
 import { hasPermission } from "../lib/auth";
 import { errorMessage, loadError } from "../lib/error";
 import { useMe } from "../lib/me";
-import { getPermissionCatalog, roleAssignmentLevels, listGrants, listRoles, permissionHasScope, resourceLabel, roleHref, saveRole, type PermissionDefinition, type PermissionRole } from "../lib/permissions";
+import { getPermissionCatalog, roleAssignmentLevels, listGrants, listRoles, permissionHasScope, resourceLabel, resourceRank, roleHref, saveRole, type PermissionDefinition, type PermissionRole } from "../lib/permissions";
 import { CheckboxGroup, Field, FormActions, Segmented, TextArea, TextInput } from "../ui/Field";
 import { Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
@@ -20,10 +20,6 @@ import { useAuditItem } from "../features/audit/auditLink";
 
 type Level = "environment" | "organization";
 type Tab = "permissions" | "assignments";
-
-// Agents come first: they are what most roles are about.
-const RESOURCE_ORDER = ["agents", "agent_connections", "sessions", "triggers", "deployments", "templates", "computers", "secrets", "api_keys", "projects", "environments", "members", "invitations", "groups", "roles", "assignments"];
-const resourceRank = (resource: string) => { const i = RESOURCE_ORDER.indexOf(resource); return i < 0 ? RESOURCE_ORDER.length : i; };
 
 // The permission groups a role of this level chooses from.
 function permissionGroups(catalog: readonly PermissionDefinition[], level: Level) {
@@ -150,9 +146,10 @@ function RoleForm(props: { role: PermissionRole | undefined; copy: boolean; read
       <Show when={addsSessionReading()}><Notice tone="warning" class="mb-3">Viewing or managing all sessions includes other people’s personal conversations with these agents.</Notice></Show>
       <Show when={dropsAgents()}><Notice tone="warning" class="mb-3">Removing every agent permission clears the agents chosen on this role’s assignments.</Notice></Show>
       <Show when={!props.readonly}>
-        <Show when={error()}><p class={ui.error} role="alert">{error()}</p></Show>
-        <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <span class={ui.muted}>{editing() && (props.role?.grant_count ?? 0) > 0 ? `Changes apply to ${props.role!.grant_count} ${props.role!.grant_count === 1 ? "assignment" : "assignments"}.` : ""}</span>
+        <Show when={error()}><Notice tone="danger" class="mb-3">{error()}</Notice></Show>
+        {/* The permission list is long; the actions stay in view at the bottom of the page. */}
+        <div class="sticky bottom-0 z-10 -mx-1 mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-console-border bg-console-bg px-1 py-2.5">
+          <span class={ui.muted}>{[changed() ? (editing() ? "Unsaved changes." : "") : "", editing() && (props.role?.grant_count ?? 0) > 0 ? `Changes apply to ${props.role!.grant_count} ${props.role!.grant_count === 1 ? "assignment" : "assignments"}.` : ""].filter(Boolean).join(" ")}</span>
           <FormActions class="flex gap-2" submitLabel={editing() ? "Save role" : "Create role"} busyLabel="Saving…" busy={busy()} cancelLabel="Discard" onCancel={reset} disabled={!name().trim() || permissions().length === 0 || (editing() && !changed())} />
         </div>
       </Show>

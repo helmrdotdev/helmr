@@ -100,7 +100,7 @@ test("a different account never retries the old request", async () => {
 
 for (const path of ["/admin/api/v1/regions", "/admin/api/v1/credentials"]) {
   test(`expired operator authority uses its own login for ${path}`, async () => {
-    const location = { pathname: "/admin/security", search: "", href: "" };
+    const location = { pathname: "/admin/operator-keys", search: "", href: "" };
     (globalThis as { window?: unknown }).window = { location };
     sessionStorage.setItem("helmr.account", "ordinary-user");
     const calls: string[] = [];
@@ -111,12 +111,12 @@ for (const path of ["/admin/api/v1/regions", "/admin/api/v1/credentials"]) {
     }) as typeof fetch;
     await expect(request(path, { method: "POST" })).rejects.toMatchObject({ code: "authentication_required" });
     expect(calls).toEqual([path, "/admin/api/v1/me"]);
-    expect(location.href).toBe("/admin/login?next=%2Fadmin%2Fsecurity");
+    expect(location.href).toBe("/admin/login?next=%2Fadmin%2Foperator-keys");
   });
 }
 
 test("same operator rotation retries a read independently of the ordinary account", async () => {
-  (globalThis as { window?: unknown }).window = { location: { pathname: "/admin/security", search: "", href: "" } };
+  (globalThis as { window?: unknown }).window = { location: { pathname: "/admin/operator-keys", search: "", href: "" } };
   sessionStorage.setItem("helmr.operator", "operator-1");
   sessionStorage.setItem("helmr.account", "ordinary-user");
   let reads = 0;
@@ -131,7 +131,7 @@ test("same operator rotation retries a read independently of the ordinary accoun
 
 
 test("operator rotation never replays a mutation", async () => {
-  (globalThis as { window?: unknown }).window = { location: { pathname: "/admin/security", search: "", href: "" } };
+  (globalThis as { window?: unknown }).window = { location: { pathname: "/admin/operator-keys", search: "", href: "" } };
   sessionStorage.setItem("helmr.operator", "operator-1");
   let writes = 0;
   globalThis.fetch = (async (input: string | URL | Request) => {

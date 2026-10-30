@@ -29,7 +29,8 @@ const PAGES: readonly { label: string; href: string; keywords?: string; permissi
   { label: "Settings › Secrets", href: "/settings/secrets" },
   { label: "Settings › API keys", href: "/settings/api-keys", keywords: "tokens" },
   { label: "Settings › Members", href: "/settings/members", keywords: "organization invitations" },
-  { label: "Account settings", href: "/settings/account", keywords: "settings profile slack" },
+  { label: "Settings › Profile", href: "/settings/account", keywords: "account settings slack" },
+  { label: "Settings › Sign-in and security", href: "/settings/security", keywords: "account passkey email github sign out" },
 ];
 
 // Every page and environment is listed; Sessions show the most recent few and

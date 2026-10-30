@@ -63,9 +63,9 @@ or a later participant. A currently authorized colleague can continue the existi
 conversation.
 
 Revoke account or member access to prevent new operations and disclosure. Stop
-unwanted work separately with Session and Command controls. **View related work**
-in Account settings or Members shows visible work initiated by or involving that
-person, plus descendants, in the selected Environment. It does not include work
+unwanted work separately with Session and Command controls. **View your sessions**
+in Sign-in and security, or **View related work** in Members, shows visible work
+initiated by or involving that person, plus descendants, in the selected Environment. It does not include work
 you cannot view or turn revocation into automatic cancellation. Schedules and
 organization-owned resources remain independently managed. A valid sign-in can
 establish new access after revoke-all; retire compromised credentials as well.
@@ -76,7 +76,7 @@ that source, confirm with a sign-in method you will keep.
 ## Operator API authentication
 
 Operator pages and APIs share the administration namespace: `/admin/login`,
-`/admin/security` and `/admin/api/v1/*`. The internal operator identity remains
+`/admin/operator-keys`, `/admin/account-repair` and `/admin/api/v1/*`. The internal operator identity remains
 separate from ordinary accounts. Authentication is defined per operation, not
 inferred from the URL prefix.
 

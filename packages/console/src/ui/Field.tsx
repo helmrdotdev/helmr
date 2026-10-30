@@ -209,7 +209,7 @@ export function Segmented<T extends string>(props: {
   disabled?: boolean;
 }) {
   return (
-    <div class="inline-flex max-w-full flex-wrap overflow-hidden rounded-xs border border-console-border-strong" role="group" aria-label={props.label}>
+    <div class="inline-flex w-fit max-w-full flex-wrap justify-self-start overflow-hidden rounded-xs border border-console-border-strong" role="group" aria-label={props.label}>
       <For each={props.options}>
         {(option) => (
           <button
@@ -307,7 +307,7 @@ export function CheckboxGroup<T extends string>(props: {
             return (
               <div class="border border-console-border">
                 <div class={cx("flex items-center justify-between gap-2 border-b border-console-border-soft bg-console-bg-panel px-2.5 py-1.5", ui.microLabel)}>
-                  <span>{group.label}</span>
+                  <span>{group.label} <span class="normal-case tracking-normal text-console-muted">· {selected()} of {values().length}</span></span>
                   <label class="flex cursor-pointer items-center gap-1.5 font-sans text-chrome normal-case tracking-normal text-console-muted">
                     <input
                       type="checkbox"

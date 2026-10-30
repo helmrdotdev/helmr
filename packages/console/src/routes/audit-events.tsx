@@ -15,6 +15,7 @@ import { useScope } from "../lib/scope";
 import { DataTable, LoadMore } from "../ui/DataTable";
 import { Segmented, TextInput } from "../ui/Field";
 import { Icon, type IconName } from "../ui/Icon";
+import { Notice } from "../ui/Notice";
 import { PageHeader } from "../ui/PageHeader";
 import { DeniedState, EmptyState, isDenied } from "../ui/QueryState";
 import { RelativeTime } from "../ui/RelativeTime";
@@ -208,9 +209,9 @@ export function AuditEvents(props: { adminView?: boolean }) {
           </Show>
           <Switch>
             <Match when={isDenied(events.error)}><DeniedState message="You need Read audit events permission for this scope." /></Match>
-            <Match when={params.category && actions.data && inCategory().length === 0}><p class={ui.error}>This kind of action is not recorded. <button type="button" class={ui.compactButton} onClick={() => setParams({ category: undefined })}>Clear</button></p></Match>
-            <Match when={params.category && actions.isError}><p class={ui.error}>Could not load the kinds of action. <button type="button" class={ui.compactButton} onClick={() => void actions.refetch()}>Retry</button></p></Match>
-            <Match when={events.isError && !events.data}><p class={ui.error}>{errorMessage(events.error)}</p></Match>
+            <Match when={params.category && actions.data && inCategory().length === 0}><Notice tone="info" action={<button type="button" class={ui.compactButton} onClick={() => setParams({ category: undefined })}>Clear</button>}>This kind of action is not recorded.</Notice></Match>
+            <Match when={params.category && actions.isError}><Notice tone="danger" action={<button type="button" class={ui.compactButton} onClick={() => void actions.refetch()}>Retry</button>}>Could not load the kinds of action.</Notice></Match>
+            <Match when={events.isError && !events.data}><Notice tone="danger" action={<button type="button" class={ui.compactButton} onClick={() => void events.refetch()}>Retry</button>}>{errorMessage(events.error)}</Notice></Match>
             <Match when={!events.data}><TableSkeleton label="Loading audit events" columns={COLUMNS} /></Match>
             <Match when={rows().length === 0}><EmptyState title="No events match these filters." hint="Events older than their retention are gone. Organization access changes appear only to people who can read the whole organization's audit events." /></Match>
             <Match when={true}>

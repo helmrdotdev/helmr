@@ -2,7 +2,7 @@ import { Match, Switch } from "solid-js";
 import { cx } from "./styles";
 
 export type IconName =
-  | "chevron-right" | "chevron-down" | "check" | "arrow-down"
+  | "chevron-right" | "chevron-down" | "check" | "cross" | "arrow-down"
   | "member" | "group" | "all-members" | "api-key" | "lock"
   | "slack-channel" | "slack-dm" | "terminal" | "held" | "warning";
 
@@ -26,6 +26,7 @@ export function Icon(props: { name: IconName; label?: string | undefined; class?
         <Match when={props.name === "chevron-right"}><path d="m9 6 6 6-6 6" /></Match>
         <Match when={props.name === "chevron-down"}><path d="m6 9 6 6 6-6" /></Match>
         <Match when={props.name === "check"}><path d="m5 12 5 5 9-10" /></Match>
+        <Match when={props.name === "cross"}><path d="M7 7l10 10M17 7 7 17" /></Match>
         <Match when={props.name === "arrow-down"}><path d="M12 5v14M6 13l6 6 6-6" /></Match>
         <Match when={props.name === "member"}><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></Match>
         <Match when={props.name === "group"}><circle cx="9" cy="8" r="3.5" /><path d="M2 21a7 7 0 0 1 14 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5a7 7 0 0 1 4 6.5" /></Match>

@@ -114,7 +114,7 @@ test("an empty palette lists every page, then recent Sessions and Environments",
   await page.keyboard.press("ControlOrMeta+k");
   await expect(palette(page).getByRole("group", { name: "Go to" }).getByRole("option")).toHaveText([
     /^Overview/, /^Sessions/, "Agents", "Triggers", "Computers", "Templates", "Deployments",
-    "Settings › General", "Settings › Environments", "Settings › Secrets", "Settings › API keys", "Settings › Members", "Account settings",
+    "Settings › General", "Settings › Environments", "Settings › Secrets", "Settings › API keys", "Settings › Members", "Settings › Profile", "Settings › Sign-in and security",
   ]);
   await expect(palette(page).getByRole("group", { name: "Agents" })).toHaveCount(0);
   await expect(palette(page).getByRole("group").nth(1)).toHaveAccessibleName("Sessions");

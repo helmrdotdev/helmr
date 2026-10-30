@@ -105,9 +105,9 @@ their Slack account once per workspace:
   sends them a link that asks them to sign in to Helmr and confirm both accounts.
   Their first action is not applied; they repeat it after linking. In a DM, send
   a new message outside the linking hint's thread.
-- From the Console: open **Account settings** from the profile menu; **My
-  account** lists linked identities under **Your Slack identity**. Choose a
-  workspace and **Verify Slack identity**.
+- From the Console: open **Account settings** from the profile menu; **Profile**
+  lists linked identities under **Your Slack identity**. Choose a workspace and
+  **Verify Slack identity**.
 
 Linking uses the person's existing Helmr permissions. Unlinking stops future
 requests and answers from that Slack account; work already accepted continues.

@@ -149,19 +149,26 @@ Panel.
   Projects, by Environment when their details are loaded), Go to (sections and
   Settings pages), Agents and recent Sessions (one bounded request each). Enter
   chooses, Escape closes, focus returns to where it was.
-- **ProfileMenu** (`components/`). Opens in a `Popover` under a 32px container
-  header with the name and role on one line (the name truncates).
+- **ProfileMenu** (`components/`). Opens in a `Popover` under a container header
+  with the name and email, then the current organization (name, ID and role) with
+  Switch organization…, which opens `/organizations`; then Profile, Sign-in and
+  security and Sign out. The app bar never names the organization.
+- **OperatorMenu** (`components/`). The admin bar's counterpart: the same
+  `Popover` with the operator ID in its header, when the session ends (warning
+  tone under an hour), Renew session, Operator keys and Sign out operator.
 - **SettingsLayout** (`components/`). Settings pages have flat topic paths
   (`/settings/<topic>`); the navigation groups them by the level they apply to:
   Account, Project and Organization. Every settings page uses the full content
   column; no page narrows it.
 - **EnvironmentSelectorLayout** and `useEditedEnvironment` (`components/`). An
   Environment-specific settings page (Secrets, API keys) edits one Environment of
-  the tab's Project, chosen in a rail (a Select on narrow screens). It opens on the
+  the tab's Project, chosen with one Select at the start of the page `Toolbar` at
+  every width; page filters go beside it in its `tools` slot. It opens on the
   tab's Environment, is page state only (never the URL or the tab's scope), and
-  starts over when the tab's scope changes. The rail tags the tab's Environment
-  with the `working` Tag (in the narrow Select's trailing column too), as
-  the Environments table does. The primary action names the edited Environment and
+  starts over when the tab's scope changes. The Select tags the tab's Environment
+  with the `working` Tag in its trailing column, as the Environments table does;
+  while another Environment is chosen the toolbar says "You are working in X" with
+  a Back to X action. The primary action names the edited Environment and
   its dialogs carry it.
 
 ## Page structure
@@ -312,8 +319,9 @@ Panel.
 | Many independent toggles grouped by scope | **CheckboxGroup** (group headings, "Select all", optional per-option description) |
 
 There is one Select. Native `<select>` elements are not used. An option's
-`trailing` tags (a Tag) sit in a trailing column and show in the
-trigger for the chosen option.
+`leading` mark (an Environment's colour dot) sits before its label, and its
+`trailing` tags (a Tag) sit in a trailing column; both show in the trigger for
+the chosen option, the tags right-aligned as in the list.
 
 ## Feedback
 

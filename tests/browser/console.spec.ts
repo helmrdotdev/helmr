@@ -142,7 +142,8 @@ test("on a phone the menu button opens a drawer that reaches every section, Sett
   await expect(drawer.getByRole("heading")).toHaveCount(0);
   await expect(drawer.getByRole("button", { name: /^Change / })).toHaveCount(0);
   await expect(drawer.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
-  await expect(drawer.getByRole("link", { name: "Account settings", exact: true })).toHaveAttribute("href", "/settings/account");
+  await expect(drawer.getByRole("link", { name: "Profile", exact: true })).toHaveAttribute("href", "/settings/account");
+  await expect(drawer.getByRole("link", { name: "Switch organization", exact: true })).toHaveAttribute("href", "/organizations");
   await drawer.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(page).toHaveURL("/settings/project");
 

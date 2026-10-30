@@ -38,7 +38,8 @@ async function fixture(page: Page, options: { signedOut?: boolean } = {}) {
     else if (apiKeys && method === "POST") json = { ...apiKey(apiKeys[1]!), raw_key: "hk_test_synthetic_raw_key_value" };
     else if (apiKeys) json = { api_keys: [apiKey(apiKeys[1]!)] };
     else if (scoped && method === "DELETE") json = {};
-    else if (path === "/api/account/credentials") json = {credentials:[]};
+    else if (path === "/api/account/credentials") json = { credentials: [{ id: "cred-1", method: "passkey", label: "Laptop key", created_at: now, last_used_at: now }, { id: "cred-2", method: "email", label: "fixture@example.test", created_at: now }] };
+    else if (path === "/api/ownership/members") json = { members: [{ membership_id: "member-1", display_name: "Dana Example", is_owner: true }, { membership_id: "member-2", display_name: "Riley Example", is_owner: false }] };
     else if (path === "/api/slack/user-links") json = { links: [] };
     else if (path === "/api/slack/link-workspaces") json = { configured: true, workspaces: [] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: path } } }); return; }
@@ -50,8 +51,11 @@ async function fixture(page: Page, options: { signedOut?: boolean } = {}) {
 const scope = `project=${projectID}&environment=production`;
 const scopeTrigger = (page: Page) => page.locator("header").getByRole("button", { name: /^Environment:/ });
 const subtitle = (page: Page) => page.locator("h1").locator("xpath=../following-sibling::div[1]");
-const rail = (page: Page) => page.getByRole("region", { name: "Environment" });
-const radio = (page: Page, name: string) => rail(page).getByRole("radio", { name: new RegExp(`^${name}\\b`) });
+const environmentSelect = (page: Page) => page.getByRole("combobox", { name: "Environment", exact: true });
+async function chooseEnvironment(page: Page, name: string) {
+  await environmentSelect(page).click();
+  await page.getByRole("option", { name: new RegExp(`^${name}\\b`) }).click();
+}
 
 test("on a phone settings navigation is one control that opens the grouped pages", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
@@ -95,11 +99,11 @@ test("settings navigation groups pages by Account, Project and Organization", as
   const account = navigation.getByRole("group", { name: "Account", exact: true });
   const projectGroup = navigation.getByRole("group", { name: "Project", exact: true });
   const organization = navigation.getByRole("group", { name: "Organization", exact: true });
-  await expect(account.getByRole("link")).toHaveText(["My account"]);
+  await expect(account.getByRole("link")).toHaveText(["Profile", "Sign-in and security"]);
   await expect(projectGroup).not.toContainText("Settings Demo");
   await expect(projectGroup.getByRole("link")).toHaveText(["General", "Environments", "Secrets", "API keys"]);
   await expect(organization).not.toContainText("Research Org");
-  await expect(organization.getByRole("link")).toHaveText(["Members", "Groups", "Roles", "Audit events"]);
+  await expect(organization.getByRole("link")).toHaveText(["Members", "Groups", "Roles", "Ownership", "Audit events"]);
   await expect(projectGroup.getByRole("link", { name: "General", exact: true })).toHaveAttribute("aria-current", "page");
 
   const settings = page.locator("header").getByRole("link", { name: "Settings" });
@@ -109,21 +113,81 @@ test("settings navigation groups pages by Account, Project and Organization", as
 
   await page.getByRole("button", { name: "Open profile menu" }).click();
   await expect(page.getByRole("menuitem", { name: "Slack account" })).toHaveCount(0);
-  await page.getByRole("menuitem", { name: "Account settings", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Switch organization…", exact: true })).toHaveAttribute("href", "/organizations");
+  await page.getByRole("menuitem", { name: "Profile", exact: true }).click();
   await expect(page).toHaveURL("/settings/account");
-  await expect(account.getByRole("link", { name: "My account", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(account.getByRole("link", { name: "Profile", exact: true })).toHaveAttribute("aria-current", "page");
 });
 
-test("My account shows the profile and the Slack identity section", async ({ page }) => {
+test("a page that scrolls lines up with one that does not", async ({ page }) => {
+  await fixture(page);
+  const left = async () => page.evaluate(() => Math.round(document.querySelector("section")!.getBoundingClientRect().left));
+  await page.setViewportSize({ width: 1400, height: 400 });
+  await page.goto(`/settings/secrets?${scope}`);
+  await expect(page.getByRole("heading", { name: "Secrets", exact: true })).toBeVisible();
+  const short = await left();
+  await page.evaluate(() => { document.body.style.minHeight = "3000px"; });
+  expect(await page.evaluate(() => document.documentElement.scrollHeight > innerHeight)).toBe(true);
+  expect(await left()).toBe(short);
+  // No empty strip is reserved for the scrollbar.
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarGutter)).toBe("auto");
+});
+
+test("Profile shows the profile, the membership and the Slack identity section", async ({ page }) => {
   await fixture(page);
   await page.goto(`/settings/account?${scope}`);
-  await expect(page.getByRole("heading", { name: "My account", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Profile", exact: true })).toBeVisible();
   const profile = page.getByRole("region", {name:"Your profile",exact:true});
   await expect(profile.getByLabel("Display name", {exact:true})).toHaveValue("Dana Example");
   await expect(profile).toContainText("fixture@example.test");
   await expect(profile).not.toContainText("Research Org");
+  const membership = page.getByRole("region", { name: "Membership", exact: true });
+  await expect(membership).toContainText("Owner");
+  await expect(membership.getByRole("link", { name: "View my access", exact: true })).toHaveAttribute("href", /\/settings\/members\//);
+  // Sign-in methods and ownership live on their own pages.
+  await expect(page.getByRole("region", { name: /Sign-in methods|Organization ownership|Confirm your account/ })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Your Slack identity" })).toBeVisible();
   await expect(page.getByText("No Slack identities linked.")).toBeVisible();
+});
+
+test("Sign-in and security lists sign-in methods and confirms removal and sign-out everywhere", async ({ page }) => {
+  await fixture(page);
+  await page.goto(`/settings/security?${scope}`);
+  await expect(page.getByRole("heading", { name: "Sign-in and security", exact: true })).toBeVisible();
+  const table = page.getByRole("table");
+  await expect(table.getByRole("row")).toHaveCount(3);
+  await expect(table.getByRole("row").nth(1)).toContainText("Laptop key");
+  await expect(table.getByRole("row").nth(1)).toContainText("passkey");
+  await expect(page.getByText("Showing 2 sign-in methods", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Actions for Laptop key", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+  const remove = page.getByRole("dialog", { name: "Remove sign-in method", exact: true });
+  await expect(remove).toContainText("Laptop key");
+  await remove.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Add passkey", exact: true }).click();
+  const add = page.getByRole("dialog", { name: "Add passkey", exact: true });
+  await expect(add.getByLabel("Passkey name", { exact: true })).toHaveValue("Passkey 1");
+  await add.getByLabel("Passkey name", { exact: true }).fill("");
+  await expect(add.getByRole("button", { name: "Add passkey", exact: true })).toBeDisabled();
+  await add.getByRole("button", { name: "Cancel", exact: true }).click();
+  const danger = page.getByRole("region", { name: "Sign out everywhere", exact: true });
+  await danger.getByRole("button", { name: "Sign out everywhere…", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Sign out everywhere", exact: true })).toBeVisible();
+});
+
+test("Ownership lists owners for an owner and confirms each change", async ({ page }) => {
+  await fixture(page);
+  await page.goto(`/settings/ownership?${scope}`);
+  await expect(page.getByRole("heading", { name: "Ownership", exact: true })).toBeVisible();
+  const owner = page.getByRole("row").filter({ hasText: "Dana Example" });
+  await expect(owner.getByText("owner", { exact: true })).toBeVisible();
+  await expect(owner).toContainText("Owner");
+  await page.getByRole("button", { name: "Actions for Riley Example", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Make owner", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Make owner", exact: true })).toContainText("Riley Example");
+  await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Recover my access administration", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Recover access administration", exact: true })).toBeVisible();
 });
 
 const MISSING_PATHS = ["/no-such-page", "/settings/no-such-topic"];
@@ -153,18 +217,17 @@ test("the Secrets Environment selector edits another Environment without changin
   const state = await fixture(page);
   await page.goto(`/settings/secrets?${scope}`);
   await expect(scopeTrigger(page)).toContainText("Production");
-  await expect(rail(page)).toContainText("Opens on the environment you are working in. Switching here does not change it.");
-  const production = radio(page, "Production");
-  const staging = radio(page, "Staging");
-  await expect(production).toHaveAccessibleName(/^Production\s*working$/);
-  await expect(staging).toHaveAccessibleName(/^Staging$/);
-  await expect(production).toBeChecked();
+  const select = environmentSelect(page);
+  await expect(select).toContainText("Production");
+  await expect(select.getByText("working", { exact: true })).toBeVisible();
+  await expect(page.getByText("You are working in", { exact: false })).toHaveCount(0);
   await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toBeVisible();
   await expect(subtitle(page)).toHaveText("Values are never displayed after saving.");
   await expect(page.getByRole("button", { name: "Set secret in Production", exact: true })).toBeVisible();
 
-  await staging.check();
-  await expect(staging).toBeChecked();
+  await chooseEnvironment(page, "Staging");
+  await expect(select).toContainText("Staging");
+  await expect(page.getByText("You are working in Production.", { exact: false })).toBeVisible();
   await expect(page.getByRole("cell", { name: "STAGING_TOKEN", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toHaveCount(0);
   await expect(subtitle(page)).toHaveText("Values are never displayed after saving.");
@@ -205,21 +268,20 @@ test("the Secrets Environment selector edits another Environment without changin
   await scopeTrigger(page).click();
   await page.getByRole("dialog", { name: "Choose environment" }).getByRole("option", { name: "Staging" }).click();
   await expect(scopeTrigger(page)).toContainText("Staging");
-  await expect(staging).toBeChecked();
+  await expect(select).toContainText("Staging");
   await scopeTrigger(page).click();
   await page.getByRole("dialog", { name: "Choose environment" }).getByRole("option", { name: "Production" }).click();
   await expect(scopeTrigger(page)).toContainText("Production");
-  await expect(production).toBeChecked();
+  await expect(select).toContainText("Production");
   await expect(page.getByRole("button", { name: "Set secret in Production", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toBeVisible();
 });
 
-test("on narrow screens the Environment selector is a Select above the table", async ({ page }) => {
+test("on narrow screens the Environment selector stays a Select above the table", async ({ page }) => {
   await fixture(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/settings/secrets?${scope}`);
-  await expect(rail(page)).toBeHidden();
-  const select = page.getByRole("combobox", { name: "Environment", exact: true });
+  const select = environmentSelect(page);
   // The working tag follows the name of the tab's Environment.
   await expect(select).toContainText("Production");
   await expect(select.getByText("working", { exact: true })).toBeVisible();
@@ -231,13 +293,17 @@ test("on narrow screens the Environment selector is a Select above the table", a
   await expect(page.getByRole("cell", { name: "STAGING_TOKEN", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Set secret in Staging", exact: true })).toBeVisible();
   await expect(scopeTrigger(page)).toContainText("Production");
+  await page.getByRole("button", { name: "Back to Production", exact: true }).click();
+  await expect(select).toContainText("Production");
+  await expect(select).toBeFocused();
+  await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toBeVisible();
 });
 
 test("API keys list, generate and revoke in the selected Environment, not the tab's", async ({ page }) => {
   const state = await fixture(page);
   await page.goto(`/settings/api-keys?${scope}`);
   await expect(page.getByRole("cell", { name: "Key production", exact: true })).toBeVisible();
-  await radio(page, "Staging").check();
+  await chooseEnvironment(page, "Staging");
   await expect(page.getByRole("cell", { name: "Key staging", exact: true })).toBeVisible();
   await expect(scopeTrigger(page)).toContainText("Production");
 
