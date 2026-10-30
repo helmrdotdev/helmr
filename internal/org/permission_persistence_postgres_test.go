@@ -23,7 +23,7 @@ func TestRolePermissionSetIsCanonicalAndNonempty(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT permissions FROM roles WHERE id=$1`, role.ID).Scan(&stored); err != nil || !slices.Equal(stored, want) {
 		t.Fatalf("stored permission set: %v %v", stored, err)
 	}
-	for _, permissions := range [][]string{nil, {"unknown.permission"}, {"agent_connections.create"}, {"agent_connections.update_credentials"}, {"agent_connections.authorize"}} {
+	for _, permissions := range [][]string{nil, {"unknown.permission"}, {"agent_connections.create"}, {"agent_connections.update_credentials"}, {"agent_connections.authorize"}, {"computers.read_output"}, {"computers.cancel_command"}, {"computers.update_retention"}, {"projects.update_retention"}} {
 		var invalid org.InputError
 		if _, err := org.SavePermissionRole(t.Context(), f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: permissions}); !errors.As(err, &invalid) {
 			t.Fatalf("invalid permission set accepted: %v", err)

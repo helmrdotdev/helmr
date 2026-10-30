@@ -92,7 +92,7 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func canAccessComputerCommandOutput(principal auth.Principal, scope auth.Scope) bool {
-	return principal.HasPermission(auth.PermissionComputersReadOutput, scope)
+	return principal.HasPermission(auth.PermissionCommandsReadOutput, scope)
 }
 
 func (s *Server) getComputerCommandHTTP(w http.ResponseWriter, r *http.Request) {

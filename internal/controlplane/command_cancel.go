@@ -24,7 +24,7 @@ func (s *Server) cancelCommandHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(err))
 		return
 	}
-	if permissionErr := auth.Require(principal, auth.PermissionComputersCancelCommand, scope,
+	if permissionErr := auth.Require(principal, auth.PermissionCommandsCancel, scope,
 		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
 		s.writeOperationError(w, r, forbidden(permissionErr))
 		return

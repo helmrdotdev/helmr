@@ -9,7 +9,7 @@ import (
 )
 
 func TestPermissionCatalog(t *testing.T) {
-	expected := map[string]int{"audit_events": 1, "agents": 4, "agent_connections": 3, "sessions": 10, "deployments": 3, "templates": 2, "triggers": 1, "computers": 9, "secrets": 4, "api_keys": 5, "projects": 4, "environments": 3, "members": 2, "invitations": 3, "groups": 6, "roles": 4, "assignments": 4}
+	expected := map[string]int{"audit_events": 1, "agents": 4, "agent_connections": 3, "sessions": 10, "deployments": 3, "templates": 2, "triggers": 1, "computers": 7, "commands": 2, "secrets": 4, "api_keys": 5, "projects": 3, "environments": 3, "members": 2, "invitations": 3, "groups": 6, "roles": 4, "assignments": 4}
 	counts := map[string]int{}
 	seen := map[Permission]bool{}
 	for _, d := range PermissionCatalog() {
@@ -22,7 +22,7 @@ func TestPermissionCatalog(t *testing.T) {
 		switch d.ResourceType {
 		case "agents", "agent_connections", "sessions", "triggers":
 			scope = ScopeAgent
-		case "deployments", "templates", "computers", "secrets", "api_keys":
+		case "deployments", "templates", "computers", "commands", "secrets", "api_keys":
 			scope = ScopeEnvironment
 		}
 		machine := scope != ScopeOrganization && d.ResourceType != "api_keys" && d.ResourceType != "agent_connections" && !slices.Contains([]Permission{"agents.delete", "agents.restore", "sessions.check_delivery", "sessions.abandon_delivery"}, d.ID)
@@ -35,7 +35,7 @@ func TestPermissionCatalog(t *testing.T) {
 			t.Fatalf("wrong scope or machine eligibility: %+v", d)
 		}
 	}
-	if len(seen) != 68 {
+	if len(seen) != 67 {
 		t.Fatalf("catalog size %d", len(seen))
 	}
 	for resource, count := range expected {
@@ -43,7 +43,7 @@ func TestPermissionCatalog(t *testing.T) {
 			t.Errorf("%s: %d, want %d", resource, counts[resource], count)
 		}
 	}
-	for _, invalid := range []Permission{"", "*", "agents.manage", "sessions.view", "computers.operate", "access.manage", "unknown.read", "agent_connections.create", "agent_connections.update_credentials", "agent_connections.authorize"} {
+	for _, invalid := range []Permission{"", "*", "agents.manage", "sessions.view", "computers.operate", "access.manage", "unknown.read", "agent_connections.create", "agent_connections.update_credentials", "agent_connections.authorize", "computers.read_output", "computers.cancel_command", "computers.update_retention", "projects.update_retention"} {
 		if IsPermission(invalid) || IsMachinePermission(invalid) {
 			t.Errorf("unknown permission accepted: %q", invalid)
 		}

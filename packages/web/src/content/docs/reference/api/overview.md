@@ -106,7 +106,7 @@ needed. Each collection has its own cursor.
 
 `PATCH /v1/computers/{computerID}` changes retention with
 `{"delete_after_unused_ms": <positive integer> | null}`; `null` means never delete.
-It requires `computers:update`.
+It requires `computers.update`.
 
 ## Conventions
 

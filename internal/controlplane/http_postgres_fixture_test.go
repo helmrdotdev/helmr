@@ -103,7 +103,7 @@ func (f httpPostgresFixture) member(t *testing.T, orgID uuid.UUID, userID uuid.U
 		t.Fatal(err)
 	}
 	if role == "owner" || role == "admin" {
-		dbtest.GrantMember(t, f.pool, orgID, userID, nil, "members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete", "projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update")
+		dbtest.GrantMember(t, f.pool, orgID, userID, nil, "members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete", "projects.read", "projects.create", "projects.update", "environments.read", "environments.create", "environments.update")
 	}
 	return pgvalue.MustUUIDValue(record.ID)
 }

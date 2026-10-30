@@ -19,7 +19,11 @@ func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, 
 		return invalidInput("history retention must be positive")
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionProjectsUpdateRetention); err != nil {
+		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionProjectsUpdate); err != nil {
+			return err
+		}
+		// Admission verified this credential; only retention edits require recent proof.
+		if err := auth.RequireRecentProof(m.Human); err != nil {
 			return err
 		}
 		var old pgtype.Int8

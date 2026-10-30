@@ -48,13 +48,13 @@ const (
 	PermissionTemplatesRefresh          Permission = "templates.refresh"
 	PermissionTriggersRead              Permission = "triggers.read"
 	PermissionComputersRead             Permission = "computers.read"
-	PermissionComputersReadOutput       Permission = "computers.read_output"
+	PermissionCommandsReadOutput        Permission = "commands.read_output"
 	PermissionComputersExecute          Permission = "computers.execute"
-	PermissionComputersCancelCommand    Permission = "computers.cancel_command"
+	PermissionCommandsCancel            Permission = "commands.cancel"
 	PermissionComputersCreate           Permission = "computers.create"
 	PermissionComputersWake             Permission = "computers.wake"
 	PermissionComputersHibernate        Permission = "computers.hibernate"
-	PermissionComputersUpdateRetention  Permission = "computers.update_retention"
+	PermissionComputersUpdate           Permission = "computers.update"
 	PermissionComputersDelete           Permission = "computers.delete"
 	PermissionSecretsRead               Permission = "secrets.read"
 	PermissionSecretsCreate             Permission = "secrets.create"
@@ -68,7 +68,6 @@ const (
 	PermissionProjectsRead              Permission = "projects.read"
 	PermissionProjectsCreate            Permission = "projects.create"
 	PermissionProjectsUpdate            Permission = "projects.update"
-	PermissionProjectsUpdateRetention   Permission = "projects.update_retention"
 	PermissionEnvironmentsRead          Permission = "environments.read"
 	PermissionEnvironmentsCreate        Permission = "environments.create"
 	PermissionEnvironmentsUpdate        Permission = "environments.update"
@@ -119,13 +118,13 @@ var permissionCatalog = []PermissionDefinition{
 	{"templates", PermissionTemplatesRefresh, "Refresh templates", "Start explicit preparation refresh for a current Template, including configured preparation credential use.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"triggers", PermissionTriggersRead, "Read triggers", "Read matching trigger definitions, input payloads and occurrence records. This is potentially sensitive input, not a metadata-only feed. Session links still require Session authority to follow.", []PermissionScope{ScopeAgent}, true, nil},
 	{"computers", PermissionComputersRead, "Read computers", "List/read Computer state, resource diagnostics, execution-scope preview, usage IDs and Command status/outcome. No conversation/file/stdout/stderr content.", []PermissionScope{ScopeEnvironment}, true, nil},
-	{"computers", PermissionComputersReadOutput, "Read Command output", "Read retained Command stdout/stderr. This can disclose sensitive content even without execution.", []PermissionScope{ScopeEnvironment}, true, nil},
+	{"commands", PermissionCommandsReadOutput, "Read Command output", "Read retained Command stdout/stderr. This can disclose sensitive content even without execution.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"computers", PermissionComputersExecute, "Execute computers", "Submit Commands on an existing Computer or explicitly place an authorized Session there. Does not implicitly grant historical output/status APIs; standard debugging Roles include them.", []PermissionScope{ScopeEnvironment}, true, nil},
-	{"computers", PermissionComputersCancelCommand, "Cancel Computer Commands", "Cancel a Command in the environment, regardless of creator. No new owner-only cancellation mechanism.", []PermissionScope{ScopeEnvironment}, true, nil},
+	{"commands", PermissionCommandsCancel, "Cancel Commands", "Cancel a Command in the environment, regardless of creator. No new owner-only cancellation mechanism.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"computers", PermissionComputersCreate, "Create computers", "Provision from an allowed definition, including requested Secret bindings and initial retention, under existing quota and creation rules. This is trusted credential-bearing provisioning.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"computers", PermissionComputersWake, "Wake computers", "Explicitly wake a Computer, subject to existing state constraints.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"computers", PermissionComputersHibernate, "Hibernate computers", "Explicitly hibernate a Computer with existing busy/settlement checks.", []PermissionScope{ScopeEnvironment}, true, nil},
-	{"computers", PermissionComputersUpdateRetention, "Update Computer retention", "Change deletion-after-unused policy; shortening it can promptly cause deletion.", []PermissionScope{ScopeEnvironment}, true, nil},
+	{"computers", PermissionComputersUpdate, "Update computers", "Change deletion-after-unused policy; shortening it can promptly cause deletion.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"computers", PermissionComputersDelete, "Delete computers", "Delete the Computer through the platform API with existing settlement rules.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"secrets", PermissionSecretsRead, "Read secrets", "Read Secret names/IDs, versions and non-value metadata. Never retrieve stored plaintext.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"secrets", PermissionSecretsCreate, "Create secrets", "Create a Secret using newly supplied material.", []PermissionScope{ScopeEnvironment}, true, nil},
@@ -138,8 +137,7 @@ var permissionCatalog = []PermissionDefinition{
 	{"api_keys", PermissionAPIKeysRevoke, "Revoke api keys", "Revoke a key.", []PermissionScope{ScopeEnvironment}, false, nil},
 	{"projects", PermissionProjectsRead, "Read projects", "Read the organization-wide Project directory, full Project metadata and history-retention settings.", []PermissionScope{ScopeOrganization}, false, nil},
 	{"projects", PermissionProjectsCreate, "Create projects", "Create a Project and receive resource administration and audit access in its initial Environments.", []PermissionScope{ScopeOrganization}, false, nil},
-	{"projects", PermissionProjectsUpdate, "Update projects", "Change a Project's display name; no slug/identity reassignment.", []PermissionScope{ScopeOrganization}, false, nil},
-	{"projects", PermissionProjectsUpdateRetention, "Update Project retention", "Change Project history retention; explicitly potentially destructive to retained history.", []PermissionScope{ScopeOrganization}, false, nil},
+	{"projects", PermissionProjectsUpdate, "Update projects", "Change a Project's display name and Session history retention. Shortening retention can permanently delete history; no slug/identity reassignment.", []PermissionScope{ScopeOrganization}, false, nil},
 	{"environments", PermissionEnvironmentsRead, "Read environments", "Read full Environment metadata in the organization.", []PermissionScope{ScopeOrganization}, false, nil},
 	{"environments", PermissionEnvironmentsCreate, "Create environments", "Create an Environment and receive resource administration and audit access in it.", []PermissionScope{ScopeOrganization}, false, nil},
 	{"environments", PermissionEnvironmentsUpdate, "Update environments", "Update an Environment's display name and color; no identity/region move.", []PermissionScope{ScopeOrganization}, false, nil},

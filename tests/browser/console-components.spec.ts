@@ -38,7 +38,7 @@ async function fixture(page: Page, accessAdmin = false): Promise<Fixture> {
     const path = url.pathname;
     const method = route.request().method();
     let json: unknown;
-    if (isAuthenticationPath(path)) json = { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: [...(accessAdmin ? ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"] : []), "projects.read", "projects.create", "projects.update", "projects.update_retention", "environments.read", "environments.create", "environments.update"], permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke", "secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke", "deployments.read"] }], admin: false, organization_required: false, project_required: false, email_delivery: true };
+    if (isAuthenticationPath(path)) json = { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: true, permissions: [...(accessAdmin ? ["members.read", "members.remove", "invitations.read", "invitations.create", "invitations.revoke", "groups.read", "groups.create", "groups.update", "groups.delete", "groups.add_member", "groups.remove_member", "roles.read", "roles.create", "roles.update", "roles.delete", "assignments.read", "assignments.create", "assignments.update", "assignments.delete"] : []), "projects.read", "projects.create", "projects.update", "environments.read", "environments.create", "environments.update"], permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["api_keys.read", "api_keys.create", "api_keys.update", "api_keys.rotate", "api_keys.revoke", "secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke", "deployments.read"] }], admin: false, organization_required: false, project_required: false, email_delivery: true };
     else if (path === "/api/groups") json = { groups: [] };
     else if (path === "/api/role-grants") json = { grants: [] };
     else if (path === "/api/roles") json = { roles: [{id:"viewer",name:"Session viewer",permissions:["sessions.read"],assignment_levels:["environment"],api_key_assignable:true,revision:7}], catalog:[{id:"sessions.read",name:"View all sessions",resource_type:"sessions",scope_types: ["agent"], assignment_levels: ["environment"],api_key_assignable:true}] };
@@ -178,6 +178,8 @@ test("a long Select filters its options and picks with the keyboard", async ({ p
 test("a short Select moves with arrow keys, Home, End and typeahead", async ({ page }) => {
   await fixture(page);
   await page.goto(`/settings/project?${scope}`);
+  await page.getByRole("combobox", { name: "History retention", exact: true }).click();
+  await page.getByRole("option", { name: "Custom", exact: true }).click();
   const unit = page.getByRole("combobox", { name: "Unit", exact: true });
   await expect(unit).toHaveText("Days");
   await unit.focus();

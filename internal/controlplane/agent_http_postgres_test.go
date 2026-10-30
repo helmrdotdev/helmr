@@ -178,7 +178,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	for _, body := range []string{`{"input":[],"close_after_idle_ms":0}`, `{"input":[],"close_after_idle_ms":1.5}`} {
 		call(start, owner, body, http.StatusBadRequest)
 	}
-	preserver := issue(auth.PermissionComputersUpdateRetention)
+	preserver := issue(auth.PermissionComputersUpdate)
 	computerPath := "/v1/computers/" + f.Computer.String()
 	for _, tc := range []struct {
 		token, body string

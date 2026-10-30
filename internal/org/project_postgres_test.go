@@ -695,3 +695,38 @@ func TestProjectEnvironmentAuditAtomicity(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectUpdateIncludesRetentionWithOperationSpecificProof(t *testing.T) {
+	f := newProjectFixture(t, 0, 0)
+	project, _, err := CreateProject(t.Context(), f.pool, f.manager, ProjectInput{Slug: "update", ExecutionLimits: testExecutionLimits()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := pgvalue.MustUUIDValue(project.ID)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE roles SET permissions=ARRAY['projects.update'] WHERE org_id=$1 AND builtin_key IS NULL`, f.orgID)
+	if _, err := UpdateProject(t.Context(), f.pool, f.manager, id, ProjectDetails{Name: "Updated"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, f.manager, id, nil); err != nil {
+		t.Fatal(err)
+	}
+	var evidence bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='project.retention_changed' AND target_id=$1 AND authorization_evidence::text LIKE '%projects.update%')`, id).Scan(&evidence); err != nil || !evidence {
+		t.Fatal("missing update authorization evidence", err)
+	}
+	stale := f.manager
+	stale.Human.AuthenticatedAt = time.Now().Add(-2 * time.Hour)
+	if _, err := UpdateProject(t.Context(), f.pool, stale, id, ProjectDetails{Name: "Ordinary edit"}); err != nil {
+		t.Fatal("ordinary edit required recent sign-in", err)
+	}
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, nil); !errors.Is(err, auth.ErrRecentProofRequired) {
+		t.Fatal("retention accepted stale proof", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE roles SET permissions=ARRAY['projects.read'] WHERE org_id=$1 AND builtin_key IS NULL`, f.orgID)
+	if _, err := UpdateProject(t.Context(), f.pool, f.manager, id, ProjectDetails{Name: "Denied"}); !errors.Is(err, ErrMemberManagementRequired) {
+		t.Fatal("reader changed name", err)
+	}
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, f.manager, id, nil); !errors.Is(err, ErrMemberManagementRequired) {
+		t.Fatal("reader changed retention", err)
+	}
+}

@@ -40,7 +40,7 @@ func Cancel(ctx context.Context, auditPolicy auditpolicy.Policy, txb db.TxBeginn
 		if err != nil {
 			return err
 		}
-		if permissionErr := auth.Require(current, auth.PermissionComputersCancelCommand, scope,
+		if permissionErr := auth.Require(current, auth.PermissionCommandsCancel, scope,
 			access.ErrDenied); permissionErr != nil {
 			return permissionErr
 		}
@@ -70,7 +70,7 @@ func cancel(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, prin
 	if err != nil {
 		return CancelReceipt{}, err
 	}
-	if permissionErr := auth.Require(current, auth.PermissionComputersCancelCommand, scope,
+	if permissionErr := auth.Require(current, auth.PermissionCommandsCancel, scope,
 		access.ErrDenied); permissionErr != nil {
 		return CancelReceipt{}, permissionErr
 	}
@@ -104,7 +104,7 @@ func cancel(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, prin
 			return idempotency.Completion{}, err
 		}
 
-		actor, err := audit.Authorized(current, auth.PermissionComputersCancelCommand, scope)
+		actor, err := audit.Authorized(current, auth.PermissionCommandsCancel, scope)
 		if err != nil {
 			return idempotency.Completion{}, err
 		}

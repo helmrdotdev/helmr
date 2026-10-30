@@ -133,7 +133,7 @@ func UpdateRetention(ctx context.Context, auditPolicy auditpolicy.Policy, databa
 		if deleted {
 			return ErrNotFound
 		}
-		actor, err := operationActor(ctx, tx, principal, scope, auth.PermissionComputersUpdateRetention)
+		actor, err := operationActor(ctx, tx, principal, scope, auth.PermissionComputersUpdate)
 		if err != nil {
 			return err
 		}

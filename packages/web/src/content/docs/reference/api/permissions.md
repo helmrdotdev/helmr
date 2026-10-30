@@ -152,13 +152,13 @@ Agents or all current and future Agents in that environment.
 | `templates.refresh` | Environment | Yes | Start explicit preparation refresh for a current Template, including configured preparation credential use. |
 | `triggers.read` | Agent | Yes | Read matching trigger definitions, input payloads and occurrence records. This is potentially sensitive input, not a metadata-only feed. Session links still require Session authority to follow. |
 | `computers.read` | Environment | Yes | List/read Computer state, resource diagnostics, execution-scope preview, usage IDs and Command status/outcome. No conversation/file/stdout/stderr content. |
-| `computers.read_output` | Environment | Yes | Read retained Command stdout/stderr. This can disclose sensitive content even without execution. |
+| `commands.read_output` | Environment | Yes | Read retained Command stdout/stderr. This can disclose sensitive content even without execution. |
 | `computers.execute` | Environment | Yes | Submit Commands on an existing Computer or explicitly place an authorized Session there. Does not implicitly grant historical output/status APIs; standard debugging Roles include them. |
-| `computers.cancel_command` | Environment | Yes | Cancel a Command in the environment, regardless of creator. No new owner-only cancellation mechanism. |
+| `commands.cancel` | Environment | Yes | Cancel a Command in the environment, regardless of creator. No new owner-only cancellation mechanism. |
 | `computers.create` | Environment | Yes | Provision from an allowed definition, including requested Secret bindings and initial retention, under existing quota and creation rules. This is trusted credential-bearing provisioning. |
 | `computers.wake` | Environment | Yes | Explicitly wake a Computer, subject to existing state constraints. |
 | `computers.hibernate` | Environment | Yes | Explicitly hibernate a Computer with existing busy/settlement checks. |
-| `computers.update_retention` | Environment | Yes | Change deletion-after-unused policy; shortening it can promptly cause deletion. |
+| `computers.update` | Environment | Yes | Change deletion-after-unused policy; shortening it can promptly cause deletion. |
 | `computers.delete` | Environment | Yes | Delete the Computer through the platform API with existing settlement rules. |
 | `secrets.read` | Environment | Yes | Read Secret names/IDs, versions and non-value metadata. Never retrieve stored plaintext. |
 | `secrets.create` | Environment | Yes | Create a Secret using newly supplied material. |
@@ -171,8 +171,7 @@ Agents or all current and future Agents in that environment.
 | `api_keys.revoke` | Environment | No | Revoke a key. |
 | `projects.read` | Organization | No | Read the organization-wide Project directory, full Project metadata and history-retention settings. |
 | `projects.create` | Organization | No | Create a Project and receive resource administration and audit access in its initial Environments. |
-| `projects.update` | Organization | No | Change a Project's display name; no slug/identity reassignment. |
-| `projects.update_retention` | Organization | No | Change Project history retention; explicitly potentially destructive to retained history. |
+| `projects.update` | Organization | No | Change a Project's display name and Session history retention. Shortening retention can permanently delete history; no slug/identity reassignment. |
 | `environments.read` | Organization | No | Read full Environment metadata in the organization. |
 | `environments.create` | Organization | No | Create an Environment and receive resource administration and audit access in it. |
 | `environments.update` | Organization | No | Update an Environment's display name and color; no identity/region move. |
