@@ -130,7 +130,7 @@ export function AuthSuccess(props: { title: string; children?: JSX.Element; acti
   return (
     <>
       <AuthTitle>{props.title}</AuthTitle>
-      <Show when={props.children}><p role="status">{props.children}</p></Show>
+      <Show when={props.children}><p class={ui.authCopy} role="status">{props.children}</p></Show>
       <Show when={props.action}><AuthActions>{props.action}</AuthActions></Show>
     </>
   );
@@ -142,7 +142,7 @@ export function AuthMissing(props: { title: string; children: JSX.Element; actio
   return (
     <>
       <AuthTitle>{props.title}</AuthTitle>
-      <p>{props.children}</p>
+      <p class={ui.authCopy}>{props.children}</p>
       <Show when={props.action}><AuthActions>{props.action}</AuthActions></Show>
     </>
   );
