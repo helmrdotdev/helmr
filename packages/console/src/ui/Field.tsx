@@ -307,7 +307,7 @@ export function CheckboxGroup<T extends string>(props: {
             return (
               <div class="border border-console-border">
                 <div class={cx("flex items-center justify-between gap-2 border-b border-console-border-soft bg-console-bg-panel px-2.5 py-1.5", ui.microLabel)}>
-                  <span>{group.label}</span>
+                  <span>{group.label} <span class="normal-case tracking-normal text-console-muted">· {selected()} of {values().length}</span></span>
                   <label class="flex cursor-pointer items-center gap-1.5 font-sans text-chrome normal-case tracking-normal text-console-muted">
                     <input
                       type="checkbox"

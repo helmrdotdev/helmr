@@ -17,13 +17,13 @@ const MESSAGES = {
 };
 
 // What to do next, by what went wrong: the sentence and its one action. On the
-// confirmation screen (`inline`) the page keeps its own primary and My account
+// confirmation screen (`inline`) the page keeps its own primary and Profile
 // link, so only signing in again adds a link.
 function NextStep(props: { failure: Failure & { code: string }; inline?: boolean }) {
   const action = (label: string, href: string) => props.inline ? undefined : <A class={cx(ui.button, "auth-full")} href={href}>{label}</A>;
   return <Switch fallback={<>
-    <AuthCopy>Use the Helmr account that started linking. If the flow expired, try your action in Slack again or start from My account.</AuthCopy>
-    {action("My account", "/settings/account")}
+    <AuthCopy>Use the Helmr account that started linking. If the flow expired, try your action in Slack again or start from your profile.</AuthCopy>
+    {action("Profile", "/settings/account")}
   </>}>
     <Match when={props.failure.code === "unauthorized"}>
       <AuthCopy>Sign in again, then try your action in Slack again.</AuthCopy>
@@ -32,12 +32,12 @@ function NextStep(props: { failure: Failure & { code: string }; inline?: boolean
       </Show>
     </Match>
     <Match when={props.failure.code === "conflict"}>
-      <AuthCopy>Unlink the other account from My account, then link again.</AuthCopy>
-      {action("My account", "/settings/account")}
+      <AuthCopy>Unlink the other account from your profile, then link again.</AuthCopy>
+      {action("Profile", "/settings/account")}
     </Match>
     <Match when={props.failure.code === "forbidden" || props.failure.code === "service_unavailable"}>
       <AuthCopy>Ask an access administrator for help.</AuthCopy>
-      {action("My account", "/settings/account")}
+      {action("Profile", "/settings/account")}
     </Match>
   </Switch>;
 }
@@ -95,7 +95,7 @@ export function AuthSlackLink() {
           <AuthCopy>Confirm that both accounts are yours. Slack actions will use this Helmr account’s current permissions. Linking does not change organization membership.</AuthCopy>
           <Show when={confirmError()}>{(failure) => <AuthError message={failure().message} details={failure().details} action={<NextStep failure={failure()} inline />} />}</Show>
           <button type="button" class={ui.button} disabled={busy()} onClick={() => void confirm()}>{busy() ? "Linking…" : "Confirm these accounts are mine"}</button>
-          <AuthLink href="/settings/account">My account</AuthLink>
+          <AuthLink href="/settings/account">Profile</AuthLink>
         </AuthWindow>
       )}
     </Match>

@@ -11,7 +11,7 @@ import { cx, ui } from "../ui/styles";
 const MESSAGES = {
   forbidden: "This Helmr account cannot access the organization connected to this agent. Ask an administrator for an invitation, or sign in with the account that already has access.",
   bad_request: "This linking request has expired or is unavailable. Try your action in Slack again.",
-  conflict: "This Slack account or your Helmr account is already linked differently in this workspace. Unlink the other account in My account, then try your action in Slack again.",
+  conflict: "This Slack account or your Helmr account is already linked differently in this workspace. Unlink the other account in your profile, then try your action in Slack again.",
   service_unavailable: "Slack is not configured on this server. Ask an administrator to configure the Slack integration.",
 };
 
@@ -94,7 +94,7 @@ export function SlackConnect() {
           </>}
         </Show>
         <Show when={error()}>{(failure) => <AuthError message={failure().message} details={failure().details} />}</Show>
-        <Show when={context()} fallback={<A class={cx(ui.button, "auth-full")} href="/settings/account">My account</A>}>
+        <Show when={context()} fallback={<A class={cx(ui.button, "auth-full")} href="/settings/account">Profile</A>}>
           <button type="button" class={ui.button} disabled={busy()} onClick={() => void start()}>{busy() ? "Opening Slack…" : "Verify my Slack account"}</button>
         </Show>
         {switchButton()}

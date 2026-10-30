@@ -12,7 +12,9 @@ import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { listMembers, memberResourceID, updateMemberOwnership } from "../lib/members";
 import { useScope } from "../lib/scope";
-import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionGroup } from "../lib/permissions";
+import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, permissionResource, resourceLabel, resourceRank, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionDefinition, type PermissionGroup } from "../lib/permissions";
+import { Icon } from "../ui/Icon";
+import { cx, ui } from "../ui/styles";
 import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
 import { ConfirmDialog } from "../ui/Dialog";
 import { PageHeader } from "../ui/PageHeader";
@@ -22,17 +24,30 @@ import { TabPanel, Tabs } from "../ui/Tabs";
 import { useAuditItem } from "../features/audit/auditLink";
 
 type Tab = "effective" | "assignments" | "groups";
-const EFFECTIVE_COLUMNS = ["Environment", "Agent", "Permissions", "Granted through"] as const;
+const EFFECTIVE_COLUMNS = [{ label: "Details", srOnly: true }, "Environment", "Agent", "Granted through", "Permissions"] as const;
 
 type Source = { kind: MemberPermissionSource["subject_kind"]; label: string };
-const sourceOf = (source: MemberPermissionSource): Source => ({
-  kind: source.subject_kind,
-  label: source.subject_kind === "member" ? "Direct" : source.subject_kind === "all_members" ? "All members" : source.group_name || "Group",
-});
+// A source names who received the role and the role itself, so a row says how access arrived.
+const sourceOf = (source: MemberPermissionSource): Source => {
+  const subject = source.subject_kind === "member" ? "Direct" : source.subject_kind === "all_members" ? "All members" : source.group_name || "Group";
+  return { kind: source.subject_kind, label: [subject, source.role_name].filter(Boolean).join(" › ") };
+};
 
-// Where each permission comes from, one row per scope.
-function EffectiveAccessTable(props: { access: MemberPermissions; names: (id: string) => string; empty: string }) {
+// Permission names grouped by the resource they act on, in the role editor's order.
+function permissionAreas(permissions: readonly string[], catalog: readonly PermissionDefinition[], names: (id: string) => string) {
+  const areas = new Map<string, string[]>();
+  for (const permission of permissions) {
+    const resource = permissionResource(permission, catalog);
+    areas.set(resource, [...(areas.get(resource) ?? []), names(permission)]);
+  }
+  return [...areas].sort(([a], [b]) => resourceRank(a) - resourceRank(b)).map(([resource, labels]) => ({ label: resource ? resourceLabel(resource) : "Permissions", names: labels }));
+}
+
+// Where access comes from, one row per scope. A row summarizes; opening it lists
+// the permissions by area, so long permission sets stay readable.
+function EffectiveAccessTable(props: { access: MemberPermissions; catalog: readonly PermissionDefinition[]; names: (id: string) => string; empty: string }) {
   const scopeState = useScope();
+  const [open, setOpen] = createSignal<number>();
   const projects = () => new Set(props.access.scopes.filter(s => s.type !== "organization").map(s => s.project));
   // Scopes name projects and environments by ID; show their names where the tab knows them.
   const environmentName = (project: string, environment: string) => [scopeState.selectedProject(), ...scopeState.projects()].find(p => p?.project === project && p.environments)?.environments?.find(e => e.environment === environment)?.name ?? environment;
@@ -47,14 +62,39 @@ function EffectiveAccessTable(props: { access: MemberPermissions; names: (id: st
     <Show when={props.access.scopes.length > 0} fallback={<EmptyState title={props.empty} />}>
       <DataTable columns={EFFECTIVE_COLUMNS} minWidth="min-w-180" footer={<TableCount count={props.access.scopes.length} noun={{ one: "scope", other: "scopes" }} />}>
         <For each={props.access.scopes}>
-          {scope => (
-            <tr>
-              <td class={scope.type === "organization" ? "text-console-muted!" : "font-mono text-chrome!"}>{where(scope)}</td>
-              <td><Show when={scope.agent} fallback={<EmptyCell />}>{agent => <span class="font-mono text-chrome">{agent()}</span>}</Show></td>
-              <td>{scope.permissions.map(props.names).join(" · ")}</td>
-              <td><span class="flex items-center gap-3.5"><For each={sources(scope)}>{source => <AccessLabel kind={source.kind}>{source.label}</AccessLabel>}</For></span></td>
-            </tr>
-          )}
+          {(scope, index) => {
+            const expanded = () => open() === index();
+            const panel = `effective-access-${index()}`;
+            return <>
+              <tr class={cx("cursor-pointer", expanded() && "bg-console-accent-soft/40 [&>td]:border-b-transparent")} onClick={() => setOpen(expanded() ? undefined : index())}>
+                <td class="w-6 pr-0!">
+                  <button type="button" class="flex cursor-pointer items-center border-0 bg-transparent p-0 text-console-subtle hover:text-console-text" aria-expanded={expanded()} aria-controls={expanded() ? panel : undefined} aria-label={`${expanded() ? "Hide" : "Show"} permissions in ${where(scope)}`} onClick={event => { event.stopPropagation(); setOpen(expanded() ? undefined : index()); }}>
+                    <Icon name={expanded() ? "chevron-down" : "chevron-right"} />
+                  </button>
+                </td>
+                <td class={scope.type === "organization" ? "text-console-muted!" : "font-mono text-chrome!"}>{where(scope)}</td>
+                <td><Show when={scope.agent} fallback={<EmptyCell />}>{agent => <span class="font-mono text-chrome">{agent()}</span>}</Show></td>
+                <td><span class="flex flex-wrap items-center gap-x-3.5 gap-y-1"><For each={sources(scope)}>{source => <AccessLabel kind={source.kind}>{source.label}</AccessLabel>}</For></span></td>
+                <td class="font-mono text-chrome!">{scope.permissions.length}</td>
+              </tr>
+              <Show when={expanded()}>
+                <tr id={panel} class="hover:bg-transparent">
+                  <td colSpan={EFFECTIVE_COLUMNS.length} class="whitespace-normal bg-console-accent-soft/40 pt-0!">
+                    <div class="grid gap-4 pl-8 sm:grid-cols-2 lg:grid-cols-3">
+                      <For each={permissionAreas(scope.permissions, props.catalog, props.names)}>
+                        {area => (
+                          <div class="grid content-start gap-1">
+                            <span class={ui.microLabel}>{area.label}</span>
+                            <For each={area.names}>{name => <span class="text-body">{name}</span>}</For>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </td>
+                </tr>
+              </Show>
+            </>;
+          }}
         </For>
       </DataTable>
     </Show>
@@ -94,7 +134,7 @@ export function MemberDetail() {
   return <>
     <PageHeader
       title={missing() ? "Member not found" : name()}
-      breadcrumb={canManage() ? [{ href: "/settings/members", label: "Members" }] : [{ href: "/settings/account", label: "My account" }]}
+      breadcrumb={canManage() ? [{ href: "/settings/members", label: "Members" }] : [{ href: "/settings/account", label: "Profile" }]}
       badge={<Show when={member()?.is_owner || (self() && me.data?.is_owner)}><Tag title="Can appoint owners and recover access administration">owner</Tag></Show>}
       subtitle={member()?.email && member()?.email !== name() ? member()?.email : undefined}
       menu={member()?.status === "active" ? memberMenu({
@@ -109,7 +149,7 @@ export function MemberDetail() {
         <Tabs id="member-tabs" label="Member" items={tabs()} selected={tab()} onSelect={setTab} />
         <TabPanel tabs="member-tabs" value="effective" selected={tab()}>
           <Show when={canReadAccess()} fallback={<DeniedState message="You need Read assignments permission to view effective access." />}><QueryState query={access} pending={<TableSkeleton label="Loading access" columns={EFFECTIVE_COLUMNS} />} error={error => loadError(error, "Could not load access.")}>
-            {data => <EffectiveAccessTable access={data()} names={names} empty="No access yet" />}
+            {data => <EffectiveAccessTable access={data()} catalog={roles.data?.catalog ?? []} names={names} empty="No access yet" />}
           </QueryState></Show>
         </TabPanel>
         <TabPanel tabs="member-tabs" value="assignments" selected={tab()}>

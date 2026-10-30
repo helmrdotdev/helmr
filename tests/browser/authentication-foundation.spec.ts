@@ -14,11 +14,14 @@ test("ordinary passkey registration, sign-in, replay rejection and operator isol
     const original = await (await page.request.get("/api/me")).json();
     const oldCookies = await context.cookies();
     expect(original.user_id).toBeTruthy();
-    await page.goto("/settings/account");
-    await expect(page.getByLabel("Passkey name", { exact: true })).toHaveValue("Passkey 1");
+    await page.goto("/settings/security");
     await page.getByRole("button", { name: "Add passkey", exact: true }).click();
-    await expect(page.getByText("Passkey added.", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("Passkey name", { exact: true })).toHaveValue("Passkey 2");
+    const add = page.getByRole("dialog", { name: "Add passkey", exact: true });
+    await expect(add.getByLabel("Passkey name", { exact: true })).toHaveValue("Passkey 1");
+    await add.getByLabel("Passkey name", { exact: true }).fill("Browser acceptance key");
+    await add.getByRole("button", { name: "Add passkey", exact: true }).click();
+    await expect(page.getByText("Passkey “Browser acceptance key” added.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("row").filter({ hasText: "Browser acceptance key" })).toBeVisible();
     const credentials = await cdp.send("WebAuthn.getCredentials", { authenticatorId });
     expect(credentials.credentials).toHaveLength(1);
     expect(credentials.credentials[0]?.isResidentCredential).toBe(true);
@@ -29,17 +32,18 @@ test("ordinary passkey registration, sign-in, replay rejection and operator isol
       if (++optionsAttempts === 1) return route.fulfill({status:403,json:{error:{code:"recent_authentication_required",message:"Confirm your account"}}});
       return route.fallback();
     });
-    await page.getByLabel("Passkey name", {exact:true}).fill("Work laptop");
     await page.getByRole("button", {name:"Add passkey",exact:true}).click();
+    await add.getByLabel("Passkey name", {exact:true}).fill("Work laptop");
+    await add.getByRole("button", {name:"Add passkey",exact:true}).click();
     const confirmation = page.getByRole("dialog", {name:"Confirm your sign-in"});
     await confirmation.getByRole("button", {name:"Confirm with a passkey"}).click();
     await expect(confirmation.getByRole("status")).toContainText("Sign-in confirmed");
     expect((await cdp.send("WebAuthn.getCredentials", {authenticatorId})).credentials).toHaveLength(1);
     expect(optionsAttempts).toBe(1);
     await confirmation.getByRole("button", {name:"Return to your action"}).click();
-    await expect(page.getByLabel("Passkey name", {exact:true})).toHaveValue("Work laptop");
-    await page.getByRole("button", {name:"Add passkey",exact:true}).click();
-    await expect(page.getByText("Passkey added.", {exact:true})).toBeVisible();
+    await expect(add.getByLabel("Passkey name", {exact:true})).toHaveValue("Work laptop");
+    await add.getByRole("button", {name:"Add passkey",exact:true}).click();
+    await expect(page.getByText("Passkey “Work laptop” added.", {exact:true})).toBeVisible();
     const registered = await (await page.request.get("/api/account/credentials")).json();
     expect(registered.credentials).toEqual(expect.arrayContaining([expect.objectContaining({method:"passkey",label:"Work laptop"})]));
     expect(optionsAttempts).toBe(2);
@@ -97,17 +101,17 @@ test("deployment-local operator enrollment requires registration and a working a
     const enrollment = JSON.parse(readFileSync(file, "utf8"));
     await page.goto("/dev/login");
     await page.goto("/admin/login");
-    await page.getByText("Set up or repair an operator key", { exact: true }).click();
+    await page.getByRole("button", { name: "Set up or repair a key", exact: true }).click();
     await page.getByLabel("Setup or repair capability", { exact: true }).fill(enrollment.capability);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Register a key", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Register key", exact: true })).toBeVisible();
     expect((await page.request.post("/api/auth/logout", {headers:{Origin:baseURL!},data:{}})).status()).toBe(204);
     await page.reload();
-    await page.getByRole("button", { name: "Register a key", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Verify this key", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Register key", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Verify key", exact: true })).toBeVisible();
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(403);
     await page.reload();
-    await page.getByRole("button", { name: "Verify this key", exact: true }).click();
+    await page.getByRole("button", { name: "Verify key", exact: true }).click();
     await expect(page.getByRole("status")).toHaveText("Your key is ready. Sign in with it above.");
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(403);
     await page.getByRole("button", { name: "Sign in with operator key", exact: true }).click();
@@ -115,16 +119,38 @@ test("deployment-local operator enrollment requires registration and a working a
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(200);
     await expect(page.getByRole("heading", { name: "Setup is complete" })).toBeVisible();
     execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()+interval '9 hours' WHERE channel='operator'"], { stdio: "pipe" });
-    await page.goto("/admin/security");
-    await page.getByRole("button", { name: "Reauthenticate and renew session", exact: true }).click();
+    await page.goto("/admin/operator-keys");
+    await expect(page.getByRole("row").filter({ hasText: "Operator key" })).toBeVisible();
+    await page.getByRole("button", { name: "Open operator menu", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Renew session", exact: true }).click();
     await expect(page.getByText("New 12-hour operator session started.", { exact: true })).toBeVisible();
+    // A recent confirmation is given in place with the operator key; the removal is not resent.
+    let removals = 0;
+    await page.route("**/admin/api/v1/credentials/*", route => {
+      if (route.request().method() !== "DELETE") return route.fallback();
+      removals++;
+      return route.fulfill({ status: 403, json: { error: { code: "recent_authentication_required", message: "Confirm with another operator key" } } });
+    });
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Actions for Operator key", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+    const removeKey = page.getByRole("dialog", { name: "Remove operator key", exact: true });
+    await removeKey.getByRole("button", { name: "Remove key", exact: true }).click();
+    const operatorConfirmation = page.getByRole("dialog", { name: "Confirm your sign-in", exact: true });
+    await expect(operatorConfirmation).toContainText("Confirm with another operator key");
+    await operatorConfirmation.getByRole("button", { name: "Use operator key", exact: true }).click();
+    await expect(operatorConfirmation.getByRole("status")).toContainText("Sign-in confirmed");
+    expect(removals).toBe(1);
+    await operatorConfirmation.getByRole("button", { name: "Return to your action", exact: true }).click();
+    await removeKey.getByRole("button", { name: "Cancel", exact: true }).click();
+    await page.unroute("**/admin/api/v1/credentials/*");
     execFileSync("psql", ["-d", `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable`, "-At", "-c", "UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()-interval '1 second' WHERE channel='operator'"], {
       env: { ...process.env, PGDATABASE: `postgres://helmr_runtime@/postgres?host=${socket}&port=${port}&sslmode=disable` }, stdio: "pipe",
     });
-    await page.goto("/admin/security");
+    await page.goto("/admin/operator-keys");
     await page.getByRole("link", { name: "Sign in as an operator", exact: true }).click();
     await page.getByRole("button", { name: "Sign in with operator key", exact: true }).click();
-    await expect(page).toHaveURL(/\/admin\/security$/);
+    await expect(page).toHaveURL(/\/admin\/operator-keys$/);
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(200);
     expect((await page.request.get("/api/me")).status()).toBe(403);
     await page.goto("/login");
@@ -147,11 +173,12 @@ test("deployment-local operator enrollment requires registration and a working a
     // The account holder uses their authenticator; the already authenticated
     // operator continues supervising through the independent operator cookie.
     await cdp.send("WebAuthn.clearCredentials", { authenticatorId });
-    await page.goto("/admin/security");
+    await page.goto("/admin/account-repair");
     await page.getByLabel("Account repair capability", { exact: true }).fill(JSON.parse(readFileSync(repairFile, "utf8")).capability);
     await page.getByRole("button", { name: "Review repair target", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Account holder: register your key and complete repair", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "This is the right account", exact: true })).toBeVisible();
     await page.reload();
+    await page.getByRole("button", { name: "This is the right account", exact: true }).click();
     let completion: { url: string; body: unknown } | undefined;
     page.on("request", request => {
       if (/\/account-repairs\/[^/]+\/complete$/.test(new URL(request.url()).pathname)) completion = { url: request.url(), body: request.postDataJSON() };

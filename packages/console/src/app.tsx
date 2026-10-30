@@ -1,6 +1,7 @@
 import { AuthConfirmation } from "./routes/auth-confirmation";
 import { AuthenticationNotice } from "./components/AuthenticationNotice";
-import { OperatorSecurity } from "./routes/operator-security";
+import { OperatorKeys } from "./routes/operator-keys";
+import { AccountRepair } from "./routes/account-repair";
 import { Organizations } from "./routes/organizations";
 import { OperatorLogin } from "./routes/operator-login";
 import { Setup } from "./routes/setup";
@@ -32,6 +33,8 @@ import { AuthSlackLink } from "./routes/auth-slack-link";
 import { SlackConnect } from "./routes/slack-connect";
 import { AuthSlackCallback } from "./routes/auth-slack-callback";
 import { AccountSettings } from "./routes/account-settings";
+import { AccountSecurity } from "./routes/account-security";
+import { Ownership } from "./routes/ownership";
 import { AuthGitHubCallback } from "./routes/auth-callback";
 import { SessionList } from "./routes/sessions";
 import { TriggerList } from "./routes/triggers";
@@ -81,15 +84,21 @@ function SettingsLink() {
   );
 }
 
+// The Settings pages about the signed-in account rather than a Project or the
+// organization.
+const ACCOUNT_SETTINGS_PATHS = ["/settings/account", "/settings/security"];
+
 // The phone menu's Settings and account entries.
 function DrawerAccount(props: { close: () => void }) {
   const me = useMe();
   const location = useLocation();
   const item = (active: boolean) => cx(ui.drawerItem, active ? ui.activeBar : ui.drawerItemIdle);
+  const inAccount = () => ACCOUNT_SETTINGS_PATHS.includes(location.pathname);
   return (
     <div class="flex flex-col gap-0.5 p-2">
-      <A href="/settings/project" class={item(location.pathname.startsWith("/settings") && location.pathname !== "/settings/account")} onClick={props.close}>Settings</A>
-      <A href="/settings/account" class={item(location.pathname === "/settings/account")} onClick={props.close}>Account settings</A>
+      <A href="/settings/project" class={item(location.pathname.startsWith("/settings") && !inAccount())} onClick={props.close}>Settings</A>
+      <A href="/settings/account" class={item(inAccount())} onClick={props.close}>Profile</A>
+      <A href="/organizations" class={item(false)} onClick={props.close}>Switch organization</A>
 
       <button
         type="button"
@@ -102,7 +111,7 @@ function DrawerAccount(props: { close: () => void }) {
         Sign out
       </button>
       <p class="m-0 truncate px-2.5 py-2 font-mono text-chrome text-console-muted">
-        {me.data?.display_name?.trim() || me.data?.user_id || "Account"} · {formatRole(me.data?.is_owner ? "owner" : "member")}
+        {me.data?.display_name?.trim() || me.data?.user_id || "Account"} · {formatRole(me.data?.is_owner ? "owner" : "member")}<Show when={me.data?.org_name}>{name => <> · {name()}</>}</Show>
       </p>
     </div>
   );
@@ -251,12 +260,15 @@ export function App() {
 
       <Route path="/admin" component={() => <Navigate href="/admin/worker-groups" />} />
       <Route path="/admin/audit-events" component={wrapAdmin(() => <Page><AuditEvents adminView /></Page>)} />
-      <Route path="/admin/security" component={wrapAdmin(OperatorSecurity)} />
+      <Route path="/admin/operator-keys" component={wrapAdmin(OperatorKeys)} />
+      <Route path="/admin/account-repair" component={wrapAdmin(AccountRepair)} />
       <Route path="/admin/regions" component={wrapAdmin(AdminRegions)} />
       <Route path="/admin/worker-groups" component={wrapAdmin(AdminWorkerGroups)} />
 
       <Route path="/settings" component={() => <Navigate href="/settings/project" />} />
       <Route path="/settings/account" component={wrapSettings(AccountSettings, "session")} />
+      <Route path="/settings/security" component={wrapSettings(AccountSecurity, "session")} />
+      <Route path="/settings/ownership" component={wrapSettings(Ownership, "organization")} />
       <Route path="/settings/project" component={wrapSettings(ProjectSettings)} />
       <Route path="/settings/environments" component={wrapSettings(Environments)} />
       <Route path="/settings/secrets" component={wrapSettings(Secrets)} />

@@ -382,5 +382,5 @@ func (s *Server) githubLinkStart(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	s.writeGitHubAuthStart(w, r, browserAuthGitHubLink, nil, "/settings/account")
+	s.writeGitHubAuthStart(w, r, browserAuthGitHubLink, nil, "/settings/security")
 }

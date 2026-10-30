@@ -1,12 +1,33 @@
 import { useQueryClient } from "@tanstack/solid-query";
-import { createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createResource, createSignal, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { getAccount, getAuthConfig, getMe, startGitHubLogin, type Me } from "../lib/auth";
 import { assertPasskey } from "../lib/passkey";
+import { AuthDivider } from "../ui/AuthWindow";
 import { Dialog } from "../ui/Dialog";
-import { ui } from "../ui/styles";
+import { Notice } from "../ui/Notice";
+import { cx, ui } from "../ui/styles";
 import { EmailSignIn } from "./EmailSignIn";
 
-function AccountConfirmation(props: { onClose: () => void; reason?: string }) {
+type Request = { operator: boolean; reason?: string };
+
+// Keep the original page and any form dialog mounted throughout authentication.
+// The interrupted action is never replayed: the person reviews and submits it again.
+export function AuthenticationNotice() {
+  const [request, setRequest] = createSignal<Request>();
+  const show = (event: Event) => {
+    if (!request()) setRequest((event as CustomEvent<Request>).detail);
+  };
+  onMount(() => window.addEventListener("helmr-confirmation-required", show));
+  onCleanup(() => window.removeEventListener("helmr-confirmation-required", show));
+  const close = () => setRequest(undefined);
+  return <Show when={request()} keyed>
+    {value => value.operator
+      ? <OperatorConfirmation reason={value.reason} onClose={close} />
+      : <AccountConfirmation reason={value.reason} onClose={close} />}
+  </Show>;
+}
+
+function AccountConfirmation(props: { onClose: () => void; reason?: string | undefined }) {
   const queries = useQueryClient();
   const knownAccount = queries.getQueryData<Me>(["me"]);
   const [config] = createResource(getAuthConfig);
@@ -54,39 +75,107 @@ function AccountConfirmation(props: { onClose: () => void; reason?: string }) {
   onMount(() => window.addEventListener("message", returned));
   onCleanup(() => { active = false; window.removeEventListener("message", returned); popup?.close(); });
 
-  return <Dialog title="Confirm your sign-in" onClose={props.onClose} closeDisabled={busy()} bodyClass="space-y-3 p-3">
-    <Show when={complete()} fallback={<>
-      <p class={ui.muted}>Confirm your identity to continue. Then review and submit your action.</p>
-      <Show when={props.reason}><p class={ui.muted}>{props.reason}</p></Show>
-      <Show when={error() || config.error}><p role="alert">{error() || "Sign-in methods could not be loaded. Close and try again."}</p></Show>
-      <Show when={!verified()} fallback={<button type="button" class={ui.button} disabled={busy()} onClick={() => void run(confirmed)}>Retry confirmation</button>}>
-      <div class="flex flex-wrap gap-2">
-      <Show when={config()?.methods.includes("passkey")}><button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { await assertPasskey("/api/auth/passkey/options", "/api/auth/passkey/verify"); await confirmed(); })}>Confirm with a passkey</button></Show>
-      <Show when={config()?.methods.includes("github")}><button type="button" class={ui.secondaryButton} disabled={busy()} onClick={github}>Confirm with GitHub</button></Show>
-      </div>
-      <Show when={config()?.methods.includes("email")}><EmailSignIn {...(email() ? {email:email()!} : {})} complete={() => void run(confirmed)} /></Show>
+  const methods = () => config()?.methods ?? [];
+  const hasButtons = () => methods().includes("passkey") || methods().includes("github");
+  return (
+    <ConfirmationDialog
+      intro="Confirm it’s you to continue. Your form stays open; nothing is submitted for you."
+      reason={props.reason}
+      error={error() || (config.error ? "Sign-in methods could not be loaded. Close and try again." : "")}
+      settled={!config.loading}
+      busy={busy()}
+      complete={complete()}
+      onClose={props.onClose}
+    >
+      <Show when={!verified()} fallback={<div><button type="button" class={ui.button} disabled={busy()} onClick={() => void run(confirmed)}>Retry confirmation</button></div>}>
+        <Show when={hasButtons()}>
+          <div class={ui.buttonGroup}>
+            <Show when={methods().includes("passkey")}><button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { await assertPasskey("/api/auth/passkey/options", "/api/auth/passkey/verify"); await confirmed(); })}>Confirm with a passkey</button></Show>
+            <Show when={methods().includes("github")}><button type="button" class={ui.secondaryButton} disabled={busy()} onClick={github}>Confirm with GitHub</button></Show>
+          </div>
+        </Show>
+        <Show when={methods().includes("email")}>
+          <div>
+            <Show when={hasButtons()}><AuthDivider>or by email</AuthDivider></Show>
+            <EmailSignIn compact {...(email() ? { email: email()! } : {})} complete={() => void run(confirmed)} />
+          </div>
+        </Show>
       </Show>
-      <button type="button" class={ui.secondaryButton} disabled={busy()} onClick={props.onClose}>Cancel</button>
-    </>}>
-      <p role="status">Sign-in confirmed. Review your input, then submit your change.</p>
-      <button type="button" class={ui.button} onClick={props.onClose}>Return to your action</button>
-    </Show>
-  </Dialog>;
+    </ConfirmationDialog>
+  );
 }
 
-// Keep the original page and any form dialog mounted throughout authentication.
-export function AuthenticationNotice() {
-  const [request, setRequest] = createSignal<{ operator: boolean; reason?: string }>();
-  const show = (event: Event) => {
-    if (!request()) setRequest((event as CustomEvent<{ operator: boolean; reason?: string }>).detail);
+function OperatorConfirmation(props: { onClose: () => void; reason?: string | undefined }) {
+  const queries = useQueryClient();
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+  const [complete, setComplete] = createSignal(false);
+  const confirm = async () => {
+    setBusy(true); setError("");
+    try {
+      await assertPasskey("/admin/api/v1/auth/options", "/admin/api/v1/auth/verify");
+      await queries.invalidateQueries({ queryKey: ["operator"] });
+      setComplete(true);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "The operator key could not be confirmed."); }
+    finally { setBusy(false); }
   };
-  onMount(() => window.addEventListener("helmr-confirmation-required", show));
-  onCleanup(() => window.removeEventListener("helmr-confirmation-required", show));
-  return <Show when={request()} keyed>{value => <Show when={!value.operator} fallback={
-    <Dialog title="Confirm your sign-in" onClose={() => setRequest(undefined)}>
-      <p>Sign in with the same operator in the new tab, then return here and retry your action. Your form stays open.</p>
-      <a href="/admin/login" target="_blank" rel="noopener noreferrer" class={ui.button}>Confirm sign-in</a>
-      <button type="button" class={ui.secondaryButton} onClick={() => setRequest(undefined)}>Return to form</button>
+  return (
+    <ConfirmationDialog
+      intro="Confirm with an operator key to continue. Your form stays open; nothing is submitted for you."
+      reason={props.reason}
+      error={error()}
+      settled
+      busy={busy()}
+      complete={complete()}
+      onClose={props.onClose}
+    >
+      <div><button type="button" class={ui.button} disabled={busy()} onClick={() => void confirm()}>{busy() ? "Waiting for key…" : "Use operator key"}</button></div>
+    </ConfirmationDialog>
+  );
+}
+
+// The shared frame: why confirmation is needed, the methods, then either Cancel
+// or, once confirmed, the way back to the retained action.
+function ConfirmationDialog(props: {
+  intro: string;
+  reason?: string | undefined;
+  error: string;
+  settled: boolean;
+  busy: boolean;
+  complete: boolean;
+  onClose: () => void;
+  children: JSX.Element;
+}) {
+  let body: HTMLDivElement | undefined;
+  let returnButton: HTMLButtonElement | undefined;
+  // The dialog's own initial focus runs before the methods load; move it to the
+  // first method once they render, and to the way back once confirmed.
+  const focusFirst = () => requestAnimationFrame(() => body?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled)")?.focus());
+  return (
+    <Dialog title="Confirm your sign-in" onClose={props.onClose} closeDisabled={props.busy} bodyClass="flex flex-col">
+      <Show when={!props.complete} fallback={<>
+        <div class="p-3"><Notice tone="success">Sign-in confirmed. Review your input, then submit your change.</Notice></div>
+        <div class={ui.dialogFooter}><button ref={el => { returnButton = el; requestAnimationFrame(() => returnButton?.focus()); }} type="button" class={ui.button} onClick={props.onClose}>Return to your action</button></div>
+      </>}>
+        <div class="min-h-0 overflow-y-auto p-3">
+          <div class={ui.blockStack}>
+            <p class="m-0 text-body">{props.intro}</p>
+            <Show when={props.reason}>
+              {reason => (
+                <dl class="m-0 rounded-xs bg-console-surface-muted px-2.5 py-2">
+                  <dt class={ui.microLabel}>Needed for</dt>
+                  <dd class="m-0 mt-0.5 text-body">{reason()}</dd>
+                </dl>
+              )}
+            </Show>
+            <Show when={props.error}><Notice tone="danger">{props.error}</Notice></Show>
+            <Show when={props.settled} fallback={<p class={cx(ui.muted, "m-0")}>Loading your sign-in methods…</p>}>
+              <div class={ui.blockStack} ref={el => { body = el; focusFirst(); }}>{props.children}</div>
+            </Show>
+          </div>
+        </div>
+        <div class={ui.dialogFooter}><button type="button" class={ui.secondaryButton} disabled={props.busy} onClick={props.onClose}>Cancel</button></div>
+      </Show>
     </Dialog>
-  }><AccountConfirmation {...(value.reason ? {reason:value.reason} : {})} onClose={() => setRequest(undefined)} /></Show>}</Show>;
+  );
 }

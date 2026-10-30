@@ -118,8 +118,13 @@ test("a member's effective access names where each permission comes from", async
   await page.getByRole("link", { name: "Local" }).click();
   await expect(page).toHaveURL(/\/settings\/members\/m-local$/);
   const agentRow = page.getByRole("row").filter({ hasText: "assistant" });
-  await expect(agentRow).toContainText("Use agents · Manage secrets");
   await expect(agentRow).toContainText("Release team");
+  // A row summarizes; opening it lists the permissions by area.
+  const toggle = agentRow.getByRole("button", { name: / permissions in / });
+  await toggle.click();
+  const permissions = page.locator(`#${await toggle.getAttribute("aria-controls")}`);
+  await expect(permissions).toContainText("Use agents");
+  await expect(permissions).toContainText("Manage secrets");
   await expect(agentRow).toContainText("All members");
   await expect(page.getByRole("row").filter({ hasText: "Organization" })).toContainText("Direct");
 });

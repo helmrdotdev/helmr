@@ -149,8 +149,13 @@ Panel.
   Projects, by Environment when their details are loaded), Go to (sections and
   Settings pages), Agents and recent Sessions (one bounded request each). Enter
   chooses, Escape closes, focus returns to where it was.
-- **ProfileMenu** (`components/`). Opens in a `Popover` under a 32px container
-  header with the name and role on one line (the name truncates).
+- **ProfileMenu** (`components/`). Opens in a `Popover` under a container header
+  with the name and email, then the current organization (name, ID and role) with
+  Switch organization…, which opens `/organizations`; then Profile, Sign-in and
+  security and Sign out. The app bar never names the organization.
+- **OperatorMenu** (`components/`). The admin bar's counterpart: the same
+  `Popover` with the operator ID in its header, when the session ends (warning
+  tone under an hour), Renew session, Operator keys and Sign out operator.
 - **SettingsLayout** (`components/`). Settings pages have flat topic paths
   (`/settings/<topic>`); the navigation groups them by the level they apply to:
   Account, Project and Organization. Every settings page uses the full content

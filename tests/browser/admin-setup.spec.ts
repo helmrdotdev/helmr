@@ -62,8 +62,8 @@ for (const failure of ["/admin/api/v1/setup", "/api/me"]) {
 
 test("protected admin entry preserves its destination at the login link", async ({ page, context }) => {
   await setupFixture(context, { operator: false, account: true });
-  await page.goto("/admin/security");
-  await expect(page.getByRole("link", { name: "Sign in as an operator" })).toHaveAttribute("href", "/admin/login?next=%2Fadmin%2Fsecurity");
+  await page.goto("/admin/operator-keys");
+  await expect(page.getByRole("link", { name: "Sign in as an operator" })).toHaveAttribute("href", "/admin/login?next=%2Fadmin%2Foperator-keys");
   await page.getByRole("link", { name: "Sign in as an operator" }).click();
   await expect(page.getByRole("heading", { name: "Operator sign-in", exact: true })).toBeVisible();
 });

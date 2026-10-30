@@ -30,6 +30,7 @@ export function ProfileMenu() {
   const displayName = createMemo(() => me.data?.display_name?.trim() || me.data?.user_id || "Account");
   const imageURL = createMemo(() => me.data?.profile_image_url?.trim() || null);
   const showImage = createMemo(() => !!imageURL() && !imageFailed());
+  const organizationSlug = () => me.data?.organizations.find((org) => org.id === me.data?.org_id)?.slug;
 
   return (
     <div class="relative shrink-0">
@@ -54,17 +55,29 @@ export function ProfileMenu() {
         </Show>
       </button>
 
-      <Popover open={open()} anchor={trigger()} onDismiss={() => setOpen(false)} role="menu" label="Profile" align="end" width={224}>
-        <div class={ui.containerHeader}>
+      <Popover open={open()} anchor={trigger()} onDismiss={() => setOpen(false)} role="menu" label="Profile" align="end" width={264}>
+        <div class="flex flex-col gap-0.5 border-b border-console-border bg-console-bg-panel px-3 py-2">
           <span class={cx(ui.containerTitle, "text-console-text")}>{displayName()}</span>
-          <span class={cx(ui.microLabel, "shrink-0")}>{formatRole(me.data?.is_owner ? "owner" : "member")}</span>
+          <Show when={me.data?.primary_email}>{email => <span class="max-w-full truncate text-chrome text-console-muted">{email()}</span>}</Show>
         </div>
+        <Show when={me.data?.org_name}>
+          {name => (
+            <div class="flex flex-col gap-1.5 border-b border-console-border-soft px-3 py-2.5">
+              <span class={ui.microLabel}>Organization</span>
+              <span class="flex min-w-0 flex-col">
+                <span class="truncate text-body font-medium text-console-text">{name()}</span>
+                <span class="truncate font-mono text-micro text-console-muted">{[organizationSlug(), formatRole(me.data?.is_owner ? "owner" : "member")].filter(Boolean).join(" · ")}</span>
+              </span>
+              <A href="/organizations" class={ui.monoLink} role="menuitem" onClick={() => setOpen(false)}>Switch organization…</A>
+            </div>
+          )}
+        </Show>
         <div class="p-1">
-          <A href="/organizations" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>Switch organization</A>
-          <A href="/settings/account" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>
-            Account settings
-          </A>
-
+          <Show when={!me.data?.org_name}>
+            <A href="/organizations" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>Choose an organization</A>
+          </Show>
+          <A href="/settings/account" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>Profile</A>
+          <A href="/settings/security" class={ui.scopeAction} role="menuitem" onClick={() => setOpen(false)}>Sign-in and security</A>
           <button
             type="button"
             class={ui.scopeAction}

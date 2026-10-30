@@ -242,7 +242,7 @@ function MemberRow(props: {
       <tr>
         <td><MemberCell name={memberName(props.member)} owner={props.member.is_owner} you={props.isCurrentUser} href={props.member.status === "active" && props.canManage ? memberHref(props.member.membership_id) : undefined} /></td>
         <td class="text-console-muted!">{props.member.email && props.member.email !== memberName(props.member) ? props.member.email : <EmptyCell />}</td>
-        <td><Show when={props.organizationRoles.length} fallback={<EmptyCell />}>{props.organizationRoles.join(" · ")}</Show></td>
+        <td class="max-w-64" title={props.organizationRoles.join(", ") || undefined}><Show when={props.organizationRoles.length} fallback={<EmptyCell />}><span class="flex min-w-0 items-center gap-1.5"><span class="min-w-0 truncate">{props.organizationRoles[0]}</span><Show when={props.organizationRoles.length > 1}><span aria-hidden="true"><Tag title={props.organizationRoles.slice(1).join(", ")}>+{props.organizationRoles.length - 1}</Tag></span><span class="sr-only">, {props.organizationRoles.slice(1).join(", ")}</span></Show></span></Show></td>
         <td><StatusBadge resource="member" status={props.member.status ?? "active"} /></td>
         <td><RelativeTime value={props.member.created_at} /></td>
         <RowActions

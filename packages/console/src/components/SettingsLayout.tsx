@@ -1,6 +1,7 @@
 import { A, useLocation } from "@solidjs/router";
 import { Icon } from "../ui/Icon";
 import { createUniqueId, For, onMount, type JSX } from "solid-js";
+import { useMe } from "../lib/me";
 import { Page } from "../ui/Page";
 import { cx, ui } from "../ui/styles";
 
@@ -15,9 +16,14 @@ type NavGroup = { label: string; links: NavLink[] };
 // it applies to: the signed-in account, the tab's Project, or the organization.
 export function SettingsLayout(props: { children: JSX.Element }) {
   const location = useLocation();
+  const me = useMe();
 
-  const groups: NavGroup[] = [
-    { label: "Account", links: [{ href: "/settings/account", label: "My account" }] },
+  // Ownership is listed for owners only; it needs no role.
+  const groups = (): NavGroup[] => [
+    {
+      label: "Account",
+      links: [{ href: "/settings/account", label: "Profile" }, { href: "/settings/security", label: "Sign-in and security" }],
+    },
     {
       label: "Project",
       links: [
@@ -28,14 +34,20 @@ export function SettingsLayout(props: { children: JSX.Element }) {
       ],
     },
     {
-      label: "Organization",
-      links: [{ href: "/settings/members", label: "Members" }, { href: "/settings/groups", label: "Groups" }, { href: "/settings/roles", label: "Roles" }, { href: "/settings/audit-events", label: "Audit events" }],
+      label: me.data?.org_name ? `Organization · ${me.data.org_name}` : "Organization",
+      links: [
+        { href: "/settings/members", label: "Members" },
+        { href: "/settings/groups", label: "Groups" },
+        { href: "/settings/roles", label: "Roles" },
+        ...(me.data?.is_owner ? [{ href: "/settings/ownership", label: "Ownership" }] : []),
+        { href: "/settings/audit-events", label: "Audit events" },
+      ],
     },
   ];
 
   // A detail page (a member, group or role) belongs to its list's link.
   const isCurrent = (href: string) => location.pathname === href || location.pathname.startsWith(`${href}/`);
-  const current = () => groups.flatMap((group) => group.links).find((link) => isCurrent(link.href));
+  const current = () => groups().flatMap((group) => group.links).find((link) => isCurrent(link.href));
   let compact: HTMLDetailsElement | undefined;
   // Closing returns focus to the control, as the Console's other pickers do.
   const closeCompact = () => {
@@ -50,12 +62,12 @@ export function SettingsLayout(props: { children: JSX.Element }) {
   });
   const nav = (props: { class: string; onNavigate?: () => void }) => (
     <nav class={props.class} aria-label="Settings sections">
-      <For each={groups}>
+      <For each={groups()}>
         {(group) => {
           const labelID = createUniqueId();
           return (
             <div role="group" aria-labelledby={labelID} class="flex flex-col gap-px">
-              <span id={labelID} class={cx(ui.microLabel, "px-2 pb-1.5")}>{group.label}</span>
+              <span id={labelID} class={cx(ui.microLabel, "truncate px-2 pb-1.5")} title={group.label}>{group.label}</span>
               <For each={group.links}>
                 {(link) => (
                   <A
