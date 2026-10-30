@@ -162,11 +162,13 @@ Panel.
   column; no page narrows it.
 - **EnvironmentSelectorLayout** and `useEditedEnvironment` (`components/`). An
   Environment-specific settings page (Secrets, API keys) edits one Environment of
-  the tab's Project, chosen in a rail (a Select on narrow screens). It opens on the
+  the tab's Project, chosen with one Select at the start of the page `Toolbar` at
+  every width; page filters go beside it in its `tools` slot. It opens on the
   tab's Environment, is page state only (never the URL or the tab's scope), and
-  starts over when the tab's scope changes. The rail tags the tab's Environment
-  with the `working` Tag (in the narrow Select's trailing column too), as
-  the Environments table does. The primary action names the edited Environment and
+  starts over when the tab's scope changes. The Select tags the tab's Environment
+  with the `working` Tag in its trailing column, as the Environments table does;
+  while another Environment is chosen the toolbar says "You are working in X" with
+  a Back to X action. The primary action names the edited Environment and
   its dialogs carry it.
 
 ## Page structure

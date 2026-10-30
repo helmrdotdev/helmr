@@ -51,8 +51,11 @@ async function fixture(page: Page, options: { signedOut?: boolean } = {}) {
 const scope = `project=${projectID}&environment=production`;
 const scopeTrigger = (page: Page) => page.locator("header").getByRole("button", { name: /^Environment:/ });
 const subtitle = (page: Page) => page.locator("h1").locator("xpath=../following-sibling::div[1]");
-const rail = (page: Page) => page.getByRole("region", { name: "Environment" });
-const radio = (page: Page, name: string) => rail(page).getByRole("radio", { name: new RegExp(`^${name}\\b`) });
+const environmentSelect = (page: Page) => page.getByRole("combobox", { name: "Environment", exact: true });
+async function chooseEnvironment(page: Page, name: string) {
+  await environmentSelect(page).click();
+  await page.getByRole("option", { name: new RegExp(`^${name}\\b`) }).click();
+}
 
 test("on a phone settings navigation is one control that opens the grouped pages", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
@@ -93,6 +96,8 @@ test("settings navigation groups pages by Account, Project and Organization", as
   const navigation = page.getByRole("navigation", { name: "Settings sections" });
   const groups = navigation.getByRole("group");
   await expect(groups).toHaveCount(3);
+  // Every page reserves the scrollbar's width, so short and long pages line up.
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarGutter)).toBe("stable");
   const account = navigation.getByRole("group", { name: "Account", exact: true });
   const projectGroup = navigation.getByRole("group", { name: "Project", exact: true });
   // The organization group names the organization the settings belong to.
@@ -200,18 +205,17 @@ test("the Secrets Environment selector edits another Environment without changin
   const state = await fixture(page);
   await page.goto(`/settings/secrets?${scope}`);
   await expect(scopeTrigger(page)).toContainText("Production");
-  await expect(rail(page)).toContainText("Opens on the environment you are working in. Switching here does not change it.");
-  const production = radio(page, "Production");
-  const staging = radio(page, "Staging");
-  await expect(production).toHaveAccessibleName(/^Production\s*working$/);
-  await expect(staging).toHaveAccessibleName(/^Staging$/);
-  await expect(production).toBeChecked();
+  const select = environmentSelect(page);
+  await expect(select).toContainText("Production");
+  await expect(select.getByText("working", { exact: true })).toBeVisible();
+  await expect(page.getByText("You are working in", { exact: false })).toHaveCount(0);
   await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toBeVisible();
   await expect(subtitle(page)).toHaveText("Values are never displayed after saving.");
   await expect(page.getByRole("button", { name: "Set secret in Production", exact: true })).toBeVisible();
 
-  await staging.check();
-  await expect(staging).toBeChecked();
+  await chooseEnvironment(page, "Staging");
+  await expect(select).toContainText("Staging");
+  await expect(page.getByText("You are working in Production.", { exact: false })).toBeVisible();
   await expect(page.getByRole("cell", { name: "STAGING_TOKEN", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toHaveCount(0);
   await expect(subtitle(page)).toHaveText("Values are never displayed after saving.");
@@ -252,21 +256,20 @@ test("the Secrets Environment selector edits another Environment without changin
   await scopeTrigger(page).click();
   await page.getByRole("dialog", { name: "Choose environment" }).getByRole("option", { name: "Staging" }).click();
   await expect(scopeTrigger(page)).toContainText("Staging");
-  await expect(staging).toBeChecked();
+  await expect(select).toContainText("Staging");
   await scopeTrigger(page).click();
   await page.getByRole("dialog", { name: "Choose environment" }).getByRole("option", { name: "Production" }).click();
   await expect(scopeTrigger(page)).toContainText("Production");
-  await expect(production).toBeChecked();
+  await expect(select).toContainText("Production");
   await expect(page.getByRole("button", { name: "Set secret in Production", exact: true })).toBeVisible();
   await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toBeVisible();
 });
 
-test("on narrow screens the Environment selector is a Select above the table", async ({ page }) => {
+test("on narrow screens the Environment selector stays a Select above the table", async ({ page }) => {
   await fixture(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/settings/secrets?${scope}`);
-  await expect(rail(page)).toBeHidden();
-  const select = page.getByRole("combobox", { name: "Environment", exact: true });
+  const select = environmentSelect(page);
   // The working tag follows the name of the tab's Environment.
   await expect(select).toContainText("Production");
   await expect(select.getByText("working", { exact: true })).toBeVisible();
@@ -278,13 +281,17 @@ test("on narrow screens the Environment selector is a Select above the table", a
   await expect(page.getByRole("cell", { name: "STAGING_TOKEN", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Set secret in Staging", exact: true })).toBeVisible();
   await expect(scopeTrigger(page)).toContainText("Production");
+  await page.getByRole("button", { name: "Back to Production", exact: true }).click();
+  await expect(select).toContainText("Production");
+  await expect(select).toBeFocused();
+  await expect(page.getByRole("cell", { name: "PROD_TOKEN", exact: true })).toBeVisible();
 });
 
 test("API keys list, generate and revoke in the selected Environment, not the tab's", async ({ page }) => {
   const state = await fixture(page);
   await page.goto(`/settings/api-keys?${scope}`);
   await expect(page.getByRole("cell", { name: "Key production", exact: true })).toBeVisible();
-  await radio(page, "Staging").check();
+  await chooseEnvironment(page, "Staging");
   await expect(page.getByRole("cell", { name: "Key staging", exact: true })).toBeVisible();
   await expect(scopeTrigger(page)).toContainText("Production");
 

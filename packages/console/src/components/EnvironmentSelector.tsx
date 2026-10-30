@@ -1,10 +1,8 @@
-import { createEffect, createMemo, createSignal, createUniqueId, For, on, Show, type JSX } from "solid-js";
-import { environmentChip } from "../features/projects/display";
+import { createEffect, createMemo, createSignal, on, Show, type JSX } from "solid-js";
 import type { Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
-import { EnvChip } from "../ui/EnvChip";
 import { Tag } from "../ui/Tag";
-import { Panel } from "../ui/Panel";
+import { Toolbar } from "../ui/Page";
 import { Select } from "../ui/Select";
 import { cx, ui } from "../ui/styles";
 
@@ -51,12 +49,11 @@ export function WorkingTag() {
   return <Tag title="The environment you are working in">working</Tag>;
 }
 
-// An Environment-specific settings page: its content, and a rail listing the
-// Project's Environments to choose the one being edited. On narrow screens the
-// rail becomes a Select above the content.
-export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; children: JSX.Element }) {
+// An Environment-specific settings page: a toolbar choosing the Environment being
+// edited, then its content. The choice is page state; when it differs from the
+// tab's Environment the toolbar says so and offers the way back.
+export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; tools?: JSX.Element; children: JSX.Element }) {
   const scope = useScope();
-  const name = createUniqueId();
   const options = createMemo(() =>
     props.edited.environments().map((environment) => ({
       value: environment.environment,
@@ -64,11 +61,19 @@ export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; ch
       trailing: () => <Show when={environment.environment === scope.selectedEnvironmentID()}><WorkingTag /></Show>,
     })),
   );
+  const working = () => scope.selectedEnvironment();
+  const elsewhere = () => !!props.edited.environmentID() && props.edited.environmentID() !== scope.selectedEnvironmentID();
+  let toolbar: HTMLDivElement | undefined;
+  // The way back disappears once used, so focus returns to the Environment choice.
+  const back = (environmentID: string) => {
+    props.edited.select(environmentID);
+    toolbar?.querySelector<HTMLElement>("[role=combobox]")?.focus();
+  };
 
   return (
-    <div class="grid grid-cols-[minmax(0,1fr)_280px] items-start gap-6 max-[960px]:grid-cols-1">
-      <div class="min-w-0">
-        <div class="mb-3 hidden max-[960px]:block">
+    <div class="min-w-0" ref={toolbar}>
+      <Toolbar
+        start={<>
           <Select
             value={props.edited.environmentID()}
             options={options()}
@@ -77,37 +82,18 @@ export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; ch
             minWidth="200px"
             disabled={options().length === 0}
           />
-        </div>
-        {props.children}
-      </div>
-      <Panel title="Environment" class="sticky top-13.5 max-[960px]:hidden">
-        <fieldset class="m-0 grid gap-0.5 border-0 p-0">
-          <legend class="sr-only">Environment</legend>
-          <For each={props.edited.environments()}>
-            {(environment) => {
-              const chip = () => environmentChip(environment)!;
-              const selected = () => environment.environment === props.edited.environmentID();
-              return (
-                <label class={cx(ui.scopeItem, selected() && ui.scopeItemSelected)}>
-                  <input
-                    type="radio"
-                    class="m-0 size-3 accent-console-accent"
-                    name={name}
-                    value={environment.environment}
-                    checked={selected()}
-                    onChange={(event) => { if (event.currentTarget.checked) props.edited.select(environment.environment); }}
-                  />
-                  <EnvChip name={chip().name} colorHex={chip().colorHex} />
-                  <Show when={environment.environment === scope.selectedEnvironmentID()} fallback={<span />}>
-                    <WorkingTag />
-                  </Show>
-                </label>
-              );
-            }}
-          </For>
-        </fieldset>
-        <p class="m-0 text-badge leading-normal text-console-muted">Opens on the environment you are working in. Switching here does not change it.</p>
-      </Panel>
+          {props.tools}
+          <Show when={elsewhere() && working()}>
+            {(current) => (
+              <span class="text-chrome text-console-muted">
+                You are working in {current().name}.{" "}
+                <button type="button" class={cx(ui.monoLink, "border-0 bg-transparent p-0")} onClick={() => back(current().environment)}>Back to {current().name}</button>
+              </span>
+            )}
+          </Show>
+        </>}
+      />
+      {props.children}
     </div>
   );
 }

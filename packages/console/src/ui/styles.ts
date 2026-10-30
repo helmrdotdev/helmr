@@ -86,11 +86,6 @@ export const ui = {
     "relative flex h-11 min-h-11 w-full cursor-pointer items-center gap-2 rounded-xs border-0 px-2.5 text-left font-mono text-control font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45",
   drawerItemIdle: "bg-transparent text-console-muted hover:bg-console-bg-panel hover:text-console-text",
 
-  // Environment rows in the Settings Environment rail
-  scopeItem:
-    "grid min-h-6 w-full cursor-pointer grid-cols-[12px_minmax(0,1fr)_auto] items-center gap-2 rounded-xs border border-transparent bg-transparent px-2 py-0.5 text-left font-mono text-badge font-medium text-console-text transition-colors hover:border-console-border hover:bg-console-bg-panel",
-  scopeItemSelected:
-    "border-console-accent bg-console-accent-soft text-console-text hover:border-console-accent hover:bg-console-accent-soft",
   // A full-width text action inside a popover (profile menu).
   scopeAction:
     "flex h-7 w-full cursor-pointer items-center justify-start gap-2 rounded-xs border-0 bg-transparent px-2 font-mono text-badge font-medium text-console-muted transition hover:bg-console-surface hover:text-console-text disabled:cursor-not-allowed disabled:opacity-45",

@@ -209,7 +209,7 @@ export function Segmented<T extends string>(props: {
   disabled?: boolean;
 }) {
   return (
-    <div class="inline-flex max-w-full flex-wrap overflow-hidden rounded-xs border border-console-border-strong" role="group" aria-label={props.label}>
+    <div class="inline-flex w-fit max-w-full flex-wrap justify-self-start overflow-hidden rounded-xs border border-console-border-strong" role="group" aria-label={props.label}>
       <For each={props.options}>
         {(option) => (
           <button

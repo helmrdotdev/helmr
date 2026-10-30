@@ -175,6 +175,9 @@
 @layer base {
   html {
     color-scheme: light;
+    /* Reserve the scrollbar's width on every page, so moving between a short and
+       a long page never shifts the centred layout sideways. */
+    scrollbar-gutter: stable;
   }
 
   body {

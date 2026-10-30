@@ -25,7 +25,6 @@ import { EnvironmentSelectorLayout, useEditedEnvironment, type EditTarget } from
 import { DataTable, LoadMore, RowActions } from "../ui/DataTable";
 import { ConfirmDialog, FormDialog, RevealDialog } from "../ui/Dialog";
 import { Field, TextInput } from "../ui/Field";
-import { Toolbar } from "../ui/Page";
 import { PageHeader } from "../ui/PageHeader";
 import { QueryState } from "../ui/QueryState";
 import { LinesSkeleton, TableSkeleton } from "../ui/Skeleton";
@@ -270,10 +269,7 @@ export function ApiKeys() {
         }
       />
 
-      <EnvironmentSelectorLayout edited={edited}>
-        <Toolbar
-          start={<Select<ListFilter> value={filter()} options={FILTER_OPTIONS} onChange={setFilter} ariaLabel="Filter API keys" minWidth="140px" />}
-        />
+      <EnvironmentSelectorLayout edited={edited} tools={<Select<ListFilter> value={filter()} options={FILTER_OPTIONS} onChange={setFilter} ariaLabel="Filter API keys" minWidth="140px" />}>
 
         <QueryState
           query={keys}
