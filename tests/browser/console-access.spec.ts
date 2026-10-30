@@ -119,6 +119,9 @@ test("a member's effective access names where each permission comes from", async
   await expect(page).toHaveURL(/\/settings\/members\/m-local$/);
   const agentRow = page.getByRole("row").filter({ hasText: "assistant" });
   await expect(agentRow).toContainText("Release team");
+  // The group and role that grant access open their own pages, where it is changed.
+  await expect(agentRow.getByRole("link", { name: "Release team", exact: true })).toHaveAttribute("href", /^\/settings\/groups\//);
+  await expect(agentRow.getByRole("link", { name: "Agent and secrets operator", exact: true })).toHaveAttribute("href", /^\/settings\/roles\//);
   // A row summarizes; opening it lists the permissions by area.
   const toggle = agentRow.getByRole("button", { name: / permissions in / });
   await toggle.click();
