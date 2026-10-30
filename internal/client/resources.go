@@ -173,6 +173,7 @@ func (c *Client) ExecuteComputer(ctx context.Context, computerID string, input a
 	if err != nil {
 		return api.CommandReceipt{}, err
 	}
+	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
 	var receipt api.CommandReceipt
 	if err := c.postJSON(ctx, path, input, &receipt); err != nil {
 		return api.CommandReceipt{}, err

@@ -374,3 +374,45 @@ func TestPermissionCLIAPIKeyRecipient(t *testing.T) {
 		t.Fatal(writes, lists)
 	}
 }
+
+func TestPermissionCLIGroupMemberRemoveConfirmsOnlyGrantChanges(t *testing.T) {
+	group, member, grant := uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String()
+	grants := `{"grants":[]}`
+	removals := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/groups":
+			json.NewEncoder(w).Encode(map[string]any{"groups": []any{map[string]any{"id": group, "name": "Team"}}})
+		case "GET /api/groups/" + group:
+			json.NewEncoder(w).Encode(map[string]any{"id": group, "name": "Team"})
+		case "GET /api/role-grants":
+			w.Write([]byte(grants))
+		case "DELETE /api/groups/" + group + "/members/" + member:
+			removals++
+			w.WriteHeader(204)
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL)
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+	state := installTestCLIConfig(t)
+	state.SaveLogin(server.URL, "human")
+	t.Setenv(helmrAPIURLEnv, "")
+	if _, _, err := runPermissionCLI("group", "member", "remove", "team", "--member-id", member, "--json"); err != nil || removals != 1 {
+		t.Fatalf("grant-free removal: %v removals=%d", err, removals)
+	}
+	grants = `{"grants":[{"id":"` + grant + `"}]}`
+	_, _, err := runPermissionCLI("group", "member", "remove", "--group-id", group, "--member-id", member, "--json")
+	if err == nil || !strings.Contains(err.Error(), "confirmation_required") || removals != 1 {
+		t.Fatalf("granted removal without --yes: %v removals=%d", err, removals)
+	}
+	if _, _, err := runPermissionCLI("group", "member", "remove", "--group-id", group, "--member-id", member, "--yes", "--json"); err != nil || removals != 2 {
+		t.Fatalf("confirmed removal: %v removals=%d", err, removals)
+	}
+	_, _, err = runPermissionCLI("group", "member", "remove", "missing", "--member-id", member, "--json")
+	if err == nil || !strings.Contains(err.Error(), `group \"missing\" not found`) {
+		t.Fatalf("missing group: %v", err)
+	}
+}

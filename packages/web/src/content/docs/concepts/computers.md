@@ -194,7 +194,7 @@ server with `sh -c 'server &'` therefore does not keep that server running after
 the Command finishes.
 
 ```sh
-helmr computer exec --id "$COMPUTER_ID" --idempotency-key status:1 -- git status --short
+helmr computer exec --id "$COMPUTER_ID" -- git status --short
 ```
 
 Inside Agent code, run local work as ordinary child processes. See

@@ -264,6 +264,7 @@ func TestEnvCreateCommandUsesExplicitIdentifier(t *testing.T) {
 }
 
 func TestEnvCommandRequiresProjectFlag(t *testing.T) {
+	t.Setenv("HELMR_PROJECT", "")
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
@@ -271,8 +272,31 @@ func TestEnvCommandRequiresProjectFlag(t *testing.T) {
 
 	err := cmd.Execute()
 
-	if err == nil || !strings.Contains(err.Error(), "--project is required") {
+	if err == nil || !strings.Contains(err.Error(), "--project or HELMR_PROJECT is required") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEnvListCommandUsesProjectEnvironmentVariable(t *testing.T) {
+	state := installTestCLIConfig(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/prod" {
+			t.Fatalf("%s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(api.ProjectSummary{Project: "prod", Environments: []api.EnvironmentSummary{{Environment: "qa", Name: "QA"}}})
+	}))
+	defer server.Close()
+	if err := state.SaveLogin(server.URL, "session_test"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HELMR_PROJECT", "prod")
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"env", "list"})
+	if err := cmd.Execute(); err != nil || !strings.Contains(out.String(), "qa\tQA") {
+		t.Fatalf("out=%q err=%v", out.String(), err)
 	}
 }
 

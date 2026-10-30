@@ -19,7 +19,7 @@ func TestSessionTurnWaitObservesWithoutMutations(t *testing.T) {
 		name, fixture, timeout, want string
 		httpStatus                   int
 	}{
-		{"success", "completed-null", "2s", `"status":"settled"`, 200},
+		{"success", "completed-null", "", `"status":"settled"`, 200},
 		{"expired", "completed-expired", "2s", `"status":"settled"`, 200},
 		{"failure", "failed", "2s", `"status":"failed"`, 200},
 		{"timeout", "running", "100ms", `"status":"timeout"`, 200},
@@ -54,7 +54,11 @@ func TestSessionTurnWaitObservesWithoutMutations(t *testing.T) {
 			cmd := newRootCommand()
 			cmd.SetOut(&out)
 			cmd.SetErr(&bytes.Buffer{})
-			cmd.SetArgs([]string{"session", "turn", "wait", turn, "--session", testSessionID, "--timeout", tc.timeout, "--json"})
+			args := []string{"session", "turn", "wait", turn, "--session", testSessionID, "--json"}
+			if tc.timeout != "" {
+				args = append(args, "--timeout", tc.timeout)
+			}
+			cmd.SetArgs(args)
 			err := cmd.Execute()
 			if tc.name == "forbidden" || tc.name == "unknown" {
 				if err == nil || !strings.Contains(err.Error(), tc.want) {

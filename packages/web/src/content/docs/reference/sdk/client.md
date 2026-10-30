@@ -106,13 +106,15 @@ client.secrets.ref(id: string): SecretRef
 
 interface SecretRef {
   readonly secret: string
-  rotate(request: { value: string; idempotencyKey: string }, options?): Promise<Secret>
-  revoke(request: { idempotencyKey: string }, options?): Promise<Secret>
+  rotate(request: { value: string; idempotencyKey?: string }, options?): Promise<Secret>
+  revoke(request?: { idempotencyKey?: string }, options?): Promise<Secret>
 }
 ```
 
 `SecretListQuery` is `{ cursor?, limit? }` (`limit` 1–100). Use `get("GITHUB_TOKEN")`
-for a direct lookup by the same identifier used in your bindings.
+for a direct lookup by the same identifier used in your bindings. `rotate` and
+`revoke` generate a new `idempotencyKey` per call when you omit one; pass the
+same key to retry one operation after a lost response.
 
 `Secret` is `{ secret, status, createdAt, rotatedAt?, revokedAt? }`, where
 `status` is `"active"` or `"revoked"`. Reads never return the value. Bind

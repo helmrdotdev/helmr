@@ -253,7 +253,7 @@ get-or-create. `deleteAfterUnused` overrides the definition.
 ```ts
 interface ComputerCommandRequest {
   readonly command: readonly string[]
-  readonly idempotencyKey: string
+  readonly idempotencyKey?: string
   readonly cwd?: string
   readonly env?: Readonly<Record<string, string>>
   readonly stdin?: Uint8Array
@@ -263,7 +263,8 @@ interface ComputerCommandRequest {
 
 `exec()` returns after admission; use the returned Command's `wait()` to observe
 completion. `timeout` limits execution, defaults to `5m`, and accepts `1ms` through
-`24h`. It is separate from the timeout on `CommandRef.wait()`.
+`24h`. It is separate from the timeout on `CommandRef.wait()`. Without
+`idempotencyKey`, each call admits a new Command; reuse a key to retry one admission.
 
 `ComputerUsage` is `{ id, usageState, createdAt }`,
 where `usageState` is `admitted`, `running`, `waiting`, `parked`, `draining` or

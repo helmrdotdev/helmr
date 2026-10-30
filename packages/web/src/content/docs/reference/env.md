@@ -31,11 +31,13 @@ entirely by the guest image, tests, or development tooling remain internal.
 | --- | --- |
 | `HELMR_API_URL` | Control-plane base URL. |
 | `HELMR_API_KEY` | Bearer token for CLI or `HelmrClient`. |
-| `HELMR_PROJECT` | Project ID for `status` and `doctor` when `--project` is absent. |
-| `HELMR_ENV` | Environment ID for `status` and `doctor` when `--env` is absent. |
+| `HELMR_PROJECT` | Project ID for Environment and `env` commands when `--project` is absent. With an API key, it must match the key's Project. |
+| `HELMR_ENV` | Environment ID for Environment commands when `--env` is absent. With an API key, it must match the key's Environment. |
 | `HELMR_CONFIG_DIR` | CLI state directory override. |
 | `HELMR_UPLOAD_TIMEOUT` | `helmr deploy`: per-object deadline including capacity retries; defaults to `3h`. `--upload-timeout` takes precedence. |
 | `HELMR_UPLOAD_IDLE_TIMEOUT` | `helmr deploy`: maximum time without object-upload progress; defaults to `2m`. `--upload-idle-timeout` takes precedence. |
+
+Role grant and member permission commands ignore both variables: there, omitting `--project` or `--env` means organization-wide or unfiltered, so an ambient default would change a grant's scope.
 
 `HelmrClient` does not read these variables automatically. Pass the URL and API
 key from your application's configuration to its constructor.

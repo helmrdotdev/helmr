@@ -21,6 +21,7 @@ func TestCommandObservation(t *testing.T) {
 	}{
 		{"get", []string{"get", id, "--json"}, `"status":"exited"`, false},
 		{"wait", []string{"wait", id, "--timeout", "1s", "--json"}, `"status":"settled"`, false},
+		{"unbounded", []string{"wait", id, "--json"}, `"status":"settled"`, false},
 		{"timeout", []string{"wait", id, "--timeout", "10ms", "--json"}, `"status":"timeout"`, false},
 		{"page", []string{"logs", id, "--json", "--limit", "1", "--cursor", "previous"}, `"output_state":"closed"`, false},
 		{"follow", []string{"logs", id, "--follow"}, "hi", false},

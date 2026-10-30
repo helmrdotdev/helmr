@@ -96,6 +96,9 @@ test("explicit client commands use the configured authority and propagate denial
     expect(call.init?.signal).toBeDefined()
   }
   expect(JSON.parse(String(calls[0]!.init?.body))).toEqual({ command: ["true"], idempotency_key: "command" })
+  await client.computers.ref(computerId).exec({ command: ["true"] }, { signal })
+  const generated = JSON.parse(String(calls.at(-1)!.init?.body)).idempotency_key
+  expect(typeof generated === "string" && generated !== "" && generated !== "command").toBe(true)
   denied = true
   await expect(ref.get()).rejects.toMatchObject({ code: "permission_required" })
 })

@@ -37,6 +37,10 @@ Role and Group names match exactly, ignoring case. Scripts can use `--role-id`,
 selects a standard Role by its immutable key. Standard Roles cannot be edited or
 deleted; copy one to create a custom definition.
 
+`group member remove` requires `--yes` only when the Group holds Role Grants,
+because removal then changes the member's access; without `--yes` it lists the
+affected grants.
+
 Repeated `--permission` values replace the complete explicit permission set on
 update. Omitted fields are preserved. Available IDs appear in help and shell
 completion. Permissions authorize only their named actions; none includes another. Updating a shared Role changes every grant of
