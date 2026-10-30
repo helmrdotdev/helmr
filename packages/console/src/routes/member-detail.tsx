@@ -40,7 +40,16 @@ function permissionAreas(permissions: readonly string[], catalog: readonly Permi
     const resource = permissionResource(permission, catalog);
     areas.set(resource, [...(areas.get(resource) ?? []), names(permission)]);
   }
-  return [...areas].sort(([a], [b]) => resourceRank(a) - resourceRank(b)).map(([resource, labels]) => ({ label: resource ? resourceLabel(resource) : "Permissions", names: labels }));
+  return [...areas].sort(([a], [b]) => resourceRank(a) - resourceRank(b)).map(([resource, labels]) => {
+    const label = resource ? resourceLabel(resource) : "Permissions";
+    return { label, actions: labels.map(name => ({ name, short: withoutArea(name, label) })) };
+  });
+}
+
+// Inside its area's row, "Read agents" reads as "Read"; names that say more stay whole.
+function withoutArea(name: string, area: string) {
+  const suffix = ` ${area.toLowerCase()}`;
+  return name.toLowerCase().endsWith(suffix) && name.length > suffix.length ? name.slice(0, -suffix.length) : name;
 }
 
 // Where access comes from, one row per scope. A row summarizes; opening it lists
@@ -79,17 +88,21 @@ function EffectiveAccessTable(props: { access: MemberPermissions; catalog: reado
               </tr>
               <Show when={expanded()}>
                 <tr id={panel} class="hover:bg-transparent">
-                  <td colSpan={EFFECTIVE_COLUMNS.length} class="whitespace-normal bg-console-accent-soft/40 pt-0!">
-                    <div class="grid gap-4 pl-8 sm:grid-cols-2 lg:grid-cols-3">
+                  <td colSpan={EFFECTIVE_COLUMNS.length} class="h-auto! whitespace-normal bg-console-accent-soft/40 pb-3! pt-0! pl-9!">
+                    <dl class="m-0 overflow-hidden rounded-xs border border-console-border bg-console-surface">
                       <For each={permissionAreas(scope.permissions, props.catalog, props.names)}>
                         {area => (
-                          <div class="grid content-start gap-1">
-                            <span class={ui.microLabel}>{area.label}</span>
-                            <For each={area.names}>{name => <span class="text-body">{name}</span>}</For>
+                          <div class="grid grid-cols-[150px_minmax(0,1fr)] items-start gap-3 border-b border-console-border-soft px-3 py-2 last:border-b-0 max-sm:grid-cols-1 max-sm:gap-1.5">
+                            <dt class={cx(ui.microLabel, "pt-1")}>{area.label} <span class="normal-case tracking-normal">· {area.actions.length}</span></dt>
+                            <dd class="m-0 flex flex-wrap gap-1">
+                              <For each={area.actions}>
+                                {action => <span class="inline-flex h-5.5 items-center rounded-xs border border-console-border-soft bg-console-bg-panel px-1.5 text-chrome text-console-text" title={action.name}>{action.short}<span class="sr-only">{action.short === action.name ? "" : ` ${area.label.toLowerCase()}`}</span></span>}
+                              </For>
+                            </dd>
                           </div>
                         )}
                       </For>
-                    </div>
+                    </dl>
                   </td>
                 </tr>
               </Show>
