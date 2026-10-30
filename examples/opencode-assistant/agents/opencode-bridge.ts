@@ -156,10 +156,10 @@ export class OpenCodeSession {
         operation.admission = admission
         await admission
       })
-      await Effect.runPromise(this.execution.awaitIdle(this.nativeSessionId))
+      await Effect.runPromise(this.execution.awaitIdle(this.nativeSessionId), { signal: operation.cancel.signal })
       operation.accepting = false
       await operation.admission
-      await Effect.runPromise(this.execution.awaitIdle(this.nativeSessionId))
+      await Effect.runPromise(this.execution.awaitIdle(this.nativeSessionId), { signal: operation.cancel.signal })
       await Promise.all(operation.jobs)
       if (operation.failure !== undefined) throw operation.failure
       turn.signal.throwIfAborted()
@@ -173,7 +173,7 @@ export class OpenCodeSession {
       return { nativeSessionId: this.nativeSessionId, response }
     } catch (error) {
       await this.stop(operation)
-      throw error
+      throw operation.failure ?? error
     } finally {
       operation.cancel.abort()
       await Promise.allSettled(operation.jobs)
@@ -189,11 +189,12 @@ export class OpenCodeSession {
       try {
         await operation.admission.catch(() => {})
         for (const session of await Effect.runPromise(this.store.list())) {
-          await Effect.runPromise(this.execution.interrupt(session.id, { resume: false, awaitSettlement: true }))
+          await Effect.runPromise(this.execution.interrupt(session.id, { resume: false }))
         }
         await Promise.allSettled(operation.jobs)
-        // Background notifications run in the host scope and can otherwise wake
-        // an already-interrupted parent. Closing the scope joins those fibers.
+        // Interrupt requests only stop the current runs. Waiting for idle here
+        // can instead join a fresh run started by a background notification.
+        // Closing the host scope joins execution and notification fibers together.
         // The next Turn reconstructs and retires their saved pending input.
         await this.closeHost()
       } catch (error) { this.closed = true; throw error }

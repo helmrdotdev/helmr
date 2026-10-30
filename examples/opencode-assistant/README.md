@@ -1,7 +1,7 @@
 # Build a small website with OpenCode
 
 Turn a short brief into local website files, then improve them in the same
-conversation. This editable Agent uses the embedded OpenCode SDK **2.0.31** and
+conversation. This editable Agent uses the embedded OpenCode SDK **2.2.2** and
 OpenCode Go. Each Helmr Session keeps one native conversation and workspace.
 
 ## Try it
@@ -88,16 +88,15 @@ run this automatically. These local checks do not build the Linux Computer image
 
 ## Dependency maintenance
 
-The example overrides transitive MCP client/core and provider-utils versions to
-include the fixes for [MCP OAuth credential routing](https://github.com/advisories/GHSA-6qxp-vccf-f47h)
-and [provider response limits](https://github.com/advisories/GHSA-866g-f22w-33x8).
-The deployment's runtime installation preserves these overrides.
+OpenCode 2.2.2 includes the MCP credential-routing and provider-response-limit
+fixes in its pinned dependencies, so the example no longer overrides those
+packages. Its direct Zod dependency is also patched. `bun audit` still reports
+[GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) for the
+Zod 3 dependency of `gitlab-ai-provider`; upgrading OpenCode does not close that
+finding. Do not replace every Zod copy with Zod 4 without checking provider
+compatibility.
 
-At these pins, `bun audit` also reports [braces](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm)
-and [sprintf-js](https://github.com/advisories/GHSA-hp3w-g68c-fv3c), neither with a
-listed patched release. The installed watcher calls `micromatch.makeRe`, which
-uses picomatch rather than the affected braces walkers. Gray-matter uses the
-js-yaml library; its argparse/sprintf dependency belongs to the separate YAML
-CLI, not this application's YAML parsing path. This is a bounded call-path
-assessment, not a clean audit result. Recheck it when changing dependencies or
-adding integrations.
+The embedded SDK is tested on Helmr's pinned Node runtime. The transitive
+OpenTUI simulation frontend declares Node 26.4 or newer and is outside this
+example's tested runtime surface; npm reports its engine requirement during
+installation.

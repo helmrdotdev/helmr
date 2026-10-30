@@ -6,7 +6,9 @@ import { mkdtemp, mkdir, rm, readFile, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { OpenCode } from "@opencode/sdk/effect"
-import { Effect, Schema } from "effect"
+import { Effect, Exit, Schema, Scope } from "effect"
+import type { SessionExecution } from "@opencode/core/session/execution"
+import type { Session } from "@opencode/core/session"
 import { Form } from "@opencode/schema/form"
 import { askForm } from "../agents/questions"
 import { OpenCodeSession, type OpenCodeOptions } from "../agents/opencode-bridge"
@@ -25,6 +27,7 @@ test("OpenCode starter retains native context, joins interruption and reconstruc
   const calls: any[] = [], held: Array<{ response: ServerResponse; body: any }> = [], output: unknown[] = []
   const actions: Array<{ name: string; input: unknown }> = [], questions: unknown[] = []
   let hold = false, allow = true, answerQuestions = true, childMarker: string | undefined
+  let questionFailure: Error | undefined
   const childHeld: Array<{ response: ServerResponse; body: any }> = []
   function reply(response: ServerResponse, body: any) {
     response.writeHead(200, { "content-type": "text/event-stream" })
@@ -70,6 +73,7 @@ test("OpenCode starter retains native context, joins interruption and reconstruc
     registerMessages: async () => {}, closeProcessing: async () => {},
     ask: async (_turn, _id, question, signal) => {
       questions.push(question)
+      if (questionFailure) throw questionFailure
       const answer = answerQuestions ? Promise.resolve({ answer: question.type === "text" ? "fixture answer" : { selected: [question.type === "choice" ? question.options.find(option => option.id === (allow ? "once" : "reject")) ?? question.options[0]! : undefined!] }, answeredBy: { kind: "user" as const, id: "tester" } }) : new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }))
       return { answer, withdraw: async () => {} }
     },
@@ -137,6 +141,11 @@ test("OpenCode starter retains native context, joins interruption and reconstruc
     assert.equal((await dispatch("ask native question").result).status, "completed")
     assert.ok(questions.length > before)
     assert.ok(JSON.stringify(calls.at(-1)).includes("A"))
+    questionFailure = new Error("injected question transport failure")
+    actions.push(question)
+    assert.deepEqual(await dispatch("fail a native question").result, { status: "failed", error: { code: "handler_failed", message: questionFailure.message } })
+    questionFailure = undefined
+    assert.equal((await dispatch("after question failure").result).status, "completed")
     answerQuestions = false
     before = questions.length
     actions.push(question)
@@ -169,7 +178,29 @@ test("OpenCode starter retains native context, joins interruption and reconstruc
     hold = true
     const parent = dispatch("cancel parent while background work remains")
     await until(() => held.length > heldBefore)
-    await runtime.interrupt(parent.id, new Error("stop background work"))
+    // A background completion may admit a synthetic notification after the
+    // parent accepted interruption. It must not keep cancellation waiting on
+    // a fresh model call before the native host can close.
+    const lifecycle = bridge as unknown as { execution: SessionExecution.Interface; sessions: Session.Interface; scope: Scope.Closeable }
+    const execution = lifecycle.execution
+    let notified = false
+    lifecycle.execution = { ...execution, interrupt: (id, options) => execution.interrupt(id, options).pipe(Effect.tap(interrupted => {
+      if (!interrupted || id !== bridge!.nativeSessionId || notified) return Effect.void
+      notified = true
+      return lifecycle.sessions.synthetic({ sessionID: id, text: "background completion during cancellation", resume: true }).pipe(Effect.orDie)
+    })) }
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        runtime.interrupt(parent.id, new Error("stop background work")),
+        new Promise<never>((_, reject) => { deadline = setTimeout(() => reject(new Error("cancellation waited for a restarted native run")), 5000) }),
+      ])
+      assert.equal(notified, true, "the native notification race was exercised")
+    } catch (error) {
+      // Retire the host on failure without masking the bridge's success path.
+      await Effect.runPromise(Scope.close(lifecycle.scope, Exit.succeed(undefined)))
+      throw error
+    } finally { clearTimeout(deadline) }
     assert.equal((await parent.result).status, "interrupted")
     const afterCancel = calls.length
     await delay(100)
