@@ -126,7 +126,7 @@ function IssueApiKeyDialog(props: {
       setError(validation);
       return;
     }
-    if (props.canAssign && roleID() && !roleReady()) {
+    if (props.canAssign && !roleReady()) {
       setError("Choose a role and its targets after access options load.");
       return;
     }
@@ -136,7 +136,7 @@ function IssueApiKeyDialog(props: {
       const result = await issueApiKey(props.projectID, props.environmentID, {
         name: label().trim(),
         expires_in_days: value === "never" ? null : Number(value),
-        ...(props.canAssign && role() ? {role:{role_id:role()!.id,expected_role_revision:role()!.revision,agents_mode:hasAgents() ? mode() : "none" as const,agent_ids:hasAgents() && mode()==="selected" ? agents() : []}} : {}),
+        ...(props.canAssign ? {role:{role_id:role()!.id,expected_role_revision:role()!.revision,agents_mode:hasAgents() ? mode() : "none" as const,agent_ids:hasAgents() && mode()==="selected" ? agents() : []}} : {}),
       });
       await props.onIssued(result);
     } catch (issueError) {
@@ -172,8 +172,7 @@ function IssueApiKeyDialog(props: {
       <Show when={props.canAssign} fallback={<Notice tone="info">This key will have no workload access. An access administrator must grant a role before it can be used.</Notice>}>
         <Show when={props.rolesLoading || targets.isPending}><LinesSkeleton label="Loading roles and agent targets" /></Show>
         <Show when={props.rolesError || targets.error}><Notice tone="danger">{errorMessage(props.rolesError || targets.error)}</Notice></Show>
-        <Field label="Role"><Select value={roleID()} options={[{value:"",label:"No access — grant a role later"},...props.roles.filter(r=>r.api_key_assignable).map(r=>({value:r.id,label:r.name}))]} onChange={id=>{setRoleID(id);setMode("selected");setAgents([]);}} /></Field>
-        <Show when={!roleID()}><Notice tone="info">This key will have no workload access until a role is assigned.</Notice></Show>
+        <Field label="Role"><Select value={roleID()} placeholder="Select a role" options={props.roles.filter(r=>r.api_key_assignable).map(r=>({value:r.id,label:r.name}))} onChange={id=>{setRoleID(id);setMode("selected");setAgents([]);}} /></Field>
         <Show when={hasAgents()}><Field label="Agent targets"><Select value={mode()} options={[{value:"selected" as const,label:"Selected agents"},{value:"all" as const,label:"All current and future agents"}]} onChange={value=>{setMode(value);setAgents([]);}} /></Field>
           <Show when={mode()==="selected"}><fieldset class="max-h-44 space-y-2 overflow-y-auto border border-console-border p-3"><legend class="px-1 text-control">Select agents</legend><For each={environment()?.agents} fallback={<p class="text-control text-console-muted">No agents available in this environment.</p>}>{agent=><label class="flex items-center gap-2 text-control"><input type="checkbox" class="accent-console-accent" checked={agents().includes(agent.id)} onChange={e=>setAgents(ids=>e.currentTarget.checked ? [...ids,agent.id] : ids.filter(id=>id!==agent.id))}/>{agent.key}</label>}</For></fieldset></Show>
         </Show>
@@ -209,7 +208,8 @@ function EditApiKeyDialog(props: {keyItem:ApiKeySummary;target:EditTarget;onClos
 
 export function ApiKeys() {
  const me = useMe();
- const canAssign = () => hasPermission(me.data,"assignments.create");
+ // Assigning a role at issue also reads the role catalog and the agent targets.
+ const canAssign = () => ["assignments.create","assignments.read","roles.read"].every(permission => hasPermission(me.data,permission));
  const can = (action: string) => hasPermission(me.data, `api_keys.${action}`, {projectID:edited.projectID(),environmentID:edited.environmentID()});
  const catalog = createQuery(()=>({queryKey:["access","roles"],queryFn:listRoles,enabled:hasPermission(me.data, "roles.read")}));
   const edited = useEditedEnvironment();

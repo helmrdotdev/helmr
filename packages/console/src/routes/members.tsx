@@ -16,7 +16,6 @@ import {
   removeMember,
   changeMemberAccess,
   revokeInvitation,
-  updateMemberOwnership,
   type InvitationResult,
   type OrganizationInvitation,
   type OrganizationMember,
@@ -30,19 +29,9 @@ import { RelativeTime } from "../ui/RelativeTime";
 import { Notice } from "../ui/Notice";
 import { QueryState, DeniedState } from "../ui/QueryState";
 import { TableSkeleton } from "../ui/Skeleton";
-import { Select, type SelectOption } from "../ui/Select";
 import { StatusBadge } from "../ui/StatusBadge";
 import { cx, toneClass, ui } from "../ui/styles";
 import { useAuditItem } from "../features/audit/auditLink";
-
-export type OwnershipChoice = "owner" | "member";
-const OWNER_ROLE_OPTION: SelectOption<OwnershipChoice> = { value: "owner", label: "Owner" };
-
-const NON_OWNER_ROLE_OPTIONS: SelectOption<OwnershipChoice>[] = [
-  { value: "member", label: "Member" },
-];
-
-const OWNER_ROLE_OPTIONS: SelectOption<OwnershipChoice>[] = [OWNER_ROLE_OPTION, ...NON_OWNER_ROLE_OPTIONS];
 
 const EMAIL_FAILED_MESSAGE = "Invitation emails could not be sent. Nobody was invited.";
 const NO_EMAIL_DELIVERY = "Email delivery is not set up in Helmr, so members can't be invited.";
@@ -76,7 +65,6 @@ function memberName(member: OrganizationMember): string {
 }
 
 function InviteMembersDialog(props: {
-  currentUserIsOwner: boolean | undefined;
   onClose: () => void;
   onInvited: (results: InvitationResult[]) => Promise<void>;
 }) {
@@ -212,13 +200,6 @@ function MemberCell(props: { name: string; owner?: boolean; you?: boolean; href?
   );
 }
 
-// The roles the signed-in account may give a member. An owner may step down to
-// admin on their own row; the server keeps the last owner.
-export function assignableRoles(currentUserIsOwner: boolean | undefined, ownRow: boolean): SelectOption<OwnershipChoice>[] {
-  if (ownRow) return [OWNER_ROLE_OPTION, NON_OWNER_ROLE_OPTIONS[0]!];
-  return currentUserIsOwner ? OWNER_ROLE_OPTIONS : NON_OWNER_ROLE_OPTIONS.filter(option=>option.value==="member");
-}
-
 function MemberRow(props: {
   member: OrganizationMember;
   canManage: boolean;
@@ -226,17 +207,16 @@ function MemberRow(props: {
   canGrant: boolean;
   organizationRoles: string[];
   isCurrentUser: boolean;
-  currentUserIsOwner: boolean | undefined;
-  onChangeRole: (member: OrganizationMember) => void;
+  currentUserIsOwner: boolean;
   onRemove: (member: OrganizationMember) => void;
-  onAccess: (member: OrganizationMember, action: "revoke-sessions"|"suspend"|"resume") => void;
+  onAccess: (member: OrganizationMember, action: ConfirmedAccessChange) => void;
+  onResume: (member: OrganizationMember) => void;
   onGrant: (member: OrganizationMember) => void;
 }) {
   const id = () => memberResourceID(props.member);
   const isOwner = () => props.member.is_owner;
   const active = () => props.member.status !== "removed" && props.canManage && id() !== "";
   const auditItem = useAuditItem();
-  // Your own row: only an owner has a role to step down from.
   return (
     <>
       <tr>
@@ -249,17 +229,33 @@ function MemberRow(props: {
           label={`Actions for ${memberName(props.member)}`}
           items={active() ? memberMenu({
             grant: props.canGrant ? () => props.onGrant(props.member) : undefined,
-            changeOwnership: props.currentUserIsOwner && props.member.status === "active" ? () => props.onChangeRole(props.member) : undefined,
+            ownership: props.currentUserIsOwner && props.member.status === "active",
             remove: !isOwner() && props.canRemove ? () => props.onRemove(props.member) : undefined,
           }).concat(props.canRemove ? [
  {label:"Revoke sessions",onSelect:()=>props.onAccess(props.member,"revoke-sessions")},
- ...(!isOwner() ? [{label:props.member.status === "suspended" ? "Resume member" : "Suspend member",onSelect:()=>props.onAccess(props.member,props.member.status === "suspended" ? "resume":"suspend")}] : []),
+ ...(!isOwner() ? [props.member.status === "suspended" ? {label:"Resume member",onSelect:()=>props.onResume(props.member)} : {label:"Suspend member",onSelect:()=>props.onAccess(props.member,"suspend")}] : []),
  ] : []).concat([{label:"View related work",href:`/sessions?user_id=${encodeURIComponent(props.member.user_id)}`}],auditItem({ actor: props.member.user_id })) : [{label:"View related work",href:`/sessions?user_id=${encodeURIComponent(props.member.user_id)}`},...auditItem({ actor: props.member.user_id })]}
         />
       </tr>
     </>
   );
 }
+
+// Revoking sessions and suspending both end the member's current access here;
+// each says what it ends and what stays.
+type ConfirmedAccessChange = "revoke-sessions" | "suspend";
+const ACCESS_CHANGES: Record<ConfirmedAccessChange, { title: string; busyLabel: string; body: string }> = {
+  "revoke-sessions": {
+    title: "Revoke sessions",
+    busyLabel: "Revoking…",
+    body: "They are signed out of this organization and must sign in again. Their sign-in sessions, CLI sign-ins they approved and linked Slack identities here are revoked. They stay a member with the same roles and groups; other organizations are unaffected. Accepted work continues; use separate work controls to stop it.",
+  },
+  suspend: {
+    title: "Suspend member",
+    busyLabel: "Suspending…",
+    body: "They are signed out of this organization and cannot use it until resumed, after which they sign in again. Their sign-in sessions, CLI sign-ins they approved and linked Slack identities here are revoked. Roles and groups are kept; other organizations are unaffected. Accepted work continues; use separate work controls to stop it.",
+  },
+};
 
 function InvitationRow(props: {
   invitation: OrganizationInvitation;
@@ -283,10 +279,11 @@ function InvitationRow(props: {
 }
 
 // The object menu for a member, the same in its list row and by its name.
-export function memberMenu(options: { grant?: (() => void) | undefined; changeOwnership?: (() => void) | undefined; remove?: (() => void) | undefined }): ActionMenuItem[] {
+// Ownership is changed on the Ownership page, which only owners can open.
+export function memberMenu(options: { grant?: (() => void) | undefined; ownership?: boolean | undefined; remove?: (() => void) | undefined }): ActionMenuItem[] {
   return [
     ...(options.grant ? [{ label: "Grant access", onSelect: options.grant }] : []),
-    ...(options.changeOwnership ? [{ label: "Change ownership", onSelect: options.changeOwnership }] : []),
+    ...(options.ownership ? [{ label: "Manage ownership", href: "/settings/ownership" }] : []),
     ...(options.remove ? [{ label: "Remove member", tone: "danger" as const, onSelect: options.remove }] : []),
   ];
 }
@@ -300,39 +297,12 @@ export function RemoveMemberDialog(props: { member: OrganizationMember; onClose:
   );
 }
 
-export function ChangeRoleDialog(props: { member: OrganizationMember; roles: SelectOption<OwnershipChoice>[]; onClose: () => void; onSave: (role: OwnershipChoice) => Promise<void> }) {
-  const [role, setRole] = createSignal<OwnershipChoice>((props.member.is_owner ? "owner" : "member"));
-  const [busy, setBusy] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
-  return (
-    <FormDialog
-      title="Change ownership"
-      intro={<>Change ownership for <strong>{memberName(props.member)}</strong>. Ownership enables ownership transfer and access recovery; it does not grant workload permissions.</>}
-      submitLabel="Change ownership"
-      busyLabel="Changing…"
-      busy={busy()}
-      disabled={role() === (props.member.is_owner ? "owner" : "member")}
-      error={error()}
-      onClose={props.onClose}
-      onSubmit={async () => {
-        setBusy(true); setError(null);
-        try { await props.onSave(role()); props.onClose(); }
-        catch (cause) { setError(membersErrorMessage(cause)); }
-        finally { setBusy(false); }
-      }}
-    >
-      <Field label="Ownership">
-        <Select<OwnershipChoice> value={role()} options={props.roles} onChange={setRole} minWidth="100%" />
-      </Field>
-    </FormDialog>
-  );
-}
-
 export function Members() {
   const queryClient = useQueryClient();
   const [inviting, setInviting] = createSignal(false);
   const [inviteResults, setInviteResults] = createSignal<InvitationResult[] | null>(null);
-  const [accessChange,setAccessChange]=createSignal<{member:OrganizationMember;action:"revoke-sessions"|"suspend"|"resume"}>();
+  const [accessChange,setAccessChange]=createSignal<{member:OrganizationMember;action:ConfirmedAccessChange}>();
+  const [resumeError, setResumeError] = createSignal<string>();
   const [removing, setRemoving] = createSignal<OrganizationMember | null>(null);
   const [granting, setGranting] = createSignal<OrganizationMember>();
   const [revoking, setRevoking] = createSignal<OrganizationInvitation | null>(null);
@@ -371,17 +341,15 @@ export function Members() {
     ]);
   };
 
-  // The member whose role is being changed, read fresh from the list so a
-  // retry after someone else's change expects the role they set.
-  const [changingRoleID, setChangingRoleID] = createSignal<string | null>(null);
-  const changingRole = () => members.data?.members.find((member) => memberResourceID(member) === changingRoleID()) ?? null;
-  const changeOwnershipChoice = async (member: OrganizationMember, role: OwnershipChoice) => {
-    const id = memberResourceID(member);
-    if (!id || (role === "owner") === member.is_owner) return;
+  // A suspended member has no live access left to end, so resuming needs no
+  // confirmation; they sign in again afterwards.
+  const resume = async (member: OrganizationMember) => {
+    setResumeError(undefined);
     try {
-      await updateMemberOwnership(id, role === "owner", member.is_owner);
-    } finally {
+      await changeMemberAccess(member.membership_id, "resume");
       await queryClient.invalidateQueries({ queryKey: ["members"] });
+    } catch (cause) {
+      setResumeError(membersErrorMessage(cause));
     }
   };
 
@@ -404,6 +372,7 @@ export function Members() {
       <Show when={!me.isPending && !canManage()}>
         <div class="mb-3"><DeniedState message="You need Read members permission to view members." /></div>
       </Show>
+      <Show when={resumeError()}>{message => <Notice tone="danger" role="alert" class="mb-3">{message()}</Notice>}</Show>
       <Show when={can("invitations.create") && !emailDelivery()}>
         <Notice tone="info" class="mb-3">{NO_EMAIL_DELIVERY}</Notice>
       </Show>
@@ -429,11 +398,11 @@ export function Members() {
                   canGrant={can("assignments.create")}
                   organizationRoles={member.status === "active" ? [...new Set(memberGrantSources(grants.data?.grants ?? [], groups.data?.groups ?? [], member.membership_id).filter(g=>g.target_kind === "organization").map(g=>g.role_name))] : []}
                   isCurrentUser={isCurrentUser(member)}
-                  currentUserIsOwner={me.data?.is_owner}
-                  onChangeRole={(member) => setChangingRoleID(memberResourceID(member))}
-                  onRemove={setRemoving}
-                  onAccess={(member,action)=>setAccessChange({member,action})}
-                  onGrant={setGranting}
+                  currentUserIsOwner={me.data?.is_owner === true}
+                  onRemove={(member) => { setResumeError(undefined); setRemoving(member); }}
+                  onAccess={(member,action)=>{setResumeError(undefined);setAccessChange({member,action});}}
+                  onResume={(member) => void resume(member)}
+                  onGrant={(member) => { setResumeError(undefined); setGranting(member); }}
                 />
               )}
             </For>
@@ -445,7 +414,6 @@ export function Members() {
 
       <Show when={inviting()}>
         <InviteMembersDialog
-          currentUserIsOwner={me.data?.is_owner}
           onClose={() => setInviting(false)}
           onInvited={async (results) => {
             setInviting(false);
@@ -459,11 +427,7 @@ export function Members() {
         {(results) => <InvitationResultsDialog results={results()} onClose={() => setInviteResults(null)} />}
       </Show>
 
-      <Show when={changingRole()}>
-        {(member) => <ChangeRoleDialog member={member()} roles={assignableRoles(me.data?.is_owner, isCurrentUser(member()))} onClose={() => setChangingRoleID(null)} onSave={(role) => changeOwnershipChoice(member(), role)} />}
-      </Show>
-
-      <Show when={accessChange()}>{change => <ConfirmDialog title={change().action === "resume" ? "Resume member" : change().action === "suspend" ? "Suspend member" : "Revoke sessions"} confirmLabel="Confirm" busyLabel="Updating…" tone="danger" target={memberName(change().member)} errorMessage={membersErrorMessage} onClose={()=>setAccessChange(undefined)} onConfirm={async()=>{await changeMemberAccess(change().member.membership_id,change().action);await queryClient.invalidateQueries({queryKey:["members"]});}}>Existing access to this organization will end. Resuming membership requires fresh authentication. Other organizations and account credentials are preserved. Accepted work continues; use separate work controls to stop it.</ConfirmDialog>}</Show>
+      <Show when={accessChange()}>{change => <ConfirmDialog title={ACCESS_CHANGES[change().action].title} confirmLabel={ACCESS_CHANGES[change().action].title} busyLabel={ACCESS_CHANGES[change().action].busyLabel} tone="danger" target={memberName(change().member)} errorMessage={membersErrorMessage} onClose={()=>setAccessChange(undefined)} onConfirm={async()=>{await changeMemberAccess(change().member.membership_id,change().action);await queryClient.invalidateQueries({queryKey:["members"]});}}>{ACCESS_CHANGES[change().action].body}</ConfirmDialog>}</Show>
       <Show when={removing()}>
         {(member) => <RemoveMemberDialog member={member()} onClose={() => setRemoving(null)} onRemoved={() => queryClient.invalidateQueries({ queryKey: ["members"] })} />}
       </Show>

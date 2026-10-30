@@ -44,7 +44,7 @@ test("Agent Slack setup walks the steps on the page and authorizes only its exac
   await expect(currentStep(panel)).toContainText("Create the Slack app");
   await panel.getByRole("button", { name: "Connect Slack", exact: true }).click();
 
-  await expect(panel).toContainText("Slack setup 1 of 4");
+  await expect(panel).toContainText("Slack setup 1 of 3");
   await expect(currentStep(panel)).toContainText("Create the Slack app");
   await expect(panel.getByRole("link", { name: "Create app in Slack" })).toHaveAttribute("href", "https://api.slack.com/apps?new_app=1");
   const manifest = panel.getByLabel("App manifest");
@@ -70,15 +70,13 @@ test("Agent Slack setup walks the steps on the page and authorizes only its exac
   expect((await page.request.get("/slack-app-icons/cow.png")).headers()["content-type"]).toBe("image/png");
   await page.screenshot({ path: testInfo.outputPath("agent-slack-setup.png"), fullPage: true });
 
-  await panel.getByRole("button", { name: "I created the app" }).click();
-  await expect(panel).toContainText("Slack setup 2 of 4");
-  await expect(currentStep(panel)).toContainText("Save app credentials");
+  await expect(panel.getByLabel("Client ID", { exact: true })).toBeVisible();
   await panel.getByLabel("Client ID", { exact: true }).fill("client-A");
   await panel.getByLabel("Client secret", { exact: true }).fill("synthetic-client-secret");
   await panel.getByLabel("Signing secret", { exact: true }).fill("synthetic-signing-secret");
   await panel.getByRole("button", { name: "Save app credentials" }).click();
 
-  await expect(panel).toContainText("Slack setup 3 of 4");
+  await expect(panel).toContainText("Slack setup 2 of 3");
   await expect(currentStep(panel)).toContainText("Install in your workspace");
   await expect(panel.getByLabel("Client secret", { exact: true })).toBeHidden();
   await panel.getByText("Replace app credentials", { exact: true }).click();
@@ -111,14 +109,13 @@ test("Slack polling preserves credential drafts only for the same connection", a
     }, manifest: {}, create_app_url: "https://api.slack.com/apps?new_app=1" } });
   });
   const panel = await openAgent(page);
-  await panel.getByRole("button", { name: "I created the app" }).click();
   await panel.getByLabel("Client ID", { exact: true }).fill("draft-client-A");
   await panel.getByLabel("Client secret", { exact: true }).fill("synthetic-secret-A");
   await panel.getByLabel("App-level token", { exact: true }).fill("synthetic-token-A");
   const firstReads = reads;
   await page.clock.fastForward(15_001);
   await expect.poll(() => reads).toBeGreaterThan(firstReads);
-  await expect(panel).toContainText("Slack setup 2 of 4");
+  await expect(panel).toContainText("Slack setup 1 of 3");
   await expect(panel.getByLabel("Client ID", { exact: true })).toHaveValue("draft-client-A");
   await expect(panel.getByLabel("Client secret", { exact: true })).toHaveValue("synthetic-secret-A");
   await expect(panel.getByLabel("App-level token", { exact: true })).toHaveValue("synthetic-token-A");
@@ -127,8 +124,6 @@ test("Slack polling preserves credential drafts only for the same connection", a
   const beforeReplacement = reads;
   await page.clock.fastForward(15_001);
   await expect.poll(() => reads).toBeGreaterThan(beforeReplacement);
-  await expect(panel).toContainText("Slack setup 1 of 4");
-  await panel.getByRole("button", { name: "I created the app" }).click();
   await expect(panel.getByLabel("Client ID", { exact: true })).toHaveValue("");
   await expect(panel.getByLabel("Client secret", { exact: true })).toHaveValue("");
   await expect(panel.getByLabel("App-level token", { exact: true })).toHaveValue("");
@@ -402,14 +397,13 @@ test("Socket setup follows the operator mode and keeps app tokens write-only", a
   const panel = await openAgent(page);
   await expect(panel).toContainText("Socket Mode");
   await expect(panel).toContainText("Selected by the deployment operator");
-  await panel.getByRole("button", { name: "I created the app" }).click();
   await expect(panel.getByLabel("Signing secret", { exact: true })).toHaveCount(0);
   await expect(panel).toContainText("connections:write");
   await panel.getByLabel("Client ID", { exact: true }).fill("client-A");
   await panel.getByLabel("Client secret", { exact: true }).fill("synthetic-client-secret");
   await panel.getByLabel("App-level token", { exact: true }).fill("xapp-synthetic");
   await panel.getByRole("button", { name: "Save app credentials" }).click();
-  await expect(panel).toContainText("Slack setup 3 of 4");
+  await expect(panel).toContainText("Slack setup 2 of 3");
   expect(writes).toEqual([{ client_id: "client-A", client_secret: "synthetic-client-secret", app_token: "xapp-synthetic" }]);
   await panel.getByText("Replace app credentials", { exact: true }).click();
   await expect(panel.getByLabel("App-level token", { exact: true })).toHaveValue("");

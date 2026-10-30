@@ -201,11 +201,10 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
 
 type StepState = Pick<Step, "state" | "content" | "description">;
 
-function setupSteps(states: { create: StepState; credentials?: StepState | undefined; install?: StepState | undefined }): Step[] {
+function setupSteps(states: { create: StepState; install?: StepState | undefined }): Step[] {
   const upcoming: StepState = { state: "upcoming" };
   return [
-    { title: "Create the Slack app", description: "From the manifest, with this agent’s name and icon.", ...states.create },
-    { title: "Save app credentials", description: "From the Slack app settings. Secrets are never shown again.", ...(states.credentials ?? upcoming) },
+    { title: "Create the Slack app", description: "From the manifest, with this agent’s name and icon, then save its credentials.", ...states.create },
     { title: "Install in your workspace", description: "Opens Slack to authorize, then returns here.", ...(states.install ?? upcoming) },
     { title: "Invite the app to a channel", description: "Mention it to start a session.", ...upcoming },
   ];
@@ -213,7 +212,7 @@ function setupSteps(states: { create: StepState; credentials?: StepState | undef
 
 function SetupPanel(props: { status: string; step?: number; children: JSX.Element }) {
   return (
-    <Panel title={props.step ? `Slack setup ${props.step} of 4` : "Slack connection"} actions={<span class="font-mono text-chrome text-console-muted">{props.status}</span>}>
+    <Panel title={props.step ? `Slack setup ${props.step} of 3` : "Slack connection"} actions={<span class="font-mono text-chrome text-console-muted">{props.status}</span>}>
       {props.children}
     </Panel>
   );
@@ -231,28 +230,22 @@ function Setup(props: {
   authorize: () => void;
   save: (credentials: Credentials) => Promise<void>;
 }) {
-  // Whether the app exists in Slack is not known here, so the admin says so; saved
-  // credentials prove it.
-  const [created, setCreated] = createSignal(false);
-  const step = createMemo(() => props.connection.credentials_configured ? 3 : created() ? 2 : 1);
-  const createContent = () => (
-    <div class={ui.blockStack}>
-      <Show when={props.createAppURL}>{(url) => <div><a class={ui.button} href={url()} target="_blank" rel="noopener noreferrer">Create app in Slack</a></div>}</Show>
-      <JsonView value={props.manifest ?? {}} label="App manifest" kind="manifest" open={MANIFEST_OPEN} />
-      <AppIconPicker seed={props.iconSeed} agentName={props.agentName} />
-      <div><button type="button" class={ui.secondaryButton} onClick={() => setCreated(true)}>I created the app</button></div>
-    </div>
-  );
+  // Saved credentials are what show the app exists in Slack. A memo keeps the
+  // step, and any credential draft, across polls that change nothing.
+  const step = createMemo(() => props.connection.credentials_configured ? 2 : 1);
   return (
     <SetupPanel status="Setup incomplete" step={step()}>
       <Steps label="Slack setup" steps={setupSteps({
-        create: step() === 1 ? { state: "current", content: createContent() }
-          : step() === 2 ? { state: "done", description: <button type="button" class={cx(ui.monoLink, "border-0 bg-transparent p-0 text-left")} onClick={() => setCreated(false)}>Show the manifest and icon again</button> }
+        create: step() === 1
+          ? { state: "current", content: <div class={ui.blockStack}>
+              <Show when={props.createAppURL}>{(url) => <div><a class={ui.button} href={url()} target="_blank" rel="noopener noreferrer">Create app in Slack</a></div>}</Show>
+              <JsonView value={props.manifest ?? {}} label="App manifest" kind="manifest" open={MANIFEST_OPEN} />
+              <AppIconPicker seed={props.iconSeed} agentName={props.agentName} />
+              <p class={ui.muted}>Copy the app credentials from the Slack app settings. Secrets are never shown again.</p>
+              <CredentialForm connection={props.connection} busy={props.busy || !props.canCredentials} save={props.save} />
+            </div> }
           : { state: "done" },
-        credentials: step() === 2
-          ? { state: "current", content: <CredentialForm connection={props.connection} busy={props.busy || !props.canCredentials} save={props.save} /> }
-          : step() > 2 ? { state: "done" } : undefined,
-        install: step() === 3
+        install: step() === 2
           ? { state: "current", content: <div class={ui.blockStack}>
               <div><button type="button" class={ui.button} disabled={props.busy || !props.canAuthorize} onClick={() => props.authorize()}>Install app in Slack</button></div>
               <Disclosure summary="Replace app credentials"><CredentialForm connection={props.connection} busy={props.busy || !props.canCredentials} save={props.save} /></Disclosure>

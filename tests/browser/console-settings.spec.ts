@@ -311,6 +311,9 @@ test("API keys list, generate and revoke in the selected Environment, not the ta
   const form = page.getByRole("dialog", { name: "Generate API key" });
   await expect(form.getByLabel("API key target environment")).toContainText("Staging");
   await form.getByLabel("Name", { exact: true }).fill("Deploy bot");
+  // An issuer who cannot assign roles creates the key without one.
+  await expect(form.getByRole("combobox", { name: "Role", exact: true })).toHaveCount(0);
+  await expect(form).toContainText("This key will have no workload access. An access administrator must grant a role before it can be used.");
   await form.getByRole("button", { name: "Generate key", exact: true }).click();
   const reveal = page.getByRole("dialog", { name: "API key generated" });
   await reveal.getByRole("button", { name: "Done", exact: true }).click();
