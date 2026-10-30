@@ -319,8 +319,9 @@ Panel.
 | Many independent toggles grouped by scope | **CheckboxGroup** (group headings, "Select all", optional per-option description) |
 
 There is one Select. Native `<select>` elements are not used. An option's
-`trailing` tags (a Tag) sit in a trailing column and show in the
-trigger for the chosen option.
+`leading` mark (an Environment's colour dot) sits before its label, and its
+`trailing` tags (a Tag) sit in a trailing column; both show in the trigger for
+the chosen option, the tags right-aligned as in the list.
 
 ## Feedback
 

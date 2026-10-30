@@ -147,7 +147,9 @@ export const ui = {
     "grid cursor-pointer grid-cols-[15px_1fr] gap-2 border border-console-border bg-console-bg-panel px-2.5 py-2 transition hover:border-console-border-strong hover:bg-console-surface has-checked:border-console-accent has-checked:bg-console-accent-soft [&_input]:mt-px [&_input]:size-[15px] [&_input]:accent-console-accent [&_span]:block [&_strong]:block [&_strong]:text-control [&_strong]:font-medium [&_strong]:text-console-text [&_span_span]:mt-0.5 [&_span_span]:text-chrome [&_span_span]:font-normal [&_span_span]:leading-snug [&_span_span]:text-console-muted",
 
   // Page structure
-  page: "mx-auto w-full max-w-310 px-5 pb-12 pt-4",
+  // Centred against the viewport width (vw includes any scrollbar), so a page
+  // that scrolls lines up with one that does not, without reserving an empty strip.
+  page: "ml-[max(0px,calc((100vw-77.5rem)/2))] max-w-310 px-5 pb-12 pt-4",
   // Breadcrumb slot, then the title row with the actions on the right (PageHeader).
   pageHeader: "mb-4 grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 max-sm:grid-cols-1",
   pageTitle: "flex min-h-7 items-center gap-2.5",

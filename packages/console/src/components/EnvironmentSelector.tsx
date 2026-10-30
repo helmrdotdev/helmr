@@ -1,6 +1,8 @@
 import { createEffect, createMemo, createSignal, on, Show, type JSX } from "solid-js";
 import type { Environment } from "../lib/projects";
 import { useScope } from "../lib/scope";
+import { environmentChip } from "../features/projects/display";
+import { EnvDot } from "../ui/EnvChip";
 import { Tag } from "../ui/Tag";
 import { Toolbar } from "../ui/Page";
 import { Select } from "../ui/Select";
@@ -58,6 +60,7 @@ export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; to
     props.edited.environments().map((environment) => ({
       value: environment.environment,
       label: environment.name,
+      leading: () => <EnvDot colorHex={environmentChip(environment)?.colorHex} />,
       trailing: () => <Show when={environment.environment === scope.selectedEnvironmentID()}><WorkingTag /></Show>,
     })),
   );
@@ -79,7 +82,7 @@ export function EnvironmentSelectorLayout(props: { edited: EditedEnvironment; to
             options={options()}
             onChange={props.edited.select}
             ariaLabel="Environment"
-            minWidth="200px"
+            minWidth="220px"
             disabled={options().length === 0}
           />
           {props.tools}

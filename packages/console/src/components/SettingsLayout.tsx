@@ -34,7 +34,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
       ],
     },
     {
-      label: me.data?.org_name ? `Organization · ${me.data.org_name}` : "Organization",
+      label: "Organization",
       links: [
         { href: "/settings/members", label: "Members" },
         { href: "/settings/groups", label: "Groups" },
@@ -67,7 +67,7 @@ export function SettingsLayout(props: { children: JSX.Element }) {
           const labelID = createUniqueId();
           return (
             <div role="group" aria-labelledby={labelID} class="flex flex-col gap-px">
-              <span id={labelID} class={cx(ui.microLabel, "truncate px-2 pb-1.5")} title={group.label}>{group.label}</span>
+              <span id={labelID} class={cx(ui.microLabel, "px-2 pb-1.5")}>{group.label}</span>
               <For each={group.links}>
                 {(link) => (
                   <A

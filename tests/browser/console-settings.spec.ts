@@ -96,15 +96,13 @@ test("settings navigation groups pages by Account, Project and Organization", as
   const navigation = page.getByRole("navigation", { name: "Settings sections" });
   const groups = navigation.getByRole("group");
   await expect(groups).toHaveCount(3);
-  // Every page reserves the scrollbar's width, so short and long pages line up.
-  expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarGutter)).toBe("stable");
   const account = navigation.getByRole("group", { name: "Account", exact: true });
   const projectGroup = navigation.getByRole("group", { name: "Project", exact: true });
-  // The organization group names the organization the settings belong to.
-  const organization = navigation.getByRole("group", { name: "Organization · Research Org", exact: true });
+  const organization = navigation.getByRole("group", { name: "Organization", exact: true });
   await expect(account.getByRole("link")).toHaveText(["Profile", "Sign-in and security"]);
   await expect(projectGroup).not.toContainText("Settings Demo");
   await expect(projectGroup.getByRole("link")).toHaveText(["General", "Environments", "Secrets", "API keys"]);
+  await expect(organization).not.toContainText("Research Org");
   await expect(organization.getByRole("link")).toHaveText(["Members", "Groups", "Roles", "Ownership", "Audit events"]);
   await expect(projectGroup.getByRole("link", { name: "General", exact: true })).toHaveAttribute("aria-current", "page");
 
@@ -119,6 +117,20 @@ test("settings navigation groups pages by Account, Project and Organization", as
   await page.getByRole("menuitem", { name: "Profile", exact: true }).click();
   await expect(page).toHaveURL("/settings/account");
   await expect(account.getByRole("link", { name: "Profile", exact: true })).toHaveAttribute("aria-current", "page");
+});
+
+test("a page that scrolls lines up with one that does not", async ({ page }) => {
+  await fixture(page);
+  const left = async () => page.evaluate(() => Math.round(document.querySelector("section")!.getBoundingClientRect().left));
+  await page.setViewportSize({ width: 1400, height: 400 });
+  await page.goto(`/settings/secrets?${scope}`);
+  await expect(page.getByRole("heading", { name: "Secrets", exact: true })).toBeVisible();
+  const short = await left();
+  await page.evaluate(() => { document.body.style.minHeight = "3000px"; });
+  expect(await page.evaluate(() => document.documentElement.scrollHeight > innerHeight)).toBe(true);
+  expect(await left()).toBe(short);
+  // No empty strip is reserved for the scrollbar.
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarGutter)).toBe("auto");
 });
 
 test("Profile shows the profile, the membership and the Slack identity section", async ({ page }) => {
