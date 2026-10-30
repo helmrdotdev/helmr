@@ -7,6 +7,7 @@ import { createSignOut } from "../features/projects/onboarding";
 import { errorDetails, errorMessage } from "../lib/error";
 import { ME_QUERY_KEY, useMe } from "../lib/me";
 import { rememberProjectScope } from "../lib/scope";
+import { setupStep } from "../lib/setup";
 import { AuthAccount, AuthCopy, AuthError, AuthLink, AuthTitle, AuthWindow } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
@@ -21,6 +22,7 @@ export function ProjectNew() {
   const [error, setError] = createSignal<{ message: string; details: string | undefined } | null>(null);
   const firstProject = createMemo(() => me.data?.project_required === true);
   const destination = () => returnPath(new URLSearchParams(location.search).get("next"));
+  const setup = () => new URLSearchParams(location.search).get("setup") === "1" && firstProject();
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -43,7 +45,7 @@ export function ProjectNew() {
   return (
     <Show when={!me.isPending}>
       <AuthWindow
-        step={firstProject() ? "Step 2 of 2" : undefined}
+        step={setup() ? setupStep(4) : firstProject() ? "Step 2 of 2" : undefined}
         account={firstProject() ? <AuthAccount name={me.data?.display_name} signOutLabel={signOut.label()} signingOut={signOut.busy()} onSignOut={() => void signOut.run()} /> : undefined}
       >
         <AuthTitle>{firstProject() ? "Create your first project" : "New project"}</AuthTitle>

@@ -1,6 +1,9 @@
-import { createSignal, onMount, Show } from "solid-js";
+import { useSearchParams } from "@solidjs/router";
+import { createResource, createSignal, onMount, Show } from "solid-js";
 import { postJson, request } from "../lib/api";
+import { getAuthConfig } from "../lib/auth";
 import { returnPath } from "../lib/continuation";
+import { SETUP_PATH, setupStep } from "../lib/setup";
 import { errorMessage } from "../lib/error";
 import { assertPasskey, registerPasskey } from "../lib/passkey";
 import { AuthCopy, AuthDivider, AuthTitle, AuthWindow } from "../ui/AuthWindow";
@@ -15,6 +18,8 @@ const ENROLLMENT_KEY = "helmr.operator-enrollment";
 const LABEL_KEY = "helmr.operator-enrollment.label";
 
 export function OperatorLogin() {
+  const [params] = useSearchParams();
+  const [config] = createResource(getAuthConfig);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
   const signIn = async () => {
@@ -25,7 +30,7 @@ export function OperatorLogin() {
     } catch (cause) { setError(errorMessage(cause)); setBusy(false); }
   };
   return (
-    <AuthWindow>
+    <AuthWindow step={params["next"] === SETUP_PATH && config()?.setup_required ? setupStep(1) : undefined}>
       <AuthTitle>Operator sign-in</AuthTitle>
       <AuthCopy>Use your independent deployment key. This does not sign you in to an ordinary account.</AuthCopy>
       <div class={ui.blockStack}>

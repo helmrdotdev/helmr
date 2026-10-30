@@ -1,18 +1,21 @@
-import { A } from "@solidjs/router";
+import { A, Navigate } from "@solidjs/router";
 import { createQuery } from "@tanstack/solid-query";
-import { Match, Switch } from "solid-js";
+import { createResource, Match, Switch } from "solid-js";
 import { ApiError, request } from "../lib/api";
-import { getAccount } from "../lib/auth";
+import { getAccount, getAuthConfig } from "../lib/auth";
 import { withNext } from "../lib/continuation";
 import { OrganizationNew } from "./organization-new";
-import { AuthTitle, AuthCopy, AuthWindow, AuthError, AuthWorking } from "../ui/AuthWindow";
-import { ui } from "../ui/styles";
+import { AuthTitle, AuthCopy, AuthLink, AuthWindow, AuthError, AuthWorking } from "../ui/AuthWindow";
+import { SETUP_PATH, setupStep } from "../lib/setup";
+import { cx, ui } from "../ui/styles";
 
 function needsSignIn(error: unknown): boolean {
   return error instanceof ApiError && (error.code === "authentication_required" || (error.status === 401 && error.code === "unauthorized"));
 }
 
 export function Setup() {
+  // The step counter only shows while the deployment still needs its first owner.
+  const [config] = createResource(getAuthConfig);
   const operator = createQuery(() => ({
     queryKey: ["operator", "setup"],
     queryFn: () => request<{ owner_setup_required: boolean }>("/admin/api/v1/setup", { redirectOnUnauthorized: false }),
@@ -28,9 +31,9 @@ export function Setup() {
   return <Switch>
     <Match when={operator.isPending}><AuthWorking>Checking setup…</AuthWorking></Match>
     <Match when={needsSignIn(operator.error)}>
-      <AuthWindow><AuthTitle>Set up Helmr</AuthTitle>
-        <AuthCopy>First, sign in with the operator key issued by your deployment.</AuthCopy>
-        <A href={withNext("/admin/login", "/setup")} class={ui.button}>Operator sign-in</A>
+      <AuthWindow step={config()?.setup_required ? setupStep(1) : undefined}><AuthTitle>Sign in as the operator</AuthTitle>
+        <AuthCopy>Use the operator key issued by your deployment. It is separate from your own account.</AuthCopy>
+        <A href={withNext("/admin/login", SETUP_PATH)} class={cx(ui.button, "auth-full")}>Operator sign-in</A>
       </AuthWindow>
     </Match>
     <Match when={operator.isError}>
@@ -40,22 +43,19 @@ export function Setup() {
     </Match>
     <Match when={operator.data && !operator.data.owner_setup_required}>
       <AuthWindow><AuthTitle>Setup is complete</AuthTitle>
-        <A class={ui.button} href="/admin">Open deployment administration</A>
-        <A class={ui.secondaryButton} href="/">Open the console</A>
+        <AuthCopy>Helmr is ready. Invite your team from Members, or deploy your first agent.</AuthCopy>
+        <A class={cx(ui.button, "auth-full")} href="/">Open the console</A>
+        <AuthLink href="/admin">Open deployment administration</AuthLink>
       </AuthWindow>
     </Match>
     <Match when={account.isPending}><AuthWorking>Checking owner account…</AuthWorking></Match>
-    <Match when={needsSignIn(account.error)}>
-      <AuthWindow><AuthTitle>Choose the first owner</AuthTitle>
-        <AuthCopy>Sign in to the ordinary account that will own this organization. Your operator credential remains separate.</AuthCopy>
-        <A class={ui.button} href={withNext("/login", "/setup")}>Sign in to the owner account</A>
-      </AuthWindow>
-    </Match>
+    {/* Step 2: the sign-in page itself explains it is for the first owner. */}
+    <Match when={needsSignIn(account.error)}><Navigate href={withNext("/login", SETUP_PATH)} /></Match>
     <Match when={account.isError}>
       <AuthWindow><AuthError title="Owner account could not be loaded" message="Unable to check your account. Try again." />
         <button class={ui.button} onClick={() => void account.refetch()}>Retry</button>
       </AuthWindow>
     </Match>
-    <Match when={account.data}><OrganizationNew /></Match>
+    <Match when={account.data}><OrganizationNew setup /></Match>
   </Switch>;
 }

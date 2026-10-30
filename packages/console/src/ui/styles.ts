@@ -220,8 +220,9 @@ export const ui = {
     "inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-xs border border-console-border bg-console-surface px-2 font-mono text-badge text-console-muted transition hover:border-console-border-strong hover:text-console-text aria-pressed:border-console-border-strong aria-pressed:bg-console-bg-panel aria-pressed:text-console-text disabled:cursor-not-allowed disabled:opacity-45",
 
   // Auth pages
-  authTitle: "m-0 text-[1.35rem] font-medium leading-tight text-console-text",
-  authCopy: "mb-4 mt-1 text-body leading-normal text-console-muted",
+  // The title owns the gap below it, so copy, a notice or a form all sit the same distance under it.
+  authTitle: "m-0 mb-2 text-[1.35rem] font-medium leading-tight text-console-text",
+  authCopy: "mb-4 mt-0 text-body leading-normal text-console-muted",
   authActions: "mt-3 flex flex-col gap-1.5",
   authLink:
     "mt-1 inline-flex h-7 w-full cursor-pointer items-center justify-center font-mono text-chrome text-console-accent hover:text-console-accent-hover disabled:cursor-not-allowed disabled:opacity-60",

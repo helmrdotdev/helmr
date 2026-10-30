@@ -1,6 +1,7 @@
 import { A } from "@solidjs/router";
 import { BrandMark } from "./BrandMark";
 import { Show, type JSX } from "solid-js";
+import { Notice } from "./Notice";
 import { Spinner } from "./Skeleton";
 import { cx, ui } from "./styles";
 
@@ -8,8 +9,9 @@ import { cx, ui } from "./styles";
 // access and onboarding screens: the product mark in the top-left corner, no
 // window or card, and one left-aligned column. `step` labels onboarding progress
 // above the title ("Step 1 of 2"); `account` sits in the top-right corner for a
-// signed-in account (see AuthAccount). In the column, buttons and button links
-// run full width; one primary action, secondary actions as AuthLink under it.
+// signed-in account (see AuthAccount). In the column, buttons run full width, and
+// a link styled as a button takes `auth-full` to match; one primary action, the
+// secondary ones as AuthLink (or several side by side in AuthLinks) under it.
 export function AuthWindow(props: { children: JSX.Element; step?: string | undefined; account?: JSX.Element }) {
   return (
     <main class="flex min-h-dvh flex-col px-4 text-console-text">
@@ -60,6 +62,11 @@ export function AuthActions(props: { children: JSX.Element }) {
   return <div class={ui.authActions}>{props.children}</div>;
 }
 
+// Several secondary actions under the primary one, side by side as link text.
+export function AuthLinks(props: { children: JSX.Element }) {
+  return <div class="mt-1 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 [&>*]:w-auto!">{props.children}</div>;
+}
+
 // A secondary action under the primary one, as centered link text.
 export function AuthLink(props: { children: JSX.Element; onClick?: () => void; href?: string; disabled?: boolean }) {
   return (
@@ -104,7 +111,7 @@ export function AuthError(props: { title?: string; message: string; details?: st
   return (
     <>
       <Show when={props.title}><AuthTitle>{props.title}</AuthTitle></Show>
-      <p class="mb-2 font-medium text-console-danger!" role="alert">{props.message}</p>
+      <Notice tone="danger" class="mb-3">{props.message}</Notice>
       <Show when={props.details}>
         <details class="mb-3 text-chrome text-console-muted">
           <summary class="cursor-pointer font-mono">Technical details</summary>
@@ -123,7 +130,7 @@ export function AuthSuccess(props: { title: string; children?: JSX.Element; acti
   return (
     <>
       <AuthTitle>{props.title}</AuthTitle>
-      <Show when={props.children}><p role="status">{props.children}</p></Show>
+      <Show when={props.children}><p class={ui.authCopy} role="status">{props.children}</p></Show>
       <Show when={props.action}><AuthActions>{props.action}</AuthActions></Show>
     </>
   );
@@ -135,7 +142,7 @@ export function AuthMissing(props: { title: string; children: JSX.Element; actio
   return (
     <>
       <AuthTitle>{props.title}</AuthTitle>
-      <p>{props.children}</p>
+      <p class={ui.authCopy}>{props.children}</p>
       <Show when={props.action}><AuthActions>{props.action}</AuthActions></Show>
     </>
   );

@@ -4,7 +4,7 @@ import { finishGitHubAuth } from "../lib/auth";
 import { returnPath } from "../lib/continuation";
 import { AUTH_MESSAGES, describeFailure, type Failure } from "../lib/error";
 import { AuthError, AuthMissing, AuthWindow, AuthWorking } from "../ui/AuthWindow";
-import { ui } from "../ui/styles";
+import { cx, ui } from "../ui/styles";
 
 type Params = Record<string, string | undefined>;
 type Outcome = { kind: "working" } | { kind: "missing" } | ({ kind: "failed" } & Failure);
@@ -18,7 +18,7 @@ function NextStep() {
   return (
     <>
       <p>If you started from the CLI, run helmr login again in your terminal.</p>
-      <A class={ui.button} href="/login">Sign in to the console</A>
+      <A class={cx(ui.button, "auth-full")} href="/login">Sign in to the console</A>
     </>
   );
 }

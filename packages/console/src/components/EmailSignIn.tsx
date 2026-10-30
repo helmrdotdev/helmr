@@ -1,12 +1,13 @@
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { startEmailLogin,resendEmailCode,verifyEmailCode,type EmailChallenge } from "../lib/auth";
-import { AuthCopy,AuthError } from "../ui/AuthWindow";
+import { AuthCopy,AuthError,AuthLink,AuthLinks } from "../ui/AuthWindow";
 import { Field,TextInput } from "../ui/Field";
 import { loadError, AUTH_MESSAGES } from "../lib/error";
 import { ui } from "../ui/styles";
 
-// `compact` fits the form inside a dialog: a known address shows as text and the
-// send button is secondary, so it does not compete with the dialog's main action.
+// `compact` makes email the secondary path beside another method (a passkey, a
+// dialog's main action): a known address shows as text and the send button is
+// secondary, so it does not compete with the primary one.
 export function EmailSignIn(props:{email?:string;invitationToken?:string;next?:string;compact?:boolean;complete:(next:string)=>void}){
  const [email,setEmail]=createSignal(props.email??"");const [code,setCode]=createSignal("");
  const [challenge,setChallenge]=createSignal<EmailChallenge>();const [busy,setBusy]=createSignal(false);const [error,setError]=createSignal("");
@@ -25,9 +26,9 @@ export function EmailSignIn(props:{email?:string;invitationToken?:string;next?:s
   </>}><Show when={props.compact&&props.email} fallback={<Field label="Email"><TextInput type="email" autocomplete="email" value={email()} onInput={e=>setEmail(e.currentTarget.value)} required disabled={busy()||!!props.email} /></Field>}><p class="m-0 mb-2 text-body text-console-muted">Send a code to <span class="font-mono text-chrome text-console-text">{email()}</span></p></Show></Show>
   <Show when={error()}><AuthError message={error()} /></Show>
   <button class={props.compact&&!challenge()?ui.secondaryButton:ui.button} type="submit" disabled={busy()||expired()}>{busy()?"Working…":challenge()?"Verify email":"Send verification code"}</button>
-  <Show when={challenge()}><div class="mt-3 flex gap-3">
-   <button class={ui.secondaryButton} type="button" disabled={busy()||cooldown()>0} onClick={()=>expired()?void start():void run(async current=>{const result=await resendEmailCode(challenge()!.challenge_id);if(current()){setChallenge(result);setCode("");}})}>{cooldown()>0?`Resend in ${cooldown()}s`:expired()?"Request new code":"Resend code"}</button>
-   <button class={ui.secondaryButton} type="button" disabled={busy()} onClick={()=>{setChallenge(undefined);setCode("");}}>Start again</button>
-  </div></Show>
+  <Show when={challenge()}><AuthLinks>
+   <AuthLink disabled={busy()||cooldown()>0} onClick={()=>expired()?void start():void run(async current=>{const result=await resendEmailCode(challenge()!.challenge_id);if(current()){setChallenge(result);setCode("");}})}>{cooldown()>0?`Resend in ${cooldown()}s`:expired()?"Request new code":"Resend code"}</AuthLink>
+   <AuthLink disabled={busy()} onClick={()=>{setChallenge(undefined);setCode("");}}>Start again</AuthLink>
+  </AuthLinks></Show>
  </form>;
 }
