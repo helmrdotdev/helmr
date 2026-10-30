@@ -14,13 +14,14 @@ helmr computer sessions (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [-
 helmr computer commands (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [--json]
 helmr computer update (--id UUID | --key KEY) --delete-after-unused DURATION_OR_NEVER [--json]
 helmr computer delete (--id UUID | --key KEY) [--idempotency-key KEY] [--json]
-helmr computer exec (--id UUID | --key KEY) --idempotency-key KEY -- COMMAND [ARG...]
+helmr computer exec (--id UUID | --key KEY) [--idempotency-key KEY] -- COMMAND [ARG...]
 ```
 
 All commands also accept project/environment scope.
 
 `exec` accepts `--cwd`, repeated `--set-env NAME=VALUE`, `--stdin FILE`, and
-`--timeout` (default 5m, maximum 24h). It returns a Command ID after admission. Use
+`--timeout` (default 5m, maximum 24h). Without `--idempotency-key`, each run admits
+a new Command; reuse a key to retry one admission. It returns a Command ID after admission. Use
 [`helmr command`](/docs/reference/cli/command) to read output, wait, or cancel. The `--` separator is required before the
 remote command.
 

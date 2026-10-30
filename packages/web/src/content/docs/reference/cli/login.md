@@ -35,7 +35,7 @@ or `http` on a loopback host, with no path, query, fragment or credentials.
 The browser page shows the account, organization, server and code to approve.
 An expired or denied request needs a new `helmr login`. CLI login does not
 require a Project; commands that act in an Environment still need
-`--project` and `--env`.
+`--project` and `--env`, or `HELMR_PROJECT` and `HELMR_ENV`.
 
 ### Confirming sensitive changes
 
@@ -86,8 +86,11 @@ Reports which credentials the CLI would use.
 | Otherwise | The saved login for the origin | `--api-url`, then `HELMR_API_URL`, then the saved default origin |
 
 `HELMR_API_KEY` must not have surrounding whitespace. An API key is bound to one
-Environment, so `--project` and `--env` are rejected with it. With a saved
-login, Environment-scoped commands require both. Project and Environment
+Environment, so `--project` and `--env` are optional with it; a value given
+(including `HELMR_PROJECT`/`HELMR_ENV`) must match the key's own Project or
+Environment, or the server rejects the request with `api_key_scope_mismatch`.
+With a saved login, Environment-scoped commands require both; each flag falls
+back to its environment variable when absent. Project and Environment
 management (`helmr project`, `helmr env`) always uses the saved login.
 
 ## Saved state

@@ -182,7 +182,7 @@ func computerCommandCommand() *cobra.Command {
 	var idempotencyKey string
 	var jsonOutput bool
 	command := &cobra.Command{
-		Use:   "exec --idempotency-key KEY -- COMMAND [ARG...]",
+		Use:   "exec -- COMMAND [ARG...]",
 		Short: "Admit one command and return its execution ID.",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -208,7 +208,7 @@ func computerCommandCommand() *cobra.Command {
 			}
 			result, err := controlPlane.ExecuteComputer(command.Context(), computerID, api.ExecuteComputerRequest{
 				Command: args, Cwd: cwd, Env: env, StdinBase64: stdinBase64,
-				Timeout: timeout, IdempotencyKey: idempotencyKey,
+				Timeout: timeout, IdempotencyKey: strings.TrimSpace(idempotencyKey),
 			}, scope)
 			if err != nil {
 				return err
@@ -226,9 +226,8 @@ func computerCommandCommand() *cobra.Command {
 	command.Flags().StringArrayVar(&envPairs, "set-env", nil, "Environment entry NAME=VALUE. Repeatable.")
 	command.Flags().StringVar(&stdinPath, "stdin", "", "Read stdin bytes from a file.")
 	command.Flags().StringVar(&timeout, "timeout", "", "Execution timeout (default 5m, maximum 24h).")
-	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Required idempotency key.")
+	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for retrying this admission.")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "Emit the execution receipt as JSON.")
-	_ = command.MarkFlagRequired("idempotency-key")
 	return command
 }
 

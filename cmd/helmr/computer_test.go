@@ -48,6 +48,7 @@ func TestComputerCommandCommandReturnsAdmissionReceipt(t *testing.T) {
 	const computerID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 	const commandID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
 	requests := 0
+	var keys []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		if r.Header.Get("authorization") != "Bearer test-key" {
@@ -61,6 +62,11 @@ func TestComputerCommandCommandReturnsAdmissionReceipt(t *testing.T) {
 		if r.Method != "POST" || r.URL.Path != "/v1/computers/"+computerID+"/exec" {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
+		var body api.ExecuteComputerRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		keys = append(keys, body.IdempotencyKey)
 		w.WriteHeader(202)
 		_ = json.NewEncoder(w).Encode(api.CommandReceipt{CommandID: commandID})
 	}))
@@ -72,9 +78,11 @@ func TestComputerCommandCommandReturnsAdmissionReceipt(t *testing.T) {
 		command := newRootCommand()
 		command.SetOut(&stdout)
 		command.SetErr(&stderr)
-		args := []string{"computer", "exec", "--id", computerID, "--idempotency-key", "exec-1"}
+		args := []string{"computer", "exec", "--id", computerID}
 		if jsonOutput {
 			args = append(args, "--json")
+		} else {
+			args = append(args, "--idempotency-key", "exec-1")
 		}
 		args = append(args, "--", "false")
 		command.SetArgs(args)
@@ -91,6 +99,9 @@ func TestComputerCommandCommandReturnsAdmissionReceipt(t *testing.T) {
 	}
 	if requests != 4 {
 		t.Fatalf("requests=%d", requests)
+	}
+	if len(keys) != 2 || keys[0] != "exec-1" || keys[1] == "" || keys[1] == "exec-1" {
+		t.Fatalf("idempotency keys = %q", keys)
 	}
 }
 

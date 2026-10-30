@@ -13,11 +13,11 @@ export interface SecretCreateRequest {
 
 export interface SecretRotateRequest {
   readonly value: string
-  readonly idempotencyKey: string
+  readonly idempotencyKey?: string
 }
 
 export interface SecretRevokeRequest {
-  readonly idempotencyKey: string
+  readonly idempotencyKey?: string
 }
 
 export interface Secret {
@@ -35,7 +35,7 @@ export interface SecretRef {
     options?: RequestOptions,
   ): Promise<Secret>
   revoke(
-    request: SecretRevokeRequest,
+    request?: SecretRevokeRequest,
     options?: RequestOptions,
   ): Promise<Secret>
 }
@@ -165,25 +165,25 @@ function createSecretRef(
       if (typeof request.value !== "string") {
         throw new Error("Secret rotate request.value must be a string")
       }
-      validateIdempotencyKey(request.idempotencyKey)
+      validateOptionalIdempotencyKey(request.idempotencyKey)
       return parseSecret(
         await transport.request("POST", `${path}/rotate`, {
           body: {
             value: request.value,
-            idempotency_key: request.idempotencyKey,
+            idempotency_key: request.idempotencyKey ?? crypto.randomUUID(),
           },
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         }),
       )
     },
     async revoke(
-      request: SecretRevokeRequest,
+      request: SecretRevokeRequest = {},
       options: RequestOptions = {},
     ): Promise<Secret> {
-      validateIdempotencyKey(request.idempotencyKey)
+      validateOptionalIdempotencyKey(request.idempotencyKey)
       return parseSecret(
         await transport.request("POST", `${path}/revoke`, {
-          body: { idempotency_key: request.idempotencyKey },
+          body: { idempotency_key: request.idempotencyKey ?? crypto.randomUUID() },
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         }),
       )
@@ -225,12 +225,8 @@ function dateValue(value: unknown, label: string): string {
 }
 
 function validateOptionalIdempotencyKey(value: string | undefined): void {
-  if (value !== undefined) validateIdempotencyKey(value)
-}
-
-function validateIdempotencyKey(value: string): void {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Error("Secret idempotencyKey is required")
+  if (value !== undefined && (typeof value !== "string" || value.trim() === "")) {
+    throw new Error("Secret idempotencyKey must be a non-empty string")
   }
 }
 

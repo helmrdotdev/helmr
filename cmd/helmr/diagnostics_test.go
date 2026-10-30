@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -183,9 +184,23 @@ func TestDiagnosticStatusReportsProblemButDoctorFails(t *testing.T) {
 
 func TestDiagnosticAPIKeyAndScopeBoundary(t *testing.T) {
 	clearDiagnosticEnvironment(t)
-	server := diagnosticFixture(t, api.AttentionCounts{}, "", nil)
+	var expected atomic.Value
+	expected.Store("")
+	server := diagnosticFixture(t, api.AttentionCounts{}, "", func(w http.ResponseWriter, r *http.Request) bool {
+		got := r.Header.Get("X-Helmr-Project") + "/" + r.Header.Get("X-Helmr-Environment")
+		if got != expected.Load().(string) {
+			t.Errorf("expected scope headers = %q, want %q", got, expected.Load())
+		}
+		if r.Header.Get("X-Helmr-Environment") == "other" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"api_key_scope_mismatch","message":"mismatch"}}`))
+			return true
+		}
+		return false
+	})
 	t.Setenv(helmrAPIKeyEnv, "api-key")
 	t.Setenv(helmrAPIURLEnv, server.URL)
+	expected.Store("/")
 	report, _, err := runDiagnosticTest(t, "doctor")
 	if err != nil {
 		t.Fatal(err)
@@ -193,9 +208,15 @@ func TestDiagnosticAPIKeyAndScopeBoundary(t *testing.T) {
 	if report.Identity != nil || report.Live == nil {
 		t.Fatalf("report=%+v", report)
 	}
-	_, _, err = runDiagnosticTest(t, "status", "--project", "project", "--env", "environment")
-	if err == nil {
-		t.Fatal("API key accepted explicit scope")
+	expected.Store("project/environment")
+	t.Setenv("HELMR_ENV", "environment")
+	if report, _, err = runDiagnosticTest(t, "status", "--project", "project"); err != nil || report.Live == nil {
+		t.Fatalf("matching API-key scope: %v %+v", err, report)
+	}
+	expected.Store("project/other")
+	report, _, err = runDiagnosticTest(t, "status", "--project", "project", "--env", "other")
+	if err == nil || !strings.Contains(fmt.Sprint(report.Checks), "different Project or Environment") {
+		t.Fatalf("mismatched API-key scope: %v %+v", err, report.Checks)
 	}
 }
 

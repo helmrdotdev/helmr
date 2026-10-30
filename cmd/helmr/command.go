@@ -26,7 +26,7 @@ func commandAction(action string) *cobra.Command {
 	var limit int
 	cmd := &cobra.Command{Use: action + " COMMAND_ID", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		var duration time.Duration
-		if action == "wait" {
+		if action == "wait" && cmd.Flags().Changed("timeout") {
 			var err error
 			duration, err = parseDuration(timeout)
 			if err != nil {
@@ -63,7 +63,10 @@ func commandAction(action string) *cobra.Command {
 			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", receipt.TargetID, receipt.Status)
 			return err
 		case "wait":
-			ctx, cancel := context.WithTimeout(cmd.Context(), duration)
+			ctx, cancel := cmd.Context(), context.CancelFunc(func() {})
+			if duration > 0 {
+				ctx, cancel = context.WithTimeout(cmd.Context(), duration)
+			}
 			defer cancel()
 			var outcome *api.CommandOutcome
 			for {
@@ -186,8 +189,7 @@ func commandAction(action string) *cobra.Command {
 	switch action {
 	case "wait":
 		cmd.Short = "Observe settlement without cancelling work."
-		cmd.Flags().StringVar(&timeout, "timeout", "", "Required maximum observation duration.")
-		_ = cmd.MarkFlagRequired("timeout")
+		cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum observation duration; without it, wait until the command settles.")
 	case "logs":
 		cmd.Short = "Read command output with explicit gaps and completeness."
 		cmd.Flags().StringVar(&cursor, "cursor", "", "Continue after this cursor.")

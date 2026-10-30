@@ -17,6 +17,7 @@ type Client struct {
 	bearer              string
 	sessionScopedRoutes bool
 	deploymentUploads   DeploymentUploadOptions
+	expectedScope       EnvironmentScopeOptions
 }
 
 type options struct {
@@ -63,6 +64,11 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 
 func (c *Client) UsesSessionScopedRoutes() bool { return c.sessionScopedRoutes }
 
+// ExpectAPIKeyScope names the Project and Environment later API-key requests
+// expect to act in. The server rejects a request when the key is scoped
+// elsewhere; an empty value expects nothing.
+func (c *Client) ExpectAPIKeyScope(scope EnvironmentScopeOptions) { c.expectedScope = scope }
+
 func (c *Client) postJSON(ctx context.Context, path string, in any, out any) error {
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(in); err != nil {
@@ -103,7 +109,17 @@ func (c *Client) deleteJSON(ctx context.Context, path string, in any, out any) e
 }
 
 func (c *Client) newRequest(ctx context.Context, method string, path string, body io.Reader) (*http.Request, error) {
-	return c.transport.Request(ctx, method, path, body, c.bearer)
+	req, err := c.transport.Request(ctx, method, path, body, c.bearer)
+	if err != nil {
+		return nil, err
+	}
+	if c.expectedScope.ProjectID != "" {
+		req.Header.Set("X-Helmr-Project", c.expectedScope.ProjectID)
+	}
+	if c.expectedScope.EnvironmentID != "" {
+		req.Header.Set("X-Helmr-Environment", c.expectedScope.EnvironmentID)
+	}
+	return req, nil
 }
 
 func (c *Client) doJSON(req *http.Request, out any) error { return c.transport.DoJSON(req, out) }

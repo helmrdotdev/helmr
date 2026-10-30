@@ -54,12 +54,13 @@ Pass exactly one of `--id` or `--key`. The JSON form includes `status`
 
 ```sh
 helmr computer exec --key repo:acme/app --project demo --env staging \
-  --idempotency-key status:1 -- git -C /workspace/app status --short
+  -- git -C /workspace/app status --short
 ```
 
 Everything after `--` is the command and its arguments; it runs without a shell.
 The command prints the command ID once Helmr has accepted the command, which can
-be before a hibernated Computer has resumed. `--idempotency-key` is required.
+be before a hibernated Computer has resumed. Each run admits a new command; pass
+the same `--idempotency-key` to retry one admission after a lost response.
 
 | Flag | Meaning |
 | --- | --- |
@@ -120,7 +121,6 @@ const computer = await client.computers.create({
 const command = await computer.exec({
   command: ["git", "-C", "/workspace/app", "status", "--short"],
   timeout: "5m",
-  idempotencyKey: "status:1",
 })
 
 for await (const record of command.logs.stream()) {

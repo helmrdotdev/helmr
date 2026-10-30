@@ -134,7 +134,7 @@ in its saved disk. To check a binding, run a command that uses it:
 
 ```sh
 helmr computer exec --key github-review --project demo --env staging \
-  --idempotency-key check:gh -- gh api user
+  -- gh api user
 ```
 
 To change a binding or its allowed origins, create a new Computer. Secrets used

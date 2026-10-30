@@ -23,6 +23,18 @@ curl "$HELMR_API_URL/v1/sessions" \
   -H "Authorization: Bearer $HELMR_API_KEY"
 ```
 
+To guard against using a key from the wrong Environment, send the Project and
+Environment IDs you expect:
+
+```http
+X-Helmr-Project: acme
+X-Helmr-Environment: production
+```
+
+Each header is optional and compared with the key's own Project or Environment
+ID. A mismatch is rejected with `403` and the code `api_key_scope_mismatch`,
+whose message names the key's actual Project and Environment.
+
 Keep keys out of source control and logs. The TypeScript `HelmrClient` accepts
 the same key as `apiKey`; the CLI reads `HELMR_API_KEY`.
 

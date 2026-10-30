@@ -241,16 +241,15 @@ func permissionRole(ctx context.Context, c *client.Client, name, id, builtin str
 	if err != nil {
 		return api.PermissionRole{}, err
 	}
-	matches := []api.PermissionRole{}
 	for _, role := range list.Roles {
 		if name != "" && strings.EqualFold(role.Name, name) || builtin != "" && role.BuiltinKey != nil && *role.BuiltinKey == builtin {
-			matches = append(matches, role)
+			return c.GetPermissionRole(ctx, role.ID)
 		}
 	}
-	if len(matches) != 1 {
-		return api.PermissionRole{}, fmt.Errorf("role lookup matched %d roles; use --role-id for an exact identity", len(matches))
+	if builtin != "" {
+		return api.PermissionRole{}, fmt.Errorf("built-in role %q not found", builtin)
 	}
-	return c.GetPermissionRole(ctx, matches[0].ID)
+	return api.PermissionRole{}, fmt.Errorf("role %q not found", name)
 }
 func permissionGroup(ctx context.Context, c *client.Client, name, id string) (api.PermissionGroup, error) {
 	if (name == "") == (id == "") {
@@ -267,16 +266,12 @@ func permissionGroup(ctx context.Context, c *client.Client, name, id string) (ap
 	if err != nil {
 		return api.PermissionGroup{}, err
 	}
-	matches := []api.PermissionGroup{}
 	for _, group := range list.Groups {
 		if strings.EqualFold(group.Name, name) {
-			matches = append(matches, group)
+			return c.GetPermissionGroup(ctx, group.ID)
 		}
 	}
-	if len(matches) != 1 {
-		return api.PermissionGroup{}, fmt.Errorf("group lookup matched %d groups; use --group-id for an exact identity", len(matches))
-	}
-	return c.GetPermissionGroup(ctx, matches[0].ID)
+	return api.PermissionGroup{}, fmt.Errorf("group %q not found", name)
 }
 func permissionUser(ctx context.Context, c *client.Client, email, id string, self bool) (string, error) {
 	count := 0
@@ -621,7 +616,7 @@ func groupMemberCommand(action string) *cobra.Command {
 		cmd.Flags().StringVar(&userID, "member-id", "", "Stable member ID.")
 	}
 	if action == "remove" {
-		cmd.Flags().Bool("yes", false, "Confirm removal of group membership.")
+		cmd.Flags().Bool("yes", false, "Confirm removal when the group holds role grants.")
 	}
 	cmd.RunE = permissionRun(func(cmd *cobra.Command, args []string) error {
 		if len(args) > 1 {
@@ -655,8 +650,10 @@ func groupMemberCommand(action string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err = permissionConfirm(cmd, impact.Grants); err != nil {
-				return err
+			if len(impact.Grants) > 0 {
+				if err = permissionConfirm(cmd, impact.Grants); err != nil {
+					return err
+				}
 			}
 		}
 		if err = c.SetPermissionGroupMember(cmd.Context(), group.ID, user, action == "add"); err != nil {

@@ -141,7 +141,7 @@ describe("HelmrClient Computers", () => {
         return Response.json(responses.shift())
       }) as typeof fetch,
     })
-    const ref = await client.computers.ref(computerId).exec({ command: ["false"], idempotencyKey: "exec" })
+    const ref = await client.computers.ref(computerId).exec({ command: ["false"] })
     expect(ref.id).toBe(commandId)
     expect(requests).toHaveLength(1)
     const reconstructed = client.commands.ref(commandId)
@@ -295,6 +295,26 @@ describe("HelmrClient Secrets", () => {
     expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
       idempotency_key: "revoke-1",
     })
+  })
+
+  test("generates a fresh idempotency key per Secret rotation and revocation", async () => {
+    const bodies: Array<{ idempotency_key?: string }> = []
+    const active = { secret: "github-token", status: "active", created_at: "2026-07-25T01:00:00Z" }
+    const client = new HelmrClient({
+      url: "https://api.example.test",
+      apiKey: "api-key",
+      fetch: (async (_input: URL | RequestInfo, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)))
+        return Response.json(active)
+      }) as typeof fetch,
+    })
+    const secretRef = client.secrets.ref("github-token")
+    await secretRef.rotate({ value: "second" })
+    await secretRef.rotate({ value: "third" })
+    await secretRef.revoke()
+    const keys = bodies.map((body) => body.idempotency_key)
+    expect(keys.every((key) => typeof key === "string" && key !== "")).toBe(true)
+    expect(new Set(keys).size).toBe(3)
   })
 
   test("rejects a malformed Secret ID before transport", () => {

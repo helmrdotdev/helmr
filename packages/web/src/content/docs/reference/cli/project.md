@@ -32,7 +32,8 @@ Project and Environment arguments use the same readable IDs shown in the Console
 and returned as `project` and `environment` by the API. Create chooses the ID
 explicitly; `--name` sets an optional display name. IDs are permanent. Update can
 change the display name and Environment color. Environment color
-defaults from its ID. Project IDs cannot use UUID syntax.
+defaults from its ID. Project IDs cannot use UUID syntax. `env` commands use
+`HELMR_PROJECT` when `--project` is absent.
 
 New Projects default to **30-day Session history retention**. Configure the
 Project-wide policy in the Console's Project settings or with:

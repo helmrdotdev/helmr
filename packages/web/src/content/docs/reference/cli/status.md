@@ -29,14 +29,14 @@ The report identifies the source of the server, Project and Environment:
 - Project: `--project`, then `HELMR_PROJECT`.
 - Environment: `--env`, then `HELMR_ENV`.
 
-The Project and Environment environment variables apply to these two diagnostic
-commands only. Other Environment commands still require explicit scope flags
-with a saved login. No Project or Environment context is saved.
+Other Environment commands resolve scope the same way. No Project or
+Environment context is saved.
 
 With a saved login and no selected scope, the commands report identity and skip
 Environment inspection. Selecting only one of Project or Environment is an error.
-An API key is already Environment scoped and rejects explicit scope. Its Project
-and Environment names remain unknown because there is no key-introspection API.
+An API key is already Environment scoped, so selecting scope is optional with it.
+A selected Project or Environment is sent to the server, which reports an error
+when the key belongs elsewhere.
 
 Credentials are described by kind, source and presence, never their value or a
 prefix. Expiry is `null` because the current credential store and APIs do not

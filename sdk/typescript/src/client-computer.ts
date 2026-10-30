@@ -164,7 +164,7 @@ export function createClientComputerRef(
           ...(request.env === undefined ? {} : { env: request.env }),
           ...(request.stdin === undefined ? {} : { stdin_base64: encodeBase64(request.stdin) }),
           ...(request.timeout === undefined ? {} : { timeout: `${durationMilliseconds(request.timeout, "Command execution timeout")}ms` }),
-          idempotency_key: request.idempotencyKey,
+          idempotency_key: request.idempotencyKey ?? crypto.randomUUID(),
         },
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       }))

@@ -59,22 +59,6 @@ func deployCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !controlPlane.UsesSessionScopedRoutes() && (cmd.Flags().Changed("project") || cmd.Flags().Changed("env")) {
-				return errors.New("--project and --env require helmr login; API keys are already environment scoped")
-			}
-			if controlPlane.UsesSessionScopedRoutes() {
-				projectRef = strings.TrimSpace(projectRef)
-				envRef = strings.TrimSpace(envRef)
-				if !cmd.Flags().Changed("project") || projectRef == "" {
-					return errors.New("--project is required with helmr login")
-				}
-				if !cmd.Flags().Changed("env") || envRef == "" {
-					return errors.New("--env is required with helmr login")
-				}
-				if err := validateProjectFlag(projectRef); err != nil {
-					return err
-				}
-			}
 			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectRef, envRef)
 			if err != nil {
 				return err
@@ -439,9 +423,6 @@ func promoteCommand() *cobra.Command {
 			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
-			}
-			if !controlPlane.UsesSessionScopedRoutes() && (cmd.Flags().Changed("project") || cmd.Flags().Changed("env")) {
-				return errors.New("--project and --env require helmr login; API keys are already environment scoped")
 			}
 			scope, err := environmentScopeForClient(cmd.Context(), controlPlane, projectID, environmentID)
 			if err != nil {

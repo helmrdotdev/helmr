@@ -20,7 +20,7 @@ helmr session close SESSION_ID [--idempotency-key KEY] [--json]
 helmr session cancel SESSION_ID [--idempotency-key KEY] [--json]
 helmr session turn list --session SESSION_ID [--limit N] [--cursor CURSOR] [--json]
 helmr session turn get TURN_ID --session SESSION_ID [--json]
-helmr session turn wait TURN_ID --session SESSION_ID --timeout DURATION [--json]
+helmr session turn wait TURN_ID --session SESSION_ID [--timeout DURATION] [--json]
 helmr session turn interrupt TURN_ID --session SESSION_ID [--idempotency-key KEY] [--json]
 helmr session turn send TURN_ID --session SESSION_ID (--text TEXT | --data-json JSON | --data-file FILE) [--idempotency-key KEY] [--json]
 helmr session turn ask list --session SESSION_ID --turn TURN_ID [--limit N] [--cursor CURSOR] [--json]
@@ -118,12 +118,12 @@ records are available. Event kinds are listed in
 | --- | --- |
 | `turn list` | One page of Turns in admission order. `--limit` 1–100, default 50. |
 | `turn get` | Status, result or error, response and payload expiry when available. |
-| `turn wait` | Observes the Turn until it settles or `--timeout` elapses. |
+| `turn wait` | Observes the Turn until it settles or the optional `--timeout` elapses. |
 | `turn interrupt` | Interrupts exactly one running Turn without adding a hold or affecting owned Sessions. A queued or settled Turn is rejected. |
 | `turn send` | Sends a message to exactly this Turn. It is never redirected to another Turn. |
 
-`turn wait` requires a positive `--timeout` such as `30s` or `10m`. A timeout
-ends only the observation. JSON output is `{ "status": "timeout" }` or
+`turn wait` accepts a positive `--timeout` such as `30s` or `10m`; without it,
+the wait lasts until the Turn settles. A timeout ends only the observation. JSON output is `{ "status": "timeout" }` or
 `{ "status": "settled", "outcome": { "status": "completed", ... } }`, where the
 outcome includes `result`, `response`, `error` and `payload_expired_at` when
 present. Failed, interrupted and cancelled Turns are settled outcomes.

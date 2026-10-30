@@ -362,14 +362,15 @@ func envUpdateCommand() *cobra.Command {
 	return cmd
 }
 
+// requireProjectFlag reads --project, falling back to HELMR_PROJECT.
 func requireProjectFlag(cmd *cobra.Command) (string, error) {
 	projectRef, err := cmd.Flags().GetString("project")
 	if err != nil {
 		return "", err
 	}
-	projectRef = strings.TrimSpace(projectRef)
+	projectRef = scopeValue(projectRef, helmrProjectEnv)
 	if projectRef == "" {
-		return "", errors.New("--project is required")
+		return "", errors.New("--project or HELMR_PROJECT is required")
 	}
 	return projectRef, nil
 }

@@ -53,7 +53,7 @@ export interface ComputerCommandRequest {
   readonly env?: Readonly<Record<string, string>>
   readonly stdin?: Uint8Array
   readonly timeout?: Duration
-  readonly idempotencyKey: string
+  readonly idempotencyKey?: string
 }
 
 export interface ComputerDeleteRequest {

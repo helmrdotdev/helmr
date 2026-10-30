@@ -131,7 +131,11 @@ func (r *diagnosticReport) check(id, status, message string, remedy *diagnosticR
 func (r *diagnosticReport) readError(id string, err error) {
 	message := "Could not read this state; check the server connection and retry."
 	remedy := &diagnosticRemedy{"Check the server connection and retry.", false}
+	var apiErr *httpclient.Error
 	switch {
+	case errors.As(err, &apiErr) && apiErr.Code == "api_key_scope_mismatch":
+		message = "The API key belongs to a different Project or Environment than the one selected."
+		remedy = &diagnosticRemedy{"Select the API key's own Project and Environment, or remove --project/--env and HELMR_PROJECT/HELMR_ENV.", false}
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		message = "The diagnostic request timed out or was cancelled."
 	case httpclient.IsStatus(err, http.StatusUnauthorized):
@@ -154,8 +158,8 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 	if doctor {
 		report.Schema = "helmr.doctor/v1"
 	}
-	report.Project = diagnosticScopeValue(cmd, "project", "HELMR_PROJECT", project)
-	report.Environment = diagnosticScopeValue(cmd, "env", "HELMR_ENV", environment)
+	report.Project = diagnosticScopeValue(cmd, "project", helmrProjectEnv, project)
+	report.Environment = diagnosticScopeValue(cmd, "env", helmrEnvironmentEnv, environment)
 	cp := diagnosticConnection(cmd, &report)
 	if cp == nil {
 		return report
@@ -189,9 +193,6 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 			report.check("scope.environment", "error", "Select both a Project and an Environment.", &diagnosticRemedy{"Pass --project and --env, or HELMR_PROJECT and HELMR_ENV.", false})
 			return report
 		}
-	} else if report.Project != nil || report.Environment != nil {
-		report.check("scope.environment", "error", "API keys are already Environment scoped; explicit scope is not supported.", &diagnosticRemedy{"Remove --project/--env and HELMR_PROJECT/HELMR_ENV, or use a saved login without HELMR_API_KEY.", false})
-		return report
 	}
 	p, e := "", ""
 	if report.Project != nil {
@@ -208,7 +209,7 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 	if cp.UsesSessionScopedRoutes() {
 		report.check("scope.environment", "pass", "Selected Project and Environment are accessible.", nil)
 	} else {
-		report.check("scope.environment", "skip", "API-key scope is enforced by the server; its Project and Environment names are not available through introspection.", nil)
+		report.check("scope.environment", "skip", "API-key scope is enforced by the server, which also rejects a selected Project or Environment the key does not belong to.", nil)
 	}
 	report.Live = &diagnosticLive{}
 	deployment, err := cp.GetCurrentDeployment(ctx, scope)

@@ -29,16 +29,23 @@ func sessionTurnWaitCommand() *cobra.Command {
 	var sessionID string
 	var project, environment, timeout string
 	var jsonOutput bool
-	cmd := &cobra.Command{Use: "wait TURN_ID --session SESSION_ID --timeout DURATION", Short: "Observe a Turn until settlement or timeout without cancelling work.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		duration, err := parseDuration(timeout)
-		if err != nil || duration <= 0 {
-			return errors.New("--timeout must be a positive duration, such as 30s or 10m")
+	cmd := &cobra.Command{Use: "wait TURN_ID --session SESSION_ID", Short: "Observe a Turn until settlement or timeout without cancelling work.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		var duration time.Duration
+		if cmd.Flags().Changed("timeout") {
+			var err error
+			duration, err = parseDuration(timeout)
+			if err != nil || duration <= 0 {
+				return errors.New("--timeout must be a positive duration, such as 30s or 10m")
+			}
 		}
 		cp, scope, err := scopedSessionClient(cmd, project, environment)
 		if err != nil {
 			return err
 		}
-		ctx, cancel := context.WithTimeout(cmd.Context(), duration)
+		ctx, cancel := cmd.Context(), context.CancelFunc(func() {})
+		if duration > 0 {
+			ctx, cancel = context.WithTimeout(cmd.Context(), duration)
+		}
 		defer cancel()
 		turn, err := waitForSessionTurn(ctx, cp, sessionID, args[0], scope)
 		result := turnWaitResult{Status: "timeout"}
@@ -77,8 +84,7 @@ func sessionTurnWaitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
 	_ = cmd.MarkFlagRequired("session")
 	addScopeFlags(cmd, &project, &environment)
-	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum observation time (for example 30s or 10m).")
-	_ = cmd.MarkFlagRequired("timeout")
+	cmd.Flags().StringVar(&timeout, "timeout", "", "Maximum observation time (for example 30s or 10m); without it, wait until the Turn settles.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit timeout or the settled outcome as JSON.")
 	return cmd
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
@@ -50,8 +51,64 @@ func (s *Server) requireAPIKeyWithErrorWriter(
 		if !s.admitPrincipal(w, r, principal) {
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
+		r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
+		if !s.acceptExpectedAPIKeyScope(w, r, principal) {
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
+}
+
+// acceptExpectedAPIKeyScope refuses a request whose X-Helmr-Project or
+// X-Helmr-Environment names a Project or Environment other than the API key's
+// own. An absent header expects nothing; a repeated header is malformed.
+// Refusals are recorded for the authenticated key, so r must carry p.
+func (s *Server) acceptExpectedAPIKeyScope(w http.ResponseWriter, r *http.Request, p auth.Principal) bool {
+	projects, environments := r.Header.Values("X-Helmr-Project"), r.Header.Values("X-Helmr-Environment")
+	if len(projects) > 1 || len(environments) > 1 {
+		if s.refuseOperation(w, r, "invalid_request") {
+			writeError(w, badRequest(errors.New("X-Helmr-Project and X-Helmr-Environment accept at most one value")))
+		}
+		return false
+	}
+	expectedProject, expectedEnvironment := "", ""
+	if len(projects) == 1 {
+		expectedProject = strings.TrimSpace(projects[0])
+	}
+	if len(environments) == 1 {
+		expectedEnvironment = strings.TrimSpace(environments[0])
+	}
+	if expectedProject == "" && expectedEnvironment == "" {
+		return true
+	}
+	projectID, err := uuid.Parse(p.ProjectID)
+	if err != nil {
+		writeError(w, fmt.Errorf("api key project id: %w", err))
+		return false
+	}
+	environmentID, err := uuid.Parse(p.EnvironmentID)
+	if err != nil {
+		writeError(w, fmt.Errorf("api key environment id: %w", err))
+		return false
+	}
+	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{OrgID: pgvalue.UUID(p.OrgID), ID: pgvalue.UUID(projectID)})
+	if err != nil {
+		writeError(w, fmt.Errorf("load api key project: %w", err))
+		return false
+	}
+	environment, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{OrgID: pgvalue.UUID(p.OrgID), ProjectID: project.ID, ID: pgvalue.UUID(environmentID)})
+	if err != nil {
+		writeError(w, fmt.Errorf("load api key environment: %w", err))
+		return false
+	}
+	if (expectedProject == "" || expectedProject == project.Slug) && (expectedEnvironment == "" || expectedEnvironment == environment.Slug) {
+		return true
+	}
+	if !s.refuseOperation(w, r, "permission_denied") {
+		return false
+	}
+	writeError(w, forbidden(codedError{code: "api_key_scope_mismatch", message: fmt.Sprintf("This API key belongs to Project %q, Environment %q.", project.Slug, environment.Slug)}))
+	return false
 }
 
 type authErrorWriter func(http.ResponseWriter, *slog.Logger, error)
