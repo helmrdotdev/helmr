@@ -204,9 +204,9 @@ test("deployment-local operator enrollment requires registration and a working a
 
 test("real setup entry without an operator session renders its login action", async ({ page }) => {
   await page.goto("/setup");
-  await expect(page.getByRole("heading", { name: "Set up Helmr" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in as the operator" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Operator sign-in" })).toHaveAttribute("href", "/admin/login?next=%2Fsetup");
   await page.goto("/dev/login");
   await page.goto("/setup");
-  await expect(page.getByRole("heading", { name: "Set up Helmr" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sign in as the operator" })).toBeVisible();
 });

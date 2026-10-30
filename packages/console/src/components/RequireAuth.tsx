@@ -1,11 +1,11 @@
-import { A, useLocation, useNavigate } from "@solidjs/router";
+import { useLocation, useNavigate } from "@solidjs/router";
 import { createEffect, createMemo, Show, type JSX } from "solid-js";
 import { ApiError } from "../lib/api";
 import { onboardingRedirectPath, type AuthRequirement } from "../lib/auth";
 import { useMe } from "../lib/me";
 import { locationDestination, withNext } from "../lib/continuation";
 import { errorDetails } from "../lib/error";
-import { AuthError, AuthWindow } from "../ui/AuthWindow";
+import { AuthError, AuthWindow, AuthLink, AuthLinks } from "../ui/AuthWindow";
 import { ui } from "../ui/styles";
 
 export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRequirement }) {
@@ -39,7 +39,7 @@ export function RequireAuth(props: { children: JSX.Element; requirement?: AuthRe
           />
         </AuthWindow>
       }>
-        <Show when={props.requirement === "session" || !me.data?.organization_access_denied} fallback={<AuthWindow><AuthError title="Organization access is unavailable" message="Confirm your sign-in to refresh access. If your membership is suspended, an administrator must resume it."/><button class={ui.button} onClick={() => window.dispatchEvent(new CustomEvent("helmr-confirmation-required", {detail:{operator:false}}))}>Confirm sign-in</button><A class={ui.secondaryButton} href={withNext("/organizations",locationDestination(location))}>Choose another organization</A><button class={ui.secondaryButton} onClick={()=>void me.refetch()}>Retry</button></AuthWindow>}><div data-account-active style={{display:"contents"}}>{props.children}</div></Show>
+        <Show when={props.requirement === "session" || !me.data?.organization_access_denied} fallback={<AuthWindow><AuthError title="Organization access is unavailable" message="Confirm your sign-in to refresh access. If your membership is suspended, an administrator must resume it."/><button class={ui.button} onClick={() => window.dispatchEvent(new CustomEvent("helmr-confirmation-required", {detail:{operator:false}}))}>Confirm sign-in</button><AuthLinks><AuthLink href={withNext("/organizations",locationDestination(location))}>Choose another organization</AuthLink><AuthLink onClick={()=>void me.refetch()}>Retry</AuthLink></AuthLinks></AuthWindow>}><div data-account-active style={{display:"contents"}}>{props.children}</div></Show>
       </Show>
     </Show>
   );

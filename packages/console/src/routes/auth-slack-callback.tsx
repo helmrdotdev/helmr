@@ -4,7 +4,7 @@ import { ApiError } from "../lib/api";
 import { describeFailure, type Failure } from "../lib/error";
 import { finishSlackAuthorization } from "../lib/slack";
 import { AuthCopy, AuthError, AuthWindow, AuthWorking } from "../ui/AuthWindow";
-import { ui } from "../ui/styles";
+import { cx, ui } from "../ui/styles";
 
 const MESSAGES = {
   bad_request: "The Slack authorization expired, was cancelled, or was started by a different account.",
@@ -53,7 +53,7 @@ export function AuthSlackCallback() {
             details={current().details}
             action={<>
               <AuthCopy>{current().nextStep}</AuthCopy>
-              <A class={ui.secondaryButton} href="/agents">Return to agents</A>
+              <A class={cx(ui.button, "auth-full")} href="/agents">Return to agents</A>
             </>}
           />
         </AuthWindow>

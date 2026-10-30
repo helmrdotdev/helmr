@@ -403,20 +403,23 @@ issues and a linked identity (`/__dev/slack`). `dev-states.ts` lists them.
 **AuthWindow** is the page for sign-in, invites, callbacks, Slack linking, CLI
 device approval, access screens and onboarding: the product mark in the top-left
 corner, no window or card, and one left-aligned column. `step` labels onboarding
-progress above the title ("Step 1 of 2"); `account` puts **AuthAccount** (the
-signed-in name and Sign out) in the top-right corner. In the column there is one
-full-width primary action; secondary actions are **AuthLink** text under it, and
+progress above the title ("Step 1 of 2"; the first-run setup of a deployment is
+one journey labelled "Set up Helmr · Step n of 4" from operator sign-in to the
+first project); `account` puts **AuthAccount** (the signed-in name and Sign out)
+in the top-right corner. In the column there is one full-width primary action (a
+link styled as a button takes `auth-full`); secondary actions are **AuthLink**
+text under it, several side by side in **AuthLinks**, and
 an error sentence sits directly above the primary. **AuthFacts** groups what the
 person checks before acting (account, organization) as rows between two
 hairlines; a code to compare is large mono text with no box.
 
 Its states: the form itself, **AuthWorking** (Spinner and a message),
 **AuthSuccess** (one title, one sentence naming the next step, its action),
-**AuthError** (human message, folded technical details from `errorDetails`, next
+**AuthError** (human message in a danger Notice, folded technical details from `errorDetails`, next
 step; without a title it sits inside a form, and input mistakes pass no details)
 and **AuthMissing** (the link or code is missing or expired, and how to get a
 new one). The raw server message is only ever in the technical details.
-`AuthTitle`, `AuthCopy`, `AuthActions`, `AuthLink`, `AuthFacts` and
+`AuthTitle`, `AuthCopy`, `AuthActions`, `AuthLink`, `AuthLinks`, `AuthFacts` and
 `AuthDivider` lay out the content.
 
 ## Shared behavior

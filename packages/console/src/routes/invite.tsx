@@ -5,7 +5,7 @@ import { ApiError, chooseOrganization, postJson, releasePageIdentity, setOrganiz
 import { getAccount, getAuthConfig, type Account, type AuthConfig } from "../lib/auth";
 import { describeFailure, errorMessage, type Failure } from "../lib/error";
 import { assertPasskey } from "../lib/passkey";
-import { AuthCopy, AuthDivider, AuthTitle, AuthWindow } from "../ui/AuthWindow";
+import { AuthCopy, AuthDivider, AuthTitle, AuthWindow, AuthLink } from "../ui/AuthWindow";
 import { LinesSkeleton } from "../ui/Skeleton";
 import { Notice } from "../ui/Notice";
 import { cx, ui } from "../ui/styles";
@@ -64,14 +64,14 @@ export function Invite() {
           <AuthTitle>This invitation link does not work</AuthTitle>
           <Notice tone="danger">{linkFailure()!.message}</Notice>
           <p class={cx(ui.muted, "m-0")}>Invitations expire and work once. Ask the person who invited you to send a new one.</p>
-          <div><A class={ui.secondaryButton} href="/login">Sign in to Helmr</A></div>
+          <A class={cx(ui.button, "auth-full")} href="/login">Sign in to Helmr</A>
         </div>
       }>
         <Show when={summary()} fallback={<Show when={loadFailure()} fallback={<LinesSkeleton label="Opening your invitation" />}>{failure => (
           <div class={ui.blockStack}>
             <AuthTitle>Join an organization</AuthTitle>
             <Notice tone="danger">{failure().message}</Notice>
-            <div><button type="button" class={ui.button} onClick={() => window.location.reload()}>Try again</button></div>
+            <button type="button" class={ui.button} onClick={() => window.location.reload()}>Try again</button>
           </div>
         )}</Show>}>
           {invited => (
@@ -92,13 +92,11 @@ export function Invite() {
                 {current => (
                   <Show when={matches(current(), invited())} fallback={<>
                     <Notice tone="warning">You are signed in as <span class="font-mono">{current().primary_email}</span>. Sign in with the invited email to accept.</Notice>
-                    <div><button type="button" class={ui.button} disabled={busy()} onClick={() => void signOut()}>Sign out to use another account</button></div>
+                    <button type="button" class={ui.button} disabled={busy()} onClick={() => void signOut()}>Sign out to use another account</button>
                   </>}>
                     <p class={cx(ui.muted, "m-0")}>Signed in as {current().primary_email}.</p>
-                    <div class={ui.buttonGroup}>
-                      <button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { const accepted = await postJson<{ token: string }, { organization_id: string }>("/api/auth/invitations/accept", { token: token() }, { redirectOnUnauthorized: false }); chooseOrganization(accepted.organization_id); })}>Accept invitation</button>
-                      <button type="button" class={ui.secondaryButton} disabled={busy()} onClick={() => void signOut()}>Use another account</button>
-                    </div>
+                    <button type="button" class={ui.button} disabled={busy()} onClick={() => void run(async () => { const accepted = await postJson<{ token: string }, { organization_id: string }>("/api/auth/invitations/accept", { token: token() }, { redirectOnUnauthorized: false }); chooseOrganization(accepted.organization_id); })}>Accept invitation</button>
+                    <AuthLink disabled={busy()} onClick={() => void signOut()}>Use another account</AuthLink>
                   </Show>
                 )}
               </Show>

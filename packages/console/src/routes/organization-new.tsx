@@ -1,16 +1,19 @@
 import { useMe } from "../lib/me";
 import { locationDestination, withNext } from "../lib/continuation";
 import { useNavigate, useLocation } from "@solidjs/router";
-import { chooseOrganization } from "../lib/api";
+import { chooseOrganization, setOrganization } from "../lib/api";
 import { createEffect, createSignal, Show } from "solid-js";
 import { createSignOut } from "../features/projects/onboarding";
 import { errorDetails, errorMessage } from "../lib/error";
 import { createOrganization } from "../lib/organizations";
+import { SETUP_PROJECT_PATH, setupStep } from "../lib/setup";
 import { AuthAccount, AuthCopy, AuthError, AuthTitle, AuthWindow } from "../ui/AuthWindow";
 import { createDerivedSlug, Field, SlugInput, TextInput } from "../ui/Field";
 import { ui } from "../ui/styles";
 
-export function OrganizationNew() {
+// In first-run setup it is step 3 and continues to the first project; otherwise it
+// starts the two-step onboarding of a new organization.
+export function OrganizationNew(props: { setup?: boolean }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [name, setName] = createSignal("");
@@ -33,7 +36,9 @@ export function OrganizationNew() {
         name: name().trim(),
         slug: slug.value().trim(),
       });
-      chooseOrganization(organization.id, locationDestination(location));
+      // The setup destination carries a query, which an ordinary continuation drops.
+      if (props.setup) { setOrganization(organization.id); window.location.assign(SETUP_PROJECT_PATH); }
+      else chooseOrganization(organization.id, locationDestination(location));
     } catch (e) {
       setError({ message: errorMessage(e, "The organization could not be created. Try again."), details: errorDetails(e) });
     } finally {
@@ -42,7 +47,7 @@ export function OrganizationNew() {
   }
 
   return (
-    <AuthWindow step="Step 1 of 2" account={<AuthAccount name={me.data?.display_name} signOutLabel={signOut.label()} signingOut={signOut.busy()} onSignOut={() => void signOut.run()} />}>
+    <AuthWindow step={props.setup ? setupStep(3) : "Step 1 of 2"} account={<AuthAccount name={me.data?.display_name} signOutLabel={signOut.label()} signingOut={signOut.busy()} onSignOut={() => void signOut.run()} />}>
       <AuthTitle>Create your organization</AuthTitle>
       <AuthCopy>Organizations own members, projects, environments, credentials, and sessions.</AuthCopy>
       <form onSubmit={submit}>
