@@ -37,7 +37,7 @@ func RequireRecentFor(p Principal, permission Permission) error {
 		PermissionSecretsCreate, PermissionSecretsRotate, PermissionSecretsRevoke,
 		PermissionAgentConnectionsConfigure, PermissionAgentConnectionsDelete,
 		PermissionAgentsDelete, PermissionAgentsRestore, PermissionComputersDelete,
-		PermissionProjectsUpdateRetention, PermissionComputersUpdateRetention:
+		PermissionComputersUpdate:
 		return RequireRecentProof(p)
 	}
 	return nil

@@ -236,7 +236,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("read key created Computer: %d %s", denied.Code, denied.Body.String())
 	}
-	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "computer SDK", RolePermissions: []auth.Permission{auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsRead, auth.PermissionComputersRead, auth.PermissionComputersCreate, auth.PermissionComputersUpdateRetention, auth.PermissionSecretsCreate}})
+	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "computer SDK", RolePermissions: []auth.Permission{auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsRead, auth.PermissionComputersRead, auth.PermissionComputersCreate, auth.PermissionComputersUpdate, auth.PermissionSecretsCreate}})
 	if err != nil {
 		t.Fatal(err)
 	}

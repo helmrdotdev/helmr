@@ -650,7 +650,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Use(s.requireSession)
 		r.With(s.sessionPermission(auth.PermissionProjectsCreate)).Post("/projects", s.createProject)
 		r.With(s.sessionPermission(auth.PermissionProjectsUpdate)).Patch("/projects/{project}", s.updateProject)
-		r.With(s.sessionPermission(auth.PermissionProjectsUpdateRetention)).Patch("/projects/{project}/settings", s.updateProjectSettings)
+		r.With(s.sessionPermission(auth.PermissionProjectsUpdate)).Patch("/projects/{project}/settings", s.updateProjectSettings)
 		r.With(s.sessionPermission(auth.PermissionEnvironmentsCreate)).Post("/projects/{project}/environments", s.createEnvironment)
 		r.With(s.sessionPermission(auth.PermissionEnvironmentsUpdate)).Patch("/projects/{project}/environments/{environment}", s.updateEnvironment)
 	})

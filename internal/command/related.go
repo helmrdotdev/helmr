@@ -33,7 +33,7 @@ func ListRelated(ctx context.Context, pool db.TxBeginner, principal auth.Princip
 		if err = auth.Require(current, auth.PermissionComputersRead, scope, access.ErrDenied); err != nil {
 			return err
 		}
-		result.CanCancel = current.HasPermission(auth.PermissionComputersCancelCommand, scope)
+		result.CanCancel = current.HasPermission(auth.PermissionCommandsCancel, scope)
 		rows, err := tx.Query(ctx, `SELECT id,computer_id,status,created_at FROM commands WHERE environment_id=$1 AND caller_kind='user' AND caller_id=$2 AND (terminal_at IS NULL OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)) AND ($3::uuid='00000000-0000-0000-0000-000000000000' OR id<$3) ORDER BY id DESC LIMIT 101`, scope.EnvironmentID, user, before)
 		if err != nil {
 			return err

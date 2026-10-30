@@ -36,9 +36,9 @@ export async function assignRole(project:string,input:GrantInput,existing?:Pick<
 }
 export const removeGrant=(id:string,revision:number)=>request(`/api/role-grants/${encodeURIComponent(id)}`,{method:"DELETE",headers:{"If-Match":`"${revision}"`}});
 // Agents come first: they are what most roles are about.
-const RESOURCE_ORDER = ["agents", "agent_connections", "sessions", "triggers", "deployments", "templates", "computers", "secrets", "api_keys", "projects", "environments", "members", "invitations", "groups", "roles", "assignments"];
+const RESOURCE_ORDER = ["agents", "agent_connections", "sessions", "triggers", "deployments", "templates", "computers", "commands", "secrets", "api_keys", "projects", "environments", "members", "invitations", "groups", "roles", "assignments"];
 export const resourceRank = (resource: string) => { const i = RESOURCE_ORDER.indexOf(resource); return i < 0 ? RESOURCE_ORDER.length : i; };
-export const resourceLabel=(type:string)=>({agents:"Agents",sessions:"Sessions",agent_connections:"Agent connections",triggers:"Triggers",templates:"Templates",projects:"Projects",environments:"Environments",members:"Members",invitations:"Invitations",groups:"Groups",roles:"Roles",assignments:"Assignments",deployments:"Deployments",computers:"Computers",secrets:"Secrets",api_keys:"API keys",audit_events:"Audit events",organization:"Organization"}[type] ?? type);
+export const resourceLabel=(type:string)=>({agents:"Agents",sessions:"Sessions",agent_connections:"Agent connections",triggers:"Triggers",templates:"Templates",projects:"Projects",environments:"Environments",members:"Members",invitations:"Invitations",groups:"Groups",roles:"Roles",assignments:"Assignments",deployments:"Deployments",computers:"Computers",commands:"Commands",secrets:"Secrets",api_keys:"API keys",audit_events:"Audit events",organization:"Organization"}[type] ?? type);
 export const targetSummary=(grant:RoleGrant)=>grant.targets.map(t=>`${resourceLabel(t.resource_type)}: ${t.mode === "selected" ? t.agent_keys?.join(", ") || "No remaining agent targets" : t.mode === "all" ? "All current and future agents" : t.mode === "organization" ? "Organization" : "Entire environment"}`).join(" · ");
 // The route ID of the built-in all-members audience on the Groups pages.
 export const ALL_MEMBERS = "all-members";

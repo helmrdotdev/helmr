@@ -186,7 +186,7 @@ func (s *Server) updateComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}
-	if permissionErr := auth.Require(principal, auth.PermissionComputersUpdateRetention, scope,
+	if permissionErr := auth.Require(principal, auth.PermissionComputersUpdate, scope,
 		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
 		s.writeOperationError(w, r, forbidden(permissionErr))
 		return

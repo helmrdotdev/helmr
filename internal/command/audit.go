@@ -40,7 +40,7 @@ func AdmitOutputRead(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		if err != nil {
 			return err
 		}
-		if permissionErr := auth.Require(current, auth.PermissionComputersReadOutput, scope,
+		if permissionErr := auth.Require(current, auth.PermissionCommandsReadOutput, scope,
 			access.ErrDenied); permissionErr != nil {
 			return permissionErr
 		}
@@ -48,7 +48,7 @@ func AdmitOutputRead(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		if err != nil {
 			return err
 		}
-		actor, err := audit.Authorized(current, auth.PermissionComputersReadOutput, scope)
+		actor, err := audit.Authorized(current, auth.PermissionCommandsReadOutput, scope)
 		if err != nil {
 			return err
 		}

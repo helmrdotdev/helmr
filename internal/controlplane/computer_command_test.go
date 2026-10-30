@@ -85,9 +85,9 @@ func TestPublicCommandInfoProjectsEveryState(t *testing.T) {
 func TestComputerCommandOutputRequiresDedicatedPermission(t *testing.T) {
 	orgID := uuid.New()
 	scope := auth.Scope{OrgID: orgID, ProjectID: "project", EnvironmentID: "environment"}
-	for _, permission := range []auth.Permission{auth.PermissionComputersRead, auth.PermissionComputersExecute, auth.PermissionComputersReadOutput} {
+	for _, permission := range []auth.Permission{auth.PermissionComputersRead, auth.PermissionComputersExecute, auth.PermissionCommandsReadOutput} {
 		p := auth.Principal{Kind: auth.PrincipalKindAPIKey, OrgID: orgID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Grants: []auth.PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Permission: permission}}}
-		if got := canAccessComputerCommandOutput(p, scope); got != (permission == auth.PermissionComputersReadOutput) {
+		if got := canAccessComputerCommandOutput(p, scope); got != (permission == auth.PermissionCommandsReadOutput) {
 			t.Fatalf("output permission %s: %v", permission, got)
 		}
 	}

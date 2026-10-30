@@ -247,7 +247,7 @@ get-or-create. `deleteAfterUnused` overrides the definition.
 | `sessions.list({ cursor?, limit? }?, options?)` | `CursorPage<ComputerUsage>` | Sessions currently using the Computer, including pending cleanup; `limit` 1–100. |
 | `commands.list({ cursor?, limit? }?, options?)` | `CursorPage<ComputerUsage>` | Commands currently using the Computer, including pending cleanup; `limit` 1–100. |
 | `exec(request, options?)` | `CommandRef` | Admits a Command. See [Commands](#client-commands). |
-| `update({ deleteAfterUnused }, options?)` | `Computer` | Changes retention. Requires the `computers:update` permission. |
+| `update({ deleteAfterUnused }, options?)` | `Computer` | Changes retention. Requires the `computers.update` permission. |
 | `delete({ idempotencyKey? }?, options?)` | `{ computerId }` | Requests deletion. |
 
 ```ts
