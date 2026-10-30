@@ -126,8 +126,12 @@ test("a member's effective access names where each permission comes from", async
   const toggle = agentRow.getByRole("button", { name: / permissions in / });
   await toggle.click();
   const permissions = page.locator(`#${await toggle.getAttribute("aria-controls")}`);
-  await expect(permissions).toContainText("Use agents");
-  await expect(permissions).toContainText("Manage secrets");
+  // Every permission at this scope is named; ones not granted say so.
+  await expect(permissions.getByRole("listitem").filter({ hasText: "Use agents" })).not.toContainText("not granted");
+  await expect(permissions.getByRole("listitem").filter({ hasText: "Manage secrets" })).not.toContainText("not granted");
+  await expect(permissions.getByText("View all sessions")).toHaveCount(0);
+  await permissions.getByRole("button", { name: "Show 1 area with no access", exact: true }).click();
+  await expect(permissions.getByRole("listitem").filter({ hasText: "View all sessions" })).toContainText("(not granted)");
   await expect(agentRow).toContainText("All members");
   await expect(page.getByRole("row").filter({ hasText: "Organization" })).toContainText("Direct");
 });

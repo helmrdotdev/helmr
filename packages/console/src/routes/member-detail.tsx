@@ -12,7 +12,7 @@ import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
 import { listMembers, memberResourceID, updateMemberOwnership } from "../lib/members";
 import { useScope } from "../lib/scope";
-import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, permissionResource, resourceLabel, resourceRank, roleHref, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionDefinition, type PermissionGroup } from "../lib/permissions";
+import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, resourceLabel, resourceRank, roleHref, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionDefinition, type PermissionGroup } from "../lib/permissions";
 import { Icon } from "../ui/Icon";
 import { cx, ui } from "../ui/styles";
 import { DataTable, EmptyCell, TableCount, PrimaryLink, RowActions } from "../ui/DataTable";
@@ -24,7 +24,7 @@ import { TabPanel, Tabs } from "../ui/Tabs";
 import { useAuditItem } from "../features/audit/auditLink";
 
 type Tab = "effective" | "assignments" | "groups";
-const EFFECTIVE_COLUMNS = [{ label: "Details", srOnly: true }, "Environment", "Agent", "Granted through", "Permissions"] as const;
+const EFFECTIVE_COLUMNS = [{ label: "Details", srOnly: true }, "Environment", "Agent", "Granted through"] as const;
 
 type Source = { kind: MemberPermissionSource["subject_kind"]; subject: string; groupID: string | undefined; role: string | undefined };
 // A source names who received the role and the role itself, so a row says how access arrived.
@@ -52,23 +52,48 @@ function SourceLabel(props: { source: Source; roleID: (name: string) => string |
   );
 }
 
-// Permission names grouped by the resource they act on, in the role editor's order.
-function permissionAreas(permissions: readonly string[], catalog: readonly PermissionDefinition[], names: (id: string) => string) {
-  const areas = new Map<string, string[]>();
-  for (const permission of permissions) {
-    const resource = permissionResource(permission, catalog);
-    areas.set(resource, [...(areas.get(resource) ?? []), names(permission)]);
-  }
-  return [...areas].sort(([a], [b]) => resourceRank(a) - resourceRank(b)).map(([resource, labels]) => {
-    const label = resource ? resourceLabel(resource) : "Permissions";
-    return { label, actions: labels.map(name => ({ name, short: withoutArea(name, label) })) };
-  });
+type AreaPermission = { id: string; name: string; granted: boolean };
+type Area = { label: string; permissions: AreaPermission[] };
+
+// Every permission that applies at this scope, by area in the role editor's order
+// and with the role editor's names; areas without any granted permission come apart.
+function permissionAreas(scope: MemberPermissions["scopes"][number], catalog: readonly PermissionDefinition[], names: (id: string) => string) {
+  const granted = new Set(scope.permissions);
+  // Agent rows also carry the environment's own permissions, so applicability follows the assignment level.
+  const level = scope.type === "organization" ? "organization" : "environment";
+  const applicable = catalog.filter(c => c.assignment_levels.includes(level));
+  const byResource = new Map<string, AreaPermission[]>();
+  for (const permission of applicable) byResource.set(permission.resource_type, [...(byResource.get(permission.resource_type) ?? []), { id: permission.id, name: permission.name, granted: granted.has(permission.id) }]);
+  // Without the catalog (no Read roles permission) only the granted names are known.
+  const unknown = scope.permissions.filter(id => !applicable.some(c => c.id === id)).map(id => ({ id, name: names(id), granted: true }));
+  const areas: Area[] = [...byResource].sort(([a], [b]) => resourceRank(a) - resourceRank(b)).map(([resource, permissions]) => ({ label: resourceLabel(resource), permissions }));
+  if (unknown.length) areas.push({ label: "Permissions", permissions: unknown });
+  return { withAccess: areas.filter(a => a.permissions.some(p => p.granted)), withoutAccess: areas.filter(a => !a.permissions.some(p => p.granted)) };
 }
 
-// Inside its area's row, "Read agents" reads as "Read"; names that say more stay whole.
-function withoutArea(name: string, area: string) {
-  const suffix = ` ${area.toLowerCase()}`;
-  return name.toLowerCase().endsWith(suffix) && name.length > suffix.length ? name.slice(0, -suffix.length) : name;
+function AreaRows(props: { areas: Area[] }) {
+  return (
+    <For each={props.areas}>
+      {area => (
+        <tr class="group/area h-auto! hover:bg-transparent!">
+          <th scope="row" class="h-auto! w-36 border-b border-console-border-soft px-2.5! group-last/area:border-b-0 py-1.5! text-left align-top text-body font-medium leading-5.5 text-console-text">{area.label}</th>
+          <td class="h-auto! whitespace-normal! px-2.5! py-1.5! align-top">
+            <ul class="m-0 flex list-none flex-wrap gap-x-1.5 gap-y-0.5 p-0">
+              <For each={area.permissions}>
+                {permission => (
+                  <li class={cx("inline-flex items-center gap-1 rounded-xs px-1.5 text-body leading-5.5", permission.granted ? "bg-console-success-bg font-medium text-console-text" : "text-console-subtle")}>
+                    <Show when={permission.granted}><span class="text-console-success" aria-hidden="true"><Icon name="check" /></span></Show>
+                    {permission.name}
+                    <Show when={!permission.granted}><span class="sr-only"> (not granted)</span></Show>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </td>
+        </tr>
+      )}
+    </For>
+  );
 }
 
 // Where access comes from, one row per scope. A row summarizes; opening it lists
@@ -103,32 +128,29 @@ function EffectiveAccessTable(props: { access: MemberPermissions; catalog: reado
                 <td class={scope.type === "organization" ? "text-console-muted!" : "font-mono text-chrome!"}>{where(scope)}</td>
                 <td><Show when={scope.agent} fallback={<EmptyCell />}>{agent => <span class="font-mono text-chrome">{agent()}</span>}</Show></td>
                 <td><span class="flex flex-wrap items-center gap-x-3.5 gap-y-1"><For each={sources(scope)}>{source => <SourceLabel source={source} roleID={props.roleID} />}</For></span></td>
-                <td class="font-mono text-chrome!">{scope.permissions.length}</td>
               </tr>
               <Show when={expanded()}>
-                <tr id={panel} class="hover:bg-transparent">
-                  <td colSpan={EFFECTIVE_COLUMNS.length} class="h-auto! whitespace-normal bg-console-accent-soft/40 py-2! pl-9!">
-                    <table class="w-full border-collapse overflow-hidden rounded-xs border border-console-border-soft bg-console-surface text-chrome">
-                      <tbody>
-                        <For each={permissionAreas(scope.permissions, props.catalog, props.names)}>
-                          {area => (
-                            <tr class="h-auto! border-b border-console-border-soft last:border-b-0 hover:bg-transparent!">
-                              <th scope="row" class={cx(ui.microLabel, "h-auto! w-36 whitespace-nowrap px-2.5! py-1.5! text-left align-top")}>{area.label}</th>
-                              <td class="h-auto! w-8 border-0! px-1! py-1.5! text-right align-top font-mono text-console-muted!">{area.actions.length}</td>
-                              <td class="h-auto! whitespace-normal! border-0! px-2.5! py-1.5! align-top">
-                                <ul class="m-0 flex list-none flex-wrap gap-x-1 gap-y-0.5 p-0">
-                                  <For each={area.actions}>
-                                    {action => <li class="rounded-xs bg-console-bg-panel px-1.5 leading-5 text-console-text" title={action.name}>{action.short}<span class="sr-only">{action.short === action.name ? "" : ` ${area.label.toLowerCase()}`}</span></li>}
-                                  </For>
-                                </ul>
-                              </td>
-                            </tr>
-                          )}
-                        </For>
-                      </tbody>
-                    </table>
-                  </td>
-                </tr>
+                {(() => {
+                  const areas = permissionAreas(scope, props.catalog, props.names);
+                  const [showAll, setShowAll] = createSignal(false);
+                  return (
+                    <tr id={panel} class="hover:bg-transparent">
+                      <td colSpan={EFFECTIVE_COLUMNS.length} class="h-auto! whitespace-normal bg-console-accent-soft/40 py-2.5! pl-9!">
+                        <table class="w-full border-collapse overflow-hidden rounded-xs border border-console-border-soft bg-console-surface">
+                          <tbody>
+                            <AreaRows areas={areas.withAccess} />
+                            <Show when={showAll()}><AreaRows areas={areas.withoutAccess} /></Show>
+                          </tbody>
+                        </table>
+                        <Show when={areas.withoutAccess.length > 0}>
+                          <button type="button" class={cx(ui.monoLink, "mt-2 border-0 bg-transparent p-0")} onClick={() => setShowAll(!showAll())}>
+                            {showAll() ? "Hide areas with no access" : `Show ${areas.withoutAccess.length} ${areas.withoutAccess.length === 1 ? "area" : "areas"} with no access`}
+                          </button>
+                        </Show>
+                      </td>
+                    </tr>
+                  );
+                })()}
               </Show>
             </>;
           }}
