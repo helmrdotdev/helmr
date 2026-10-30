@@ -35,7 +35,7 @@ func RequireRecentFor(p Principal, permission Permission) error {
 		PermissionGroupsDelete, PermissionGroupsAddMember, PermissionGroupsRemoveMember,
 		PermissionMembersRemove, PermissionAPIKeysCreate, PermissionAPIKeysUpdate, PermissionAPIKeysRotate, PermissionAPIKeysRevoke,
 		PermissionSecretsCreate, PermissionSecretsRotate, PermissionSecretsRevoke,
-		PermissionAgentConnectionsCreate, PermissionAgentConnectionsUpdateCredentials, PermissionAgentConnectionsAuthorize, PermissionAgentConnectionsDelete,
+		PermissionAgentConnectionsConfigure, PermissionAgentConnectionsDelete,
 		PermissionAgentsDelete, PermissionAgentsRestore, PermissionComputersDelete,
 		PermissionProjectsUpdateRetention, PermissionComputersUpdateRetention:
 		return RequireRecentProof(p)

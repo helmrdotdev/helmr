@@ -88,6 +88,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.Environment, f.Deployment)
 	base := "/api/projects/project/environments/test/agents/agent/slack"
+	f.SetPermissions(t, "agent_connections.configure")
 	created := call("POST", base, owner, nil, nil)
 	var result struct {
 		Publication slack.ConnectionView `json:"connection"`
@@ -120,8 +121,11 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	finish := func(state, token string, cookies []*http.Cookie) *httptest.ResponseRecorder {
 		return call("POST", "/api/slack/installations/finish", token, map[string]string{"state": state, "code": "verified-code"}, cookies)
 	}
-	if w := call("GET", base, owner, nil, nil); w.Code != 200 {
-		t.Fatal(w.Code, w.Body.String())
+	if w := call("GET", base, owner, nil, nil); w.Code != 403 {
+		t.Fatal("configure granted connection read", w.Code, w.Body.String())
+	}
+	if w := call("DELETE", base+"/"+publication.ID.String(), owner, nil, nil); w.Code != 403 {
+		t.Fatal("configure granted disconnect", w.Code, w.Body.String())
 	}
 	state, cookies := start()
 	if w := finish("wrong-state", owner, cookies); w.Code != 400 || exchanges != 0 {
@@ -163,6 +167,13 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &reauthorized) != nil || reauthorized.ID != connected.ID || exchanges != 2 {
 		t.Fatal("reauthorization changed generation")
 	}
+	f.SetPermissions(t, "agent_connections.read")
+	if w := call("PUT", base+"/"+publication.ID.String()+"/credentials", owner, slack.AppCredentials{ClientID: "client", ClientSecret: "private-client", SigningSecret: "signing-secret"}, nil); w.Code != 403 {
+		t.Fatal("read granted credential update", w.Code, w.Body.String())
+	}
+	if w := call("POST", base+"/"+publication.ID.String()+"/authorize", owner, nil, nil); w.Code != 403 {
+		t.Fatal("read granted authorization", w.Code, w.Body.String())
+	}
 	if w := call("GET", base, owner, nil, nil); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(`"status":"connected"`)) {
 		t.Fatal("missing connection state", w.Body.String())
 	}
@@ -170,7 +181,7 @@ func TestSlackInstallationHTTPBindsBrowserIdentityAndKeepsCredentialsPrivate(t *
 	if w := call("DELETE", base+"/"+publication.ID.String(), owner, nil, nil); w.Code != 403 {
 		t.Fatal("non-manager disconnected")
 	}
-	f.SetPermissions(t, "agent_connections.delete", "agent_connections.authorize", "sessions.read", "sessions.send", "agents.use")
+	f.SetPermissions(t, "agent_connections.delete", "agent_connections.configure", "sessions.read", "sessions.send", "agents.use")
 	if w := call("DELETE", base+"/"+publication.ID.String(), owner, nil, nil); w.Code != 204 {
 		t.Fatal("disconnect failed", w.Code, w.Body.String())
 	}

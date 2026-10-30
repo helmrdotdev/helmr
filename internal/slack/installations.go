@@ -14,7 +14,7 @@ var errInstallationAuthority = errors.New("management of Slack installations is 
 func lockAgentManager(ctx context.Context, tx pgx.Tx, prior auth.Principal, environment, agent uuid.UUID, permission auth.Permission) error {
 	org := prior.OrgID
 	switch permission {
-	case auth.PermissionAgentConnectionsRead, auth.PermissionAgentConnectionsCreate, auth.PermissionAgentConnectionsUpdateCredentials, auth.PermissionAgentConnectionsAuthorize, auth.PermissionAgentConnectionsDelete, auth.PermissionAgentsDelete:
+	case auth.PermissionAgentConnectionsRead, auth.PermissionAgentConnectionsConfigure, auth.PermissionAgentConnectionsDelete, auth.PermissionAgentsDelete:
 	default:
 		return errInstallationAuthority
 	}

@@ -28,7 +28,7 @@ type Credentials = import("../../lib/slack").SlackAppCredentials;
 
 const MANAGERS = "Members with Agent connection permissions";
 
-// Connection details and each lifecycle action have separate permissions.
+// Reading, configuring and disconnecting a connection have separate permissions.
 export function AgentSlackConnection(props: { agentName: string }) {
   const permission = usePermission();
   const scope = useScope();
@@ -135,7 +135,7 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                 <Steps label="Slack setup" steps={setupSteps({
                   create: { state: "current", content: <>
                     <p class={ui.muted}>Each agent has one Slack app in this environment. Its app name and avatar identify it in conversations. Start to get the app manifest for <strong>{props.agentName}</strong>.</p>
-                    <div><button type="button" class={ui.button} disabled={busy() || !can("create")} onClick={() => attempt(() => beginAgentSlackConnection(address()))}>Connect Slack</button></div>
+                    <div><button type="button" class={ui.button} disabled={busy() || !can("configure")} onClick={() => attempt(() => beginAgentSlackConnection(address()))}>Connect Slack</button></div>
                   </> },
                 })} />
               </SetupPanel>
@@ -149,8 +149,8 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                   agentName={props.agentName}
                   iconSeed={iconSeed()}
                   busy={busy()}
-                  canAuthorize={can("authorize")}
-                  canCredentials={can("update_credentials")}
+                  canAuthorize={can("configure")}
+                  canCredentials={can("configure")}
                   authorize={() => authorize(connection())}
                   save={(credentials) => saveCredentials(connection(), credentials)}
                 />
@@ -162,8 +162,8 @@ function ManagedConnection(props: { agentName: string; projectID: string; enviro
                   agentName={props.agentName}
                   iconSeed={iconSeed()}
                   busy={busy()}
-                  canAuthorize={can("authorize")}
-                  canCredentials={can("update_credentials")}
+                  canAuthorize={can("configure")}
+                  canCredentials={can("configure")}
                   authorize={() => authorize(connection())}
                   save={(credentials) => saveCredentials(connection(), credentials)}
                 />

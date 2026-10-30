@@ -1,13 +1,15 @@
 package auth
 
 import (
+	"errors"
 	"slices"
 	"testing"
+	"time"
 	"uuid"
 )
 
 func TestPermissionCatalog(t *testing.T) {
-	expected := map[string]int{"audit_events": 1, "agents": 4, "agent_connections": 5, "sessions": 10, "deployments": 3, "templates": 2, "triggers": 1, "computers": 9, "secrets": 4, "api_keys": 5, "projects": 4, "environments": 3, "members": 2, "invitations": 3, "groups": 6, "roles": 4, "assignments": 4}
+	expected := map[string]int{"audit_events": 1, "agents": 4, "agent_connections": 3, "sessions": 10, "deployments": 3, "templates": 2, "triggers": 1, "computers": 9, "secrets": 4, "api_keys": 5, "projects": 4, "environments": 3, "members": 2, "invitations": 3, "groups": 6, "roles": 4, "assignments": 4}
 	counts := map[string]int{}
 	seen := map[Permission]bool{}
 	for _, d := range PermissionCatalog() {
@@ -33,7 +35,7 @@ func TestPermissionCatalog(t *testing.T) {
 			t.Fatalf("wrong scope or machine eligibility: %+v", d)
 		}
 	}
-	if len(seen) != 70 {
+	if len(seen) != 68 {
 		t.Fatalf("catalog size %d", len(seen))
 	}
 	for resource, count := range expected {
@@ -41,7 +43,7 @@ func TestPermissionCatalog(t *testing.T) {
 			t.Errorf("%s: %d, want %d", resource, counts[resource], count)
 		}
 	}
-	for _, invalid := range []Permission{"", "*", "agents.manage", "sessions.view", "computers.operate", "access.manage", "unknown.read"} {
+	for _, invalid := range []Permission{"", "*", "agents.manage", "sessions.view", "computers.operate", "access.manage", "unknown.read", "agent_connections.create", "agent_connections.update_credentials", "agent_connections.authorize"} {
 		if IsPermission(invalid) || IsMachinePermission(invalid) {
 			t.Errorf("unknown permission accepted: %q", invalid)
 		}
@@ -253,5 +255,19 @@ func TestRoleAssignmentLevelsPreserveAgentRefinement(t *testing.T) {
 		if got := RoleAssignmentLevels(tc.permissions); !slices.Equal(got, tc.levels) {
 			t.Fatalf("%v: %v, want %v", tc.permissions, got, tc.levels)
 		}
+	}
+}
+
+func TestConnectionConfigureRequiresRecentAuthentication(t *testing.T) {
+	p := Principal{Kind: PrincipalKindSession, AuthenticatedAt: time.Now().Add(-2 * time.Hour)}
+	if err := RequireRecentFor(p, PermissionAgentConnectionsConfigure); !errors.Is(err, ErrRecentProofRequired) {
+		t.Fatalf("stale sign-in configured connection: %v", err)
+	}
+	if err := RequireRecentFor(p, PermissionAgentConnectionsRead); err != nil {
+		t.Fatalf("connection read required recent sign-in: %v", err)
+	}
+	p.AuthenticatedAt = time.Now()
+	if err := RequireRecentFor(p, PermissionAgentConnectionsConfigure); err != nil {
+		t.Fatalf("recent sign-in denied configuration: %v", err)
 	}
 }

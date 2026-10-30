@@ -43,7 +43,7 @@ const linkWorkspaceAccess = `EXISTS (
  SELECT 1 FROM slack_connections c JOIN (` + access.MemberPermissionGrantsSQL + `) g
  ON g.org_id=i.org_id AND g.environment_id=c.environment_id
  WHERE c.slack_installation_id=i.id AND c.revoked_at IS NULL
- AND g.permission IN ('agents.use','agent_connections.read','agent_connections.create','agent_connections.update_credentials','agent_connections.authorize','agent_connections.delete')
+ AND g.permission IN ('agents.use','agent_connections.read','agent_connections.configure','agent_connections.delete')
  AND (g.agent_id IS NULL OR g.agent_id=c.agent_id))`
 
 func CheckLinkWorkspace(ctx context.Context, pool db.TxBeginner, org, user, installation uuid.UUID) (LinkWorkspace, error) {

@@ -105,7 +105,7 @@ func TestLinkWorkspaceAuthorizationPrecedesPagination(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) VALUES($1,$2,$3,$4,$5,$6,(SELECT org_id FROM slack_app_registrations WHERE id=$4))`, connection, f.Environment, agent, registration, hidden, f.User)
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE role_grants SET all_agents=false WHERE org_id=$1 AND environment_id=$2`, org, f.Environment)
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$3 FROM role_grants WHERE org_id=$1 AND environment_id=$2`, org, f.Environment, f.Agent)
-	for _, capability := range []string{"agents.use", "agent_connections.read", "agent_connections.create", "agent_connections.update_credentials", "agent_connections.authorize", "agent_connections.delete"} {
+	for _, capability := range []string{"agents.use", "agent_connections.read", "agent_connections.configure", "agent_connections.delete"} {
 		t.Run(capability, func(t *testing.T) {
 			dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=ARRAY[$2::text] WHERE org_id=$1`, org, capability)
 			page, err := ListLinkWorkspaces(ctx, f.Pool, org, f.User, uuid.Nil(), 1)

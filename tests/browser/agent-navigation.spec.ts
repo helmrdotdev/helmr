@@ -9,7 +9,7 @@ const base = `/api/projects/${project}/environments/${environment}`;
 const scope = `project=${project}&environment=${environment}`;
 const now = "2026-10-12T00:00:00Z";
 
-async function catalog(page: Page, options: { current?: boolean; defined?: boolean; manageConnection?: boolean } = {}) {
+async function catalog(page: Page, options: { current?: boolean; defined?: boolean; manageConnection?: boolean; connectionPermissions?: string[] } = {}) {
   const current = options.current ?? true;
   const defined = options.defined ?? true;
   const record = { agent: "support", current_deployment_id: current ? deployment : null, defined_in_current: defined && current };
@@ -21,7 +21,7 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
     let json: unknown;
     const env = { environment: environment, project: project, name: "Development", is_default: true, created_at: now, updated_at: now };
     const proj = { project: project, name: "Test", is_default: true, environments: [env], created_at: now, updated_at: now };
-    if (isAuthenticationPath(path)) json = { user_id: "user", display_name: "User", org_id: "org", is_owner: false, permissions: [], permission_scopes: [{ project, environment, permissions: ["sessions.read", "agents.read", "agents.use", "deployments.read", "templates.read", "computers.read", ...(options.manageConnection === false ? [] : ["agent_connections.read", "agent_connections.create"])] }], organization_required: false, project_required: false };
+    if (isAuthenticationPath(path)) json = { user_id: "user", display_name: "User", org_id: "org", is_owner: false, permissions: [], permission_scopes: [{ project, environment, permissions: ["sessions.read", "agents.read", "agents.use", "deployments.read", "templates.read", "computers.read", ...(options.connectionPermissions ?? (options.manageConnection === false ? [] : ["agent_connections.read", "agent_connections.configure"]))] }], organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [proj] };
     else if (path === `/api/projects/${project}`) json = proj;
     else if (path === base) json = env;
@@ -195,3 +195,29 @@ test("trigger history separates ended activations and shows occurrence outcomes"
   await expect(dialog).toContainText("agent_deleted");
   await page.screenshot({ path: testInfo.outputPath("trigger-occurrences.png"), fullPage: true });
 });
+
+for (const configure of [false, true]) {
+  test(`Slack configuration actions require configure, independently of read and delete (${configure})`, async ({ page }) => {
+    await catalog(page, { connectionPermissions: ["agent_connections.read", ...(configure ? ["agent_connections.configure"] : [])] });
+    let connection: Record<string, unknown> | null = null;
+    await page.route(`**${base}/agents/support/slack`, route => route.fulfill({ json: { transport: "http", connection } }));
+    await page.goto(`/agents/support/slack?${scope}`);
+    const panel = page.getByRole("tabpanel", { name: "Slack" });
+    await expect(panel.getByRole("button", { name: "Connect Slack", exact: true })).toBeEnabled({ enabled: configure });
+
+    connection = { id: "connection", registration_id: "registration", installation_id: null, status: "setup_incomplete", transport: "http", credentials_configured: false };
+    await page.reload();
+    await panel.getByRole("button", { name: "I created the app", exact: true }).click();
+    await expect(panel.getByLabel("Client ID", { exact: true })).toBeEnabled({ enabled: configure });
+    await expect(page.getByRole("button", { name: "Discard setup", exact: true })).toBeDisabled();
+
+    connection = { ...connection, credentials_configured: true, client_id: "client" };
+    await page.reload();
+    await expect(panel.getByRole("button", { name: "Install app in Slack", exact: true })).toBeEnabled({ enabled: configure });
+
+    connection = { ...connection, installation_id: "installation", status: "reauthorization_required", direct_messages_authorized: true };
+    await page.reload();
+    await expect(panel.getByRole("button", { name: "Reauthorize in Slack", exact: true })).toBeEnabled({ enabled: configure });
+    await expect(page.getByRole("button", { name: "Disconnect", exact: true })).toBeDisabled();
+  });
+}

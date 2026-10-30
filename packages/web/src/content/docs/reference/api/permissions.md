@@ -133,9 +133,7 @@ Agents or all current and future Agents in that environment.
 | `agents.delete` | Agent | No | Preview and apply explicit Agent deletion, including its fixed cleanup effects; current-deployment and unsettled-work blockers remain. |
 | `agents.restore` | Agent | No | Preview and restore a deleted Agent identity. Does not restore removed selected grants or Slack connections; broad grants apply again and existing parent Sessions may create children immediately, before another deployment includes the Agent. |
 | `agent_connections.read` | Agent | No | Read the Agent's Slack connection status/setup metadata, without credential values. |
-| `agent_connections.create` | Agent | No | Begin connection/setup registration for the Agent. |
-| `agent_connections.update_credentials` | Agent | No | Replace supplied Slack app credentials; no stored-value export. |
-| `agent_connections.authorize` | Agent | No | Begin/complete installation authorization or reauthorization for this Agent's connection, subject to verified OAuth flow. |
+| `agent_connections.configure` | Agent | No | Register the Agent's connection, replace supplied app credentials and authorize or reauthorize installation through verified OAuth. Does not grant credential export or disconnection. |
 | `agent_connections.delete` | Agent | No | Disconnect the Agent's connection and perform its fixed cleanup. |
 | `sessions.read` | Agent | Yes | Read/list matching Sessions, Turns, events, Asks, updates and execution history. Includes conversation contents and the existing human delivery-record view. |
 | `sessions.create_keyed` | Agent | Yes | Supply a caller-defined Session key or the existing administrative channel identifier on scoped Session creation; also requires agents.use. Does not grant somebody else's origin. |

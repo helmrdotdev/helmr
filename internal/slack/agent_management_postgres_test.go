@@ -18,7 +18,7 @@ func TestAgentManagementUsesExactCurrentGrantAndStoredConnection(t *testing.T) {
 	if _, err := GetConnection(t.Context(), f.Pool, f.Principal(t), f.Environment, f.Agent, auth.PermissionAgentConnectionsRead); !errors.Is(err, errInstallationAuthority) {
 		t.Fatalf("owner-only connection read: %v", err)
 	}
-	dbtest.GrantMember(t, f.Pool, org, f.User, &f.Environment, "agent_connections.read", "agent_connections.update_credentials", "agent_connections.authorize", "agent_connections.delete")
+	dbtest.GrantMember(t, f.Pool, org, f.User, &f.Environment, "agent_connections.read", "agent_connections.configure", "agent_connections.delete")
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE role_grants SET all_agents=false WHERE environment_id=$1; INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Agent)
 	otherAgent, otherRegistration, otherInstallation, otherConnection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'other');

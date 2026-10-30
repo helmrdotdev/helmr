@@ -144,7 +144,7 @@ function slackFixture(req: IncomingMessage, res: ServerResponse, url: URL, backe
   if (role && path === "/api/me" && req.method === "GET") {
     // This preview persona omits connection and secret management grants.
     const manages = role === "owner" || role === "admin";
-    patched(req, res, backendURL, (body) => ({ ...body, permissions: (body["permissions"] as string[] | undefined ?? []).filter((permission) => manages || !["secrets.create", "secrets.rotate", "secrets.revoke", "agent_connections.create", "agent_connections.update_credentials", "agent_connections.authorize", "agent_connections.delete"].includes(permission)), permission_scopes: (body["permission_scopes"] as {permissions:string[]}[] | undefined ?? []).map(scope => ({...scope, permissions:scope.permissions.filter(permission => manages || !["secrets.create", "secrets.rotate", "secrets.revoke", "agent_connections.create", "agent_connections.update_credentials", "agent_connections.authorize", "agent_connections.delete"].includes(permission))})) }));
+    patched(req, res, backendURL, (body) => ({ ...body, permissions: (body["permissions"] as string[] | undefined ?? []).filter((permission) => manages || !["secrets.create", "secrets.rotate", "secrets.revoke", "agent_connections.configure", "agent_connections.delete"].includes(permission)), permission_scopes: (body["permission_scopes"] as {permissions:string[]}[] | undefined ?? []).map(scope => ({...scope, permissions:scope.permissions.filter(permission => manages || !["secrets.create", "secrets.rotate", "secrets.revoke", "agent_connections.configure", "agent_connections.delete"].includes(permission))})) }));
     return true;
   }
   if (!state) return false;

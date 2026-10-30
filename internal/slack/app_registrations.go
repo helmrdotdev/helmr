@@ -88,7 +88,7 @@ func (s *CredentialStore) StoreAppCredentials(ctx context.Context, prior auth.Pr
 		return errCredentialUnavailable
 	}
 	return db.RunTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockRegistrationManager(ctx, tx, prior, registration, auth.PermissionAgentConnectionsUpdateCredentials); err != nil {
+		if err := lockRegistrationManager(ctx, tx, prior, registration, auth.PermissionAgentConnectionsConfigure); err != nil {
 			return err
 		}
 		verified, proofErr := registrationAuditActor(ctx, tx, prior, registration)

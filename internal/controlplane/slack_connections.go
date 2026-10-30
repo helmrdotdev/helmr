@@ -29,15 +29,10 @@ func (s *Server) agentSlackConnection(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "agentName")
 	permission := auth.PermissionAgentConnectionsRead
 	switch r.Method {
-	case http.MethodPut:
-		permission = auth.PermissionAgentConnectionsUpdateCredentials
+	case http.MethodPut, http.MethodPost:
+		permission = auth.PermissionAgentConnectionsConfigure
 	case http.MethodDelete:
 		permission = auth.PermissionAgentConnectionsDelete
-	case http.MethodPost:
-		permission = auth.PermissionAgentConnectionsCreate
-		if chi.URLParam(r, "connectionID") != "" {
-			permission = auth.PermissionAgentConnectionsAuthorize
-		}
 	}
 	agent, err := slack.ConnectionAgent(r.Context(), s.tx, principal, env, name, permission)
 	if err != nil {
