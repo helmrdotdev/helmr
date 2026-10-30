@@ -35,7 +35,7 @@ func ExpirePending(ctx context.Context, auditPolicy auditpolicy.Policy, database
 	}
 	for i, p := range candidates {
 		err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-			return FailPending(ctx, auditPolicy, tx, p, Failure{Code: "computer_command_assignment_timed_out", Detail: []byte(`{"code":"computer_command_assignment_timed_out","retryable":false}`)})
+			return FailPending(ctx, auditPolicy, tx, p, Failure{Code: "computer_command_assignment_timed_out", Detail: []byte(`{"code":"computer_command_assignment_timed_out","retryable":true}`)})
 		})
 		if err != nil && !errors.Is(err, ErrChanged) {
 			return i, err

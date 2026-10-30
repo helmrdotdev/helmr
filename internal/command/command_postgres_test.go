@@ -651,6 +651,9 @@ func TestCommandPendingTimeoutRetainsIdentity(t *testing.T) {
 	if c.Status != "failed" || c.ComputerLeaseEpoch.Valid || c.TerminalReasonCode.String != "computer_command_assignment_timed_out" {
 		t.Fatalf("pending timeout %+v", c)
 	}
+	if string(c.Error) != `{"code": "computer_command_assignment_timed_out", "retryable": true}` {
+		t.Fatalf("pending timeout error = %s", c.Error)
+	}
 	retry, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("timeout"))
 	if err != nil || retry.ID != c.ID || retry.Status != "failed" {
 		t.Fatalf("pending replay %+v %v", retry, err)

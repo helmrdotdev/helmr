@@ -202,3 +202,20 @@ func TestComputerBasicExecInvalidLimitsPreserveAdmission(t *testing.T) {
 		t.Fatal(result)
 	}
 }
+
+func TestComputerBasicExecSpecTimeoutBound(t *testing.T) {
+	for _, test := range []struct {
+		timeoutMS int64
+		valid     bool
+	}{
+		{0, false},
+		{1, true},
+		{(24 * time.Hour).Milliseconds(), true},
+		{(24 * time.Hour).Milliseconds() + 1, false},
+	} {
+		spec := computerBasicExecSpec{Command: []string{"true"}, TimeoutMS: test.timeoutMS}
+		if spec.valid() != test.valid {
+			t.Fatalf("timeout %dms valid=%t, want %t", test.timeoutMS, spec.valid(), test.valid)
+		}
+	}
+}

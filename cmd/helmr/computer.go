@@ -225,7 +225,7 @@ func computerCommandCommand() *cobra.Command {
 	command.Flags().StringVar(&cwd, "cwd", "", "Working directory (defaults to /workspace).")
 	command.Flags().StringArrayVar(&envPairs, "set-env", nil, "Environment entry NAME=VALUE. Repeatable.")
 	command.Flags().StringVar(&stdinPath, "stdin", "", "Read stdin bytes from a file.")
-	command.Flags().StringVar(&timeout, "timeout", "", "Execution timeout (default 5m, maximum 15m).")
+	command.Flags().StringVar(&timeout, "timeout", "", "Execution timeout (default 5m, maximum 24h).")
 	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Required idempotency key.")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "Emit the execution receipt as JSON.")
 	_ = command.MarkFlagRequired("idempotency-key")

@@ -20,7 +20,7 @@ helmr computer exec (--id UUID | --key KEY) --idempotency-key KEY -- COMMAND [AR
 All commands also accept project/environment scope.
 
 `exec` accepts `--cwd`, repeated `--set-env NAME=VALUE`, `--stdin FILE`, and
-`--timeout` (default 5m, maximum 15m). It returns a Command ID after admission. Use
+`--timeout` (default 5m, maximum 24h). It returns a Command ID after admission. Use
 [`helmr command`](/docs/reference/cli/command) to read output, wait, or cancel. The `--` separator is required before the
 remote command.
 
