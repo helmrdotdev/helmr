@@ -119,7 +119,7 @@ identity, including Slack events admitted through either verified HTTP requests 
 fenced Socket Mode receipts. It does not claim OIDC or request-signature verification.
 Transport revisions absent from a retained provider receipt are not reconstructed.
 
-Current relationship checks (`session_origin`, `slack_thread`, `host_assignment`)
+Current host assignment checks (`host_assignment`)
 record passed owner observations. `principal_currency` records a failed refresh;
 `runtime_binding` records a passed binding or an observed generation mismatch.
 Attribute and permission checks can pass or fail. The operation owner retains its

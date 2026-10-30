@@ -30,25 +30,24 @@ not grant organization membership or Agent access. An explicit attempt from an
 unlinked person receives a private linking prompt; after linking, they send the
 message again. Rejected input is never replayed.
 
-Use agents for the connected Agent allows starting a DM or participating in a
-shared conversation started by mentioning the Agent in a channel. Channel input
-also requires current channel membership. Other eligible participants may continue
-the shared conversation without being its creator, including stopping, closing or
-resuming that conversation through its Slack controls. Sharing does not give them
-Console access to another person's personal Sessions. A personal Session projected
-into a channel by an operator keeps its original authorization.
+`sessions.create` for the connected Agent allows starting a conversation in a
+channel or DM. Continuing an existing conversation requires `sessions.send`;
+answering, resuming and stopping use their corresponding Session permissions.
+Channel input also requires current channel membership. Being the creator or a
+Slack participant does not grant these actions automatically.
 
-DM Sessions belong to their initiating user. View all sessions for that Agent
-allows reading their input and output in Console, including other people's DMs.
-Manage all sessions allows viewing, stopping and closing; adding input, answering
-questions or resuming additionally requires Use agents for the same Agent and
-valid runtime authority. Input supplied through Console or the API can produce
-output in the Session's original Slack destination.
+`sessions.read` for an Agent allows reading all its Sessions in Console, including
+other people's DMs and private-channel conversations. Each granted control action
+also applies across that Agent's Sessions, without requiring creation permission.
+The Agent User Role includes creation, reading and conversation controls. Input
+supplied through Console or the API can produce output in the Session's original
+Slack destination. DM delivery retains its original recipient identity and requires
+that recipient to hold `sessions.read`.
 
 Explicit unauthorized attempts receive private access guidance. Incidental
 unauthorized replies in a channel are ignored. Helmr checks current permissions
-again before dispatching queued input, and verifies that its Slack author can
-still participate. A shared conversation runs under its connected Agent's
+before admitting input and verifies that its Slack author can participate.
+Already admitted work retains its pinned runtime authority. A shared conversation runs under its connected Agent's
 scope, without inheriting its creator's administrative permissions. A revoked DM
 recipient stops receiving new deliveries; already published messages cannot be
 retracted by permission changes.
@@ -124,9 +123,9 @@ Use these in the Session thread, optionally after the Agent's mention:
 `!mute` and `!unmute` must be the whole message. Quoted commands and commands
 inside code are ordinary text. Wait for the command confirmation before relying
 on the changed state. A command does not start a Session, create Agent work or
-release a Stop hold. Linked participants with current Agent use can change input state in their own
-DMs or connected shared channels. Session managers can control sessions of their
-assigned Agents; a DM also retains its original peer boundary.
+release a Stop hold. Changing input state requires `sessions.interrupt` for the
+Session’s Agent and a linked Slack identity authorized for that conversation.
+A DM retains its original peer boundary.
 
 While muted, an explicit Agent mention with work submits only that message and
 leaves the thread muted. A bare mention is not work. `!aside` wins even if the
@@ -261,9 +260,10 @@ output, a question or a response, the Session records a
 running. The full output remains in the Session's events. See
 [Events](/docs/reference/events).
 
-When a post's delivery is uncertain or has failed, members with Manage all sessions in
-the environment can recheck it against Slack or stop delivering it from the Session's
-page in the Console. Neither action resends content.
+When a post's delivery is uncertain or has failed, members with `sessions.read`
+and the corresponding `sessions.check_delivery` or `sessions.abandon_delivery`
+permission for the Agent can recheck it against Slack or stop delivering it from
+the Session's page in the Console. Neither action resends content.
 
 Reconnecting an Agent's Slack app creates a new connection. Threads from the
 old connection stay disconnected, earlier undelivered output is not

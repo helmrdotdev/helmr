@@ -46,13 +46,8 @@ func linkedSessionHuman(ctx context.Context, tx pgx.Tx, team, actor string, inst
 	}
 	return linkedHuman(ctx, tx, team, actor, installation, environment, agent, source)
 }
-func slackCaller(p auth.Principal, thread uuid.UUID) session.Caller {
-	c := session.UserCaller(p)
-	c.SlackThreadID = thread
-	return c
-}
 
-// Direct output requires its original recipient and current use permission.
+// Direct output requires its original recipient and current Session read permission.
 // Relinking the same accounts restores eligibility for prior conversations.
 // A route that remains connected does not preserve a revoked user's access. Public channel output follows the configured shared publication route.
 func directRecipient(ctx context.Context, tx pgx.Tx, thread uuid.UUID) (bool, auth.Principal, uuid.UUID, error) {
@@ -97,7 +92,7 @@ func directRecipientAuthorized(ctx context.Context, tx pgx.Tx, thread uuid.UUID)
 		return false, err
 	}
 	scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: env.String(), AgentID: agent.String()}
-	return p.HasPermission(auth.PermissionAgentsUse, scope), nil
+	return p.HasPermission(auth.PermissionSessionsRead, scope), nil
 }
 func directRecipientCanReadSession(ctx context.Context, tx pgx.Tx, thread, target uuid.UUID) (bool, error) {
 	direct, p, env, err := directRecipient(ctx, tx, thread)

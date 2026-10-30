@@ -24,7 +24,7 @@ func TestGrantReadersPreserveTargetsAndCallerTransaction(t *testing.T) {
 	if grants, err := access.APIKeyGrants(ctx, f.Pool, org, key); err != nil || len(grants) != 0 {
 		t.Fatalf("unassigned key: %v %v", grants, err)
 	}
-	dbtest.SetAPIKeyRole(t, f.Pool, key, "agents.use", "sessions.read", "sessions.send", "secrets.create")
+	dbtest.SetAPIKeyRole(t, f.Pool, key, "sessions.create", "sessions.read", "sessions.send", "secrets.create")
 	read := func(database db.DBTX, wantAgent bool, target string) {
 		t.Helper()
 		human, err := access.MemberGrants(ctx, database, org, f.MemberID)
@@ -48,7 +48,7 @@ func TestGrantReadersPreserveTargetsAndCallerTransaction(t *testing.T) {
 		}{{"human", grants}, {"key", machine}} {
 			foundAgent, foundSecret := false, false
 			for _, g := range subject.grants {
-				if auth.PermissionResourceType(g.Permission) == "agents" {
+				if auth.SupportsScope(g.Permission, auth.ScopeAgent) {
 					foundAgent = true
 					if g.AgentID != target {
 						t.Fatalf("%s target widened: %+v", subject.name, g)

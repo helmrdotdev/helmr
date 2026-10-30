@@ -69,7 +69,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 	agent, other := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agents(id,environment_id,key) VALUES($1,$2,'invoice'),($3,$2,'private')`, agent, env.EnvironmentID, other)
 	var role api.PermissionRole
-	check(request("POST", "/api/roles", `{"name":"User","description":"Original","permissions":["agents.use"]}`, owner, ""), 201, &role)
+	check(request("POST", "/api/roles", `{"name":"User","description":"Original","permissions":["sessions.create"]}`, owner, ""), 201, &role)
 	var group api.PermissionGroup
 	check(request("POST", "/api/groups", `{"name":"Team"}`, owner, ""), 201, &group)
 	check(request("GET", "/api/roles/"+role.ID, "", stranger, ""), 404, nil)
@@ -99,7 +99,7 @@ func TestPermissionManagementHTTP(t *testing.T) {
 	}
 	// The grant that authorized the change is not the grant created by it.
 	var distinct bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT actor_user_id IS NOT NULL AND authentication_result='verified' AND credential_kind='login_session' AND credential_id IS NOT NULL AND authorization_evidence->>'decision'='allowed' AND authorization_evidence->'checks' @> '[{"type":"permission","permission":"assignments.create","result":"passed"}]'::jsonb AND authorization_evidence->'checks'->0->'evidence'->>'assignment_id'<>target_id::text AND details->'before'='null'::jsonb AND details->'after'->>'role_id'=$2 AND details->'after'->>'group_id'=$3 AND details->'after'->'permissions'='["agents.use"]'::jsonb FROM audit_events WHERE action='role_grant.created' AND target_id=$1`, grant.ID, role.ID, group.ID).Scan(&distinct); err != nil || !distinct {
+	if err := f.pool.QueryRow(t.Context(), `SELECT actor_user_id IS NOT NULL AND authentication_result='verified' AND credential_kind='login_session' AND credential_id IS NOT NULL AND authorization_evidence->>'decision'='allowed' AND authorization_evidence->'checks' @> '[{"type":"permission","permission":"assignments.create","result":"passed"}]'::jsonb AND authorization_evidence->'checks'->0->'evidence'->>'assignment_id'<>target_id::text AND details->'before'='null'::jsonb AND details->'after'->>'role_id'=$2 AND details->'after'->>'group_id'=$3 AND details->'after'->'permissions'='["sessions.create"]'::jsonb FROM audit_events WHERE action='role_grant.created' AND target_id=$1`, grant.ID, role.ID, group.ID).Scan(&distinct); err != nil || !distinct {
 		t.Fatal("change and evaluated authority conflated", distinct, err)
 	}
 	// Concurrent duplicate creation converges on the existing tuple without extra audit events.

@@ -1,16 +1,15 @@
 import { usePermission } from "../../lib/me";
-import { createQuery, useQueryClient } from "@tanstack/solid-query";
+import { createQuery } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
-import { errorDetails, errorMessage, loadError } from "../../lib/error";
+import { errorDetails, loadError } from "../../lib/error";
 import { listMembers } from "../../lib/members";
 import {
-  assignRole, grantCoversAgent, listAccessTargets, listGrants, listGroups, listRoles, memberHref, permissionName, permissionHasScope, removeGrant,
+  grantCoversAgent, listAccessTargets, listGrants, listGroups, listRoles, memberHref, permissionName, permissionHasScope,
   type RoleGrant,
 } from "../../lib/permissions";
 import { useScopeIDs } from "../../lib/scope";
 import { DataTable, EmptyCell, TableCount, PrimaryLink } from "../../ui/DataTable";
 import { Segmented } from "../../ui/Field";
-import { Notice } from "../../ui/Notice";
 import { Toolbar } from "../../ui/Page";
 import { EmptyState, ErrorState } from "../../ui/QueryState";
 import { TableSkeleton } from "../../ui/Skeleton";
@@ -27,7 +26,7 @@ const PEOPLE_COLUMNS = ["Person", "Email", "Can", "Granted through"] as const;
 // groups and API keys it is granted to, and where each person's access comes from.
 export function AgentAccess(props: { agent: string }) {
   const permission = usePermission();
-  const scope = useScopeIDs(); const cache = useQueryClient();
+  const scope = useScopeIDs();
   const targets = createQuery(() => ({ queryKey: ["access", "targets", scope().projectID], queryFn: () => listAccessTargets(scope().projectID), enabled: !!scope().projectID }));
   const grants = createQuery(() => ({ queryKey: ["access", "grants"], queryFn: listGrants }));
   const groups = createQuery(() => ({ queryKey: ["access", "groups"], queryFn: listGroups, enabled: permission.has("groups.read") }));
@@ -42,47 +41,6 @@ export function AgentAccess(props: { agent: string }) {
   });
   const [view, setView] = createSignal<View>("people");
   const [granting, setGranting] = createSignal(false);
-  const [sharing, setSharing] = createSignal(false);
-  const [shareError, setShareError] = createSignal("");
-
-  // Shared with everyone: an all-members assignment covers this agent. Sharing
-  // adds the agent to the standard agent user one; unsharing takes it out of
-  // every all-members assignment that selects it.
-  const agentUser = () => roles.data?.roles.find(r => r.builtin_key === "agent_user");
-  const audiences = () => covering().filter(g => g.subject_kind === "all_members");
-  const shared = () => audiences().length > 0;
-  const canShare = () => {
-    const target = agent();
-    if (!target) return false;
-    if (shared()) return audiences().every(grant => permission.has(grant.agent_ids.filter(id => id !== target.id).length ? "assignments.update" : "assignments.delete"));
-    const existing = grants.data?.grants.some(g => g.subject_kind === "all_members" && g.environment_id === environment()?.environment_id && g.role_id === agentUser()?.id);
-    return permission.has(existing ? "assignments.update" : "assignments.create");
-  };
-  const toggleShare = async () => {
-    const role = agentUser(); const env = environment(); const target = agent();
-    if (!role || !env || !target) return;
-    setSharing(true); setShareError("");
-    try {
-      if (shared()) {
-        for (const grant of audiences()) {
-          const ids = grant.agent_ids.filter(id => id !== target.id);
-          const grantRole = roles.data?.roles.find(r => r.id === grant.role_id);
-          if (ids.length === 0) await removeGrant(grant.id, grant.revision);
-          else if (!grantRole) throw new Error("A role used for sharing could not be loaded.");
-          else await assignRole(scope().projectID, { subject_kind: "all_members", group_id: null, role_id: grant.role_id, environment_id: env.environment_id, target_kind: "environment", agents_mode: "selected", agent_ids: ids, expected_role_revision: grantRole.revision }, grant);
-        }
-      } else {
-        const existing = (grants.data?.grants ?? []).find(g => g.subject_kind === "all_members" && g.environment_id === env.environment_id && g.role_id === role.id);
-        await assignRole(scope().projectID, { subject_kind: "all_members", group_id: null, role_id: role.id, environment_id: env.environment_id, target_kind: "environment", agents_mode: "selected", agent_ids: [...(existing?.agent_ids ?? []), target.id], expected_role_revision: role.revision }, existing);
-      }
-    } catch (cause) {
-      setShareError(`${errorMessage(cause)} Check the current sharing and try again.`);
-    } finally {
-      await Promise.all([cache.invalidateQueries({ queryKey: ["access"] }), cache.invalidateQueries({ queryKey: ["me"] })]);
-      setSharing(false);
-    }
-  };
-
   // Each person with access, from direct assignments, their groups and all members.
   const people = createMemo(() => {
     const active = (members.data?.members ?? []).filter(m => m.status === "active");
@@ -115,20 +73,12 @@ export function AgentAccess(props: { agent: string }) {
     <Show when={!failure()} fallback={<ErrorState message={loadError(failure(), "Could not load access.")} details={errorDetails(failure())} onRetry={retry} />}>
     <Show when={!loading()} fallback={<TableSkeleton label="Loading access" columns={PEOPLE_COLUMNS} />}>
       <Show when={agent()} fallback={<EmptyState title="This agent isn't registered in this environment." />}>
-        <label class={`${ui.container} mb-4 flex cursor-pointer items-center justify-between gap-4 px-3 py-2.5`}>
-          <span class="min-w-0">
-            <span class="font-medium text-console-text">Share with all members</span>
-            <span class="ml-2 text-console-muted">Everyone in the organization can use this agent, including people who join later.</span>
-          </span>
-          <input type="checkbox" class="size-4 shrink-0 accent-console-accent" checked={shared()} disabled={sharing() || !agentUser() || !canShare()} onChange={() => void toggleShare()} />
-        </label>
-        <Show when={shareError()}><Notice tone="danger" class="mb-3">{shareError()}</Notice></Show>
         <Toolbar
           start={<Segmented label="Who has access" value={view()} options={[{ value: "people" as const, label: "People", count: people().length }, { value: "groups" as const, label: "Groups", count: groupGrants().length }, { value: "api_keys" as const, label: "API keys", count: keyGrants().length }]} onChange={setView} />}
           end={<button type="button" class={ui.button} disabled={!permission.has("assignments.create")} onClick={() => setGranting(true)}>Grant access</button>}
         />
         <Show when={view() === "people"}>
-          <Show when={people().length > 0} fallback={<EmptyState title="Nobody can use this agent yet" hint="Share it with all members or grant a role." />}>
+          <Show when={people().length > 0} fallback={<EmptyState title="No access assignments for this agent" hint="Grant a role to a person, group, All members or API key." />}>
             <DataTable columns={PEOPLE_COLUMNS} minWidth="min-w-180" footer={<TableCount count={people().length} noun={{ one: "person", other: "people" }} />}>
               <For each={people()}>
                 {person => (

@@ -152,8 +152,6 @@ const CHECK_TITLES: Record<string, string> = {
   platform_operator: "Platform operator",
   user_attribute: "Helmr administrator",
   runtime_binding: "Current runtime",
-  session_origin: "Started by",
-  slack_thread: "Slack thread",
   principal_currency: "Current credential",
   host_assignment: "Worker host assignment",
 };
@@ -225,19 +223,6 @@ export function checkFields(check: AuditCheck, names: AuditNames, links: { sessi
         { label: "Generation", value: String(check.generation ?? "Not recorded"), sub: check.observed_generation ? `current was ${check.observed_generation}` : undefined },
         result(check),
         ...reason(check),
-      ];
-    case "session_origin":
-      return [
-        ...(check.session_id ? [{ label: "Session", value: shortID(check.session_id), href: links.session(check.session_id), code: true }] : []),
-        ...(check.initiator_id ? [{ label: "Started by", ...named(check.initiator_id, names, check.initiator_kind === "api_key" ? "API key" : check.initiator_kind === "session" ? "session" : "member") }] : []),
-        result(check),
-      ];
-    case "slack_thread":
-      return [
-        ...(check.session_id ? [{ label: "Session", value: shortID(check.session_id), href: links.session(check.session_id), code: true }] : []),
-        ...(check.thread_id ? [{ label: "Thread", value: shortID(check.thread_id), code: true }] : []),
-        ...person("Slack user of", check.user_id, names, "member"),
-        result(check),
       ];
     case "principal_currency":
       return [

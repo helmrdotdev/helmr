@@ -4,7 +4,7 @@ import { assert, completedResult, deadline, deleteComputer, errorCode, verify, w
 import { fixtureInput } from "../../support/runtime-mcp"
 
 // The ordinary verification credential is an environment operator with Computer
-// cleanup rights. These two distinct keys must each have only agents.use.
+// cleanup rights. These two distinct keys must each have only sessions.create.
 const rawA = process.env.HELMR_SCOPED_KEY_A
 const rawB = process.env.HELMR_SCOPED_KEY_B
 assert(rawA && rawB && rawA !== rawB, "Two distinct scoped verification keys are required")
@@ -29,10 +29,10 @@ await verify("scoped-permissions", async ({ client: operator, marker, objects, c
     return { ...receipt, computerId }
   }
   const first = await start(a, "first")
-  const firstResult = await completedResult(first.turn)
+  const firstResult = await completedResult(operator.sessions.ref(first.session.id).turns.ref(first.turn.id))
   assert.deepEqual(firstResult, { marker: `${marker}:first`, previous: null, computerId: first.computerId, ambientAPIKey: false })
   const second = await start(b, "second")
-  const secondResult = await completedResult(second.turn)
+  const secondResult = await completedResult(operator.sessions.ref(second.session.id).turns.ref(second.turn.id))
   assert.notEqual(first.computerId, second.computerId, "Distinct origins shared a Computer")
   assert.deepEqual(secondResult, { marker: `${marker}:second`, previous: null, computerId: second.computerId, ambientAPIKey: false })
   await denied(() => b.sessions.get(first.session.id))
@@ -41,14 +41,18 @@ await verify("scoped-permissions", async ({ client: operator, marker, objects, c
   await denied(() => b.sessions.ref(first.session.id).enqueue(fixtureInput({ marker: "forbidden" }), { idempotencyKey: `${marker}:cross-input` }))
   await denied(() => a.computers.get(first.computerId))
   await denied(() => operator.sessions.create({ agent: "verification-scoped", computer: { id: first.computerId }, input: fixtureInput({ marker: "forbidden" }), idempotencyKey: `${marker}:broad-attachment` }))
-  const own = await first.session.enqueue(fixtureInput({ marker: `${marker}:own` }), { idempotencyKey: `${marker}:own` })
-  objects.turn_ids.push(own.id)
-  assert.deepEqual(await completedResult(own), { marker: `${marker}:own`, previous: `${marker}:first`, computerId: first.computerId, ambientAPIKey: false })
+  await denied(() => a.sessions.get(first.session.id))
+  await denied(() => first.session.enqueue(fixtureInput({ marker: "forbidden" }), { idempotencyKey: `${marker}:own-input` }))
+  const continuation = await operator.sessions.ref(first.session.id).enqueue(fixtureInput({ marker: `${marker}:continued` }), { idempotencyKey: `${marker}:continued` })
+  objects.turn_ids.push(continuation.id)
+  assert.deepEqual(await completedResult(continuation), { marker: `${marker}:continued`, previous: `${marker}:first`, computerId: first.computerId, ambientAPIKey: false })
   const questioning = await start(a, "question", true)
-  const ask = await waitAsk(questioning.turn)
+  const turn = operator.sessions.ref(questioning.session.id).turns.ref(questioning.turn.id)
+  const ask = await waitAsk(turn)
   objects.ask_ids.push(ask.id)
+  await denied(() => questioning.turn.asks.answer(ask.id, { answer: { selectedIds: ["done"] }, answerId: `${marker}:own-answer` }))
   await denied(() => b.sessions.ref(questioning.session.id).turns.ref(questioning.turn.id).asks.answer(ask.id, { answer: { selectedIds: ["done"] }, answerId: `${marker}:cross-answer` }))
-  await questioning.turn.asks.answer(ask.id, { answer: { selectedIds: ["done"] }, answerId: `${marker}:own-answer` })
-  await completedResult(questioning.turn)
-  return { distinctKeyOrigins: true, distinctNativeComputers: true, isolatedGuestFiles: true, ownFileContinuity: true, crossReadInputAnswerDenied: true, broadAttachmentDenied: true, ambientWorkloadKeyAbsent: true }
+  await turn.asks.answer(ask.id, { answer: { selectedIds: ["done"] }, answerId: `${marker}:operator-answer` })
+  await completedResult(turn)
+  return { distinctKeyOrigins: true, distinctNativeComputers: true, isolatedGuestFiles: true, fileContinuity: true, createOnlyReadInputAnswerDenied: true, explicitOperatorActions: true, broadAttachmentDenied: true, ambientWorkloadKeyAbsent: true }
 })

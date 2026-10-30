@@ -157,11 +157,6 @@ func RecoverDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxB
 		scope := auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}
 		readDecisions, canRead := p.Decide(auth.PermissionSessionsRead, scope)
 		if !canRead {
-			// The Session owner above verified the own-session alternative.
-			readDecisions, canRead = p.Decide(auth.PermissionAgentsUse, scope)
-			actor.Authorization.Checks = append(actor.Authorization.Checks, audit.OriginCheck{Type: "session_origin", SessionID: session, InitiatorKind: "user", InitiatorID: user, Result: "passed"})
-		}
-		if !canRead {
 			return errInstallationAuthority
 		}
 		actor.Authorization.Checks = append(actor.Authorization.Checks, audit.PermissionEvidence(p, readDecisions)...)

@@ -5,7 +5,7 @@ import { describeFailure, type Failure } from "../../lib/error";
 // text is never the message; it stays in the technical details.
 export const SLACK_MESSAGES: Readonly<Record<string, string>> = {
   service_unavailable: "Slack is not set up in Helmr.",
-  forbidden: "You need Manage agents permission to manage this agent’s connection. Your access may have changed; reload the page.",
+  forbidden: "You do not have permission for this Slack action. Your access may have changed; reload the page.",
   conflict: "The Slack connection changed since this page loaded. Reload to see its current state.",
   bad_request: "Slack did not accept this request. Check the values and try again.",
   not_found: "This Slack connection or message is no longer available here.",

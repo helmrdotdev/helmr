@@ -112,7 +112,7 @@ func admitControl(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 		}
 		var askID *uuid.UUID
 		err = db.RunTx(ctx, tx, func(coreTx pgx.Tx) error {
-			caller := slackCaller(human, target.Thread)
+			caller := session.UserCaller(human)
 			if lifecycleAction(gesture.Control.Action) {
 				receipt, err := applyLifecycleControl(ctx, auditPolicy, coreTx, caller, target, gesture.Control, id)
 				if err != nil {

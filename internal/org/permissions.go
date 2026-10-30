@@ -233,10 +233,6 @@ func validateRoleInput(input RoleInput) (RoleInput, error) {
 	}
 	return input, nil
 }
-func supportsAgent(permissions []string) bool {
-	return len(permissions) == 1 && permissions[0] == string(auth.PermissionAgentsUse)
-}
-
 func hasAgentPermissions(permissions []string) bool {
 	for _, p := range permissions {
 		if auth.IsAgentPermission(auth.Permission(p)) {
@@ -257,11 +253,8 @@ func grantAgentsMode(permissions []string, allAgents bool) string {
 	return "selected"
 }
 
-func roleSupportsTargets(permissions []string, organization bool, mode string, allMembers bool) bool {
+func roleSupportsTargets(permissions []string, organization bool, mode string) bool {
 	if len(permissions) == 0 {
-		return false
-	}
-	if allMembers && (mode != "selected" || !supportsAgent(permissions)) {
 		return false
 	}
 	level := auth.ScopeEnvironment
@@ -409,19 +402,19 @@ func SavePermissionRole(ctx context.Context, database db.TxBeginner, m ManagingM
 			}
 			before = permissionRoleSnapshot(old)
 			action = "role.updated"
-			rows, err := tx.Query(ctx, `SELECT id,environment_id IS NULL,all_agents,all_members,api_key_id IS NOT NULL FROM role_grants WHERE org_id=$1 AND role_id=$2 ORDER BY id FOR UPDATE`, m.OrgID, id)
+			rows, err := tx.Query(ctx, `SELECT id,environment_id IS NULL,all_agents,api_key_id IS NOT NULL FROM role_grants WHERE org_id=$1 AND role_id=$2 ORDER BY id FOR UPDATE`, m.OrgID, id)
 			if err != nil {
 				return err
 			}
 			incompatible := []string{}
 			for rows.Next() {
 				var gid uuid.UUID
-				var organization, allAgents, allMembers, machine bool
-				if err = rows.Scan(&gid, &organization, &allAgents, &allMembers, &machine); err != nil {
+				var organization, allAgents, machine bool
+				if err = rows.Scan(&gid, &organization, &allAgents, &machine); err != nil {
 					rows.Close()
 					return err
 				}
-				if !roleSupportsTargets(input.Permissions, organization, grantAgentsMode(old.Permissions, allAgents), allMembers) || machine && !machineAssignable(input.Permissions) {
+				if !roleSupportsTargets(input.Permissions, organization, grantAgentsMode(old.Permissions, allAgents)) || machine && !machineAssignable(input.Permissions) {
 					incompatible = append(incompatible, gid.String())
 				}
 			}
@@ -838,7 +831,7 @@ func writeRoleGrant(ctx context.Context, database db.TxBeginner, m ManagingMembe
 		if role.Revision != input.ExpectedRoleRevision {
 			return ErrStaleRevision
 		}
-		if !roleSupportsTargets(role.Permissions, input.EnvironmentID == nil, input.AgentsMode, input.Subject.Type == "all_members") || (!hasAgentPermissions(role.Permissions) && input.AgentsMode != "none") {
+		if !roleSupportsTargets(role.Permissions, input.EnvironmentID == nil, input.AgentsMode) || (!hasAgentPermissions(role.Permissions) && input.AgentsMode != "none") {
 			return ErrRoleTarget
 		}
 		if input.AgentsMode == "selected" && len(input.AgentIDs) == 0 {

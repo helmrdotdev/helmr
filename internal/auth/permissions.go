@@ -117,23 +117,15 @@ func (a Principal) Evaluate(permission Permission, scope Scope) ([]PermissionEva
 			return refuse("key_scope_mismatch")
 		}
 	}
-	var checks []PermissionEvaluation
-	if SessionExecutionOperation(permission) {
-		var ok bool
-		checks, ok = a.Evaluate(PermissionAgentsUse, scope)
-		if !ok {
-			return checks, false
-		}
-	}
 	for _, grant := range a.Grants {
 		if grant.allows(permission, scope) {
 			check.Result = "passed"
 			check.Evidence = &PermissionDecision{Permission: permission, Scope: scope, AssignmentID: grant.AssignmentID, AssignmentRevision: grant.AssignmentRevision, RoleID: grant.RoleID, RoleRevision: grant.RoleRevision, MemberID: a.MemberID, GroupID: grant.GroupID, Subject: grant.Subject}
-			return append(checks, check), true
+			return []PermissionEvaluation{check}, true
 		}
 	}
 	check.Reason = "no_matching_grant"
-	return append(checks, check), false
+	return []PermissionEvaluation{check}, false
 }
 
 func (a Principal) Decide(permission Permission, scope Scope) ([]PermissionDecision, bool) {

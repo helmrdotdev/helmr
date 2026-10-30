@@ -32,7 +32,7 @@ func agentReadScope(p auth.Principal, scope auth.Scope) (bool, []uuid.UUID) {
 func agentIdentityScope(p auth.Principal, scope auth.Scope) (bool, []uuid.UUID) {
 	all := false
 	ids := []uuid.UUID{}
-	for _, permission := range []auth.Permission{auth.PermissionAgentsRead, auth.PermissionAgentsUse, auth.PermissionAgentsDelete, auth.PermissionAgentsRestore} {
+	for _, permission := range []auth.Permission{auth.PermissionAgentsRead, auth.PermissionSessionsCreate, auth.PermissionAgentsDelete, auth.PermissionAgentsRestore} {
 		broad, selected := p.AgentPermissionScope(permission, scope)
 		all = all || broad
 		ids = append(ids, selected...)

@@ -21,7 +21,7 @@ async function catalog(page: Page, options: { current?: boolean; defined?: boole
     let json: unknown;
     const env = { environment: environment, project: project, name: "Development", is_default: true, created_at: now, updated_at: now };
     const proj = { project: project, name: "Test", is_default: true, environments: [env], created_at: now, updated_at: now };
-    if (isAuthenticationPath(path)) json = { user_id: "user", display_name: "User", org_id: "org", is_owner: false, permissions: [], permission_scopes: [{ project, environment, permissions: ["sessions.read", "agents.read", "agents.use", "deployments.read", "templates.read", "computers.read", ...(options.connectionPermissions ?? (options.manageConnection === false ? [] : ["agent_connections.read", "agent_connections.configure"]))] }], organization_required: false, project_required: false };
+    if (isAuthenticationPath(path)) json = { user_id: "user", display_name: "User", org_id: "org", is_owner: false, permissions: [], permission_scopes: [{ project, environment, permissions: ["sessions.read", "agents.read", "sessions.create", "deployments.read", "templates.read", "computers.read", ...(options.connectionPermissions ?? (options.manageConnection === false ? [] : ["agent_connections.read", "agent_connections.configure"]))] }], organization_required: false, project_required: false };
     else if (path === "/api/projects") json = { projects: [proj] };
     else if (path === `/api/projects/${project}`) json = proj;
     else if (path === base) json = env;

@@ -293,7 +293,7 @@ func TestSessionControlAPIKeyRequiresExactPermissionAndHumanAttribution(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.SetAPIKeyRole(t, f.pool, key, "agents.use", "sessions.resume")
+	dbtest.SetAPIKeyRole(t, f.pool, key, "sessions.resume")
 	resume := controlRequest(f, "resume", "resume")
 	resume.HoldID = r.HoldID
 	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume); err != nil {

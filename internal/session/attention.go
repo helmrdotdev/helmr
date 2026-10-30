@@ -50,7 +50,7 @@ type Attention struct {
 // there is no separate dismissal.
 const attentionFailedTurnWindow = `interval '24 hours'`
 
-const attentionAccessSQL = `($2::boolean OR s.agent_id=ANY($7::uuid[]) OR (s.origin_slack_connection_id IS NULL AND (s.origin_user_id=$3 OR s.origin_api_key_id=$4) AND ($5::boolean OR s.agent_id=ANY($6::uuid[]))))`
+const attentionAccessSQL = `($2::boolean OR s.agent_id=ANY($3::uuid[]))`
 
 const attentionQuestionsFromSQL = `
  FROM turn_asks a
@@ -60,7 +60,7 @@ const attentionQuestionsFromSQL = `
  AND ` + attentionAccessSQL
 
 const attentionQuestionsSQL = `SELECT a.id,a.session_id,a.turn_id,ag.key,a.created_at,a.question,count(*) OVER ()` + attentionQuestionsFromSQL + `
- ORDER BY a.created_at,a.id LIMIT $8`
+ ORDER BY a.created_at,a.id LIMIT $4`
 const attentionQuestionsCountSQL = `SELECT count(*)` + attentionQuestionsFromSQL
 
 const attentionHoldsFromSQL = `
@@ -71,7 +71,7 @@ const attentionHoldsFromSQL = `
  AND ` + attentionAccessSQL
 
 const attentionHoldsSQL = `SELECT h.id,h.session_id,ag.key,h.created_at,h.reason,count(*) OVER ()` + attentionHoldsFromSQL + `
- ORDER BY h.created_at,h.id LIMIT $8`
+ ORDER BY h.created_at,h.id LIMIT $4`
 const attentionHoldsCountSQL = `SELECT count(*)` + attentionHoldsFromSQL
 
 const attentionFailedTurnsFromSQL = `
@@ -83,7 +83,7 @@ const attentionFailedTurnsFromSQL = `
  AND ` + attentionAccessSQL
 
 const attentionFailedTurnsSQL = `SELECT t.id,t.session_id,ag.key,t.terminal_at,t.seq,t.error_code,count(*) OVER ()` + attentionFailedTurnsFromSQL + `
- ORDER BY t.terminal_at,t.id LIMIT $8`
+ ORDER BY t.terminal_at,t.id LIMIT $4`
 const attentionFailedTurnsCountSQL = `SELECT count(*)` + attentionFailedTurnsFromSQL
 
 // ListAttention reads the Environment's waiting work with the same authority as
@@ -101,7 +101,7 @@ func ListAttention(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.
 		if err != nil {
 			return err
 		}
-		if !filter.All && !filter.AllAgents && len(filter.Agents) == 0 && len(filter.ViewAgents) == 0 {
+		if !filter.All && len(filter.Agents) == 0 {
 			return ErrDenied
 		}
 		result.Questions, result.QuestionCount, err = attentionRows(ctx, tx, attentionQuestionsSQL, env, filter, func(row pgx.Rows, item *AttentionItem, count *int64) error {
@@ -162,7 +162,7 @@ func ListAttention(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.
 func attentionRows(ctx context.Context, tx pgx.Tx, sql string, env uuid.UUID, filter sessionReadScope, scan func(pgx.Rows, *AttentionItem, *int64) error) ([]AttentionItem, int64, error) {
 	items := []AttentionItem{}
 	var count int64
-	rows, err := tx.Query(ctx, sql, env, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, AttentionLimit)
+	rows, err := tx.Query(ctx, sql, env, filter.All, filter.Agents, AttentionLimit)
 	if err != nil {
 		return items, 0, err
 	}
@@ -224,11 +224,11 @@ func CountAttention(ctx context.Context, pool db.TxBeginner, caller Caller, env 
 		if err != nil {
 			return err
 		}
-		if !filter.All && !filter.AllAgents && len(filter.Agents) == 0 && len(filter.ViewAgents) == 0 {
+		if !filter.All && len(filter.Agents) == 0 {
 			return ErrDenied
 		}
 		const countsSQL = `SELECT (` + attentionQuestionsCountSQL + `), (` + attentionHoldsCountSQL + `), (` + attentionFailedTurnsCountSQL + `)`
-		return tx.QueryRow(ctx, countsSQL, env, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents).Scan(&result.QuestionCount, &result.HoldCount, &result.FailedTurnCount)
+		return tx.QueryRow(ctx, countsSQL, env, filter.All, filter.Agents).Scan(&result.QuestionCount, &result.HoldCount, &result.FailedTurnCount)
 	})
 	if err != nil {
 		return AttentionCounts{}, hideMissing(err)

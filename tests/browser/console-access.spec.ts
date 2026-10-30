@@ -12,17 +12,17 @@ const now = "2026-10-14T00:00:00Z";
 
 const catalog = [
   { resource_type: "assignments", id: "assignments.create", name: "Manage access", description: "Manage members and access.", scope_types: ["organization"], assignment_levels: ["organization"], api_key_assignable: false },
-  { resource_type: "agents", id: "agents.use", name: "Use agents", description: "Use assigned agents.", scope_types: ["agent"], assignment_levels: ["environment"], api_key_assignable: true },
+  { resource_type: "sessions", id: "sessions.create", name: "Create sessions", description: "Create sessions for assigned agents.", scope_types: ["agent"], assignment_levels: ["environment"], api_key_assignable: true },
   { resource_type: "sessions", id: "sessions.read", name: "View all sessions", description: "Read all sessions.", scope_types: ["agent"], assignment_levels: ["environment"], api_key_assignable: true },
   { resource_type: "secrets", id: "secrets.rotate", name: "Manage secrets", description: "Manage secrets.", scope_types: ["environment"], assignment_levels: ["environment"], api_key_assignable: true },
 ];
 const role = (id: string, name: string, permissions: string[], builtin: string | null, extra: Record<string, unknown> = {}) =>
   ({ id, name, description: `${name} description`, builtin_key: builtin, permissions, assignment_levels: [permissions.includes("assignments.create") ? "organization" : "environment"], api_key_assignable: !permissions.includes("assignments.create"), grant_count: 0, group_count: 0, updated_at: now, revision: 1, ...extra });
 const roles = [
-  role("role-user", "Agent user", ["agents.use"], "agent_user", { grant_count: 1 }),
+  role("role-user", "Agent user", ["sessions.create"], "agent_user", { grant_count: 1 }),
   role("role-viewer", "Session viewer", ["sessions.read"], "session_viewer", { grant_count: 1 }),
   role("role-admin", "Access administrator", ["assignments.create"], "access_administrator", { grant_count: 1 }),
-  role("role-ops", "Agent and secrets operator", ["agents.use", "secrets.rotate"], null, { grant_count: 1 }),
+  role("role-ops", "Agent and secrets operator", ["sessions.create", "secrets.rotate"], null, { grant_count: 1 }),
 ];
 const grant = (id: string, subject: Record<string, unknown>, roleID: string, extra: Record<string, unknown> = {}) => {
   const r = roles.find(x => x.id === roleID)!;
@@ -65,9 +65,9 @@ async function fixture(page: Page) {
     else if (path === "/api/invitations") json = { invitations: [] };
     else if (path === "/api/members/m-local/permissions") json = { user_id: "local", membership_id: "m-local", is_owner: true, status: "active", notice: "", scopes: [
       { type: "organization", project: "", environment: "", permissions: ["assignments.create"], sources: [{ kind: "role_grant", subject_kind: "member", grant_id: "grant-admin", role_name: "Access administrator", permissions: ["assignments.create"] }] },
-      { type: "agent", project: projectID, environment: environmentID, agent: "assistant", permissions: ["agents.use", "secrets.rotate"], sources: [
-        { kind: "role_grant", subject_kind: "group", group_id: "group-release", group_name: "Release team", grant_id: "grant-ops", role_name: "Agent and secrets operator", permissions: ["agents.use", "secrets.rotate"] },
-        { kind: "role_grant", subject_kind: "all_members", grant_id: "grant-all", role_name: "Agent user", permissions: ["agents.use"] },
+      { type: "agent", project: projectID, environment: environmentID, agent: "assistant", permissions: ["sessions.create", "secrets.rotate"], sources: [
+        { kind: "role_grant", subject_kind: "group", group_id: "group-release", group_name: "Release team", grant_id: "grant-ops", role_name: "Agent and secrets operator", permissions: ["sessions.create", "secrets.rotate"] },
+        { kind: "role_grant", subject_kind: "all_members", grant_id: "grant-all", role_name: "Agent user", permissions: ["sessions.create"] },
       ] },
     ] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: "not found" } } }); return; }
@@ -104,7 +104,7 @@ test("roles list the organization's roles first and lock the ones Helmr maintain
   await expect(rows.filter({ hasText: "Agent user" }).getByRole("img", { name: "Managed by Helmr" })).toBeVisible();
   await expect(rows.filter({ hasText: "Access administrator" })).toContainText("Organization");
   await rows.filter({ hasText: "Agent user" }).getByRole("link", { name: "Agent user" }).click();
-  await expect(page.getByRole("checkbox", { name: "Use agents" })).toBeDisabled();
+  await expect(page.getByRole("checkbox", { name: "Create sessions" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Save role" })).toHaveCount(0);
   await page.getByRole("button", { name: "Role actions", exact: true }).click();
   const menu = page.getByRole("menu", { name: "Role actions" });
@@ -127,30 +127,27 @@ test("a member's effective access names where each permission comes from", async
   await toggle.click();
   const permissions = page.locator(`#${await toggle.getAttribute("aria-controls")}`);
   // Every permission at this scope is named; ones not granted say so.
-  await expect(permissions.getByRole("listitem").filter({ hasText: "Use agents" })).not.toContainText("not granted");
+  await expect(permissions.getByRole("listitem").filter({ hasText: "Create sessions" })).not.toContainText("not granted");
   await expect(permissions.getByRole("listitem").filter({ hasText: "Manage secrets" })).not.toContainText("not granted");
-  await expect(permissions.getByText("View all sessions")).toHaveCount(0);
-  await permissions.getByRole("button", { name: "Show 1 area with no access", exact: true }).click();
   await expect(permissions.getByRole("listitem").filter({ hasText: "View all sessions" })).toContainText("(not granted)");
   await expect(agentRow).toContainText("All members");
   await expect(page.getByRole("row").filter({ hasText: "Organization" })).toContainText("Direct");
 });
 
-test("granting to all members offers only agent use on selected agents", async ({ page }) => {
+test("granting to all members offers normal roles and all-agent targets", async ({ page }) => {
   const state = await fixture(page);
   await page.goto("/settings/groups/all-members");
   await page.getByRole("button", { name: "Group actions", exact: true }).click();
   await expect(page.getByRole("menu", { name: "Group actions" }).getByRole("menuitem")).toHaveText(["Grant access"]);
   await page.getByRole("menu", { name: "Group actions" }).getByRole("menuitem", { name: "Grant access", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Grant access" });
-  await expect(dialog).toContainText("3 roles can’t be granted to all members.");
   await dialog.getByRole("combobox", { name: "Role" }).click();
-  await expect(page.getByRole("option")).toHaveCount(1);
+  await expect(page.getByRole("option")).toHaveCount(4);
   await page.getByRole("option", { name: "Agent user" }).click();
-  await expect(dialog.getByRole("button", { name: "All, including new ones" })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "All, including new ones" })).toBeVisible();
   await dialog.getByRole("checkbox", { name: "triage" }).check();
   // All members already use assistant through this role, so the grant adds triage to that assignment.
-  await expect(dialog).toContainText("All members can use agents on assistant, triage in Production.");
+  await expect(dialog).toContainText("All members can create sessions on assistant, triage in Production.");
   await expect(dialog).toContainText("All members already has this role on assistant.");
   await dialog.getByRole("button", { name: "Grant access" }).click();
   await expect(dialog).toBeHidden();
@@ -161,9 +158,9 @@ test("granting to all members offers only agent use on selected agents", async (
 test("an agent's access lists who can use it and adds the agent to an existing assignment", async ({ page }) => {
   const state = await fixture(page);
   await page.goto("/agents/assistant/access");
-  await expect(page.getByRole("checkbox", { name: /Share with all members/ })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: /Share with all members/ })).toHaveCount(0);
   const people = page.getByRole("table");
-  await expect(people.getByRole("row").filter({ hasText: "Second Member" })).toContainText("Use agents · View all sessions");
+  await expect(people.getByRole("row").filter({ hasText: "Second Member" })).toContainText("Create sessions · View all sessions");
   await expect(people.getByRole("row").filter({ hasText: "Second Member" })).toContainText("Direct");
 
   await page.getByRole("button", { name: "Grant access" }).click();
@@ -171,7 +168,7 @@ test("an agent's access lists who can use it and adds the agent to an existing a
   await dialog.getByRole("combobox", { name: "Who" }).click();
   await page.getByRole("option", { name: "Second Member" }).click();
   await dialog.getByRole("combobox", { name: "Role" }).click();
-  // Organization roles and roles without agent permissions don't apply to one agent.
+  // The common dialog offers all environment Roles.
   await expect(page.getByRole("option")).toHaveText(["Agent and secrets operator", "Agent user", "Session viewer"]);
   await page.getByRole("option", { name: "Session viewer" }).click();
   await expect(dialog).toContainText("Second Member already has this role on assistant.");
@@ -181,4 +178,43 @@ test("an agent's access lists who can use it and adds the agent to an existing a
   await expect(dialog).toBeHidden();
   expect(state.posts).toEqual([]);
   expect(state.patches).toEqual([{ path: "/api/role-grants/grant-viewer", body: expect.objectContaining({ role_id: "role-viewer", agents_mode: "selected", agent_ids: [agentID, "agent-2"] }) }]);
+});
+
+for (const selectedRole of ["Access administrator", "Agent and secrets operator"]) {
+  test(`all members can receive ${selectedRole} at its normal scope`, async ({ page }) => {
+    const state = await fixture(page);
+    await page.goto("/settings/groups/all-members");
+    await page.getByRole("button", { name: "Group actions", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Grant access", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Grant access" });
+    await dialog.getByRole("combobox", { name: "Role" }).click();
+    await page.getByRole("option", { name: selectedRole, exact: true }).click();
+    if (selectedRole === "Access administrator") {
+      await expect(dialog).toContainText("across the organization");
+    } else {
+      await dialog.getByRole("button", { name: "All, including new ones" }).click();
+      await expect(dialog).toContainText("on every agent in Production, including new ones");
+      await expect(dialog).toContainText("manage secrets across Production");
+    }
+    await dialog.getByRole("button", { name: "Grant access", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(state.posts).toEqual([expect.objectContaining({ subject: { type: "all_members" }, agents_mode: selectedRole === "Access administrator" ? "none" : "all" })]);
+    expect(state.patches).toEqual([]);
+  });
+}
+
+test("agent access uses the common mixed-role scope summary", async ({ page }) => {
+  const state = await fixture(page);
+  await page.goto("/agents/assistant/access");
+  await page.getByRole("button", { name: "Grant access", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Grant access" });
+  await dialog.getByRole("combobox", { name: "Who" }).click();
+  await page.getByRole("option", { name: "Second Member", exact: true }).click();
+  await dialog.getByRole("combobox", { name: "Role" }).click();
+  await page.getByRole("option", { name: "Agent and secrets operator", exact: true }).click();
+  await expect(dialog).toContainText("create sessions on assistant in Production and manage secrets across Production");
+  await dialog.getByRole("button", { name: "Grant access", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(state.posts).toEqual([expect.objectContaining({ role_id: "role-ops", agent_ids: [agentID], environment_id: environmentUUID })]);
+  expect(state.patches).toEqual([]);
 });

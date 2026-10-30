@@ -34,29 +34,17 @@ func admissionActor(ctx context.Context, tx pgx.Tx, caller Caller, req StartRequ
 		return audit.Evidence{}, audit.Causality{}, ErrDenied
 	}
 	p.SessionID = caller.CredentialID
-	actor, err := audit.Authorized(p, auth.PermissionAgentsUse, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, AgentID: agent.String()})
+	actor, err := audit.Authorized(p, auth.PermissionSessionsCreate, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, AgentID: agent.String()})
 	if err != nil {
 		return audit.Evidence{}, audit.Causality{}, err
 	}
-	if caller.SlackConnectionID == uuid.Nil() {
-		permissions := []auth.Permission{}
-		if req.SessionKey != nil || req.SlackChannelID != nil {
-			permissions = append(permissions, auth.PermissionSessionsCreateKeyed)
+	if req.ComputerID != uuid.Nil() && caller.SlackConnectionID == uuid.Nil() {
+		scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}
+		decisions, allowed := p.Decide(auth.PermissionComputersExecute, scope)
+		if !allowed {
+			return audit.Evidence{}, audit.Causality{}, ErrDenied
 		}
-		if req.ComputerID != uuid.Nil() {
-			permissions = append(permissions, auth.PermissionComputersExecute)
-		}
-		for _, permission := range permissions {
-			scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}
-			if permission == auth.PermissionSessionsCreateKeyed {
-				scope.AgentID = agent.String()
-			}
-			decisions, allowed := p.Decide(permission, scope)
-			if !allowed {
-				return audit.Evidence{}, audit.Causality{}, ErrDenied
-			}
-			actor.Authorization.Checks = append(actor.Authorization.Checks, audit.PermissionEvidence(p, decisions)...)
-		}
+		actor.Authorization.Checks = append(actor.Authorization.Checks, audit.PermissionEvidence(p, decisions)...)
 	}
 	callerAuthentication(&actor, caller)
 	return actor, audit.Causality{}, nil
@@ -117,16 +105,7 @@ func auditOperation(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, c
 		}
 		p.SessionID = caller.CredentialID
 		scope := auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID, AgentID: origin.Agent.String()}
-		if p.HasPermission(permission, scope) {
-			e.Evidence, err = audit.Authorized(p, permission, scope)
-		} else {
-			e.Evidence, err = audit.Authorized(p, auth.PermissionAgentsUse, scope)
-			if origin.mode() == "shared" {
-				e.Authorization.Checks = append(e.Authorization.Checks, audit.SlackThreadCheck{Type: "slack_thread", SessionID: e.SessionID, ThreadID: caller.SlackThreadID, UserID: caller.ID, Result: "passed"})
-			} else {
-				e.Authorization.Checks = append(e.Authorization.Checks, audit.OriginCheck{Type: "session_origin", SessionID: e.SessionID, InitiatorKind: caller.Kind, InitiatorID: caller.ID, Result: "passed"})
-			}
-		}
+		e.Evidence, err = audit.Authorized(p, permission, scope)
 		if err != nil {
 			return err
 		}

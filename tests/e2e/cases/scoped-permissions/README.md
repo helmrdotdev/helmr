@@ -10,14 +10,15 @@ that prepared fixture using the normal authorized deployment workflow. Supply
 verification cleanup, not either restricted execution identity.
 
 Set `HELMR_SCOPED_KEY_A` and `HELMR_SCOPED_KEY_B` to two different Environment keys,
-each granting only `agents.use` in that same Environment. Keep tokens in the normal
+each granting only `sessions.create` in that same Environment. Keep tokens in the normal
 secret surface and outside evidence. Run the prepared project's
 `cases/scoped-permissions/run.ts`. The case never creates credentials, deploys,
 changes a role, starts a host, or modifies infrastructure.
 
 The case asserts distinct native Computers and empty initial guest file state
 across key origins, persistence within the first Session, absence of the `HELMR_API_KEY`
-environment variable, denial of cross-origin read/events/input/Ask answers, denial of shell
+environment variable, denial of create-only read/events/input/Ask answers for both own and other Sessions,
+continuation and answers through the explicit operator permissions, denial of shell
 Computer metadata, and rejection of broad attachment to the scoped Computer.
 The standard verifier records owned IDs, cancels every created Session and deletes
 its Computers on success or failure. Recover recorded fixtures after interruption,

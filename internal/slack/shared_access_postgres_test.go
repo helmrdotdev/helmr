@@ -18,11 +18,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
+func TestSlackSharedConversationUsesExplicitSessionActions(t *testing.T) {
 	f := newSlackAdmissionFixture(t)
 	ctx := t.Context()
 	f.link(t)
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=ARRAY['agents.use']`)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=ARRAY['sessions.create']`)
 	root := slackNow()
 	first := f.newMessage(t, "shared-start", root)
 	if err := admitMessage(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), first); err != nil {
@@ -30,7 +30,7 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 	}
 	var target, thread uuid.UUID
 	if err := f.Pool.QueryRow(ctx, `SELECT session_id,thread_id FROM slack_requests WHERE id=$1 AND status='accepted'`, first).Scan(&target, &thread); err != nil {
-		t.Fatal("Agent use could not start shared work", err)
+		t.Fatal("Create permission could not start shared work", err)
 	}
 	var shared bool
 	if err := f.Pool.QueryRow(ctx, `SELECT origin_slack_connection_id=$2 FROM sessions WHERE id=$1`, target, f.publication).Scan(&shared); err != nil || !shared {
@@ -51,7 +51,7 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 	}
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'local','personal','user',$4),($1,uuidv7(),$3,'local','shared','user',$4)`, f.Environment, f.Session, target, f.User)
 	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), f.Environment)
-	if err != nil || attention.HoldCount != 1 || len(attention.Holds) != 1 || attention.Holds[0].SessionID != f.Session {
+	if !errors.Is(err, session.ErrDenied) || attention.HoldCount != 0 || len(attention.Holds) != 0 {
 		t.Fatalf("shared creator gained personal attention access: %+v %v", attention, err)
 	}
 	dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM session_holds WHERE environment_id=$1`, f.Environment)
@@ -61,7 +61,7 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 	if err := f.Pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
 		t.Fatal(err)
 	}
-	member := dbtest.GrantMember(t, f.Pool, org, peer, &f.Environment, "agents.use")
+	member := dbtest.GrantMember(t, f.Pool, org, peer, &f.Environment, "sessions.send")
 	f.linkActor(t, peer, "peer")
 	// Losing the creator's grant does not transfer administrative authority or stop
 	// an independently authorized participant from using the shared connection.
@@ -84,12 +84,7 @@ func TestSlackSharedConversationRequiresUseWithoutManagement(t *testing.T) {
 	if err := f.Pool.QueryRow(ctx, `SELECT status='accepted' AND session_id=$2 FROM slack_requests WHERE id=$1`, second, target).Scan(&accepted); err != nil || !accepted {
 		t.Fatal("eligible peer could not continue", accepted, err)
 	}
-	// A private Console session projected into Slack remains private to its owner
-	// and explicitly assigned operators; the shared route does not convert it.
-	input := session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "copied-private", Input: json.RawMessage(`[]`)}
-	if _, err := session.RouteSlackInput(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, session.Caller{Kind: "user", ID: peer, SlackThreadID: f.thread, CredentialID: uuid.NewV7()}, input); !errors.Is(err, session.ErrDenied) {
-		t.Fatal("private projection became shared", err)
-	}
+
 	dbtest.MustExec(t, ctx, f.Pool, `DELETE FROM role_grants WHERE member_id=$1`, member)
 	denied := send("shared-revoked")
 	if err := f.Pool.QueryRow(ctx, `SELECT status='rejected' AND error='permission_denied' FROM slack_requests WHERE id=$1`, denied).Scan(&accepted); err != nil || !accepted {
@@ -209,13 +204,11 @@ func TestSharedRuntimeDiscoveryKeepsRelationshipsAndScheduleIsolation(t *testing
 	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, other); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("unrelated shared runtime read", err)
 	}
-	// Eligible participants can control their shared conversation without an
-	// administrative grant over other personal conversations.
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=ARRAY['agents.use']`)
+	// Slack participation does not imply control; explicit actions apply to the Agent.
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE roles SET permissions=ARRAY['sessions.close','sessions.cancel','sessions.resume']`)
 	for _, operation := range []auth.Permission{auth.PermissionSessionsClose, auth.PermissionSessionsCancel, auth.PermissionSessionsResume} {
 		err := db.RunTx(ctx, f.Pool, func(tx pgx.Tx) error {
 			human := session.UserCaller(f.Principal(t))
-			human.SlackThreadID = f.thread
 			return session.AuthorizeSessionOperation(ctx, tx, human, f.Environment, f.Session, operation)
 		})
 		if err != nil {

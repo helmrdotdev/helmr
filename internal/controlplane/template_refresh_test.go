@@ -64,7 +64,7 @@ func TestTemplateRefreshHTTPPermissionsAndObservation(t *testing.T) {
 		t.Fatalf("receipt %s: %v", response.Body.String(), err)
 	}
 	readPath := "/v1/templates/fixture-computer/builds/" + build.ImageBuildID + "?deployment_id=" + build.DeploymentID
-	response = h.request(t, http.MethodGet, readPath, issue(auth.PermissionAgentsUse), "")
+	response = h.request(t, http.MethodGet, readPath, issue(auth.PermissionSessionsCreate), "")
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("Use-only build read HTTP %d: %s", response.Code, response.Body.String())
 	}

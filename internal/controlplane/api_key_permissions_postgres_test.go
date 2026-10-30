@@ -178,7 +178,7 @@ func newAPIKeyHTTPPostgresFixture(t *testing.T, keyCount int) apiKeyHTTPPostgres
 	for _, permission := range []string{"api_keys.read", "api_keys.create", "api_keys.revoke"} {
 		fixture.grant(t, orgID, ownerUser, environmentID, permission)
 	}
-	roleID, _ := dbtest.CreateRole(t, fixture.pool, orgID, "agents.use", "sessions.read", "sessions.send", "deployments.publish", "deployments.promote", "computers.execute", "secrets.create")
+	roleID, _ := dbtest.CreateRole(t, fixture.pool, orgID, "sessions.create", "sessions.read", "sessions.send", "deployments.publish", "deployments.promote", "computers.execute", "secrets.create")
 	dbtest.MustExec(t, t.Context(), fixture.pool, `UPDATE roles SET name='Machine workload' WHERE id=$1`, roleID)
 	keyRows := make([][]any, 0, keyCount+1)
 	for index := range keyCount {

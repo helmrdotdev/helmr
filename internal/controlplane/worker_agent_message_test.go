@@ -73,7 +73,7 @@ func TestWorkerAgentMessageReceiptSurvivesReattachment(t *testing.T) {
 	if _, err := f.Pool.Exec(t.Context(), `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User); err != nil {
 		t.Fatal(err)
 	}
-	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, f.Principal(t), auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, testAPIKeyInput{Name: "SDK messages", RolePermissions: []auth.Permission{auth.PermissionAgentsUse, auth.PermissionSessionsSend}})
+	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, f.Principal(t), auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, testAPIKeyInput{Name: "SDK messages", RolePermissions: []auth.Permission{auth.PermissionSessionsCreate, auth.PermissionSessionsSend}})
 	if err != nil {
 		t.Fatal(err)
 	}

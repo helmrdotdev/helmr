@@ -211,15 +211,15 @@ func askKey(t *testing.T, f fixture, permissions []string) session.Caller {
 func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 	f, a, id, _ := askFixture(t)
 	reader := askKey(t, f, []string{"sessions.read"})
-	answerer := askKey(t, f, []string{"agents.use", "sessions.answer"})
-	scoped := askKey(t, f, []string{"agents.use"})
+	answerer := askKey(t, f, []string{"sessions.answer"})
+	scoped := askKey(t, f, []string{"sessions.create"})
 	otherEnv := uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#123456',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1`, f.env, otherEnv); err != nil {
 		t.Fatal(err)
 	}
 	otherFixture := f
 	otherFixture.env = otherEnv
-	cross := askKey(t, otherFixture, []string{"agents.use", "sessions.answer"})
+	cross := askKey(t, otherFixture, []string{"sessions.answer"})
 
 	req := session.AskAnswerRequest{EnvironmentID: f.env, SessionID: f.session, TurnID: a.TurnID, AskID: id, AnswerID: "response", Answer: json.RawMessage(`""`)}
 	for _, caller := range []session.Caller{reader, scoped, cross, {Kind: "session", ID: f.session}} {
@@ -249,7 +249,7 @@ func TestAskKeyAuthorityAndAttribution(t *testing.T) {
 }
 func TestAskKeyExpiresWhileWaitingForSession(t *testing.T) {
 	f, a, id, _ := askFixture(t)
-	key := askKey(t, f, []string{"agents.use", "sessions.answer"})
+	key := askKey(t, f, []string{"sessions.answer"})
 	var expires time.Time
 	if err := f.pool.QueryRow(t.Context(), `UPDATE api_keys SET expires_at=clock_timestamp()+interval '1 second' WHERE id=$1 RETURNING expires_at`, key.ID).Scan(&expires); err != nil {
 		t.Fatal(err)

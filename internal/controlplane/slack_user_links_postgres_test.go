@@ -78,11 +78,11 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				t.Fatal(err)
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE org_id=$1 AND user_id=$2`, org, f.User)
-			f.SetPermissions(t, "agents.use", "sessions.read", "sessions.send", "agent_connections.configure")
+			f.SetPermissions(t, "sessions.create", "sessions.read", "sessions.send", "agent_connections.configure")
 			if err = store.StoreAppCredentials(t.Context(), f.Principal(t), registration, slack.AppCredentials{ClientID: "client", ClientSecret: "private-secret", SigningSecret: "secret"}); err != nil {
 				t.Fatal(err)
 			}
-			f.SetPermissions(t, "agents.use", "deployments.publish", "deployments.promote", "sessions.read", "sessions.send", "computers.execute", "secrets.create", "api_keys.create")
+			f.SetPermissions(t, "sessions.create", "deployments.publish", "deployments.promote", "sessions.read", "sessions.send", "computers.execute", "secrets.create", "api_keys.create")
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET app_registration_id=$2 WHERE id=$1`, installation, registration)
 			cfg := completeServerConfig(t)
 			cfg.AppOrigin = &url.URL{Scheme: "https", Host: "console.example.test"}

@@ -153,7 +153,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	}
 	call("/v1/sessions/"+first.SessionID+"/enqueue", otherKey.Raw, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
 	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/enqueue", first.SessionID), owner, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
-	starter, sender := issue(auth.PermissionAgentsUse), issue(auth.PermissionAgentsUse, auth.PermissionSessionsSend)
+	starter, sender := issue(auth.PermissionSessionsCreate), issue(auth.PermissionSessionsCreate, auth.PermissionSessionsSend)
 	call("/v1/sessions", issue(auth.PermissionSessionsRead), input, http.StatusForbidden)
 	call("/v1/sessions/"+first.SessionID+"/enqueue", starter, `{"input":[{"type":"text","text":"4"}]}`, http.StatusForbidden)
 	call("/v1/sessions/"+first.SessionID+"/enqueue", sender, `{"input":[{"type":"text","text":"4"}]}`, http.StatusOK)
@@ -214,7 +214,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	keyResumePath := "/v1/sessions/" + first.SessionID + "/resume"
 	resumeBody := fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"explicit-recovery"}`, systemHold.String())
 	userResumeBody := fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"explicit-recovery"}`, userHold.String())
-	resumer := issue(auth.PermissionAgentsUse, auth.PermissionSessionsResume)
+	resumer := issue(auth.PermissionSessionsCreate, auth.PermissionSessionsResume)
 	call(resumePath, "", resumeBody, http.StatusUnauthorized)
 	call(resumePath, viewer, resumeBody, http.StatusForbidden)
 	call(keyResumePath, starter, resumeBody, http.StatusForbidden)
@@ -338,7 +338,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(closer))
 	call(keyClosePath, closer, closeBody, http.StatusUnauthorized)
 
-	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "SDK composition", RolePermissions: []auth.Permission{auth.PermissionAgentsUse, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsCreateKeyed, auth.PermissionSessionsResume, auth.PermissionSessionsInterrupt, auth.PermissionSessionsClose, auth.PermissionSessionsCancel}})
+	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "SDK composition", RolePermissions: []auth.Permission{auth.PermissionSessionsCreate, auth.PermissionSessionsRead, auth.PermissionSessionsSend, auth.PermissionSessionsCreate, auth.PermissionSessionsResume, auth.PermissionSessionsInterrupt, auth.PermissionSessionsClose, auth.PermissionSessionsCancel}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	call(cancelPath, viewer, cancelBody, http.StatusForbidden)
 	call(cancelPath, owner, `{}`, http.StatusBadRequest)
 	call(cancelPath, owner, `{"idempotency_key":"cancel-retained","caller_id":"fake"}`, http.StatusBadRequest)
-	call("/v1/sessions/"+first.SessionID+"/cancel", issue(auth.PermissionAgentsUse), cancelBody, http.StatusForbidden)
+	call("/v1/sessions/"+first.SessionID+"/cancel", issue(auth.PermissionSessionsCreate), cancelBody, http.StatusForbidden)
 	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/cancel", first.SessionID), owner, cancelBody, http.StatusForbidden)
 	var cancellation api.SessionCancelReceipt
 	if err := json.Unmarshal(call(cancelPath, owner, cancelBody, http.StatusOK), &cancellation); err != nil || cancellation.ID == "" || cancellation.SessionID != first.SessionID || cancellation.Status != "accepted" {

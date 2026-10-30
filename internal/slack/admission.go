@@ -231,7 +231,7 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 				if slackroute.IsDirectMessage(p.message.Channel) {
 					destination = nil
 				}
-				caller := slackCaller(p.human, uuid.Nil())
+				caller := session.UserCaller(p.human)
 				if destination != nil {
 					caller.SlackConnectionID = p.route.Target.ConnectionID
 				}
@@ -249,7 +249,7 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 				if err = resumeNativeStops(ctx, auditPolicy, core, id, p); err != nil {
 					return err
 				}
-				receipt, err = session.RouteSlackInput(ctx, auditPolicy, core, trust, slackCaller(p.human, p.thread), session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
+				receipt, err = session.RouteSlackInput(ctx, auditPolicy, core, trust, session.UserCaller(p.human), session.EnqueueRequest{EnvironmentID: p.route.Target.EnvironmentID, SessionID: p.session, IdempotencyKey: "slack:" + id.String(), Input: input})
 			}
 			if err != nil {
 				return err
@@ -345,7 +345,7 @@ func applyThreadInput(ctx context.Context, tx pgx.Tx, id uuid.UUID, p *messageAd
 	if !unexpired {
 		return true, rejectMessage(ctx, tx, id, "gesture_expired")
 	}
-	if err := session.AuthorizeSessionOperation(ctx, tx, slackCaller(p.human, p.thread), p.route.Target.EnvironmentID, p.session, auth.PermissionSessionsInterrupt); err != nil {
+	if err := session.AuthorizeSessionOperation(ctx, tx, session.UserCaller(p.human), p.route.Target.EnvironmentID, p.session, auth.PermissionSessionsInterrupt); err != nil {
 		if errors.Is(err, session.ErrDenied) {
 			return true, rejectMessage(ctx, tx, id, "permission_denied")
 		}

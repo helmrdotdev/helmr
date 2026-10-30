@@ -70,7 +70,7 @@ type UsageAgent struct {
 }
 
 // usageTurnsHead + span + usageTurnsTail reads the caller's Turns admitted within `span` of the read, plus
-// any still running, as `turns_in`. The window is $9 days back from the read;
+// any still running, as `turns_in`. The window is $4 days back from the read;
 // the previous window is the same length before it. A Turn belongs to the
 // window it was admitted in for counts and run lengths (`current`, `seconds`);
 // its work is the part of its run inside each window (`work`, `previous_work`),
@@ -88,16 +88,16 @@ const usageTurnsTail = ` OR t.status='running')
  ), turns_in AS MATERIALIZED (
   SELECT r.*,
    CASE WHEN started_at IS NULL THEN 0 ELSE extract(epoch FROM ended-started_at) END AS seconds,
-   created_at>=now()-make_interval(days => $9::int) AS current,
-   CASE WHEN started_at IS NULL THEN 0 ELSE GREATEST(0,extract(epoch FROM LEAST(ended,now())-GREATEST(started_at,now()-make_interval(days => $9::int)))) END AS work,
-   CASE WHEN started_at IS NULL THEN 0 ELSE GREATEST(0,extract(epoch FROM LEAST(ended,now()-make_interval(days => $9::int))-GREATEST(started_at,now()-make_interval(days => 2*$9::int)))) END AS previous_work
+   created_at>=now()-make_interval(days => $4::int) AS current,
+   CASE WHEN started_at IS NULL THEN 0 ELSE GREATEST(0,extract(epoch FROM LEAST(ended,now())-GREATEST(started_at,now()-make_interval(days => $4::int)))) END AS work,
+   CASE WHEN started_at IS NULL THEN 0 ELSE GREATEST(0,extract(epoch FROM LEAST(ended,now()-make_interval(days => $4::int))-GREATEST(started_at,now()-make_interval(days => 2*$4::int)))) END AS previous_work
   FROM turns_raw r
  ) `
 
 const (
-	usageWindow   = `make_interval(days => $9::int)`
-	usageTwoSpans = `make_interval(days => 2*$9::int)`
-	usageWeekSpan = `make_interval(days => $9::int+7)`
+	usageWindow   = `make_interval(days => $4::int)`
+	usageTwoSpans = `make_interval(days => 2*$4::int)`
+	usageWeekSpan = `make_interval(days => $4::int+7)`
 )
 
 const usageWorkSQL = usageTurnsHead + usageTwoSpans + usageTurnsTail + `SELECT COALESCE(sum(work),0),COALESCE(sum(previous_work),0),
@@ -106,7 +106,7 @@ const usageWorkSQL = usageTurnsHead + usageTwoSpans + usageTurnsTail + `SELECT C
 // Each day takes the part of every run that overlaps it, including runs
 // admitted before the window.
 const usageDailySQL = usageTurnsHead + usageTwoSpans + usageTurnsTail + `SELECT d,sum(GREATEST(0,extract(epoch FROM LEAST(t.ended,now()-make_interval(days => d))-GREATEST(t.started_at,now()-make_interval(days => d+1)))))
- FROM generate_series(0,$9::int-1) d JOIN turns_in t ON t.started_at IS NOT NULL AND t.started_at<now()-make_interval(days => d) AND t.ended>now()-make_interval(days => d+1)
+ FROM generate_series(0,$4::int-1) d JOIN turns_in t ON t.started_at IS NOT NULL AND t.started_at<now()-make_interval(days => d) AND t.ended>now()-make_interval(days => d+1)
  GROUP BY d`
 
 // People are active members who started Turns themselves; API keys, other
@@ -125,7 +125,7 @@ const usagePeopleSQL = usageTurnsHead + usageWindow + usageTurnsTail + usagePeop
 
 // Each day counts the distinct people of the seven days ending with it, from
 // one pass over the people active on each day.
-const usageDailyPeopleSQL = usageTurnsHead + usageWeekSpan + usageTurnsTail + usagePeople + `SELECT d,count(DISTINCT p.caller_id) FROM generate_series(0,$9::int-1) d JOIN people p ON p.age BETWEEN d AND d+6 GROUP BY d`
+const usageDailyPeopleSQL = usageTurnsHead + usageWeekSpan + usageTurnsTail + usagePeople + `SELECT d,count(DISTINCT p.caller_id) FROM generate_series(0,$4::int-1) d JOIN people p ON p.age BETWEEN d AND d+6 GROUP BY d`
 
 // Conversations people started work from in the last seven days, matching the
 // weekly people count above them. Direct messages count as one, "D".
@@ -134,10 +134,10 @@ const usageChannelsSQL = usageTurnsHead + usageWindow + usageTurnsTail + `SELECT
  JOIN slack_channel_bindings b ON b.id=st.slack_channel_binding_id
  LEFT JOIN slack_channels n ON n.installation_id=b.installation_id AND n.slack_channel_id=b.slack_channel_id
  WHERE t.created_at>=now()-interval '7 days' AND t.caller_kind='user'
- GROUP BY 1,2 ORDER BY 3 DESC,1 LIMIT $10::int`
+ GROUP BY 1,2 ORDER BY 3 DESC,1 LIMIT $5::int`
 
-const usageRunsSQL = usageTurnsHead + usageWindow + usageTurnsTail + `SELECT count(*) FILTER (WHERE seconds<$10),count(*) FILTER (WHERE seconds>=$10 AND seconds<$11),count(*) FILTER (WHERE seconds>=$11 AND seconds<$12),
- count(*) FILTER (WHERE seconds>=$12 AND seconds<$13),count(*) FILTER (WHERE seconds>=$13),
+const usageRunsSQL = usageTurnsHead + usageWindow + usageTurnsTail + `SELECT count(*) FILTER (WHERE seconds<$5),count(*) FILTER (WHERE seconds>=$5 AND seconds<$6),count(*) FILTER (WHERE seconds>=$6 AND seconds<$7),
+ count(*) FILTER (WHERE seconds>=$7 AND seconds<$8),count(*) FILTER (WHERE seconds>=$8),
  COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY seconds),0),
  count(*) FILTER (WHERE status='completed'),
  count(*) FILTER (WHERE status='completed' AND NOT EXISTS(SELECT 1 FROM turn_asks a WHERE a.environment_id=$1 AND a.session_id=turns_in.session_id AND a.turn_id=turns_in.id))
@@ -162,11 +162,11 @@ func ReadUsage(ctx context.Context, pool db.TxBeginner, caller Caller, env uuid.
 		if err != nil {
 			return err
 		}
-		if !filter.All && !filter.AllAgents && len(filter.Agents) == 0 && len(filter.ViewAgents) == 0 {
+		if !filter.All && len(filter.Agents) == 0 {
 			return ErrDenied
 		}
 		args := func(extra ...any) []any {
-			return append([]any{env, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), days}, extra...)
+			return append([]any{env, filter.All, filter.Agents, days}, extra...)
 		}
 		if err := tx.QueryRow(ctx, usageWorkSQL, args()...).Scan(&result.WorkSeconds, &result.PreviousWorkSeconds, &result.Turns, &result.PreviousTurns); err != nil {
 			return err

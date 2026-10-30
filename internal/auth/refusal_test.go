@@ -25,11 +25,11 @@ func TestPermissionRefusalRetainsEvaluatedScopeAndSubject(t *testing.T) {
 	}
 }
 
-func TestPermissionPrerequisiteRefusalDoesNotInventLaterChecks(t *testing.T) {
+func TestSessionActionRefusalReportsRequestedPermission(t *testing.T) {
 	p := Principal{Kind: PrincipalKindSession, UserID: uuid.NewV7(), OrgID: uuid.NewV7()}
 	scope := Scope{OrgID: p.OrgID, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(), AgentID: uuid.NewV7().String()}
 	checks, ok := p.Evaluate(PermissionSessionsSend, scope)
-	if ok || len(checks) != 1 || checks[0].Permission != PermissionAgentsUse || checks[0].Reason != "no_matching_grant" || checks[0].SubjectUserID != p.UserID {
+	if ok || len(checks) != 1 || checks[0].Permission != PermissionSessionsSend || checks[0].Reason != "no_matching_grant" || checks[0].SubjectUserID != p.UserID {
 		t.Fatal(checks, ok)
 	}
 }

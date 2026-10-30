@@ -454,7 +454,7 @@ func sessionCreationReceipt(ctx context.Context, tx pgx.Tx, caller Caller, env, 
 	} else if err = authorizeStart(ctx, tx, caller, env); err != nil {
 		return nil, err
 	}
-	if err := authorizeTarget(ctx, tx, caller, env, result.SessionID, auth.PermissionSessionsRead); err != nil {
+	if err := authorizeTargetAuthority(ctx, tx, caller, env, result.SessionID, auth.PermissionSessionsCreate); err != nil {
 		return nil, err
 	}
 	if !bytes.Equal(prior, digest[:]) {

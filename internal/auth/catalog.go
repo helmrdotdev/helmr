@@ -25,14 +25,13 @@ const (
 const (
 	PermissionAuditEventsRead           Permission = "audit_events.read"
 	PermissionAgentsRead                Permission = "agents.read"
-	PermissionAgentsUse                 Permission = "agents.use"
+	PermissionSessionsCreate            Permission = "sessions.create"
 	PermissionAgentsDelete              Permission = "agents.delete"
 	PermissionAgentsRestore             Permission = "agents.restore"
 	PermissionAgentConnectionsRead      Permission = "agent_connections.read"
 	PermissionAgentConnectionsConfigure Permission = "agent_connections.configure"
 	PermissionAgentConnectionsDelete    Permission = "agent_connections.delete"
 	PermissionSessionsRead              Permission = "sessions.read"
-	PermissionSessionsCreateKeyed       Permission = "sessions.create_keyed"
 	PermissionSessionsSend              Permission = "sessions.send"
 	PermissionSessionsAnswer            Permission = "sessions.answer"
 	PermissionSessionsResume            Permission = "sessions.resume"
@@ -95,17 +94,16 @@ const (
 var permissionCatalog = []PermissionDefinition{
 	{"audit_events", PermissionAuditEventsRead, "Read audit events", "Read security facts across the assigned organization or environment, including actor identity and IP; does not grant execution content access.", []PermissionScope{ScopeOrganization, ScopeEnvironment}, true, nil},
 	{"agents", PermissionAgentsRead, "Read agents", "List/read the authorized Agent's definition and retained status, including deleted status; not other Agents or full deployment catalogs.", []PermissionScope{ScopeAgent}, true, nil},
-	{"agents", PermissionAgentsUse, "Use agents", "Start ordinary own-origin conversations and perform the established own-session operations; participate in authorized connected shared conversations. Includes only identity/definition needed to use the target Agent.", []PermissionScope{ScopeAgent}, true, nil},
+	{"sessions", PermissionSessionsCreate, "Create sessions", "Create a Session with initial input, an optional key and Slack destination. Returns a creation receipt without granting history or control of the Session.", []PermissionScope{ScopeAgent}, true, nil},
 	{"agents", PermissionAgentsDelete, "Delete agents", "Preview and apply explicit Agent deletion, including its fixed cleanup effects; current-deployment and unsettled-work blockers remain.", []PermissionScope{ScopeAgent}, false, nil},
 	{"agents", PermissionAgentsRestore, "Restore agents", "Preview and restore a deleted Agent identity. Does not restore removed selected grants or Slack connections; broad grants apply again and existing parent Sessions may create children immediately, before another deployment includes the Agent.", []PermissionScope{ScopeAgent}, false, nil},
 	{"agent_connections", PermissionAgentConnectionsRead, "Read agent connections", "Read the Agent's Slack connection status/setup metadata, without credential values.", []PermissionScope{ScopeAgent}, false, nil},
 	{"agent_connections", PermissionAgentConnectionsConfigure, "Configure agent connections", "Register the Agent's connection, replace supplied app credentials and authorize or reauthorize installation through verified OAuth. Does not grant credential export or disconnection.", []PermissionScope{ScopeAgent}, false, nil},
 	{"agent_connections", PermissionAgentConnectionsDelete, "Delete agent connections", "Disconnect the Agent's connection and perform its fixed cleanup.", []PermissionScope{ScopeAgent}, false, nil},
 	{"sessions", PermissionSessionsRead, "Read sessions", "Read/list matching Sessions, Turns, events, Asks, updates and execution history. Includes conversation contents and the existing human delivery-record view.", []PermissionScope{ScopeAgent}, true, nil},
-	{"sessions", PermissionSessionsCreateKeyed, "Create keyed sessions", "Supply a caller-defined Session key or the existing administrative channel identifier on scoped Session creation; also requires agents.use. Does not grant somebody else's origin.", []PermissionScope{ScopeAgent}, true, nil},
-	{"sessions", PermissionSessionsSend, "Send Session input", "Enqueue input or send a message to a matching Session/Turn; also requires agents.use.", []PermissionScope{ScopeAgent}, true, nil},
-	{"sessions", PermissionSessionsAnswer, "Answer Session questions", "Answer an Ask; also requires agents.use.", []PermissionScope{ScopeAgent}, true, nil},
-	{"sessions", PermissionSessionsResume, "Resume sessions", "Resume matching suspended work; also requires agents.use.", []PermissionScope{ScopeAgent}, true, nil},
+	{"sessions", PermissionSessionsSend, "Send Session input", "Enqueue input or send a message to a matching Session/Turn.", []PermissionScope{ScopeAgent}, true, nil},
+	{"sessions", PermissionSessionsAnswer, "Answer Session questions", "Answer an Ask.", []PermissionScope{ScopeAgent}, true, nil},
+	{"sessions", PermissionSessionsResume, "Resume sessions", "Resume matching suspended work.", []PermissionScope{ScopeAgent}, true, nil},
 	{"sessions", PermissionSessionsInterrupt, "Interrupt sessions", "Interrupt the addressed Session/Turn using existing interruption semantics.", []PermissionScope{ScopeAgent}, true, nil},
 	{"sessions", PermissionSessionsCancel, "Cancel sessions", "Cancel the addressed Session using existing cancellation semantics.", []PermissionScope{ScopeAgent}, true, nil},
 	{"sessions", PermissionSessionsClose, "Close sessions", "Inspect the close-scope preview and request Session closure using existing child/settlement constraints.", []PermissionScope{ScopeAgent}, true, nil},

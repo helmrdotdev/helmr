@@ -14,8 +14,8 @@ import (
 
 func TestRolePermissionSetIsCanonicalAndNonempty(t *testing.T) {
 	f := newMachineGrantFixture(t)
-	role := f.role(t, "secrets.create", "agents.use", "agents.use")
-	want := []string{"agents.use", "secrets.create"}
+	role := f.role(t, "secrets.create", "sessions.create", "sessions.create")
+	want := []string{"secrets.create", "sessions.create"}
 	if !slices.Equal(role.Permissions, want) || role.Revision != 1 {
 		t.Fatalf("created Role: %+v", role)
 	}
@@ -29,7 +29,7 @@ func TestRolePermissionSetIsCanonicalAndNonempty(t *testing.T) {
 			t.Fatalf("invalid permission set accepted: %v", err)
 		}
 	}
-	for _, value := range []string{"{}", "{NULL}", "{{agents.use,secrets.create},{agents.use,secrets.create}}"} {
+	for _, value := range []string{"{}", "{NULL}", "{{sessions.create,secrets.create},{sessions.create,secrets.create}}"} {
 		_, err := f.pool.Exec(t.Context(), `UPDATE roles SET permissions=$2::text[] WHERE id=$1`, role.ID, value)
 		var constraint *pgconn.PgError
 		if !errors.As(err, &constraint) || constraint.Code != "23514" {
@@ -41,7 +41,7 @@ func TestRolePermissionSetIsCanonicalAndNonempty(t *testing.T) {
 func TestGrantRevisionAndAuditFollowLogicalMutation(t *testing.T) {
 	f := newMachineGrantFixture(t)
 	ctx := t.Context()
-	role := f.role(t, "agents.use", "secrets.create")
+	role := f.role(t, "sessions.create", "secrets.create")
 	input := f.input(role)
 	input.AgentIDs = []uuid.UUID{f.agent, f.otherAgent}
 	grants, err := org.AssignRole(ctx, f.pool, f.owner, input)
@@ -104,7 +104,7 @@ func TestGrantRevisionAndAuditFollowLogicalMutation(t *testing.T) {
 	if err := f.pool.QueryRow(ctx, `SELECT all_agents FROM role_grants WHERE id=$1`, grant.ID).Scan(&allAgents); err != nil || allAgents {
 		t.Fatalf("Role removal retained all-Agent intent: %t %v", allAgents, err)
 	}
-	if _, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(updated.Revision, 10), Permissions: []string{"agents.use", "secrets.create"}}); !errors.Is(err, org.ErrRoleTarget) {
+	if _, err := org.SavePermissionRole(ctx, f.pool, f.owner, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: strconv.FormatInt(updated.Revision, 10), Permissions: []string{"sessions.create", "secrets.create"}}); !errors.Is(err, org.ErrRoleTarget) {
 		t.Fatalf("Agent capability restored without explicit targets: %v", err)
 	}
 }
@@ -113,7 +113,7 @@ func TestTargetRestrictionRequiresExplicitCleanupBeforeParentTeardown(t *testing
 	for _, parent := range []string{"environment", "organization"} {
 		t.Run(parent, func(t *testing.T) {
 			f := newMachineGrantFixture(t)
-			role := f.role(t, "agents.use")
+			role := f.role(t, "sessions.create")
 			input := f.input(role)
 			// Use a human assignment so key lifecycle restriction is not the subject.
 			input.Subject = org.GrantSubject{Type: "member", MemberID: &f.member.MemberID}
@@ -165,7 +165,7 @@ func TestFirstAgentCapabilityRacesUntargetedAssignment(t *testing.T) {
 		}()
 		go func() {
 			<-start
-			_, err := org.SavePermissionRole(ctx, f.pool, f.admin, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"agents.use", "secrets.create"}})
+			_, err := org.SavePermissionRole(ctx, f.pool, f.admin, role.ID, org.RoleInput{Name: role.Name, ExpectedRevision: "1", Permissions: []string{"sessions.create", "secrets.create"}})
 			edited <- err
 		}()
 		close(start)
@@ -174,7 +174,7 @@ func TestFirstAgentCapabilityRacesUntargetedAssignment(t *testing.T) {
 			t.Fatalf("first Agent capability race: assign=%v edit=%v", assignErr, editErr)
 		}
 		var invalid bool
-		if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM role_grants g JOIN roles r ON r.id=g.role_id WHERE r.id=$1 AND 'agents.use'=ANY(r.permissions))`, role.ID).Scan(&invalid); err != nil || invalid {
+		if err := f.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM role_grants g JOIN roles r ON r.id=g.role_id WHERE r.id=$1 AND 'sessions.create'=ANY(r.permissions))`, role.ID).Scan(&invalid); err != nil || invalid {
 			t.Fatalf("untargeted assignment gained Agent capability: %t %v", invalid, err)
 		}
 	}
@@ -184,7 +184,7 @@ func TestAgentDeletionRacesSelectedAssignment(t *testing.T) {
 	f := newMachineGrantFixture(t)
 	ctx := t.Context()
 	for range 4 {
-		role := f.role(t, "agents.use")
+		role := f.role(t, "sessions.create")
 		agent := uuid.NewV7()
 		dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(id,environment_id,key) VALUES($1,$2,$1::uuid::text)`, agent, f.env)
 		input := f.input(role)

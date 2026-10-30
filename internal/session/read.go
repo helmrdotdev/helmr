@@ -218,7 +218,7 @@ func ListSessions(ctx context.Context, policy auditpolicy.Policy, pool db.TxBegi
 	return result, nil
 }
 
-const sessionReadPredicate = `($2::boolean OR agent_id=ANY($7::uuid[]) OR (origin_slack_connection_id=$8) OR (origin_slack_connection_id IS NULL AND (origin_user_id=$3 OR origin_api_key_id=$4) AND ($5::boolean OR agent_id=ANY($6::uuid[]))))`
+const sessionReadPredicate = `($2::boolean OR agent_id=ANY($3::uuid[]))`
 
 func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter sessionReadScope) (SessionPage, error) {
 	result := SessionPage{Sessions: []SessionView{}}
@@ -237,20 +237,20 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter
 		return result, ErrInvalidInput
 	}
 	rows, err := tx.Query(ctx, `WITH RECURSIVE seeds(id,priority) AS (
- SELECT id,1 FROM sessions WHERE environment_id=$1 AND origin_user_id=$17 AND parent_session_id IS NULL AND requester_session_id IS NULL
- UNION ALL SELECT session_id,2 FROM turns WHERE environment_id=$1 AND caller_kind='user' AND caller_id=$17
- UNION ALL SELECT session_id,2 FROM turn_messages WHERE environment_id=$1 AND caller_kind='user' AND caller_id=$17
- UNION ALL SELECT session_id,3 FROM turn_asks WHERE environment_id=$1 AND answered_by_user_id=$17
+ SELECT id,1 FROM sessions WHERE environment_id=$1 AND origin_user_id=$12 AND parent_session_id IS NULL AND requester_session_id IS NULL
+ UNION ALL SELECT session_id,2 FROM turns WHERE environment_id=$1 AND caller_kind='user' AND caller_id=$12
+ UNION ALL SELECT session_id,2 FROM turn_messages WHERE environment_id=$1 AND caller_kind='user' AND caller_id=$12
+ UNION ALL SELECT session_id,3 FROM turn_asks WHERE environment_id=$1 AND answered_by_user_id=$12
  ), direct AS (
  SELECT id,CASE min(priority) WHEN 1 THEN 'initiated' WHEN 2 THEN 'contributed' ELSE 'answered' END AS relation FROM seeds GROUP BY id
  ), related(id) AS (SELECT id FROM direct UNION SELECT s.id FROM sessions s JOIN related p ON (s.parent_session_id=p.id OR s.requester_session_id=p.id) WHERE s.environment_id=$1)
- SELECT `+sessionViewColumns+`,CASE WHEN $17::uuid IS NULL THEN '' ELSE COALESCE((SELECT relation FROM direct WHERE direct.id=sessions.id),'descendant') END FROM sessions WHERE environment_id=$1 AND ($17::uuid IS NULL OR id IN(SELECT id FROM related)) AND `+sessionReadPredicate+`
- AND ($9::uuid IS NULL OR id<$9) AND ($11::text IS NULL OR key=$11)
- AND (cardinality($12::text[]) IS NULL OR cardinality($12::text[])=0 OR status=ANY($12))
- AND ($13::uuid IS NULL OR parent_session_id=$13) AND ($14::uuid IS NULL OR requester_session_id=$14)
- AND ($15::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$15))
- AND ($16::text[] IS NULL OR agent_id IN (SELECT id FROM agents WHERE environment_id=$1 AND key=ANY($16::text[])))
- ORDER BY id DESC LIMIT $10`, req.EnvironmentID, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent, filter.MCPAgentKeys, nullableID(req.RelatedUserID))
+ SELECT `+sessionViewColumns+`,CASE WHEN $12::uuid IS NULL THEN '' ELSE COALESCE((SELECT relation FROM direct WHERE direct.id=sessions.id),'descendant') END FROM sessions WHERE environment_id=$1 AND ($12::uuid IS NULL OR id IN(SELECT id FROM related)) AND `+sessionReadPredicate+`
+ AND ($4::uuid IS NULL OR id<$4) AND ($6::text IS NULL OR key=$6)
+ AND (cardinality($7::text[]) IS NULL OR cardinality($7::text[])=0 OR status=ANY($7))
+ AND ($8::uuid IS NULL OR parent_session_id=$8) AND ($9::uuid IS NULL OR requester_session_id=$9)
+ AND ($10::text = '' OR agent_id=(SELECT a.id FROM agents a WHERE a.environment_id=$1 AND a.key=$10))
+ AND ($11::text[] IS NULL OR agent_id IN (SELECT id FROM agents WHERE environment_id=$1 AND key=ANY($11::text[])))
+ ORDER BY id DESC LIMIT $5`, req.EnvironmentID, filter.All, filter.Agents, nullableID(req.Before), req.Limit+1, req.Key, req.Statuses, nullableID(req.ParentSessionID), nullableID(req.RequesterSessionID), req.Agent, filter.MCPAgentKeys, nullableID(req.RelatedUserID))
 	if err != nil {
 		return result, err
 	}
@@ -358,7 +358,7 @@ func redactSessionRelations(ctx context.Context, tx pgx.Tx, caller Caller, env u
 	}
 	// Human/API reads reuse the list predicate and resolve every related ID in
 	// one query. Runtime reads retain their stronger relationship checker.
-	if caller.Kind != "session" && caller.SlackThreadID == uuid.Nil() {
+	if caller.Kind != "session" {
 		ids := make([]uuid.UUID, 0)
 		add := func(id uuid.UUID) {
 			if _, ok := cache[id]; !ok {
@@ -383,7 +383,7 @@ func redactSessionRelations(ctx context.Context, tx pgx.Tx, caller Caller, env u
 			if err != nil {
 				return err
 			}
-			rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND `+sessionReadPredicate+` AND id=ANY($9::uuid[])`, env, filter.All, filter.User, filter.Key, filter.AllAgents, filter.Agents, filter.ViewAgents, nullableID(filter.SharedConnection), ids)
+			rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND `+sessionReadPredicate+` AND id=ANY($4::uuid[])`, env, filter.All, filter.Agents, ids)
 			if err != nil {
 				return err
 			}

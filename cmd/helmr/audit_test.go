@@ -73,7 +73,7 @@ func TestAuditCLIUsesSelectedCredentialsAndBoundedNavigation(t *testing.T) {
 
 func TestAuditCLIPreservesPublicAndAdminEvidence(t *testing.T) {
 	id, host := uuid.NewV7().String(), uuid.NewV7().String()
-	public := `{"id":"` + id + `","recorded_at":"2026-10-01T12:00:00Z","action":"session.content_read","outcome":"succeeded","actor_kind":"platform_service","restricted":["actor_identity","authorization"],"authorization":{"decision":"allowed","checks":[{"type":"session_origin","session_id":"` + id + `","initiator_kind":"user","initiator_id":"` + id + `","result":"passed"}],"platform_authority":false},"details":{"sequence":4}}`
+	public := `{"id":"` + id + `","recorded_at":"2026-10-01T12:00:00Z","action":"session.content_read","outcome":"succeeded","actor_kind":"platform_service","restricted":["actor_identity","authorization"],"authorization":{"decision":"allowed","checks":[{"type":"permission","subject_user_id":"` + id + `","permission":"sessions.read","scope":{"org_id":"` + id + `","environment_id":"` + id + `","agent_id":"` + id + `"},"result":"passed"}],"platform_authority":false},"details":{"sequence":4}}`
 	admin := `{"id":"` + id + `","recorded_at":"2026-10-01T12:00:00Z","action":"session.content_read","outcome":"succeeded","actor_worker_host_id":"` + host + `","source_ip":"10.20.30.40","runtime_generation":17,"authorization":{"decision":"allowed","checks":[{"type":"host_assignment","worker_host_id":"` + host + `","result":"passed"}]},"details":{"sequence":4,"generation":17}}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		event := public

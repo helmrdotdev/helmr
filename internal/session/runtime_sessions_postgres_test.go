@@ -100,7 +100,7 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	ownedTurn := owned.enqueue(t, "owned")
 	requestedTurn := independent.enqueue(t, "requested")
 	unrelated.enqueue(t, "unrelated")
-	// Agent use does not authorize runtime access to an unrelated personal Session.
+	// Human permissions do not authorize runtime access to an unrelated personal Session.
 	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: unrelated.session, IdempotencyKey: "sent", Input: json.RawMessage(`[]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatal(err)
 	}

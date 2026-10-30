@@ -49,7 +49,7 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'unrelated')`, otherUser)
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, uuid.NewV7(), orgID, otherUser)
-	dbtest.GrantMember(t, f.pool, orgID, otherUser, &f.env, "agents.use")
+	dbtest.GrantMember(t, f.pool, orgID, otherUser, &f.env, "sessions.create")
 	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, session.Caller{Kind: "user", ID: otherUser, CredentialID: uuid.NewV7()}, session.EnqueueRequest{EnvironmentID: f.env, SessionID: child, IdempotencyKey: "unrelated", Input: []byte(`[{"type":"text","text":"unrelated"}]`)}); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("unauthorized caller learned deletion state: %v", err)
 	}

@@ -222,10 +222,6 @@ func DecodeAuthorization(data []byte) (Authorization, error) {
 			c = &MembershipAttributeCheck{}
 		case "runtime_binding":
 			c = &RuntimeBindingCheck{}
-		case "session_origin":
-			c = &OriginCheck{}
-		case "slack_thread":
-			c = &SlackThreadCheck{}
 		case "principal_currency":
 			c = &PrincipalCurrencyCheck{}
 		case "host_assignment":

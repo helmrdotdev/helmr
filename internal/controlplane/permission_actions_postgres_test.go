@@ -57,7 +57,7 @@ func TestOrganizationActionsAuthorizeIndependentlyHTTP(t *testing.T) {
 			member := f.member(t, organization, recipient, "member")
 			var role api.PermissionRole
 			var group api.PermissionGroup
-			request(t, "POST", "/api/roles", owner, encode(map[string]any{"name": permission + " role", "permissions": []string{"agents.use"}}), "", 201, &role)
+			request(t, "POST", "/api/roles", owner, encode(map[string]any{"name": permission + " role", "permissions": []string{"sessions.create"}}), "", 201, &role)
 			request(t, "POST", "/api/groups", owner, encode(map[string]any{"name": permission + " group"}), "", 201, &group)
 			input := api.RoleGrantInput{Subject: api.GrantSubject{Type: "member", MemberID: new(member.String())}, RoleID: role.ID, ProjectID: new(project.String()), EnvironmentID: new(environment.String()), AgentsMode: "selected", AgentIDs: []string{agent.String()}, ExpectedRoleRevision: role.Revision}
 			var grants api.RoleGrantsResponse

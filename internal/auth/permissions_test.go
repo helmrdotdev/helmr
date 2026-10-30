@@ -59,20 +59,11 @@ func TestEveryPermissionIsExactAndScopeBounded(t *testing.T) {
 				}
 				grant := PermissionGrant{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, AgentID: scope.AgentID, Permission: permission}
 				p := Principal{Kind: PrincipalKindSession, OrgID: org, IsOwner: true, Grants: []PermissionGrant{grant}}
-				// The three execution actions intentionally require use on the same Agent.
-				if SessionExecutionOperation(permission) {
-					if p.HasPermission(permission, scope) {
-						t.Fatal("execution without Agent use")
-					}
-					use := grant
-					use.Permission = PermissionAgentsUse
-					p.Grants = append(p.Grants, use)
-				}
 				if !p.HasPermission(permission, scope) {
 					t.Fatal("dedicated permission denied")
 				}
 				for _, other := range AllPermissions() {
-					if other != permission && !(SessionExecutionOperation(permission) && other == PermissionAgentsUse) && p.HasPermission(other, scope) {
+					if other != permission && p.HasPermission(other, scope) {
 						t.Errorf("implied %s", other)
 					}
 				}
@@ -134,36 +125,23 @@ func TestEveryPermissionIsExactAndScopeBounded(t *testing.T) {
 	}
 }
 
-func TestExecutionRequiresMatchingAgentUse(t *testing.T) {
+func TestSessionActionsDoNotRequireCreate(t *testing.T) {
 	org := uuid.NewV7()
-	env := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()}
-	first := env
-	first.AgentID = uuid.NewV7().String()
-	second := uuid.NewV7().String()
+	scope := Scope{OrgID: org, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(), AgentID: uuid.NewV7().String()}
 	for _, action := range []Permission{PermissionSessionsSend, PermissionSessionsAnswer, PermissionSessionsResume} {
-		p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{
-			{ProjectID: env.ProjectID, EnvironmentID: env.EnvironmentID, AgentID: first.AgentID, Permission: action},
-			{ProjectID: env.ProjectID, EnvironmentID: env.EnvironmentID, AgentID: second, Permission: PermissionAgentsUse},
-		}}
-		if p.HasPermission(action, first) {
-			t.Fatal("borrowed use from another Agent")
+		p := Principal{Kind: PrincipalKindSession, OrgID: org, Grants: []PermissionGrant{{ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, AgentID: scope.AgentID, Permission: action}}}
+		if !p.HasPermission(action, scope) || p.HasPermission(PermissionSessionsCreate, scope) {
+			t.Fatal("action requires or implies creation")
 		}
-		p.Grants[1].AgentID = first.AgentID
-		if !p.HasPermission(action, first) {
-			t.Fatal("matching assignments failed to combine")
-		}
-		p.Grants = p.Grants[1:]
-		if p.HasPermission(action, first) {
-			t.Fatal("use implied session action")
+		p.Grants[0].Permission = PermissionSessionsCreate
+		if p.HasPermission(action, scope) {
+			t.Fatal("creation implies existing Session action")
 		}
 	}
 }
 
 func TestStandardRolesContainOnlyExplicitCompatibleActions(t *testing.T) {
 	roles := StandardRoles()
-	if len(roles) != 17 {
-		t.Fatalf("roles: %d", len(roles))
-	}
 	keys := map[string]bool{}
 	for _, role := range roles {
 		if keys[role.Key] {
@@ -186,8 +164,15 @@ func TestStandardRolesContainOnlyExplicitCompatibleActions(t *testing.T) {
 		if organization && workload {
 			t.Fatalf("mixed scope role %s", role.Key)
 		}
-		if role.Key == "agent_user" && (len(role.Permissions) != 1 || role.Permissions[0] != PermissionAgentsUse) {
-			t.Fatal("Agent User must only allow use")
+		if role.Key == "agent_user" {
+			for _, action := range []Permission{PermissionSessionsCreate, PermissionSessionsRead, PermissionSessionsSend, PermissionSessionsAnswer, PermissionSessionsResume, PermissionSessionsInterrupt, PermissionSessionsCancel, PermissionSessionsClose} {
+				if !seen[action] {
+					t.Fatalf("Agent User lacks %s", action)
+				}
+			}
+			if seen[PermissionComputersExecute] || seen[PermissionAgentConnectionsConfigure] {
+				t.Fatal("Agent User includes infrastructure management")
+			}
 		}
 	}
 }
