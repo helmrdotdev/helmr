@@ -1,5 +1,5 @@
 import { Show } from "solid-js";
-import { ChoiceCards, Field, TextInput } from "./Field";
+import { Field, TextInput } from "./Field";
 import { Select } from "./Select";
 
 const units = [
@@ -10,19 +10,24 @@ const units = [
 ];
 const maxSeconds = 9223372036854775807n;
 
-type Mode = "never" | "duration";
+const periods = [
+  { value: "7d", label: "7 days" },
+  { value: "30d", label: "30 days" },
+  { value: "90d", label: "90 days" },
+  { value: "never", label: "Never expire" },
+  { value: "custom", label: "Custom" },
+] as const;
 
-const MODES: { value: Mode; label: string; description: string }[] = [
-  { value: "never", label: "Never expire", description: "Session history is kept until the session is deleted." },
-  { value: "duration", label: "Keep for a duration", description: "History older than this is removed and cannot be restored. Open sessions keep their history." },
-];
+type Mode = (typeof periods)[number]["value"];
 
 export type HistoryRetentionDraft = { mode: Mode; amount: string; unit: number };
 
 export function historyRetentionDraft(policy: string): HistoryRetentionDraft {
   if (policy === "never") return { mode: "never", amount: "30", unit: 86400 };
   const unit = units.find(unit => unit.suffix === policy.slice(-1))!;
-  return { mode: "duration", amount: policy.slice(0, -1), unit: unit.seconds };
+  const amount = policy.slice(0, -1);
+  const preset = periods.find(period => period.value === policy);
+  return { mode: preset?.value ?? "custom", amount, unit: unit.seconds };
 }
 
 export function historyRetentionSeconds(policy: string): bigint | null {
@@ -33,6 +38,7 @@ export function historyRetentionSeconds(policy: string): bigint | null {
 
 export function historyRetentionPolicy(draft: HistoryRetentionDraft): string {
   if (draft.mode === "never") return "never";
+  if (draft.mode !== "custom") return draft.mode;
   if (/^[1-9][0-9]*$/.test(draft.amount)) {
     const seconds = BigInt(draft.amount) * BigInt(draft.unit);
     if (seconds <= maxSeconds) {
@@ -46,15 +52,19 @@ export function historyRetentionPolicy(draft: HistoryRetentionDraft): string {
 export function HistoryRetentionFields(props: { value: HistoryRetentionDraft; onChange: (value: HistoryRetentionDraft) => void }) {
   return (
     <div>
-      <ChoiceCards
-        label="History retention"
-        hideLabel
-        name="history-retention"
-        value={props.value.mode}
-        options={MODES}
-        onChange={mode => props.onChange({ ...props.value, mode })}
-      />
-      <Show when={props.value.mode === "duration"}>
+      <Field label="History retention" hint={props.value.mode === "never"
+        ? "Session history is kept until the session is deleted."
+        : "History older than this is removed and cannot be restored. Open sessions keep their history."}>
+        <Select
+          value={props.value.mode}
+          options={periods}
+          onChange={mode => props.onChange(mode === "custom"
+            ? { ...props.value, mode }
+            : historyRetentionDraft(mode))}
+          minWidth="100%"
+        />
+      </Field>
+      <Show when={props.value.mode === "custom"}>
         <div class="flex gap-2">
           <Field label="Retention period" class="flex-1">
             <TextInput
