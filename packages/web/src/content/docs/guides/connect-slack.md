@@ -27,14 +27,14 @@ how Slack conversations map to Sessions, see [Slack](/docs/concepts/slack).
 ## Create the Agent's Slack app
 
 1. In the Console, select the Environment, open **Agents**, choose the Agent,
-   and open its **Slack** tab. The tab walks you through the setup in four
+   and open its **Slack** tab. The tab walks you through the setup in three
    numbered steps.
 2. Choose **Connect Slack**. Each Agent has one Slack connection per
    Environment.
 3. Choose **Create app in Slack**. Slack opens with an app manifest already
    filled in: the app name, bot user, the scopes Helmr needs, and the delivery settings for this connection. The manifest is also shown in the
    Console if you prefer to paste it.
-4. Create the app, then choose **I created the app** in the Console. From the
+4. Create the app. The credential form is shown with the manifest. From the
    app's **Basic Information** page in Slack, copy the **Client ID**,
    **Client Secret**. For HTTP callbacks, also copy the **Signing Secret**.
    For Socket Mode, generate an **App-Level Token** with `connections:write`

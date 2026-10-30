@@ -552,9 +552,10 @@ test("members and pending invitations share one table told apart by status", asy
   await expect(rows).toHaveCount(4);
   await expect(rows.nth(1)).toContainText("Local");
   await expect(rows.nth(1)).toContainText("you");
-  // Owners cannot be removed; ownership changes separately from ordinary roles.
+  // Owners cannot be removed; ownership changes on its own page, separately from ordinary roles.
   await page.getByRole("button", { name: "Actions for Local", exact: true }).click();
-  await expect(page.getByRole("menuitem")).toHaveText(["View related work", "Grant access", "Change ownership", "Revoke sessions"]);
+  await expect(page.getByRole("menuitem")).toHaveText(["Manage ownership", "View related work", "Grant access", "Revoke sessions"]);
+  await expect(page.getByRole("menuitem", { name: "Manage ownership", exact: true })).toHaveAttribute("href", "/settings/ownership");
   await page.keyboard.press("Escape");
   await expect(rows.nth(1).getByRole("cell").nth(3)).toHaveText("Active");
   await expect(rows.nth(2).getByRole("cell").nth(0)).toHaveText("Second Member");
@@ -619,46 +620,6 @@ test("invitations that fail to load leave the members and offer Retry", async ({
   await expect(notice).toHaveCount(0);
   await expect(page.getByRole("table").getByRole("row")).toHaveCount(4);
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
-});
-
-test("ownership changes detect a conflict and retry with a newly chosen value", async ({ page }) => {
-  await fixture(page, true);
-  let isOwner = false;
-  const writes: unknown[] = [];
-  await page.route("**/api/members**", async route => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    const member = () => ({ user_id: "member-2", membership_id: "membership-2", display_name: "Second Member", email: "second@example.test", is_owner: isOwner, status: "active", created_at: now, updated_at: now });
-    if (path === "/api/members/membership-2/ownership" && request.method() === "PUT") {
-      const body = request.postDataJSON() as { is_owner: boolean; expected_is_owner: boolean };
-      writes.push(body);
-      if (body.expected_is_owner !== isOwner) return route.fulfill({ status: 409, json: { error: { code: "conflict", message: "ownership changed" } } });
-      isOwner = body.is_owner;
-      return route.fulfill({ json: member() });
-    }
-    if (path !== "/api/members" || request.method() !== "GET") return route.fallback();
-    return route.fulfill({ json: { members: [
-      { user_id: "local", membership_id: "membership-local", display_name: "Local", email: "local@example.test", is_owner: true, status: "active", created_at: now, updated_at: now }, member(),
-    ] } });
-  });
-  await page.goto(`/settings/members?${scope}`);
-  await page.getByRole("button", { name: "Actions for Second Member", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Change ownership", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Change ownership" });
-  await expect(dialog).toContainText("it does not grant workload permissions");
-  await dialog.getByRole("combobox").click();
-  await page.getByRole("option", { name: "Owner", exact: true }).click();
-  isOwner = true; // Another owner changes the member while this dialog is open.
-  await dialog.getByRole("button", { name: "Change ownership", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toHaveText("This member's role changed. Check it and try again.");
-  await expect(dialog.getByRole("button", { name: "Change ownership", exact: true })).toBeDisabled();
-  // Refresh now shows ownership is already set. Make a new explicit choice.
-  await dialog.getByRole("combobox").click();
-  await page.getByRole("option", { name: "Member", exact: true }).click();
-  await dialog.getByRole("button", { name: "Change ownership", exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  expect(writes).toEqual([{ is_owner: true, expected_is_owner: false }, { is_owner: false, expected_is_owner: true }]);
-  await expect(page.getByRole("table").getByRole("row").nth(2).getByRole("cell").nth(2)).toHaveText("—");
 });
 
 test("removing a member and revoking an invitation each confirm before the request", async ({ page }) => {
@@ -773,27 +734,41 @@ test("without email delivery, inviting members is unavailable and says why", asy
   await expect(page.getByText("Showing 2 members, 1 invitation", { exact: true })).toBeVisible();
 });
 
-for (const withRole of [false, true]) {
-  test(`an access administrator creates a key ${withRole ? "with a selected Agent Role" : "without access"}`, async ({ page }) => {
-    const state = await fixture(page, true);
-    await page.goto(`/settings/api-keys?${scope}`);
-    await page.getByRole("button", { name: "Generate API key in Production", exact: true }).click();
-    const form = page.getByRole("dialog", {name:"Generate API key"});
-    await form.getByLabel("Name", {exact:true}).fill("Automation");
-    await expect(form.getByRole("combobox",{name:"Role",exact:true})).toContainText("No access");
-    if (withRole) {
-      await form.getByRole("combobox",{name:"Role",exact:true}).click();
-      await page.getByRole("option",{name:"Session viewer",exact:true}).click();
-      await form.getByRole("button",{name:"Generate key",exact:true}).click();
-      await expect(form).toContainText("Choose a role and its targets");
-      expect(state.apiKeyRequests).toHaveLength(0);
-      await form.getByRole("checkbox",{name:"assistant",exact:true}).check();
-    }
-    await form.getByRole("button",{name:"Generate key",exact:true}).click();
-    await expect(page.getByRole("dialog",{name:"API key generated"})).toBeVisible();
-    expect(state.apiKeyRequests).toEqual([{name:"Automation",expires_in_days:null,...(withRole ? {role:{role_id:"viewer",expected_role_revision:7,agents_mode:"selected",agent_ids:["agent-1"]}} : {})}]);
-  });
-}
+test("an access administrator must choose a role for a new key", async ({ page }) => {
+  const state = await fixture(page, true);
+  await page.goto(`/settings/api-keys?${scope}`);
+  await page.getByRole("button", { name: "Generate API key in Production", exact: true }).click();
+  const form = page.getByRole("dialog", {name:"Generate API key"});
+  await form.getByLabel("Name", {exact:true}).fill("Automation");
+  await form.getByRole("combobox",{name:"Role",exact:true}).click();
+  await expect(page.getByRole("option",{name:/No access/})).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await form.getByRole("button",{name:"Generate key",exact:true}).click();
+  await expect(form).toContainText("Choose a role and its targets");
+  await form.getByRole("combobox",{name:"Role",exact:true}).click();
+  await page.getByRole("option",{name:"Session viewer",exact:true}).click();
+  await form.getByRole("button",{name:"Generate key",exact:true}).click();
+  await expect(form).toContainText("Choose a role and its targets");
+  expect(state.apiKeyRequests).toHaveLength(0);
+  await form.getByRole("checkbox",{name:"assistant",exact:true}).check();
+  await form.getByRole("button",{name:"Generate key",exact:true}).click();
+  await expect(page.getByRole("dialog",{name:"API key generated"})).toBeVisible();
+  expect(state.apiKeyRequests).toEqual([{name:"Automation",expires_in_days:null,role:{role_id:"viewer",expected_role_revision:7,agents_mode:"selected",agent_ids:["agent-1"]}}]);
+});
+
+test("an issuer who can assign but not read roles or assignments creates a key without a role", async ({ page }) => {
+  const state = await fixture(page);
+  await page.route(url => isAuthenticationPath(url.pathname), route => route.fulfill({ json: authenticationResponse(new URL(route.request().url()).pathname, { user_id: "local", display_name: "Local", org_id: "org", membership_id: "membership-local", is_owner: false, permissions: ["assignments.create", "projects.read", "environments.read"], permission_scopes: [{ project: projectID, environment: environmentID, permissions: ["api_keys.read", "api_keys.create"] }], admin: false, organization_required: false, project_required: false, email_delivery: true }) }));
+  await page.goto(`/settings/api-keys?${scope}`);
+  await page.getByRole("button", { name: "Generate API key in Production", exact: true }).click();
+  const form = page.getByRole("dialog", {name:"Generate API key"});
+  await form.getByLabel("Name", {exact:true}).fill("Automation");
+  await expect(form.getByRole("combobox",{name:"Role",exact:true})).toHaveCount(0);
+  await expect(form).toContainText("This key will have no workload access. An access administrator must grant a role before it can be used.");
+  await form.getByRole("button",{name:"Generate key",exact:true}).click();
+  await expect(page.getByRole("dialog",{name:"API key generated"})).toBeVisible();
+  expect(state.apiKeyRequests).toEqual([{name:"Automation",expires_in_days:null}]);
+});
 
 test("secret read permission alone offers no creation action in an empty environment", async ({ page }) => {
   await fixture(page);
@@ -826,7 +801,7 @@ test("secret create permission remains usable when reading secrets is denied", a
   expect(state.secretWrites).toEqual([{ path: `${base}/secrets`, body: { secret: "WRITE_ONLY", value: "synthetic-value", idempotency_key: expect.any(String) } }]);
 });
 
-test("member suspension, resumption and session revocation require confirmation",async({page})=>{
+test("member suspension and session revocation confirm with their own text while resumption runs directly",async({page})=>{
  await fixture(page,true);
  let status="active";const writes:string[]=[];
  await page.route("**/api/members**",async route=>{
@@ -836,11 +811,18 @@ test("member suspension, resumption and session revocation require confirmation"
  return route.fallback();
  });
  await page.goto(`/settings/members?${scope}`);
- for(const [label,action] of [["Suspend member","suspend"],["Resume member","resume"],["Revoke sessions","revoke-sessions"]]){
+ for(const [label,action,text] of [["Suspend member","suspend","cannot use it until resumed"],["Revoke sessions","revoke-sessions","must sign in again"]] as const){
  await page.getByRole("button",{name:"Actions for Second Member",exact:true}).click();await page.getByRole("menuitem",{name:label,exact:true}).click();
- const dialog=page.getByRole("dialog",{name:label,exact:true});await expect(dialog).toBeVisible();expect(writes).not.toContain(`/api/members/membership-2/${action}`);
- await dialog.getByRole("button",{name:"Confirm",exact:true}).click();await expect(dialog).toHaveCount(0);
+ const dialog=page.getByRole("dialog",{name:label,exact:true});await expect(dialog).toContainText(text);await expect(dialog).toContainText("linked Slack identities");expect(writes).not.toContain(`/api/members/membership-2/${action}`);
+ await dialog.getByRole("button",{name:label,exact:true}).click();await expect(dialog).toHaveCount(0);
  expect(writes).toContain(`/api/members/membership-2/${action}`);
+ if(action==="suspend"){
+ await expect(page.getByRole("table").getByRole("row").nth(1)).toContainText("Suspended");
+ await page.getByRole("button",{name:"Actions for Second Member",exact:true}).click();await page.getByRole("menuitem",{name:"Resume member",exact:true}).click();
+ await expect(page.getByRole("dialog")).toHaveCount(0);
+ await expect.poll(()=>writes).toContain("/api/members/membership-2/resume");
+ await expect(page.getByRole("table").getByRole("row").nth(1)).toContainText("Active");
+ }
  }
 });
 

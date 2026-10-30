@@ -60,7 +60,7 @@ export function GroupDetail() {
       title={missing() ? "Group not found" : name()}
       breadcrumb={[{ href: "/settings/groups", label: "Groups" }]}
       badge={<Show when={isAll()}><ManagedMark title={ALL_MEMBERS_NOTE} /></Show>}
-      subtitle={isAll() ? "Everyone in the organization, including people who join later. Only agent use on selected agents can be granted here." : undefined}
+      subtitle={isAll() ? "Everyone in the organization, including people who join later." : undefined}
       menu={allowed() && !missing() && (isAll() || group()) ? groupMenu({ all: isAll(), membersLoaded: !!members.data, can: permission => hasPermission(me.data, permission), grant: () => setGranting(true), add: () => setAdding(true), rename: () => setRenaming(true), remove: () => setDeleting(true) }).concat(isAll() ? [] : auditItem({ target: id(), target_kind: "permission_group" })) : undefined}
       menuLabel="Group actions"
     />

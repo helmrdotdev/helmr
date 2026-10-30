@@ -207,7 +207,6 @@ for (const configure of [false, true]) {
 
     connection = { id: "connection", registration_id: "registration", installation_id: null, status: "setup_incomplete", transport: "http", credentials_configured: false };
     await page.reload();
-    await panel.getByRole("button", { name: "I created the app", exact: true }).click();
     await expect(panel.getByLabel("Client ID", { exact: true })).toBeEnabled({ enabled: configure });
     await expect(page.getByRole("button", { name: "Discard setup", exact: true })).toBeDisabled();
 

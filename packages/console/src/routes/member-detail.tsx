@@ -1,5 +1,5 @@
 import { A, useNavigate, useParams } from "@solidjs/router";
-import { assignableRoles, ChangeRoleDialog, memberMenu, RemoveMemberDialog, type OwnershipChoice } from "./members";
+import { memberMenu, RemoveMemberDialog } from "./members";
 import { Tag } from "../ui/Tag";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
@@ -10,7 +10,7 @@ import { GroupMemberRemovalImpact } from "../features/access/GrantRemovalImpact"
 import { hasPermission } from "../lib/auth";
 import { loadError } from "../lib/error";
 import { useMe } from "../lib/me";
-import { listMembers, memberResourceID, updateMemberOwnership } from "../lib/members";
+import { listMembers } from "../lib/members";
 import { useScope } from "../lib/scope";
 import { getMemberPermissions, groupHref, listGrants, listGroups, listRoles, permissionName, resourceLabel, resourceRank, roleHref, setGroupMember, type MemberPermissions, type MemberPermissionSource, type PermissionDefinition, type PermissionGroup } from "../lib/permissions";
 import { Icon } from "../ui/Icon";
@@ -180,7 +180,6 @@ export function MemberDetail() {
   const missing = () => canManage() && !!members.data && !member();
   const [tab, setTab] = createSignal<Tab>("effective");
   const [granting, setGranting] = createSignal(false);
-  const [changingOwnership, setChangingOwnership] = createSignal(false);
   const [removing, setRemoving] = createSignal(false);
   const navigate = useNavigate();
   const [leaving, setLeaving] = createSignal<PermissionGroup>();
@@ -201,7 +200,7 @@ export function MemberDetail() {
       subtitle={member()?.email && member()?.email !== name() ? member()?.email : undefined}
       menu={member()?.status === "active" ? memberMenu({
         grant: hasPermission(me.data, "assignments.create") ? () => setGranting(true) : undefined,
-        changeOwnership: canManage() && me.data?.is_owner ? () => setChangingOwnership(true) : undefined,
+        ownership: me.data?.is_owner === true,
         remove: !member()?.is_owner && hasPermission(me.data, "members.remove") ? () => setRemoving(true) : undefined,
       }).concat(auditItem({ actor: member()!.user_id })) : undefined}
       menuLabel="Member actions"
@@ -240,11 +239,6 @@ export function MemberDetail() {
         </TabPanel>
       </Show>
     </Show>
-    <Show when={changingOwnership() && member()}>{m => <ChangeRoleDialog member={m()} roles={assignableRoles(me.data?.is_owner, self())} onClose={() => setChangingOwnership(false)} onSave={async (role: OwnershipChoice) => {
-      if ((role === "owner") === m().is_owner) return;
-      try { await updateMemberOwnership(memberResourceID(m()), role === "owner", m().is_owner); }
-      finally { await cache.invalidateQueries({ queryKey: ["members"] }); }
-    }} />}</Show>
     <Show when={removing() && member()}>{m => <RemoveMemberDialog member={m()} onClose={() => setRemoving(false)} onRemoved={async () => { await cache.invalidateQueries({ queryKey: ["members"] }); navigate("/settings/members"); }} />}</Show>
     <Show when={granting()}><GrantAccessDialog recipient={{ kind: "member", id: id(), name: name() }} onClose={() => setGranting(false)} /></Show>
     <Show when={leaving()}>
