@@ -52,7 +52,6 @@ func (s *Server) sessionSlackDelivery(w http.ResponseWriter, r *http.Request) {
 		page["next_cursor"] = strconv.FormatInt(rows[len(rows)-1].Sequence, 10)
 	}
 	writeJSON(w, http.StatusOK, page)
-	return
 }
 func (s *Server) writeSlackDeliveryError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, audit.ErrCapture) {
