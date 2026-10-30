@@ -163,7 +163,7 @@ function slackFixture(req: IncomingMessage, res: ServerResponse, url: URL, backe
     return true;
   }
   // Writes succeed without changing the fixture; authorizing "returns" here.
-  if (/\/agents\/[^/]+\/slack\//.test(path) || /\/slack-delivery\/[^/]+\/(check|abandon)$/.test(path) || (path.startsWith("/api/slack/user-links/") && req.method === "DELETE")) {
+  if (/\/agents\/[^/]+\/slack\//.test(path) || (path.startsWith("/api/slack/user-links/") && req.method === "DELETE")) {
     if (path.endsWith("/authorize")) json(res, 200, { redirect_url: "/" });
     else { res.statusCode = 204; res.end(); }
     return true;
@@ -263,15 +263,15 @@ function deliveryPosts() {
   const post = (tail: number, fields: Record<string, unknown>) => ({
     id: id(tail), turn_id: null, sequence: 1, role: "intermediate", continuation_ordinal: 0, status: "uncertain",
     text: "Agent progress that may already be in Slack", payload_expired_at: null, created_at: ago(3), desired_revision: 2,
-    confirmed_revision: 0, publication_revision: 2, method: "chat.postMessage", attempt_id: id(795), message_ts: null,
-    root_known: true, opening: false, stream_status: "none", check_paused_at: now(), disposed_at: null, disposed_by: null,
-    error: "history_no_match", ...fields,
+    confirmed_revision: 0, method: "chat.postMessage", attempt_id: id(795), message_ts: null,
+    root_known: true, opening: false, stream_status: "none", disposed_at: null,
+    error: "delivery_outcome_unknown", ...fields,
   });
   return [
-    post(791, { role: "response", sequence: 2, error: "history_page_limit", text: "Final answer: 3 duplicate tickets merged." }),
-    post(792, { role: "question", sequence: 3, status: "failed", check_paused_at: null, error: "channel_not_found", text: "Which Slack channel should urgent escalations go to?" }),
-    post(793, { sequence: 4, disposed_at: ago(2), disposed_by: "local", confirmed_revision: 1, text: "Stopped after partial confirmation" }),
-    post(794, { role: "request_feedback", sequence: 5, status: "suppressed", attempt_id: null, check_paused_at: null, error: null, root_known: false, text: "Acknowledged your request" }),
-    post(796, { sequence: 6, status: "failed", attempt_id: null, check_paused_at: null, payload_expired_at: ago(1), text: "" }),
+    post(791, { role: "response", sequence: 2, error: "history_attempt_limit", status: "failed", disposed_at: ago(1), text: "Final answer: 3 duplicate tickets merged." }),
+    post(792, { role: "question", sequence: 3, status: "failed", error: "channel_not_found", text: "Which Slack channel should urgent escalations go to?" }),
+    post(793, { sequence: 4, status: "failed", disposed_at: ago(2), confirmed_revision: 1, text: "Partial confirmation retained" }),
+    post(794, { role: "request_feedback", sequence: 5, status: "suppressed", attempt_id: null, error: null, root_known: false, text: "Acknowledged your request" }),
+    post(796, { sequence: 6, status: "failed", attempt_id: null, payload_expired_at: ago(1), text: "" }),
   ];
 }

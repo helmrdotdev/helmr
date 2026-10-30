@@ -64,10 +64,10 @@ export function unlinkSlackUser(link: SlackUserLink): Promise<void> {
 export type SlackDeliveryPost = {
   id: string; turn_id: string | null; sequence: number; role: string; continuation_ordinal: number;
   status: string; text: string; payload_expired_at: string | null; created_at: string;
-  desired_revision: number; confirmed_revision: number; publication_revision: number;
+  desired_revision: number; confirmed_revision: number;
   method: string | null; attempt_id: string | null; message_ts: string | null;
-  root_known: boolean; opening: boolean; stream_status: string; check_paused_at: string | null;
-  disposed_at: string | null; disposed_by: string | null; error: string | null;
+  root_known: boolean; opening: boolean; stream_status: string;
+  disposed_at: string | null; error: string | null;
 };
 function sessionDeliveryPath(address: import("./sessions").SessionAddress): string {
   return `/api/projects/${encodeURIComponent(address.projectID)}/environments/${encodeURIComponent(address.environmentID)}/sessions/${encodeURIComponent(address.sessionID)}/slack-delivery`;
@@ -75,7 +75,4 @@ function sessionDeliveryPath(address: import("./sessions").SessionAddress): stri
 export function listSlackDelivery(address: import("./sessions").SessionAddress, cursor?: string): Promise<{ posts: SlackDeliveryPost[]; next_cursor?: string }> {
   const query = new URLSearchParams({ limit: "50" }); if (cursor) query.set("cursor", cursor);
   return request(`${sessionDeliveryPath(address)}?${query.toString()}`);
-}
-export function recoverSlackDelivery(address: import("./sessions").SessionAddress, post: SlackDeliveryPost, action: "check" | "abandon"): Promise<void> {
-  return postJson(`${sessionDeliveryPath(address)}/${encodeURIComponent(post.id)}/${action}`, { attempt_id: post.attempt_id, publication_revision: post.publication_revision });
 }

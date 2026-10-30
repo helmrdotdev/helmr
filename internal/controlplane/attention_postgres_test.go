@@ -310,7 +310,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=true WHERE user_id=$1`, f.User)
 	f.SetPermissions(t, "agent_connections.read", "sessions.read", "sessions.send", "api_keys.create")
 	stillOwner := h.session(t, f.User, org)
-	f.SetPermissions(t, "sessions.create", "sessions.read", "sessions.send", "api_keys.create")
+	f.SetPermissions(t, "sessions.create", "sessions.read", "sessions.send", "sessions.answer", "api_keys.create")
 	if w := h.request(t, http.MethodGet, path, stillOwner, ""); w.Code != http.StatusOK || bytes.Contains(w.Body.Bytes(), []byte("slack_reauthorization")) {
 		t.Fatalf("withdrawn owner: %d %s", w.Code, w.Body.String())
 	}

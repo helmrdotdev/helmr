@@ -944,7 +944,7 @@ column slack_posts.confirmed_stream_text text not null default ''::text
 column slack_posts.continuation_ordinal integer not null default 0
 column slack_posts.created_at timestamp with time zone not null default clock_timestamp()
 column slack_posts.delivery_disposed_at timestamp with time zone
-column slack_posts.delivery_disposed_by_user_id uuid
+column slack_posts.delivery_disposed_through_seq bigint
 column slack_posts.desired_revision bigint not null default 1
 column slack_posts.environment_id uuid not null
 column slack_posts.error text
@@ -967,7 +967,6 @@ column slack_posts.recipient_team_id text
 column slack_posts.recipient_user_id text
 column slack_posts.reconciliation_cursor text not null default ''::text
 column slack_posts.reconciliation_pages integer not null default 0
-column slack_posts.reconciliation_paused_at timestamp with time zone
 column slack_posts.request_id uuid
 column slack_posts.role text not null
 column slack_posts.seq bigint not null
@@ -1895,7 +1894,6 @@ constraint role_grant_agents f FOREIGN KEY (grant_id, environment_id) REFERENCES
 constraint role_grant_agents p PRIMARY KEY (grant_id, agent_id)
 constraint role_grants c CHECK ((num_nonnulls(member_id, group_id, api_key_id) + all_members::integer) = 1)
 constraint role_grants c CHECK (NOT all_agents OR environment_id IS NOT NULL)
-constraint role_grants c CHECK (NOT all_members OR environment_id IS NOT NULL AND NOT all_agents)
 constraint role_grants c CHECK (api_key_id IS NULL OR environment_id IS NOT NULL)
 constraint role_grants c CHECK (revision > 0)
 constraint role_grants f FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
@@ -2120,7 +2118,7 @@ constraint slack_link_requests f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint slack_link_requests p PRIMARY KEY (id)
 constraint slack_method_limits f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
 constraint slack_method_limits p PRIMARY KEY (installation_id, method)
-constraint slack_posts c CHECK ((delivery_disposed_at IS NULL) = (delivery_disposed_by_user_id IS NULL))
+constraint slack_posts c CHECK ((delivery_disposed_at IS NULL) = (delivery_disposed_through_seq IS NULL))
 constraint slack_posts c CHECK ((payload IS NULL) = (payload_expired_at IS NOT NULL))
 constraint slack_posts c CHECK ((recipient_team_id IS NULL) = (recipient_user_id IS NULL))
 constraint slack_posts c CHECK ((role <> ALL (ARRAY['intermediate'::text, 'response'::text, 'question'::text])) OR turn_id IS NOT NULL)
@@ -2133,6 +2131,7 @@ constraint slack_posts c CHECK (attempt_count >= 0)
 constraint slack_posts c CHECK (confirmed_revision >= 0 AND confirmed_revision <= desired_revision)
 constraint slack_posts c CHECK (continuation_ordinal >= 0)
 constraint slack_posts c CHECK (delivery_disposed_at IS NULL OR closed_at IS NOT NULL)
+constraint slack_posts c CHECK (delivery_disposed_through_seq >= 0)
 constraint slack_posts c CHECK (desired_revision > 0)
 constraint slack_posts c CHECK (inflight_revision > 0 AND inflight_revision <= desired_revision)
 constraint slack_posts c CHECK (message_ts <> ''::text)
@@ -2162,7 +2161,6 @@ constraint slack_posts c CHECK (status <> 'posted'::text OR message_ts IS NOT NU
 constraint slack_posts c CHECK (status = ANY (ARRAY['pending'::text, 'sending'::text, 'posted'::text, 'uncertain'::text, 'failed'::text, 'suppressed'::text]))
 constraint slack_posts c CHECK (stream_status = ANY (ARRAY['none'::text, 'open'::text, 'stopped'::text, 'uncertain'::text]))
 constraint slack_posts c CHECK (suppressed_revision >= 0 AND suppressed_revision <= desired_revision)
-constraint slack_posts f FOREIGN KEY (delivery_disposed_by_user_id) REFERENCES users(id)
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, request_id) REFERENCES slack_requests(environment_id, session_id, id)
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, thread_source_id) REFERENCES slack_thread_sources(environment_id, session_id, id)
 constraint slack_posts f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)

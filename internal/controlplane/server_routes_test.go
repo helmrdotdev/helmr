@@ -285,7 +285,6 @@ POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/clo
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/enqueue
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/interrupt
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/resume
-POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks/{askID}/answer
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/interrupt
 POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/messages

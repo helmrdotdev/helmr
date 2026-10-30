@@ -508,7 +508,7 @@ func TestSlackDeliveryWorkerSuppressesBlockedTailWhenConnectionAuthorityEnds(t *
 				t.Fatal(err)
 			}
 			tail := f.post(t, 2, "tail", "lifecycle", nil)
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET reconciliation_paused_at=clock_timestamp() WHERE id=$1;
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET next_attempt_at=clock_timestamp()+interval '1 day' WHERE id=$1;
  UPDATE slack_posts SET post_key='chain',continuation_ordinal=1 WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, first, tail)
 			switch reason {
 			case "connection-revoked":
@@ -526,7 +526,7 @@ func TestSlackDeliveryWorkerSuppressesBlockedTailWhenConnectionAuthorityEnds(t *
 				t.Fatal(err)
 			}
 			var exact bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT status='uncertain' AND reconciliation_paused_at IS NOT NULL FROM slack_posts WHERE id=$1) AND (SELECT status='suppressed' AND error='publication_authority_unavailable' FROM slack_posts WHERE id=$2)`, first, tail).Scan(&exact); err != nil || !exact {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT status='uncertain' AND delivery_disposed_at IS NULL FROM slack_posts WHERE id=$1) AND (SELECT status='suppressed' AND error='publication_authority_unavailable' FROM slack_posts WHERE id=$2)`, first, tail).Scan(&exact); err != nil || !exact {
 				t.Fatal("blocked tail cleanup hidden", exact, err)
 			}
 		})

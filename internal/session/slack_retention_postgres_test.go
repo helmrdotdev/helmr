@@ -13,7 +13,7 @@ import (
 )
 
 func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
-	for _, kind := range []string{"unprojected", "pending", "sending", "uncertain", "open-stream", "uncertain-stream", "newer-revision", "stopped-stream", "posted", "failed", "suppressed", "abandoned-post", "abandoned-uncertain-stream", "abandoned-open-stream", "abandoned-stopped-stream"} {
+	for _, kind := range []string{"unprojected", "pending", "sending", "uncertain", "open-stream", "uncertain-stream", "newer-revision", "stopped-stream", "posted", "failed", "suppressed", "terminal-post", "terminal-uncertain-stream", "terminal-open-stream", "terminal-stopped-stream"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newAdmissionFixture(t)
 			_, channel := slackRouteFixture(t, f)
@@ -38,17 +38,21 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_posts(id,environment_id,session_id,thread_id,thread_source_id,seq,post_key,role,turn_id,payload,payload_digest,presentation_path)
  SELECT $1,environment_id,session_id,thread_id,id,1,'content','intermediate',$3,$4,$5,'post' FROM slack_thread_sources WHERE session_id=$2`, post, f.session, turn.TurnID, body, digest[:])
 				switch kind {
-				case "abandoned-post", "abandoned-uncertain-stream", "abandoned-open-stream", "abandoned-stopped-stream":
-					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET status='failed',error='delivery_abandoned',closed_at=clock_timestamp(),delivery_disposed_at=clock_timestamp(),delivery_disposed_by_user_id=$2,inflight_method='chat.postMessage',inflight_payload=payload,inflight_digest=payload_digest,inflight_revision=1,inflight_attempt_id=$3 WHERE id=$1`, post, f.user, uuid.NewV7())
-					if kind != "abandoned-post" {
+				case "terminal-post", "terminal-uncertain-stream", "terminal-open-stream", "terminal-stopped-stream":
+					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET status='failed',error='history_no_match',closed_at=clock_timestamp(),delivery_disposed_at=clock_timestamp(),delivery_disposed_through_seq=0,inflight_method='chat.postMessage',inflight_payload=payload,inflight_digest=payload_digest,inflight_revision=1,inflight_attempt_id=$2 WHERE id=$1`, post, uuid.NewV7())
+					if kind != "terminal-post" {
 						state := "uncertain"
-						if kind == "abandoned-open-stream" {
+						if kind == "terminal-open-stream" {
 							state = "open"
 						}
-						if kind == "abandoned-stopped-stream" {
+						if kind == "terminal-stopped-stream" {
 							state = "stopped"
 						}
-						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET presentation_path='stream',recipient_team_id='team',recipient_user_id='human',stream_status=$2,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1`, post, state)
+						if state == "uncertain" {
+							dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET presentation_path='stream',recipient_team_id='team',recipient_user_id='human',stream_status='uncertain',inflight_method='chat.startStream',inflight_stream_text='retained prefix' WHERE id=$1`, post)
+						} else {
+							dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET presentation_path='stream',recipient_team_id='team',recipient_user_id='human',stream_status=$2,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1`, post, state)
+						}
 					}
 				case "sending", "uncertain":
 					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE slack_posts SET status=$2,inflight_method='chat.postMessage',inflight_payload=payload,inflight_digest=payload_digest,inflight_revision=1,inflight_attempt_id=$3,claimed_until=CASE WHEN $2='sending' THEN clock_timestamp()+interval '30 seconds' END WHERE id=$1`, post, kind, uuid.NewV7())
@@ -77,7 +81,7 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 			dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO slack_requests(id,installation_id,request_key,request_digest,source_occurred_at,slack_user_id,payload,expires_at,status,finished_at,user_id,thread_id,thread_source_id,environment_id,session_id,operation,turn_id,source_link_id)
  SELECT $1,c.installation_id,'retained-input',$2,clock_timestamp(),'human',$3,clock_timestamp()+interval '1 minute','accepted',clock_timestamp(),$4,p.thread_id,p.id,p.environment_id,p.session_id,'enqueue',$5,gen_random_uuid() FROM slack_thread_sources p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE p.session_id=$6`, request, digest[:], body, f.user, turn.TurnID, f.session)
 			reconcileHistory(t, f)
-			released := kind == "abandoned-post" || kind == "abandoned-stopped-stream" || kind == "stopped-stream" || kind == "posted" || kind == "failed" || kind == "suppressed"
+			released := kind == "terminal-post" || kind == "terminal-stopped-stream" || kind == "terminal-open-stream" || kind == "terminal-uncertain-stream" || kind == "stopped-stream" || kind == "posted" || kind == "failed" || kind == "suppressed"
 			if got := historyClock(t, f); (got != nil) != released {
 				t.Fatalf("clock released=%v want=%v", got != nil, released)
 			}
@@ -94,6 +98,12 @@ func TestSlackHistoryRetentionWaitsForProjectionAndDelivery(t *testing.T) {
 				t.Fatal("request expiry lost identity or ignored obligation", receiptRetained, err)
 			}
 			if kind != "unprojected" {
+				if kind == "terminal-uncertain-stream" {
+					var unknown bool
+					if err := f.pool.QueryRow(t.Context(), `SELECT stream_status='uncertain' AND delivery_disposed_at IS NOT NULL FROM slack_posts WHERE session_id=$1`, f.session).Scan(&unknown); err != nil || !unknown {
+						t.Fatal("retention fabricated remote stream closure", unknown, err)
+					}
+				}
 				var contentExpired bool
 				if err := f.pool.QueryRow(t.Context(), `SELECT (payload IS NULL)=$2 AND (payload_expired_at IS NOT NULL)=$2 AND post_key='content' AND octet_length(payload_digest)=32 AND (NOT $2 OR (confirmed_stream_text='' AND inflight_payload IS NULL AND inflight_attempt_id IS NULL)) FROM slack_posts WHERE session_id=$1`, f.session, released).Scan(&contentExpired); err != nil || !contentExpired {
 					t.Fatal("post expiry lost identity or ignored delivery", contentExpired, err)

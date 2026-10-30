@@ -63,7 +63,7 @@ func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 		return decodeDetail[SessionHoldDetails], true
 	case "computer.restore_completed", "computer.checkpoint_published":
 		return decodeDetail[CheckpointDetails], true
-	case "trigger.content_read", "session.delivery_check_requested", "session.delivery_abandoned", "input.requested", "message.delivered", "turn.interrupted", "computer.created", "command.cancel_requested", "message.admitted", "worker_group.updated", "session.created", "session.closed", "session.cancelled", "session.content_read", "turn.admitted", "turn.completed", "turn.cancelled", "input.answered", "input.cancelled", "command.admitted", "command.completed", "command.cancelled", "command.output_read":
+	case "trigger.content_read", "input.requested", "message.delivered", "turn.interrupted", "computer.created", "command.cancel_requested", "message.admitted", "worker_group.updated", "session.created", "session.closed", "session.cancelled", "session.content_read", "turn.admitted", "turn.completed", "turn.cancelled", "input.answered", "input.cancelled", "command.admitted", "command.completed", "command.cancelled", "command.output_read":
 		return decodeDetail[LifecycleDetails], true
 	case "slack_connection.disconnected":
 		return decodeDisconnectDetails, true

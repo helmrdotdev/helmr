@@ -183,9 +183,8 @@ type AuditFailureDetails struct {
 func (AuditFailureDetails) auditDetails() {}
 
 type AuditLifecycleDetails struct {
-	Sequence            int64     `json:"sequence,omitempty"`
-	RequestID           uuid.UUID `json:"request_id,omitzero"`
-	PublicationRevision int64     `json:"publication_revision,omitempty"`
+	Sequence  int64     `json:"sequence,omitempty"`
+	RequestID uuid.UUID `json:"request_id,omitzero"`
 }
 
 func (AuditLifecycleDetails) auditDetails() {}

@@ -147,7 +147,7 @@ func confirmOpeningMessage(ctx context.Context, pool db.TxBeginner, org uuid.UUI
 		if revision == nil || *revision != metadata.Payload.Revision || (state != "sending" && state != "uncertain" && !(state == "failed" && disposed)) {
 			return nil
 		}
-		if _, err = tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN desired_revision<=suppressed_revision THEN 'suppressed' ELSE 'posted' END,confirmed_revision=inflight_revision,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'delivery_abandoned' WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1::uuid`, post, message.Timestamp); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN desired_revision<=suppressed_revision THEN 'suppressed' ELSE 'posted' END,confirmed_revision=inflight_revision,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN error WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1::uuid`, post, message.Timestamp); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE slack_threads SET thread_ts=$2 WHERE id=$1::uuid AND thread_ts IS NULL`, thread, message.Timestamp); err != nil {

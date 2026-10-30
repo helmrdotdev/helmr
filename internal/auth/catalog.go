@@ -38,8 +38,6 @@ const (
 	PermissionSessionsInterrupt         Permission = "sessions.interrupt"
 	PermissionSessionsCancel            Permission = "sessions.cancel"
 	PermissionSessionsClose             Permission = "sessions.close"
-	PermissionSessionsCheckDelivery     Permission = "sessions.check_delivery"
-	PermissionSessionsAbandonDelivery   Permission = "sessions.abandon_delivery"
 	PermissionDeploymentsRead           Permission = "deployments.read"
 	PermissionDeploymentsPublish        Permission = "deployments.publish"
 	PermissionDeploymentsPromote        Permission = "deployments.promote"
@@ -107,8 +105,6 @@ var permissionCatalog = []PermissionDefinition{
 	{"sessions", PermissionSessionsInterrupt, "Interrupt sessions", "Interrupt the addressed Session/Turn using existing interruption semantics.", []PermissionScope{ScopeAgent}, true, nil},
 	{"sessions", PermissionSessionsCancel, "Cancel sessions", "Cancel the addressed Session using existing cancellation semantics.", []PermissionScope{ScopeAgent}, true, nil},
 	{"sessions", PermissionSessionsClose, "Close sessions", "Inspect the close-scope preview and request Session closure using existing child/settlement constraints.", []PermissionScope{ScopeAgent}, true, nil},
-	{"sessions", PermissionSessionsCheckDelivery, "Check Session delivery", "Request Slack publication reconciliation for an uncertain delivery; also requires Session read. No resend or new execution authority.", []PermissionScope{ScopeAgent}, false, nil},
-	{"sessions", PermissionSessionsAbandonDelivery, "Abandon Session delivery", "Record the existing delivery-abandonment disposition; also requires Session read. No resend or new execution authority.", []PermissionScope{ScopeAgent}, false, nil},
 	{"deployments", PermissionDeploymentsRead, "Read deployments", "Read deployment list, current deployment, record and events; not Session conversations or Computer stdout/stderr.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"deployments", PermissionDeploymentsPublish, "Publish deployments", "Obtain upload plan, finalize bundle and register immutable deployment definitions/code. Publication/preparation may execute code with configured credentials.", []PermissionScope{ScopeEnvironment}, true, nil},
 	{"deployments", PermissionDeploymentsPromote, "Promote deployments", "Activate or roll back to an existing deployment; changes current definitions and scheduled admission. No upload authority.", []PermissionScope{ScopeEnvironment}, true, nil},

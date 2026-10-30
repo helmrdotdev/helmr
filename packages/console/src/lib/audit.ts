@@ -90,7 +90,7 @@ export type AuditDetails =
   | { kind: string; request_id: string; reason?: string }
   | { request_id: string; hold_id?: string }
   | { image_build_id: string } | { hold_id: string } | { checkpoint_id: string }
-  | { sequence?: number; request_id?: string; publication_revision?: number }
+  | { sequence?: number; request_id?: string }
   | { from: string; to: string; result_count?: number; environment_ids?: string[]; requested_environment_id?: string; actions?: string[]; operation_id?: string; event_id?: string; actor_kind?: string; actor_id?: string; target_kind?: string; target_id?: string; target_user_id?: string; slack_team_id?: string; slack_user_id?: string; outcome?: string };
 export type AuditEvent = AuditMetadata & {
   actor_kind: AuditActorKind; restricted: AuditRestrictedSection[];

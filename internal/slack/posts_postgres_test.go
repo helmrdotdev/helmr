@@ -161,7 +161,7 @@ func TestSlackPostUncertainProgressBlocksContinuationButAllowsQuestionAndRespons
 	}
 	// An explicit unsuccessful disposition releases the dependency; the network
 	// outcome becoming unknown did not itself authorize that disposition.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='failed',error='delivery_abandoned',inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1`, progress)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='failed',error='history_no_match',inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1`, progress)
 	f.due(t)
 	next := f.postClaim(t, continuation)
 	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, next, DeliveryResult{Disposition: Acknowledged, Timestamp: "123.101"}); err != nil {

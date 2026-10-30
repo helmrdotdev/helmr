@@ -142,7 +142,7 @@ function SessionDetailContent() {
                 canInterrupt={can("sessions.interrupt")}
                 onInterruptTurn={controls.interruptTurn}
               />
-              <Show when={current().slack_channel_id}><SessionDelivery address={address()} live={live()} canCheck={hasPermission(me.data, "sessions.check_delivery", { ...address(), agent: current().agent })} canAbandon={hasPermission(me.data, "sessions.abandon_delivery", { ...address(), agent: current().agent })} /></Show>
+              <Show when={current().slack_channel_id}><SessionDelivery address={address()} live={live()} /></Show>
               <Show when={controls.error()}>{message => <Notice tone="danger" role="alert">{message()}</Notice>}</Show>
             </div>
           )}

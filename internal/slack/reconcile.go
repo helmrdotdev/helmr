@@ -109,7 +109,7 @@ func confirmMessage(ctx context.Context, pool db.TxBeginner, installation uuid.U
 			return nil
 		}
 		if _, err = tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN desired_revision=inflight_revision THEN 'posted' WHEN desired_revision<=suppressed_revision THEN 'suppressed' ELSE 'pending' END,
- confirmed_revision=inflight_revision,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),error=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'delivery_abandoned' WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,next_attempt_at=clock_timestamp(),
+ confirmed_revision=inflight_revision,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),error=CASE WHEN delivery_disposed_at IS NOT NULL THEN error WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,next_attempt_at=clock_timestamp(),
  inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL
  WHERE id=$1`, metadata.Payload.PostID, message.Timestamp); err != nil {
 			return err

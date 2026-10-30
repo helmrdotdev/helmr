@@ -4,12 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/dbnotify"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/access"
-	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -18,32 +15,27 @@ import (
 )
 
 var ErrDeliveryUnavailable = errors.New("the Slack delivery is unavailable")
-var ErrDeliveryChanged = errors.New("the Slack delivery changed; refresh before trying again")
-var ErrDeliveryCheckUnavailable = errors.New("the original Slack connection is unavailable for delivery checks")
 
 type DeliveryView struct {
-	ID                  uuid.UUID  `json:"id"`
-	TurnID              *uuid.UUID `json:"turn_id"`
-	Sequence            int64      `json:"sequence"`
-	Role                string     `json:"role"`
-	Continuation        int        `json:"continuation_ordinal"`
-	Status              string     `json:"status"`
-	Text                string     `json:"text"`
-	PayloadExpiredAt    *time.Time `json:"payload_expired_at"`
-	CreatedAt           time.Time  `json:"created_at"`
-	DesiredRevision     int64      `json:"desired_revision"`
-	ConfirmedRevision   int64      `json:"confirmed_revision"`
-	PublicationRevision int64      `json:"publication_revision"`
-	Method              *string    `json:"method"`
-	AttemptID           *uuid.UUID `json:"attempt_id"`
-	MessageTimestamp    *string    `json:"message_ts"`
-	RootKnown           bool       `json:"root_known"`
-	Opening             bool       `json:"opening"`
-	StreamStatus        string     `json:"stream_status"`
-	CheckPausedAt       *time.Time `json:"check_paused_at"`
-	DisposedAt          *time.Time `json:"disposed_at"`
-	DisposedByUserID    *uuid.UUID `json:"disposed_by"`
-	Error               *string    `json:"error"`
+	ID                uuid.UUID  `json:"id"`
+	TurnID            *uuid.UUID `json:"turn_id"`
+	Sequence          int64      `json:"sequence"`
+	Role              string     `json:"role"`
+	Continuation      int        `json:"continuation_ordinal"`
+	Status            string     `json:"status"`
+	Text              string     `json:"text"`
+	PayloadExpiredAt  *time.Time `json:"payload_expired_at"`
+	CreatedAt         time.Time  `json:"created_at"`
+	DesiredRevision   int64      `json:"desired_revision"`
+	ConfirmedRevision int64      `json:"confirmed_revision"`
+	Method            *string    `json:"method"`
+	AttemptID         *uuid.UUID `json:"attempt_id"`
+	MessageTimestamp  *string    `json:"message_ts"`
+	RootKnown         bool       `json:"root_known"`
+	Opening           bool       `json:"opening"`
+	StreamStatus      string     `json:"stream_status"`
+	DisposedAt        *time.Time `json:"disposed_at"`
+	Error             *string    `json:"error"`
 }
 
 // ListSessionDelivery exposes only diagnostics and authored fallback text, never
@@ -71,10 +63,9 @@ func ListSessionDelivery(ctx context.Context, policy auditpolicy.Policy, pool db
 		}
 		rows, err := tx.Query(ctx, `SELECT p.id,p.turn_id,p.seq,p.role,p.continuation_ordinal,p.status,p.payload,p.payload_expired_at,p.created_at,
  p.desired_revision,p.confirmed_revision,
- (SELECT sum(v.desired_revision)::bigint FROM slack_posts v WHERE v.thread_source_id=p.thread_source_id AND v.post_key=p.post_key),
  p.inflight_method,p.inflight_attempt_id,p.message_ts,t.thread_ts IS NOT NULL,
  p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key AND p.continuation_ordinal=0,
- p.stream_status,p.reconciliation_paused_at,p.delivery_disposed_at,p.delivery_disposed_by_user_id,p.error
+ p.stream_status,p.delivery_disposed_at,p.error
  FROM slack_posts p JOIN slack_thread_sources s ON s.id=p.thread_source_id JOIN slack_threads t ON t.id=s.thread_id
  WHERE p.environment_id=$1 AND p.session_id=$2 AND p.seq>$3 AND (p.status IN ('uncertain','failed','suppressed') OR p.delivery_disposed_at IS NOT NULL)
  ORDER BY p.seq LIMIT $4`, environment, session, after, limit)
@@ -85,7 +76,7 @@ func ListSessionDelivery(ctx context.Context, policy auditpolicy.Policy, pool db
 		for rows.Next() {
 			var v DeliveryView
 			var raw []byte
-			if err = rows.Scan(&v.ID, &v.TurnID, &v.Sequence, &v.Role, &v.Continuation, &v.Status, &raw, &v.PayloadExpiredAt, &v.CreatedAt, &v.DesiredRevision, &v.ConfirmedRevision, &v.PublicationRevision, &v.Method, &v.AttemptID, &v.MessageTimestamp, &v.RootKnown, &v.Opening, &v.StreamStatus, &v.CheckPausedAt, &v.DisposedAt, &v.DisposedByUserID, &v.Error); err != nil {
+			if err = rows.Scan(&v.ID, &v.TurnID, &v.Sequence, &v.Role, &v.Continuation, &v.Status, &raw, &v.PayloadExpiredAt, &v.CreatedAt, &v.DesiredRevision, &v.ConfirmedRevision, &v.Method, &v.AttemptID, &v.MessageTimestamp, &v.RootKnown, &v.Opening, &v.StreamStatus, &v.DisposedAt, &v.Error); err != nil {
 				return err
 			}
 			if raw != nil {
@@ -109,158 +100,4 @@ func ListSessionDelivery(ctx context.Context, policy auditpolicy.Policy, pool db
 		return nil, err
 	}
 	return result, nil
-}
-
-type DeliveryRecovery struct {
-	AttemptID           uuid.UUID `json:"attempt_id"`
-	PublicationRevision int64     `json:"publication_revision"`
-}
-
-// RecoverDelivery requests read-only evidence or records a human's unsuccessful
-// logical-publication disposition. Neither operation resends content, replaces a
-// root, changes core work, or treats missing evidence as non-delivery.
-func RecoverDelivery(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner, principal auth.Principal, environment, session, post uuid.UUID, input DeliveryRecovery, action string) error {
-	org, user := principal.OrgID, principal.UserID
-	if input.AttemptID == uuid.Nil() || input.PublicationRevision < 1 || (action != "check" && action != "abandon") {
-		return ErrDeliveryChanged
-	}
-	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		p, err := access.HumanInEnvironment(ctx, tx, principal, environment)
-		if err != nil {
-			return err
-		}
-		var agent uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT agent_id FROM sessions WHERE environment_id=$1 AND id=$2`, environment, session).Scan(&agent); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrDeliveryUnavailable
-			}
-			return err
-		}
-		permission := auth.PermissionSessionsCheckDelivery
-		if action == "abandon" {
-			permission = auth.PermissionSessionsAbandonDelivery
-		}
-		if p.OrgID != org || !p.HasPermission(permission, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}) {
-			return errInstallationAuthority
-		}
-		if err := sessionowner.AuthorizeSessionOperation(ctx, tx, sessionowner.UserCaller(principal), environment, session, auth.PermissionSessionsRead); err != nil {
-			if errors.Is(err, sessionowner.ErrDenied) {
-				return errInstallationAuthority
-			}
-			return err
-		}
-		p.SessionID = principal.SessionID
-		actor, err := audit.Authorized(p, permission, auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()})
-		if err != nil {
-			return err
-		}
-		scope := auth.Scope{OrgID: org, ProjectID: p.ProjectID, EnvironmentID: environment.String(), AgentID: agent.String()}
-		readDecisions, canRead := p.Decide(auth.PermissionSessionsRead, scope)
-		if !canRead {
-			return errInstallationAuthority
-		}
-		actor.Authorization.Checks = append(actor.Authorization.Checks, audit.PermissionEvidence(p, readDecisions)...)
-		capture := func() error {
-			name, outcome := "session.delivery_check_requested", "accepted"
-			if action == "abandon" {
-				name, outcome = "session.delivery_abandoned", "succeeded"
-			}
-			return audit.Append(ctx, tx, policy, audit.Event{Evidence: actor, EnvironmentID: environment, SessionID: session, TargetKind: "session", TargetID: session, Action: name, Outcome: outcome, Details: audit.LifecycleDetails{RequestID: input.AttemptID, Generation: input.PublicationRevision}})
-		}
-		var installation, thread, participant uuid.UUID
-		var publication string
-		err = tx.QueryRow(ctx, `SELECT c.installation_id,p.thread_id,p.thread_source_id,p.post_key
- FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id
- JOIN environments e ON e.id=p.environment_id WHERE p.id=$1 AND p.environment_id=$2 AND p.session_id=$3 AND e.org_id=$4`, post, environment, session, org).Scan(&installation, &thread, &participant, &publication)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrDeliveryUnavailable
-		}
-		if err != nil {
-			return err
-		}
-		var id uuid.UUID
-		if err = tx.QueryRow(ctx, `SELECT id FROM slack_installations WHERE id=$1 AND org_id=$2 FOR NO KEY UPDATE`, installation, org).Scan(&id); err != nil {
-			return err
-		}
-		if err = tx.QueryRow(ctx, `SELECT id FROM slack_threads WHERE id=$1 FOR NO KEY UPDATE`, thread).Scan(&id); err != nil {
-			return err
-		}
-		if err = tx.QueryRow(ctx, `SELECT id FROM slack_thread_sources WHERE id=$1 FOR NO KEY UPDATE`, participant).Scan(&id); err != nil {
-			return err
-		}
-		var attempt *uuid.UUID
-		var state string
-		var disposed, paused bool
-		if err = tx.QueryRow(ctx, `SELECT status,inflight_attempt_id,delivery_disposed_at IS NOT NULL,reconciliation_paused_at IS NOT NULL FROM slack_posts WHERE id=$1 FOR NO KEY UPDATE`, post).Scan(&state, &attempt, &disposed, &paused); err != nil {
-			return err
-		}
-		var revision int64
-		var sending bool
-		if err = tx.QueryRow(ctx, `SELECT sum(desired_revision)::bigint,bool_or(status='sending') FROM slack_posts WHERE thread_source_id=$1 AND post_key=$2`, participant, publication).Scan(&revision, &sending); err != nil {
-			return err
-		}
-		if attempt == nil || *attempt != input.AttemptID || revision != input.PublicationRevision || (state != "uncertain" && !(state == "failed" && disposed)) {
-			return ErrDeliveryChanged
-		}
-		if err = dbnotify.Notify(ctx, tx, "slack_delivery"); err != nil {
-			return err
-		}
-		if action == "check" {
-			if !paused {
-				return ErrDeliveryChanged
-			}
-			var available bool
-			if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id
- JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_connections pub ON pub.id=c.connection_id
- JOIN slack_app_registrations reg ON reg.id=pub.slack_app_registration_id JOIN slack_installations i ON i.id=c.installation_id
- WHERE p.id=$1 AND pub.revoked_at IS NULL AND reg.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL)`, post).Scan(&available); err != nil {
-				return err
-			}
-			if !available {
-				return ErrDeliveryCheckUnavailable
-			}
-			_, err = tx.Exec(ctx, `UPDATE slack_posts SET reconciliation_cursor='',reconciliation_pages=0,reconciliation_paused_at=NULL,next_attempt_at=clock_timestamp() WHERE id=$1`, post)
-			if err != nil {
-				return err
-			}
-			return capture()
-		}
-		if disposed {
-			return nil
-		}
-		// A live mutation must first finish or become uncertain; do not overwrite its
-		// claim or allow a late known-unsent completion to restore abandoned bytes.
-		if sending {
-			return ErrDeliveryChanged
-		}
-		// RuntimeOutput takes the same installation/thread gates before accepting
-		// source content. Require its existing prefix to be projected and observed
-		// before closing this publication; later output may start a fresh one.
-		var unreadProgress bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(
- SELECT 1 FROM slack_posts p JOIN slack_thread_sources s ON s.id=p.thread_source_id
- JOIN session_events e ON e.environment_id=p.environment_id AND e.session_id=p.session_id AND e.turn_id=p.turn_id
- WHERE p.id=$1 AND p.role='intermediate' AND e.kind='turn.output' AND e.seq>s.projected_event_seq)`, post).Scan(&unreadProgress); err != nil {
-			return err
-		}
-		if unreadProgress {
-			return ErrDeliveryChanged
-		}
-		_, err = tx.Exec(ctx, `UPDATE slack_posts SET delivery_disposed_at=clock_timestamp(),delivery_disposed_by_user_id=$3,closed_at=COALESCE(closed_at,clock_timestamp()),
- suppressed_revision=desired_revision,reconciliation_paused_at=COALESCE(reconciliation_paused_at,clock_timestamp()),
- status=CASE WHEN status='uncertain' THEN 'failed' WHEN status='pending' THEN 'suppressed' ELSE status END,
- error=CASE WHEN status IN ('pending','uncertain') THEN 'delivery_abandoned' ELSE error END,
- inflight_method=CASE WHEN status='pending' THEN NULL ELSE inflight_method END,
- inflight_payload=CASE WHEN status='pending' THEN NULL ELSE inflight_payload END,
- inflight_digest=CASE WHEN status='pending' THEN NULL ELSE inflight_digest END,
- inflight_revision=CASE WHEN status='pending' THEN NULL ELSE inflight_revision END,
- inflight_attempt_id=CASE WHEN status='pending' THEN NULL ELSE inflight_attempt_id END,
- inflight_stream_text=CASE WHEN status='pending' THEN NULL ELSE inflight_stream_text END,
- next_attempt_at=clock_timestamp()
- WHERE thread_source_id=$1 AND post_key=$2`, participant, publication, user)
-		if err != nil {
-			return err
-		}
-		return capture()
-	})
 }

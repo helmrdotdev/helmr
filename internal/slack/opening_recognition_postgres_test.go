@@ -24,7 +24,7 @@ func TestOpeningRecognitionUsesActualSenderAndKeepsAbandonment(t *testing.T) {
 				t.Fatal(err)
 			}
 			if kind == "abandoned" {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='failed',delivery_disposed_at=clock_timestamp(),delivery_disposed_by_user_id=$2,closed_at=clock_timestamp(),error='delivery_abandoned' WHERE id=$1`, post, f.User)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='failed',delivery_disposed_at=clock_timestamp(),delivery_disposed_through_seq=0,closed_at=clock_timestamp(),error='history_no_match' WHERE id=$1`, post)
 			}
 			metadata, _ := json.Marshal(map[string]any{"event_type": "helmr_post", "event_payload": map[string]any{"post_id": post.String(), "revision": 1}})
 			message := observedMessage{Channel: "C1", Timestamp: "123.999", AppID: "app", User: "bot", Text: "Slack normalized this text", Metadata: metadata}
@@ -90,7 +90,7 @@ func TestOpeningAbandonmentInvalidatesClaimBeforeHTTP(t *testing.T) {
 			if allowed, err := authorized(); err != nil || !allowed {
 				t.Fatal(allowed, err)
 			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='failed',delivery_disposed_at=clock_timestamp(),delivery_disposed_by_user_id=$2,closed_at=clock_timestamp(),error='delivery_abandoned' WHERE id=$1`, opening, f.User)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='failed',delivery_disposed_at=clock_timestamp(),delivery_disposed_through_seq=0,closed_at=clock_timestamp(),error='history_no_match' WHERE id=$1`, opening)
 			if allowed, err := authorized(); err != nil || allowed {
 				t.Fatal("abandoned opening retained HTTP authority", allowed, err)
 			}

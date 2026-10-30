@@ -260,10 +260,21 @@ output, a question or a response, the Session records a
 running. The full output remains in the Session's events. See
 [Events](/docs/reference/events).
 
-When a post's delivery is uncertain or has failed, members with `sessions.read`
-and the corresponding `sessions.check_delivery` or `sessions.abandon_delivery`
-permission for the Agent can recheck it against Slack or stop delivering it from
-the Session's page in the Console. Neither action resends content.
+When a post's delivery is uncertain, Helmr makes a bounded number of paced
+checks against Slack history. Confirmed evidence can establish delivery; missing
+history cannot prove that a message was never delivered. Rate-limited reads count
+toward the same limit and respect Slack's retry delay.
+
+If confirmation is unavailable or the checks reach their limit, delivery ends
+locally as unconfirmed. Helmr does not resend the uncertain content or its dependent
+continuations. An unconfirmed first message suppresses later output to that thread;
+Helmr does not create a replacement thread. Agent work continues. Later positive
+evidence can update the recorded outcome without restarting suppressed delivery.
+
+Members with `sessions.read` for the Agent can inspect delivery status and retained
+output in Console. Content follows the Session history retention policy, even when
+Slack's remote stream outcome remains unknown. There are no manual delivery recovery
+actions.
 
 Reconnecting an Agent's Slack app creates a new connection. Threads from the
 old connection stay disconnected, earlier undelivered output is not
