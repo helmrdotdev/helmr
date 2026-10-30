@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -85,6 +86,19 @@ func ReconcileHistory(ctx context.Context, database db.TxDB, after HistoryPositi
 // Identities and digests remain available for exact retries after expiry.
 func RetainSessionHistory(ctx context.Context, database db.TxBeginner, environment, id uuid.UUID) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		// Serialize expiry with projection, claims and late observations before
+		// taking Session locks. Terminal stream cleanup may still be in flight.
+		rows, err := tx.Query(ctx, `SELECT DISTINCT t.slack_channel_binding_id FROM slack_thread_sources src JOIN slack_threads t ON t.id=src.thread_id WHERE src.environment_id=$1 AND src.session_id=$2`, environment, id)
+		if err != nil {
+			return err
+		}
+		channels, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		if _, err = slackroute.LockChannelsForDelivery(ctx, tx, environment, channels); err != nil {
+			return err
+		}
 		expired, err := session.RetainHistory(ctx, tx, environment, id)
 		if err != nil || !expired {
 			return err
@@ -96,6 +110,8 @@ func RetainSessionHistory(ctx context.Context, database db.TxBeginner, environme
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET payload=NULL,payload_expired_at=COALESCE(payload_expired_at,clock_timestamp()),confirmed_stream_text='',
+ status=CASE WHEN delivery_disposed_at IS NOT NULL AND status IN ('pending','sending') THEN 'failed' ELSE status END,
+ error=CASE WHEN delivery_disposed_at IS NOT NULL AND status IN ('pending','sending') THEN COALESCE(error,'stream_stop_unconfirmed') ELSE error END,claimed_until=NULL,
  inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,inflight_stream_text=NULL,closed_at=COALESCE(closed_at,clock_timestamp()) WHERE environment_id=$1 AND session_id=$2`, environment, id); err != nil {
 			return err
 		}

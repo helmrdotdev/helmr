@@ -20,7 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *testing.T) {
+func TestSlackDeliveryHTTPReadsCurrentScope(t *testing.T) {
 	f := sessiontest.New(t)
 	var org, project uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&org, &project); err != nil {
@@ -35,7 +35,6 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
  INSERT INTO slack_threads(id,environment_id,front_session_id,slack_channel_binding_id,org_id,team_id,slack_channel_id,thread_ts,opening_post_key) VALUES($9,$5,$8,$4,$3,'team','C1','123.456','opening');
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($10,$9,$5,$8)`, pgx.QueryExecModeSimpleProtocol, f.User, installation, org, channel, f.Environment, publication, f.Agent, f.Session, thread, participant, registration)
 	var first uuid.UUID
-	var attempt uuid.UUID
 	for seq := 1; seq <= 2; seq++ {
 		post := uuid.NewV7()
 		body := []byte(`{"text":"visible fallback","blocks":[{"type":"actions","elements":[{"value":"DO_NOT_RETURN_SIGNED_CONTROL"}]}]}`)
@@ -48,9 +47,8 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 		if err = slack.FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, *claim, slack.DeliveryResult{Disposition: slack.Uncertain}); err != nil {
 			t.Fatal(err)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET reconciliation_paused_at=clock_timestamp() WHERE id=$1`, post)
 		if seq == 1 {
-			first, attempt = post, claim.AttemptID
+			first = post
 		}
 	}
 	queries := db.New(f.Pool)
@@ -94,29 +92,18 @@ func TestSlackDeliveryHTTPReadsCurrentScopeAndRestrictsRecoveryToManagers(t *tes
 	}
 	call(http.MethodGet, base+"?cursor=1&limit=1", owner, "", 200)
 	call(http.MethodGet, base+"?cursor=-1", owner, "", 400)
-	input, _ := json.Marshal(slack.DeliveryRecovery{AttemptID: attempt, PublicationRevision: 1})
-	action := base + "/" + first.String()
-	call(http.MethodPost, action+"/check", owner, string(input), 204)
-	call(http.MethodPost, action+"/check", owner, string(input), 409)
 	call(http.MethodGet, fmt.Sprintf("/api/projects/project/environments/test/sessions/%s/slack-delivery", uuid.NewV7()), owner, "", 404)
 	viewerID := h.user(t, "Viewer")
 	h.member(t, org, viewerID, "member")
 	h.grant(t, org, viewerID, f.Environment, "sessions.read")
 	viewer := h.session(t, viewerID, org)
 	call(http.MethodGet, base, viewer, "", 200)
-	call(http.MethodPost, action+"/abandon", viewer, string(input), 403)
 	issuer := f.Principal(t)
 	key, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, auth.Scope{OrgID: org, ProjectID: project.String(), EnvironmentID: f.Environment.String()}, testAPIKeyInput{Name: "delivery read", RolePermissions: []auth.Permission{auth.PermissionSessionsRead}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	call(http.MethodPost, action+"/abandon", key.Raw, string(input), 401)
-	call(http.MethodPost, action+"/abandon", owner, string(input), 204)
-	call(http.MethodPost, action+"/abandon", owner, string(input), 204)
-	raw = call(http.MethodGet, base, owner, "", 200)
-	if !bytes.Contains(raw, []byte(`"disposed_by":"`+f.User.String()+`"`)) || !bytes.Contains(raw, []byte(`"status":"failed"`)) {
-		t.Fatal("disposition not visible", string(raw))
-	}
-	f.SetPermissions(t, "sessions.read")
-	call(http.MethodPost, action+"/check", owner, string(input), 403)
+	call(http.MethodGet, base, key.Raw, "", 401)
+	f.SetPermissions(t, "sessions.create")
+	call(http.MethodGet, base, owner, "", 404)
 }

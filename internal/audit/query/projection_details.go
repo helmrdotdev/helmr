@@ -83,9 +83,7 @@ func projectDetails(event *api.AuditEvent, scope readScope, details audit.Detail
 		return api.AuditCheckpointDetails{CheckpointID: d.CheckpointID}, nil
 	case audit.LifecycleDetails:
 		public := api.AuditLifecycleDetails{Sequence: d.Sequence, RequestID: d.RequestID}
-		if event.Action == "session.delivery_check_requested" || event.Action == "session.delivery_abandoned" {
-			public.PublicationRevision = d.Generation
-		} else if d.Generation != 0 {
+		if d.Generation != 0 {
 			restrict(event, api.AuditRestrictedDetails)
 		}
 		return public, nil

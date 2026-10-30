@@ -241,7 +241,6 @@ var auditRoutes = map[string]auditRoute{
 	"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/enqueue":                                          {"turn.admitted", ""},
 	"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/interrupt":                                        {"session.interrupt_requested", ""},
 	"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/resume":                                           {"session.resume_requested", ""},
-	"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}": {"session.delivery_check_requested", ""},
 	"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/asks/{askID}/answer":               {"input.answered", ""},
 	"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/interrupt":                         {"turn.interrupt_requested", ""},
 	"POST /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns/{turnID}/messages":                          {"turn.admitted", ""},

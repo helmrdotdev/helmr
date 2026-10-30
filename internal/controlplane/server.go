@@ -597,7 +597,6 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects/{project}/environments/{environment}/sessions", s.listAgentSessionsHTTP)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}", s.getAgentSessionHTTP)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery", s.sessionSlackDelivery)
-		r.Post("/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery/{postID}/{recovery:check|abandon}", s.sessionSlackDelivery)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/updates", s.streamSessionUpdates)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/events", s.listAgentEventsHTTP)
 		r.Get("/projects/{project}/environments/{environment}/sessions/{sessionID}/turns", s.listAgentTurnsHTTP)

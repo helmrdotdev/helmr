@@ -92,7 +92,7 @@ func TestSlackHistoryRateLimitIsSharedAndDoesNotReplayMutation(t *testing.T) {
 	f.noPostClaim(t, post)
 }
 
-func TestSlackHistoryExpiredCursorPausesWithoutDeliveryClaim(t *testing.T) {
+func TestSlackHistoryExpiredCursorTerminatesWithoutDeliveryClaim(t *testing.T) {
 	f := newStatusFixture(t)
 	post := f.post(t, 1, "content", "lifecycle", nil)
 	claim := f.postClaim(t, post)
@@ -107,7 +107,7 @@ func TestSlackHistoryExpiredCursorPausesWithoutDeliveryClaim(t *testing.T) {
 		t.Fatalf("cursor error: %v %v", read, err)
 	}
 	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='uncertain' AND reconciliation_cursor='' AND reconciliation_paused_at IS NOT NULL AND inflight_payload=$2 FROM slack_posts WHERE id=$1`, post, claim.Payload).Scan(&exact); err != nil || !exact {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND error='history_cursor_expired' AND delivery_disposed_at IS NOT NULL AND inflight_payload=$2 FROM slack_posts WHERE id=$1`, post, claim.Payload).Scan(&exact); err != nil || !exact {
 		t.Fatalf("cursor recovery changed delivery: %v %v", exact, err)
 	}
 }
@@ -139,4 +139,85 @@ func TestSlackHistoryConfirmationReleasesNewerDeliveryWithoutReadCooldown(t *tes
 	if err := f.Pool.QueryRow(t.Context(), `SELECT history_next_at>clock_timestamp() FROM slack_installations WHERE id=$1`, f.installation).Scan(&paced); err != nil || !paced {
 		t.Fatalf("read pacing lost: %v %v", paced, err)
 	}
+}
+
+func TestSlackHistoryReservationsSurviveLostWorkersAndExhaustWithoutNewReads(t *testing.T) {
+	f := newStatusFixture(t)
+	post := f.post(t, 1, "content", "lifecycle", nil)
+	claim := f.postClaim(t, post)
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 1; attempt <= historyPageBudget; attempt++ {
+		f.historyDue(t, post)
+		ctx, cancel := context.WithCancel(t.Context())
+		entered, release := make(chan struct{}), make(chan struct{})
+		client := NewWebClient(credentialsFunc(func(context.Context, uuid.UUID, int64) (string, error) { return "fixture", nil }), roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			close(entered)
+			<-release
+			cancel() // the worker dies after reserving/issuing its read, before persistence
+			return nil, ctx.Err()
+		}))
+		done := make(chan error, 1)
+		go func() { _, err := ReconcileUnknownPost(ctx, f.Pool, client, post); done <- err }()
+		<-entered
+		var spent int
+		if err := f.Pool.QueryRow(t.Context(), `SELECT reconciliation_pages FROM slack_posts WHERE id=$1`, post).Scan(&spent); err != nil || spent != attempt {
+			t.Fatalf("reservation not durable: %d %v", spent, err)
+		}
+		// Another worker cannot issue a second read during the durable reservation.
+		if did, err := ReconcileUnknownPost(t.Context(), f.Pool, client, post); err != nil || did {
+			t.Fatalf("concurrent reservation: %v %v", did, err)
+		}
+		close(release)
+		if err := <-done; err == nil {
+			t.Fatal("cancelled worker unexpectedly committed its result")
+		}
+		cancel()
+	}
+	f.historyDue(t, post)
+	client := NewWebClient(credentialsFunc(func(context.Context, uuid.UUID, int64) (string, error) {
+		t.Fatal("spent budget acquired credentials")
+		return "", nil
+	}), roundTripFunc(func(*http.Request) (*http.Response, error) { t.Fatal("spent budget issued HTTP"); return nil, nil }))
+	if did, err := ReconcileUnknownPost(t.Context(), f.Pool, client, post); err != nil || did {
+		t.Fatalf("spent restart: %v %v", did, err)
+	}
+	var terminal bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT delivery_disposed_at IS NOT NULL AND error='history_attempt_limit' AND reconciliation_pages=$2 AND inflight_attempt_id=$3 AND confirmed_revision=0 FROM slack_posts WHERE id=$1`, post, historyPageBudget, claim.AttemptID).Scan(&terminal); err != nil || !terminal {
+		t.Fatalf("lost-worker cycle not terminal: %v %v", terminal, err)
+	}
+	f.noPostClaim(t, post)
+}
+
+func TestSlackHistoryLatePageCannotRestartTerminalPublication(t *testing.T) {
+	f := newStatusFixture(t)
+	post := f.post(t, 1, "content", "lifecycle", nil)
+	claim := f.postClaim(t, post)
+	if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	client := NewWebClient(credentialsFunc(func(context.Context, uuid.UUID, int64) (string, error) { return "fixture", nil }), roundTripFunc(func(*http.Request) (*http.Response, error) {
+		close(entered)
+		<-release
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"messages":[],"has_more":true,"response_metadata":{"next_cursor":"stale-page"}}`))}, nil
+	}))
+	done := make(chan error, 1)
+	go func() { _, err := ReconcileUnknownPost(t.Context(), f.Pool, client, post); done <- err }()
+	<-entered
+	// Simulate the reservation expiring while the external read is still delayed.
+	if err := f.finishUnknown(t, post); err != nil {
+		close(release)
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	var stable bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND delivery_disposed_at IS NOT NULL AND reconciliation_pages=2 AND reconciliation_cursor='' AND error='history_no_match' FROM slack_posts WHERE id=$1`, post).Scan(&stable); err != nil || !stable {
+		t.Fatal("late page changed terminal state", stable, err)
+	}
+	f.noPostClaim(t, post)
 }

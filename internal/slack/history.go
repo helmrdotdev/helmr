@@ -17,7 +17,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Each explicit check reads at most 120 messages across eight paced pages.
+// Each uncertain mutation gets at most eight paced attempts, including rate limits
+// and temporary credential refresh. Reservations survive crashes and restarts.
 const historyPageBudget = 8
 
 // Dedicated Apps are created by each customer for their own workspace. Slack
@@ -115,9 +116,9 @@ func (c *WebClient) readMessages(ctx context.Context, installation uuid.UUID, cr
 
 // ReconcileUnknownPost reserves a paced read, then acquires authenticated evidence
 // outside the transaction. Pagination survives restarts without retaining a copied
-// transcript. No negative observation changes the uncertain delivery disposition.
+// transcript. Negative evidence settles local work without claiming non-delivery.
 func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebClient, post uuid.UUID) (bool, error) {
-	var installation, organization uuid.UUID
+	var installation, organization, attempt uuid.UUID
 	var team string
 	var credential int64
 	var channel, cursor string
@@ -144,24 +145,27 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
  JOIN slack_connections p ON p.id=c.connection_id JOIN slack_installations i ON i.id=c.installation_id JOIN slack_app_registrations r ON r.id=p.slack_app_registration_id
  WHERE c.id=$1 AND p.revoked_at IS NULL AND r.retired_at IS NULL AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND i.credential_ciphertext IS NOT NULL`, targetChannel).Scan(&installation, &credential, &ready)
 		if errors.Is(err, pgx.ErrNoRows) {
-			_, err = tx.Exec(ctx, `UPDATE slack_posts SET reconciliation_paused_at=clock_timestamp(),error='delivery_unverifiable' WHERE id=$1 AND status IN ('uncertain','failed') AND inflight_attempt_id IS NOT NULL`, post)
-			return err
+			return disposeUnknownDelivery(ctx, tx, post, "delivery_unverifiable")
 		}
 		if err != nil || !ready {
 			return err
 		}
-		err = tx.QueryRow(ctx, `SELECT t.slack_channel_id,t.thread_ts,p.reconciliation_cursor,p.inflight_digest,p.reconciliation_pages FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id
- WHERE p.id=$1 AND (p.status='uncertain' OR (p.status='failed' AND p.delivery_disposed_at IS NOT NULL)) AND p.reconciliation_paused_at IS NULL AND p.next_attempt_at<=clock_timestamp() AND p.inflight_method IN ('chat.postMessage','chat.update','chat.startStream','chat.appendStream') FOR UPDATE OF p`, post).Scan(&channel, &root, &cursor, &digest, &pages)
+		err = tx.QueryRow(ctx, `SELECT t.slack_channel_id,t.thread_ts,p.reconciliation_cursor,p.inflight_digest,p.reconciliation_pages,p.inflight_attempt_id FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id
+ WHERE p.id=$1 AND p.status='uncertain' AND p.delivery_disposed_at IS NULL AND p.next_attempt_at<=clock_timestamp() AND p.inflight_method IN ('chat.postMessage','chat.update','chat.startStream','chat.appendStream') FOR UPDATE OF p`, post).Scan(&channel, &root, &cursor, &digest, &pages, &attempt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
+		if pages >= historyPageBudget {
+			return disposeUnknownDelivery(ctx, tx, post, "history_attempt_limit")
+		}
+		pages++
 		if _, err = tx.Exec(ctx, `UPDATE slack_installations SET history_next_at=clock_timestamp()+$2*interval '1 second' WHERE id=$1`, installation, historyReadInterval.Seconds()); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE slack_posts SET next_attempt_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, post); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE slack_posts SET reconciliation_pages=$2,next_attempt_at=clock_timestamp()+interval '1 minute' WHERE id=$1`, post, pages); err != nil {
 			return err
 		}
 		reserved = true
@@ -190,20 +194,31 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
 		if err := tx.QueryRow(ctx, `SELECT id FROM slack_installations WHERE id=$1 FOR NO KEY UPDATE`, installation).Scan(&id); err != nil {
 			return err
 		}
-		next, code := cursor, page.Code
-		paused := page.RetryAfter == 0
-		// A local credential refresh can temporarily prevent any HTTP read. Give
-		// it the existing paced window to finish, without consuming an unbounded
-		// series of attempts or turning one normal rotation into operator work.
-		if code == "credential_unavailable" {
-			pages++
-			paused = pages >= historyPageBudget
+		if page.RetryAfter > 0 {
+			_, err := tx.Exec(ctx, `UPDATE slack_installations SET history_next_at=GREATEST(history_next_at,clock_timestamp()+$2*interval '1 second') WHERE id=$1`, installation, page.RetryAfter.Seconds())
+			if err != nil {
+				return err
+			}
 		}
-		if code == "history_cursor_expired" {
-			next = ""
+		// An expired reservation may have been replaced by a newer bounded
+		// attempt. Its authenticated matches remain useful, but its cursor/error
+		// must not overwrite that newer attempt or revive terminal delivery.
+		var current bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts WHERE id=$1 AND status='uncertain' AND delivery_disposed_at IS NULL AND inflight_digest=$2 AND reconciliation_pages=$3 AND inflight_attempt_id=$4)`, post, digest, pages, attempt).Scan(&current); err != nil {
+			return err
+		}
+		if !current {
+			return nil
+		}
+		next, code := cursor, page.Code
+		if page.RetryAfter > 0 {
+			code = "history_rate_limited"
+		}
+		terminal := page.RetryAfter == 0
+		if code == "credential_unavailable" {
+			terminal = pages >= historyPageBudget
 		}
 		if code == "" {
-			pages++
 			next = page.NextCursor
 			switch {
 			case !page.More:
@@ -211,21 +226,21 @@ func ReconcileUnknownPost(ctx context.Context, pool db.TxBeginner, client *WebCl
 			case next == "" || next == cursor:
 				code = "history_pagination_unavailable"
 			case pages >= historyPageBudget:
-				code = "history_page_limit"
+				code = "history_attempt_limit"
 			default:
-				paused = false
+				terminal = false
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET reconciliation_cursor=$3,reconciliation_pages=$7,
- reconciliation_paused_at=CASE WHEN $8 THEN clock_timestamp() ELSE NULL END,error=COALESCE(NULLIF($4,''),error),
- next_attempt_at=GREATEST(next_attempt_at,clock_timestamp()+$5*interval '1 second')
- WHERE id=$1 AND (status='uncertain' OR (status='failed' AND delivery_disposed_at IS NOT NULL))
- AND inflight_digest=$2 AND reconciliation_cursor=$6 AND reconciliation_paused_at IS NULL`, post, digest, next, code, page.RetryAfter.Seconds(), cursor, pages, paused); err != nil {
+		if pages >= historyPageBudget {
+			terminal = true
+		}
+		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET reconciliation_cursor=$3,error=COALESCE(NULLIF($4,''),error),next_attempt_at=GREATEST(next_attempt_at,clock_timestamp()+$5*interval '1 second') WHERE id=$1 AND inflight_digest=$2 AND delivery_disposed_at IS NULL`, post, digest, next, code, page.RetryAfter.Seconds()); err != nil {
 			return err
 		}
-		if page.RetryAfter > 0 {
-			_, err := tx.Exec(ctx, `UPDATE slack_installations SET history_next_at=GREATEST(history_next_at,clock_timestamp()+$2*interval '1 second') WHERE id=$1`, installation, page.RetryAfter.Seconds())
-			return err
+		if terminal {
+			if err := disposeUnknownDelivery(ctx, tx, post, code); err != nil {
+				return err
+			}
 		}
 		return nil
 	})

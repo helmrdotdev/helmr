@@ -194,14 +194,6 @@ func TestAuditProjectionScopesAndDetailSemantics(t *testing.T) {
 	if bytes.Contains(data, []byte(foreign.String())) || !bytes.Contains(data, []byte("organization_mismatch")) {
 		t.Fatalf("foreign scope/result: %s", data)
 	}
-	r, scope = projectionRecord(t, audit.Internal(audit.ControlPlane), "session.delivery_check_requested", audit.LifecycleDetails{Generation: 7, RequestID: uuid.NewV7()})
-	public, err = projectRecord(r, scope)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if public.Details.(api.AuditLifecycleDetails).PublicationRevision != 7 {
-		t.Fatal("delivery publication observation lost")
-	}
 	r, scope = projectionRecord(t, audit.Internal(audit.ControlPlane), "secret.exposed", audit.SecretExposureDetails{ExposureID: uuid.NewV7(), VersionID: uuid.NewV7(), RevocationGeneration: 9})
 	public, err = projectRecord(r, scope)
 	if err != nil {

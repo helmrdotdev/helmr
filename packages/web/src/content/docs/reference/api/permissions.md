@@ -147,8 +147,6 @@ Agents or all current and future Agents in that environment.
 | `sessions.interrupt` | Agent | Yes | Interrupt the addressed Session/Turn using existing interruption semantics. |
 | `sessions.cancel` | Agent | Yes | Cancel the addressed Session using existing cancellation semantics. |
 | `sessions.close` | Agent | Yes | Inspect the close-scope preview and request Session closure using existing child/settlement constraints. |
-| `sessions.check_delivery` | Agent | No | Request Slack publication reconciliation for an uncertain delivery; also requires Session read. No resend or new execution authority. |
-| `sessions.abandon_delivery` | Agent | No | Record the existing delivery-abandonment disposition; also requires Session read. No resend or new execution authority. |
 | `deployments.read` | Environment | Yes | Read deployment list, current deployment, record and events; not Session conversations or Computer stdout/stderr. |
 | `deployments.publish` | Environment | Yes | Obtain upload plan, finalize bundle and register immutable deployment definitions/code. Publication/preparation may execute code with configured credentials. |
 | `deployments.promote` | Environment | Yes | Activate or roll back to an existing deployment; changes current definitions and scheduled admission. No upload authority. |

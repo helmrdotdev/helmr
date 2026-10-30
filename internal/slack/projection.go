@@ -138,6 +138,15 @@ func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectio
 		if e.turn == nil {
 			return errors.New("the Slack output has no Turn")
 		}
+		// A terminal publication disposed the unread output prefix under the same
+		// installation/thread gates as admission. Later output may start fresh.
+		var disposed bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_posts WHERE thread_source_id=$1 AND turn_id=$2 AND role='intermediate' AND delivery_disposed_through_seq>=$3)`, o.participant, e.turn, e.sequence).Scan(&disposed); err != nil {
+			return err
+		}
+		if disposed {
+			return nil
+		}
 		return projectContent(ctx, tx, o, e, "intermediate", e.data, false, nil)
 	case "turn.completed":
 		if e.turn == nil {

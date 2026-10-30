@@ -40,8 +40,6 @@ var definitions = []Definition{
 	{"turn.interrupt_requested", "turn", []string{"accepted", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 
 	{"trigger.content_read", "trigger", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
-	{"session.delivery_check_requested", "session", []string{"accepted", "denied", "failed"}, OrganizationScope, OrganizationAudience},
-	{"session.delivery_abandoned", "session", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"region.created", "region", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"region.updated", "region", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},
 	{"worker_group.updated", "worker_group", []string{"succeeded", "denied", "failed"}, PlatformScope, PlatformAudience},

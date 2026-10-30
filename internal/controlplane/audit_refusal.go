@@ -20,9 +20,7 @@ func (s *Server) requestAuditRoute(r *http.Request) (auditRoute, string, bool) {
 		return auditRoute{}, "", false
 	}
 	route, ok := auditRoutes[r.Method+" "+matched.RoutePattern()]
-	if ok && route.action == "session.delivery_check_requested" && matched.URLParam("recovery") == "abandon" {
-		route.action = "session.delivery_abandoned"
-	}
+
 	return route, r.Method + " " + matched.RoutePattern(), ok
 }
 

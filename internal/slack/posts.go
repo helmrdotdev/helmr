@@ -91,7 +91,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
  FROM slack_posts WHERE id=$1 FOR NO KEY UPDATE`, post).Scan(&role, &state, &path, &publication, &ordinal, &due, &expired, &revision, &message, &body, &frozen, &method, &frozenRevision, &stream.state, &stream.confirmed, &stream.recipientTeam, &stream.recipientUser, &stream.closed, &stream.suppressed, &stream.confirmedRevision, &streamText); err != nil {
 			return err
 		}
-		if path != "post" && path != "stream" {
+		if body == nil || (path != "post" && path != "stream") {
 			return nil
 		}
 		if state == "sending" && expired {
@@ -189,7 +189,7 @@ func ClaimPost(ctx context.Context, pool db.TxBeginner, post uuid.UUID) (*PostCl
 		digest := sha256.Sum256(frozen)
 		c := &PostClaim{TeamID: team, ChannelID: slackChannel, PeerID: peer, PostID: post, ThreadID: thread, InstallationID: installation, CredentialRevision: credential, AuthorizedAt: authorized, AttemptID: uuid.NewV7(), Revision: revision, Method: selected, Payload: frozen}
 		if err = tx.QueryRow(ctx, `UPDATE slack_posts SET status='sending',attempt_count=attempt_count+1,
- claimed_until=clock_timestamp()+interval '30 seconds',reconciliation_cursor='',reconciliation_pages=0,reconciliation_paused_at=NULL,inflight_method=$2,inflight_payload=$3,inflight_digest=$4,inflight_revision=$5,inflight_attempt_id=$6,inflight_stream_text=$7,error=CASE WHEN $2='chat.stopStream' THEN error ELSE NULL END
+ claimed_until=clock_timestamp()+interval '30 seconds',reconciliation_cursor='',reconciliation_pages=0,inflight_method=$2,inflight_payload=$3,inflight_digest=$4,inflight_revision=$5,inflight_attempt_id=$6,inflight_stream_text=$7,error=CASE WHEN $2='chat.stopStream' THEN error ELSE NULL END
  WHERE id=$1 RETURNING attempt_count,claimed_until`, post, selected, frozen, digest[:], revision, c.AttemptID, streamText).Scan(&c.AttemptCount, &c.ExpiresAt); err != nil {
 			return err
 		}
@@ -270,7 +270,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, 
  stream_status=CASE WHEN presentation_path='stream' THEN CASE WHEN inflight_method='chat.stopStream' THEN 'stopped' ELSE 'open' END ELSE stream_status END,
  confirmed_stream_text=COALESCE(inflight_stream_text,confirmed_stream_text),inflight_stream_text=NULL,
  confirmed_revision=inflight_revision,confirmed_at=clock_timestamp(),message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,
- inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'delivery_abandoned' WHEN inflight_method='chat.stopStream' AND error LIKE 'stream_content_rejected:%' THEN error WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END
+ inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN error WHEN inflight_method='chat.stopStream' AND error LIKE 'stream_content_rejected:%' THEN error WHEN desired_revision>inflight_revision AND desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END
  WHERE id=$1`, claim.PostID, timestamp)
 		if err != nil {
 			return err
@@ -316,7 +316,7 @@ func finishPostClaim(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, 
 		ended := (claim.Method == "chat.appendStream" || claim.Method == "chat.stopStream") && (code == "message_not_in_streaming_state" || code == "stopped_by_user" || code == "message_not_found")
 		if claim.Method == "chat.stopStream" && ended && code != "message_not_found" {
 			_, err := tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN error LIKE 'stream_content_rejected:%' THEN 'failed' WHEN desired_revision<=suppressed_revision THEN 'suppressed' ELSE 'posted' END,
- stream_status='stopped',claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'delivery_abandoned' WHEN error LIKE 'stream_content_rejected:%' THEN error WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,
+ stream_status='stopped',claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN error WHEN error LIKE 'stream_content_rejected:%' THEN error WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,
  inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL,inflight_stream_text=NULL WHERE id=$1`, claim.PostID)
 			return err
 		}

@@ -4,7 +4,7 @@
  SELECT p.id,p.turn_id,p.role,p.seq,p.status,p.presentation_path,p.stream_status,
  p.desired_revision,p.confirmed_revision,p.suppressed_revision,p.payload_expired_at IS NOT NULL AS payload_expired,
  p.created_at,p.posted_at,p.confirmed_at,p.closed_at,p.inflight_method,p.attempt_count,
- p.next_attempt_at,p.claimed_until,p.message_ts,p.error,p.delivery_disposed_at,p.reconciliation_paused_at
+ p.next_attempt_at,p.claimed_until,p.message_ts,p.error,p.delivery_disposed_at,p.reconciliation_pages
  FROM slack_posts p JOIN target s ON s.id=p.thread_source_id ORDER BY p.seq DESC LIMIT 100
 )
 SELECT jsonb_build_object(
