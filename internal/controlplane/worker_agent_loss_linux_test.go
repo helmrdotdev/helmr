@@ -583,7 +583,7 @@ func runWorkerAuthorityLoss(t *testing.T, input nativeExecutionConfig, published
 			t.Fatal("native storage pressure", err)
 		}
 	}
-	if _, err := apiClient.SendSessionMessage(ctx, started.SessionID, started.Turn.TurnID, api.SessionDataRequest{Data: json.RawMessage(`[{"type":"text","text":"\"release\""}]`), IdempotencyKey: "loss-release"}, client.EnvironmentScopeOptions{}); err != nil {
+	if _, err := apiClient.SendSessionMessage(ctx, started.SessionID, started.Turn.TurnID, api.SessionMessageRequest{Message: json.RawMessage(`[{"type":"text","text":"\"release\""}]`), IdempotencyKey: "loss-release"}, client.EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	var publication lossPublication

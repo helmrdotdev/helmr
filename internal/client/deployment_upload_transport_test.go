@@ -83,16 +83,16 @@ func TestDeploymentObjectUploadCancelsCapacityWait(t *testing.T) {
 	}
 }
 
-func TestDeploymentObjectUploadConfiguredLifetimeIncludesCapacityWait(t *testing.T) {
+func TestDeploymentObjectUploadLifetimeIncludesCapacityWait(t *testing.T) {
 	object := writeDeploymentUploadTestObject(t, "object")
 	synctest.Test(t, func(t *testing.T) {
 		calls := 0
-		c, err := New("https://example.test", WithDeploymentUploads(DeploymentUploadOptions{Timeout: 4 * time.Hour, IdleTimeout: 3 * time.Hour}), WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		c, err := New("https://example.test", WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			calls++
 			if calls == 1 {
 				return &http.Response{StatusCode: 429, Status: "429 Too Many Requests", Header: http.Header{"Retry-After": {"9000"}}, Body: io.NopCloser(strings.NewReader("busy"))}, nil
 			}
-			time.Sleep(time.Hour)
+			time.Sleep(time.Minute)
 			return deploymentUploadTestResponse(r), nil
 		})}))
 		if err != nil {
@@ -102,18 +102,18 @@ func TestDeploymentObjectUploadConfiguredLifetimeIncludesCapacityWait(t *testing
 		if err := c.UploadDeploymentBundleObject(t.Context(), testUploadBundleDigest, EnvironmentScopeOptions{}, deploymentUploadTestPlan(6), object, nil); err != nil {
 			t.Fatal(err)
 		}
-		if calls != 2 || time.Since(started) != 210*time.Minute {
+		if calls != 2 || time.Since(started) != 151*time.Minute {
 			t.Fatalf("calls=%d elapsed=%s", calls, time.Since(started))
 		}
 	})
 }
 
-func TestDeploymentObjectUploadConfiguredDeadlineAndCallerCancellation(t *testing.T) {
+func TestDeploymentObjectUploadDeadlineAndCallerCancellation(t *testing.T) {
 	object := writeDeploymentUploadTestObject(t, "object")
 	for _, callerDeadline := range []bool{false, true} {
 		t.Run(fmt.Sprint(callerDeadline), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				c, err := New("https://example.test", WithDeploymentUploads(DeploymentUploadOptions{Timeout: 30 * time.Second, IdleTimeout: 10 * time.Second}), WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				c, err := New("https://example.test", WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					return &http.Response{StatusCode: 429, Status: "429 Too Many Requests", Header: http.Header{"Retry-After": {"9223372036854775807"}}, Body: io.NopCloser(strings.NewReader("busy"))}, nil
 				})}))
 				if err != nil {
@@ -127,14 +127,14 @@ func TestDeploymentObjectUploadConfiguredDeadlineAndCallerCancellation(t *testin
 				}
 				started := time.Now()
 				err = c.UploadDeploymentBundleObject(ctx, testUploadBundleDigest, EnvironmentScopeOptions{}, deploymentUploadTestPlan(6), object, nil)
-				want := 30 * time.Second
+				want := 3 * time.Hour
 				if callerDeadline {
 					want = 5 * time.Second
 				}
 				if !errors.Is(err, context.DeadlineExceeded) || time.Since(started) != want {
 					t.Fatalf("elapsed=%s error=%v", time.Since(started), err)
 				}
-				if !callerDeadline && !strings.Contains(err.Error(), "client object-upload deadline 30s exceeded") {
+				if !callerDeadline && !strings.Contains(err.Error(), "client object-upload deadline 3h0m0s exceeded") {
 					t.Fatalf("deadline owner missing: %v", err)
 				}
 			})

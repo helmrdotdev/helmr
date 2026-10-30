@@ -160,7 +160,7 @@ func verifyNativeSeedGeneration(t *testing.T, parent context.Context, pool *pgxp
 	})
 	progressMS := time.Since(progressAt).Seconds() * 1000
 	observeQueued()
-	if _, err := c.SendSessionMessage(ctx, keeper.SessionID, keeper.Turn.TurnID, api.SessionDataRequest{Data: json.RawMessage(`[{"type":"text","text":"\"release\""}]`), IdempotencyKey: "old-generation-release"}, client.EnvironmentScopeOptions{}); err != nil {
+	if _, err := c.SendSessionMessage(ctx, keeper.SessionID, keeper.Turn.TurnID, api.SessionMessageRequest{Message: json.RawMessage(`[{"type":"text","text":"\"release\""}]`), IdempotencyKey: "old-generation-release"}, client.EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	waitTurn(keeper.SessionID, keeper.Turn.TurnID)
@@ -251,7 +251,7 @@ func verifyNativeSeedGeneration(t *testing.T, parent context.Context, pool *pgxp
 		}
 		sessions[phase] = r.SessionID
 		samples = append(samples, map[string]any{"phase": phase, "session": r.SessionID, "computer": computer, "request_started_at": started, "ack_ms": ackMS, "first_output_observed_ms": firstOutputMS, "output": output})
-		if _, err := c.SendSessionMessage(ctx, r.SessionID, r.Turn.TurnID, api.SessionDataRequest{Data: json.RawMessage(`[{"type":"text","text":"\"release\""}]`), IdempotencyKey: phase + "-release"}, client.EnvironmentScopeOptions{}); err != nil {
+		if _, err := c.SendSessionMessage(ctx, r.SessionID, r.Turn.TurnID, api.SessionMessageRequest{Message: json.RawMessage(`[{"type":"text","text":"\"release\""}]`), IdempotencyKey: phase + "-release"}, client.EnvironmentScopeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		waitTurn(r.SessionID, r.Turn.TurnID)

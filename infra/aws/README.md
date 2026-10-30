@@ -184,16 +184,15 @@ to retry. Established transfers release ordinary API admission slots, while
 shared resource pressure remains a deployment concern.
 
 In Standard and Private, `controlplane_idle_timeout_seconds` configures the ALB connection idle timer
-(default 180 seconds, range 1–4000). Set it above the supported upload inactivity
-interval. The module configures backend `CONTROL_PLANE_HTTP_IDLE_TIMEOUT` to
+(default 180 seconds, range 1–4000). It must exceed the CLI's two-minute upload
+inactivity timeout. The module configures backend `CONTROL_PLANE_HTTP_IDLE_TIMEOUT` to
 30 seconds longer than the ALB timer, avoiding reuse of already-expired backend
 connections. Backend keepalive between requests is distinct from body inactivity.
 Other ingress layers, including CloudFront origin response/completion timeouts,
 can impose tighter limits and require their own end-to-end qualification.
 CloudFront's response timeout is not the upload's total-duration setting.
 
-The CLI defaults to a three-hour deadline per object, including 429 waiting,
-and a two-minute no-progress timeout. Operators can supply compatible client
-settings through `HELMR_UPLOAD_TIMEOUT`/`HELMR_UPLOAD_IDLE_TIMEOUT` or the deploy
-flags `--upload-timeout`/`--upload-idle-timeout`. Leave client retry headroom beyond
-the server's admitted-transfer duration; there is no automatic policy discovery.
+The CLI uses a fixed three-hour deadline per object, including 429 waiting,
+and a two-minute no-progress timeout. Other ingress inactivity limits must also
+exceed two minutes, and the server's admitted-transfer duration should leave
+room for client retries within the three-hour deadline.

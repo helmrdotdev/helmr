@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -25,7 +24,6 @@ func deployCommand() *cobra.Command {
 	var skipPromotion bool
 	var jsonOutput bool
 	var idempotencyKey string
-	uploadOptions := client.DefaultDeploymentUploadOptions()
 	cmd := &cobra.Command{
 		Use:   "deploy [path]",
 		Short: "Build and deploy a verified deployment bundle.",
@@ -37,25 +35,7 @@ func deployCommand() *cobra.Command {
 			if strings.TrimSpace(bundlePath) != "" && len(args) != 0 {
 				return errors.New("deploy accepts either a source path or --bundle, not both")
 			}
-			for _, option := range []struct {
-				flag, environment string
-				target            *time.Duration
-			}{
-				{"upload-timeout", "HELMR_UPLOAD_TIMEOUT", &uploadOptions.Timeout},
-				{"upload-idle-timeout", "HELMR_UPLOAD_IDLE_TIMEOUT", &uploadOptions.IdleTimeout},
-			} {
-				if value, ok := os.LookupEnv(option.environment); ok && !cmd.Flags().Changed(option.flag) {
-					duration, err := time.ParseDuration(strings.TrimSpace(value))
-					if err != nil {
-						return fmt.Errorf("%s: %w", option.environment, err)
-					}
-					*option.target = duration
-				}
-			}
-			if err := uploadOptions.Validate(); err != nil {
-				return err
-			}
-			controlPlane, err := controlPlaneClient(cmd, client.WithDeploymentUploads(uploadOptions))
+			controlPlane, err := controlPlaneClient(cmd)
 			if err != nil {
 				return err
 			}
@@ -133,8 +113,6 @@ func deployCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&skipPromotion, "skip-promotion", false, "Finalize the deployment without promoting it current.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON lines for deployment progress.")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for retrying deployment finalization.")
-	cmd.Flags().DurationVar(&uploadOptions.Timeout, "upload-timeout", uploadOptions.Timeout, "Deadline for each object upload including capacity retries; HELMR_UPLOAD_TIMEOUT overrides the default.")
-	cmd.Flags().DurationVar(&uploadOptions.IdleTimeout, "upload-idle-timeout", uploadOptions.IdleTimeout, "Maximum time without upload progress; HELMR_UPLOAD_IDLE_TIMEOUT overrides the default.")
 	return cmd
 }
 

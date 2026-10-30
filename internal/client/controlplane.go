@@ -30,25 +30,14 @@ var (
 	ErrDeploymentObjectUploadNoProgress   = errors.New("deployment object upload made no progress")
 )
 
-const deploymentObjectUploadProgressInterval = 10 * time.Second
-
-// DeploymentUploadOptions are caller-side bounds, independent of the server's
-// per-admitted-request limits. Timeout includes waiting for upload capacity.
-type DeploymentUploadOptions struct {
-	Timeout     time.Duration
-	IdleTimeout time.Duration
-}
-
-func DefaultDeploymentUploadOptions() DeploymentUploadOptions {
-	return DeploymentUploadOptions{Timeout: 3 * time.Hour, IdleTimeout: 2 * time.Minute}
-}
-
-func (o DeploymentUploadOptions) Validate() error {
-	if o.IdleTimeout < time.Millisecond || o.Timeout < o.IdleTimeout {
-		return errors.New("client upload durations must be at least 1ms with idle timeout no greater than total timeout")
-	}
-	return nil
-}
+// Deployment object uploads are bounded by the client, independent of the
+// server's per-admitted-request limits. The deadline includes waiting for
+// upload capacity; the idle bound fails an upload that stops making progress.
+const (
+	deploymentObjectUploadTimeout          = 3 * time.Hour
+	deploymentObjectUploadIdleTimeout      = 2 * time.Minute
+	deploymentObjectUploadProgressInterval = 10 * time.Second
+)
 
 type ListProjectsOptions struct {
 	Cursor string
@@ -191,13 +180,13 @@ func (c *Client) UploadDeploymentBundleObject(
 	objectPath string,
 	progress func(bytesRead int64, totalBytes int64) error,
 ) error {
-	timeout := c.deploymentUploads.Timeout
+	timeout := deploymentObjectUploadTimeout
 	deadline := fmt.Errorf("client object-upload deadline %s exceeded (including capacity retries): %w", timeout, context.DeadlineExceeded)
 	ctx, cancel := context.WithTimeoutCause(ctx, timeout, deadline)
 	defer cancel()
 	for {
 		err := c.uploadDeploymentBundleObject(ctx, bundleDigest, scope, upload, objectPath, progress,
-			min(deploymentObjectUploadProgressInterval, c.deploymentUploads.IdleTimeout/4), c.deploymentUploads.IdleTimeout)
+			deploymentObjectUploadProgressInterval, deploymentObjectUploadIdleTimeout)
 		if ctx.Err() != nil {
 			return context.Cause(ctx)
 		}

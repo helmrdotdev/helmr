@@ -126,8 +126,8 @@ func (c *Client) EnqueueSession(ctx context.Context, sessionID string, input api
 	return response, nil
 }
 
-func (c *Client) SendSessionMessage(ctx context.Context, sessionID string, turnID string, input api.SessionDataRequest, opts EnvironmentScopeOptions) (api.SessionMessageReceipt, error) {
-	if err := api.ValidateSessionDataRequest(input); err != nil {
+func (c *Client) SendSessionMessage(ctx context.Context, sessionID string, turnID string, request api.SessionMessageRequest, opts EnvironmentScopeOptions) (api.SessionMessageReceipt, error) {
+	if err := api.ValidateSessionMessageRequest(request); err != nil {
 		return api.SessionMessageReceipt{}, err
 	}
 	if err := ids.Validate(turnID); err != nil {
@@ -137,9 +137,9 @@ func (c *Client) SendSessionMessage(ctx context.Context, sessionID string, turnI
 	if err != nil {
 		return api.SessionMessageReceipt{}, err
 	}
-	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
+	request.IdempotencyKey = invocationKey(request.IdempotencyKey)
 	var response api.SessionMessageReceipt
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
+	if err := c.postJSON(ctx, path, request, &response); err != nil {
 		return api.SessionMessageReceipt{}, err
 	}
 	return response, nil

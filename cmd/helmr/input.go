@@ -57,7 +57,7 @@ func parseContentInput(cmd *cobra.Command, file, raw, label string) (json.RawMes
 		return nil, fmt.Errorf("--text, %s-file or %s-json is required", label, label)
 	}
 	normalized, err := content.Invocation(value)
-	if label == "--data" {
+	if label == "--message" {
 		normalized, err = content.Input(value)
 	}
 	if err != nil {

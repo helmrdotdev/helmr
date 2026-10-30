@@ -196,13 +196,13 @@ function createSessionRef(
           return parseAskReceipt(await post(path + "/asks/" + encodeURIComponent(resourceID(askId, "Ask ID")) + "/answer", { answer: normalizeSubmission(request.answer), answer_id: request.answerId }, options))
         },
       } satisfies import("./contract").TurnAsks),
-      async send(data, request, options) {
-        normalizeInput(data)
+      async send(message, request, options) {
+        normalizeInput(message)
         const receipt = parseSessionMessageReceipt(
           await post(
             path + "/messages",
             {
-              data,
+              message,
               idempotency_key: sessionOperationOptions(request).idempotencyKey,
             },
             options,
