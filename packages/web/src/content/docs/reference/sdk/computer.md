@@ -263,7 +263,7 @@ interface ComputerCommandRequest {
 
 `exec()` returns after admission; use the returned Command's `wait()` to observe
 completion. `timeout` limits execution, defaults to `5m`, and accepts `1ms` through
-`15m`. It is separate from the timeout on `CommandRef.wait()`.
+`24h`. It is separate from the timeout on `CommandRef.wait()`.
 
 `ComputerUsage` is `{ id, usageState, createdAt }`,
 where `usageState` is `admitted`, `running`, `waiting`, `parked`, `draining` or

@@ -66,7 +66,7 @@ be before a hibernated Computer has resumed. `--idempotency-key` is required.
 | `--cwd PATH` | Working directory. Defaults to `/workspace`. |
 | `--set-env NAME=VALUE` | Add an environment variable. Repeatable. |
 | `--stdin PATH` | Send a file's bytes on standard input. |
-| `--timeout DURATION` | Execution limit. Defaults to `5m`, at most `15m`. |
+| `--timeout DURATION` | Execution limit. Defaults to `5m`, at most `24h`. |
 
 Commands can change the Computer's disk; changes persist for later commands and
 Sessions on the same Computer. Do not pass Secret values in arguments or

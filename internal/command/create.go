@@ -33,7 +33,7 @@ const (
 	// DefaultTimeout is the timeout of a Command that names none.
 	DefaultTimeout = 5 * time.Minute
 	// MaxTimeout is the longest timeout a Command may name.
-	MaxTimeout = 15 * time.Minute
+	MaxTimeout = 24 * time.Hour
 
 	argMaxCount = 128
 	argMaxBytes = 64 << 10
@@ -174,7 +174,7 @@ func normalize(request CreateRequest) (normalizedRequest, error) {
 		timeout = DefaultTimeout
 	}
 	if timeout < time.Millisecond || timeout > MaxTimeout {
-		return normalizedRequest{}, invalid("timeout must be between 1ms and 15m")
+		return normalizedRequest{}, invalid("timeout must be between 1ms and 24h")
 	}
 	return normalizedRequest{
 		argv:      argv,

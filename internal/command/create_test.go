@@ -26,6 +26,13 @@ func TestNormalizeAppliesClosedDefaults(t *testing.T) {
 	}
 }
 
+func TestNormalizeAcceptsDayLongTimeout(t *testing.T) {
+	normalized, err := normalize(CreateRequest{Argv: []string{"x"}, Timeout: 24 * time.Hour})
+	if err != nil || normalized.timeoutMS != 86400000 {
+		t.Fatalf("normalized = %+v, %v", normalized, err)
+	}
+}
+
 func TestNonNilBytesClonesInput(t *testing.T) {
 	if value := nonNilBytes(nil); value == nil || len(value) != 0 {
 		t.Fatalf("empty value = %#v", value)
@@ -62,7 +69,7 @@ func TestNormalizeRejectsInvalidAuthorityAndBounds(t *testing.T) {
 		{"reserved env", CreateRequest{Argv: []string{"x"}, Env: map[string]string{"HELMR_TOKEN": "x"}}, InputInvalid, `computer exec request is invalid: env name "HELMR_TOKEN" is invalid or reserved`},
 		{"too many env", CreateRequest{Argv: []string{"x"}, Env: tooManyEnv}, InputTooLarge, "computer exec request is too large: env has more than 128 entries"},
 		{"stdin", CreateRequest{Argv: []string{"x"}, Stdin: make([]byte, MaxStdinBytes+1)}, InputStdinTooLarge, "computer exec stdin is too large"},
-		{"timeout", CreateRequest{Argv: []string{"x"}, Timeout: MaxTimeout + time.Millisecond}, InputInvalid, "computer exec request is invalid: timeout must be between 1ms and 15m"},
+		{"timeout", CreateRequest{Argv: []string{"x"}, Timeout: MaxTimeout + time.Millisecond}, InputInvalid, "computer exec request is invalid: timeout must be between 1ms and 24h"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := normalize(test.request)

@@ -28,11 +28,19 @@ type computerBasicExec struct {
 	output       *commandOutputSpool
 }
 
+// computerBasicExecMaxTimeout is the longest execution timeout a Command may carry.
+const computerBasicExecMaxTimeout = 24 * time.Hour
+
 type computerBasicExecSpec struct {
 	Command   []string          `json:"command"`
 	Cwd       string            `json:"cwd"`
 	Env       map[string]string `json:"env"`
 	TimeoutMS int64             `json:"timeout_ms"`
+}
+
+func (spec computerBasicExecSpec) valid() bool {
+	return len(spec.Command) > 0 && spec.Command[0] != "" &&
+		spec.TimeoutMS > 0 && spec.TimeoutMS <= computerBasicExecMaxTimeout.Milliseconds()
 }
 
 // The lifecycle/finalization locks serialize transfer, reservation, Program admission
@@ -157,8 +165,7 @@ func (entry *computerMountEntry) executeComputerBasicExec(
 	if err := decoder.Decode(&spec); err != nil {
 		return computerBasicCommandFailure(fingerprint, "computer_command_invalid", err)
 	}
-	if len(spec.Command) == 0 || spec.Command[0] == "" ||
-		spec.TimeoutMS <= 0 || spec.TimeoutMS > int64((15*time.Minute)/time.Millisecond) {
+	if !spec.valid() {
 		return computerBasicCommandFailure(fingerprint, "computer_command_invalid", errors.New("computer exec request is invalid"))
 	}
 	launchCwd, err := entry.computerLaunchCwd(spec.Cwd)
