@@ -38,7 +38,8 @@ func TestSlackClosedStatusFollowsExternalCloseCancelAndIdleExpiry(t *testing.T) 
 			f.assertAggregate(t, "active")
 			if kind == "idle" {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$1;
- UPDATE sessions SET close_after_idle_ms=1,idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Session)
+ UPDATE agent_definitions d SET close_after_idle_ms=1 FROM sessions s WHERE s.id=$1 AND (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id);
+ UPDATE sessions SET idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Session)
 				ctx, cancel := context.WithCancel(t.Context())
 				done := make(chan error, 1)
 				go func() {

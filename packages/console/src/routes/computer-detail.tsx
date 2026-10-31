@@ -136,7 +136,6 @@ export function ComputerDetail() {
                   <KeyValue label="Deployment">
                     <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                   </KeyValue>
-                  <KeyValue label="Last activity"><RelativeTime value={current().last_activity_at} /></KeyValue>
                   <KeyValue label="Created"><RelativeTime value={current().created_at} /></KeyValue>
                   <KeyValue label="Updated"><RelativeTime value={current().updated_at} /></KeyValue>
                 </KeyValueList>

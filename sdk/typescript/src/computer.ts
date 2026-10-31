@@ -16,7 +16,6 @@ export type ComputerStatus =
   | "deleting"
 
 export interface ComputerCreateRequest {
-  readonly deleteAfterUnused?: Retention
   readonly template: string
   readonly key?: string
   readonly secrets?: readonly SecretBinding[]
@@ -28,6 +27,7 @@ export type ComputerExecutionWait = Readonly<{ reason: "scheduling" | "environme
 interface ComputerProperties {
   readonly executionControl: ComputerExecutionReceipt | null
   readonly executionWait: ComputerExecutionWait | null
+  /** The origin Template's unused period. */
   readonly deleteAfterUnused: Retention
   readonly unusedSince: string | null
   readonly id: string
@@ -36,7 +36,6 @@ interface ComputerProperties {
   readonly deploymentId: string
   readonly status: ComputerStatus
   readonly secrets: readonly SecretBinding[]
-  readonly lastActivityAt: string
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -90,7 +89,6 @@ export interface ComputerExecutionReceipt {
 export interface ComputerRef {
   hibernate(request?: ComputerExecutionRequest, options?: RequestOptions): Promise<ComputerExecutionReceipt>
   wake(request?: ComputerExecutionRequest, options?: RequestOptions): Promise<ComputerExecutionReceipt>
-  update(request: Readonly<{ deleteAfterUnused: Retention }>, options?: RequestOptions): Promise<Computer>
   exec(request: ComputerCommandRequest, options?: RequestOptions): Promise<import("./command").CommandRef>
   readonly id: string
   get(options?: RequestOptions): Promise<Computer>
@@ -237,7 +235,6 @@ export function parseComputer(value: unknown): Computer {
     executionControl: input["execution_control"] == null ? null : parseComputerExecutionReceipt(input["execution_control"]),
     ...(input["error"] === undefined ? {} : { error: parseComputerError(input["error"]) }),
     secrets: Object.freeze(input["secrets"].map(parseComputerSecret)),
-    lastActivityAt: computerTimestamp(input["last_activity_at"], "last_activity_at"),
     createdAt: computerTimestamp(input["created_at"], "created_at"),
     updatedAt: computerTimestamp(input["updated_at"], "updated_at"),
   } as Computer)

@@ -17,8 +17,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 
-	"github.com/helmrdotdev/helmr/internal/lifetime"
-
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -31,7 +29,6 @@ import (
 // Agent references are definition keys in the caller's pinned Deployment.
 // A start that names a Slack channel is admitted through the Slack owner.
 type StartRequest struct {
-	CloseAfterIdle lifetime.Policy
 	EnvironmentID  uuid.UUID
 	Agent          string
 	ComputerID     uuid.UUID
@@ -92,7 +89,7 @@ func admitSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.T
 
 // PlanStart validates a start request and computes its idempotency digest.
 func PlanStart(auditPolicy auditpolicy.Policy, caller Caller, req StartRequest, method string) (StartPlan, error) {
-	if !req.CloseAfterIdle.Valid() || req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
+	if req.EnvironmentID == uuid.Nil() || !definition.ValidDeclaredID(req.Agent) || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) || (req.SessionKey != nil && (len(*req.SessionKey) == 0 || len(*req.SessionKey) > 512 || !utf8.ValidString(*req.SessionKey) || strings.ContainsRune(*req.SessionKey, 0))) {
 		return StartPlan{}, ErrInvalidInput
 	}
 	if req.SlackChannelID != nil && (!definition.ValidSlackChannelID(*req.SlackChannelID) || caller.Kind == "session") {
@@ -116,13 +113,12 @@ func PlanStart(auditPolicy auditpolicy.Policy, caller Caller, req StartRequest, 
 		}
 	}
 	raw, err := json.Marshal(struct {
-		CloseAfterIdle lifetime.Policy `json:",omitzero"`
 		Agent          string
 		Computer       any
 		SessionKey     *string
 		Input          json.RawMessage
 		SlackChannelID *string
-	}{req.CloseAfterIdle, req.Agent, nullableID(req.ComputerID), req.SessionKey, req.Input, req.SlackChannelID})
+	}{req.Agent, nullableID(req.ComputerID), req.SessionKey, req.Input, req.SlackChannelID})
 	if err != nil {
 		return StartPlan{}, ErrInvalidInput
 	}
@@ -237,9 +233,7 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			deployment = *policy.Deployment
 		}
 		var templateKey, inputKind string
-		var duration *int64
-		var never bool
-		if err = tx.QueryRow(ctx, `SELECT t.key,d.close_after_idle_ms,d.close_after_idle_never,d.input_kind FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&templateKey, &duration, &never, &inputKind); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT t.key,d.input_kind FROM agent_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.agent_id=$2 AND d.deployment_id=$3`, req.EnvironmentID, agentID, deployment).Scan(&templateKey, &inputKind); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotReady
 			}
@@ -316,7 +310,6 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 			}
 		}
 		result.SessionID, result.Created = uuid.NewV7(), true
-		result.CloseAfterIdleMs = lifetime.Resolve(req.CloseAfterIdle, duration, never)
 		if hasInput {
 			result.TurnID, result.Sequence = uuid.NewV7(), 1
 		}
@@ -336,8 +329,8 @@ func AdmitStart(ctx context.Context, tx pgx.Tx, trust computer.TrustIssuer, p St
 				return ErrInvalidInput
 			}
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,key,close_after_idle_ms,creation_caller_kind,creation_caller_id,creation_method,creation_idempotency_key,creation_digest,creation_turn_id,idle_since,next_turn_seq,origin_user_id,origin_api_key_id,origin_activation_id,origin_slack_connection_id)
- SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,NULLIF($16,''),$17,$18,CASE WHEN $18::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $18::uuid IS NULL THEN 1 ELSE 2 END,$19,$20,$21,$22 FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computerID), root, parent, requester, origin, causal, req.SessionKey, result.CloseAfterIdleMs, caller.Kind, caller.ID, method, req.IdempotencyKey, digest[:], nullableID(result.TurnID), lineage.User, lineage.Key, lineage.Activation, lineage.Connection); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,origin_turn_id,causal_depth,key,creation_caller_kind,creation_caller_id,creation_method,creation_idempotency_key,creation_digest,creation_turn_id,idle_since,next_turn_seq,origin_user_id,origin_api_key_id,origin_activation_id,origin_slack_connection_id)
+ SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NULLIF($15,''),$16,$17,CASE WHEN $17::uuid IS NULL THEN clock_timestamp() END,CASE WHEN $17::uuid IS NULL THEN 1 ELSE 2 END,$18,$19,$20,$21 FROM environments WHERE id=$1`, req.EnvironmentID, result.SessionID, agentID, deployment, nullableID(computerID), root, parent, requester, origin, causal, req.SessionKey, caller.Kind, caller.ID, method, req.IdempotencyKey, digest[:], nullableID(result.TurnID), lineage.User, lineage.Key, lineage.Activation, lineage.Connection); err != nil {
 			return err
 		}
 		if err = inheritComputerRecoveryGap(ctx, tx, req.EnvironmentID, result.SessionID, computerID); err != nil {
@@ -436,7 +429,7 @@ func sessionCreationReceipt(ctx context.Context, tx pgx.Tx, caller Caller, env, 
 	var result Admission
 	var turn *uuid.UUID
 	var prior []byte
-	err := tx.QueryRow(ctx, `SELECT id,creation_turn_id,creation_digest,close_after_idle_ms FROM sessions WHERE environment_id=$1 AND creation_caller_kind=$2 AND creation_caller_id=$3 AND creation_method=$4 AND agent_id=$5 AND creation_idempotency_key=$6`, env, caller.Kind, caller.ID, method, agentID, retry).Scan(&result.SessionID, &turn, &prior, &result.CloseAfterIdleMs)
+	err := tx.QueryRow(ctx, `SELECT id,creation_turn_id,creation_digest FROM sessions WHERE environment_id=$1 AND creation_caller_kind=$2 AND creation_caller_id=$3 AND creation_method=$4 AND agent_id=$5 AND creation_idempotency_key=$6`, env, caller.Kind, caller.ID, method, agentID, retry).Scan(&result.SessionID, &turn, &prior)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

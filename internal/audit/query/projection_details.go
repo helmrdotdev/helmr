@@ -63,8 +63,6 @@ func projectDetails(event *api.AuditEvent, scope readScope, details audit.Detail
 		return api.AuditMCPDetails(d), nil
 	case audit.SecretExposureDetails:
 		return api.AuditSecretExposureDetails(d), nil
-	case audit.ComputerRetentionDetails:
-		return api.AuditComputerRetentionDetails(d), nil
 	case audit.ComputerControlDetails:
 		return api.AuditComputerControlDetails(d), nil
 	case audit.SessionControlDetails:

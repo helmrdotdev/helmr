@@ -23,7 +23,6 @@ export type Session = {
   initial_turn: { id: string; status: SessionTurn["status"] } | null;
   key?: string;
   status: SessionStatus;
-  suspension: "manual" | "after_turn";
   close_after_idle_ms: number | null;
   created_at: string;
   holds: SessionHold[];

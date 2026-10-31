@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
@@ -231,7 +230,6 @@ func (server *Server) workerAgentFail(w http.ResponseWriter, r *http.Request, re
 func decodeAgentStart(payload json.RawMessage, environment uuid.UUID) (session.StartRequest, error) {
 	var input struct {
 		AgentID        string          `json:"agent"`
-		CloseAfterIdle lifetime.Policy `json:"closeAfterIdleMs,omitzero"`
 		Input          json.RawMessage `json:"input"`
 		ComputerID     json.RawMessage `json:"computerId,omitempty"`
 		IdempotencyKey string          `json:"idempotencyKey,omitempty"`
@@ -252,7 +250,7 @@ func decodeAgentStart(payload json.RawMessage, environment uuid.UUID) (session.S
 	if input.IdempotencyKey == "" {
 		return session.StartRequest{}, errors.New("MCP mutation requires an idempotency key")
 	}
-	return session.StartRequest{CloseAfterIdle: input.CloseAfterIdle, EnvironmentID: environment, Agent: input.AgentID, ComputerID: computer, IdempotencyKey: input.IdempotencyKey, Input: input.Input}, nil
+	return session.StartRequest{EnvironmentID: environment, Agent: input.AgentID, ComputerID: computer, IdempotencyKey: input.IdempotencyKey, Input: input.Input}, nil
 }
 
 func (server *Server) workerAgentStartSession(w http.ResponseWriter, r *http.Request, request workerapi.AgentOperationRequest, caller session.Caller) {
@@ -270,7 +268,7 @@ func (server *Server) workerAgentStartSession(w http.ResponseWriter, r *http.Req
 		server.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
 	}
-	body, _ := json.Marshal(map[string]any{"sessionId": receipt.SessionID.String(), "turnId": receipt.TurnID.String(), "sequence": receipt.Sequence, "closeAfterIdleMs": receipt.CloseAfterIdleMs})
+	body, _ := json.Marshal(map[string]any{"sessionId": receipt.SessionID.String(), "turnId": receipt.TurnID.String(), "sequence": receipt.Sequence})
 	writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: body})
 }
 
@@ -285,7 +283,7 @@ func (server *Server) workerAgentSpawn(w http.ResponseWriter, r *http.Request, r
 		server.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
 	}
-	body, _ := json.Marshal(map[string]any{"sessionId": receipt.SessionID.String(), "turnId": receipt.TurnID.String(), "sequence": receipt.Sequence, "closeAfterIdleMs": receipt.CloseAfterIdleMs})
+	body, _ := json.Marshal(map[string]any{"sessionId": receipt.SessionID.String(), "turnId": receipt.TurnID.String(), "sequence": receipt.Sequence})
 	writeJSON(w, http.StatusOK, workerapi.AgentOperationResponse{RequestID: request.RequestID, Value: body})
 }
 

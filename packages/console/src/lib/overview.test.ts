@@ -11,7 +11,7 @@ const failure = (overrides: Partial<OverviewFailure> = {}): OverviewFailure => (
 });
 const computer = (id: string, overrides: Partial<ComputerListItem> = {}): ComputerListItem => ({
   id, template: "base", deployment_id: "d", status: "available", execution_control: null, execution_wait: null, residency: "running",
-  last_activity_at: "2026-10-25T11:00:00Z", created_at: "2026-10-24T00:00:00Z", updated_at: "2026-10-25T11:00:00Z", ...overrides,
+  created_at: "2026-10-24T00:00:00Z", updated_at: "2026-10-25T11:00:00Z", ...overrides,
 });
 const item = (kind: AttentionItem["kind"], at: string, overrides: Partial<AttentionItem> = {}): AttentionItem => ({ kind, id: `${kind}-${at}`, at, agent: "triage", session_id: "s2", ...overrides });
 
@@ -57,11 +57,11 @@ test("failureRate rounds to one decimal and is undefined without turns", () => {
   expect(failureRate({ total: 0, failed: 0 })).toBeUndefined();
 });
 
-test("orderComputers puts problems first, then awake, newest activity first", () => {
+test("orderComputers puts problems first, then awake, newest first", () => {
   const ordered = orderComputers([
-    computer("asleep", { residency: "parked", last_activity_at: "2026-10-25T11:59:00Z" }),
-    computer("awake-old", { last_activity_at: "2026-10-25T09:00:00Z" }),
-    computer("awake-new", { last_activity_at: "2026-10-25T11:00:00Z" }),
+    computer("asleep", { residency: "parked", created_at: "2026-10-25T11:59:00Z" }),
+    computer("awake-old", { created_at: "2026-10-25T09:00:00Z" }),
+    computer("awake-new", { created_at: "2026-10-25T11:00:00Z" }),
     computer("waiting", { residency: "cold", execution_wait: { reason: "environment_limit" } }),
     computer("broken", { residency: "unavailable" }),
     computer("gone", { status: "deleted" }),

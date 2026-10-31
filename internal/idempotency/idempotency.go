@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -54,9 +53,8 @@ type DeploymentFinalizeFingerprint struct {
 	BundleDigest string `json:"bundleDigest"`
 }
 type ComputerCreateFingerprint struct {
-	DeleteAfterUnused lifetime.Policy `json:",omitzero"`
-	Key               *string
-	Secrets           json.RawMessage
+	Key     *string
+	Secrets json.RawMessage
 }
 type ComputerCommandFingerprint struct {
 	Command   []string

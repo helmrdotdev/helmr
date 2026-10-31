@@ -9,8 +9,8 @@ import { compareUTF8, hasOnlyUnicodeScalarValues } from "./utf8"
 export const BUILD_PLAN_FORMAT_VERSION = 0 as const
 
 export interface TemplateManifest {
-  readonly deleteAfterUnusedMs?: number
-  readonly deleteAfterUnusedNever?: boolean
+  /** Null means never. */
+  readonly deleteAfterUnusedMs: number | null
   readonly imageBuild: ImageBuild
   readonly resources: { readonly milliCpu: number; readonly memoryMiB: number; readonly diskMiB?: number }
   readonly network: NetworkPolicy
@@ -26,9 +26,10 @@ export interface AgentManifest {
   readonly hasInit: boolean
   readonly inputKind: "text" | "json"
   readonly inputSchema?: InputSchemaDiscovery
-  readonly suspension?: "manual" | "after_turn"
-  readonly closeAfterIdleMs?: number
-  readonly closeAfterIdleNever?: boolean
+  /** Null means never. */
+  readonly closeAfterIdleMs: number | null
+  /** Null means never. */
+  readonly hibernateAfterIdleMs: number | null
   readonly maxTurnDurationMs?: number
   readonly triggers: Readonly<Record<string, { readonly cron: string; readonly timezone: string; readonly input: JsonValue; readonly slack?: Readonly<{ channelId: string }> }>>
 }
@@ -119,13 +120,12 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
         }
         triggers[key] = { cron: trigger.cron, timezone: trigger.timezone, input: trigger.input, ...(trigger.slack === undefined ? {} : { slack: { channelId: trigger.slack.channelId } }) }
       }
-      if (definition.suspension !== undefined && definition.suspension !== "manual" && definition.suspension !== "after_turn") throw new Error("Agent suspension must be manual or after_turn")
       return { kind: "agent", declaredId: definition.id, manifest: {
         ...describeInput(definition.inputSchema, definition.id),
         ...(definition.runtimeMcp === undefined ? {} : { runtimeMcp: normalizeRuntimeMcp(definition.runtimeMcp, agentKeys, `${definition.id}.runtimeMcp`) }),
-        suspension: definition.suspension ?? "manual",
         templateDefinitionId: definition.template.id, hasInit: definition.init !== undefined, triggers,
-        ...(definition.closeAfterIdle === undefined ? {} : definition.closeAfterIdle === "never" ? { closeAfterIdleNever: true } : { closeAfterIdleMs: duration(definition.closeAfterIdle, "closeAfterIdle") }),
+        closeAfterIdleMs: retention(definition.closeAfterIdle, DEFAULT_RETENTION, "closeAfterIdle"),
+        hibernateAfterIdleMs: retention(definition.hibernateAfterIdle, "never", "hibernateAfterIdle"),
         ...(definition.maxTurnDuration === undefined ? {} : { maxTurnDurationMs: duration(definition.maxTurnDuration, "maxTurnDuration") }),
       } }
     }
@@ -143,7 +143,7 @@ export function analyze(options: AnalyzeOptions): AnalysisResult {
     return { kind: "template", declaredId: definition.id, manifest: {
       imageBuild: compileImageBuild(image, options), resources: normalizeComputerResources(definition.resources),
       prepare: definition.prepare !== undefined, network, ...(prepareNetwork === undefined ? {} : { prepareNetwork }),
-      ...(definition.deleteAfterUnused === undefined ? {} : definition.deleteAfterUnused === "never" ? { deleteAfterUnusedNever: true } : { deleteAfterUnusedMs: duration(definition.deleteAfterUnused, "deleteAfterUnused") }),
+      deleteAfterUnusedMs: retention(definition.deleteAfterUnused, DEFAULT_RETENTION, "deleteAfterUnused"),
       ...(refresh === undefined ? {} : { refresh: { everyMs: duration(refresh.every, "refresh.every"), ...(refresh.maxAge === undefined ? {} : { maxAgeMs: duration(refresh.maxAge, "refresh.maxAge") }) } }),
       secrets, prepareSecrets,
     } }
@@ -169,7 +169,7 @@ function locateDefinitions(options: AnalyzeOptions): LocatedDefinition[] {
     const value = item.value as Partial<Definition> | undefined
     if (!value || (value.kind !== "agent" && value.kind !== "template")) continue
     if (value.kind === "agent") {
-      assertMembers(value, ["kind", "id", "template", "init", "turn", "inputSchema", "resultSchema", "suspension", "closeAfterIdle", "maxTurnDuration", "triggers", "runtimeMcp"], "Agent")
+      assertMembers(value, ["kind", "id", "template", "init", "turn", "inputSchema", "resultSchema", "closeAfterIdle", "hibernateAfterIdle", "maxTurnDuration", "triggers", "runtimeMcp"], "Agent")
       if (typeof value.turn !== "function" || (value.init !== undefined && typeof value.init !== "function") || value.template?.kind !== "template") throw new Error("Invalid Agent definition")
       add(value as Definition, item, false)
       add(value.template, item, true)
@@ -200,6 +200,13 @@ export function normalizeComputerResources(resources: Readonly<{ cpu: number; me
   return { milliCpu: normalizeCpu(resources.cpu), memoryMiB: normalizeIecMiB(resources.memory, "memory"), ...(resources.disk === undefined ? {} : { diskMiB: normalizeIecMiB(resources.disk, "disk") }) }
 }
 const duration = durationMilliseconds
+/** Close and delete retention apply after 7 days unless the definition says otherwise. */
+const DEFAULT_RETENTION = "7d"
+function retention(value: unknown, omitted: "never" | typeof DEFAULT_RETENTION, label: string): number | null {
+  const resolved = value === undefined ? omitted : value
+  if (resolved === "never") return null
+  return duration(resolved as Parameters<typeof duration>[0], label)
+}
 
 function compileImageBuild(
   root: InternalImage,

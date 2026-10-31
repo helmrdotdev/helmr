@@ -3,22 +3,20 @@ package slack
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/access"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 )
 
-func lifecycleButton(config ProjectionConfig, target controlTarget, action, label, actor, scope string, computerID uuid.UUID) (map[string]any, error) {
+func lifecycleButton(config ProjectionConfig, target controlTarget, action, label, actor string, computerID uuid.UUID) (map[string]any, error) {
 	var expires int64
 	if !persistentLifecycleControl(action) {
 		expires = time.Now().Add(10 * time.Minute).Unix()
 	}
-	value, err := encodeControl(config.ControlKey, controlEnvelope{Nonce: target.Thread, Action: action, Target: target, Actor: actor, Scope: scope, Computer: computerID, ExpiresAt: expires})
+	value, err := encodeControl(config.ControlKey, controlEnvelope{Nonce: target.Thread, Action: action, Target: target, Actor: actor, Computer: computerID, ExpiresAt: expires})
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +32,7 @@ func lifecycleButton(config ProjectionConfig, target controlTarget, action, labe
 }
 
 // Private help is rendered only after current linked-user authorization. Shared
-// cards never disclose another Session's identity or issue scope confirmation.
+// cards never disclose another Session's identity or issue confirmations.
 func lifecyclePresentation(ctx context.Context, tx pgx.Tx, config ProjectionConfig, target controlTarget, action, actor string, private bool) (string, []any, error) {
 	state, _, err := readLifecycleState(ctx, tx, target)
 	if err != nil {
@@ -44,7 +42,7 @@ func lifecyclePresentation(ctx context.Context, tx pgx.Tx, config ProjectionConf
 }
 
 func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config ProjectionConfig, target controlTarget, action, actor string, private bool, snapshot lifecycleState) (string, []any, error) {
-	computerID, status, policy, idle, muted := snapshot.ComputerID, snapshot.Status, snapshot.Policy, snapshot.Idle, snapshot.Muted
+	computerID, status, hibernateAfter, closeAfter, muted := snapshot.ComputerID, snapshot.Status, snapshot.HibernateAfter, snapshot.CloseAfter, snapshot.Muted
 	sleeping := false
 	text := "Session " + status + "."
 	if status == "open" {
@@ -75,15 +73,16 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 				state += ". Could not " + control + ". " + lifecycleFailureMessage(failure)
 			}
 		}
-		suspension := "Automatic hibernation: off. "
-		if policy == "after_turn" {
-			suspension = "May hibernate after a completed Turn. "
+		text = state + ". "
+		if hibernateAfter == nil {
+			text += "Automatic hibernation: off. "
+		} else {
+			text += fmt.Sprintf("Hibernates after %s without work; background tasks pause until it wakes. ", (time.Duration(*hibernateAfter) * time.Millisecond).String())
 		}
-		text = state + ". " + suspension
-		if idle == nil {
+		if closeAfter == nil {
 			text += "Automatic close: off."
 		} else {
-			text += fmt.Sprintf("Closes after %s without new user work; background tasks may be stopped.", (time.Duration(*idle) * time.Millisecond).String())
+			text += fmt.Sprintf("Closes after %s without new user work; background tasks may be stopped.", (time.Duration(*closeAfter) * time.Millisecond).String())
 		}
 		if muted {
 			text += " Thread input is muted; an explicit Agent mention still sends work."
@@ -91,8 +90,8 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 	}
 	blocks := []any{map[string]any{"type": "section", "text": plainText(text)}}
 	var buttons []any
-	add := func(action, label, scope string, id uuid.UUID) error {
-		b, err := lifecycleButton(config, target, action, label, actor, scope, id)
+	add := func(action, label string, id uuid.UUID) error {
+		b, err := lifecycleButton(config, target, action, label, actor, id)
 		if err == nil {
 			buttons = append(buttons, b)
 		}
@@ -113,25 +112,16 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 			}
 			caller := session.UserCaller(p)
 			if action == "sleep" && computerID != nil {
-				if err := auth.Require(p, auth.PermissionComputersHibernate, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}, access.ErrDenied); err != nil {
-					return "", nil, err
-				}
-				scope, err := session.ReadComputerExecutionScope(ctx, tx, target.Environment, *computerID)
+				count, err := session.ComputerHibernatePreview(ctx, tx, caller, target.Environment, *computerID)
 				if err != nil {
 					return "", nil, err
 				}
-				members := append(append([]string{}, scope.Sessions...), scope.Commands...)
-				var detail strings.Builder
-				detail.WriteString(fmt.Sprintf("Affected scope: %d Sessions, %d active Commands.\n", len(scope.Sessions), len(scope.Commands)))
-				for i, id := range members {
-					if i == 12 {
-						detail.WriteString("Additional members are listed in Console.\n")
-						break
-					}
-					detail.WriteString(id + "\n")
+				detail := "Hibernating pauses this Session."
+				if count != 1 {
+					detail = fmt.Sprintf("Hibernating pauses %d open Sessions on this Computer.", count)
 				}
-				blocks = append(blocks, map[string]any{"type": "section", "text": plainText(strings.TrimSpace(detail.String()))})
-				if err = add("hibernate", "Hibernate Computer", scope.Digest, *computerID); err != nil {
+				blocks = append(blocks, map[string]any{"type": "section", "text": plainText(detail)})
+				if err = add("hibernate", "Hibernate Computer", *computerID); err != nil {
 					return "", nil, err
 				}
 			} else if action == "close" {
@@ -144,7 +134,7 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 					detail = fmt.Sprintf("Closing affects %d Sessions: this Session and the Sessions it owns.", count)
 				}
 				blocks = append(blocks, map[string]any{"type": "section", "text": plainText(detail + " Running work finishes; held work and open questions are cancelled.")})
-				if err = add("confirm_close", "Close Session", "", uuid.Nil()); err != nil {
+				if err = add("confirm_close", "Close Session", uuid.Nil()); err != nil {
 					return "", nil, err
 				}
 			} else {
@@ -156,7 +146,7 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 				if sleeping {
 					action, label = "wake", "Wake Computer"
 				}
-				if err := add(action, label, "", uuid.Nil()); err != nil {
+				if err := add(action, label, uuid.Nil()); err != nil {
 					return "", nil, err
 				}
 			}
@@ -165,13 +155,13 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 				if muted {
 					muteAction, muteLabel = "unmute", "Unmute thread input"
 				}
-				if err := add(muteAction, muteLabel, "", uuid.Nil()); err != nil {
+				if err := add(muteAction, muteLabel, uuid.Nil()); err != nil {
 					return "", nil, err
 				}
-				if err := add("close", "Close Session", "", uuid.Nil()); err != nil {
+				if err := add("close", "Close Session", uuid.Nil()); err != nil {
 					return "", nil, err
 				}
-			} else if err := add("help", "More", "", uuid.Nil()); err != nil {
+			} else if err := add("help", "More", uuid.Nil()); err != nil {
 				return "", nil, err
 			}
 		}

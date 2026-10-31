@@ -180,7 +180,7 @@ func agentRedactableID(id uuid.UUID) *string {
 	return &value
 }
 func agentSessionResponse(v session.SessionView) api.AgentSession {
-	result := api.AgentSession{RelatedVia: v.RelatedVia, Permissions: v.Permissions, Suspension: v.Suspension, AgentDefinitionID: v.AgentDefinitionID, TemplateDefinitionID: v.TemplateDefinitionID, CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: agentUTCTime(v.IdleSince), ID: v.ID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: agentOptionalID(v.ComputerID), RootSessionID: agentRedactableID(v.RootSessionID), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
+	result := api.AgentSession{RelatedVia: v.RelatedVia, Permissions: v.Permissions, AgentDefinitionID: v.AgentDefinitionID, TemplateDefinitionID: v.TemplateDefinitionID, CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: agentUTCTime(v.IdleSince), ID: v.ID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: agentOptionalID(v.ComputerID), RootSessionID: agentRedactableID(v.RootSessionID), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
 	result.Activity = agentActivityResponse(v.Activity)
 	result.RequesterSessionID = agentOptionalID(v.RequesterSessionID)
 	if v.InitialTurnID != nil && v.InitialTurnStatus != nil {

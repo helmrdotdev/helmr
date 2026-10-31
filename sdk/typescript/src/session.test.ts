@@ -46,7 +46,7 @@ function transport(responses: unknown[]) {
 describe("Session lifecycle client", () => {
   test("Session creation admits an optional initial Turn", async () => {
     const { client, requests } = transport([
-      { session_id: sessionId, turn: {session_id: sessionId, turn_id: turnId, sequence: 1}, close_after_idle_ms: 604800000 },
+      { session_id: sessionId, turn: {session_id: sessionId, turn_id: turnId, sequence: 1} },
       { session_id: sessionId, turn_id: messageId, sequence: 2 },
     ])
     const { session, turn } = await client.sessions.create({ agent: "operator", input: [{ type: "text", text: "initial" }],
@@ -69,7 +69,7 @@ describe("Session lifecycle client", () => {
   })
   test("empty creation does not invent a Turn and exact send never routes to new work", async () => {
     const {client, requests} = transport([
-      {session_id:sessionId, turn:null, close_after_idle_ms:604800000},
+      {session_id:sessionId, turn:null},
       {id:operationId, turn_id:turnId, message_id:messageId, status:"accepted"},
     ])
     const empty = await client.sessions.create({agent:"operator", idempotencyKey:"empty"})
@@ -206,7 +206,7 @@ describe("Session lifecycle client", () => {
         initial_turn: { id: turnId, status: "queued" },
         activity: { process: null },
         parent_session_id: null,
-        suspension: "manual", close_after_idle_ms: null, idle_since: null,
+        close_after_idle_ms: null, idle_since: null,
         deployment_id: holdId,
         computer_id: holdId,
         status: "closing",

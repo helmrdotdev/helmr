@@ -5,13 +5,11 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"log/slog"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -42,7 +40,9 @@ func RunRetention(ctx context.Context, auditPolicy auditpolicy.Policy, database 
 }
 
 func reconcileRetention(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, log *slog.Logger, after retentionPosition) (retentionPosition, bool, error) {
-	rows, err := database.Query(ctx, `SELECT environment_id,id FROM computers c WHERE deleted_at IS NULL AND delete_after_unused_ms IS NOT NULL AND (unused_since IS NULL OR extract(epoch FROM (clock_timestamp()-unused_since))*1000>=delete_after_unused_ms OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.computer_id=c.id AND save.requested_at>=c.unused_since)) AND (environment_id,id)>($1,$2) ORDER BY environment_id,id LIMIT 100`, after.environment, after.computer)
+	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id FROM computers c JOIN template_definitions d ON (d.environment_id,d.template_id,d.deployment_id)=(c.environment_id,c.origin_template_id,c.origin_deployment_id)
+ WHERE c.deleted_at IS NULL AND d.delete_after_unused_ms IS NOT NULL AND (c.unused_since IS NULL OR extract(epoch FROM (clock_timestamp()-c.unused_since))*1000>=d.delete_after_unused_ms)
+ AND (c.environment_id,c.id)>($1,$2) ORDER BY c.environment_id,c.id LIMIT 100`, after.environment, after.computer)
 	if err != nil {
 		return after, false, err
 	}
@@ -73,6 +73,9 @@ func reconcileRetention(ctx context.Context, auditPolicy auditpolicy.Policy, dat
 	return after, more, errors.Join(failures...)
 }
 
+// reconcileUnused deletes a Computer whose origin Template's unused period has
+// passed. The unused clock starts when the Computer has no Session, process or
+// Command; a save in progress defers deletion but never restarts the clock.
 func reconcileUnused(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxBeginner, env, id uuid.UUID) (bool, error) {
 	deletedByRetention := false
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
@@ -81,25 +84,28 @@ func reconcileUnused(ctx context.Context, auditPolicy auditpolicy.Policy, databa
 		}
 		var deleted bool
 		var policy *int64
-		if err := tx.QueryRow(ctx, `SELECT deleted_at IS NOT NULL,delete_after_unused_ms FROM computers WHERE environment_id=$1 AND id=$2 FOR NO KEY UPDATE`, env, id).Scan(&deleted, &policy); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT c.deleted_at IS NOT NULL,d.delete_after_unused_ms FROM computers c JOIN template_definitions d ON (d.environment_id,d.template_id,d.deployment_id)=(c.environment_id,c.origin_template_id,c.origin_deployment_id) WHERE c.environment_id=$1 AND c.id=$2 FOR NO KEY UPDATE OF c`, env, id).Scan(&deleted, &policy); err != nil {
 			return err
 		}
 		if deleted || policy == nil {
 			return nil
 		}
-		var busy bool
-		if err := tx.QueryRow(ctx, unusedComputerBusySQL, env, id).Scan(&busy); err != nil {
+		var busy, saving bool
+		if err := tx.QueryRow(ctx, unusedComputerBusySQL, env, id).Scan(&busy, &saving); err != nil {
 			return err
 		}
 		if busy {
 			_, err := tx.Exec(ctx, `UPDATE computers SET unused_since=NULL WHERE environment_id=$1 AND id=$2`, env, id)
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE computers SET unused_since=CASE WHEN unused_since IS NULL OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=computers.environment_id AND save.computer_id=computers.id AND save.requested_at>=computers.unused_since) THEN clock_timestamp() ELSE unused_since END WHERE environment_id=$1 AND id=$2`, env, id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE computers SET unused_since=COALESCE(unused_since,clock_timestamp()) WHERE environment_id=$1 AND id=$2`, env, id); err != nil {
 			return err
 		}
+		if saving {
+			return nil
+		}
 		var due bool
-		if err := tx.QueryRow(ctx, `SELECT extract(epoch FROM (clock_timestamp()-unused_since))*1000>=delete_after_unused_ms FROM computers WHERE environment_id=$1 AND id=$2`, env, id).Scan(&due); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT extract(epoch FROM (clock_timestamp()-unused_since))*1000>=$3 FROM computers WHERE environment_id=$1 AND id=$2`, env, id, *policy).Scan(&due); err != nil {
 			return err
 		}
 		if !due {
@@ -115,39 +121,4 @@ func reconcileUnused(ctx context.Context, auditPolicy auditpolicy.Policy, databa
 		return nil
 	})
 	return deletedByRetention && err == nil, err
-}
-
-// UpdateRetention serializes preservation with deletion. The current continuous
-// unused interval remains valid when a policy changes; deleted data cannot be revived.
-func UpdateRetention(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxBeginner, principal auth.Principal, scope Scope, id uuid.UUID, policy lifetime.Policy) (Snapshot, error) {
-	if !policy.Set || !policy.Valid() {
-		return Snapshot{}, invalidInput("delete_after_unused_ms must be null or positive safe integer milliseconds")
-	}
-	var result Snapshot
-	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		var deleted bool
-		var before *int64
-		if err := tx.QueryRow(ctx, `SELECT c.deleted_at IS NOT NULL,c.delete_after_unused_ms FROM computers c JOIN environments e ON e.id=c.environment_id WHERE c.environment_id=$1 AND c.id=$2 AND e.org_id=$3 AND e.project_id=$4 FOR NO KEY UPDATE OF c`, scope.EnvironmentID, id, scope.OrgID, scope.ProjectID).Scan(&deleted, &before); err != nil {
-			return err
-		}
-		if deleted {
-			return ErrNotFound
-		}
-		actor, err := operationActor(ctx, tx, principal, scope, auth.PermissionComputersUpdate)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE computers SET delete_after_unused_ms=$3,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, scope.EnvironmentID, id, policy.Milliseconds); err != nil {
-			return err
-		}
-		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: scope.EnvironmentID, ComputerID: id, Action: "computer.retention_changed", TargetKind: "computer", TargetID: id, Details: audit.ComputerRetentionDetails{Before: before, After: policy.Milliseconds}}); err != nil {
-			return err
-		}
-		result, err = Read(ctx, tx, scope, id)
-		return err
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		err = ErrNotFound
-	}
-	return result, err
 }

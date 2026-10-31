@@ -158,8 +158,7 @@ export function overviewIssues(input: {
 
 const COMPUTER_ORDER: Record<string, number> = { unavailable: 0, starting: 2, restoring: 2, running: 3, parking: 4, parked: 5, cold: 6 };
 
-// Computers that need a look first, then awake ones, each most recently active
-// first.
+// Computers that need a look first, then awake ones, each newest first.
 export function computerRank(c: ComputerListItem): number {
   return c.execution_wait ? 1 : (COMPUTER_ORDER[c.residency] ?? 7);
 }
@@ -168,7 +167,7 @@ export function orderComputers(computers: readonly ComputerListItem[]): Computer
   return computers
     .filter((c) => c.status === "available")
     .slice()
-    .sort((a, b) => computerRank(a) - computerRank(b) || Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at));
+    .sort((a, b) => computerRank(a) - computerRank(b) || Date.parse(b.created_at) - Date.parse(a.created_at));
 }
 
 // A short label for why a session is held.

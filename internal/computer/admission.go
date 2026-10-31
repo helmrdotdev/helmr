@@ -9,7 +9,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -54,9 +53,8 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, depl
 	var cpuMillis, memoryBytes int64
 	var diskBytes *int64
 	var seed []byte
-	var maxAge, deleteUnused *int64
-	var deleteNever bool
-	if err := tx.QueryRow(ctx, `SELECT d.template_id,d.image_spec_id,d.cpu_millis,d.memory_bytes,d.disk_bytes,d.max_image_age_ms,s.seed,d.delete_after_unused_ms,d.delete_after_unused_never FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) JOIN image_specs s ON (s.environment_id,s.id)=(d.environment_id,d.image_spec_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key=$3`, env, deployment, key).Scan(&template, &spec, &cpuMillis, &memoryBytes, &diskBytes, &maxAge, &seed, &deleteUnused, &deleteNever); err != nil {
+	var maxAge *int64
+	if err := tx.QueryRow(ctx, `SELECT d.template_id,d.image_spec_id,d.cpu_millis,d.memory_bytes,d.disk_bytes,d.max_image_age_ms,s.seed FROM template_definitions d JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) JOIN image_specs s ON (s.environment_id,s.id)=(d.environment_id,d.image_spec_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND t.key=$3`, env, deployment, key).Scan(&template, &spec, &cpuMillis, &memoryBytes, &diskBytes, &maxAge, &seed); err != nil {
 		return uuid.Nil(), err
 	}
 	var base definition.ComputerSeedManifest
@@ -75,7 +73,7 @@ func createComputer(ctx context.Context, tx pgx.Tx, trust TrustIssuer, env, depl
 		return uuid.Nil(), ErrNotReady
 	}
 	id := uuid.NewV7()
-	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,image_spec_id,origin_deployment_id,origin_template_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes,preparation_deadline_at,preparation_max_age_ms,delete_after_unused_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10*interval '1 millisecond',$11,$12)`, env, id, spec, deployment, template, cpuMillis, memoryBytes, diskBytes, disk.SeedCapacity, limits.PreparationTimeout, maxAge, lifetime.Resolve(lifetime.Policy{}, deleteUnused, deleteNever)); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO computers(environment_id,id,image_spec_id,origin_deployment_id,origin_template_id,cpu_millis,memory_bytes,disk_bytes,storage_reservation_bytes,preparation_deadline_at,preparation_max_age_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,clock_timestamp()+$10*interval '1 millisecond',$11)`, env, id, spec, deployment, template, cpuMillis, memoryBytes, diskBytes, disk.SeedCapacity, limits.PreparationTimeout, maxAge); err != nil {
 		return uuid.Nil(), err
 	}
 	if explicit == nil {

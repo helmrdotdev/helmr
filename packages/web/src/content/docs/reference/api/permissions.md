@@ -154,14 +154,13 @@ Agents or all current and future Agents in that environment.
 | `templates.read` | Environment | Yes | Read Template definitions and preparation-build status for permitted deployment selection. No broad Agent/Session authority. |
 | `templates.refresh` | Environment | Yes | Start explicit preparation refresh for a current Template, including configured preparation credential use. |
 | `triggers.read` | Agent | Yes | Read matching trigger definitions, input payloads and occurrence records. This is potentially sensitive input, not a metadata-only feed. Session links still require Session authority to follow. |
-| `computers.read` | Environment | Yes | List/read Computer state, resource diagnostics, execution-scope preview, usage IDs and Command status/outcome. No conversation/file/stdout/stderr content. |
+| `computers.read` | Environment | Yes | List/read Computer state, resource diagnostics, usage IDs and Command status/outcome. No conversation/file/stdout/stderr content. |
 | `commands.read_output` | Environment | Yes | Read retained Command stdout/stderr. This can disclose sensitive content even without execution. |
 | `computers.execute` | Environment | Yes | Submit Commands on an existing Computer or explicitly place an authorized Session there. Does not implicitly grant historical output/status APIs; standard debugging Roles include them. |
 | `commands.cancel` | Environment | Yes | Cancel a Command in the environment, regardless of creator. No new owner-only cancellation mechanism. |
-| `computers.create` | Environment | Yes | Provision from an allowed definition, including requested Secret bindings and initial retention, under existing quota and creation rules. This is trusted credential-bearing provisioning. |
+| `computers.create` | Environment | Yes | Provision from an allowed definition, including requested Secret bindings, under existing quota and creation rules. This is trusted credential-bearing provisioning. |
 | `computers.wake` | Environment | Yes | Explicitly wake a Computer, subject to existing state constraints. |
-| `computers.hibernate` | Environment | Yes | Explicitly hibernate a Computer with existing busy/settlement checks. |
-| `computers.update` | Environment | Yes | Change deletion-after-unused policy; shortening it can promptly cause deletion. |
+| `computers.hibernate` | Environment | Yes | Preview how many open Sessions a hibernate pauses and explicitly hibernate a Computer with existing busy/settlement checks. |
 | `computers.delete` | Environment | Yes | Preview and apply Computer deletion. Deleting cancels its Sessions and the Sessions they started, and its unfinished Commands, without a separate cancel permission. |
 | `secrets.read` | Environment | Yes | Read Secret names/IDs, versions and non-value metadata. Never retrieve stored plaintext. |
 | `secrets.create` | Environment | Yes | Create a Secret under a new name using newly supplied material. A revoked name is set again by rotating it. |

@@ -47,7 +47,6 @@ export function parseSession(value: unknown): Session {
       : { key: requiredString(v["key"], "Session.key") }),
     status: sessionStatus(v["status"]),
     createdAt: timestampString(v["created_at"], "Session.created_at"),
-    suspension: suspensionPolicy(v["suspension"]),
     closeAfterIdle: retentionFromMilliseconds(v["close_after_idle_ms"], "closeAfterIdle"),
     idleSince: v["idle_since"] === null ? null : timestampString(v["idle_since"], "Session.idle_since"),
     holds: Object.freeze(
@@ -307,7 +306,3 @@ function parseAuthoredIdentifier(value: unknown, label: string): string {
   return value
 }
 
-function suspensionPolicy(value: unknown): "manual" | "after_turn" {
-  if (value !== "manual" && value !== "after_turn") throw new Error("Session.suspension is invalid")
-  return value
-}

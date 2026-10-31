@@ -17,15 +17,14 @@ column account_security_notifications.next_attempt_at timestamp with time zone n
 column account_security_notifications.recipient text not null
 column agent_definitions.agent_id uuid not null
 column agent_definitions.close_after_idle_ms bigint
-column agent_definitions.close_after_idle_never boolean not null default false
 column agent_definitions.deployment_id uuid not null
 column agent_definitions.environment_id uuid not null
 column agent_definitions.has_init boolean not null
+column agent_definitions.hibernate_after_idle_ms bigint
 column agent_definitions.input_kind text not null default 'text'::text
 column agent_definitions.input_schema jsonb
 column agent_definitions.max_turn_duration_ms bigint
 column agent_definitions.runtime_mcp_policy jsonb not null
-column agent_definitions.suspension text not null default 'manual'::text
 column agent_definitions.template_id uuid not null
 column agent_triggers.agent_id uuid not null
 column agent_triggers.cron text not null
@@ -316,7 +315,6 @@ column computer_saves.status text not null default 'requested'::text
 column computer_saves.turn_id uuid
 column computers.cpu_millis bigint not null
 column computers.created_at timestamp with time zone not null default clock_timestamp()
-column computers.delete_after_unused_ms bigint
 column computers.deleted_at timestamp with time zone
 column computers.disk_bytes bigint
 column computers.environment_id uuid not null
@@ -331,7 +329,6 @@ column computers.initial_root_id uuid
 column computers.integrity_fault_at timestamp with time zone
 column computers.integrity_fault_reason text
 column computers.key text
-column computers.last_activity_at timestamp with time zone not null default clock_timestamp()
 column computers.memory_bytes bigint not null
 column computers.next_control_version bigint not null default 1
 column computers.next_save_seq bigint not null default 1
@@ -813,7 +810,6 @@ column session_processes.stop_turn_id uuid
 column sessions.agent_id uuid not null
 column sessions.authority_generation bigint not null default 1
 column sessions.causal_depth integer not null
-column sessions.close_after_idle_ms bigint
 column sessions.close_how text
 column sessions.computer_id uuid
 column sessions.created_at timestamp with time zone not null default clock_timestamp()
@@ -841,7 +837,6 @@ column sessions.parent_session_id uuid
 column sessions.requester_session_id uuid
 column sessions.root_session_id uuid not null
 column sessions.status text not null default 'open'::text
-column sessions.suspension_after_seq bigint not null default 0
 column slack_app_registrations.app_icon_url text
 column slack_app_registrations.app_id text
 column slack_app_registrations.app_name text
@@ -1057,7 +1052,6 @@ column slack_work_items.thread_id uuid not null
 column slack_work_items.turn_id uuid not null
 column template_definitions.cpu_millis bigint not null
 column template_definitions.delete_after_unused_ms bigint
-column template_definitions.delete_after_unused_never boolean not null default false
 column template_definitions.deployment_id uuid not null
 column template_definitions.disk_bytes bigint
 column template_definitions.environment_id uuid not null
@@ -1307,12 +1301,11 @@ constraint account_security_notifications c CHECK (attempts >= 0)
 constraint account_security_notifications c CHECK (event = ANY (ARRAY['identity.email_changed'::text, 'identity.credential_added'::text, 'identity.credential_removed'::text, 'identity.access_revoked'::text, 'identity.other_access_revoked'::text, 'identity.account_repaired'::text]))
 constraint account_security_notifications p PRIMARY KEY (id)
 constraint agent_definitions c CHECK ((runtime_mcp_policy = '{"kind": "unrestricted"}'::jsonb OR jsonb_typeof(runtime_mcp_policy) = 'object'::text AND (runtime_mcp_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(runtime_mcp_policy -> 'rules'::text) = 'array'::text AND (runtime_mcp_policy - ARRAY['kind'::text, 'rules'::text]) = '{}'::jsonb) IS TRUE)
-constraint agent_definitions c CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL)
 constraint agent_definitions c CHECK (close_after_idle_ms > 0)
+constraint agent_definitions c CHECK (hibernate_after_idle_ms > 0)
 constraint agent_definitions c CHECK (input_kind = 'text'::text AND input_schema IS NULL OR input_kind = 'json'::text AND input_schema IS NOT NULL AND jsonb_typeof(input_schema) = 'object'::text)
 constraint agent_definitions c CHECK (input_kind = ANY (ARRAY['text'::text, 'json'::text]))
 constraint agent_definitions c CHECK (max_turn_duration_ms > 0)
-constraint agent_definitions c CHECK (suspension = ANY (ARRAY['manual'::text, 'after_turn'::text]))
 constraint agent_definitions f FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id)
 constraint agent_definitions f FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id)
 constraint agent_definitions f FOREIGN KEY (environment_id, template_id, deployment_id) REFERENCES template_definitions(environment_id, template_id, deployment_id)
@@ -1574,7 +1567,6 @@ constraint computer_saves u UNIQUE (environment_id, turn_id)
 constraint computers c CHECK ((initial_root_digest IS NOT NULL) = (initial_root_id IS NOT NULL OR initial_payload_retired_at IS NOT NULL))
 constraint computers c CHECK ((integrity_fault_at IS NULL) = (integrity_fault_reason IS NULL))
 constraint computers c CHECK (cpu_millis > 0)
-constraint computers c CHECK (delete_after_unused_ms > 0)
 constraint computers c CHECK (disk_bytes > 0 AND (disk_bytes % 1048576::bigint) = 0)
 constraint computers c CHECK (image_build_id IS NULL OR image_spec_id IS NOT NULL)
 constraint computers c CHECK (image_id IS NULL OR image_spec_id IS NOT NULL AND initial_root_digest IS NOT NULL)
@@ -1991,7 +1983,6 @@ constraint session_processes u UNIQUE (environment_id, computer_id, session_id, 
 constraint sessions c CHECK ((status = 'open'::text) = (close_how IS NULL))
 constraint sessions c CHECK (authority_generation > 0)
 constraint sessions c CHECK (causal_depth >= 0)
-constraint sessions c CHECK (close_after_idle_ms > 0)
 constraint sessions c CHECK (close_how = ANY (ARRAY['close'::text, 'cancel'::text, 'idle'::text]))
 constraint sessions c CHECK (creation_caller_kind = ANY (ARRAY['user'::text, 'api_key'::text, 'session'::text]))
 constraint sessions c CHECK (creation_idempotency_key IS NULL OR creation_digest IS NOT NULL)
@@ -2011,7 +2002,6 @@ constraint sessions c CHECK (origin_turn_id IS NULL OR requester_session_id IS N
 constraint sessions c CHECK (parent_session_id IS NULL AND root_session_id = id OR parent_session_id IS NOT NULL AND root_session_id = parent_session_id AND root_session_id <> id AND requester_session_id IS NOT NULL AND requester_session_id = parent_session_id)
 constraint sessions c CHECK (requester_session_id IS NULL AND causal_depth = 0 OR requester_session_id IS NOT NULL AND causal_depth > 0)
 constraint sessions c CHECK (status = ANY (ARRAY['open'::text, 'closing'::text, 'closed'::text]))
-constraint sessions c CHECK (suspension_after_seq >= 0)
 constraint sessions f FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
 constraint sessions f FOREIGN KEY (environment_id, agent_id, origin_slack_connection_id) REFERENCES slack_connections(environment_id, agent_id, id)
 constraint sessions f FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id)
@@ -2206,7 +2196,6 @@ constraint slack_work_items f FOREIGN KEY (post_id, thread_id, environment_id) R
 constraint slack_work_items p PRIMARY KEY (thread_id, turn_id)
 constraint template_definitions c CHECK (((network_policy = ANY (ARRAY['{"kind": "ordinary"}'::jsonb, '{"kind": "block"}'::jsonb])) OR jsonb_typeof(network_policy) = 'object'::text AND (network_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(network_policy -> 'domains'::text) = 'array'::text AND (network_policy -> 'domains'::text) <> '[]'::jsonb AND (network_policy - ARRAY['kind'::text, 'domains'::text]) = '{}'::jsonb) IS TRUE)
 constraint template_definitions c CHECK (((prepare_network_policy = ANY (ARRAY['{"kind": "ordinary"}'::jsonb, '{"kind": "block"}'::jsonb])) OR jsonb_typeof(prepare_network_policy) = 'object'::text AND (prepare_network_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(prepare_network_policy -> 'domains'::text) = 'array'::text AND (prepare_network_policy -> 'domains'::text) <> '[]'::jsonb AND (prepare_network_policy - ARRAY['kind'::text, 'domains'::text]) = '{}'::jsonb) IS TRUE)
-constraint template_definitions c CHECK (NOT delete_after_unused_never OR delete_after_unused_ms IS NULL)
 constraint template_definitions c CHECK (cpu_millis > 0)
 constraint template_definitions c CHECK (delete_after_unused_ms > 0)
 constraint template_definitions c CHECK (disk_bytes > 0 AND (disk_bytes % 1048576::bigint) = 0)
@@ -2434,14 +2423,15 @@ index CREATE INDEX boot_seed_builds_host ON public.boot_seed_builds USING btree 
 index CREATE INDEX boot_seed_builds_image ON public.boot_seed_builds USING btree (environment_id, image_id)
 index CREATE INDEX commands_pending ON public.commands USING btree (created_at, id) WHERE (status = 'pending'::text)
 index CREATE INDEX commands_related_user ON public.commands USING btree (environment_id, caller_id, id) WHERE ((caller_kind = 'user'::text) AND ((terminal_at IS NULL) OR ((computer_lease_epoch IS NOT NULL) AND (process_reconciled_at IS NULL))))
+index CREATE INDEX commands_settled ON public.commands USING btree (environment_id, computer_id, terminal_at) WHERE (terminal_at IS NOT NULL)
 index CREATE INDEX commands_unreconciled ON public.commands USING btree (environment_id, computer_id, computer_lease_epoch) WHERE ((computer_lease_epoch IS NOT NULL) AND (process_reconciled_at IS NULL))
+index CREATE INDEX computer_controls_wake ON public.computer_controls USING btree (environment_id, computer_id, accepted_at) WHERE (kind = 'wake'::text)
 index CREATE INDEX computer_leases_expiring ON public.computer_leases USING btree (expires_at, environment_id, computer_id, epoch) WHERE ((fenced_at IS NULL) AND (status = ANY (ARRAY['active'::text, 'acquiring'::text, 'releasing'::text])))
 index CREATE INDEX computer_leases_host_unfenced ON public.computer_leases USING btree (worker_host_id, worker_epoch) WHERE (fenced_at IS NULL)
 index CREATE INDEX computers_image ON public.computers USING btree (environment_id, image_id) WHERE (image_id IS NOT NULL)
 index CREATE INDEX computers_image_build ON public.computers USING btree (environment_id, image_spec_id, image_build_id) WHERE (image_build_id IS NOT NULL)
 index CREATE INDEX computers_preparation_deadline ON public.computers USING btree (preparation_deadline_at) WHERE ((initial_root_digest IS NULL) AND (preparation_failed_at IS NULL) AND (deleted_at IS NULL))
 index CREATE INDEX computers_storage_reservations ON public.computers USING btree (environment_id) INCLUDE (storage_reservation_bytes) WHERE (storage_reservation_bytes IS NOT NULL)
-index CREATE INDEX computers_unused_policy ON public.computers USING btree (environment_id, id) WHERE ((deleted_at IS NULL) AND (delete_after_unused_ms IS NOT NULL))
 index CREATE INDEX deployment_events_accepted ON public.deployment_events USING btree (accepted_at, id)
 index CREATE INDEX deployment_events_deployment ON public.deployment_events USING btree (environment_id, deployment_id, id)
 index CREATE INDEX deployment_objects_cas ON public.deployment_objects USING btree (org_id, digest)
@@ -2474,14 +2464,16 @@ index CREATE INDEX role_grants_group ON public.role_grants USING btree (org_id, 
 index CREATE INDEX role_grants_member ON public.role_grants USING btree (org_id, member_id) WHERE (member_id IS NOT NULL)
 index CREATE INDEX secret_bindings_secret ON public.secret_bindings USING btree (environment_id, secret_id)
 index CREATE INDEX secret_exposures_secret ON public.secret_exposures USING btree (environment_id, secret_id)
+index CREATE INDEX session_events_closed ON public.session_events USING btree (environment_id, session_id) INCLUDE (created_at) WHERE (kind = 'session.closed'::text)
 index CREATE INDEX session_events_expired_floor ON public.session_events USING btree (environment_id, session_id, seq) WHERE (payload_expired_at IS NOT NULL)
 index CREATE INDEX session_holds_active ON public.session_holds USING btree (environment_id, session_id) WHERE (released_at IS NULL)
 index CREATE INDEX session_processes_computer_custody ON public.session_processes USING btree (environment_id, computer_id, computer_lease_epoch, session_id, epoch) WHERE (fenced_at IS NULL)
 index CREATE INDEX session_processes_stop_due ON public.session_processes USING btree (stop_deadline_at) WHERE ((stop_deadline_at IS NOT NULL) AND (fenced_at IS NULL))
 index CREATE INDEX sessions_children ON public.sessions USING btree (environment_id, parent_session_id) WHERE (parent_session_id IS NOT NULL)
 index CREATE INDEX sessions_closing ON public.sessions USING btree (environment_id, id) WHERE (status = 'closing'::text)
-index CREATE INDEX sessions_idle_policy ON public.sessions USING btree (environment_id, id) WHERE ((status = 'open'::text) AND (close_after_idle_ms IS NOT NULL))
+index CREATE INDEX sessions_computer ON public.sessions USING btree (environment_id, computer_id) WHERE (computer_id IS NOT NULL)
 index CREATE INDEX sessions_key_origin ON public.sessions USING btree (environment_id, origin_api_key_id, id) WHERE (origin_api_key_id IS NOT NULL)
+index CREATE INDEX sessions_open ON public.sessions USING btree (environment_id, id) WHERE (status = 'open'::text)
 index CREATE INDEX sessions_related_user ON public.sessions USING btree (environment_id, origin_user_id, id) WHERE ((origin_user_id IS NOT NULL) AND (parent_session_id IS NULL) AND (requester_session_id IS NULL))
 index CREATE INDEX sessions_user_origin ON public.sessions USING btree (environment_id, origin_user_id, id) WHERE ((origin_user_id IS NOT NULL) AND (origin_slack_connection_id IS NULL))
 index CREATE INDEX slack_channel_bindings_environment ON public.slack_channel_bindings USING btree (environment_id, id)

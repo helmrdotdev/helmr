@@ -10,7 +10,6 @@ const computer = {
       residency: "unavailable",
   secrets: [],
   error: { code: "computer_preparation_exhausted", message: "Computer preparation limit reached" },
-  last_activity_at: "2026-07-24T11:50:00Z",
   created_at: "2026-07-24T11:50:00Z",
   updated_at: "2026-07-24T11:50:00Z",
 }

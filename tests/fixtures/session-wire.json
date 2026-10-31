@@ -73,7 +73,6 @@
     },
     "status": "closing",
     "created_at": "2026-10-01T00:00:00Z",
-    "suspension": "manual",
     "activity": {
       "process": null
     },

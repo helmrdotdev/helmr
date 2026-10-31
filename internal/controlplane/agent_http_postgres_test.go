@@ -166,41 +166,20 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		t.Fatalf("API key identity: %v %v", valid, err)
 	}
 
-	// Lifetime policy survives both HTTP transports; preservation is separately scoped.
-	never := decode(call("/v1/sessions", starter, `{"agent":"agent","close_after_idle_ms":null,"idempotency_key":"never"}`, http.StatusOK))
-	if never.CloseAfterIdleMs != nil {
-		t.Fatalf("never policy: %+v", never)
-	}
-	finite := decode(call(start, owner, `{"agent":"agent","close_after_idle_ms":12000}`, http.StatusOK))
-	if finite.CloseAfterIdleMs == nil || *finite.CloseAfterIdleMs != 12000 {
-		t.Fatalf("finite policy: %+v", finite)
-	}
-	for _, body := range []string{`{"input":[],"close_after_idle_ms":0}`, `{"input":[],"close_after_idle_ms":1.5}`} {
+	// Retention belongs to definitions: requests cannot override it, and the
+	// Computer retention update and execution-scope routes do not exist.
+	for _, body := range []string{`{"agent":"agent","close_after_idle_ms":null,"idempotency_key":"never"}`, `{"agent":"agent","close_after_idle_ms":12000}`} {
 		call(start, owner, body, http.StatusBadRequest)
 	}
-	preserver := issue(auth.PermissionComputersUpdate)
-	computerPath := "/v1/computers/" + f.Computer.String()
-	for _, tc := range []struct {
-		token, body string
-		status      int
-	}{
-		{sender, `{"delete_after_unused_ms":null}`, http.StatusForbidden},
-		{preserver, `{}`, http.StatusBadRequest},
-		{preserver, `{"delete_after_unused_ms":0}`, http.StatusBadRequest},
-		{preserver, `{"delete_after_unused_ms":null}`, http.StatusOK},
-	} {
-		response := httpFixture.request(t, http.MethodPatch, computerPath, tc.token, tc.body)
-		if response.Code != tc.status {
-			t.Fatalf("preservation: %d %s, want %d", response.Code, response.Body.String(), tc.status)
+	for _, path := range []string{"/v1/computers/" + f.Computer.String(), base + "/computers/" + f.Computer.String()} {
+		response := httpFixture.request(t, http.MethodPatch, path, owner, `{"delete_after_unused_ms":5000}`)
+		if response.Code != http.StatusNotFound && response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("retention update route exists: %s %d %s", path, response.Code, response.Body.String())
 		}
-	}
-	var stored *int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT delete_after_unused_ms FROM computers WHERE id=$1`, f.Computer).Scan(&stored); err != nil || stored != nil {
-		t.Fatalf("preservation persisted: %v %v", stored, err)
-	}
-	response := httpFixture.request(t, http.MethodPatch, base+"/computers/"+f.Computer.String(), owner, `{"delete_after_unused_ms":5000}`)
-	if response.Code != http.StatusOK {
-		t.Fatalf("session preservation: %d %s", response.Code, response.Body.String())
+		response = httpFixture.request(t, http.MethodGet, path+"/execution-scope", owner, "")
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("execution-scope route exists: %s %d %s", path, response.Code, response.Body.String())
+		}
 	}
 
 	// Explicit recovery releases only its named hold through the same owner on

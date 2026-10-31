@@ -1,6 +1,5 @@
 import { normalizeSubmission } from "./question"
 import type { AgentContract, AgentInput, AgentResult } from "./agent"
-import { retentionMilliseconds, retentionFromMilliseconds, type Retention } from "./duration"
 import { slackStartOption } from "./client-slack"
 import type { JsonValue } from "./contract"
 import { normalizeInput, normalizeInvocation } from "./content"
@@ -64,14 +63,12 @@ export interface SessionCreateRequest<A extends AgentContract = DynamicAgent> {
   readonly key?: string
   readonly input?: AgentInput<A>
   readonly computer?: Readonly<{ id: string }>
-  readonly closeAfterIdle?: Retention
   readonly slack?: Readonly<{ channelId: string }>
   readonly idempotencyKey?: string
 }
 export interface SessionCreateReceipt<T extends TurnRef<any> | null = TurnRef | null, I = JsonValue, O = JsonValue> {
   readonly session: SessionRef<I, O>
   readonly turn: T
-  readonly closeAfterIdle: Retention
 }
 export interface ClientSessionsApi {
   create<A extends AgentContract = DynamicAgent>(request: SessionCreateRequest<A> & { readonly input: AgentInput<A> & ({} | null) }, options?: RequestOptions): Promise<SessionCreateReceipt<TurnRef<AgentResult<A>>, AgentInput<A>, AgentResult<A>>>
@@ -108,7 +105,6 @@ export function createClientSessions(
         ...(request.input === undefined ? {} : { input: request.input }),
         ...(request.key === undefined ? {} : { key: request.key }),
         ...(request.computer === undefined ? {} : { computer_id: resourceID(request.computer.id, "Computer ID") }),
-        ...(request.closeAfterIdle === undefined ? {} : { close_after_idle_ms: retentionMilliseconds(request.closeAfterIdle, "closeAfterIdle") }),
         ...(request.slack === undefined ? {} : { slack: slackStartOption(request.slack) }),
         idempotency_key: sessionOperationOptions(request).idempotencyKey,
       },
@@ -118,7 +114,7 @@ export function createClientSessions(
     const admission = value["turn"] === null ? null : parseTurnAdmission(value["turn"])
     if (admission !== null && admission.sessionId !== session.id) throw new Error("Initial Turn belongs to another Session")
     if ((request.input === undefined) !== (admission === null)) throw new Error("Session create response has inconsistent initial Turn")
-    return Object.freeze({session, turn: admission === null ? null : session.turns.ref(admission.turnId), closeAfterIdle: retentionFromMilliseconds(value["close_after_idle_ms"], "closeAfterIdle")})
+    return Object.freeze({session, turn: admission === null ? null : session.turns.ref(admission.turnId)})
   }
   return Object.freeze({
     create,

@@ -82,8 +82,8 @@ There are two ways to create work:
 | `start` | An independent root Session. | The caller's pinned Deployment. |
 
 Both take `agent`, `input` (text parts) and a required `idempotencyKey`, plus
-optional `computerId` and `closeAfterIdleMs`. They return
-`{ sessionId, turnId, sequence, closeAfterIdleMs }`. Reuse the same
+an optional `computerId`. They return `{ sessionId, turnId, sequence }`. The new
+Session's idle periods come from the target Agent definition. Reuse the same
 idempotency key with the same arguments when you are unsure whether a call
 succeeded. Use `list_agents` with `operation: "spawn"` or `"start"` to see the
 Agents you can target.
@@ -106,8 +106,11 @@ A spawned child belongs to the Session that spawned it:
 - `ctx.session.parent` in the child's `init` identifies its parent.
 - The parent's Turn returning or failing does not wait for or stop its
   children. Wait for results explicitly.
-- A parent with children that are not closed is not idle, so it does not close
-  on `closeAfterIdle` while they remain. A child held only by an interrupt on
+- Spawning a child counts as work by the parent and restarts the parent's idle
+  clock. After that, the child's own work does not: a parent with children that
+  are not closed does not close on `closeAfterIdle` while they remain, but its
+  idle time keeps counting, so it can close once they all close. Children on
+  other Computers do not keep the parent's Computer from hibernating. A child held only by an interrupt on
   its parent is idle when nothing runs, so it closes on its own
   `closeAfterIdle`; its held queued Turns are cancelled.
 - Controls apply to the owned tree. Closing, cancelling or interrupting a
