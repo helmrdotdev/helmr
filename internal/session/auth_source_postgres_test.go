@@ -40,7 +40,7 @@ func TestQueuedHumanInputSurvivesAccessRevocation(t *testing.T) {
 			pending := f.enqueue(t, "accepted-before-revocation")
 			switch change {
 			case "account":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.user)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.user)
 			case "source":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.user)
 			case "member":
@@ -93,7 +93,7 @@ func TestRuntimeAgentScopeIsPublishedAndIndependentOfHumanSource(t *testing.T) {
 		return raw
 	}
 	before := read()
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1; UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE user_id=$1; DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, pgx.QueryExecModeSimpleProtocol, f.user)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1; UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE user_id=$1; DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, pgx.QueryExecModeSimpleProtocol, f.user)
 	if string(read()) != string(before) {
 		t.Fatal("published scope changed with requester authority")
 	}

@@ -200,7 +200,6 @@ type LoginSession struct {
 	RevokedAt           pgtype.Timestamptz `json:"revoked_at"`
 	OperatorID          pgtype.UUID        `json:"operator_id"`
 	Channel             string             `json:"channel"`
-	AccessEpoch         int64              `json:"access_epoch"`
 	MemberID            pgtype.UUID        `json:"member_id"`
 	IdentityID          pgtype.UUID        `json:"identity_id"`
 	PasskeyID           pgtype.UUID        `json:"passkey_id"`
@@ -275,7 +274,6 @@ type User struct {
 	PrimaryEmail       pgtype.Text        `json:"primary_email"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-	AccessEpoch        int64              `json:"access_epoch"`
 	WebauthnUserHandle []byte             `json:"webauthn_user_handle"`
 }
 

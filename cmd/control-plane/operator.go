@@ -21,19 +21,25 @@ import (
 // owner-readable file, so terminal recording and process arguments contain none.
 func runOperatorCommand(ctx context.Context, args []string) error {
 	if len(args) == 0 || (args[0] != "enroll" && args[0] != "repair" && args[0] != "repair-account") {
-		return errors.New("usage: control-plane operator enroll|repair|repair-account --label LABEL --output-file ABSOLUTE_PATH [--operator-id ID]")
+		return errors.New("usage: control-plane operator enroll --label LABEL --output-file ABSOLUTE_PATH | repair --operator-id ID --output-file ABSOLUTE_PATH | repair-account --operator-id ID --user-id ID --output-file ABSOLUTE_PATH")
 	}
 	flags := flag.NewFlagSet("operator", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	label := flags.String("label", "", "Operator display label")
+	label := flags.String("label", "", "Display label of the new operator")
 	output := flags.String("output-file", "", "New protected capability file")
 	userTarget := flags.String("user-id", "", "Ordinary account to repair")
 	target := flags.String("operator-id", "", "Operator to repair")
 	if err := flags.Parse(args[1:]); err != nil {
 		return errors.New("invalid operator command arguments")
 	}
-	if flags.NArg() != 0 || (args[0] != "repair-account" && strings.TrimSpace(*label) == "") || !filepath.IsAbs(*output) {
-		return errors.New("an absolute output-file and (for operator enrollment) label are required")
+	if flags.NArg() != 0 || !filepath.IsAbs(*output) {
+		return errors.New("an absolute output-file is required")
+	}
+	if args[0] == "enroll" && strings.TrimSpace(*label) == "" {
+		return errors.New("enroll requires label")
+	}
+	if args[0] != "enroll" && *label != "" {
+		return errors.New("label is only valid for enroll")
 	}
 	id := uuid.Nil()
 	if args[0] != "enroll" {

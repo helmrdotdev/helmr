@@ -134,7 +134,7 @@ func TestMemberRemovalRevokesOnlyItsLoginSessionsAndRollsBackFailure(t *testing.
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, otherMember, otherOrg, f.member.UserID)
 	for _, scope := range []struct{ org, member uuid.UUID }{{f.owner.OrgID, f.member.MemberID}, {otherOrg, otherMember}} {
 		id := uuid.NewV7()
-		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO login_sessions(id,user_id,org_id,member_id,channel,access_epoch,identity_id,authenticated_at,token_hash,expires_at) VALUES($1,$2,$3,$4,'cli',0,$5,$6,uuid_send($1::uuid),clock_timestamp()+interval '1 hour')`, id, f.member.UserID, scope.org, scope.member, f.member.Human.IdentityID, f.member.Human.AuthenticatedAt)
+		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO login_sessions(id,user_id,org_id,member_id,channel,identity_id,authenticated_at,token_hash,expires_at) VALUES($1,$2,$3,$4,'cli',$5,$6,uuid_send($1::uuid),clock_timestamp()+interval '1 hour')`, id, f.member.UserID, scope.org, scope.member, f.member.Human.IdentityID, f.member.Human.AuthenticatedAt)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_member_session_revocation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected session revocation failure'; END $$;
  CREATE TRIGGER reject_member_session_revocation BEFORE UPDATE ON login_sessions FOR EACH STATEMENT EXECUTE FUNCTION reject_member_session_revocation()`)
@@ -583,6 +583,6 @@ func setupOperator(t *testing.T, pool *pgxpool.Pool) auth.Principal {
 	operator, key, session := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO platform_operators(id,label,webauthn_user_handle) VALUES($1,'Setup operator',uuid_send($1::uuid))`, operator)
 	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO passkey_credentials(id,credential_id,operator_id,label,credential_data) VALUES($1,uuid_send($1::uuid),$2,'Operator key','{}')`, key, operator)
-	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO login_sessions(id,operator_id,channel,token_hash,access_epoch,passkey_id,issued_at,authenticated_at,expires_at) VALUES($1,$2,'operator',uuid_send($1::uuid),0,$3,clock_timestamp(),clock_timestamp(),clock_timestamp()+interval '12 hours')`, session, operator, key)
+	dbtest.MustExec(t, t.Context(), pool, `INSERT INTO login_sessions(id,operator_id,channel,token_hash,passkey_id,issued_at,authenticated_at,expires_at) VALUES($1,$2,'operator',uuid_send($1::uuid),$3,clock_timestamp(),clock_timestamp(),clock_timestamp()+interval '12 hours')`, session, operator, key)
 	return auth.Principal{Kind: auth.PrincipalKindOperator, Channel: "operator", OperatorID: operator, SessionID: session, PasskeyID: key}
 }

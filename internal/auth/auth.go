@@ -27,7 +27,6 @@ type Principal struct {
 	IdentityID        uuid.UUID
 	PasskeyID         uuid.UUID
 	AuthenticatedAt   time.Time
-	AccessEpoch       int64
 	Channel           string
 
 	OrgID         uuid.UUID

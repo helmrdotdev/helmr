@@ -18,7 +18,6 @@ import (
 )
 
 var (
-	ErrEnrollmentConflict       = errors.New("enrollment phase has changed")
 	ErrIdentityConflict         = errors.New("identity belongs to another credential lifetime")
 	ErrAccountProofRequired     = errors.New("ordinary account proof is required")
 	ErrRecentProofRequired      = auth.ErrRecentProofRequired
@@ -27,6 +26,7 @@ var (
 	ErrWrongAccount             = errors.New("verified email does not match invitation")
 	ErrAlreadyMember            = errors.New("identity is already a member of this organization")
 	ErrUserNotFound             = errors.New("user not found")
+	ErrOperatorNotFound         = errors.New("operator not found")
 	ErrOrganizationAccessDenied = errors.New("organization access is denied")
 	ErrOrganizationRequired     = errors.New("organization is required")
 	ErrInvalidDeviceCode        = errors.New("invalid device code")

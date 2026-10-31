@@ -14,6 +14,18 @@ func (recentAuthenticationRequired) ErrorCode() string { return "recent_authenti
 
 var ErrRecentProofRequired error = recentAuthenticationRequired{}
 
+// RecentProofWindow is how long a sign-in or confirmation counts as recent proof.
+const RecentProofWindow = time.Hour
+
+// ProofClockSkew is how far a proof time may lie after now, allowing for the
+// database and application clocks to differ slightly.
+const ProofClockSkew = time.Minute
+
+// ProvedRecently reports whether a proof made at at is still recent at now.
+func ProvedRecently(at, now time.Time) bool {
+	return !at.IsZero() && now.Sub(at) <= RecentProofWindow && at.Sub(now) <= ProofClockSkew
+}
+
 // RequireRecentProof is called after admission. Activity does not refresh
 // proof time. Slack sends security changes to the browser. A CLI login was
 // approved from a browser signed in within the last hour, and that approval is
@@ -25,7 +37,7 @@ func RequireRecentProof(p Principal) error {
 	if p.Kind == PrincipalKindSession && p.Channel == "cli" && p.SlackLinkID == uuid.Nil() {
 		return nil
 	}
-	if p.SlackLinkID != uuid.Nil() || p.AuthenticatedAt.IsZero() || time.Since(p.AuthenticatedAt) > time.Hour {
+	if p.SlackLinkID != uuid.Nil() || !ProvedRecently(p.AuthenticatedAt, time.Now()) {
 		return ErrRecentProofRequired
 	}
 	return nil

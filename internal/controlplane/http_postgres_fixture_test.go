@@ -124,7 +124,7 @@ func (f httpPostgresFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'fixture',$1::uuid::text,clock_timestamp())`, source, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO login_sessions(id,user_id,channel,access_epoch,token_hash,identity_id,authenticated_at,expires_at) SELECT $1,id,'browser',access_epoch,$3,$4,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM users WHERE id=$2`, session, userID, hash, source); err != nil {
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO login_sessions(id,user_id,channel,token_hash,identity_id,authenticated_at,expires_at) SELECT $1,id,'browser',$3,$4,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM users WHERE id=$2`, session, userID, hash, source); err != nil {
 		t.Fatal(err)
 	}
 	f.browserOrganizations[token] = orgID
@@ -168,7 +168,7 @@ func issueAPIKeyWithRole(t *testing.T, ctx context.Context, database db.TxDB, is
 	if issuer.Channel == "" {
 		source, session := uuid.NewV7(), uuid.NewV7()
 		dbtest.MustExec(t, ctx, database, `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'fixture',$1::uuid::text,clock_timestamp())`, source, issuer.UserID)
-		dbtest.MustExec(t, ctx, database, `INSERT INTO login_sessions(id,user_id,channel,access_epoch,token_hash,identity_id,authenticated_at,expires_at) SELECT $1,id,'browser',access_epoch,uuid_send($1::uuid),$3,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM users WHERE id=$2`, session, issuer.UserID, source)
+		dbtest.MustExec(t, ctx, database, `INSERT INTO login_sessions(id,user_id,channel,token_hash,identity_id,authenticated_at,expires_at) SELECT $1,id,'browser',uuid_send($1::uuid),$3,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM users WHERE id=$2`, session, issuer.UserID, source)
 		var err error
 		issuer, err = access.SessionPrincipal(ctx, database, session, scope.OrgID)
 		if err != nil {

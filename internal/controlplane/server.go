@@ -370,7 +370,7 @@ func (s *Server) mountAdminRoutes(r chi.Router) {
 	r.Use(s.browserMutationGuard)
 	// Authentication ceremonies retain their own capability/session checks and
 	// request limits. Applying the resource guard here would block sign-in and
-	// renewal precisely when a fresh operator proof is needed.
+	// confirmation precisely when a fresh operator proof is needed.
 	r.Group(func(r chi.Router) {
 		r.Use(limitAPIRequestBody)
 		s.mountOperatorRoutes(r)

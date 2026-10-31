@@ -113,7 +113,7 @@ func TestSlackAcceptedInputSurvivesAccessRevocation(t *testing.T) {
 	for _, shared := range []bool{false, true} {
 		for _, mutation := range []string{
 			"UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE user_id=$1",
-			"UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1",
+			"UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1",
 			"UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1",
 			"UPDATE org_members SET suspended_at=clock_timestamp() WHERE user_id=$1",
 			"UPDATE slack_installations SET authorization_lost_at=clock_timestamp()",

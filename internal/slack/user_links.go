@@ -219,7 +219,7 @@ func linkConsentPrincipal(ctx context.Context, tx pgx.Tx, e audit.Evidence, org,
 	if err != nil {
 		return p, err
 	}
-	if p.UserID != user || p.Channel != "browser" || !access.Recent(p, time.Now()) {
+	if p.UserID != user || p.Channel != "browser" || !auth.ProvedRecently(p.AuthenticatedAt, time.Now()) {
 		return p, ErrUserLinkDenied
 	}
 	return p, nil

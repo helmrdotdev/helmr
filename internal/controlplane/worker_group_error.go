@@ -56,7 +56,7 @@ func workerGroupError(err error) error {
 // writeWorkerGroupError writes a workergroup owner error, including the region
 // errors it surfaces, logging the failures it does not describe to the client.
 func (s *Server) writeWorkerGroupError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, audit.ErrCapture) {
+	if errors.Is(err, audit.ErrCapture) || authorityLost(err) {
 		s.writeOperationError(w, r, err)
 		return
 	}

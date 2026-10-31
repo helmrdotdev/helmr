@@ -135,22 +135,11 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 			if err != nil {
 				return &audit.Refusal{Authorization: actor.Authorization, Cause: ErrSearchDenied}
 			}
-			var active bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.passkey_id AND k.operator_id=o.id WHERE s.id=$1 AND s.operator_id=$2 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND o.access_epoch=s.access_epoch AND o.access_epoch=$3 AND k.revoked_at IS NULL)`, prior.SessionID, prior.OperatorID, prior.AccessEpoch).Scan(&active); err != nil {
-				return err
-			}
-			check := audit.OperatorCheck{Type: "platform_operator", OperatorID: prior.OperatorID, SessionID: prior.SessionID, AccessEpoch: prior.AccessEpoch, ObservationSource: "transaction", Result: "passed"}
-			if !active {
-				check.Result = "failed"
-				actor.Authorization.Decision = "denied"
-			}
-			actor.Authorization.Checks = append(actor.Authorization.Checks, check)
-			if !active {
-				return &audit.Refusal{Authorization: actor.Authorization, Cause: ErrSearchDenied}
-			}
-
+			// The audit append below rechecks the live operator session in this
+			// transaction; a session that ended is refused and no rows are returned.
 			orgWide = true
 			if org != uuid.Nil() {
+				var active bool
 				if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1)`, org).Scan(&active); err != nil {
 					return err
 				}
@@ -297,7 +286,11 @@ func search(ctx context.Context, database db.TxBeginner, policy auditpolicy.Poli
 		if unresolved {
 			event.TargetID = org
 		}
-		return audit.Append(ctx, tx, policy, event)
+		err = audit.Append(ctx, tx, policy, event)
+		if refusal, ok := errors.AsType[*audit.Refusal](err); ok && adminView {
+			return &audit.Refusal{Authorization: refusal.Authorization, Cause: ErrSearchDenied}
+		}
+		return err
 	})
 	if err != nil {
 		return searchResult{}, err

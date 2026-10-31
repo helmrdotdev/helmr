@@ -11,8 +11,8 @@ import (
 	"uuid"
 )
 
-func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge uuid.UUID, user, session pgtype.UUID, epoch pgtype.Int8, email, raw string) (string, error) {
-	if !user.Valid || !session.Valid || !epoch.Valid {
+func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge uuid.UUID, user, session pgtype.UUID, email, raw string) (string, error) {
+	if !user.Valid || !session.Valid {
 		return "", ErrInvalidToken
 	}
 	hash, err := auth.HashToken(cfg.sessionKey, raw)
@@ -20,7 +20,7 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 		return "", ErrInvalidToken
 	}
 	var matches bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions WHERE id=$1 AND user_id=$2 AND token_hash=$3 AND access_epoch=$4 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND channel='browser')`, session, user, hash, epoch.Int64).Scan(&matches); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions WHERE id=$1 AND user_id=$2 AND token_hash=$3 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND channel='browser')`, session, user, hash).Scan(&matches); err != nil {
 		return "", err
 	}
 	if !matches {
@@ -29,9 +29,6 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 	p, err := access.SessionPrincipal(ctx, tx, pgvalue.MustUUIDValue(session), uuid.Nil())
 	if err != nil {
 		return "", err
-	}
-	if p.AccessEpoch != epoch.Int64 {
-		return "", ErrInvalidToken
 	}
 	if err = requireRecentAccount(ctx, tx, p); err != nil {
 		return "", err
@@ -60,7 +57,7 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 	if err != nil {
 		return "", err
 	}
-	proof := provedUser(pgvalue.MustUUIDValue(user), pgvalue.MustUUIDValue(credential.ID), uuid.Nil(), epoch.Int64, credential.LastAuthenticatedAt.Time, "email")
+	proof := provedUser(pgvalue.MustUUIDValue(user), pgvalue.MustUUIDValue(credential.ID), uuid.Nil(), credential.LastAuthenticatedAt.Time, "email")
 	token, err := confirmBrowserProof(ctx, tx, cfg, pgvalue.MustUUIDValue(session), hash, proof)
 	if err != nil {
 		return "", err
@@ -87,7 +84,7 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 
 func CheckEmailChangeChallenge(ctx context.Context, q db.DBTX, p auth.Principal, id uuid.UUID, binding []byte) error {
 	var matches bool
-	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM email_challenges c JOIN login_sessions s ON s.id=c.session_id WHERE c.id=$1 AND c.browser_hash=$2 AND c.purpose='email_change' AND s.user_id=$3 AND c.session_id=$4 AND s.access_epoch=$5 AND c.consumed_at IS NULL AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp())`, id, binding, p.UserID, p.SessionID, p.AccessEpoch).Scan(&matches)
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM email_challenges c JOIN login_sessions s ON s.id=c.session_id WHERE c.id=$1 AND c.browser_hash=$2 AND c.purpose='email_change' AND s.user_id=$3 AND c.session_id=$4 AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND c.consumed_at IS NULL AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp())`, id, binding, p.UserID, p.SessionID).Scan(&matches)
 	if err != nil {
 		return err
 	}

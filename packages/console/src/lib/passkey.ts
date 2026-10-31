@@ -31,5 +31,5 @@ export async function registerPasskey(optionsPath:string,completePath:string,lab
  const publicKey:PublicKeyCredentialCreationOptions={...creation,challenge:decode(options.publicKey.challenge),user:{...options.publicKey.user,id:decode(options.publicKey.user.id)},...(options.publicKey.excludeCredentials?{excludeCredentials:options.publicKey.excludeCredentials.map(c=>({...c,id:decode(c.id)}))}:{})};
  const credential=await navigator.credentials.create({publicKey}) as PublicKeyCredential|null;
  if(!credential)throw new Error("Passkey registration was cancelled.");
- return postJson<Record<string,unknown>,{enrollment_id:string;next:string}|undefined>(completePath,{challenge_id:options.challenge_id,credential:serialize(credential),label},{redirectOnUnauthorized:false});
+ return postJson<Record<string,unknown>,undefined>(completePath,{challenge_id:options.challenge_id,credential:serialize(credential),label},{redirectOnUnauthorized:false});
 }

@@ -27,35 +27,18 @@ func IssueAccountRepair(ctx context.Context, database db.TxBeginner, user, opera
 	result.ID = uuid.NewV7()
 	result.Capability = raw
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if _, _, err := loadKeyUser(ctx, tx, uuid.Nil(), operator); err != nil {
+		if _, err := loadKeyUser(ctx, tx, uuid.Nil(), operator); err != nil {
 			return err
 		}
-		_, epoch, err := loadKeyUser(ctx, tx, user, uuid.Nil())
-		if err != nil {
+		if _, err := loadKeyUser(ctx, tx, user, uuid.Nil()); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE account_repair_enrollments SET revoked_at=clock_timestamp() WHERE user_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL`, user); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE account_repair_enrollments SET revoked_at=clock_timestamp() WHERE user_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL`, user); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `INSERT INTO account_repair_enrollments(id,user_id,operator_id,capability_hash,expected_access_epoch,expires_at) VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, user, operator, hash[:], epoch).Scan(&result.ExpiresAt)
+		return tx.QueryRow(ctx, `INSERT INTO account_repair_enrollments(id,user_id,operator_id,capability_hash,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, user, operator, hash[:]).Scan(&result.ExpiresAt)
 	})
 	return result, err
-}
-func currentRepairOperator(ctx context.Context, tx pgx.Tx, p auth.Principal) error {
-	if p.OperatorID == uuid.Nil() {
-		return ErrInvalidToken
-	}
-	if _, _, err := loadKeyUser(ctx, tx, uuid.Nil(), p.OperatorID); err != nil {
-		return err
-	}
-	current, err := operatorFromSession(ctx, tx, p.SessionID)
-	if err != nil {
-		return err
-	}
-	if current.OperatorID != p.OperatorID || current.AccessEpoch != p.AccessEpoch || time.Since(current.AuthenticatedAt) > time.Hour {
-		return ErrRecentProofRequired
-	}
-	return nil
 }
 func RedeemAccountRepair(ctx context.Context, database db.TxBeginner, p auth.Principal, raw string, binding []byte) (OperatorEnrollment, error) {
 	var result OperatorEnrollment
@@ -64,18 +47,17 @@ func RedeemAccountRepair(ctx context.Context, database db.TxBeginner, p auth.Pri
 	}
 	hash := sha256.Sum256([]byte(raw))
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if err := currentRepairOperator(ctx, tx, p); err != nil {
+		if _, err := requireRecentOperator(ctx, tx, p); err != nil {
 			return err
 		}
 		var user uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT user_id FROM account_repair_enrollments WHERE capability_hash=$1 AND operator_id=$2`, hash[:], p.OperatorID).Scan(&user); err != nil {
 			return ErrInvalidToken
 		}
-		_, epoch, err := loadKeyUser(ctx, tx, user, uuid.Nil())
-		if err != nil {
+		if _, err := loadKeyUser(ctx, tx, user, uuid.Nil()); err != nil {
 			return err
 		}
-		err = tx.QueryRow(ctx, `UPDATE account_repair_enrollments SET browser_hash=$3 WHERE capability_hash=$1 AND operator_id=$2 AND expected_access_epoch=$4 AND browser_hash IS NULL AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() RETURNING id,expires_at`, hash[:], p.OperatorID, binding, epoch).Scan(&result.ID, &result.ExpiresAt)
+		err := tx.QueryRow(ctx, `UPDATE account_repair_enrollments SET browser_hash=$3 WHERE capability_hash=$1 AND operator_id=$2 AND browser_hash IS NULL AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() RETURNING id,expires_at`, hash[:], p.OperatorID, binding).Scan(&result.ID, &result.ExpiresAt)
 		if isNoRows(err) {
 			return ErrInvalidToken
 		}
@@ -86,34 +68,27 @@ func RedeemAccountRepair(ctx context.Context, database db.TxBeginner, p auth.Pri
 
 type accountRepair struct {
 	id, user uuid.UUID
-	epoch    int64
 	expires  time.Time
 }
 
 func lockAccountRepair(ctx context.Context, tx pgx.Tx, p auth.Principal, id uuid.UUID, binding []byte) (accountRepair, passkeyUser, error) {
 	result := accountRepair{id: id}
 	var user passkeyUser
-	if err := currentRepairOperator(ctx, tx, p); err != nil {
+	if _, err := requireRecentOperator(ctx, tx, p); err != nil {
 		return result, user, err
 	}
 	if err := tx.QueryRow(ctx, `SELECT user_id FROM account_repair_enrollments WHERE id=$1 AND operator_id=$2 AND browser_hash=$3`, id, p.OperatorID, binding).Scan(&result.user); err != nil {
 		return result, user, ErrInvalidToken
 	}
-	user, epoch, err := loadKeyUser(ctx, tx, result.user, uuid.Nil())
+	user, err := loadKeyUser(ctx, tx, result.user, uuid.Nil())
 	if err != nil {
 		return result, user, err
 	}
-	err = tx.QueryRow(ctx, `SELECT expected_access_epoch,expires_at FROM account_repair_enrollments WHERE id=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE`, id).Scan(&result.epoch, &result.expires)
+	err = tx.QueryRow(ctx, `SELECT expires_at FROM account_repair_enrollments WHERE id=$1 AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() FOR UPDATE`, id).Scan(&result.expires)
 	if isNoRows(err) {
 		return result, user, ErrInvalidToken
 	}
-	if err != nil {
-		return result, user, err
-	}
-	if epoch != result.epoch {
-		return result, user, ErrInvalidToken
-	}
-	return result, user, nil
+	return result, user, err
 }
 
 type AccountRepairState struct {
@@ -174,7 +149,7 @@ func CompleteAccountRepairRegistration(ctx context.Context, database db.TxBeginn
 		if err != nil {
 			return err
 		}
-		if target.purpose != "repair" || target.repair != id || target.user != repair.user || target.epoch != repair.epoch {
+		if target.purpose != "repair" || target.repair != id || target.user != repair.user {
 			return ErrInvalidToken
 		}
 		key, err := wa.CreateCredential(user, state, parsed)
@@ -190,7 +165,7 @@ func CompleteAccountRepairRegistration(ctx context.Context, database db.TxBeginn
 		if _, err = tx.Exec(ctx, `UPDATE account_repair_enrollments SET consumed_at=CASE WHEN id=$2 THEN clock_timestamp() ELSE consumed_at END,revoked_at=CASE WHEN id<>$2 THEN clock_timestamp() ELSE revoked_at END WHERE user_id=$1 AND consumed_at IS NULL`, repair.user, id); err != nil {
 			return err
 		}
-		if err = invalidateAccount(ctx, tx, repair.user); err != nil {
+		if err = retireAccountChannels(ctx, tx, repair.user, uuid.Nil()); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE webauthn_challenges SET consumed_at=clock_timestamp() WHERE id=$1`, challenge)

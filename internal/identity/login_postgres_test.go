@@ -13,14 +13,14 @@ func TestSignInPostgresFailedSessionRecordsNothing(t *testing.T) {
 	fixture := newIdentityFixture(t)
 	ctx := t.Context()
 	returning := ExternalIdentity{Provider: "github", Subject: "returning", DisplayName: "Before", Email: "returning@example.test", EmailVerified: true}
-	if _, err := SignInBrowserProvider(ctx, fixture.pool, fixture.cfg, returning, "", false); err != nil {
+	if _, err := SignInBrowserProvider(ctx, fixture.pool, fixture.cfg, returning, "", uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	returningID, _ := fixture.userByEmail(t, "returning@example.test")
 
 	restore := fixture.rejectLoginSessions(t)
 	first := ExternalIdentity{Provider: "github", Subject: "first", DisplayName: "First", Email: "admin@example.test", EmailVerified: true}
-	if _, err := SignInBrowserProvider(ctx, fixture.pool, fixture.cfg, first, "", false); err == nil {
+	if _, err := SignInBrowserProvider(ctx, fixture.pool, fixture.cfg, first, "", uuid.Nil()); err == nil {
 		t.Fatal("first sign-in succeeded without a login session")
 	}
 	var identities, users int
@@ -29,7 +29,7 @@ func TestSignInPostgresFailedSessionRecordsNothing(t *testing.T) {
 	}
 	renamed := returning
 	renamed.DisplayName = "After"
-	if _, err := SignInBrowserProvider(ctx, fixture.pool, fixture.cfg, renamed, "", false); err == nil {
+	if _, err := SignInBrowserProvider(ctx, fixture.pool, fixture.cfg, renamed, "", uuid.Nil()); err == nil {
 		t.Fatal("returning sign-in succeeded without a login session")
 	}
 	var displayName string
@@ -38,7 +38,7 @@ func TestSignInPostgresFailedSessionRecordsNothing(t *testing.T) {
 	}
 	restore()
 
-	raw, err := SignInBrowserProvider(ctx, fixture.pool, fixture.cfg, first, "", false)
+	raw, err := SignInBrowserProvider(ctx, fixture.pool, fixture.cfg, first, "", uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestSignInPostgres(t *testing.T) {
 	f := newIdentityFixture(t)
 	ctx := t.Context()
 	external := ExternalIdentity{Provider: "github", Subject: "1", DisplayName: "Original", Email: "admin@example.test", EmailVerified: true}
-	raw, err := SignInBrowserProvider(ctx, f.pool, f.cfg, external, "", false)
+	raw, err := SignInBrowserProvider(ctx, f.pool, f.cfg, external, "", uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestSignInPostgres(t *testing.T) {
 	}
 	external.DisplayName = "Provider changed"
 	external.Email = "new@example.test"
-	if _, err = SignInBrowserProvider(ctx, f.pool, f.cfg, external, "", false); err != nil {
+	if _, err = SignInBrowserProvider(ctx, f.pool, f.cfg, external, "", uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	var name, email string
@@ -102,12 +102,12 @@ func TestSignInPostgres(t *testing.T) {
 	}
 	external.Subject = "2"
 	external.Email = "ADMIN@example.test"
-	if _, err = SignInBrowserProvider(ctx, f.pool, f.cfg, external, "", false); !errors.Is(err, ErrAccountProofRequired) {
+	if _, err = SignInBrowserProvider(ctx, f.pool, f.cfg, external, "", uuid.Nil()); !errors.Is(err, ErrAccountProofRequired) {
 		t.Fatal("email collision linked unrelated identity", err)
 	}
 	external.EmailVerified = false
 	external.Email = "unverified@example.test"
-	if _, err = SignInBrowserProvider(ctx, f.pool, f.cfg, external, "", false); !errors.Is(err, ErrAccountProofRequired) {
+	if _, err = SignInBrowserProvider(ctx, f.pool, f.cfg, external, "", uuid.Nil()); !errors.Is(err, ErrAccountProofRequired) {
 		t.Fatal("unverified new account", err)
 	}
 }

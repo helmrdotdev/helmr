@@ -78,6 +78,11 @@ type Querier interface {
 	GetEnvironmentBySlug(ctx context.Context, arg GetEnvironmentBySlugParams) (Environment, error)
 	GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSession, error)
 	GetLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (LoginSession, error)
+	// An operator session holds authority only while the session and the key that
+	// signed it in stay live. Inside a transaction, the shared locks hold that
+	// authority until commit, so key removal, repair and sign-out wait for it.
+	// Outside a transaction the locks end with the statement.
+	GetOperatorAuthority(ctx context.Context, id pgtype.UUID) (GetOperatorAuthorityRow, error)
 	GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error)
 	GetPendingInvitationByEmail(ctx context.Context, arg GetPendingInvitationByEmailParams) (GetPendingInvitationByEmailRow, error)
 	GetProject(ctx context.Context, arg GetProjectParams) (Project, error)

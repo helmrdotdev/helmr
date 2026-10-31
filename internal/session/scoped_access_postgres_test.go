@@ -253,10 +253,6 @@ func TestAcceptedRuntimeCanContinueChildrenAfterAccessRevocation(t *testing.T) {
 			if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("new-human")); !errors.Is(err, session.ErrDenied) {
 				t.Fatal("logged-out human started new work", err)
 			}
-			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.user)
-			if _, err = session.AdmitSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, f.startRequest("after-incident"), method); err != nil {
-				t.Fatal("account revocation blocked accepted runtime", err)
-			}
 		})
 	}
 }

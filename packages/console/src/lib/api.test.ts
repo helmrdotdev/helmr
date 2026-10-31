@@ -139,7 +139,7 @@ test("operator rotation never replays a mutation", async () => {
     writes++;
     return Response.json({ error: { code: "authentication_required", message: "Sign in" } }, { status: 403 });
   }) as typeof fetch;
-  await expect(request("/admin/api/v1/credentials/enroll", { method: "POST" })).rejects.toMatchObject({ code: "authentication_changed" });
+  await expect(request("/admin/api/v1/credentials/options", { method: "POST" })).rejects.toMatchObject({ code: "authentication_changed" });
   expect(writes).toBe(1);
 });
 
@@ -149,10 +149,10 @@ test("protected requests pin the original actor, while login and identity discov
  sessionStorage.setItem("helmr.operator","operator-1");
  const headers=new Map<string,string|null>();
  globalThis.fetch=(async(input:string|URL|Request,init?:RequestInit)=>{headers.set(String(input),new Headers(init?.headers).get("X-Helmr-Actor"));return Response.json({});}) as typeof fetch;
- for(const path of ["/api/auth/device/approve","/api/account","/admin/api/v1/auth/renew/options","/api/auth/passkey/options","/api/me"]){await request(path);}
+ for(const path of ["/api/auth/device/approve","/api/account","/admin/api/v1/credentials/options","/api/auth/passkey/options","/api/me"]){await request(path);}
  expect(headers.get("/api/auth/device/approve")).toBe("ordinary-user");
  expect(headers.get("/api/account")).toBe("ordinary-user");
- expect(headers.get("/admin/api/v1/auth/renew/options")).toBe("operator-1");
+ expect(headers.get("/admin/api/v1/credentials/options")).toBe("operator-1");
  expect(headers.get("/api/auth/passkey/options")).toBeNull();
  expect(headers.get("/api/me")).toBeNull();
 });

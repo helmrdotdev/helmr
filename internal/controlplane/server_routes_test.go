@@ -72,7 +72,6 @@ GET /admin/api/v1/account-repairs/{id}
 GET /admin/api/v1/audit-events
 GET /admin/api/v1/audit-events/actions
 GET /admin/api/v1/credentials
-GET /admin/api/v1/enrollment/{id}
 GET /admin/api/v1/me
 GET /admin/api/v1/regions
 GET /admin/api/v1/regions/{regionID}
@@ -209,13 +208,10 @@ POST /admin/api/v1/account-repairs/{id}/complete
 POST /admin/api/v1/account-repairs/{id}/options
 POST /admin/api/v1/auth/logout
 POST /admin/api/v1/auth/options
-POST /admin/api/v1/auth/renew/options
-POST /admin/api/v1/auth/renew/verify
 POST /admin/api/v1/auth/verify
-POST /admin/api/v1/credentials/enroll
+POST /admin/api/v1/credentials/complete
+POST /admin/api/v1/credentials/options
 POST /admin/api/v1/enrollment/redeem
-POST /admin/api/v1/enrollment/{id}/assert/options
-POST /admin/api/v1/enrollment/{id}/assert/verify
 POST /admin/api/v1/enrollment/{id}/complete
 POST /admin/api/v1/enrollment/{id}/options
 POST /admin/api/v1/regions

@@ -105,16 +105,12 @@ func (f identityFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.UUID
 	var raw string
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 		source := uuid.NewV7()
-		var epoch int64
 		var at time.Time
-		if err := tx.QueryRow(t.Context(), `SELECT access_epoch FROM users WHERE id=$1`, userID).Scan(&epoch); err != nil {
-			return err
-		}
 		if err := tx.QueryRow(t.Context(), `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'fixture',$1::uuid::text,clock_timestamp()) RETURNING last_authenticated_at`, source, userID).Scan(&at); err != nil {
 			return err
 		}
 		var err error
-		raw, err = issueLoginSession(t.Context(), tx, f.cfg, provedUser(userID, source, uuid.Nil(), epoch, at, "fixture"))
+		raw, err = issueLoginSession(t.Context(), tx, f.cfg, provedUser(userID, source, uuid.Nil(), at, "fixture"))
 		return err
 	})
 	if err != nil {

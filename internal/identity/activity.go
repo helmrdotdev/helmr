@@ -23,10 +23,10 @@ func RecordHumanActivity(ctx context.Context, database db.TxBeginner, p auth.Pri
 		if err != nil {
 			return err
 		}
-		if current.UserID != p.UserID || current.AccessEpoch != p.AccessEpoch {
+		if current.UserID != p.UserID {
 			return ErrInvalidToken
 		}
-		tag, err := tx.Exec(ctx, `UPDATE login_sessions SET last_human_activity_at=clock_timestamp(),expires_at=clock_timestamp()+interval '30 days' WHERE id=$1 AND access_epoch=$2 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND channel='browser'`, p.SessionID, p.AccessEpoch)
+		tag, err := tx.Exec(ctx, `UPDATE login_sessions SET last_human_activity_at=clock_timestamp(),expires_at=clock_timestamp()+interval '30 days' WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND channel='browser'`, p.SessionID)
 		if err != nil {
 			return err
 		}

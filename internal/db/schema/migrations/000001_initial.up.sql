@@ -2404,7 +2404,7 @@ CREATE TABLE audit_events (
     CHECK (authentication_origin<>'internal' OR (actor_component IS NOT NULL AND credential_kind IS NULL)),
     CHECK (authentication_result='verified' OR (credential_id IS NULL AND credential_version IS NULL AND runtime_generation IS NULL AND process_epoch IS NULL)),
     CHECK (authentication_result<>'verified' OR credential_kind IS NOT NULL),
-    CHECK (identity_provider IS NULL OR credential_kind='provider_assertion'),
+    CHECK (identity_provider IS NULL OR credential_kind IS NOT DISTINCT FROM 'provider_assertion'),
     CHECK (actor_api_key_id IS NULL OR (credential_kind='api_key' AND credential_id IS NOT NULL AND credential_id=actor_api_key_id AND credential_version IS NOT NULL)),
     CHECK (actor_worker_host_id IS NULL OR (credential_kind='worker_host' AND credential_id IS NOT NULL AND credential_id=actor_worker_host_id AND credential_version IS NOT NULL)),
     CHECK (actor_session_id IS NULL OR (credential_kind='worker_host' AND credential_id IS NOT NULL AND credential_version IS NOT NULL AND runtime_generation IS NOT NULL)),

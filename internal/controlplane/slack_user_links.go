@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -160,8 +159,7 @@ func (s *Server) startSlackUserLink(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, err)
 		return
 	}
-	hash := sha256.Sum256([]byte(rawBrowserSession(r)))
-	flow := browserAuthFlow{StartedAt: time.Now(), SessionHash: base64.RawURLEncoding.EncodeToString(hash[:]), Kind: browserAuthSlackUser, State: state, Nonce: nonce, OrganizationID: p.OrgID.String(), UserID: p.UserID.String(), InstallationID: installation.String(), AppRegistrationID: registration.String(), SlackTeamID: workspace.TeamID, SlackUserID: origin.SlackUserID, SlackLinkToken: input.Link, SlackReturnURL: origin.ReturnURL}
+	flow := browserAuthFlow{StartedAt: time.Now(), SessionID: p.SessionID, Kind: browserAuthSlackUser, State: state, Nonce: nonce, OrganizationID: p.OrgID.String(), UserID: p.UserID.String(), InstallationID: installation.String(), AppRegistrationID: registration.String(), SlackTeamID: workspace.TeamID, SlackUserID: origin.SlackUserID, SlackLinkToken: input.Link, SlackReturnURL: origin.ReturnURL}
 	encoded, err := s.encodeAuthFlow(flow)
 	if err != nil {
 		s.writeOperationError(w, r, err)
@@ -236,8 +234,7 @@ func (s *Server) verifySlackUserLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	flow, err := s.decodeAuthFlow(r)
-	hash := sha256.Sum256([]byte(rawBrowserSession(r)))
-	if err != nil || flow.StartedAt.IsZero() || flow.SessionHash != base64.RawURLEncoding.EncodeToString(hash[:]) || flow.Kind != browserAuthSlackUser || input.State == "" || input.State != flow.State || flow.UserID != p.UserID.String() || (flow.SlackLinkToken == "" && flow.OrganizationID != p.OrgID.String()) {
+	if err != nil || flow.StartedAt.IsZero() || flow.SessionID == uuid.Nil() || flow.SessionID != p.SessionID || flow.Kind != browserAuthSlackUser || input.State == "" || input.State != flow.State || flow.UserID != p.UserID.String() || (flow.SlackLinkToken == "" && flow.OrganizationID != p.OrgID.String()) {
 		s.writeOperationError(w, r, badRequest(errors.New("the Slack identity flow expired or account changed; start linking again")))
 		return
 	}

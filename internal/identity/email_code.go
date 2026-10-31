@@ -152,7 +152,6 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 		var attempts int
 		var mac []byte
 		var userID, sessionID pgtype.UUID
-		var epoch pgtype.Int8
 		// Resolve immutable email first, then lock account before protocol state. This
 		// matches revoke-all; the locked challenge is still fully rechecked below.
 		var ownerEmail string
@@ -168,9 +167,9 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 		if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE lower(primary_email)=$1 OR id=(SELECT s.user_id FROM email_challenges c JOIN login_sessions s ON s.id=c.session_id WHERE c.id=$2) ORDER BY id FOR UPDATE`, ownerEmail, id); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT c.email,c.safe_next,c.generation,c.failed_attempts,c.code_mac,s.user_id,c.session_id,s.access_epoch
+		err := tx.QueryRow(ctx, `SELECT c.email,c.safe_next,c.generation,c.failed_attempts,c.code_mac,s.user_id,c.session_id
  FROM email_challenges c LEFT JOIN login_sessions s ON s.id=c.session_id
- WHERE c.id=$1 AND c.browser_hash=$2 AND c.purpose=$3 AND c.consumed_at IS NULL AND c.revoked_at IS NULL AND c.sent_at IS NOT NULL AND c.expires_at>clock_timestamp() FOR UPDATE OF c`, id, binding, purpose).Scan(&email, &next, &generation, &attempts, &mac, &userID, &sessionID, &epoch)
+ WHERE c.id=$1 AND c.browser_hash=$2 AND c.purpose=$3 AND c.consumed_at IS NULL AND c.revoked_at IS NULL AND c.sent_at IS NOT NULL AND c.expires_at>clock_timestamp() FOR UPDATE OF c`, id, binding, purpose).Scan(&email, &next, &generation, &attempts, &mac, &userID, &sessionID)
 		if isNoRows(err) {
 			return ErrInvalidToken
 		}
@@ -188,7 +187,7 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 			return nil
 		}
 		if purpose == "email_change" {
-			token, err := completeEmailChange(ctx, tx, cfg, id, userID, sessionID, epoch, email, rawSession)
+			token, err := completeEmailChange(ctx, tx, cfg, id, userID, sessionID, email, rawSession)
 			if err != nil {
 				return err
 			}
@@ -200,7 +199,7 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 		if err != nil {
 			return err
 		}
-		if userID.Valid && (userID != user.id || epoch.Int64 != user.accessEpoch) {
+		if userID.Valid && userID != user.id {
 			return ErrWrongAccount
 		}
 		if sessionID.Valid {
@@ -261,7 +260,7 @@ func emailUser(ctx context.Context, tx pgx.Tx, email string) (signedInUser, erro
 	if err != nil {
 		return signedInUser{}, err
 	}
-	if err = tx.QueryRow(ctx, `SELECT access_epoch FROM users WHERE id=$1 FOR UPDATE`, user.ID).Scan(&user.AccessEpoch); err != nil {
+	if _, err = tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, user.ID); err != nil {
 		return signedInUser{}, err
 	}
 	identity, err := q.GetAuthIdentity(ctx, db.GetAuthIdentityParams{Provider: "email", Subject: pgvalue.MustUUIDValue(user.ID).String()})
@@ -275,7 +274,7 @@ func emailUser(ctx context.Context, tx pgx.Tx, email string) (signedInUser, erro
 	if err = tx.QueryRow(ctx, `UPDATE auth_identities SET last_authenticated_at=clock_timestamp() WHERE id=$1 RETURNING last_authenticated_at`, identity.ID).Scan(&at); err != nil {
 		return signedInUser{}, err
 	}
-	return provedUser(pgvalue.MustUUIDValue(user.ID), pgvalue.MustUUIDValue(identity.ID), uuid.Nil(), user.AccessEpoch, at, "email"), nil
+	return provedUser(pgvalue.MustUUIDValue(user.ID), pgvalue.MustUUIDValue(identity.ID), uuid.Nil(), at, "email"), nil
 }
 
 func confirmBrowserProof(ctx context.Context, tx pgx.Tx, cfg Config, id uuid.UUID, oldHash []byte, user signedInUser) (string, error) {
@@ -287,7 +286,7 @@ func confirmBrowserProof(ctx context.Context, tx pgx.Tx, cfg Config, id uuid.UUI
 	if err != nil {
 		return "", err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE login_sessions SET token_hash=$3,identity_id=$6,passkey_id=$7,authenticated_at=$8,last_human_activity_at=clock_timestamp(),expires_at=clock_timestamp()+interval '30 days' WHERE id=$1 AND token_hash=$2 AND user_id=$4 AND channel='browser' AND revoked_at IS NULL AND expires_at>clock_timestamp() AND access_epoch=$5`, id, oldHash, hash, user.id, user.accessEpoch, optionalUUID(user.identityID), optionalUUID(user.passkeyID), user.authenticatedAt)
+	tag, err := tx.Exec(ctx, `UPDATE login_sessions SET token_hash=$3,identity_id=$5,passkey_id=$6,authenticated_at=$7,last_human_activity_at=clock_timestamp(),expires_at=clock_timestamp()+interval '30 days' WHERE id=$1 AND token_hash=$2 AND user_id=$4 AND channel='browser' AND revoked_at IS NULL AND expires_at>clock_timestamp()`, id, oldHash, hash, user.id, optionalUUID(user.identityID), optionalUUID(user.passkeyID), user.authenticatedAt)
 	if err != nil {
 		return "", err
 	}
@@ -306,7 +305,7 @@ func currentAccount(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Prin
 	if err != nil {
 		return auth.Principal{}, err
 	}
-	if current.UserID != p.UserID || current.AccessEpoch != p.AccessEpoch {
+	if current.UserID != p.UserID {
 		return auth.Principal{}, ErrInvalidToken
 	}
 	return current, nil
@@ -317,7 +316,7 @@ func requireRecentAccount(ctx context.Context, q db.DBTX, p auth.Principal) erro
 	if err != nil {
 		return err
 	}
-	if !access.Recent(current, time.Now()) {
+	if !auth.ProvedRecently(current.AuthenticatedAt, time.Now()) {
 		return ErrRecentProofRequired
 	}
 	return nil

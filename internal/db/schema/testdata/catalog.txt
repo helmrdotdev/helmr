@@ -2,7 +2,6 @@ column account_repair_enrollments.browser_hash bytea
 column account_repair_enrollments.capability_hash bytea not null
 column account_repair_enrollments.consumed_at timestamp with time zone
 column account_repair_enrollments.created_at timestamp with time zone not null default clock_timestamp()
-column account_repair_enrollments.expected_access_epoch bigint not null
 column account_repair_enrollments.expires_at timestamp with time zone not null
 column account_repair_enrollments.id uuid not null
 column account_repair_enrollments.operator_id uuid not null
@@ -606,7 +605,6 @@ column invitations.org_id uuid not null
 column invitations.revoked_at timestamp with time zone
 column invitations.revoked_by_member_id uuid
 column invitations.token_hash bytea not null
-column login_sessions.access_epoch bigint not null
 column login_sessions.authenticated_at timestamp with time zone not null
 column login_sessions.channel text not null
 column login_sessions.expires_at timestamp with time zone not null
@@ -625,13 +623,9 @@ column operator_passkey_enrollments.browser_hash bytea
 column operator_passkey_enrollments.capability_hash bytea
 column operator_passkey_enrollments.consumed_at timestamp with time zone
 column operator_passkey_enrollments.created_at timestamp with time zone not null default clock_timestamp()
-column operator_passkey_enrollments.expected_access_epoch bigint not null
 column operator_passkey_enrollments.expires_at timestamp with time zone not null
 column operator_passkey_enrollments.id uuid not null
-column operator_passkey_enrollments.issuer_session_id uuid
 column operator_passkey_enrollments.operator_id uuid not null
-column operator_passkey_enrollments.provisional_credential jsonb
-column operator_passkey_enrollments.purpose text not null
 column operator_passkey_enrollments.revoked_at timestamp with time zone
 column org_members.created_at timestamp with time zone not null default now()
 column org_members.display_name text
@@ -665,7 +659,6 @@ column permission_groups.name text not null
 column permission_groups.org_id uuid not null
 column permission_groups.revision bigint not null default 1
 column permission_groups.updated_at timestamp with time zone not null default now()
-column platform_operators.access_epoch bigint not null default 0
 column platform_operators.created_at timestamp with time zone not null default clock_timestamp()
 column platform_operators.id uuid not null
 column platform_operators.label text not null
@@ -1174,7 +1167,6 @@ column turns.started_at timestamp with time zone
 column turns.status text not null default 'queued'::text
 column turns.target_id uuid not null
 column turns.terminal_at timestamp with time zone
-column users.access_epoch bigint not null default 0
 column users.created_at timestamp with time zone not null default now()
 column users.display_name text not null
 column users.id uuid not null
@@ -1308,7 +1300,6 @@ column worker_scale_in_operations.operation_key uuid not null
 column worker_scale_in_operations.worker_group_id uuid not null
 column worker_scale_in_operations.worker_host_id uuid not null
 column worker_scale_in_operations.worker_pool_id uuid not null
-constraint account_repair_enrollments c CHECK (expected_access_epoch >= 0)
 constraint account_repair_enrollments f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
 constraint account_repair_enrollments f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint account_repair_enrollments p PRIMARY KEY (id)
@@ -1366,7 +1357,7 @@ constraint audit_events c CHECK (credential_kind = ANY (ARRAY['login_session'::t
 constraint audit_events c CHECK (credential_version > 0)
 constraint audit_events c CHECK (environment_id IS NULL OR project_id IS NOT NULL)
 constraint audit_events c CHECK (expires_at > recorded_at AND expires_at = (recorded_at + retention_seconds::double precision * '00:00:01'::interval))
-constraint audit_events c CHECK (identity_provider IS NULL OR credential_kind = 'provider_assertion'::text)
+constraint audit_events c CHECK (identity_provider IS NULL OR NOT credential_kind IS DISTINCT FROM 'provider_assertion'::text)
 constraint audit_events c CHECK (isfinite(occurred_at) AND isfinite(recorded_at) AND isfinite(expires_at))
 constraint audit_events c CHECK (jsonb_typeof(actor_identity) = 'object'::text AND pg_column_size(actor_identity) <= 4096)
 constraint audit_events c CHECK (jsonb_typeof(authorization_evidence) = 'object'::text AND pg_column_size(authorization_evidence) <= 16384 AND authorization_evidence ?& ARRAY['decision'::text, 'checks'::text] AND jsonb_typeof(authorization_evidence -> 'decision'::text) = 'string'::text AND ((authorization_evidence ->> 'decision'::text) = ANY (ARRAY['allowed'::text, 'denied'::text, 'not_evaluated'::text])) AND jsonb_typeof(authorization_evidence -> 'checks'::text) = 'array'::text AND ((authorization_evidence ->> 'decision'::text) = 'not_evaluated'::text) = (jsonb_array_length(authorization_evidence -> 'checks'::text) = 0))
@@ -1815,7 +1806,6 @@ constraint invitations f FOREIGN KEY (org_id, invited_by_member_id) REFERENCES o
 constraint invitations f FOREIGN KEY (org_id, revoked_by_member_id) REFERENCES org_members(org_id, id) ON DELETE SET NULL (revoked_by_member_id)
 constraint invitations p PRIMARY KEY (id)
 constraint invitations u UNIQUE (token_hash)
-constraint login_sessions c CHECK (access_epoch >= 0)
 constraint login_sessions c CHECK (channel = ANY (ARRAY['browser'::text, 'cli'::text, 'operator'::text]))
 constraint login_sessions c login_sessions_owner CHECK (num_nonnulls(user_id, operator_id) = 1)
 constraint login_sessions c login_sessions_shape CHECK (channel = 'browser'::text AND user_id IS NOT NULL AND org_id IS NULL AND member_id IS NULL AND num_nonnulls(identity_id, passkey_id) = 1 OR channel = 'cli'::text AND user_id IS NOT NULL AND org_id IS NOT NULL AND member_id IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1 OR channel = 'operator'::text AND operator_id IS NOT NULL AND passkey_id IS NOT NULL AND num_nonnulls(org_id, member_id, identity_id) = 0 AND authenticated_at >= issued_at AND authenticated_at <= expires_at)
@@ -1827,11 +1817,7 @@ constraint login_sessions f FOREIGN KEY (passkey_id, user_id) REFERENCES passkey
 constraint login_sessions f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint login_sessions p PRIMARY KEY (id)
 constraint login_sessions u UNIQUE (token_hash)
-constraint operator_passkey_enrollments c CHECK (expected_access_epoch >= 0)
-constraint operator_passkey_enrollments c CHECK (provisional_credential IS NULL OR browser_hash IS NOT NULL)
-constraint operator_passkey_enrollments c CHECK (purpose = 'add_key'::text AND issuer_session_id IS NOT NULL AND browser_hash IS NOT NULL AND capability_hash IS NULL OR (purpose = ANY (ARRAY['bootstrap'::text, 'repair'::text])) AND issuer_session_id IS NULL AND num_nonnulls(capability_hash, browser_hash) = 1)
-constraint operator_passkey_enrollments c CHECK (purpose = ANY (ARRAY['bootstrap'::text, 'repair'::text, 'add_key'::text]))
-constraint operator_passkey_enrollments f FOREIGN KEY (issuer_session_id) REFERENCES login_sessions(id)
+constraint operator_passkey_enrollments c CHECK (num_nonnulls(capability_hash, browser_hash) = 1)
 constraint operator_passkey_enrollments f FOREIGN KEY (operator_id) REFERENCES platform_operators(id)
 constraint operator_passkey_enrollments p PRIMARY KEY (id)
 constraint operator_passkey_enrollments u UNIQUE (capability_hash)
@@ -1861,7 +1847,6 @@ constraint permission_groups c CHECK (revision > 0)
 constraint permission_groups f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint permission_groups p PRIMARY KEY (id)
 constraint permission_groups u UNIQUE (org_id, id)
-constraint platform_operators c CHECK (access_epoch >= 0)
 constraint platform_operators c CHECK (btrim(label) <> ''::text)
 constraint platform_operators p PRIMARY KEY (id)
 constraint platform_operators u UNIQUE (webauthn_user_handle)
@@ -2315,7 +2300,6 @@ constraint turns u UNIQUE (environment_id, id, computer_id, has_recorded_result)
 constraint turns u UNIQUE (environment_id, session_id, id)
 constraint turns u UNIQUE (environment_id, session_id, id, process_epoch)
 constraint turns u UNIQUE (environment_id, session_id, seq)
-constraint users c CHECK (access_epoch >= 0)
 constraint users c CHECK (btrim(display_name) <> ''::text)
 constraint users c CHECK (profile_image_url IS NULL OR btrim(profile_image_url) <> ''::text)
 constraint users p PRIMARY KEY (id)
@@ -2332,8 +2316,8 @@ constraint vm_platforms c CHECK (rootfs_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint vm_platforms c CHECK (snapshot_format_version ~ '^[0-9]+\.[0-9]+\.[0-9]+$'::text)
 constraint vm_platforms p PRIMARY KEY (id)
 constraint webauthn_challenges c CHECK (ceremony = ANY (ARRAY['register'::text, 'assert'::text]))
-constraint webauthn_challenges c CHECK (purpose = 'login'::text AND ceremony = 'assert'::text AND num_nonnulls(session_id, operator_passkey_enrollment_id, account_repair_enrollment_id) = 0 OR (purpose = ANY (ARRAY['confirm'::text, 'renew'::text, 'register'::text])) AND session_id IS NOT NULL AND num_nonnulls(operator_passkey_enrollment_id, account_repair_enrollment_id) = 0 AND ((purpose = ANY (ARRAY['confirm'::text, 'renew'::text])) AND ceremony = 'assert'::text OR purpose = 'register'::text AND ceremony = 'register'::text AND NOT operator_scope) OR purpose = 'enroll'::text AND operator_scope AND operator_passkey_enrollment_id IS NOT NULL AND num_nonnulls(session_id, account_repair_enrollment_id) = 0 OR purpose = 'repair'::text AND ceremony = 'register'::text AND NOT operator_scope AND account_repair_enrollment_id IS NOT NULL AND num_nonnulls(session_id, operator_passkey_enrollment_id) = 0)
-constraint webauthn_challenges c CHECK (purpose = ANY (ARRAY['login'::text, 'confirm'::text, 'renew'::text, 'register'::text, 'enroll'::text, 'repair'::text]))
+constraint webauthn_challenges c CHECK (purpose = 'login'::text AND ceremony = 'assert'::text AND num_nonnulls(session_id, operator_passkey_enrollment_id, account_repair_enrollment_id) = 0 OR (purpose = ANY (ARRAY['confirm'::text, 'register'::text])) AND session_id IS NOT NULL AND num_nonnulls(operator_passkey_enrollment_id, account_repair_enrollment_id) = 0 AND (purpose = 'confirm'::text AND ceremony = 'assert'::text OR purpose = 'register'::text AND ceremony = 'register'::text) OR purpose = 'enroll'::text AND ceremony = 'register'::text AND operator_scope AND operator_passkey_enrollment_id IS NOT NULL AND num_nonnulls(session_id, account_repair_enrollment_id) = 0 OR purpose = 'repair'::text AND ceremony = 'register'::text AND NOT operator_scope AND account_repair_enrollment_id IS NOT NULL AND num_nonnulls(session_id, operator_passkey_enrollment_id) = 0)
+constraint webauthn_challenges c CHECK (purpose = ANY (ARRAY['login'::text, 'confirm'::text, 'register'::text, 'enroll'::text, 'repair'::text]))
 constraint webauthn_challenges f FOREIGN KEY (account_repair_enrollment_id) REFERENCES account_repair_enrollments(id)
 constraint webauthn_challenges f FOREIGN KEY (operator_passkey_enrollment_id) REFERENCES operator_passkey_enrollments(id)
 constraint webauthn_challenges f FOREIGN KEY (session_id) REFERENCES login_sessions(id)

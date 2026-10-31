@@ -48,7 +48,7 @@ ALTER TABLE device_codes DROP COLUMN user_id, DROP COLUMN browser_session_id;
 ALTER TABLE device_codes ADD FOREIGN KEY (org_id,decided_by_member_id) REFERENCES org_members(org_id,id) ON DELETE SET NULL (decided_by_member_id);
 DELETE FROM login_sessions WHERE user_id IS NULL;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_shape, DROP CONSTRAINT login_sessions_owner;
-ALTER TABLE login_sessions DROP COLUMN operator_id, DROP COLUMN channel, DROP COLUMN access_epoch,
+ALTER TABLE login_sessions DROP COLUMN operator_id, DROP COLUMN channel,
  DROP COLUMN member_id, DROP COLUMN identity_id, DROP COLUMN passkey_id, DROP COLUMN authenticated_at;
 ALTER TABLE login_sessions RENAME COLUMN issued_at TO created_at;
 ALTER TABLE login_sessions RENAME COLUMN last_human_activity_at TO last_seen_at;
@@ -66,7 +66,7 @@ DROP TABLE passkey_credentials;
 DROP TABLE platform_operators;
 ALTER TABLE org_members DROP COLUMN suspended_at, DROP COLUMN reauthenticate_after;
 ALTER TABLE org_members DROP CONSTRAINT org_members_org_id_id_user_id_key;
-ALTER TABLE users DROP COLUMN access_epoch, DROP COLUMN webauthn_user_handle;
+ALTER TABLE users DROP COLUMN webauthn_user_handle;
 ALTER TABLE users ADD COLUMN admin boolean NOT NULL DEFAULT false;
 -- Multiple retired lifetimes cannot be represented by the former schema.
 DO $$ BEGIN

@@ -20,7 +20,7 @@ func (f identityFixture) operator(t *testing.T) (uuid.UUID, uuid.UUID, string) {
 	var raw string
 	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 		var err error
-		raw, err = issueOperatorSession(t.Context(), tx, f.cfg, op, key, 0, time.Now())
+		raw, err = issueOperatorSession(t.Context(), tx, f.cfg, op, key, time.Now())
 		return err
 	})
 	if err != nil {
@@ -32,7 +32,7 @@ func TestOperatorIsolationExpiryAndAudit(t *testing.T) {
 	f := newIdentityFixture(t)
 	op, key, raw := f.operator(t)
 	p, expiry, err := AuthenticateOperator(t.Context(), f.pool, f.cfg, raw)
-	if err != nil || p.OperatorID != op || p.AccessEpoch != 0 || p.UserID != uuid.Nil() {
+	if err != nil || p.OperatorID != op || p.PasskeyID != key || p.UserID != uuid.Nil() {
 		t.Fatal(p, err)
 	}
 	if time.Until(expiry) > 12*time.Hour || time.Until(expiry) < 11*time.Hour {
@@ -43,7 +43,7 @@ func TestOperatorIsolationExpiryAndAudit(t *testing.T) {
 	}
 	actor, err := audit.PlatformOperator(p)
 	if err != nil {
-		t.Fatal("initial epoch authority", err)
+		t.Fatal("operator authority", err)
 	}
 	appendEvent := func() error {
 		return db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
@@ -67,6 +67,8 @@ func TestOperatorIsolationExpiryAndAudit(t *testing.T) {
 	f.exec(t, `UPDATE passkey_credentials SET revoked_at=clock_timestamp() WHERE id=$1`, key)
 	if err = appendEvent(); err == nil {
 		t.Fatal("revoked operator committed audited mutation")
+	} else if _, refused := errors.AsType[*audit.Refusal](err); !refused || errors.Is(err, audit.ErrCapture) {
+		t.Fatal("revoked operator was not refused as lost authority", err)
 	}
 	if _, _, err = AuthenticateOperator(t.Context(), f.pool, f.cfg, raw); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatal("revoked key", err)
@@ -135,10 +137,10 @@ func TestOperatorLogoutSerializesWithCredentialMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	if _, _, err = loadKeyUser(t.Context(), tx, uuid.Nil(), op); err != nil {
+	if _, err = loadKeyUser(t.Context(), tx, uuid.Nil(), op); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = operatorFromSession(t.Context(), tx, p.SessionID); err != nil {
+	if _, _, err = operatorFromSession(t.Context(), tx, p.SessionID); err != nil {
 		t.Fatal(err)
 	}
 	conn, err := f.pool.Acquire(t.Context())

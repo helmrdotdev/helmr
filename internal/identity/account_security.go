@@ -49,21 +49,11 @@ func RevokeAccountAccess(ctx context.Context, database db.TxBeginner, cfg Config
 		if _, err := currentAccount(ctx, tx, p); err != nil {
 			return err
 		}
-		if err := invalidateAccount(ctx, tx, p.UserID); err != nil {
+		if err := retireAccountChannels(ctx, tx, p.UserID, uuid.Nil()); err != nil {
 			return err
 		}
 		return accountSecurityEvent(ctx, tx, cfg, p, "identity.access_revoked", uuid.Nil(), "")
 	})
-}
-
-// invalidateAccount retires every channel of the account. The new access epoch
-// also refuses authority that earlier admitted work still holds.
-func invalidateAccount(ctx context.Context, tx pgx.Tx, user uuid.UUID) error {
-	if err := retireAccountChannels(ctx, tx, user, uuid.Nil()); err != nil {
-		return err
-	}
-	_, err := tx.Exec(ctx, `UPDATE users SET access_epoch=access_epoch+1,updated_at=clock_timestamp() WHERE id=$1`, user)
-	return err
 }
 
 // RevokeOtherAccess signs the account out everywhere except this browser.
@@ -84,9 +74,9 @@ func RevokeOtherAccess(ctx context.Context, database db.TxBeginner, cfg Config, 
 
 // retireAccountChannels revokes every session, Slack link and request, approved
 // device code, pending account repair and open challenge of the account except
-// the browser session keep and its own challenges. A zero keep retires them all. It leaves the
-// access epoch alone, so keep stays signed in; each retired channel is checked
-// directly whenever it is used.
+// the browser session keep and its own challenges. A zero keep retires them all.
+// Every use of a channel checks that the channel itself is still live, so work
+// admitted before this transaction is refused at its next check.
 func retireAccountChannels(ctx context.Context, tx pgx.Tx, user, keep uuid.UUID) error {
 	if err := slack.RetireAccountAccess(ctx, tx, user); err != nil {
 		return err
@@ -201,7 +191,7 @@ func LinkProvider(ctx context.Context, database db.TxBeginner, cfg Config, p aut
 		if err != nil {
 			return ErrInvalidToken
 		}
-		proof := provedUser(p.UserID, nullableUUID(existing.ID), uuid.Nil(), p.AccessEpoch, time.Now(), external.Provider)
+		proof := provedUser(p.UserID, nullableUUID(existing.ID), uuid.Nil(), time.Now(), external.Provider)
 		raw, err = confirmBrowserProof(ctx, tx, cfg, p.SessionID, hash, proof)
 		if err != nil {
 			return err

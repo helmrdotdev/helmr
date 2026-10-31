@@ -113,7 +113,7 @@ func TestDeviceExchangeCopiesTheBrowserSignInAtExchange(t *testing.T) {
 		t.Run(change, func(t *testing.T) {
 			f := newIdentityFixture(t)
 			external := ExternalIdentity{Provider: "github", Subject: "device-owner", DisplayName: "Owner", Email: "owner@example.test", EmailVerified: true}
-			raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false)
+			raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", uuid.Nil())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,7 +136,7 @@ func TestDeviceExchangeCopiesTheBrowserSignInAtExchange(t *testing.T) {
 			}
 			switch change {
 			case "same-source":
-				_, err = SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, raw, true)
+				_, err = SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, raw, p.SessionID)
 			case "different-source":
 				_, err = LinkProvider(t.Context(), f.pool, f.cfg, p, ExternalIdentity{Provider: "github", Subject: "second-source", Email: "owner@example.test", EmailVerified: true}, raw)
 			case "revoke-all":
@@ -156,7 +156,7 @@ func TestDeviceExchangeCopiesTheBrowserSignInAtExchange(t *testing.T) {
 				t.Fatal("browser sign-in again blocked the approved CLI login", err)
 			}
 			issued, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, cli, uuid.Nil())
-			if err != nil || issued.MemberID != p.MemberID || issued.AccessEpoch != p.AccessEpoch {
+			if err != nil || issued.MemberID != p.MemberID || issued.UserID != p.UserID {
 				t.Fatal(issued, err)
 			}
 			var copied bool

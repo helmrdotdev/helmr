@@ -30,10 +30,13 @@ const (
 )
 
 type browserAuthFlow struct {
+	// SessionID is the live browser session that started the flow, or nil when
+	// the browser was signed out. It survives a confirmation mid-flow, which
+	// rotates the session token but keeps the session.
+	SessionID uuid.UUID `json:"session_id"`
+
 	SlackManagementSource *slackManagementSource `json:"slack_management_source,omitempty"`
 	SlackConsentID        string                 `json:"slack_consent_id,omitempty"`
-	SessionBound          bool                   `json:"session_bound,omitempty"`
-	SessionHash           string                 `json:"session_hash,omitempty"`
 	StartedAt             time.Time              `json:"started_at"`
 	ConnectionID          string                 `json:"connection_id,omitempty"`
 	AppRegistrationID     string                 `json:"app_registration_id,omitempty"`
@@ -107,16 +110,12 @@ func (s *Server) writeGitHubAuthStart(w http.ResponseWriter, r *http.Request, ki
 		Verifier:      verifier,
 		RedirectAfter: redirectAfter,
 	}
-	if raw := rawBrowserSession(r); raw != "" {
-		h := sha256.Sum256([]byte(raw))
-		flow.SessionHash = base64.RawURLEncoding.EncodeToString(h[:])
-		_, authErr := identity.AuthenticateLoginSession(r.Context(), s.tx, s.identity, raw, uuid.Nil())
-		if authErr != nil && !errors.Is(authErr, auth.ErrUnauthenticated) {
-			s.writeIdentityError(w, r, authErr)
-			return
-		}
-		flow.SessionBound = authErr == nil
+	session, err := s.browserSessionID(r)
+	if err != nil {
+		s.writeIdentityError(w, r, err)
+		return
 	}
+	flow.SessionID = session
 	if len(tokenHash) > 0 {
 		flow.TokenHash = base64.RawURLEncoding.EncodeToString(tokenHash)
 	}
@@ -196,18 +195,34 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.GitHubAuthFinishResponse{RedirectAfter: validateRedirectAfter(flow.RedirectAfter)})
 }
 
+// browserSessionID names the live browser session the request presents, or nil
+// when the browser is signed out or its session has ended.
+func (s *Server) browserSessionID(r *http.Request) (uuid.UUID, error) {
+	raw := rawBrowserSession(r)
+	if raw == "" {
+		return uuid.Nil(), nil
+	}
+	p, err := identity.AuthenticateLoginSession(r.Context(), s.tx, s.identity, raw, uuid.Nil())
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		return uuid.Nil(), nil
+	}
+	if err != nil {
+		return uuid.Nil(), err
+	}
+	if p.Channel != "browser" {
+		return uuid.Nil(), nil
+	}
+	return p.SessionID, nil
+}
+
 func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, external identity.ExternalIdentity) (string, error) {
 	raw := rawBrowserSession(r)
-	hash := ""
-	if raw != "" {
-		h := sha256.Sum256([]byte(raw))
-		hash = base64.RawURLEncoding.EncodeToString(h[:])
-	}
-	if hash != flow.SessionHash {
-		return "", identity.ErrWrongAccount
-	}
 	if flow.Kind == browserAuthGitHubLink {
-		return identity.LinkProvider(r.Context(), s.tx, s.identity, s.optionalAccount(r), external, raw)
+		p := s.optionalAccount(r)
+		if flow.SessionID == uuid.Nil() || p.SessionID != flow.SessionID {
+			return "", identity.ErrWrongAccount
+		}
+		return identity.LinkProvider(r.Context(), s.tx, s.identity, p, external, raw)
 	}
 	if flow.Kind == browserAuthGitHubInvite {
 		tokenHash, err := decodeFlowTokenHash(flow)
@@ -222,7 +237,7 @@ func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, exte
 			return "", identity.ErrWrongAccount
 		}
 	}
-	return identity.SignInBrowserProvider(r.Context(), s.tx, s.identity, external, raw, flow.SessionBound)
+	return identity.SignInBrowserProvider(r.Context(), s.tx, s.identity, external, raw, flow.SessionID)
 }
 
 // resolveInvitation resolves a raw invitation token for starting an
@@ -340,7 +355,7 @@ func identityError(err error) error {
 		return badRequest(err)
 	case errors.Is(err, identity.ErrRecentProofRequired):
 		return forbidden(codedError{code: "recent_authentication_required", message: "Sign in again to confirm it's you, then retry."})
-	case errors.Is(err, identity.ErrIdentityConflict), errors.Is(err, identity.ErrEnrollmentConflict):
+	case errors.Is(err, identity.ErrIdentityConflict):
 		return conflict(codedError{code: "identity_conflict", message: err.Error()})
 	case errors.Is(err, identity.ErrAccountProofRequired):
 		return forbidden(codedError{code: "account_authentication_required", message: err.Error()})
@@ -372,7 +387,7 @@ func identityError(err error) error {
 // Identity owns its failure facts. This boundary reports capture failure without
 // generating a second refusal for an already recorded identity outcome.
 func (s *Server) writeIdentityError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, audit.ErrCapture) {
+	if authorityLost(err) || errors.Is(err, audit.ErrCapture) {
 		s.writeOperationError(w, r, err)
 		return
 	}

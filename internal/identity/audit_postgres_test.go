@@ -16,7 +16,7 @@ import (
 func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 	f := newIdentityFixture(t)
 	external := ExternalIdentity{Provider: "github", Subject: "subject-42", DisplayName: "Original", Email: "person@example.test", EmailVerified: true}
-	raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false)
+	raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 		t.Fatal(issued, err)
 	}
 	external.DisplayName = "Renamed"
-	if _, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false); err != nil {
+	if _, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", uuid.Nil()); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT actor_identity->>'display_name'='Original' FROM audit_events WHERE action='identity.sign_in' AND target_id=$1`, principal.SessionID).Scan(&issued); err != nil || !issued {
@@ -42,7 +42,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, linked, "", false)
+	second, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, linked, "", uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 		t.Fatal("concurrent provider provenance", issued, err)
 	}
 	f.exec(t, `ALTER TABLE audit_events ADD CONSTRAINT reject_issuance CHECK(action<>'identity.sign_in') NOT VALID`)
-	if token, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "rejected", DisplayName: "Must rollback", Email: "rollback@example.test", EmailVerified: true}, "", false); err == nil || token != "" {
+	if token, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "rejected", DisplayName: "Must rollback", Email: "rollback@example.test", EmailVerified: true}, "", uuid.Nil()); err == nil || token != "" {
 		t.Fatal("released unaudited credential", token != "", err)
 	}
 	var absent bool
@@ -124,7 +124,7 @@ func (tx lostCommitTransaction) Commit(ctx context.Context) error {
 }
 func TestAuditAuthenticationLostCommitAcknowledgement(t *testing.T) {
 	f := newIdentityFixture(t)
-	_, err := SignInBrowserProvider(t.Context(), lostCommitAcknowledgement{f.pool}, f.cfg, ExternalIdentity{Provider: "github", Subject: "lost-ack", DisplayName: "Committed", Email: "committed@example.test", EmailVerified: true}, "", false)
+	_, err := SignInBrowserProvider(t.Context(), lostCommitAcknowledgement{f.pool}, f.cfg, ExternalIdentity{Provider: "github", Subject: "lost-ack", DisplayName: "Committed", Email: "committed@example.test", EmailVerified: true}, "", uuid.Nil())
 	if !db.CommitOutcomeUnknown(err) {
 		t.Fatalf("expected uncertain commit: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestAuditAuthenticationLostCommitAcknowledgement(t *testing.T) {
 
 func TestAuditDeviceIssuanceLinksVerifiedAuthorization(t *testing.T) {
 	f := newIdentityFixture(t)
-	raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "device-authorizer", DisplayName: "Approver", Email: "approver@example.test", EmailVerified: true}, "", false)
+	raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "device-authorizer", DisplayName: "Approver", Email: "approver@example.test", EmailVerified: true}, "", uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 			t.Run(method+"/"+failure, func(t *testing.T) {
 				f := newIdentityFixture(t)
 				external := ExternalIdentity{Provider: "github", Subject: "custody", DisplayName: "User", Email: "custody@example.test", EmailVerified: true}
-				initial, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false)
+				initial, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", uuid.Nil())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -198,7 +198,9 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 				}
 				org := f.organization(t, "custody")
 				f.member(t, org, p.UserID, "member")
-				issue := func() (string, error) { return SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false) }
+				issue := func() (string, error) {
+					return SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", uuid.Nil())
+				}
 				if method == "email" {
 					c, b := emailChallenge(t, f, external.Email)
 					if err = MarkEmailDelivered(t.Context(), f.pool, c); err != nil {

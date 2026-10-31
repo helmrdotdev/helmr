@@ -12,7 +12,7 @@ import (
 )
 
 const getLoginSession = `-- name: GetLoginSession :one
-SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, access_epoch, member_id, identity_id, passkey_id, authenticated_at FROM login_sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, member_id, identity_id, passkey_id, authenticated_at FROM login_sessions WHERE id=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
 `
 
 func (q *Queries) GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSession, error) {
@@ -29,7 +29,6 @@ func (q *Queries) GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSes
 		&i.RevokedAt,
 		&i.OperatorID,
 		&i.Channel,
-		&i.AccessEpoch,
 		&i.MemberID,
 		&i.IdentityID,
 		&i.PasskeyID,
@@ -39,7 +38,7 @@ func (q *Queries) GetLoginSession(ctx context.Context, id pgtype.UUID) (LoginSes
 }
 
 const getLoginSessionByTokenHash = `-- name: GetLoginSessionByTokenHash :one
-SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, access_epoch, member_id, identity_id, passkey_id, authenticated_at FROM login_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
+SELECT id, org_id, user_id, token_hash, issued_at, last_human_activity_at, expires_at, revoked_at, operator_id, channel, member_id, identity_id, passkey_id, authenticated_at FROM login_sessions WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>clock_timestamp()
 `
 
 func (q *Queries) GetLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (LoginSession, error) {
@@ -56,11 +55,44 @@ func (q *Queries) GetLoginSessionByTokenHash(ctx context.Context, tokenHash []by
 		&i.RevokedAt,
 		&i.OperatorID,
 		&i.Channel,
-		&i.AccessEpoch,
 		&i.MemberID,
 		&i.IdentityID,
 		&i.PasskeyID,
 		&i.AuthenticatedAt,
+	)
+	return i, err
+}
+
+const getOperatorAuthority = `-- name: GetOperatorAuthority :one
+SELECT s.id,s.operator_id,s.passkey_id,s.authenticated_at,s.expires_at
+FROM login_sessions s
+JOIN platform_operators o ON o.id=s.operator_id
+JOIN passkey_credentials k ON k.id=s.passkey_id AND k.operator_id=o.id
+WHERE s.id=$1 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND k.revoked_at IS NULL
+FOR SHARE OF o,s,k
+`
+
+type GetOperatorAuthorityRow struct {
+	ID              pgtype.UUID        `json:"id"`
+	OperatorID      pgtype.UUID        `json:"operator_id"`
+	PasskeyID       pgtype.UUID        `json:"passkey_id"`
+	AuthenticatedAt pgtype.Timestamptz `json:"authenticated_at"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+}
+
+// An operator session holds authority only while the session and the key that
+// signed it in stay live. Inside a transaction, the shared locks hold that
+// authority until commit, so key removal, repair and sign-out wait for it.
+// Outside a transaction the locks end with the statement.
+func (q *Queries) GetOperatorAuthority(ctx context.Context, id pgtype.UUID) (GetOperatorAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getOperatorAuthority, id)
+	var i GetOperatorAuthorityRow
+	err := row.Scan(
+		&i.ID,
+		&i.OperatorID,
+		&i.PasskeyID,
+		&i.AuthenticatedAt,
+		&i.ExpiresAt,
 	)
 	return i, err
 }

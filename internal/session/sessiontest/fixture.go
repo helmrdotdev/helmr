@@ -129,7 +129,7 @@ func (f Fixture) Principal(t *testing.T) auth.Principal {
 	t.Helper()
 	source, session := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO auth_identities(id,user_id,provider,subject,last_authenticated_at) VALUES($1,$2,'fixture',$1::uuid::text,clock_timestamp())`, source, f.User)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO login_sessions(id,user_id,channel,access_epoch,token_hash,identity_id,authenticated_at,expires_at) SELECT $1,id,'browser',access_epoch,uuid_send($1::uuid),$3,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM users WHERE id=$2`, session, f.User, source)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO login_sessions(id,user_id,channel,token_hash,identity_id,authenticated_at,expires_at) SELECT $1,id,'browser',uuid_send($1::uuid),$3,clock_timestamp(),clock_timestamp()+interval '1 hour' FROM users WHERE id=$2`, session, f.User, source)
 	var org uuid.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, f.Environment).Scan(&org); err != nil {
 		t.Fatal(err)

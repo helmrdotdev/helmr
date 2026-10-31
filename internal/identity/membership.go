@@ -2,10 +2,8 @@ package identity
 
 import (
 	"context"
-	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/slack"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/audit"
@@ -31,12 +29,8 @@ func CreateOrganization(ctx context.Context, database db.TxBeginner, input org.O
 			return ErrInvalidToken
 		}
 		if input.InitialSetup {
-			current, err := operatorFromSession(ctx, tx, operator.SessionID)
-			if err != nil {
+			if _, err := requireRecentOperator(ctx, tx, operator); err != nil {
 				return err
-			}
-			if current.OperatorID != operator.OperatorID || !access.Recent(current, time.Now()) {
-				return ErrRecentProofRequired
 			}
 		}
 		var err error

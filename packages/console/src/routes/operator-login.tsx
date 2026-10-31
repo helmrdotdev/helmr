@@ -1,6 +1,6 @@
 import { useSearchParams } from "@solidjs/router";
-import { createResource, createSignal, onMount, Show } from "solid-js";
-import { postJson, request } from "../lib/api";
+import { createResource, createSignal, Show } from "solid-js";
+import { postJson } from "../lib/api";
 import { getAuthConfig } from "../lib/auth";
 import { returnPath } from "../lib/continuation";
 import { SETUP_PATH, setupStep } from "../lib/setup";
@@ -11,11 +11,6 @@ import { Field, SecretInput, TextInput } from "../ui/Field";
 import { Notice } from "../ui/Notice";
 import { Steps } from "../ui/Steps";
 import { cx, ui } from "../ui/styles";
-
-// An enrollment in progress survives a reload, so a registered key can be verified.
-const ENROLLMENT_KEY = "helmr.operator-enrollment";
-// The server keeps the name sent when the key is verified, so it is remembered too.
-const LABEL_KEY = "helmr.operator-enrollment.label";
 
 export function OperatorLogin() {
   const [params] = useSearchParams();
@@ -43,40 +38,36 @@ export function OperatorLogin() {
   );
 }
 
-// Setting up or repairing a key: redeem the deployment-issued capability, register
-// the key, then sign in with it once so a key that cannot sign in is never kept.
+// A capability works once, in one browser. Reloading, or reusing it, needs a new one.
+const CAPABILITY_MESSAGES = {
+  invalid_token: "This setup or repair capability has already been used or has expired. Run control-plane operator enroll (or control-plane operator repair) again to get a new one.",
+};
+
+// Setting up or repairing a key: redeem the deployment-issued capability, then
+// register the key. Registering installs it as the operator's only key and
+// signs out every operator session.
 function SetUpKey() {
-  const [enrollment, setEnrollmentID] = createSignal(sessionStorage.getItem(ENROLLMENT_KEY) ?? "");
-  const [open, setOpen] = createSignal(!!enrollment());
+  const [open, setOpen] = createSignal(false);
+  const [enrollment, setEnrollment] = createSignal("");
   const [capability, setCapability] = createSignal("");
-  const [label, setLabel] = createSignal(sessionStorage.getItem(LABEL_KEY) ?? "Operator key");
-  const [registered, setRegistered] = createSignal(false);
+  const [label, setLabel] = createSignal("Operator key");
   const [ready, setReady] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
-  const setEnrollment = (id: string) => { setEnrollmentID(id); if (id) sessionStorage.setItem(ENROLLMENT_KEY, id); else { sessionStorage.removeItem(ENROLLMENT_KEY); sessionStorage.removeItem(LABEL_KEY); } };
   const run = async (fn: () => Promise<void>) => {
     setBusy(true); setError("");
-    try { await fn(); } catch (cause) { setError(errorMessage(cause)); } finally { setBusy(false); }
+    try { await fn(); } catch (cause) { setError(errorMessage(cause, undefined, CAPABILITY_MESSAGES)); } finally { setBusy(false); }
   };
-  onMount(() => {
-    if (enrollment()) void run(async () => { setRegistered((await request<{ stage: string }>(`/admin/api/v1/enrollment/${enrollment()}`, { redirectOnUnauthorized: false })).stage === "assert"); });
-  });
   const redeem = () => run(async () => {
     const result = await postJson<{ capability: string }, { enrollment_id: string }>("/admin/api/v1/enrollment/redeem", { capability: capability().trim() }, { redirectOnUnauthorized: false });
     setCapability(""); setEnrollment(result.enrollment_id);
   });
   const register = () => run(async () => {
     await registerPasskey(`/admin/api/v1/enrollment/${enrollment()}/options`, `/admin/api/v1/enrollment/${enrollment()}/complete`, label().trim());
-    sessionStorage.setItem(LABEL_KEY, label().trim());
-    setRegistered(true);
-  });
-  const verify = () => run(async () => {
-    await assertPasskey(`/admin/api/v1/enrollment/${enrollment()}/assert/options`, `/admin/api/v1/enrollment/${enrollment()}/assert/verify`, { label: label().trim() });
     setEnrollment(""); setReady(true);
   });
-  const startOver = () => { setEnrollment(""); setRegistered(false); setReady(false); setError(""); };
-  const step = () => ready() ? 3 : registered() ? 2 : enrollment() ? 1 : 0;
+  const startOver = () => { setEnrollment(""); setReady(false); setError(""); };
+  const step = () => ready() ? 2 : enrollment() ? 1 : 0;
   const state = (index: number) => step() > index ? "done" as const : step() === index ? "current" as const : "upcoming" as const;
   return (
     <Show when={open()} fallback={<button type="button" class={cx(ui.secondaryButton, "w-full")} onClick={() => setOpen(true)}>Set up or repair a key</button>}>
@@ -90,7 +81,7 @@ function SetUpKey() {
             {
               title: "Enter the capability",
               state: state(0),
-              description: "Issued by your deployment for setting up or repairing a key.",
+              description: "Issued by your deployment for setting up or repairing a key. It works once, in one browser.",
               content: <form class={ui.blockStack} onSubmit={e => { e.preventDefault(); void redeem(); }}>
                 <Field label="Setup or repair capability" flush><SecretInput value={capability()} onInput={e => setCapability(e.currentTarget.value)} autocomplete="off" disabled={busy()} /></Field>
                 <div><button type="submit" class={ui.button} disabled={busy() || !capability().trim()}>Continue</button></div>
@@ -99,20 +90,14 @@ function SetUpKey() {
             {
               title: "Register the key",
               state: state(1),
-              description: "Your browser asks you to create the key on this device or a security key.",
+              description: "Your browser asks you to create the key on this device or a security key. It replaces any earlier operator keys.",
               content: <form class="flex flex-wrap items-end gap-2" onSubmit={e => { e.preventDefault(); void register(); }}>
                 <Field label="Key name" flush class="w-52 max-w-full"><TextInput value={label()} onInput={e => setLabel(e.currentTarget.value)} required maxlength={200} disabled={busy()} /></Field>
                 <button type="submit" class={ui.button} disabled={busy() || !label().trim()}>{busy() ? "Waiting for key…" : "Register key"}</button>
               </form>,
             },
-            {
-              title: "Sign in with the new key",
-              state: state(2),
-              description: <span>Proves the key works before it is kept as <span class="font-mono text-console-text">{label()}</span>.</span>,
-              content: <button type="button" class={ui.button} disabled={busy()} onClick={() => void verify()}>{busy() ? "Waiting for key…" : "Verify key"}</button>,
-            },
           ]} />
-          <Show when={ready()}><Notice tone="success">Your key is ready. Sign in with it above.</Notice></Show>
+          <Show when={ready()}><Notice tone="success">Your key is ready. Sign in with it above. If it cannot sign in, run <span class="font-mono">control-plane operator repair</span> for a new capability.</Notice></Show>
           <Show when={error()}><Notice tone="danger">{error()}</Notice></Show>
         </div>
       </section>

@@ -68,14 +68,14 @@ func TestAccountRevocationRetiresApprovedAccessAndKeepsCredentials(t *testing.T)
 		t.Fatal(err)
 	}
 	current, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, renewed.Token, uuid.Nil())
-	if err != nil || current.UserID != p.UserID || current.IdentityID != p.IdentityID || current.AccessEpoch != p.AccessEpoch+1 {
+	if err != nil || current.UserID != p.UserID || current.IdentityID != p.IdentityID || current.SessionID == p.SessionID {
 		t.Fatal("revocation removed method or changed identity", current, err)
 	}
 }
 func TestEmailChangeSignsOutOtherSessions(t *testing.T) {
 	f := newIdentityFixture(t)
 	external := ExternalIdentity{Provider: "github", Subject: "independent", DisplayName: "Owner", Email: "old@example.test", EmailVerified: true}
-	github, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false)
+	github, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", uuid.Nil())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestEmailChangeSignsOutOtherSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mixed, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, emailOnly.Token, true)
+	mixed, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, emailOnly.Token, original.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestSignOutOtherSessionsKeepsOnlyThisBrowser(t *testing.T) {
 		t.Fatal(err)
 	}
 	current, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, raw, uuid.Nil())
-	if err != nil || current.SessionID != p.SessionID || current.AccessEpoch != p.AccessEpoch {
+	if err != nil || current.SessionID != p.SessionID || current.UserID != p.UserID {
 		t.Fatal("sign out other sessions ended this browser", current, err)
 	}
 	for name, token := range map[string]string{"other browser": other, "CLI": cli} {

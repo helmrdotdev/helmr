@@ -111,10 +111,25 @@ func (s *Server) auditCaptureFailed(r *http.Request, err error) {
 	}
 	s.log.ErrorContext(r.Context(), "mandatory audit capture failed", "capture_failures", count)
 }
+
+// authorityLost reports a session or key that ended after the request was
+// admitted, which the audit append refuses at commit.
+func authorityLost(err error) bool {
+	refusal, ok := errors.AsType[*audit.Refusal](err)
+	return ok && errors.Is(refusal.Cause, auth.ErrUnauthenticated)
+}
+
 func (s *Server) writeOperationError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, audit.ErrCapture) {
 		s.auditCaptureFailed(r, err)
 		writeError(w, unavailable(audit.ErrCapture))
+		return
+	}
+	if authorityLost(err) {
+		if !s.refuseOperation(w, r, "authentication_invalid", err) {
+			return
+		}
+		writeError(w, unauthorized(codedError{code: "authentication_invalid", message: "Your operator session has ended. Sign in again, then retry."}))
 		return
 	}
 	if apiErr, ok := errors.AsType[apiError](err); ok {

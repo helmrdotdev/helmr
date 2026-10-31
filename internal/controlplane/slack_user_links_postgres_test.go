@@ -202,6 +202,8 @@ func TestSlackUserLinkHTTPProvesBothAccountsBeforeExplicitConfirmation(t *testin
 				call("POST", "/api/slack/user-links/verify", session, input, started.Result().Cookies(), 400)
 				slackActor = "human"
 			}
+			// Confirming the sign-in mid-flow rotates the token but keeps the session.
+			session = fixture.rotateSession(t, session)
 			verified := call("POST", "/api/slack/user-links/verify", session, input, started.Result().Cookies(), 200)
 			var proof struct {
 				Confirmation string             `json:"confirmation"`
