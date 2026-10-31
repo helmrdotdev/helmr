@@ -96,7 +96,7 @@ func TestPreparationKeyConcurrentRetryAndOwnership(t *testing.T) {
 
 func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 	for _, phase := range []string{"wrap", "unwrap"} {
-		for _, change := range []string{"expire", "revoke", "stop"} {
+		for _, change := range []string{"expire", "stop"} {
 			t.Run(phase+"/"+change, func(t *testing.T) {
 				f := newPreparationFixture(t)
 				ref := f.claim(t, f.attach(t, f.waiter(t)))
@@ -105,10 +105,6 @@ func TestPreparationKeyReauthorizesProviderIO(t *testing.T) {
 					switch change {
 					case "expire":
 						dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, ref.ImageBuildID)
-					case "revoke":
-						if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke"); err != nil {
-							t.Fatal(err)
-						}
 					case "stop":
 						if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, *f.host(), preparationIdentity(ref)); err != nil {
 							t.Fatal(err)

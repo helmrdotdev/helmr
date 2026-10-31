@@ -163,9 +163,9 @@ Agents or all current and future Agents in that environment.
 | `computers.update` | Environment | Yes | Change deletion-after-unused policy; shortening it can promptly cause deletion. |
 | `computers.delete` | Environment | Yes | Delete the Computer through the platform API with existing settlement rules. |
 | `secrets.read` | Environment | Yes | Read Secret names/IDs, versions and non-value metadata. Never retrieve stored plaintext. |
-| `secrets.create` | Environment | Yes | Create a Secret using newly supplied material. |
-| `secrets.rotate` | Environment | Yes | Replace/rotate supplied Secret material. |
-| `secrets.revoke` | Environment | Yes | Revoke a Secret under existing binding/lifecycle constraints. |
+| `secrets.create` | Environment | Yes | Create a Secret under a new name using newly supplied material. A revoked name is set again by rotating it. |
+| `secrets.rotate` | Environment | Yes | Set the next value of an existing Secret, including reactivating a revoked Secret. New work and the next protected request use the new value. |
+| `secrets.revoke` | Environment | Yes | Stop providing a Secret to new work and protected requests. Running work continues and raw values already delivered stay; revoke the credential at its provider. |
 | `api_keys.read` | Environment | No | List key metadata and current non-secret status. Access-assignment UI may see minimal key identity through its target-directory rule. |
 | `api_keys.create` | Environment | No | Issue a key and reveal its credential once. The new key has no workload Role until separately assigned. |
 | `api_keys.update` | Environment | No | Update a key's name and expiration, including extending its usable lifetime; never its Role grants. |

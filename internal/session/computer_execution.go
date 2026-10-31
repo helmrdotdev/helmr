@@ -81,9 +81,6 @@ func ControlComputerExecution(ctx context.Context, auditPolicy auditpolicy.Polic
 				return ErrControlScopeChanged
 			}
 		}
-		if err = computer.RequireSecretsNotRevoked(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {
-			return err
-		}
 		var sleeping, awake bool
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM checkpoints WHERE environment_id=$1 AND computer_id=$2 AND status='ready'),
    EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.status='active' AND l.fenced_at IS NULL AND l.initialized_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL))))`, req.EnvironmentID, req.ComputerID).Scan(&sleeping, &awake); err != nil {

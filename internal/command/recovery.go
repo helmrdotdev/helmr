@@ -38,10 +38,6 @@ func recoverCommand(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 	if target.ComputerID != pgvalue.UUID(candidate.ComputerID) {
 		return ErrChanged
 	}
-	bindings, err := lockBindings(ctx, tx, env, candidate.ComputerID)
-	if err != nil {
-		return err
-	}
 	l, err := lockCommandLease(ctx, tx, target, candidate.CommandID)
 	if err != nil {
 		return err
@@ -55,29 +51,6 @@ func recoverCommand(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 	}
 	if c.ProcessReconciledAt.Valid {
 		return nil
-	}
-	revoked := false
-	for _, b := range bindings {
-		if b.status != "active" {
-			revoked = true
-		}
-	}
-	if revoked && !c.TerminalAt.Valid && !c.CancelRequestedAt.Valid {
-		if _, err = tx.Exec(ctx, `UPDATE commands SET cancel_requested_at=clock_timestamp(),
- status=CASE WHEN computer_lease_epoch IS NULL THEN 'failed' ELSE 'stopping' END,
- failure_reason=CASE WHEN computer_lease_epoch IS NULL THEN 'guest_failure' END,
- error=CASE WHEN computer_lease_epoch IS NULL THEN '{"code":"secret_revoked","retryable":false}'::jsonb END,
- terminal_at=CASE WHEN computer_lease_epoch IS NULL THEN clock_timestamp() END,
- terminal_reason_code=CASE WHEN computer_lease_epoch IS NULL THEN 'secret_revoked' END,
- result_expires_at=CASE WHEN computer_lease_epoch IS NULL THEN clock_timestamp()+interval '30 days' END,
- revision=revision+1,updated_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, env, candidate.CommandID); err != nil {
-			return err
-		}
-		if !c.ComputerLeaseEpoch.Valid {
-			if err = auditServiceFailure(ctx, tx, auditPolicy, c, audit.ControlPlane, "failed", "permission_denied"); err != nil {
-				return err
-			}
-		}
 	}
 	if !c.ComputerLeaseEpoch.Valid {
 		return nil

@@ -110,7 +110,7 @@ func desiredSessionControl(ctx context.Context, tx pgx.Tx, e Execution) (string,
 	err := tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
  SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
  UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
-) SELECT s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL),
+) SELECT s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL),
  EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
  FROM sessions s
  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
@@ -211,14 +211,10 @@ func ObserveSessionStopped(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		if err != nil {
 			return err
 		}
-		revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, auditPolicy, tx, e)
-		if err != nil {
-			return err
-		}
 		if err = interruptRunningSessionTurn(ctx, auditPolicy, tx, auditWorkerActor(host, e), e); err != nil {
 			return err
 		}
-		if kind != "shutdown" && !revocationRecorded {
+		if kind != "shutdown" {
 			if err = recordSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, "Session process stopped unexpectedly", "process_failed"); err != nil {
 				return err
 			}
@@ -254,7 +250,7 @@ func readCurrentSessionDelivery(ctx context.Context, tx pgx.Tx, host workergroup
  WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.target_lease_epoch=l.epoch AND cp.status IN ('restoring','consumed') AND cp.controls_reconciled_at IS NULL
  AND m.session_id=p.session_id AND m.process_epoch=p.epoch)))
  AND p.attachment_sequence=$10 AND p.control_attachment=$10 AND p.control_generation=s.authority_generation
- AND p.control_kind=CASE WHEN s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL) THEN 'shutdown'
+ AND p.control_kind=CASE WHEN s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL) THEN 'shutdown'
  WHEN EXISTS(SELECT 1 FROM session_holds hold JOIN ancestors a ON a.id=hold.session_id WHERE hold.environment_id=$1 AND hold.released_at IS NULL AND (hold.session_id=$2 OR hold.scope='subtree')) THEN 'suspend' ELSE 'resume' END`,
 		e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, host.HostID, host.Epoch, host.GroupID, host.GroupClaimVersion, host.HostClaimVersion, attachment).Scan(&result.Sequence, &result.Generation, &result.Kind, &result.Acknowledged, &result.Error, &result.StopSequence, &result.StopTurnID, &result.StopDeadline, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -24,11 +24,24 @@ import {
 } from "./computer"
 
 type WithoutSecrets<T> = T extends Computer ? Omit<T, "secrets"> : never
-export type ComputerListItem = WithoutSecrets<Computer>
 
+/**
+ * How a Computer came to hold a raw Secret value: `received` directly by a
+ * process or Command, or `image` when its image was prepared with the value,
+ * so the Computer may hold it.
+ */
+export type ComputerSecretExposure = "received" | "image"
+
+/** `secretExposure` is present only when the list is filtered by `secret`. */
+export type ComputerListItem = WithoutSecrets<Computer> & Readonly<{ secretExposure?: ComputerSecretExposure }>
+
+/**
+ * `secret` lists only non-deleted Computers that received a raw value of that
+ * Secret, directly or through their image.
+ */
 export type ComputerListQuery =
-  | Readonly<{ key?: never; cursor?: string; limit?: number }>
-  | Readonly<{ key: string; cursor?: never; limit?: never }>
+  | Readonly<{ key?: never; secret?: string; cursor?: string; limit?: number }>
+  | Readonly<{ key: string; secret?: never; cursor?: never; limit?: never }>
 
 export interface ClientComputersApi {
   create(request: ComputerCreateRequest, options?: RequestOptions): Promise<ComputerRef>
@@ -111,8 +124,14 @@ export function createClientComputers(
 }
 
 function parseComputerListItem(value: unknown): ComputerListItem {
-  const { secrets: _, ...item } = parseComputer({ ...objectValue(value, "Computer list item"), secrets: [] })
-  return Object.freeze(item)
+  const input = objectValue(value, "Computer list item")
+  const { secrets: _, ...item } = parseComputer({ ...input, secrets: [] })
+  const exposure = input["secret_exposure"]
+  if (exposure === undefined) return Object.freeze(item)
+  if (exposure !== "received" && exposure !== "image") {
+    throw new Error("Computer list item.secret_exposure is invalid")
+  }
+  return Object.freeze({ ...item, secretExposure: exposure })
 }
 
 export function createClientComputerRef(
@@ -215,13 +234,17 @@ export function createClientCommandRef(id: string, transport: ComputerTransport)
 }
 
 function computerListQuery(queryInput: ComputerListQuery): string {
-  if (queryInput.key !== undefined && (queryInput.cursor !== undefined || queryInput.limit !== undefined)) {
-    throw new Error("Computer exact key lookup does not accept cursor or limit")
+  if (queryInput.key !== undefined && (queryInput.secret !== undefined || queryInput.cursor !== undefined || queryInput.limit !== undefined)) {
+    throw new Error("Computer exact key lookup does not accept secret, cursor or limit")
   }
   const query = new URLSearchParams()
   if (queryInput.key !== undefined) {
     if (queryInput.key.length === 0) throw new Error("Computer key is required")
     query.set("key", queryInput.key)
+  }
+  if (queryInput.secret !== undefined) {
+    if (queryInput.secret.length === 0) throw new Error("Computer secret filter is required")
+    query.set("secret", queryInput.secret)
   }
   if (queryInput.cursor !== undefined) {
     if (queryInput.cursor.length === 0) throw new Error("Computer cursor is required")

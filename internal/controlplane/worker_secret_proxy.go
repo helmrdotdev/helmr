@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
+	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
@@ -128,6 +129,8 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 	if err != nil {
 		if errors.Is(err, secret.ErrProxyTrustExpired) {
 			writeError(w, conflict(secret.ErrProxyTrustExpired))
+		} else if errors.Is(err, secret.ErrProtectedRevoked) {
+			writeError(w, conflict(codedError{code: secretproxy.SecretRevokedCode, message: secret.ErrProtectedRevoked.Error()}))
 		} else {
 			writeError(w, conflict(secret.ErrDeliveryUnavailable))
 		}

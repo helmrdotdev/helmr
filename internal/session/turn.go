@@ -331,11 +331,25 @@ func admitSessionInput(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 			}
 		}
 		var computerAvailable bool
-		if err = tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) FROM computers WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, o.computer).Scan(&computerAvailable); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT preparation_failed_at IS NULL AND deleted_at IS NULL FROM computers WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, o.computer).Scan(&computerAvailable); err != nil {
 			return err
 		}
 		if !computerAvailable {
 			return ErrNotReady
+		}
+		// Input for a Session without a live process needs a new process start,
+		// which a revoked raw Secret binding refuses. A running process keeps
+		// receiving input.
+		var live bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND fenced_at IS NULL)`, req.EnvironmentID, req.SessionID).Scan(&live); err != nil {
+			return err
+		}
+		if !live {
+			if revoked, err := computer.RawSecretRevoked(ctx, tx, req.EnvironmentID, o.computer); err != nil {
+				return err
+			} else if revoked {
+				return computer.ErrSecretUnavailable
+			}
 		}
 		if method != "enqueue" {
 			admitted, err := admitMessage(ctx, auditPolicy, tx, caller, req, method, exactTurn, digest, o, &result)
@@ -426,7 +440,7 @@ func authorizeSessionInput(ctx context.Context, tx pgx.Tx, caller Caller, env uu
         ) SELECT NOT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
         AND EXISTS(SELECT 1 FROM sessions s
           JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
-          WHERE s.environment_id=$1 AND s.id=$2 AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id) AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL)
+          WHERE s.environment_id=$1 AND s.id=$2 AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL)
         AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3 AND process_epoch=$4 AND status='running' AND processing_closed_at IS NULL AND (deadline_at IS NULL OR deadline_at>clock_timestamp())))`, env, caller.ID, nullableID(caller.TurnID), caller.Execution.ProcessEpoch).Scan(&allowed)
 		if err != nil {
 			return err
@@ -459,7 +473,7 @@ func executionAvailable(ctx context.Context, tx pgx.Tx, e Execution, o owners, a
 	if e.AuthorityGeneration != o.generation {
 		return runtimeGenerationRefusal(e, o.generation)
 	}
-	if err := executionPhysical(ctx, tx, e, allowStarting, true); err != nil {
+	if err := executionPhysical(ctx, tx, e, allowStarting); err != nil {
 		return err
 	}
 	return computer.DispatchAvailable(ctx, tx, e.EnvironmentID, o.computer)
@@ -472,14 +486,14 @@ func executionReceipt(ctx context.Context, tx pgx.Tx, e Execution, o owners) err
 	if e.AuthorityGeneration != o.generation {
 		return runtimeGenerationRefusal(e, o.generation)
 	}
-	err := executionPhysical(ctx, tx, e, true, false)
+	err := executionPhysical(ctx, tx, e, true)
 	if errors.Is(err, ErrNotReady) {
 		return ErrDenied
 	}
 	return err
 }
 
-func executionPhysical(ctx context.Context, tx pgx.Tx, e Execution, allowStarting, requireActiveSecrets bool) error {
+func executionPhysical(ctx context.Context, tx pgx.Tx, e Execution, allowStarting bool) error {
 	var allowed bool
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_processes p JOIN computer_leases l
       ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
@@ -489,7 +503,7 @@ func executionPhysical(ctx context.Context, tx pgx.Tx, e Execution, allowStartin
       WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3 AND l.epoch=$4 AND l.worker_host_id=$5
         AND (p.status='ready' OR ($7 AND p.status='starting')) AND p.fenced_at IS NULL AND l.status='active' AND l.fenced_at IS NULL
         AND l.worker_epoch=$6 AND l.expires_at>clock_timestamp()
-        AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND (NOT $8 OR (NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id))))`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, e.WorkerHostID, e.WorkerEpoch, allowStarting, requireActiveSecrets).Scan(&allowed)
+        AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL)`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, e.WorkerHostID, e.WorkerEpoch, allowStarting).Scan(&allowed)
 	if err != nil {
 		return err
 	}

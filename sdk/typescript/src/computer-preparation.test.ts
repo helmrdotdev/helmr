@@ -48,3 +48,24 @@ for (const value of [undefined, {}, { reason: "warm" }, "saving", []]) {
     await expect(client.get(computer.id)).rejects.toThrow("execution_wait")
   })
 }
+
+test("Computer list by Secret reports how each Computer holds the raw value", async () => {
+  const paths: string[] = []
+  const client = createClientComputers({
+    async request(_method, path) {
+      paths.push(path)
+      return { computers: [
+        { ...computer, id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", secret_exposure: "received" },
+        { ...computer, secret_exposure: "image" },
+      ] }
+    },
+  })
+  const listed = await client.list({ secret: "DATABASE_PASSWORD", limit: 10 })
+  expect(paths).toEqual(["/v1/computers?secret=DATABASE_PASSWORD&limit=10"])
+  expect(listed.items.map((item) => item.secretExposure)).toEqual(["received", "image"])
+  expect((await client.list()).items[0]?.secretExposure).toBe("received")
+  await expect(client.list({ secret: "" })).rejects.toThrow("secret")
+  await expect(client.list({ key: "repository", secret: "TOKEN" } as never)).rejects.toThrow("secret")
+  const invalid = createClientComputers({ async request() { return { computers: [{ ...computer, secret_exposure: "copied" }] } } })
+  await expect(invalid.list({ secret: "TOKEN" })).rejects.toThrow("secret_exposure")
+})

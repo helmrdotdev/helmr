@@ -150,8 +150,8 @@ func assertPrimitiveLifecycleSchema(
 	pool *pgxpool.Pool,
 ) {
 	t.Helper()
-	tableNames := []string{"secrets", "worker_pools", "sessions", "worker_groups", "device_codes", "worker_hosts", "checkpoints", "computer_leases", "commands", "session_processes", "turns", "computer_saves", "image_builds"}
-	columnNames := []string{"status", "status", "status", "status", "status", "status", "status", "status", "status", "status", "status", "status", "status"}
+	tableNames := []string{"worker_pools", "sessions", "worker_groups", "device_codes", "worker_hosts", "checkpoints", "computer_leases", "commands", "session_processes", "turns", "computer_saves", "image_builds"}
+	columnNames := []string{"status", "status", "status", "status", "status", "status", "status", "status", "status", "status", "status", "status"}
 	var constrainedTextColumns int
 	if err := pool.QueryRow(ctx, `
 		WITH targets AS (

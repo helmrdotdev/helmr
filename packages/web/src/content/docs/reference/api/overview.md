@@ -104,6 +104,17 @@ process cleanup is pending. They are not history endpoints. Entries contain `id`
 status. The page envelopes are `sessions` or `commands`, with `next_cursor` when
 needed. Each collection has its own cursor.
 
+`GET /v1/computers?secret=NAME` lists non-deleted Computers that received a raw
+value of that Secret. Each item then carries `secret_exposure`: `received` when
+a process or Command on the Computer received the value directly, or `image`
+when its image was prepared with the value, so the Computer may hold it. The
+filter pages with `cursor` and `limit` and cannot be combined with `key`.
+
+Secret creation only makes new names. Creating an existing active name returns
+409 `conflict`; a revoked name returns 409 `secret_revoked`. Rotate a revoked
+Secret to reactivate it with its existing bindings. `idempotency_key` is
+optional for create, rotate and revoke.
+
 `PATCH /v1/computers/{computerID}` changes retention with
 `{"delete_after_unused_ms": <positive integer> | null}`; `null` means never delete.
 It requires `computers.update`.

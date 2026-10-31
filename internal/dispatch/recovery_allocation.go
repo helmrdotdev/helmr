@@ -92,9 +92,6 @@ func (a *Allocator) AllocateRecoveredLease(ctx context.Context, env, computerID 
 		if err = requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		if err := computer.RequireSecretsNotRevoked(ctx, tx, env, computerID); err != nil {
-			return err
-		}
 		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
 	})
 	if err != nil {

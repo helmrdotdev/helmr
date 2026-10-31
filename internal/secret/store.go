@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/access"
@@ -108,19 +109,28 @@ func (s *Store) create(ctx context.Context, environmentID uuid.UUID, name string
 var ErrMutationConflict = errors.New("secret retry identity conflicts with its original request")
 var ErrInvalidMutation = errors.New("invalid Secret mutation")
 
-func mutationKey(raw string, required bool) (string, error) {
+// ErrNameExists refuses Create for a name held by an active Secret.
+var ErrNameExists = errors.New("secret name already exists")
+
+// ErrNameRevoked refuses Create for a name held by a revoked Secret. The Secret
+// keeps its identity; rotating it sets a new value and resumes provision.
+var ErrNameRevoked = errors.New("a Secret with this name is revoked; rotate it to set a new value")
+
+// mutationKey normalizes an optional retry identity; empty means unkeyed.
+func mutationKey(raw string) (string, error) {
 	key := strings.TrimSpace(raw)
-	if !required && key == "" {
+	if key == "" {
 		return "", nil
 	}
-	if key == "" || len(key) > 512 || !utf8.ValidString(key) || strings.ContainsFunc(key, unicode.IsControl) {
+	if len(key) > 512 || !utf8.ValidString(key) || strings.ContainsFunc(key, unicode.IsControl) {
 		return "", ErrInvalidMutation
 	}
 	return key, nil
 }
 
-// Create serializes Environment-owned name and retry identities. Its first
-// encrypted version is the immutable value receipt, even after rotation/revocation.
+// Create serializes Environment-owned name and retry identities and only
+// makes new names. Its first encrypted version is the immutable value receipt,
+// even after rotation or revocation.
 func (s *Store) Create(ctx context.Context, principal auth.Principal, env uuid.UUID, name string, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
@@ -131,7 +141,7 @@ func (s *Store) Create(ctx context.Context, principal auth.Principal, env uuid.U
 	if err := secretname.Validate(name); err != nil {
 		return db.GetSecretSnapshotRow{}, err
 	}
-	key, err := mutationKey(idempotencyKey, false)
+	key, err := mutationKey(idempotencyKey)
 	if err != nil {
 		return db.GetSecretSnapshotRow{}, err
 	}
@@ -163,6 +173,15 @@ func (s *Store) Create(ctx context.Context, principal auth.Principal, env uuid.U
 				result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: acquired.Claim.SecretID})
 				return idempotency.Completion{}, err
 			}
+			var revoked bool
+			switch err := tx.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM secrets WHERE environment_id=$1 AND name=$2`, env, name).Scan(&revoked); {
+			case err == nil && revoked:
+				return idempotency.Completion{}, ErrNameRevoked
+			case err == nil:
+				return idempotency.Completion{}, ErrNameExists
+			case !errors.Is(err, pgx.ErrNoRows):
+				return idempotency.Completion{}, err
+			}
 			bound := *s
 			bound.db = q
 			record, err := bound.create(ctx, env, name, value)
@@ -180,20 +199,24 @@ func (s *Store) Create(ctx context.Context, principal auth.Principal, env uuid.U
 	return result, err
 }
 
-// Rotate binds retries to the exact encrypted version and never rewrites pins.
+// Rotate sets the next version of the same Secret. Rotating a revoked Secret
+// reactivates it. Keyed retries bind to the exact encrypted version.
 func (s *Store) Rotate(ctx context.Context, principal auth.Principal, env, id uuid.UUID, value []byte, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
-	key, err := mutationKey(idempotencyKey, true)
+	key, err := mutationKey(idempotencyKey)
 	if err != nil || env == uuid.Nil() || id == uuid.Nil() {
 		return db.GetSecretSnapshotRow{}, ErrInvalidMutation
 	}
 	var result db.GetSecretSnapshotRow
 	err = db.RunTx(ctx, s.tx, func(tx pgx.Tx) error {
-		request, err := idempotency.NewSecretRotateRequest(env, id, key)
-		if err != nil {
-			return err
+		var request *idempotency.Request
+		if key != "" {
+			request, err = idempotency.NewSecretRotateRequest(env, id, key)
+			if err != nil {
+				return err
+			}
 		}
 		actor, err := authorizeMutation(ctx, tx, principal, env, auth.PermissionSecretsRotate)
 		if err != nil {
@@ -212,10 +235,7 @@ func (s *Store) Rotate(ctx context.Context, principal auth.Principal, env, id uu
 				result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
 				return idempotency.Completion{}, err
 			}
-			if record.Status != "active" {
-				return idempotency.Completion{}, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.Status)}
-			}
-			current, err := q.GetCurrentSecretValue(ctx, db.GetCurrentSecretValueParams{EnvironmentID: pgvalue.UUID(env), SecretID: record.ID})
+			current, err := q.GetSecretVersion(ctx, db.GetSecretVersionParams{EnvironmentID: pgvalue.UUID(env), SecretID: record.ID, VersionID: record.CurrentVersionID})
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
@@ -239,12 +259,14 @@ func (s *Store) Rotate(ctx context.Context, principal auth.Principal, env, id uu
 	return result, err
 }
 
-// Revoke records intent, never a claim that physical execution has stopped.
+// Revoke stops future provision of the Secret. It changes only the Secret row:
+// running work continues and values already delivered stay where they are.
+// A keyed retry returns its original receipt and never revokes again.
 func (s *Store) Revoke(ctx context.Context, principal auth.Principal, env, id uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
-	key, err := mutationKey(idempotencyKey, false)
+	key, err := mutationKey(idempotencyKey)
 	if err != nil || env == uuid.Nil() || id == uuid.Nil() {
 		return db.GetSecretSnapshotRow{}, ErrInvalidMutation
 	}
@@ -266,8 +288,14 @@ func (s *Store) Revoke(ctx context.Context, principal auth.Principal, env, id uu
 			if err != nil {
 				return idempotency.Completion{}, err
 			}
+			if !acquired.New {
+				if err = json.Unmarshal(acquired.Claim.Receipt, &result); err != nil {
+					return idempotency.Completion{}, fmt.Errorf("read Secret revoke receipt: %w", err)
+				}
+				return idempotency.Completion{}, nil
+			}
 			q := db.New(tx)
-			if record.Status != "revoked" {
+			if !record.RevokedAt.Valid {
 				if _, err = q.RevokeSecret(ctx, db.RevokeSecretParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID, ExpectedCurrentVersionID: record.CurrentVersionID}); err != nil {
 					return idempotency.Completion{}, err
 				}
@@ -276,7 +304,11 @@ func (s *Store) Revoke(ctx context.Context, principal auth.Principal, env, id uu
 				}
 			}
 			result, err = q.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{EnvironmentID: pgvalue.UUID(env), ID: record.ID})
-			return idempotency.Completion{Target: idempotency.Target{SecretID: id}, Receipt: []byte(`{}`)}, err
+			if err != nil {
+				return idempotency.Completion{}, err
+			}
+			receipt, err := json.Marshal(result)
+			return idempotency.Completion{Target: idempotency.Target{SecretID: id}, Receipt: receipt}, err
 		})
 	})
 	return result, err

@@ -35,7 +35,7 @@ const usableImageBuildSQL = `p.status IN ('queued','running') AND p.deadline_at>
    AND (p.worker_host_id IS NULL OR ((p.delivered_at IS NULL OR p.executor_expires_at>clock_timestamp()) AND EXISTS (
      SELECT 1 FROM worker_hosts h WHERE h.id=p.worker_host_id AND h.current_epoch=p.worker_epoch AND h.status IN ('active','draining'))))
    AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-     WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status='revoked')`
+     WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.revoked_at IS NOT NULL)`
 
 // AttachImageBuild participates in its caller's admission transaction. It acquires
 // Environment and preparation owners before the Computer, so callers must invoke
@@ -169,8 +169,7 @@ func CheckImageBuildExecutor(ctx context.Context, tx pgx.Tx, host workergroup.Ho
 	var digest []byte
 	var valid bool
 	err := tx.QueryRow(ctx, `SELECT channel_credential_digest,COALESCE(worker_host_id=$3 AND worker_epoch=$4 AND executor_epoch=$5 AND allocation_id=$6
-  AND (NOT $7 OR (status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp() AND executor_expires_at>clock_timestamp()
-   AND NOT EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE x.environment_id=$1 AND x.image_build_id=$2 AND s.status='revoked'))), false)
+  AND (NOT $7 OR (status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp() AND executor_expires_at>clock_timestamp())), false)
   FROM image_builds WHERE environment_id=$1 AND id=$2`, ref.EnvironmentID, ref.ImageBuildID, host.HostID, host.Epoch, ref.Epoch, ref.InstanceID, live).Scan(&digest, &valid)
 	if err != nil {
 		return err
@@ -239,7 +238,7 @@ func RecordImageBuildExposure(ctx context.Context, auditPolicy auditpolicy.Polic
 		slices.SortFunc(ids, func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
 		versions := map[uuid.UUID]uuid.UUID{}
 		if len(ids) > 0 {
-			rows, err := tx.Query(ctx, `SELECT id,current_version_id FROM secrets WHERE environment_id=$1 AND id=ANY($2::uuid[]) AND status='active' ORDER BY id FOR SHARE`, ref.EnvironmentID, ids)
+			rows, err := tx.Query(ctx, `SELECT id,current_version_id FROM secrets WHERE environment_id=$1 AND id=ANY($2::uuid[]) AND revoked_at IS NULL ORDER BY id FOR SHARE`, ref.EnvironmentID, ids)
 			if err != nil {
 				return err
 			}
@@ -312,7 +311,7 @@ func RecordImageBuildExposure(ctx context.Context, auditPolicy auditpolicy.Polic
 					return err
 				}
 				actor := audit.AssignedWorker(host.HostID, host.HostClaimVersion, "image_build", ref.ImageBuildID, ref.Epoch)
-				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: ref.EnvironmentID, Action: "secret.exposed", TargetKind: "secret", TargetID: id, Details: audit.SecretExposureDetails{ExposureID: exposureID, VersionID: versions[id], RevocationGeneration: 0, ImageBuildID: ref.ImageBuildID}}); err != nil {
+				if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: ref.EnvironmentID, Action: "secret.exposed", TargetKind: "secret", TargetID: id, Details: audit.SecretExposureDetails{ExposureID: exposureID, VersionID: versions[id], ImageBuildID: ref.ImageBuildID}}); err != nil {
 					return err
 				}
 

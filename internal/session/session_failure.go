@@ -35,7 +35,7 @@ func recordSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, t
 	return eventData(ctx, tx, e.EnvironmentID, e.SessionID, uuid.Nil(), "session.process_failed", data)
 }
 
-// Definitive process failure or stop settles its exact running Turn, including revocation.
+// Definitive process failure or stop settles its exact running Turn.
 func interruptRunningSessionTurn(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Evidence, e Execution) error {
 	return interruptRunningSessionTurnWithData(ctx, auditPolicy, tx, actor, e, nil)
 }
@@ -108,23 +108,19 @@ func ObserveSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, 
 
 func observeSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, actor audit.Evidence, e Execution, reason, auditReason string) error {
 	var terminal bool
-	if err := tx.QueryRow(ctx, `SELECT s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) FROM sessions s  WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&terminal); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT s.status IN ('closed','cancelled') FROM sessions s  WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&terminal); err != nil {
 		return err
 	}
-	revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, auditPolicy, tx, e)
-	if err != nil {
-		return err
-	}
-	if !terminal && !revocationRecorded {
-		if err = recordSessionFailure(ctx, auditPolicy, tx, actor, e, reason, auditReason); err != nil {
+	if !terminal {
+		if err := recordSessionFailure(ctx, auditPolicy, tx, actor, e, reason, auditReason); err != nil {
 			return err
 		}
 	}
-	if err = interruptRunningSessionTurn(ctx, auditPolicy, tx, actor, e); err != nil {
+	if err := interruptRunningSessionTurn(ctx, auditPolicy, tx, actor, e); err != nil {
 		return err
 	}
 	// This is stop intent, never evidence that the physical process is absent.
-	_, err = tx.Exec(ctx, `UPDATE session_processes SET failure_recorded_at=clock_timestamp(),status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)
+	_, err := tx.Exec(ctx, `UPDATE session_processes SET failure_recorded_at=clock_timestamp(),status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)
 	if err != nil {
 		return err
 	}

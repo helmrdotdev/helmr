@@ -129,9 +129,6 @@ func (p *CheckpointPublisher) CompleteCheckpoint(ctx context.Context, ref Checkp
 		if _, err = computer.CurrentLease(ctx, tx, ref.Host, ref.EnvironmentID, manifest.ComputerID, manifest.LeaseEpoch); err != nil {
 			return err
 		}
-		if err = computer.RequireSecretsNotRevoked(ctx, tx, ref.EnvironmentID, manifest.ComputerID); err != nil {
-			return err
-		}
 		if err := computer.MarkCheckpointReady(ctx, p.auditPolicy, tx, ref.EnvironmentID, manifest.CheckpointID); err != nil {
 			return err
 		}
@@ -182,9 +179,6 @@ func lockCheckpointPublication(ctx context.Context, tx pgx.Tx, ref CheckpointPub
 			return r, nil, false, ErrNotReady
 		}
 		return r, raw, true, nil
-	}
-	if err = computer.RequireSecretsNotRevoked(ctx, tx, ref.EnvironmentID, r.Computer); err != nil {
-		return r, nil, false, err
 	}
 	if r.State != "sealed" {
 		return r, nil, false, ErrNotReady

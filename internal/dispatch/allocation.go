@@ -375,9 +375,6 @@ func (a *Allocator) AllocateFreshLease(ctx context.Context, env, computerID uuid
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
 			return err
 		}
-		if err := computer.RequireSecretsNotRevoked(ctx, tx, env, computerID); err != nil {
-			return err
-		}
 		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)
 	})
 	if err != nil {
@@ -501,9 +498,6 @@ func (a *Allocator) AllocateRestoredLease(ctx context.Context, env, checkpoint u
 			return err
 		}
 		if err := requireAllocationFreshSupply(ctx, tx, supply); err != nil {
-			return err
-		}
-		if err := computer.RequireSecretsNotRevoked(ctx, tx, env, computerID); err != nil {
 			return err
 		}
 		return workergroup.RequireExecutionPlacement(ctx, tx, env, uuid.Nil(), before)

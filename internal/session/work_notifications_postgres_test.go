@@ -191,7 +191,7 @@ func TestShutdownReceiptReplayRetainsInterruptedTurnWithoutNotifying(t *testing.
 }
 
 func TestIdleStopIntentNotifiesWithoutTurnOrNewHold(t *testing.T) {
-	for _, cause := range []string{"failure", "revocation", "cancelled-child"} {
+	for _, cause := range []string{"failure", "cancelled-child"} {
 		t.Run(cause, func(t *testing.T) {
 			f := newFixture(t)
 			var stop func() error
@@ -206,19 +206,6 @@ func TestIdleStopIntentNotifiesWithoutTurnOrNewHold(t *testing.T) {
 					return session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
 						RetentionSeconds: 3600,
 					}, f.pool, *f.host(), f.execution(), a.Sequence)
-				}
-			case "revocation":
-				p := preparationResidentImage(t)
-				f = p.f.fixture
-				if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, p.f.secretID, "revoke"); err != nil {
-					t.Fatal(err)
-				}
-				// Revocation was already recorded, but the physical stop intent still needs delivery.
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET failure_recorded_at=clock_timestamp() WHERE session_id=$1`, f.session)
-				stop = func() error {
-					return session.ReconcileComputerSecretRevocation(t.Context(), auditpolicy.Policy{
-						RetentionSeconds: 3600,
-					}, f.pool, f.env, f.computer)
 				}
 			case "cancelled-child":
 				parent := f

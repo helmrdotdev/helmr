@@ -40,7 +40,7 @@ func RefreshImageSpec(ctx context.Context, database db.TxBeginner, env, spec uui
 		var active bool
 		if err := tx.QueryRow(ctx, `SELECT NOT EXISTS(SELECT 1 FROM secret_bindings b
  WHERE b.environment_id=$1 AND b.image_spec_id=$2 AND NOT EXISTS(
- SELECT 1 FROM secrets s WHERE s.environment_id=b.environment_id AND s.id=b.secret_id AND s.status='active'))`, env, spec).Scan(&active); err != nil {
+ SELECT 1 FROM secrets s WHERE s.environment_id=b.environment_id AND s.id=b.secret_id AND s.revoked_at IS NULL))`, env, spec).Scan(&active); err != nil {
 			return err
 		}
 		if !active {

@@ -114,20 +114,72 @@ func TestSecretMutationReplayComparesExactEncryptedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	replayed, err = store.Create(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, "API_TOKEN", []byte("first-value"), "create-1")
-	if err != nil || replayed.Status != "revoked" {
+	if err != nil || !replayed.RevokedAt.Valid {
 		t.Fatalf("revoked create replay: %+v %v", replayed, err)
 	}
 	replayed, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, secretID, []byte("second-value"), "rotate-1")
-	if err != nil || replayed.Status != "revoked" {
-		t.Fatalf("revoked rotate replay: %+v %v", replayed, err)
-	}
-	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, environmentID), environmentID, secretID, []byte("new"), "rotate-3"); !IsUnavailable(err) {
-		t.Fatalf("revoked rotation: %v", err)
+	if err != nil || !replayed.RevokedAt.Valid {
+		t.Fatalf("revoked rotate replay reactivated: %+v %v", replayed, err)
 	}
 	var versions int
 	var revoked bool
-	if err = database.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM secret_versions WHERE secret_id=$1),status='revoked' AND current_version_id IS NULL AND revoked_at IS NOT NULL FROM secrets WHERE id=$1`, secretID).Scan(&versions, &revoked); err != nil || versions != 3 || !revoked {
-		t.Fatalf("versions=%d revoked=%t: %v", versions, revoked, err)
+	if err = database.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM secret_versions WHERE secret_id=$1),current_version_id=$2 AND revoked_at IS NOT NULL FROM secrets WHERE id=$1`, secretID, latest).Scan(&versions, &revoked); err != nil || versions != 3 || !revoked {
+		t.Fatalf("revocation kept identity: versions=%d revoked=%t: %v", versions, revoked, err)
+	}
+}
+
+// A Secret's identity is permanent. Rotating a revoked Secret reactivates it
+// with the next version; Create only makes new names.
+func TestSecretRotationReactivatesRevokedSecret(t *testing.T) {
+	database := dbtest.Open(t)
+	if err := schema.Up(t.Context(), database.DSN); err != nil {
+		t.Fatal(err)
+	}
+	env := seedSecretEnvironment(t, database.Pool)
+	store, err := New(db.New(database.Pool), database.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := dbtest.SecretManager(t, database.Pool, env)
+	created, err := store.Create(t.Context(), manager, env, "TOKEN", []byte("first"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := pgvalue.MustUUIDValue(created.ID)
+	if _, err = store.Create(t.Context(), manager, env, "TOKEN", []byte("other"), ""); !errors.Is(err, ErrNameExists) {
+		t.Fatalf("create on an active name: %v", err)
+	}
+	if _, err = store.Rotate(t.Context(), manager, env, id, []byte("second"), ""); err != nil {
+		t.Fatalf("unkeyed rotation: %v", err)
+	}
+	revoked, err := store.Revoke(t.Context(), manager, env, id, "revoke-1")
+	if err != nil || !revoked.RevokedAt.Valid {
+		t.Fatalf("revoke: %+v %v", revoked, err)
+	}
+	if _, err = store.Create(t.Context(), manager, env, "TOKEN", []byte("other"), "create-again"); !errors.Is(err, ErrNameRevoked) {
+		t.Fatalf("create on a revoked name: %v", err)
+	}
+	reactivated, err := store.Rotate(t.Context(), manager, env, id, []byte("third"), "")
+	if err != nil || reactivated.ID != created.ID || reactivated.RevokedAt.Valid || !reactivated.RotatedAt.Valid {
+		t.Fatalf("reactivation: %+v %v", reactivated, err)
+	}
+	var version int64
+	if err = database.Pool.QueryRow(t.Context(), `SELECT v.version FROM secrets s JOIN secret_versions v ON v.id=s.current_version_id WHERE s.id=$1 AND s.revoked_at IS NULL`, id).Scan(&version); err != nil || version != 3 {
+		t.Fatalf("reactivated version %d: %v", version, err)
+	}
+	// A keyed revoke replayed after reactivation returns its original receipt
+	// and never revokes the Secret again.
+	replayed, err := store.Revoke(t.Context(), manager, env, id, "revoke-1")
+	if err != nil || replayed.ID != revoked.ID || !replayed.RevokedAt.Valid || !replayed.RevokedAt.Time.Equal(revoked.RevokedAt.Time) {
+		t.Fatalf("revoke replay: %+v %v", replayed, err)
+	}
+	var active bool
+	if err = database.Pool.QueryRow(t.Context(), `SELECT revoked_at IS NULL FROM secrets WHERE id=$1`, id).Scan(&active); err != nil || !active {
+		t.Fatalf("revoke replay re-revoked the reactivated Secret: %v %v", active, err)
+	}
+	var revocations int
+	if err = database.Pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE environment_id=$1 AND target_id=$2 AND action='secret.revoked'`, env, id).Scan(&revocations); err != nil || revocations != 1 {
+		t.Fatalf("revocation audit %d: %v", revocations, err)
 	}
 }
 
@@ -195,7 +247,7 @@ func TestSecretMutationConcurrentRetriesAndEnvironmentScope(t *testing.T) {
 	if _, err = store.Create(t.Context(), dbtest.SecretManager(t, database.Pool, other), other, "TOKEN", []byte("other"), "same-create"); err != nil {
 		t.Fatalf("retry identity leaked across Environments: %v", err)
 	}
-	for _, key := range []string{"", "bad\x00key", string([]byte{0xff})} {
+	for _, key := range []string{"bad\x00key", string([]byte{0xff})} {
 		if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, database.Pool, env), env, pgvalue.MustUUIDValue(id), []byte("bad"), key); !errors.Is(err, ErrInvalidMutation) {
 			t.Fatalf("invalid key accepted %v", err)
 		}

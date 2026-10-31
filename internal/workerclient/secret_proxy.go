@@ -30,5 +30,8 @@ func secretProxyError(err error) error {
 	if errors.As(err, &response) && response.Message == secretproxy.ErrTrustExpired.Error() {
 		return secretproxy.ErrTrustExpired
 	}
+	if errors.As(err, &response) && response.Code == secretproxy.SecretRevokedCode {
+		return secretproxy.ErrSecretRevoked
+	}
 	return err
 }

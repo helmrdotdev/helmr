@@ -22,6 +22,8 @@ const COLUMNS = ["Secret ID", "Status", "Rotated", "Created", { label: "Actions"
 const SECRET_ERROR_MESSAGES: Record<string, string> = {
   forbidden: "You do not have permission to manage secrets.",
   not_found: "This secret no longer exists.",
+  conflict: "A secret with this ID already exists.",
+  secret_revoked: "A secret with this ID is revoked. Update it to set a new value.",
 };
 const INTERNAL_ERROR_MESSAGE = "Something went wrong. Please try again.";
 
@@ -91,6 +93,7 @@ function SecretRow(props: {
   secret: Secret;
   canRotate: boolean;
   canRevoke: boolean;
+  computersHref: string | undefined;
   onUpdate: (secret: Secret) => void;
   onRevoke: (secret: Secret) => void;
   onCopy: (secret: Secret) => void;
@@ -105,7 +108,8 @@ function SecretRow(props: {
       <RowActions
         label={`Actions for ${props.secret.secret}`}
         items={[
-          ...(active() && props.canRotate ? [{ label: "Update", onSelect: () => props.onUpdate(props.secret) }] : []),
+          ...(props.canRotate ? [{ label: "Update", onSelect: () => props.onUpdate(props.secret) }] : []),
+          ...(props.computersHref ? [{ label: "View computers", href: props.computersHref }] : []),
           { label: "Copy ID", onSelect: () => props.onCopy(props.secret) },
           ...(active() && props.canRevoke ? [{ label: "Revoke", tone: "danger" as const, onSelect: () => props.onRevoke(props.secret) }] : []),
         ]}
@@ -118,6 +122,13 @@ export function Secrets() {
   const edited = useEditedEnvironment();
   const permission = usePermission();
   const can = (action: string) => permission.has(`secrets.${action}`, { projectID: edited.projectID(), environmentID: edited.environmentID() });
+  // Computers that received a raw value of the secret, opened in the edited environment.
+  const computersHref = (secret: Secret) => {
+    const scope = { projectID: edited.projectID(), environmentID: edited.environmentID() };
+    if (!scope.projectID || !scope.environmentID || !permission.has("computers.read", scope)) return undefined;
+    const params = new URLSearchParams({ secret: secret.secret, project: scope.projectID, environment: scope.environmentID });
+    return `/computers?${params.toString()}`;
+  };
   const queryClient = useQueryClient();
   const clipboard = useClipboard({ copied: "Secret ID copied", failed: "Could not copy the secret ID" });
   const [editing, setEditing] = createSignal<{ secret: Secret | null; target: EditTarget }>();
@@ -173,6 +184,7 @@ export function Secrets() {
                     secret={secret}
                     canRotate={can("rotate")}
                     canRevoke={can("revoke")}
+                    computersHref={computersHref(secret)}
                     onUpdate={edit}
                     onRevoke={revoke}
                     onCopy={(current) => void clipboard.copy(current.secret)}
@@ -217,7 +229,7 @@ export function Secrets() {
               await invalidateSecrets();
             }}
           >
-            Affected running turns may be interrupted and fail to complete. Pending inputs are retained but cannot run on affected computers.
+            Protected requests that use this secret fail until it is updated, and new work that needs its raw value is refused. Running work continues, and raw copies already delivered stay on their computers. Revoke the credential at its provider, then use View computers to find computers that may hold it.
           </ConfirmDialog>
         )}
       </Show>

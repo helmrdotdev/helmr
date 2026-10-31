@@ -42,9 +42,6 @@ func (p *ImageBuildPublisher) BeginCapture(ctx context.Context, host workergroup
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		if err := lockImageBuildSecretOwners(ctx, tx, ref); err != nil {
-			return err
-		}
 		if err := lockImageBuildExecutorOnHost(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
@@ -276,9 +273,6 @@ func lockImageBuildStorage(ctx context.Context, tx pgx.Tx, host workergroup.Host
 		return scope, false, ErrInvalidInput
 	}
 	if err := LockHost(ctx, tx, host); err != nil {
-		return scope, false, err
-	}
-	if err := lockImageBuildSecretOwners(ctx, tx, ref); err != nil {
 		return scope, false, err
 	}
 	if err := lockImageBuildExecutorOnHost(ctx, tx, host, ref, false); err != nil {

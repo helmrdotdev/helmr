@@ -280,6 +280,11 @@ func TestExpiredTrustGivesSafeRecreationError(t *testing.T) {
 		t.Fatal("expiry did not explain recreation")
 	}
 	response = httptest.NewRecorder()
+	denyTransportError(response, ErrSecretRevoked)
+	if response.Code != 502 || strings.TrimSpace(response.Body.String()) != "Protected Secret is revoked; rotate it to resume" {
+		t.Fatalf("revoked Secret response = %d %q", response.Code, response.Body.String())
+	}
+	response = httptest.NewRecorder()
 	denyTransportError(response, errors.New("synthetic-sensitive-value"))
 	if strings.Contains(response.Body.String(), "synthetic-sensitive-value") {
 		t.Fatal("transport disclosed arbitrary error")

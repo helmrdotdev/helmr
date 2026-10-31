@@ -116,7 +116,7 @@ func PrepareComputerRestore(ctx context.Context, pool db.TxBeginner, host worker
 		for _, m := range r.Members {
 			var generation int64
 			var terminal, fenced bool
-			if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),p.fenced_at IS NOT NULL FROM sessions s  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, m.Session, m.Epoch).Scan(&generation, &terminal, &fenced); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped'),p.fenced_at IS NOT NULL FROM sessions s  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, m.Session, m.Epoch).Scan(&generation, &terminal, &fenced); err != nil {
 				return err
 			}
 			if fenced && !terminal {
@@ -177,9 +177,6 @@ func ValidateComputerRestore(ctx context.Context, pool db.TxBeginner, host worke
 		if err != nil {
 			return err
 		}
-		if err = computer.RequireSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
-			return err
-		}
 		var stored []byte
 		if err = tx.QueryRow(ctx, `SELECT restore_identity FROM checkpoints WHERE environment_id=$1 AND id=$2`, env, checkpoint).Scan(&stored); err != nil {
 			return err
@@ -218,9 +215,6 @@ func CommitComputerRestore(ctx context.Context, pool db.TxBeginner, host workerg
 		}
 		if r.State == "consumed" {
 			return nil
-		}
-		if err = computer.RequireSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
-			return err
 		}
 		// A pre-freeze acknowledgement cannot release this continuation. Reset
 		// the delivery identity once, so delayed old receipts also fail to match.
@@ -264,9 +258,6 @@ func CompleteComputerRestore(ctx context.Context, auditPolicy auditpolicy.Policy
 		}
 		if r.ControlsReconciled {
 			return nil
-		}
-		if err = computer.RequireSecretsNotRevoked(ctx, tx, env, r.Computer); err != nil {
-			return err
 		}
 		if err = requireComputerControlReceipts(ctx, tx, env, r); err != nil {
 			return err
@@ -376,7 +367,7 @@ func validateRestoreInstallation(ctx context.Context, tx pgx.Tx, host workergrou
 		}
 		var generation, processLease int64
 		var terminal, fenced bool
-		if err = tx.QueryRow(ctx, `SELECT s.authority_generation,p.computer_lease_epoch,s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) OR p.status IN ('stopping','lost','stopped'),p.fenced_at IS NOT NULL FROM sessions s  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, m.Session, m.Epoch).Scan(&generation, &processLease, &terminal, &fenced); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT s.authority_generation,p.computer_lease_epoch,s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped'),p.fenced_at IS NOT NULL FROM sessions s  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, m.Session, m.Epoch).Scan(&generation, &processLease, &terminal, &fenced); err != nil {
 			return r, err
 		}
 		if processLease != epoch || (fenced && !terminal) {

@@ -60,9 +60,9 @@ func TestSecretAuditCommitsOnceAndRollsBackMutationOnFailure(t *testing.T) {
 	if _, err = store.Revoke(t.Context(), actor, env, id, "revoke"); err == nil {
 		t.Fatal("audit failure allowed revocation")
 	}
-	var status string
-	if err = d.Pool.QueryRow(t.Context(), `SELECT status FROM secrets WHERE id=$1`, id).Scan(&status); err != nil || status != "active" {
-		t.Fatalf("status=%s err=%v", status, err)
+	var active bool
+	if err = d.Pool.QueryRow(t.Context(), `SELECT revoked_at IS NULL FROM secrets WHERE id=$1`, id).Scan(&active); err != nil || !active {
+		t.Fatalf("active=%v err=%v", active, err)
 	}
 	dbtest.MustExec(t, t.Context(), d.Pool, `DROP TRIGGER reject_secret_audit ON audit_events`)
 	if _, err = store.Revoke(t.Context(), actor, env, id, "revoke"); err != nil {
@@ -167,7 +167,7 @@ func TestSecretMutationRechecksExactHumanSession(t *testing.T) {
 	}
 }
 
-func TestSecretCreateCannotReuseARevokedName(t *testing.T) {
+func TestSecretRevokedNameIsRotatedWithRecentProof(t *testing.T) {
 	d := dbtest.Open(t)
 	if err := schema.Up(t.Context(), d.DSN); err != nil {
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestSecretCreateCannotReuseARevokedName(t *testing.T) {
 	user, member := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Manager')`, user)
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, member, org, user)
-	dbtest.GrantMember(t, d.Pool, org, user, &env, "secrets.create", "secrets.revoke")
+	dbtest.GrantMember(t, d.Pool, org, user, &env, "secrets.create", "secrets.rotate", "secrets.revoke")
 	p := dbtest.BrowserPrincipal(t, d.Pool, org, user)
 	store, err := New(db.New(d.Pool), d.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
 	if err != nil {
@@ -193,12 +193,22 @@ func TestSecretCreateCannotReuseARevokedName(t *testing.T) {
 	if _, err = store.Revoke(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), ""); err != nil {
 		t.Fatal(err)
 	}
-	// A revoked name stays reserved, so creating on it never issues new material
-	// under that name, with or without recent proof.
+	// Create never issues new material under a revoked name, with or without
+	// recent proof. Setting a new value is a rotation, which needs recent proof.
+	recent := p.AuthenticatedAt
 	p.AuthenticatedAt = p.AuthenticatedAt.Add(-2 * time.Hour)
 	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
-	if _, err = store.Create(t.Context(), p, env, "RETIRED", []byte("replacement"), ""); !db.IsUniqueViolation(err) {
-		t.Fatalf("create on a revoked name = %v, want the name to stay taken", err)
+	if _, err = store.Create(t.Context(), p, env, "RETIRED", []byte("replacement"), ""); !errors.Is(err, ErrNameRevoked) {
+		t.Fatalf("create on a revoked name = %v, want it refused as revoked", err)
+	}
+	if _, err = store.Rotate(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), []byte("replacement"), ""); !errors.Is(err, auth.ErrRecentProofRequired) {
+		t.Fatalf("rotate a revoked Secret without recent proof = %v", err)
+	}
+	p.AuthenticatedAt = recent
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
+	reactivated, err := store.Rotate(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), []byte("replacement"), "")
+	if err != nil || reactivated.ID != row.ID || reactivated.RevokedAt.Valid {
+		t.Fatalf("rotate a revoked Secret with recent proof = %+v %v", reactivated, err)
 	}
 	var count int
 	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secrets WHERE environment_id=$1 AND name='RETIRED'`, env).Scan(&count); err != nil || count != 1 {

@@ -22,7 +22,12 @@ export type Computer = {
   updated_at: string;
 };
 
-export type ComputerListItem = Omit<Computer, "secrets">;
+// Present only when the list is filtered by secret: "received" when a process or
+// command received the raw value, "image" when the computer's image was prepared
+// with it, so the computer may hold it.
+export type ComputerSecretExposure = "received" | "image";
+
+export type ComputerListItem = Omit<Computer, "secrets"> & { secret_exposure?: ComputerSecretExposure };
 
 type ListComputersResponse = {
   computers: ComputerListItem[];
@@ -36,9 +41,10 @@ export type ComputerScope = {
 
 export async function listComputers(
   scope: ComputerScope,
-  options: { cursor?: string | undefined; limit?: number | undefined } = {},
+  options: { secret?: string | undefined; cursor?: string | undefined; limit?: number | undefined } = {},
 ): Promise<ListComputersResponse> {
   const params = new URLSearchParams();
+  if (options.secret) params.set("secret", options.secret);
   if (options.cursor) params.set("cursor", options.cursor);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const query = params.size === 0 ? "" : `?${params.toString()}`;

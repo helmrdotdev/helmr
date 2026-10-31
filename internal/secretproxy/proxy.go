@@ -32,6 +32,14 @@ const maxCapturedConnections = 256
 const maxProtectedRequests = maxCapturedConnections
 
 var ErrTrustExpired = errors.New("computer Secret transport has expired; create a new Computer")
+
+// SecretRevokedCode identifies a resolution refused because a requested Secret
+// is revoked. Other Secrets on the same Computer keep resolving.
+const SecretRevokedCode = "secret_revoked"
+
+const secretRevokedMessage = "Protected Secret is revoked; rotate it to resume"
+
+var ErrSecretRevoked = errors.New("protected Secret is revoked")
 var markerPattern = regexp.MustCompile(`hlmr_protected_[a-f0-9]{64}`)
 
 type Config struct {
@@ -236,6 +244,10 @@ func deny(w http.ResponseWriter) {
 func denyTransportError(w http.ResponseWriter, err error) {
 	if errors.Is(err, ErrTrustExpired) {
 		http.Error(w, ErrTrustExpired.Error(), http.StatusBadGateway)
+		return
+	}
+	if errors.Is(err, ErrSecretRevoked) {
+		http.Error(w, secretRevokedMessage, http.StatusBadGateway)
 		return
 	}
 	deny(w)

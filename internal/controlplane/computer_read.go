@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/secretname"
 )
 
 type computerListCursor struct {
@@ -21,6 +22,7 @@ type computerListCursor struct {
 	EnvironmentID string    `json:"environment_id"`
 	CreatedAt     time.Time `json:"created_at"`
 	ID            string    `json:"id"`
+	Secret        string    `json:"secret,omitempty"`
 }
 
 func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
@@ -35,7 +37,7 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
-	limit, cursor, exactKey, err := parseComputerListQuery(r, scope.ProjectID, scope.EnvironmentID)
+	limit, cursor, exactKey, secretName, err := parseComputerListQuery(r, scope.ProjectID, scope.EnvironmentID)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
@@ -60,7 +62,7 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	page := computer.ListPage{Limit: limit}
+	page := computer.ListPage{Limit: limit, Secret: secretName}
 	if cursor != nil {
 		page.After = &computer.ListPosition{CreatedAt: cursor.CreatedAt, ID: uuid.MustParse(cursor.ID)}
 	}
@@ -80,7 +82,7 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 		last := listing.Items[len(listing.Items)-1]
 		response.NextCursor, err = encodeComputerListCursor(computerListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			CreatedAt: last.CreatedAt, ID: last.ID,
+			CreatedAt: last.CreatedAt, ID: last.ID, Secret: secretName,
 		})
 		if err != nil {
 			writeError(w, errors.New("list Computers"))
@@ -93,44 +95,50 @@ func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
 func parseComputerListQuery(
 	r *http.Request,
 	projectID, environmentID string,
-) (int32, *computerListCursor, *string, error) {
+) (int32, *computerListCursor, *string, string, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
-		if name != "key" && name != "cursor" && name != "limit" {
-			return 0, nil, nil, fmt.Errorf("query parameter %q is not supported", name)
+		if name != "key" && name != "secret" && name != "cursor" && name != "limit" {
+			return 0, nil, nil, "", fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || entries[0] == "" {
-			return 0, nil, nil, fmt.Errorf("%s must appear once", name)
+			return 0, nil, nil, "", fmt.Errorf("%s must appear once", name)
 		}
 	}
 	if raw := values.Get("key"); raw != "" {
-		if values.Get("cursor") != "" || values.Get("limit") != "" {
-			return 0, nil, nil, errors.New("computer exact key lookup does not accept cursor or limit")
+		if values.Get("cursor") != "" || values.Get("limit") != "" || values.Get("secret") != "" {
+			return 0, nil, nil, "", errors.New("computer exact key lookup does not accept secret, cursor or limit")
 		}
 		if err := computer.ValidateKey(&raw); err != nil {
-			return 0, nil, nil, err
+			return 0, nil, nil, "", err
 		}
-		return computer.DefaultListLimit, nil, &raw, nil
+		return computer.DefaultListLimit, nil, &raw, "", nil
+	}
+	secretName := values.Get("secret")
+	if secretName != "" {
+		if err := secretname.Validate(secretName); err != nil {
+			return 0, nil, nil, "", err
+		}
 	}
 	limit := computer.DefaultListLimit
 	if raw := values.Get("limit"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || parsed < 1 || parsed > int64(computer.MaxListLimit) {
-			return 0, nil, nil, errors.New("limit must be an integer in [1,100]")
+			return 0, nil, nil, "", errors.New("limit must be an integer in [1,100]")
 		}
 		limit = int32(parsed)
 	}
 	if raw := values.Get("cursor"); raw != "" {
 		cursor, err := decodeComputerListCursor(raw)
 		if err != nil {
-			return 0, nil, nil, err
+			return 0, nil, nil, "", err
 		}
-		if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
-			return 0, nil, nil, errors.New("computer cursor does not match request scope")
+		if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID || cursor.Secret != secretName {
+			return 0, nil, nil, "", errors.New("computer cursor does not match request scope")
 		}
-		return limit, &cursor, nil, nil
+		return limit, &cursor, nil, secretName, nil
 	}
-	return limit, nil, nil, nil
+	return limit, nil, nil, secretName, nil
 }
 
 func encodeComputerListCursor(cursor computerListCursor) (string, error) {

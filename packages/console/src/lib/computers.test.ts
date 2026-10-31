@@ -36,6 +36,12 @@ test("lists Computers with a bounded cursor", async () => {
   expect(calls[0]?.url).toBe("/api/projects/project%2F1/environments/env-1/computers?cursor=c1&limit=100");
 });
 
+test("lists Computers that received a raw value of a Secret", async () => {
+  const calls = captureFetch({ computers: [] });
+  await listComputers(scope, { secret: "GITHUB_TOKEN", cursor: "c1", limit: 100 });
+  expect(calls[0]?.url).toBe(`${base}/computers?secret=GITHUB_TOKEN&cursor=c1&limit=100`);
+});
+
 test("lists Computer Sessions within scope and preserves pagination", async () => {
   const page = { sessions: [{ id: "session-1", usage_state: "admitted", created_at: "2026-09-26T00:00:00Z" }], next_cursor: "next" };
   const calls = captureFetch(page);

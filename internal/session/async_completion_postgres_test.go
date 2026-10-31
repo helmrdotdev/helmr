@@ -335,11 +335,11 @@ func TestComputerNoGapRecoveryCreatesNewLeaseAndProcessWithoutReplay(t *testing.
 }
 
 func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.T) {
-	for _, state := range []string{"initial", "published", "capacity", "integrity", "deleted", "revoked", "missing-image", "retired-head"} {
+	for _, state := range []string{"initial", "published", "capacity", "integrity", "deleted", "missing-image", "retired-head"} {
 		t.Run(state, func(t *testing.T) {
 			f := newFixture(t)
 			storage := newSaveStorageFixture(t, f)
-			preparation := checkpointImageExposure(t, f)
+			checkpointImageExposure(t, f)
 			if state == "published" || state == "retired-head" {
 				_, save := f.finalize(t, "covered-result")
 				root, _ := storage.cut(t, 3)
@@ -360,10 +360,6 @@ func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET integrity_fault_at=clock_timestamp(),integrity_fault_reason='fixture fault' WHERE id=$1`, f.computer)
 			case "deleted":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET deleted_at=clock_timestamp() WHERE id=$1`, f.computer)
-			case "revoked":
-				if _, err := preparation.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, preparation.secretID, "revoke"); err != nil {
-					t.Fatal(err)
-				}
 			case "missing-image":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computers SET image_id=NULL WHERE id=$1`, f.computer)
 			}
@@ -384,11 +380,8 @@ func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.
 					t.Fatalf("attention holds=%d want=%d error=%v", count, want, err)
 				}
 			}
-			if state == "revoked" || state == "integrity" {
+			if state == "integrity" {
 				reason := "execution_lost"
-				if state == "revoked" {
-					reason = "secret_revoked"
-				}
 				var captured bool
 				if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'reason'=$2) FROM audit_events WHERE action='session.hold_created' AND session_id=$1`, f.session, reason).Scan(&captured); err != nil || !captured {
 					t.Fatalf("hold cause %s: %v %v", reason, captured, err)

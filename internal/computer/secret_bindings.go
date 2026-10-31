@@ -6,12 +6,13 @@ import (
 	"slices"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 )
 
 // Resolve only at new admission, under the Environment lock. SHARE conflicts
-// with revocation's status update, so admission cannot race past a revoke.
+// with revocation's row update, so admission cannot race past a revoke.
 func ResolveSecretReferences(ctx context.Context, tx pgx.Tx, env uuid.UUID, refs []secretbinding.Reference) (map[string]uuid.UUID, error) {
 	names := make([]string, 0, len(refs))
 	for _, ref := range refs {
@@ -23,7 +24,7 @@ func ResolveSecretReferences(ctx context.Context, tx pgx.Tx, env uuid.UUID, refs
 	if len(names) == 0 {
 		return resolved, nil
 	}
-	rows, err := tx.Query(ctx, `SELECT name,id FROM secrets WHERE environment_id=$1 AND name=ANY($2::text[]) AND status='active' ORDER BY id FOR SHARE`, env, names)
+	rows, err := tx.Query(ctx, `SELECT name,id FROM secrets WHERE environment_id=$1 AND name=ANY($2::text[]) AND revoked_at IS NULL ORDER BY id FOR SHARE`, env, names)
 	if err != nil {
 		return nil, err
 	}
@@ -140,4 +141,14 @@ func copyDefinitionSecretBindings(ctx context.Context, tx pgx.Tx, env, deploymen
 		return err
 	}
 	return RegisterSecretBindings(ctx, tx, env, bindings)
+}
+
+// RawSecretRevoked reports whether a new process or Command on the Computer
+// would need a revoked raw Secret value. Protected bindings never deliver the
+// value and resolve the Secret per request, so they never count.
+func RawSecretRevoked(ctx context.Context, q db.DBTX, env, computer uuid.UUID) (bool, error) {
+	var revoked bool
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
+ WHERE b.environment_id=$1 AND b.computer_id=$2 AND b.mode='raw' AND s.revoked_at IS NOT NULL)`, env, computer).Scan(&revoked)
+	return revoked, err
 }

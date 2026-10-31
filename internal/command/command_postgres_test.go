@@ -391,7 +391,7 @@ func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
 		t.Fatalf("first delivery %+v %v", first, err)
 	}
 	var exposureAudit bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'revocation_generation'='0') FROM audit_events WHERE environment_id=$1 AND target_id=$2 AND action='secret.exposed' AND details->>'command_id'=$3`, f.Environment, secretID, id.String()).Scan(&exposureAudit); err != nil || !exposureAudit {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*)=1 FROM audit_events WHERE environment_id=$1 AND target_id=$2 AND action='secret.exposed' AND details->>'command_id'=$3`, f.Environment, secretID, id.String()).Scan(&exposureAudit); err != nil || !exposureAudit {
 		t.Fatalf("new exposure audit: %v %v", exposureAudit, err)
 	}
 	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, []byte("third"), "rotate-after-delivery"); err != nil {
@@ -418,6 +418,7 @@ func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
 	if err = CheckStart(t.Context(), f.Pool, f.host(), *first.Start); err != nil {
 		t.Fatal(err)
 	}
+	waiting := f.create(t, "pending-before-revoke")
 	_, err = store.Revoke(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, "revoke")
 	if err != nil {
 		t.Fatal(err)
@@ -425,20 +426,44 @@ func TestCommandSecretSelectionOccursAtFirstDelivery(t *testing.T) {
 	if err = CheckStart(t.Context(), f.Pool, f.host(), *first.Start); !errors.Is(err, secret.ErrDeliveryRevoked) {
 		t.Fatalf("revoked delivery %v", err)
 	}
-	// The reconciler's recovery pass discovers both Commands through the
-	// revoked binding and records convergence intent for each.
+	// New Commands needing the revoked raw value are refused at admission and
+	// at claim; running Commands keep running.
+	if _, err = Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("after-revoke")); !errors.Is(err, computer.ErrSecretUnavailable) {
+		t.Fatalf("revoked raw admission: %v", err)
+	}
+	req.ActiveCommandIDs = []uuid.UUID{id, uuid.UUID(second.ID.Bytes)}
+	if claimed, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), req); err != nil || claimed.Start != nil {
+		t.Fatalf("revoked raw claim: %+v %v", claimed, err)
+	}
+	refused := f.get(t, uuid.UUID(waiting.ID.Bytes))
+	if refused.Status != "failed" || !refused.TerminalAt.Valid || refused.TerminalReasonCode.String != "secret_unavailable" {
+		t.Fatalf("pending Command with a revoked raw binding: %+v", refused)
+	}
+	for _, running := range []uuid.UUID{id, uuid.UUID(second.ID.Bytes)} {
+		if c = f.get(t, running); c.Status != "running" || c.CancelRequestedAt.Valid || c.TerminalAt.Valid {
+			t.Fatalf("revocation stopped a running Command %+v", c)
+		}
+	}
+	// A host that lost track of a started Command reattaches to it without the
+	// revoked raw value; revocation never refuses or cancels started work.
+	req.ActiveCommandIDs = []uuid.UUID{uuid.UUID(second.ID.Bytes)}
+	reattach, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), req)
+	if err != nil || reattach.Start == nil || !reattach.Start.TailOnly || uuid.UUID(reattach.Start.Command.ID.Bytes) != id || len(reattach.Start.Secrets) != 0 {
+		t.Fatalf("reclaimed running Command after revocation: %+v %v", reattach, err)
+	}
+	if err = CheckStart(t.Context(), f.Pool, f.host(), *reattach.Start); err != nil {
+		t.Fatalf("reattach refused: %v", err)
+	}
+	if c = f.get(t, id); c.Status != "running" || c.CancelRequestedAt.Valid || c.TerminalAt.Valid {
+		t.Fatalf("reclaim cancelled a running Command %+v", c)
+	}
 	if _, more, err := RecoverBatch(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
 	}, f.Pool, RecoveryPosition{}, 10); err != nil || more {
-		t.Fatalf("revocation pass more=%v %v", more, err)
+		t.Fatalf("recovery pass more=%v %v", more, err)
 	}
-	var converged int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM commands WHERE environment_id=$1 AND cancel_requested_at IS NOT NULL`, f.Environment).Scan(&converged); err != nil || converged != 2 {
-		t.Fatalf("revocation converged %d %v", converged, err)
-	}
-	c = f.get(t, id)
-	if c.Status != "stopping" || c.TerminalAt.Valid || c.ProcessReconciledAt.Valid {
-		t.Fatalf("revocation claimed stop %+v", c)
+	if c = f.get(t, id); c.Status != "running" || c.CancelRequestedAt.Valid {
+		t.Fatalf("recovery stopped a running Command after revocation %+v", c)
 	}
 }
 
@@ -623,8 +648,20 @@ func TestCommandProtectedSelectorTracksLogicalOwner(t *testing.T) {
 		t.Fatalf("selector changed: %+v %v", retry, err)
 	}
 	current, err := computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector})
-	if err != nil || len(current) != 1 || current[0].VersionID != values[0].VersionID {
-		t.Fatalf("pin changed %+v %v", current, err)
+	if err != nil || len(current) != 1 || current[0].VersionID == values[0].VersionID || current[0].Version != values[0].Version+1 {
+		t.Fatalf("rotation did not reach the next request %+v %v", current, err)
+	}
+	if _, err = store.Revoke(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector}); !errors.Is(err, secret.ErrProtectedRevoked) {
+		t.Fatalf("revoked protected request: %v", err)
+	}
+	if _, err = store.Rotate(t.Context(), dbtest.SecretManager(t, f.Pool, f.Environment), f.Environment, secretID, []byte("resumed"), ""); err != nil {
+		t.Fatal(err)
+	}
+	if current, err = computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://api.example.com", []string{selector}); err != nil || len(current) != 1 || current[0].Version != values[0].Version+2 {
+		t.Fatalf("reactivated protected request %+v %v", current, err)
 	}
 	if _, err = computer.CaptureProtectedSecrets(t.Context(), f.Pool, f.host(), f.Computer, "https://other.example.com", []string{selector}); err == nil {
 		t.Fatal("wrong origin resolved")

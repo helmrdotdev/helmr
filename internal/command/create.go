@@ -313,24 +313,28 @@ func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, requ
 		}
 
 		// Secret locks precede the Computer lock, matching revocation. Admission
-		// checks availability and placements without selecting a runtime version.
-		rows, err := tx.Query(ctx, `SELECT b.placement_kind,b.placement_target,s.status
+		// refuses a revoked raw binding and checks placements without selecting a
+		// runtime version. Protected bindings resolve per request instead.
+		rows, err := tx.Query(ctx, `SELECT b.placement_kind,b.placement_target,b.mode='raw' AND s.revoked_at IS NOT NULL
  FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
  WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY s.id,b.placement_kind,b.placement_target FOR SHARE OF s`, request.EnvironmentID, request.ComputerID)
 		if err != nil {
 			return idempotency.Completion{}, err
 		}
-		type binding struct{ kind, target, status string }
+		type binding struct {
+			kind, target string
+			revokedRaw   bool
+		}
 		bindings, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (binding, error) {
 			var b binding
-			err := row.Scan(&b.kind, &b.target, &b.status)
+			err := row.Scan(&b.kind, &b.target, &b.revokedRaw)
 			return b, err
 		})
 		if err != nil {
 			return idempotency.Completion{}, err
 		}
 		for _, b := range bindings {
-			if b.status != "active" {
+			if b.revokedRaw {
 				return idempotency.Completion{}, computer.ErrSecretUnavailable
 			}
 			if b.kind == "env" {
@@ -355,14 +359,6 @@ func create(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, requ
 		if !ready {
 			return idempotency.Completion{}, computer.ErrBusy
 		}
-		var revoked bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, request.EnvironmentID, request.ComputerID).Scan(&revoked); err != nil {
-			return idempotency.Completion{}, err
-		}
-		if revoked {
-			return idempotency.Completion{}, computer.ErrSecretUnavailable
-		}
-
 		if err = computer.MarkUsed(ctx, tx, request.EnvironmentID, request.ComputerID); err != nil {
 			return idempotency.Completion{}, err
 		}

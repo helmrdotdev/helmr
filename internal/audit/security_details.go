@@ -28,11 +28,10 @@ type LifecycleDetails struct {
 func (LifecycleDetails) auditDetails() {}
 
 type SecretExposureDetails struct {
-	ExposureID           uuid.UUID `json:"exposure_id"`
-	VersionID            uuid.UUID `json:"version_id"`
-	RevocationGeneration int64     `json:"revocation_generation"`
-	CommandID            uuid.UUID `json:"command_id,omitzero"`
-	ImageBuildID         uuid.UUID `json:"image_build_id,omitzero"`
+	ExposureID   uuid.UUID `json:"exposure_id"`
+	VersionID    uuid.UUID `json:"version_id"`
+	CommandID    uuid.UUID `json:"command_id,omitzero"`
+	ImageBuildID uuid.UUID `json:"image_build_id,omitzero"`
 }
 
 func (SecretExposureDetails) auditDetails() {}

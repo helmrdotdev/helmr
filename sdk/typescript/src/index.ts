@@ -24,6 +24,7 @@ export type {
   ClientComputersApi,
   ComputerListItem,
   ComputerListQuery,
+  ComputerSecretExposure,
 } from "./client-computer"
 
 export type {

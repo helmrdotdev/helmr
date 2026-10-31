@@ -114,7 +114,14 @@ interface SecretRef {
 `SecretListQuery` is `{ cursor?, limit? }` (`limit` 1–100). Use `get("GITHUB_TOKEN")`
 for a direct lookup by the same identifier used in your bindings. `rotate` and
 `revoke` generate a new `idempotencyKey` per call when you omit one; pass the
-same key to retry one operation after a lost response.
+same key to retry one operation after a lost response. A replayed `revoke`
+returns its original result and never revokes the Secret again after a later
+rotation.
+
+`rotate` sets the next version of the same Secret. Rotating a revoked Secret
+reactivates it with its existing bindings. `create` only makes new names: an
+active name fails with `conflict`, and a revoked name fails with
+`secret_revoked`; rotate it instead.
 
 `Secret` is `{ secret, status, createdAt, rotatedAt?, revokedAt? }`, where
 `status` is `"active"` or `"revoked"`. Reads never return the value. Bind

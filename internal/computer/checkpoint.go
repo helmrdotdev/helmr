@@ -97,7 +97,7 @@ func ValidateCheckpointRuntime(ctx context.Context, tx pgx.Tx, host workergroup.
 // A newer or unresolved disk cut makes a retained RAM image ineligible.
 func CheckpointDiskEligible(ctx context.Context, tx pgx.Tx, env, computerID, save uuid.UUID) (bool, error) {
 	var eligible bool
-	err := tx.QueryRow(ctx, `SELECT COALESCE(c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id) AND c.recovery_save_id=$3
+	err := tx.QueryRow(ctx, `SELECT COALESCE(c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND c.recovery_save_id=$3
    AND NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('requested','captured')),false)
    FROM computers c WHERE c.environment_id=$1 AND c.id=$2`, env, computerID, save).Scan(&eligible)
 	return eligible, err

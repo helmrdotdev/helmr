@@ -25,7 +25,7 @@ func AssignImageBuild(ctx context.Context, tx pgx.Tx, a Allocation, spec uuid.UU
  reserved_memory_bytes=$7,reserved_scratch_bytes=$8,vm_platform_id=$9,vm_vcpu_count=$10,cpu_config_digest=$11
  WHERE environment_id=$1 AND id=$2 AND status='queued' AND deadline_at>clock_timestamp() AND NOT EXISTS(
  SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
- WHERE binding.environment_id=$1 AND binding.image_spec_id=$12 AND s.status='revoked')`, a.EnvironmentID, a.OwnerID, a.HostID, a.HostEpoch, a.InstanceID, a.CredentialDigest, a.Shape.MemoryBytes, a.Shape.ScratchBytes, a.Shape.VMPlatformID, a.Shape.VCPUCount, a.Shape.CPUConfigDigest, spec)
+ WHERE binding.environment_id=$1 AND binding.image_spec_id=$12 AND s.revoked_at IS NOT NULL)`, a.EnvironmentID, a.OwnerID, a.HostID, a.HostEpoch, a.InstanceID, a.CredentialDigest, a.Shape.MemoryBytes, a.Shape.ScratchBytes, a.Shape.VMPlatformID, a.Shape.VCPUCount, a.Shape.CPUConfigDigest, spec)
 	if err != nil {
 		return false, err
 	}
@@ -44,32 +44,18 @@ func RecordImageBuildProxyTrust(ctx context.Context, tx pgx.Tx, env, build uuid.
 // DeliverImageBuild records the first delivery of a running build to its
 // executor. It returns pgx.ErrNoRows when the build no longer admits
 // execution.
-func DeliverImageBuild(ctx context.Context, tx pgx.Tx, env, build, spec uuid.UUID) (delivered, expires *time.Time, err error) {
+func DeliverImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID) (delivered, expires *time.Time, err error) {
 	err = tx.QueryRow(ctx, `UPDATE image_builds p SET delivered_at=COALESCE(delivered_at,clock_timestamp()),
  executor_expires_at=COALESCE(executor_expires_at,LEAST(deadline_at,clock_timestamp()+interval '1 minute'))
  WHERE environment_id=$1 AND id=$2 AND status='running' AND fenced_at IS NULL AND deadline_at>clock_timestamp()
  AND (delivered_at IS NULL OR executor_expires_at>clock_timestamp())
- AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets s ON s.environment_id=binding.environment_id AND s.id=binding.secret_id
- WHERE binding.environment_id=$1 AND binding.image_spec_id=$3 AND s.status='revoked')
- RETURNING delivered_at,executor_expires_at`, env, build, spec).Scan(&delivered, &expires)
+ RETURNING delivered_at,executor_expires_at`, env, build).Scan(&delivered, &expires)
 	return delivered, expires, err
 }
 
 // TerminateImageBuild ends a build with an error code and wipes its proxy CA.
 func TerminateImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID, code string) error {
 	_, err := tx.Exec(ctx, `UPDATE image_builds SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code=$3 WHERE environment_id=$1 AND id=$2`, env, build, code)
-	if err != nil {
-		return err
-	}
-	return notifyImageBuildChanged(ctx, tx, env, build)
-}
-
-// FailRevokedImageBuild ends a live build that has exposed a revoked Secret.
-func FailRevokedImageBuild(ctx context.Context, tx pgx.Tx, env, build uuid.UUID) error {
-	_, err := tx.Exec(ctx, `UPDATE image_builds p SET proxy_ca_certificate=NULL,proxy_ca_private_key_nonce=NULL,proxy_ca_private_key_ciphertext=NULL,proxy_ca_not_after=NULL,status='failed',error_code='secret_revoked'
-   WHERE p.environment_id=$1 AND p.id=$2 AND p.status IN ('queued','running') AND EXISTS(
-    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-    WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status='revoked')`, env, build)
 	if err != nil {
 		return err
 	}

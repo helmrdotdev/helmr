@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/content"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/slackroute"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -220,6 +221,8 @@ func (server *Server) writeAgentWorkerError(w http.ResponseWriter, r *http.Reque
 		server.writeOperationError(w, r, conflict(errors.New("session control changed")))
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		server.writeOperationError(w, r, unauthorized(errors.New("worker authentication is stale")))
+	case errors.Is(err, secret.ErrDeliveryRevoked):
+		writeError(w, conflict(codedError{code: "secret_unavailable", message: secretRevokedForNewWork}))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, dispatch.ErrDenied):
 		if !server.refuseOperation(w, r, "stale_authority", err) {
 			return

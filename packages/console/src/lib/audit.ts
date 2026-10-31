@@ -85,7 +85,7 @@ export type AuditDetails =
   | { method: string; provider?: string; subject?: string; device_code_id?: string; authorizing_credential_id?: string }
   | { reason: string; operation?: string }
   | { tool: string }
-  | { exposure_id: string; version_id: string; revocation_generation: number; command_id?: string; image_build_id?: string }
+  | { exposure_id: string; version_id: string; command_id?: string; image_build_id?: string }
   | { before_ms: number | null; after_ms: number | null }
   | { kind: string; request_id: string; reason?: string }
   | { request_id: string; hold_id?: string }

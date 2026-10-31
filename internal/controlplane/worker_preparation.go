@@ -207,7 +207,7 @@ func (server *Server) workerPreparationSecrets(w http.ResponseWriter, r *http.Re
 			hasProtected = true
 		}
 		envelopes = append(envelopes, secret.DeliveryEnvelope{Mode: e.Mode, PlacementKind: e.Kind, PlacementTarget: e.Target,
-			Secret:  db.Secret{ID: pgvalue.UUID(e.SecretID), EnvironmentID: pgvalue.UUID(ref.EnvironmentID), Status: "active"},
+			Secret:  db.Secret{ID: pgvalue.UUID(e.SecretID), EnvironmentID: pgvalue.UUID(ref.EnvironmentID)},
 			Version: db.SecretVersion{ID: pgvalue.UUID(e.VersionID), SecretID: pgvalue.UUID(e.SecretID), Version: e.Version, Nonce: e.Nonce, Ciphertext: e.Ciphertext}})
 	}
 	var protected *workerapi.ProtectedEnv

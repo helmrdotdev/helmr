@@ -8,7 +8,7 @@ sidebarLabel: computer
 
 ```text
 helmr computer create TEMPLATE [--key KEY] [--idempotency-key KEY] [--json]
-helmr computer list [--key KEY | --cursor CURSOR] [--limit N] [--json]
+helmr computer list [--key KEY | [--secret NAME] [--cursor CURSOR] [--limit N]] [--json]
 helmr computer get (--id UUID | --key KEY) [--json]
 helmr computer sessions (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [--json]
 helmr computer commands (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [--json]
@@ -74,7 +74,23 @@ usage state is distinct from the Session or Command's lifecycle status. Each
 collection has its own cursor; do not move a cursor between them.
 
 `list`, `sessions` and `commands` accept page sizes 1–100 (default 50).
-Computer `list --key KEY` is an exact lookup and rejects cursor/limit.
+Computer `list --key KEY` is an exact lookup and rejects secret, cursor and limit.
+
+## Find Computers holding a raw Secret value
+
+`list --secret NAME` lists non-deleted Computers that received a raw value of
+that Secret. Each row ends with `received` when a process or Command on the
+Computer received the value directly, or `may hold (image)` when the Computer's
+image was prepared with it. JSON output reports the same as `secret_exposure`:
+`received` or `image`. Protected bindings never deliver the value, so they do
+not appear here.
+
+```sh
+helmr computer list --secret DATABASE_PASSWORD
+```
+
+Use this list after revoking or rotating a Secret: raw copies already delivered
+stay on these Computers until you delete them.
 
 `update` changes only retention after the Computer becomes unused. For example:
 

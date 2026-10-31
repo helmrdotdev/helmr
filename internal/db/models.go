@@ -251,10 +251,8 @@ type Secret struct {
 	ID               pgtype.UUID        `json:"id"`
 	EnvironmentID    pgtype.UUID        `json:"environment_id"`
 	Name             string             `json:"name"`
-	Status           string             `json:"status"`
 	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 }
 

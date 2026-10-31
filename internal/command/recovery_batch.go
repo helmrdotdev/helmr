@@ -19,8 +19,7 @@ type RecoveryPosition struct {
 }
 
 // RecoverBatch attempts one page of recovery candidates after the position:
-// Commands whose writer was lost and Commands whose Computer holds a revoked
-// Secret binding. Every candidate is compared again under its immutable
+// Commands whose writer was lost. Every candidate is compared again under its immutable
 // Computer and lease locks. A failing candidate is reported and skipped, so a
 // persistently failing Command costs one attempt per pass instead of blocking
 // the Commands behind it. The returned position continues the pass; more is
@@ -31,8 +30,7 @@ func RecoverBatch(ctx context.Context, auditPolicy auditpolicy.Policy, database 
 	}
 	rows, err := database.Query(ctx, `SELECT c.environment_id,c.id,c.computer_id,c.revision,c.updated_at FROM commands c JOIN environments e ON e.id=c.environment_id
  LEFT JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(c.environment_id,c.computer_id,c.computer_lease_epoch)
- WHERE ((c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL AND (l.fenced_at IS NOT NULL OR (c.terminal_at IS NULL AND (l.status='lost' OR l.expires_at<=clock_timestamp()))))
- OR (c.terminal_at IS NULL AND c.cancel_requested_at IS NULL AND EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id) WHERE b.environment_id=c.environment_id AND b.computer_id=c.computer_id AND s.status='revoked')))
+ WHERE c.computer_lease_epoch IS NOT NULL AND c.process_reconciled_at IS NULL AND (l.fenced_at IS NOT NULL OR (c.terminal_at IS NULL AND (l.status='lost' OR l.expires_at<=clock_timestamp())))
  AND (c.updated_at,c.id)>($2::timestamptz,$3::uuid)
  ORDER BY c.updated_at,c.id LIMIT $1`, limit, after.UpdatedAt, after.ID)
 	if err != nil {

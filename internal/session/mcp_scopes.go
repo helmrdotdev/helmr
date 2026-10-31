@@ -51,7 +51,7 @@ func IssueMCPScope(ctx context.Context, pool db.TxBeginner, caller Caller, raw j
 		if authority.Generation != caller.Execution.AuthorityGeneration {
 			return ErrDenied
 		}
-		if err := executionPhysical(ctx, tx, caller.Execution, true, true); err != nil {
+		if err := executionPhysical(ctx, tx, caller.Execution, true); err != nil {
 			return err
 		}
 		var eligible bool

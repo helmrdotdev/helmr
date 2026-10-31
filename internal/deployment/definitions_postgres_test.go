@@ -169,7 +169,8 @@ func TestTemplateDefinitionRegistrationUsesStableScopedSecretReferences(t *testi
 	f := newDefinitionsFixture(t)
 	otherEnv, foreign, revoked, active, version := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO environments(id,org_id,project_id,slug,name,color_hex,max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at) SELECT $2,org_id,project_id,'other','Other','#112233',max_outstanding_admissions,max_causal_depth,max_resident_computers,max_cpu_millis,max_memory_bytes,max_reserved_storage_bytes,preparation_timeout_ms,admission_rate_per_second,admission_burst,admission_tokens,admission_refilled_at FROM environments WHERE id=$1;
- INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($3,$2,'FOREIGN_TOKEN','revoked',clock_timestamp()),($4,$1,'OLD_TOKEN','revoked',clock_timestamp());
+ INSERT INTO secrets(id,environment_id,name,current_version_id,revoked_at) VALUES($3,$2,'FOREIGN_TOKEN',$3,clock_timestamp()),($4,$1,'OLD_TOKEN',$4,clock_timestamp());
+ INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($3,$3,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex')),($4,$4,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'));
  INSERT INTO secrets(id,environment_id,name,current_version_id) VALUES($5,$1,'TOKEN',$6);
  INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($6,$5,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'));`, pgx.QueryExecModeSimpleProtocol, f.env, otherEnv, foreign, revoked, active, version); err != nil {
 		t.Fatal(err)

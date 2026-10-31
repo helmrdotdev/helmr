@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"uuid"
@@ -240,7 +241,17 @@ func sessionControlOperation(operation auth.Permission) bool {
 }
 
 func failQueuedPermission(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session uuid.UUID) error {
-	rows, err := tx.Query(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp(),error_code='permission_revoked',error_message=$3 WHERE environment_id=$1 AND session_id=$2 AND status='queued' RETURNING id`, env, session, []byte("Permission was revoked before execution"))
+	return failQueuedTurns(ctx, auditPolicy, tx, env, session, "permission_revoked", "Permission was revoked before execution")
+}
+
+// failQueuedSecretUnavailable settles queued input that can never start because
+// the Session's Computer has a revoked raw Secret binding.
+func failQueuedSecretUnavailable(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session uuid.UUID) error {
+	return failQueuedTurns(ctx, auditPolicy, tx, env, session, "secret_unavailable", "A raw Secret binding on this Computer is revoked; rotate the Secret to start new work")
+}
+
+func failQueuedTurns(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session uuid.UUID, code, message string) error {
+	rows, err := tx.Query(ctx, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp(),error_code=$4,error_message=$3 WHERE environment_id=$1 AND session_id=$2 AND status='queued' RETURNING id`, env, session, []byte(message), code)
 	if err != nil {
 		return err
 	}
@@ -252,7 +263,11 @@ func failQueuedPermission(ctx context.Context, auditPolicy auditpolicy.Policy, t
 		if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, TurnID: id, Action: "turn.failed", Outcome: "failed", TargetKind: "turn", TargetID: id, Details: audit.FailureDetails{Reason: "permission_denied"}}); err != nil {
 			return err
 		}
-		if err = eventData(ctx, tx, env, session, id, "turn.failed", []byte(`{"code":"permission_revoked"}`)); err != nil {
+		data, err := json.Marshal(map[string]string{"code": code})
+		if err != nil {
+			return err
+		}
+		if err = eventData(ctx, tx, env, session, id, "turn.failed", data); err != nil {
 			return err
 		}
 	}

@@ -256,8 +256,35 @@ func TestPreparationExposureFailureReturnsNoMaterial(t *testing.T) {
 	}
 }
 
-func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
-	for _, kind := range []string{"queued", "running", "revoked"} {
+// Revoking a Secret does not stop a running build. Its exposed value stays
+// pinned; delivering material to it again needs the Secret to be active.
+func TestPreparationRevocationKeepsRunningBuild(t *testing.T) {
+	f := newPreparationFixture(t)
+	p := f.attach(t, f.waiter(t))
+	ref := f.claim(t, p)
+	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); err != nil {
+		t.Fatalf("revocation stopped build renewal: %v", err)
+	}
+	if _, _, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil {
+		t.Fatal(err)
+	}
+	var running bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='running' AND fenced_at IS NULL FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&running); err != nil || !running {
+		t.Fatalf("revocation failed the running build: %v %v", running, err)
+	}
+	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) {
+		t.Fatalf("revoked material delivered again: %v", err)
+	}
+}
+
+func TestPreparationDeadlineKeepsPhysicalBlocker(t *testing.T) {
+	for _, kind := range []string{"queued", "running"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newPreparationFixture(t)
 			waiter := f.waiter(t)
@@ -266,24 +293,9 @@ func TestPreparationDeadlineAndRevocationKeepPhysicalBlocker(t *testing.T) {
 			if kind != "queued" {
 				ref = f.claim(t, p)
 			}
-			if kind == "revoked" {
-				if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke"); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := computer.RenewImageBuild(t.Context(), f.pool, *f.host(), ref); !errors.Is(err, computer.ErrDenied) {
-					t.Fatalf("revoked renewal: %v", err)
-				}
-				if err := dispatch.ReconcileImageBuildRevocation(t.Context(), f.pool, f.env, p.ID); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
-				if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, p.ID); err != nil {
-					t.Fatal(err)
-				}
+			dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_builds SET deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.env, p.ID)
+			if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, p.ID); err != nil {
+				t.Fatal(err)
 			}
 			var state string
 			var fenced bool
@@ -393,25 +405,6 @@ func TestPreparationWaiterDeadlineFailsOnlyPendingWorkAndSealsSessions(t *testin
 		t.Fatalf("duplicate events=%d: %v", events, err)
 	}
 }
-func TestPreparationLifecycleConvergesRevocationWithoutGuestConnection(t *testing.T) {
-	f := newPreparationFixture(t)
-	p := f.attach(t, f.waiter(t))
-	ref := f.claim(t, p)
-	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke"); err != nil {
-		t.Fatal(err)
-	}
-	if _, more, err := dispatch.ReconcileImageBuildLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, dispatch.ImageBuildLifecyclePosition{}); err != nil || more {
-		t.Fatalf("lifecycle more=%v: %v", more, err)
-	}
-	var code string
-	if err := f.pool.QueryRow(t.Context(), `SELECT error_code FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, p.ID).Scan(&code); err != nil || code != "secret_revoked" {
-		t.Fatalf("code=%s: %v", code, err)
-	}
-}
-
 func TestPreparationUnclaimedExecutorOperationsAreDenied(t *testing.T) {
 	f := newPreparationFixture(t)
 	p := f.attach(t, f.waiter(t))
@@ -614,9 +607,6 @@ func TestPreparationKnownAuthorityLossDoesNotAttachFreshDemand(t *testing.T) {
 					t.Fatal(err)
 				}
 			} else {
-				if err := dispatch.ReconcileImageBuildRevocation(t.Context(), f.pool, f.env, p.ID); err != nil {
-					t.Fatal(err)
-				}
 				if err := computer.ObserveImageBuildStopped(t.Context(), f.pool, host, preparationIdentity(ref)); err != nil {
 					t.Fatal(err)
 				}

@@ -43,8 +43,6 @@ const imageBuildProxyAuthority = `WITH authority AS (
  AND p.status='running' AND p.fenced_at IS NULL AND p.logical_bytes IS NULL
  AND p.deadline_at>statement_timestamp() AND p.executor_expires_at>statement_timestamp()
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.allocation_id=p.allocation_id)
- AND NOT EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
-   WHERE b.environment_id=p.environment_id AND b.image_spec_id=p.image_spec_id AND s.status<>'active')
 ) `
 
 type ImageBuildProxyTrust struct {
@@ -82,9 +80,12 @@ func CaptureImageBuildProxyTrust(ctx context.Context, database db.DBTX, host wor
 	return result, nil
 }
 
-// CaptureImageBuildProtectedSecrets selects only already exposed versions.
-// Origin, current revocation, complete selector coverage and expiry remain checked
-// for every request, even when the host reuses a previously issued TLS leaf.
+// CaptureImageBuildProtectedSecrets serves each Secret's current version once
+// the build's exposure is committed; the exposure stays the record of what the
+// image was built against, so rotation still makes the image stale. Origin,
+// each requested Secret's revocation, complete selector coverage and expiry are
+// checked for every request, even when the host reuses a previously issued TLS
+// leaf. Revoking one Secret never affects requests that need only other Secrets.
 func CaptureImageBuildProtectedSecrets(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID, origin string, selectors []string) ([]secret.ProtectedCapture, error) {
 	canonical, err := secretbinding.CanonicalOrigin(origin)
 	if err != nil || canonical != origin {
@@ -93,30 +94,43 @@ func CaptureImageBuildProtectedSecrets(ctx context.Context, database db.DBTX, ho
 	if err := secret.ValidateProtectedSelectors(selectors); err != nil {
 		return nil, ErrInvalidInput
 	}
-	rows, err := database.Query(ctx, imageBuildProxyAuthority+`SELECT b.placeholder,a.environment_id,b.secret_id,x.version_id,v.version,v.nonce,v.ciphertext,a.certificate,a.not_after,a.authorized_at,a.claims_current
+	rows, err := database.Query(ctx, imageBuildProxyAuthority+`SELECT b.placeholder,a.environment_id,b.secret_id,v.id,v.version,v.nonce,v.ciphertext,a.certificate,a.not_after,a.authorized_at,a.claims_current,s.revoked_at IS NOT NULL
  FROM authority a JOIN secret_bindings b ON b.environment_id=a.environment_id AND b.image_spec_id=a.image_spec_id
+ JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
  JOIN secret_exposures x ON x.environment_id=a.environment_id AND x.image_build_id=a.id AND x.secret_id=b.secret_id
- JOIN secret_versions v ON v.secret_id=x.secret_id AND v.id=x.version_id
+ JOIN secret_versions v ON v.secret_id=s.id AND v.id=s.current_version_id
  WHERE b.mode='protected' AND b.placeholder=ANY($7::text[]) AND $8=ANY(b.allowed_origins)
  ORDER BY b.placeholder`, instance, host.HostID, host.Epoch, host.GroupID, host.HostClaimVersion, host.GroupClaimVersion, selectors, origin)
 	if err != nil {
 		return nil, err
 	}
-	result, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (secret.ProtectedCapture, error) {
-		var result secret.ProtectedCapture
-		err := row.Scan(&result.Placeholder, &result.EnvironmentID, &result.SecretID, &result.VersionID, &result.Version, &result.Nonce, &result.Ciphertext, &result.Certificate, &result.NotAfter, &result.AuthorizedAt, &result.ClaimsCurrent)
-		return result, err
+	type candidate struct {
+		capture secret.ProtectedCapture
+		revoked bool
+	}
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (candidate, error) {
+		var c candidate
+		r := &c.capture
+		err := row.Scan(&r.Placeholder, &r.EnvironmentID, &r.SecretID, &r.VersionID, &r.Version, &r.Nonce, &r.Ciphertext, &r.Certificate, &r.NotAfter, &r.AuthorizedAt, &r.ClaimsCurrent, &c.revoked)
+		return c, err
 	})
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range result {
-		if !r.ClaimsCurrent {
+	result := make([]secret.ProtectedCapture, 0, len(candidates))
+	revoked := false
+	for _, c := range candidates {
+		if !c.capture.ClaimsCurrent {
 			return nil, workergroup.ErrStaleClaims
 		}
+		revoked = revoked || c.revoked
+		result = append(result, c.capture)
 	}
 	if len(result) != len(selectors) {
 		return nil, ErrDenied
+	}
+	if revoked {
+		return nil, secret.ErrProtectedRevoked
 	}
 	return result, nil
 }

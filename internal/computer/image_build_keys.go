@@ -47,7 +47,7 @@ type imageBuildKeyPin struct {
 
 // WriteKey creates or recovers this preparation's sole write key. Provider I/O
 // runs without SQL locks. Every result is reauthorized after I/O, including
-// revocation and expiry that occur while wrapping or unwrapping is in flight.
+// executor stop and expiry that occur while wrapping or unwrapping is in flight.
 func (b *ImageBuildKeyBroker) WriteKey(ctx context.Context, host workergroup.HostPrincipal, ref ImageBuildExecutor) (ImageBuildKey, error) {
 	pin, err := b.pin(ctx, host, ref, nil)
 	if err != nil {
@@ -99,9 +99,6 @@ func (b *ImageBuildKeyBroker) pin(ctx context.Context, host workergroup.HostPrin
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		if err := lockImageBuildSecretOwners(ctx, tx, ref); err != nil {
-			return err
-		}
 		if err := lockImageBuildExecutorOnHost(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
@@ -142,28 +139,4 @@ func (b *ImageBuildKeyBroker) pin(ctx context.Context, host workergroup.HostPrin
 		return imageBuildKeyPin{}, hideMissing(err)
 	}
 	return result, nil
-}
-
-// Secrets precede spec/attempt locks. Lock declared owners even before first
-// exposure so rotation/revocation cannot cross the deciding authorization check.
-func lockImageBuildSecretOwners(ctx context.Context, tx pgx.Tx, ref ImageBuildExecutor) error {
-	rows, err := tx.Query(ctx, `SELECT s.status FROM secrets s WHERE s.environment_id=$1 AND s.id IN (
- SELECT binding.secret_id FROM image_builds p
- JOIN secret_bindings binding ON (binding.environment_id,binding.image_spec_id)=(p.environment_id,p.image_spec_id)
- WHERE p.environment_id=$1 AND p.id=$2
- ) ORDER BY s.id FOR SHARE`, ref.EnvironmentID, ref.ImageBuildID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var status string
-		if err := rows.Scan(&status); err != nil {
-			return err
-		}
-		if status != "active" {
-			return ErrDenied
-		}
-	}
-	return rows.Err()
 }

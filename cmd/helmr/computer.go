@@ -332,7 +332,7 @@ func (e exitCodeError) Error() string {
 }
 
 func computerListCommand() *cobra.Command {
-	var project, environment, key, cursor string
+	var project, environment, key, secretName, cursor string
 	var limit int32
 	var jsonOutput bool
 	cmd := &cobra.Command{Use: "list", Short: "List Computers.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
@@ -343,7 +343,7 @@ func computerListCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		query := client.ComputerListOptions{Cursor: cursor, Limit: limit}
+		query := client.ComputerListOptions{Secret: secretName, Cursor: cursor, Limit: limit}
 		if cmd.Flags().Changed("key") {
 			query.Key = &key
 		}
@@ -355,7 +355,11 @@ func computerListCommand() *cobra.Command {
 			return writeJSON(cmd.OutOrStdout(), page)
 		}
 		for _, item := range page.Computers {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n", item.ID, item.DefinitionID, item.Status, item.Residency, computerWaitReason(item.ExecutionWait))
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s", item.ID, item.DefinitionID, item.Status, item.Residency, computerWaitReason(item.ExecutionWait))
+			if secretName != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "\t%s", computerSecretExposure(item.SecretExposure))
+			}
+			fmt.Fprintln(cmd.OutOrStdout())
 		}
 		if page.NextCursor != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "next_cursor: %s\n", page.NextCursor)
@@ -364,10 +368,19 @@ func computerListCommand() *cobra.Command {
 	}}
 	addScopeFlags(cmd, &project, &environment)
 	cmd.Flags().StringVar(&key, "key", "", "Find the Computer with this exact key.")
+	cmd.Flags().StringVar(&secretName, "secret", "", "List non-deleted Computers that received a raw value of this Secret, directly or through their image.")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum items (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON page.")
 	return cmd
+}
+
+// An image-derived exposure means the Computer may hold the value.
+func computerSecretExposure(exposure api.ComputerSecretExposure) string {
+	if exposure == api.ComputerSecretExposureImage {
+		return "may hold (image)"
+	}
+	return string(exposure)
 }
 
 func computerUsageCommand(kind string) *cobra.Command {

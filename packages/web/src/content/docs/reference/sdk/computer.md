@@ -235,9 +235,19 @@ interface ComputerCreateRequest {
 `create` uses the current Deployment. `template` is the identifier declared in `template({ id, ... })`. `key` is an optional immutable lookup value; it does not make creation
 get-or-create. `deleteAfterUnused` overrides the definition.
 
-`ComputerListQuery` is either `{ cursor?, limit? }` or an exact lookup
-`{ key }`, which does not accept `cursor` or `limit`. `ComputerListItem` is a
+`ComputerListQuery` is either `{ secret?, cursor?, limit? }` or an exact lookup
+`{ key }`, which does not accept `secret`, `cursor` or `limit`. `ComputerListItem` is a
 `Computer` without `secrets`.
+
+`secret` lists only non-deleted Computers that received a raw value of that
+Secret. Each item then has `secretExposure`: `"received"` when a process or
+Command on the Computer received the value directly, or `"image"` when its image
+was prepared with the value, so the Computer may hold it. Use it after revoking
+or rotating a Secret to find the raw copies that stay on Computers.
+
+```ts
+const holders = await client.computers.list({ secret: "DATABASE_PASSWORD" })
+```
 
 ### `ComputerRef`
 
@@ -367,6 +377,6 @@ Agent code that needs to run local processes uses ordinary child processes; a
 `executionWait` describes an observed wait for accepted runnable work. `scheduling`
 means placement is pending, `environment_limit` means the Environment's execution
 limit prevents admission, and `saving` means work is waiting for a save or
-checkpoint transition. Held or revoked work is not reported as waiting for
+checkpoint transition. Held work is not reported as waiting for
 capacity. `null` does not promise guest readiness; use residency and errors too.
 The HTTP field is `execution_wait`. Existing polling refreshes this observation.

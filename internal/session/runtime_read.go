@@ -90,7 +90,6 @@ func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, e Execution, ses
       WHERE s.environment_id=$1 AND s.id=$2 AND t.id=$3 AND t.status='queued' AND s.status IN ('open','closing')
         AND target.id<>own.computer_id
         AND target.preparation_failed_at IS NULL AND target.integrity_fault_at IS NULL AND target.deleted_at IS NULL
-        AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=$1 AND revoked.computer_id=target.id)
         AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=target.id AND l.fenced_at IS NULL)
         AND NOT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))`, e.EnvironmentID, session, turn, e.SessionID, e.ProcessEpoch).Scan(&targetCPU, &targetMemory, &ownCPU, &ownMemory, &maxResident, &maxCPU, &maxMemory)
 	if errors.Is(err, pgx.ErrNoRows) {

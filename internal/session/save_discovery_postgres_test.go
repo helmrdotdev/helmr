@@ -256,31 +256,6 @@ func TestBackgroundSaveRequiresExactLiveAuthority(t *testing.T) {
 		})
 	}
 }
-func TestBackgroundSaveDeclinesRevokedImage(t *testing.T) {
-	for _, pending := range []bool{false, true} {
-		p := preparationResidentImage(t)
-		f := p.f.fixture
-		var expected uuid.UUID
-		if pending {
-			_, save := f.finalize(t, "pending")
-			expected = save.ID
-		}
-		if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, p.f.secretID, "revoke"); err != nil {
-			t.Fatal(err)
-		}
-		save, err := computer.NextSave(t.Context(), f.pool, *f.host(), saveIdentity(f), true, true, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if pending {
-			if save == nil || save.ID != expected {
-				t.Fatalf("pending lost: %+v", save)
-			}
-		} else if save != nil {
-			t.Fatalf("revoked optional: %+v", save)
-		}
-	}
-}
 func TestBackgroundSaveDiscoveryDoesNotLockComputerUntilDue(t *testing.T) {
 	f := newFixture(t)
 	tx, err := f.pool.Begin(t.Context())

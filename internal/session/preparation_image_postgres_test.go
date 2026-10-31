@@ -321,11 +321,10 @@ func TestPreparationLifecycleReplacesThenPinsOriginalDemand(t *testing.T) {
 	if err = p.f.pool.QueryRow(t.Context(), `SELECT c.image_build_id,i.image_build_id,c.preparation_deadline_at FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id) WHERE c.environment_id=$1 AND c.id=$2`, p.f.env, computerID).Scan(&attached, &producer, &retained); err != nil || attached != original.ID || producer != next.ID || !retained.Equal(deadline) {
 		t.Fatalf("lineage/deadline: %v %v %v %v", attached, producer, retained, err)
 	}
-	if _, err = p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, "revoke"); err != nil {
-		t.Fatal(err)
-	}
-	var revoked bool
-	if err = p.f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, p.f.env, computerID).Scan(&revoked); err != nil || !revoked {
+	// The successor image's exposure keeps the Computer in the raw-value inventory.
+	var exposed bool
+	if err = p.f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
+ JOIN secret_exposures x ON (x.environment_id,x.image_build_id)=(i.environment_id,i.image_build_id) WHERE c.environment_id=$1 AND c.id=$2 AND x.secret_id=$3)`, p.f.env, computerID, p.f.secretID).Scan(&exposed); err != nil || !exposed {
 		t.Fatalf("successor lineage lost: %v", err)
 	}
 }
@@ -357,9 +356,6 @@ func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 	if err := p.f.pool.QueryRow(t.Context(), `SELECT id FROM computers WHERE environment_id=$1 AND image_build_id=$2`, p.f.env, other.ref.ImageBuildID).Scan(&otherComputer); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, "revoke"); err != nil {
-		t.Fatal(err)
-	}
 	tx, err := p.f.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -374,11 +370,8 @@ func TestPreparationLifecycleIsolatesBlockedImage(t *testing.T) {
 	if _, _, err = dispatch.ReconcileImageBuildLifecycle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, p.f.pool, dispatch.ImageBuildLifecyclePosition{}); err == nil {
 		t.Fatal("blocked image did not report timeout")
 	}
-	var pinned, stopping bool
+	var pinned bool
 	if err = p.f.pool.QueryRow(ctx, `SELECT image_id IS NOT NULL FROM computers WHERE environment_id=$1 AND id=$2`, p.f.env, otherComputer).Scan(&pinned); err != nil || !pinned {
 		t.Fatalf("independent image starved: %v", err)
-	}
-	if err = p.f.pool.QueryRow(ctx, `SELECT status='stopping' AND fenced_at IS NULL FROM session_processes WHERE environment_id=$1 AND session_id=$2`, p.f.env, p.f.session).Scan(&stopping); err != nil || !stopping {
-		t.Fatalf("revocation starved: %v", err)
 	}
 }

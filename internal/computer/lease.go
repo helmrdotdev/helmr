@@ -43,7 +43,7 @@ func RenewLease(ctx context.Context, pool db.TxBeginner, host workergroup.HostPr
  WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND allocation_id=$4 AND worker_host_id=$5 AND worker_epoch=$6
  AND status IN ('active','acquiring','releasing') AND fenced_at IS NULL AND expires_at>clock_timestamp()
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=$1 AND c.id=$2 AND c.execution_deadline_at<=clock_timestamp())
- AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) RETURNING expires_at`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&expires)
+ RETURNING expires_at`, identity.EnvironmentID, identity.ComputerID, identity.Epoch, identity.InstanceID, host.HostID, host.Epoch).Scan(&expires)
 	})
 	if err != nil {
 		return time.Time{}, hideMissing(err)
@@ -69,7 +69,7 @@ func CurrentLease(ctx context.Context, tx pgx.Tx, host workergroup.HostPrincipal
 
 func DispatchAvailable(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
 	var sealed bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) OR EXISTS(SELECT 1 FROM checkpoints WHERE environment_id=$1 AND computer_id=$2 AND (status IN ('capturing','sealed','ready','restoring','aborting') OR (status='consumed' AND controls_reconciled_at IS NULL)))`, env, computer).Scan(&sealed)
+	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM checkpoints WHERE environment_id=$1 AND computer_id=$2 AND (status IN ('capturing','sealed','ready','restoring','aborting') OR (status='consumed' AND controls_reconciled_at IS NULL)))`, env, computer).Scan(&sealed)
 	if err != nil {
 		return err
 	}

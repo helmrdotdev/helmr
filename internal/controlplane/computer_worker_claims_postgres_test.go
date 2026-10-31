@@ -256,12 +256,20 @@ func TestSecretProxySeparatesStaleClaimsFromRevocation(t *testing.T) {
 			}
 			for _, resolve := range []bool{false, true} {
 				status := test.status
-
+				// Revocation leaves transport preparation intact and refuses only
+				// the resolution that needs the revoked Secret.
+				if test.sql == "" && !resolve {
+					status = http.StatusOK
+				}
 				response := f.invoke(t.Context(), resolve)
 				if response.Code != status {
 					t.Fatalf("resolve=%v status=%d want=%d body=%s", resolve, response.Code, status, response.Body.String())
 				}
-				if status == http.StatusConflict && !bytes.Contains(response.Body.Bytes(), []byte(secret.ErrDeliveryUnavailable.Error())) {
+				want := secret.ErrDeliveryUnavailable.Error()
+				if test.sql == "" {
+					want = `"code":"secret_revoked"`
+				}
+				if status == http.StatusConflict && !bytes.Contains(response.Body.Bytes(), []byte(want)) {
 					t.Fatalf("resolve=%v conflict body=%s", resolve, response.Body.String())
 				}
 			}

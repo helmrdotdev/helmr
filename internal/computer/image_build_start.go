@@ -31,9 +31,6 @@ func ReadImageBuildStart(ctx context.Context, database db.TxBeginner, host worke
 		if err := LockHost(ctx, tx, host); err != nil {
 			return err
 		}
-		if err := lockImageBuildSecretOwners(ctx, tx, ref); err != nil {
-			return err
-		}
 		if err := lockImageBuildExecutorOnHost(ctx, tx, host, ref, true); err != nil {
 			return err
 		}
@@ -75,9 +72,6 @@ func StartImageBuild(ctx context.Context, database db.TxBeginner, host workergro
 	}
 	return hideMissing(db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if err := LockHost(ctx, tx, host); err != nil {
-			return err
-		}
-		if err := lockImageBuildSecretOwners(ctx, tx, ref); err != nil {
 			return err
 		}
 		if err := lockImageBuildExecutorOnHost(ctx, tx, host, ref, true); err != nil {

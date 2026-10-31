@@ -149,10 +149,11 @@ printf '%s' "$NEW_GITHUB_TOKEN" | helmr secret rotate GITHUB_TOKEN \
   --idempotency-key secret:github-token:rotate:2
 ```
 
-Protected bindings use the new value on their next request; you do not need to
-recreate Computers. Raw and file values are delivered when work starts, so
-processes that are already running keep the old value. A new Computer prepared
-with this Secret in `prepareSecrets` gets a freshly prepared image.
+The Secret keeps its identifier and bindings. Protected bindings use the new
+value on their next request; you do not need to recreate Computers or restart
+work. Raw and file values are delivered when work starts, so processes that are
+already running keep the old value. A new Computer prepared with this Secret in
+`prepareSecrets` gets a freshly prepared image.
 
 ## Revoke the Secret
 
@@ -162,11 +163,24 @@ helmr secret revoke GITHUB_TOKEN --yes \
   --idempotency-key secret:github-token:revoke
 ```
 
-Revocation is permanent and reserves this identifier in the Environment. Create
-a new Secret with a different ID if you need a replacement. It stops further use
-of the Secret. It cannot erase raw or file copies
-already delivered to a Computer; revoke the credential at its provider as well if
-it may have been exposed.
+Revocation stops Helmr from providing the Secret. Protected requests that need
+it fail until you rotate it, and new Session processes and Commands that need its
+raw value are refused. Running work continues, and raw or file copies already
+delivered stay on their Computers.
+
+Revoke the credential at its provider; that is the containment. Then list the
+Computers that received a raw value and delete the ones you no longer trust:
+
+```sh
+helmr computer list --secret GITHUB_TOKEN --project demo --env staging
+```
+
+Rows marked `may hold (image)` received the value through image preparation. In
+the Console, open the Secret's Computers link for the same list.
+
+To use the Secret again, rotate it with a new value. The same Secret becomes
+active with its existing bindings; creating a Secret with the revoked name is
+refused.
 
 Keep credentials out of Agent input, results, logs, image steps and source.
 Helmr does not refresh OAuth tokens or save a tool's credential changes back to a

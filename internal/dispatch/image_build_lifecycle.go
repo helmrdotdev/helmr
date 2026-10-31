@@ -63,43 +63,6 @@ func ExpireImageBuild(ctx context.Context, pool db.TxBeginner, env, id uuid.UUID
 	}))
 }
 
-// ReconcileImageBuildRevocation closes logical execution permission. It does
-// not release the unfenced-writer index or claim that the host has stopped.
-func ReconcileImageBuildRevocation(ctx context.Context, pool db.TxBeginner, env, id uuid.UUID) error {
-	return hideMissing(db.RunTx(ctx, pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout='1s'`); err != nil {
-			return err
-		}
-		p, err := computer.ReadImageBuild(ctx, tx, env, id)
-		if err != nil {
-			return err
-		}
-		// Lock exposures' Secrets before the spec. The attempt's exposure set can
-		// only grow under these same Secrets and spec locks, then is immutable.
-		rows, err := tx.Query(ctx, `SELECT s.id FROM secrets s JOIN secret_exposures x ON (x.environment_id,x.secret_id)=(s.environment_id,s.id)
-   WHERE x.environment_id=$1 AND x.image_build_id=$2 ORDER BY s.id FOR SHARE OF s`, env, id)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var locked uuid.UUID
-			if err = rows.Scan(&locked); err != nil {
-				rows.Close()
-				return err
-			}
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
-		if err = computer.LockImageSpec(ctx, tx, env, p.SpecID); err != nil {
-			return err
-		}
-		return computer.FailRevokedImageBuild(ctx, tx, env, id)
-	}))
-}
-
 type stoppedImageBuild struct {
 	env, spec, id, instance, host uuid.UUID
 	hostEpoch, executorEpoch      int64
@@ -194,8 +157,8 @@ type ImageBuildLifecyclePosition struct {
 	kind            string
 }
 
-// RunImageBuildLifecycle owns due waiter settlement, attempt expiry and revoked
-// exposure reconciliation and periodic image refresh independently of guest connectivity.
+// RunImageBuildLifecycle owns due waiter settlement, attempt expiry and
+// periodic image refresh independently of guest connectivity.
 func RunImageBuildLifecycle(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxDB, log *slog.Logger) error {
 	if database == nil || log == nil {
 		return errors.New("preparation lifecycle database and logger are required")
@@ -233,14 +196,10 @@ func ReconcileImageBuildLifecycle(ctx context.Context, auditPolicy auditpolicy.P
   SELECT c.environment_id,c.id,'image' FROM computers c JOIN image_builds p ON (p.environment_id,p.id)=(c.environment_id,c.image_build_id)
    WHERE c.initial_root_digest IS NULL AND p.status='succeeded' AND c.preparation_failed_at IS NULL AND c.deleted_at IS NULL AND c.preparation_deadline_at>statement_timestamp()
   UNION
-  SELECT revoked.environment_id,revoked.computer_id,'secret_revocation' FROM (`+db.RevokedComputerSecretsSQL+`) revoked
-   JOIN session_processes p ON (p.environment_id,p.computer_id)=(revoked.environment_id,revoked.computer_id)
-   WHERE p.fenced_at IS NULL AND (p.status IN ('starting','ready') OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=p.environment_id AND t.session_id=p.session_id AND t.process_epoch=p.epoch AND t.status='running'))
-  UNION
   SELECT s.environment_id,s.id,'refresh' FROM image_specs s JOIN environments e ON e.id=s.environment_id
    WHERE s.next_refresh_at<=statement_timestamp()
    AND NOT EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets x ON (x.environment_id,x.id)=(b.environment_id,b.secret_id)
-     WHERE b.environment_id=s.environment_id AND b.image_spec_id=s.id AND x.status='revoked')
+     WHERE b.environment_id=s.environment_id AND b.image_spec_id=s.id AND x.revoked_at IS NOT NULL)
    AND NOT EXISTS(SELECT 1 FROM image_builds p WHERE p.environment_id=s.environment_id AND p.image_spec_id=s.id
      AND p.status NOT IN ('queued','running') AND p.worker_host_id IS NOT NULL AND p.fenced_at IS NULL)
   UNION
@@ -256,10 +215,6 @@ func ReconcileImageBuildLifecycle(ctx context.Context, auditPolicy auditpolicy.P
   UNION
   SELECT p.environment_id,p.id,'attempt' FROM worker_hosts h JOIN image_builds p ON p.worker_host_id=h.id
    WHERE p.status='running' AND (h.current_epoch IS DISTINCT FROM p.worker_epoch OR h.status NOT IN ('active','draining'))
-  UNION
-  SELECT p.environment_id,p.id,'revocation' FROM secrets s JOIN secret_exposures x ON (x.environment_id,x.secret_id)=(s.environment_id,s.id)
-   JOIN image_builds p ON (p.environment_id,p.id)=(x.environment_id,x.image_build_id)
-   WHERE s.status='revoked' AND p.status IN ('queued','running')
  ) SELECT environment_id,id,kind FROM candidates WHERE (environment_id,id,kind)>($1,$2,$3) ORDER BY environment_id,id,kind LIMIT 100`, after.environment, after.id, after.kind)
 	if err != nil {
 		return after, false, err
@@ -294,10 +249,6 @@ func ReconcileImageBuildLifecycle(ctx context.Context, auditPolicy auditpolicy.P
 			err = reconcileUnattachedComputer(ctx, database, candidate.environment, candidate.id)
 		case "image":
 			err = reconcileComputerImage(ctx, database, candidate.environment, candidate.id)
-		case "secret_revocation":
-			err = session.ReconcileComputerSecretRevocation(ctx, auditPolicy, database, candidate.environment, candidate.id)
-		case "revocation":
-			err = ReconcileImageBuildRevocation(ctx, database, candidate.environment, candidate.id)
 		case "refresh":
 			err = reconcileImageRefresh(ctx, database, candidate.environment, candidate.id)
 		}

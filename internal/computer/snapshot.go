@@ -75,7 +75,21 @@ type ListItem struct {
 	LastActivityAt      time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+	// SecretExposure is set only when listing by Secret.
+	SecretExposure SecretExposure
 }
+
+// SecretExposure says how a listed Computer came to hold a raw Secret value.
+type SecretExposure string
+
+const (
+	// SecretExposureReceived means a process or Command on the Computer
+	// received the raw value directly.
+	SecretExposureReceived SecretExposure = "received"
+	// SecretExposureImage means the Computer's image was prepared with the raw
+	// value, so the Computer may hold it.
+	SecretExposureImage SecretExposure = "image"
+)
 
 // ListPosition is the last item of a previous list page.
 type ListPosition struct {
@@ -83,11 +97,32 @@ type ListPosition struct {
 	ID        uuid.UUID
 }
 
-// ListPage selects up to Limit Computers after an optional position.
+// ListPage selects up to Limit Computers after an optional position. A
+// non-empty Secret lists only non-deleted Computers that received a raw value
+// of that Secret directly or through their image.
 type ListPage struct {
-	Limit int32
-	After *ListPosition
+	Limit  int32
+	After  *ListPosition
+	Secret string
 }
+
+// secretExposedComputersSQL relates Computers to raw deliveries of the Secret
+// named $9 in Environment $3. Session and Command exposures are recorded only
+// for raw bindings; image preparation records every binding, so image lineage
+// keeps only raw ones.
+const secretExposedComputersSQL = `WITH target AS (SELECT id FROM secrets WHERE environment_id=$3 AND name=$9),
+exposed AS (
+ SELECT p.computer_id,true AS direct FROM target t JOIN secret_exposures x ON x.environment_id=$3 AND x.secret_id=t.id
+ JOIN session_processes p ON (p.environment_id,p.session_id,p.epoch)=(x.environment_id,x.session_id,x.process_epoch)
+ UNION
+ SELECT cmd.computer_id,true FROM target t JOIN secret_exposures x ON x.environment_id=$3 AND x.secret_id=t.id
+ JOIN commands cmd ON (cmd.environment_id,cmd.id)=(x.environment_id,x.command_id)
+ UNION
+ SELECT held.id,false FROM target t JOIN secret_exposures x ON x.environment_id=$3 AND x.secret_id=t.id
+ JOIN images i ON (i.environment_id,i.image_build_id)=(x.environment_id,x.image_build_id)
+ JOIN computers held ON (held.environment_id,held.image_id)=(i.environment_id,i.id)
+ WHERE EXISTS(SELECT 1 FROM secret_bindings b WHERE (b.environment_id,b.image_spec_id,b.secret_id)=(i.environment_id,i.image_spec_id,x.secret_id) AND b.mode='raw')
+) `
 
 // Listing is one page of Computers; More reports that a later page exists.
 type Listing struct {
@@ -106,7 +141,6 @@ const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t
  c.last_activity_at,c.created_at,c.updated_at,c.delete_after_unused_ms,c.unused_since,
  CASE WHEN c.deleted_at IS NOT NULL OR c.integrity_fault_at IS NOT NULL OR c.preparation_failed_at IS NOT NULL
  OR c.initial_root_id IS NULL OR c.image_id IS NULL OR l.status IN ('lost','acquiring') OR cp.status='restoring'
- OR EXISTS(SELECT 1 FROM (` + db.RevokedComputerSecretsSQL + `) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  OR NOT (EXISTS(SELECT 1 FROM computer_controls control WHERE control.environment_id=c.environment_id AND control.computer_id=c.id AND control.kind='wake' AND control.status='accepted')
  OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending')
  OR EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND ` + db.NoSessionHoldsSQL + `
@@ -126,9 +160,9 @@ const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t
  LEFT JOIN computer_leases source ON cp.status='ready' AND (source.environment_id,source.computer_id,source.epoch)=(cp.environment_id,cp.computer_id,cp.source_lease_epoch)
  WHERE e.org_id=$1 AND e.project_id=$2 AND c.environment_id=$3`
 
-func scanComputer(row pgx.Row) (ListItem, error) {
+func scanComputer(row pgx.Row, extra ...any) (ListItem, error) {
 	var item ListItem
-	err := row.Scan(&item.ID, &item.Key, &item.DefinitionKey, &item.DeploymentID, &item.Status, &item.Residency, &item.Error, &item.LastActivityAt, &item.CreatedAt, &item.UpdatedAt, &item.DeleteAfterUnusedMs, &item.UnusedSince, &item.waitCandidate, &item.waitCPU, &item.waitMemory, &item.ExecutionControl)
+	err := row.Scan(append([]any{&item.ID, &item.Key, &item.DefinitionKey, &item.DeploymentID, &item.Status, &item.Residency, &item.Error, &item.LastActivityAt, &item.CreatedAt, &item.UpdatedAt, &item.DeleteAfterUnusedMs, &item.UnusedSince, &item.waitCandidate, &item.waitCPU, &item.waitMemory, &item.ExecutionControl}, extra...)...)
 	item.LastActivityAt, item.CreatedAt, item.UpdatedAt = item.LastActivityAt.UTC(), item.CreatedAt.UTC(), item.UpdatedAt.UTC()
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
@@ -202,11 +236,26 @@ func list(ctx context.Context, database db.DBTX, scope Scope, page ListPage, ses
 	if page.After != nil {
 		afterTime, afterID = page.After.CreatedAt, page.After.ID
 	}
-	rows, err := database.Query(ctx, computerProjection+` AND ($8::uuid='00000000-0000-0000-0000-000000000000' OR c.id IN (WITH RECURSIVE lineage AS (SELECT id,computer_id FROM sessions WHERE environment_id=$3 AND id=$8 UNION ALL SELECT s.id,s.computer_id FROM sessions s JOIN lineage l ON s.parent_session_id=l.id WHERE s.environment_id=$3) SELECT computer_id FROM lineage UNION SELECT computer_id FROM sessions WHERE environment_id=$3 AND parent_session_id IS NULL AND requester_session_id=$8)) AND (NOT $4 OR (c.created_at,c.id)<($5,$6)) ORDER BY c.created_at DESC,c.id DESC LIMIT $7`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, page.After != nil, afterTime, afterID, page.Limit+1, session)
+	var secretName *string
+	if page.Secret != "" {
+		secretName = &page.Secret
+	}
+	rows, err := database.Query(ctx, secretExposedComputersSQL+`SELECT page.*,(SELECT bool_or(direct) FROM exposed WHERE exposed.computer_id::text=page.id) FROM (`+computerProjection+` AND ($9::text IS NULL OR (c.deleted_at IS NULL AND c.id IN (SELECT computer_id FROM exposed))) AND ($8::uuid='00000000-0000-0000-0000-000000000000' OR c.id IN (WITH RECURSIVE lineage AS (SELECT id,computer_id FROM sessions WHERE environment_id=$3 AND id=$8 UNION ALL SELECT s.id,s.computer_id FROM sessions s JOIN lineage l ON s.parent_session_id=l.id WHERE s.environment_id=$3) SELECT computer_id FROM lineage UNION SELECT computer_id FROM sessions WHERE environment_id=$3 AND parent_session_id IS NULL AND requester_session_id=$8)) AND (NOT $4 OR (c.created_at,c.id)<($5,$6)) ORDER BY c.created_at DESC,c.id DESC LIMIT $7) page ORDER BY page.created_at DESC,page.id DESC`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, page.After != nil, afterTime, afterID, page.Limit+1, session, secretName)
 	if err != nil {
 		return Listing{}, err
 	}
-	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ListItem, error) { return scanComputer(row) })
+	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (ListItem, error) {
+		var direct *bool
+		item, err := scanComputer(row, &direct)
+		switch {
+		case direct == nil:
+		case *direct:
+			item.SecretExposure = SecretExposureReceived
+		default:
+			item.SecretExposure = SecretExposureImage
+		}
+		return item, err
+	})
 	if err != nil {
 		return Listing{}, err
 	}

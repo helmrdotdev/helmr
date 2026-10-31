@@ -37,38 +37,3 @@ func TestCommandRecoveryDiscoverySkipsPendingProcessCleanup(t *testing.T) {
 		t.Fatalf("lost Command starved or falsely reconciled: %v %v %v", lost, unreconciled, err)
 	}
 }
-
-func TestSecretRevocationDiscoveryAdvancesPastStoppedCommands(t *testing.T) {
-	f := sessiontest.New(t)
-	secretID := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($1,$2,'TOKEN','revoked',clock_timestamp())`, secretID, f.Environment)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
-	for n := range 3 {
-		id := insertRecoveryCommand(t, f, f.Computer, false)
-		if n == 0 {
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE commands SET status='pending',computer_lease_epoch=NULL WHERE environment_id=$1 AND id=$2`, f.Environment, id)
-		}
-		position, _, err := command.RecoverBatch(t.Context(), auditpolicy.Policy{
-			RetentionSeconds: 3600,
-		}, f.Pool, command.RecoveryPosition{}, 1)
-		if err != nil || position.ID != id {
-			t.Fatalf("revocation discovery %d: position=%+v %v", n, position, err)
-		}
-		var status string
-		var terminal, reconciled bool
-		if err := f.Pool.QueryRow(t.Context(), `SELECT status,terminal_at IS NOT NULL,process_reconciled_at IS NOT NULL FROM commands WHERE environment_id=$1 AND id=$2`, f.Environment, id).Scan(&status, &terminal, &reconciled); err != nil {
-			t.Fatal(err)
-		}
-		if n == 0 {
-			if status != "failed" || !terminal {
-				t.Fatalf("pending revocation=%s %v", status, terminal)
-			}
-		} else if status != "stopping" || terminal || reconciled {
-			t.Fatalf("physical process falsely stopped=%s terminal=%v reconciled=%v", status, terminal, reconciled)
-		}
-	}
-	var live bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='active' AND fenced_at IS NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer).Scan(&live); err != nil || !live {
-		t.Fatalf("revocation changed physical lease: %v %v", live, err)
-	}
-}

@@ -19,7 +19,7 @@ func StartTemplateRefresh(ctx context.Context, tx pgx.Tx, env, spec, deployment 
 	var id uuid.UUID
 	err := tx.QueryRow(ctx, `SELECT p.id FROM image_builds p WHERE p.environment_id=$1 AND p.image_spec_id=$2 AND `+usableImageBuildSQL+`
  AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
- WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.status<>'active' OR s.current_version_id<>x.version_id))`, env, spec).Scan(&id)
+ WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.revoked_at IS NOT NULL OR s.current_version_id<>x.version_id))`, env, spec).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil(), ErrNotReady
 	}

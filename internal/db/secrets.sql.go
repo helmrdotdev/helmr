@@ -25,7 +25,7 @@ WITH secret AS (
         $3,
         $4
     )
-    RETURNING id, environment_id, name, status, current_version_id, created_at, updated_at, revoked_at
+    RETURNING id, environment_id, name, current_version_id, created_at, revoked_at
 ),
 version AS (
     INSERT INTO secret_versions (
@@ -44,7 +44,7 @@ version AS (
     FROM secret
     RETURNING secret_id
 )
-SELECT secret.id, secret.environment_id, secret.name, secret.status, secret.current_version_id, secret.created_at, secret.updated_at, secret.revoked_at
+SELECT secret.id, secret.environment_id, secret.name, secret.current_version_id, secret.created_at, secret.revoked_at
 FROM secret
 JOIN version ON version.secret_id = secret.id
 `
@@ -62,10 +62,8 @@ type CreateSecretRow struct {
 	ID               pgtype.UUID        `json:"id"`
 	EnvironmentID    pgtype.UUID        `json:"environment_id"`
 	Name             string             `json:"name"`
-	Status           string             `json:"status"`
 	CurrentVersionID pgtype.UUID        `json:"current_version_id"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 }
 
@@ -83,47 +81,15 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (Cre
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.Status,
 		&i.CurrentVersionID,
 		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.RevokedAt,
 	)
 	return i, err
 }
 
-const getCurrentSecretValue = `-- name: GetCurrentSecretValue :one
-SELECT secret_versions.id, secret_versions.secret_id, secret_versions.version, secret_versions.nonce, secret_versions.ciphertext, secret_versions.created_at
-FROM secrets
-JOIN secret_versions
-  ON secret_versions.secret_id = secrets.id
- AND secret_versions.id = secrets.current_version_id
-WHERE secrets.environment_id = $1
-  AND secrets.id = $2
-  AND secrets.status = 'active'
-`
-
-type GetCurrentSecretValueParams struct {
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SecretID      pgtype.UUID `json:"secret_id"`
-}
-
-func (q *Queries) GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecretValueParams) (SecretVersion, error) {
-	row := q.db.QueryRow(ctx, getCurrentSecretValue, arg.EnvironmentID, arg.SecretID)
-	var i SecretVersion
-	err := row.Scan(
-		&i.ID,
-		&i.SecretID,
-		&i.Version,
-		&i.Nonce,
-		&i.Ciphertext,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getSecret = `-- name: GetSecret :one
-SELECT secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.current_version_id, secrets.created_at, secrets.updated_at, secrets.revoked_at
+SELECT secrets.id, secrets.environment_id, secrets.name, secrets.current_version_id, secrets.created_at, secrets.revoked_at
 FROM secrets
 WHERE environment_id = $1
   AND id = $2
@@ -141,10 +107,8 @@ func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (Secret, e
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.Status,
 		&i.CurrentVersionID,
 		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.RevokedAt,
 	)
 	return i, err
@@ -155,21 +119,16 @@ SELECT
     secrets.id,
     secrets.environment_id,
     secrets.name,
-    secrets.status,
     secrets.created_at,
     CASE
-        WHEN latest.version > 1 THEN latest.created_at
+        WHEN current.version > 1 THEN current.created_at
         ELSE NULL::timestamptz
     END AS rotated_at,
     secrets.revoked_at
 FROM secrets
-LEFT JOIN LATERAL (
-    SELECT secret_versions.version, secret_versions.created_at
-    FROM secret_versions
-    WHERE secret_versions.secret_id = secrets.id
-    ORDER BY secret_versions.version DESC
-    LIMIT 1
-) AS latest ON true
+JOIN secret_versions AS current
+  ON current.secret_id = secrets.id
+ AND current.id = secrets.current_version_id
 WHERE secrets.environment_id = $1
   AND secrets.id = $2
 `
@@ -183,7 +142,6 @@ type GetSecretSnapshotRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Name          string             `json:"name"`
-	Status        string             `json:"status"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
@@ -196,7 +154,6 @@ func (q *Queries) GetSecretSnapshot(ctx context.Context, arg GetSecretSnapshotPa
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.Status,
 		&i.CreatedAt,
 		&i.RotatedAt,
 		&i.RevokedAt,
@@ -209,21 +166,16 @@ SELECT
     secrets.id,
     secrets.environment_id,
     secrets.name,
-    secrets.status,
     secrets.created_at,
     CASE
-        WHEN latest.version > 1 THEN latest.created_at
+        WHEN current.version > 1 THEN current.created_at
         ELSE NULL::timestamptz
     END AS rotated_at,
     secrets.revoked_at
 FROM secrets
-LEFT JOIN LATERAL (
-    SELECT secret_versions.version, secret_versions.created_at
-    FROM secret_versions
-    WHERE secret_versions.secret_id = secrets.id
-    ORDER BY secret_versions.version DESC
-    LIMIT 1
-) AS latest ON true
+JOIN secret_versions AS current
+  ON current.secret_id = secrets.id
+ AND current.id = secrets.current_version_id
 WHERE secrets.environment_id = $1
   AND secrets.name = $2
 `
@@ -237,7 +189,6 @@ type GetSecretSnapshotByNameRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Name          string             `json:"name"`
-	Status        string             `json:"status"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
@@ -250,7 +201,6 @@ func (q *Queries) GetSecretSnapshotByName(ctx context.Context, arg GetSecretSnap
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.Status,
 		&i.CreatedAt,
 		&i.RotatedAt,
 		&i.RevokedAt,
@@ -292,21 +242,16 @@ SELECT
     secrets.id,
     secrets.environment_id,
     secrets.name,
-    secrets.status,
     secrets.created_at,
     CASE
-        WHEN latest.version > 1 THEN latest.created_at
+        WHEN current.version > 1 THEN current.created_at
         ELSE NULL::timestamptz
     END AS rotated_at,
     secrets.revoked_at
 FROM secrets
-LEFT JOIN LATERAL (
-    SELECT secret_versions.version, secret_versions.created_at
-    FROM secret_versions
-    WHERE secret_versions.secret_id = secrets.id
-    ORDER BY secret_versions.version DESC
-    LIMIT 1
-) AS latest ON true
+JOIN secret_versions AS current
+  ON current.secret_id = secrets.id
+ AND current.id = secrets.current_version_id
 WHERE secrets.environment_id = $1
   AND (
       $2::text IS NULL
@@ -328,7 +273,6 @@ type ListSecretsRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Name          string             `json:"name"`
-	Status        string             `json:"status"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
@@ -352,7 +296,6 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 			&i.ID,
 			&i.EnvironmentID,
 			&i.Name,
-			&i.Status,
 			&i.CreatedAt,
 			&i.RotatedAt,
 			&i.RevokedAt,
@@ -369,15 +312,12 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 
 const revokeSecret = `-- name: RevokeSecret :one
 UPDATE secrets
-SET status = 'revoked',
-    current_version_id = NULL,
-    revoked_at = now(),
-    updated_at = now()
+SET revoked_at = now()
 WHERE environment_id = $1
   AND id = $2
-  AND status = 'active'
+  AND revoked_at IS NULL
   AND current_version_id = $3
-RETURNING id, environment_id, name, status, current_version_id, created_at, updated_at, revoked_at
+RETURNING id, environment_id, name, current_version_id, created_at, revoked_at
 `
 
 type RevokeSecretParams struct {
@@ -393,10 +333,8 @@ func (q *Queries) RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Sec
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.Status,
 		&i.CurrentVersionID,
 		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.RevokedAt,
 	)
 	return i, err
@@ -404,11 +342,10 @@ func (q *Queries) RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Sec
 
 const rotateSecret = `-- name: RotateSecret :one
 WITH locked AS (
-    SELECT id, environment_id, name, status, current_version_id, created_at, updated_at, revoked_at
+    SELECT id, environment_id, name, current_version_id, created_at, revoked_at
     FROM secrets
     WHERE secrets.environment_id = $1
       AND secrets.id = $2
-      AND secrets.status = 'active'
       AND secrets.current_version_id = $3
     FOR UPDATE
 ),
@@ -431,10 +368,10 @@ version AS (
 )
 UPDATE secrets
 SET current_version_id = version.id,
-    updated_at = now()
+    revoked_at = NULL
 FROM version
 WHERE secrets.id = version.secret_id
-RETURNING secrets.id, secrets.environment_id, secrets.name, secrets.status, secrets.current_version_id, secrets.created_at, secrets.updated_at, secrets.revoked_at
+RETURNING secrets.id, secrets.environment_id, secrets.name, secrets.current_version_id, secrets.created_at, secrets.revoked_at
 `
 
 type RotateSecretParams struct {
@@ -462,10 +399,8 @@ func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Sec
 		&i.ID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.Status,
 		&i.CurrentVersionID,
 		&i.CreatedAt,
-		&i.UpdatedAt,
 		&i.RevokedAt,
 	)
 	return i, err

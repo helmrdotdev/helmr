@@ -97,9 +97,6 @@ func (a *Allocator) DeliverImageBuild(ctx context.Context, host workergroup.Host
 		if err != nil {
 			return err
 		}
-		if err := computer.LockImageSpecSecrets(ctx, tx, env, p.SpecID); err != nil {
-			return err
-		}
 		if err := computer.LockImageSpec(ctx, tx, env, p.SpecID); err != nil {
 			return err
 		}
@@ -117,7 +114,7 @@ func (a *Allocator) DeliverImageBuild(ctx context.Context, host workergroup.Host
 		if !allocationBelongsToHost(r, host) || r.InstanceID != identity.InstanceID || r.Epoch != identity.Epoch || subtle.ConstantTimeCompare(r.CredentialDigest, expected[:]) != 1 {
 			return ErrDenied
 		}
-		if r.DeliveredAt, r.ExpiresAt, err = computer.DeliverImageBuild(ctx, tx, env, preparation, p.SpecID); err != nil {
+		if r.DeliveredAt, r.ExpiresAt, err = computer.DeliverImageBuild(ctx, tx, env, preparation); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrAllocationClosed
 			}
@@ -167,12 +164,6 @@ func (a *Allocator) DeliverLease(ctx context.Context, host workergroup.HostPrinc
 		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || subtle.ConstantTimeCompare(r.CredentialDigest, expected[:]) != 1 {
 			return ErrDenied
 		}
-		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
-			if errors.Is(err, computer.ErrDenied) {
-				return ErrAllocationClosed
-			}
-			return err
-		}
 		if r.DeliveredAt, r.ExpiresAt, err = computer.DeliverLease(ctx, tx, identity.EnvironmentID, identity.ComputerID, identity.Epoch); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrAllocationClosed
@@ -217,12 +208,6 @@ func ObserveFreshLeaseReady(ctx context.Context, database db.TxBeginner, host wo
 		}
 		if !allocationBelongsToHost(r.Allocation, host) || r.InstanceID != identity.InstanceID || r.Shape != shape || r.BaseVersion != base || (r.RestoredFrom != nil && !r.DiskOnlyRecovery) {
 			return ErrDenied
-		}
-		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
-			if errors.Is(err, computer.ErrDenied) {
-				return ErrAllocationClosed
-			}
-			return err
 		}
 		if r.FencedAt != nil || (r.Status != "acquiring" && r.Status != "active") {
 			return ErrAllocationClosed

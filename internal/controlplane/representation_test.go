@@ -12,7 +12,6 @@ func TestPublicLifecycleProjectionsRejectUnknownInternalValues(t *testing.T) {
 		project func() error
 	}{
 		{name: "worker", project: func() error { _, err := workerPublicStatus("future"); return err }},
-		{name: "secret", project: func() error { _, err := secretPublicStatus("future"); return err }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

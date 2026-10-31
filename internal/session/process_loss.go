@@ -9,7 +9,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -73,7 +72,7 @@ type ComputerLossInterruption struct {
 
 func loseProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, e Execution, physicalStopped bool, disposition ComputerLossDisposition, lossComputer uuid.UUID) error {
 	var recorded, terminal, fenced, neverStarted bool
-	if err := tx.QueryRow(ctx, `SELECT p.failure_recorded_at IS NOT NULL,s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id),p.fenced_at IS NOT NULL, p.status IN ('starting','stopping') AND p.attachment_sequence=0 AND p.failure_recorded_at IS NULL AND l.initialized_at IS NULL AND l.restored_from_save_id IS NULL
+	if err := tx.QueryRow(ctx, `SELECT p.failure_recorded_at IS NOT NULL,s.status IN ('closed','cancelled'),p.fenced_at IS NOT NULL, p.status IN ('starting','stopping') AND p.attachment_sequence=0 AND p.failure_recorded_at IS NULL AND l.initialized_at IS NULL AND l.restored_from_save_id IS NULL
  FROM session_processes p JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch) JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
  WHERE p.environment_id=$1 AND p.session_id=$2 AND p.epoch=$3 AND p.computer_lease_epoch=$4 FOR NO KEY UPDATE OF p`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch).Scan(&recorded, &terminal, &fenced, &neverStarted); err != nil {
 		return err
@@ -83,14 +82,11 @@ func loseProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx,
 	if fenced {
 		return nil
 	}
-	revocationRecorded, err := recordComputerSecretRevocationFailure(ctx, auditPolicy, tx, e)
-	if err != nil {
-		return err
-	}
 	// An initial assignment on a never-ready fresh VM cannot have run setup.
 	// Expiry retains custody; confirmed absence retires it without a false
-	// execution-loss hold. Independent controls and revocations still win.
-	if neverStarted && !terminal && !revocationRecorded {
+	// execution-loss hold. Independent controls still win.
+	var err error
+	if neverStarted && !terminal {
 		if physicalStopped {
 			_, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch)
 		}
@@ -99,7 +95,7 @@ func loseProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx,
 		}
 		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 	}
-	if !recorded && !terminal && !revocationRecorded && disposition == ComputerLossRequiresAttention {
+	if !recorded && !terminal && disposition == ComputerLossRequiresAttention {
 		if err := recordSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, "Computer execution authority lost without an eligible continuation", "execution_lost"); err != nil {
 			return err
 		}

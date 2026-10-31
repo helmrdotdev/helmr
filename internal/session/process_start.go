@@ -7,13 +7,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
 // ProcessStart binds executable discovery and the final setup release to the
 // pinned Session. Call again after slow artifact I/O: control renewal alone
-// cannot authorize setup after a hold, capture, revocation or ownership change.
+// cannot authorize setup after a hold, capture, raw Secret revocation or
+// ownership change.
 type ProcessStart struct {
 	Authority                   RuntimeAuthority
 	DeploymentID, ComputerID    uuid.UUID
@@ -62,7 +64,7 @@ func checkSessionStart(ctx context.Context, tx pgx.Tx, host workergroup.HostPrin
 	if kind != "resume" {
 		return ErrNotReady
 	}
-	if err = executionPhysical(ctx, tx, e, true, true); err != nil {
+	if err = executionPhysical(ctx, tx, e, true); err != nil {
 		return err
 	}
 	if err = tx.QueryRow(ctx, `SELECT s.deployment_id,s.computer_id,d.bundle_digest,a.key,s.key,s.parent_session_id::text,
@@ -74,6 +76,15 @@ func checkSessionStart(ctx context.Context, tx pgx.Tx, host workergroup.HostPrin
 	}
 	if err = computer.DispatchAvailable(ctx, tx, e.EnvironmentID, result.ComputerID); err != nil {
 		return err
+	}
+	// A new process never starts with a revoked raw value. Protected bindings
+	// receive placeholders and resolve the Secret per request instead.
+	revokedRaw, err := computer.RawSecretRevoked(ctx, tx, e.EnvironmentID, result.ComputerID)
+	if err != nil {
+		return err
+	}
+	if revokedRaw {
+		return secret.ErrDeliveryRevoked
 	}
 	var pendingSave bool
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND computer_lease_epoch<>$3 AND status IN ('requested','captured'))`, e.EnvironmentID, result.ComputerID, e.LeaseEpoch).Scan(&pendingSave); err != nil {
