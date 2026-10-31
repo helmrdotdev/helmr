@@ -178,7 +178,7 @@ await session.close()
 | `turn.wait({ timeout })` | `{ status: "settled", outcome }` or `{ status: "timeout" }`. Without `timeout`, waits for the outcome. |
 | `turn.get()` | The Turn's current state. |
 | `session.enqueue(input, { idempotencyKey })` | A reference to the new Turn. |
-| `session.turns.ref(id).send(input)` | A message to exactly that Turn. |
+| `session.turns.ref(id).send(message)` | A message to exactly that Turn. |
 
 To reconnect later, keep the IDs and rebuild the references with
 `client.sessions.ref(sessionId)` and `session.turns.ref(turnId)`. See the

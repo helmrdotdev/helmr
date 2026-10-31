@@ -8,10 +8,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
-// SessionDataRequest contains input for one exact Turn.
+// SessionMessageRequest contains a message for one exact Turn.
 // The endpoint, never application data, determines routing.
-type SessionDataRequest struct {
-	Data           json.RawMessage `json:"data"`
+type SessionMessageRequest struct {
+	Message        json.RawMessage `json:"message"`
 	IdempotencyKey string          `json:"idempotency_key,omitempty"`
 }
 
@@ -61,12 +61,12 @@ type SessionResumeReceipt struct {
 	Status    string `json:"status"`
 }
 
-func ValidateSessionDataRequest(request SessionDataRequest) error {
-	if len(request.Data) == 0 {
-		return errors.New("data is required")
+func ValidateSessionMessageRequest(request SessionMessageRequest) error {
+	if len(request.Message) == 0 {
+		return errors.New("message is required")
 	}
-	if _, err := jsoncanon.Transform(request.Data); err != nil {
-		return fmt.Errorf("data must be unambiguous I-JSON: %w", err)
+	if _, err := jsoncanon.Transform(request.Message); err != nil {
+		return fmt.Errorf("message must be unambiguous I-JSON: %w", err)
 	}
 	return nil
 }

@@ -371,8 +371,8 @@ func verifyNativeConcurrentRestores(t *testing.T, parent context.Context, pool *
 		t.Fatal(err)
 	}
 	waitNativeBootSeeds(t, ctx, pool, env, evidence)
-	if _, err := c.SendSessionMessage(ctx, held.SessionID, held.TurnID, api.SessionDataRequest{
-		Data: json.RawMessage(`[{"type":"text","text":"\"release\""}]`), IdempotencyKey: "release-after-preparation",
+	if _, err := c.SendSessionMessage(ctx, held.SessionID, held.TurnID, api.SessionMessageRequest{
+		Message: json.RawMessage(`[{"type":"text","text":"\"release\""}]`), IdempotencyKey: "release-after-preparation",
 	}, client.EnvironmentScopeOptions{}); err != nil {
 		t.Fatal(err)
 	}

@@ -22,8 +22,6 @@ from `helmr build` and follows the same upload and verification path.
 | `--skip-promotion` | Finalize without making the Deployment current. |
 | `--idempotency-key KEY` | Stable deployment-finalization key. |
 | `--json` | Emit progress as JSON lines. |
-| `--upload-timeout DURATION` | Deadline for each object, including capacity retries; default `3h`, configurable with `HELMR_UPLOAD_TIMEOUT`. |
-| `--upload-idle-timeout DURATION` | Time without upload progress; default `2m`, configurable with `HELMR_UPLOAD_IDLE_TIMEOUT`. |
 
 The install command, build secrets and build environment are
 [build settings](/docs/reference/config#build-environment) in `helmr.config.ts`, which the command evaluates
@@ -34,7 +32,6 @@ Control Plane never installs dependencies or rebuilds the uploaded artifacts.
 
 Uploads use the configured Helmr origin with current authorization. When upload
 capacity is busy, the CLI honors `Retry-After` within the per-object deadline.
-Explicit flags override environment settings; both durations must be positive
-and the idle timeout must not exceed the total timeout. Server and ingress
-limits apply independently. Reserve time for capacity retries when matching
-client settings to the server's admitted-transfer duration.
+Each object has a three-hour deadline, including capacity retries, and fails
+after two minutes without upload progress. Server and ingress limits apply
+independently.

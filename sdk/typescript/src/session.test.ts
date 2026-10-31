@@ -79,6 +79,7 @@ describe("Session lifecycle client", () => {
     const receipt = await empty.session.turns.ref(turnId).send([{type:"text",text:"reply"}],{idempotencyKey:"exact"})
     expect(receipt).toEqual({id:messageId,status:"accepted"})
     expect(requests[1]?.url).toEndWith(`/turns/${turnId}/messages`)
+    expect(JSON.parse(String(requests[1]?.init?.body))).toEqual({message:[{type:"text",text:"reply"}],idempotency_key:"exact"})
   })
   test("events have one ordered cursor and explicit retention gaps", async () => {
     const event = {

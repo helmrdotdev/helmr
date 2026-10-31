@@ -22,7 +22,7 @@ helmr session turn list --session SESSION_ID [--limit N] [--cursor CURSOR] [--js
 helmr session turn get TURN_ID --session SESSION_ID [--json]
 helmr session turn wait TURN_ID --session SESSION_ID [--timeout DURATION] [--json]
 helmr session turn interrupt TURN_ID --session SESSION_ID [--idempotency-key KEY] [--json]
-helmr session turn send TURN_ID --session SESSION_ID (--text TEXT | --data-json JSON | --data-file FILE) [--idempotency-key KEY] [--json]
+helmr session turn send TURN_ID --session SESSION_ID (--text TEXT | --message-json JSON | --message-file FILE) [--idempotency-key KEY] [--json]
 helmr session turn ask list --session SESSION_ID --turn TURN_ID [--limit N] [--cursor CURSOR] [--json]
 helmr session turn ask get ASK_ID --session SESSION_ID --turn TURN_ID [--json]
 helmr session turn ask answer ASK_ID --session SESSION_ID --turn TURN_ID (--answer-json JSON | --answer-file FILE)
@@ -43,8 +43,8 @@ each operation means, see [Sessions](/docs/concepts/sessions) and
 | Flag | Description |
 | --- | --- |
 | `--text TEXT` | Input or message as one text part, with whitespace preserved. |
-| `--input-json JSON`, `--data-json JSON` | A JSON array of text parts, for example `'[{"type":"text","text":"Continue"}]'`. |
-| `--input-file FILE`, `--data-file FILE` | Read the JSON array from a file. |
+| `--input-json JSON`, `--message-json JSON` | A JSON array of text parts, for example `'[{"type":"text","text":"Continue"}]'`. |
+| `--input-file FILE`, `--message-file FILE` | Read the JSON array from a file. |
 | `--idempotency-key KEY` | Retry identity for a mutation. Reuse it with identical arguments to retry an uncertain request. When omitted, each invocation uses a new key. |
 | `--json` | Print the server resource or receipt as one JSON object. |
 

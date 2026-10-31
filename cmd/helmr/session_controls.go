@@ -98,12 +98,12 @@ func sessionTurnGetCommand() *cobra.Command {
 
 func sessionTurnSendCommand() *cobra.Command {
 	var sessionID string
-	var projectID, environmentID, dataFile, dataJSON, key string
+	var projectID, environmentID, messageFile, messageJSON, key string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use: "send TURN_ID --session SESSION_ID", Short: "Send a message to exactly this Turn; never retarget it.", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			data, err := parseContentInput(cmd, dataFile, dataJSON, "--data")
+			message, err := parseContentInput(cmd, messageFile, messageJSON, "--message")
 			if err != nil {
 				return err
 			}
@@ -111,7 +111,7 @@ func sessionTurnSendCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			receipt, err := controlPlane.SendSessionMessage(cmd.Context(), sessionID, args[0], api.SessionDataRequest{Data: data, IdempotencyKey: strings.TrimSpace(key)}, scope)
+			receipt, err := controlPlane.SendSessionMessage(cmd.Context(), sessionID, args[0], api.SessionMessageRequest{Message: message, IdempotencyKey: strings.TrimSpace(key)}, scope)
 			if err != nil {
 				return err
 			}
@@ -125,12 +125,12 @@ func sessionTurnSendCommand() *cobra.Command {
 	cmd.Flags().StringVar(&sessionID, "session", "", "Parent Session ID.")
 	_ = cmd.MarkFlagRequired("session")
 	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&dataFile, "data-file", "", "Read text-part array JSON from a file.")
-	cmd.Flags().StringVar(&dataJSON, "data-json", "", "Inline text-part array JSON literal.")
+	cmd.Flags().StringVar(&messageFile, "message-file", "", "Read the message text-part array JSON from a file.")
+	cmd.Flags().StringVar(&messageJSON, "message-json", "", "Inline message text-part array JSON literal.")
 	cmd.Flags().StringVar(&key, "idempotency-key", "", "Idempotency key for this message.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
 	cmd.Flags().String("text", "", "Message text, preserving whitespace.")
-	cmd.MarkFlagsMutuallyExclusive("text", "data-file", "data-json")
+	cmd.MarkFlagsMutuallyExclusive("text", "message-file", "message-json")
 	return cmd
 }
 

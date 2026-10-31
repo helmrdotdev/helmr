@@ -26,11 +26,11 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 			loadSessionWireFixture(t, "session", &payload)
 			_ = json.NewEncoder(w).Encode(payload)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/sessions/"+testSessionID+"/turns/"+testSessionID+"/messages":
-			var request api.SessionDataRequest
+			var request api.SessionMessageRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if string(request.Data) != "[]" ||
+			if string(request.Message) != "[]" ||
 				request.IdempotencyKey != "input:1" {
 				t.Fatalf("input request = %+v", request)
 			}
@@ -77,7 +77,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
 		"session", "turn", "send", testSessionID, "--session", testSessionID,
-		"--data-json", "[]",
+		"--message-json", "[]",
 		"--idempotency-key", "input:1",
 	})
 	if err := cmd.Execute(); err != nil {
@@ -155,7 +155,7 @@ func TestSessionCommandsRejectInvalidArgumentsAndMissingData(t *testing.T) {
 	}{
 		{[]string{"session", "get"}, "accepts 1 arg"},
 		{[]string{"session", "get", "invalid"}, "invalid UUIDv7"},
-		{[]string{"session", "turn", "send", testSessionID, "--session", testSessionID}, "--text, --data-file or --data-json is required"},
+		{[]string{"session", "turn", "send", testSessionID, "--session", testSessionID}, "--text, --message-file or --message-json is required"},
 		{[]string{"session", "events", testSessionID, "--limit", "0"}, "--limit must be in [1,1000]"},
 		{[]string{"session", "events", testSessionID, "--limit", "1001"}, "limit must be in [1,1000]"},
 	} {

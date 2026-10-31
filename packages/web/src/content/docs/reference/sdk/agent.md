@@ -429,7 +429,7 @@ payloads are listed in [Session events](/docs/reference/events).
 | `get(options?)` | `TurnState` | Current Turn state. |
 | `wait({ signal? }?)` | `TurnOutcome` | Resolves when the Turn settles. |
 | `wait({ timeout, signal? })` | `TimedTurnWaitResult` | `{ status: "timeout" }` or `{ status: "settled", outcome }`. A timeout never cancels the Turn. |
-| `send(content, { idempotencyKey? }?, options?)` | `MessageReceipt` | Sends a message to exactly this Turn. Returns `{ id, status: "accepted" }`. |
+| `send(message, { idempotencyKey? }?, options?)` | `MessageReceipt` | Sends a message to exactly this Turn. Returns `{ id, status: "accepted" }`. |
 | `interrupt({ idempotencyKey? }?, options?)` | `TurnInterruptReceipt` | Interrupts this running Turn without a hold. Returns `{ id, sessionId, turnId, status: "accepted" }`. |
 | `asks` | `TurnAsks` | Question methods. See [Questions](/docs/reference/sdk/questions#client-methods). |
 

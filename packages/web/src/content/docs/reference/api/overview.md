@@ -114,8 +114,10 @@ It requires `computers.update`.
   bindings use `secret`, `env`, `file` and `allowedOrigins`, the same names
   as the SDK.
 - Inputs are JSON values validated by the Agent's input schema. Agents without
-  an input schema accept arrays of text parts, as do Turn messages. Output and
-  responses are Content arrays. See [Agent](/docs/reference/sdk/agent#content-rules).
+  an input schema accept arrays of text parts, as do Turn messages. Session
+  creation and enqueue carry `input`; a Turn message carries `message`, as in
+  `{"message":[{"type":"text","text":"Continue"}]}`. Output and responses are
+  Content arrays. See [Agent](/docs/reference/sdk/agent#content-rules).
 - Retention fields are milliseconds: `close_after_idle_ms` and
   `delete_after_unused_ms` take a positive integer or `null` for never. Omit
   them to inherit the definition.

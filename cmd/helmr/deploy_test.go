@@ -34,9 +34,6 @@ func writeSessionScopeProject(t *testing.T, w http.ResponseWriter, projectSlug, 
 }
 
 func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
-	// Explicit flags win over environment defaults, including malformed defaults.
-	t.Setenv("HELMR_UPLOAD_TIMEOUT", "invalid")
-	t.Setenv("HELMR_UPLOAD_IDLE_TIMEOUT", "invalid")
 	directory, raw, digest, objectDigest := writeDeployTestBundle(t)
 	const deploymentID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 	requests := make([]string, 0, 4)
@@ -99,7 +96,7 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"deploy", "--bundle", directory, "--idempotency-key", "deploy-test", "--upload-timeout", "5h", "--upload-idle-timeout", "3m"})
+	cmd.SetArgs([]string{"deploy", "--bundle", directory, "--idempotency-key", "deploy-test"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}

@@ -44,7 +44,7 @@ if a Turn is already running.
 | Need | SDK | CLI |
 | --- | --- | --- |
 | New work, always as a new Turn | `session.enqueue(input)` | `helmr session enqueue` |
-| Message exactly one running Turn | `session.turns.ref(id).send(data)` | `helmr session turn send` |
+| Message exactly one running Turn | `session.turns.ref(id).send(message)` | `helmr session turn send` |
 
 Both take a JSON array of text parts; the CLI also accepts `--text`.
 

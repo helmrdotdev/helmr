@@ -16,7 +16,6 @@ type Client struct {
 	transport           *httpclient.Transport
 	bearer              string
 	sessionScopedRoutes bool
-	deploymentUploads   DeploymentUploadOptions
 	expectedScope       EnvironmentScopeOptions
 }
 
@@ -24,16 +23,9 @@ type options struct {
 	bearer              string
 	httpClient          *http.Client
 	sessionScopedRoutes bool
-	deploymentUploads   DeploymentUploadOptions
 }
 
 type Option func(*options)
-
-// WithDeploymentUploads controls one object's complete upload operation,
-// including admission retries. A shorter caller deadline still takes precedence.
-func WithDeploymentUploads(upload DeploymentUploadOptions) Option {
-	return func(options *options) { options.deploymentUploads = upload }
-}
 
 func WithBearerToken(token string) Option {
 	return func(options *options) { options.bearer = token }
@@ -48,18 +40,15 @@ func WithHTTPClient(httpClient *http.Client) Option {
 }
 
 func New(baseURL string, opts ...Option) (*Client, error) {
-	config := options{deploymentUploads: DefaultDeploymentUploadOptions()}
+	var config options
 	for _, option := range opts {
 		option(&config)
-	}
-	if err := config.deploymentUploads.Validate(); err != nil {
-		return nil, err
 	}
 	transport, err := httpclient.New(baseURL, config.httpClient)
 	if err != nil {
 		return nil, err
 	}
-	return &Client{transport: transport, bearer: config.bearer, sessionScopedRoutes: config.sessionScopedRoutes, deploymentUploads: config.deploymentUploads}, nil
+	return &Client{transport: transport, bearer: config.bearer, sessionScopedRoutes: config.sessionScopedRoutes}, nil
 }
 
 func (c *Client) UsesSessionScopedRoutes() bool { return c.sessionScopedRoutes }

@@ -101,7 +101,7 @@ const client = new HelmrClient({
       return Response.json({ session_id: sessionID, turn_id: turnID, sequence: 2 })
     }
     if (path === `/v1/sessions/${sessionID}/turns/${turnID}/messages`) {
-      if (body.data[0]?.type !== "text" || body.data[0]?.text !== "answer") throw new Error("invalid exact message envelope")
+      if (body.message[0]?.type !== "text" || body.message[0]?.text !== "answer") throw new Error("invalid exact message envelope")
       return Response.json({ id: sessionID, turn_id: turnID, message_id: turnID, status: "accepted" })
     }
     if (path === `/v1/sessions/${sessionID}/events`) {

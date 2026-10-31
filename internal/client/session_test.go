@@ -33,8 +33,8 @@ func TestSessionMutations(t *testing.T) {
 		{"enqueue", "/enqueue", `{"input":{"type":"continue"}}`, `{"session_id":"` + testSessionID + `","turn_id":"` + testTurnID + `","sequence":2}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
 			return c.EnqueueSession(ctx, testSessionID, api.EnqueueSessionRequest{Input: data, IdempotencyKey: key}, s)
 		}},
-		{"exact message", "/turns/" + testTurnID + "/messages", `{"data":{"type":"continue"}}`, `{"id":"operation-1","turn_id":"` + testTurnID + `","message_id":"message-1","status":"accepted"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
-			return c.SendSessionMessage(ctx, testSessionID, testTurnID, api.SessionDataRequest{Data: data, IdempotencyKey: key}, s)
+		{"exact message", "/turns/" + testTurnID + "/messages", `{"message":{"type":"continue"}}`, `{"id":"operation-1","turn_id":"` + testTurnID + `","message_id":"message-1","status":"accepted"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
+			return c.SendSessionMessage(ctx, testSessionID, testTurnID, api.SessionMessageRequest{Message: data, IdempotencyKey: key}, s)
 		}},
 		{"close", "/close", `{}`, `{"id":"operation-1","session_id":"` + testSessionID + `","status":"closing"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
 			return c.CloseSession(ctx, testSessionID, api.CloseSessionRequest{IdempotencyKey: key}, s)
@@ -93,7 +93,7 @@ func TestSessionMutations(t *testing.T) {
 func TestTurnSendInvocationKeySurvivesTransportReplay(t *testing.T) {
 	var keys []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request api.SessionDataRequest
+		var request api.SessionMessageRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
 			return
@@ -108,7 +108,7 @@ func TestTurnSendInvocationKeySurvivesTransportReplay(t *testing.T) {
 	defer server.Close()
 	c := sessionTestClient(t, server, false)
 	for range 2 {
-		if _, err := c.SendSessionMessage(context.Background(), testSessionID, testTurnID, api.SessionDataRequest{Data: json.RawMessage(`null`)}, EnvironmentScopeOptions{}); err != nil {
+		if _, err := c.SendSessionMessage(context.Background(), testSessionID, testTurnID, api.SessionMessageRequest{Message: json.RawMessage(`null`)}, EnvironmentScopeOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -239,15 +239,15 @@ func TestSessionClientsValidateBeforeTransport(t *testing.T) {
 	scope := EnvironmentScopeOptions{}
 	for _, invoke := range []func() error{
 		func() error {
-			_, err := c.SendSessionMessage(ctx, "invalid", testTurnID, api.SessionDataRequest{Data: json.RawMessage(`null`)}, scope)
+			_, err := c.SendSessionMessage(ctx, "invalid", testTurnID, api.SessionMessageRequest{Message: json.RawMessage(`null`)}, scope)
 			return err
 		},
 		func() error {
-			_, err := c.SendSessionMessage(ctx, testSessionID, testTurnID, api.SessionDataRequest{}, scope)
+			_, err := c.SendSessionMessage(ctx, testSessionID, testTurnID, api.SessionMessageRequest{}, scope)
 			return err
 		},
 		func() error {
-			_, err := c.SendSessionMessage(ctx, testSessionID, "invalid", api.SessionDataRequest{Data: json.RawMessage(`null`)}, scope)
+			_, err := c.SendSessionMessage(ctx, testSessionID, "invalid", api.SessionMessageRequest{Message: json.RawMessage(`null`)}, scope)
 			return err
 		},
 		func() error {

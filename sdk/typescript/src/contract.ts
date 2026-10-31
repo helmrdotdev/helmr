@@ -251,7 +251,7 @@ export interface TurnRef<O = JsonValue> {
   readonly id: string
   readonly sessionId: string
   send(
-    content: InputContent,
+    message: InputContent,
     request?: SessionOperationOptions,
     options?: RequestOptions,
   ): Promise<MessageReceipt>
