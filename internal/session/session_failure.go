@@ -51,7 +51,7 @@ func recordSessionFailure(ctx context.Context, auditPolicy auditpolicy.Policy, t
 	}
 	var terminal bool
 	var failures int64
-	if err = tx.QueryRow(ctx, `SELECT s.status IN ('closed','cancelled'),(`+consecutiveProcessFailuresSQL+`) FROM sessions s WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&terminal, &failures); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT s.status='closed',(`+consecutiveProcessFailuresSQL+`) FROM sessions s WHERE s.environment_id=$1 AND s.id=$2`, e.EnvironmentID, e.SessionID).Scan(&terminal, &failures); err != nil {
 		return err
 	}
 	if terminal {

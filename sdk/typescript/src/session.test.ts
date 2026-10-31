@@ -233,16 +233,16 @@ describe("Session lifecycle client", () => {
     const { client, requests } = transport([
       { ...receipt, hold_id: holdId },
       { ...receipt, hold_id: holdId },
-      receipt,
-      receipt,
+      { session_id: sessionId, status: "closing" },
+      { session_id: sessionId, status: "closed" },
     ])
     const ref = client.sessions.ref(sessionId)
     expect(
       await ref.interrupt({ idempotencyKey: "stop-1" }),
     ).toMatchObject({ sessionId, holdId, status: "accepted" })
     await ref.resume({ holdId, idempotencyKey: "resume-1" })
-    await ref.close({ idempotencyKey: "close-1" })
-    await ref.cancel({ idempotencyKey: "cancel-1" })
+    expect(await ref.close({ idempotencyKey: "close-1" })).toEqual({ sessionId, status: "closing" })
+    expect(await ref.cancel({ idempotencyKey: "cancel-1" })).toEqual({ sessionId, status: "closed" })
     expect(requests.map((r) => JSON.parse(String(r.init?.body)))).toEqual([
       { idempotency_key: "stop-1" },
       { hold_id: holdId, idempotency_key: "resume-1" },

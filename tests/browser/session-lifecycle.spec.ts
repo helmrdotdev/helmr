@@ -32,9 +32,11 @@ test("retained queue shows independent holds and cancellation preserves input", 
   const mutations: unknown[] = [];
   await onControl(page, "cancel", body => {
     mutations.push(body);
-    data.session["status"] = "cancelled";
+    data.session["status"] = "closed";
+    data.session["holds"] = [];
     settleTurn(data, 1, { status: "cancelled", terminal_at: now });
-    return { json: { id: turnID(1), session_id: data.session["id"], status: "accepted" } };
+    addEvent(data, null, "session.closed", { how: "cancel" });
+    return { json: { session_id: data.session["id"], status: "closed" } };
   });
   await page.goto(sessionURL);
   await expandTurns(page);
@@ -47,6 +49,8 @@ test("retained queue shows independent holds and cancellation preserves input", 
   await page.getByRole("dialog").getByRole("button", { name: "Cancel session", exact: true }).click();
   await expect(page.getByText("Cancel session requested.", { exact: false })).toBeVisible();
   await expect(log(page).locator(`#turn-${turnID(1)}`)).toContainText("cancelled");
+  await expect(log(page).getByText("session cancelled")).toBeVisible();
+  await expect(page.getByText("Held by an interrupt. Queued work waits until it is resumed.", { exact: false })).toHaveCount(0);
   await expect(inputLine(page, 1)).toContainText("original input");
   await expect(page.locator("form")).toHaveCount(0);
   expect(mutations).toEqual([{ idempotency_key: expect.any(String) }]);
@@ -89,12 +93,12 @@ test("Session closure refreshes final progress and the waiting question", async 
   data.asks.push({ id: askID, session_id: data.session["id"], turn_id: turnID(1), status: "pending", created_at: now, question: { prompt: [{ type: "text", text: "Ship it?" }], type: "text" } });
   await serveSession(page, data);
   await onControl(page, "cancel", () => {
-    data.session["status"] = "cancelled";
+    data.session["status"] = "closed";
     addEvent(data, 1, "turn.output", [{ type: "text", text: "Last published output" }]);
     addEvent(data, 1, "ask.cancelled", { ask_id: askID });
     data.asks[0]!["status"] = "cancelled";
     settleTurn(data, 1, { status: "cancelled", terminal_at: now });
-    return { json: { id: turnID(1), status: "accepted" } };
+    return { json: { session_id: data.session["id"], status: "closed" } };
   });
   await page.goto(sessionURL);
   await expandTurns(page);
@@ -131,8 +135,11 @@ for (const action of ["interrupt", "cancel"] as const) {
     await onControl(page, action, body => {
       attempts.push(body);
       if (attempts.length === 1) return { status: 503, json: { error: { code: "unavailable", message: "Reply unavailable" } } };
-      if (action === "cancel") data.session["status"] = "cancelled";
-      return { json: { id: "control-receipt", session_id: data.session["id"], status: "accepted" } };
+      if (action === "cancel") {
+        data.session["status"] = "closed";
+        return { json: { session_id: data.session["id"], status: "closed" } };
+      }
+      return { json: { id: "control-receipt", session_id: data.session["id"], hold_id: "owned-hold", status: "accepted" } };
     });
     await page.goto(sessionURL);
     await expandTurns(page);
@@ -195,7 +202,7 @@ test("the log explains a deadline interruption and a recovery notice", async ({ 
   await expect(log(page).getByText("No completed requests in this session were affected", { exact: false })).toBeVisible();
 });
 
-for (const status of ["open", "closing", "closed", "cancelled"] as const) {
+for (const status of ["open", "closing", "closed"] as const) {
   const active = status === "open" || status === "closing";
   test(`Interrupt session and Cancel session are ${active ? "offered" : "not offered"} in the menu for a ${status} Session`, async ({ page }) => {
     // Settled Turns only: whether work is running does not decide the action.
@@ -220,9 +227,9 @@ test("Cancel session sits after the divider in the Session menu and confirms bef
   const mutations: string[] = [];
   await onControl(page, "cancel", () => {
     mutations.push("cancel");
-    data.session["status"] = "cancelled";
+    data.session["status"] = "closed";
     settleTurn(data, 1, { status: "cancelled", terminal_at: now });
-    return { json: { id: turnID(1), status: "accepted" } };
+    return { json: { session_id: data.session["id"], status: "closed" } };
   });
   await page.goto(sessionURL);
   await expandTurns(page);

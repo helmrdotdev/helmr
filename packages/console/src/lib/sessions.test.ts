@@ -81,9 +81,9 @@ test("lists Sessions by public status as repeated params", async () => {
     return Response.json({ sessions: [] });
   }) as typeof fetch;
 
-  await listSessions({ projectID: "project-1", environmentID: "env-1", statuses: ["open", "cancelled"], limit: 100 });
+  await listSessions({ projectID: "project-1", environmentID: "env-1", statuses: ["open", "closing"], limit: 100 });
 
-  expect(requestedURL).toBe("/api/projects/project-1/environments/env-1/sessions?status=open&status=cancelled&limit=100");
+  expect(requestedURL).toBe("/api/projects/project-1/environments/env-1/sessions?status=open&status=closing&limit=100");
 });
 
 test("safety controls preserve scope and retry identity", async () => {

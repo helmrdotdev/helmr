@@ -26,7 +26,7 @@ func TestDeletedComputerStorageWaitsForCheckpointCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1;
- UPDATE sessions SET status='closed' WHERE environment_id=$1;
+ UPDATE sessions SET status='closed',close_how='close' WHERE environment_id=$1;
  UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  UPDATE checkpoints SET status='lost',capture_request=NULL,terminal_evidence='Computer deletion retired continuation' WHERE environment_id=$1;
  UPDATE computer_leases SET status='releasing' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.f.env, f.f.computer)

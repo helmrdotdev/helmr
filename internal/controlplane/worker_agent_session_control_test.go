@@ -153,7 +153,7 @@ func TestWorkerAgentSessionControls(t *testing.T) {
 		r := request
 		r.RequestID = kind
 		receipt := call(r, map[string]any{"sessionId": child["sessionId"], "kind": kind}, "")
-		if receipt["holdId"] != "" || receipt["status"] != "accepted" {
+		if receipt["holdId"] != "" || receipt["status"] != "closed" {
 			t.Fatalf("%s receipt: %+v", kind, receipt)
 		}
 	}

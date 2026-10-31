@@ -107,7 +107,7 @@ func PrepareSessionDelivery(ctx context.Context, pool db.TxBeginner, host worker
 
 func desiredSessionControl(ctx context.Context, tx pgx.Tx, e Execution) (string, error) {
 	var stopped, held bool
-	err := tx.QueryRow(ctx, `SELECT s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL),
+	err := tx.QueryRow(ctx, `SELECT s.status='closed' OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL),
  `+db.SessionHeldSQL+`
  FROM sessions s
  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
@@ -244,7 +244,7 @@ func readCurrentSessionDelivery(ctx context.Context, tx pgx.Tx, host workergroup
  WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND cp.target_lease_epoch=l.epoch AND cp.status IN ('restoring','consumed') AND cp.controls_reconciled_at IS NULL
  AND m.session_id=p.session_id AND m.process_epoch=p.epoch)))
  AND p.attachment_sequence=$10 AND p.control_attachment=$10 AND p.control_generation=s.authority_generation
- AND p.control_kind=CASE WHEN s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL) THEN 'shutdown'
+ AND p.control_kind=CASE WHEN s.status='closed' OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL) THEN 'shutdown'
  WHEN `+db.SessionHeldSQL+` THEN 'suspend' ELSE 'resume' END`,
 		e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, host.HostID, host.Epoch, host.GroupID, host.GroupClaimVersion, host.HostClaimVersion, attachment).Scan(&result.Sequence, &result.Generation, &result.Kind, &result.Acknowledged, &result.Error, &result.StopSequence, &result.StopTurnID, &result.StopDeadline, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {

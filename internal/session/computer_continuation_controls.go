@@ -69,7 +69,7 @@ func ReadComputerContinuationControls(ctx context.Context, pool db.TxBeginner, h
 		result = &agentv1.ComputerSessionControls{Envelope: proto.Clone(p.GetEnvelope()).(*computerv0.ComputerOperationEnvelope), CheckpointId: checkpoint.String(), DesiredVersion: p.GetDesiredVersion()}
 		for _, member := range r.Members {
 			control := &agentv1.SessionContinuationControl{Identity: &agentv1.SessionIdentity{SessionId: member.Session.String(), ProcessEpoch: member.Epoch}}
-			if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped'),
+			if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status='closed' OR p.status IN ('stopping','lost','stopped'),
     `+db.SessionHeldSQL+`
    FROM sessions s  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, member.Session, member.Epoch).Scan(&control.AuthorityGeneration, &control.Stopped, &control.Held); err != nil {
 				return err

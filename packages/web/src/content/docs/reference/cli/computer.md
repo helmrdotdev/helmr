@@ -13,7 +13,7 @@ helmr computer get (--id UUID | --key KEY) [--json]
 helmr computer sessions (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [--json]
 helmr computer commands (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [--json]
 helmr computer update (--id UUID | --key KEY) --delete-after-unused DURATION_OR_NEVER [--json]
-helmr computer delete (--id UUID | --key KEY) [--idempotency-key KEY] [--json]
+helmr computer delete (--id UUID | --key KEY) [--dry-run] [--idempotency-key KEY] [--json]
 helmr computer exec (--id UUID | --key KEY) [--idempotency-key KEY] -- COMMAND [ARG...]
 ```
 
@@ -27,9 +27,12 @@ remote command.
 
 ## Delete a Computer
 
-Close its Sessions and wait for commands and saves to settle before deleting a
-Computer. `delete` acknowledges the request; `get` reports `deleting` while
-execution stops and retained disk and checkpoint data are released. Once that
+Deleting cancels its Sessions and the Sessions they started, including ones on
+other Computers, and its unfinished Commands; `computers.delete` is the only
+permission it needs. `--dry-run` prints those counts
+(`sessions_cancelled`, `commands_cancelled`) without changing anything. `delete`
+acknowledges the request; `get` reports `deleting` while execution stops,
+in-flight saves settle and retained disk and checkpoint data are released. Once that
 cleanup completes, the status becomes `deleted` and its reserved storage is
 available for new Computers in the Environment. Deletion does not increase the
 Environment's storage limit or delete Session history.

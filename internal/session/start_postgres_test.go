@@ -109,7 +109,7 @@ func TestCreateSessionKeyNeverContinuesExistingSession(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.env)
 	for _, state := range []string{"open", "closed"} {
-		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status=$2 WHERE id=$1`, first.SessionID, state)
+		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status=$2,close_how=CASE WHEN $2='open' THEN NULL ELSE 'close' END WHERE id=$1`, first.SessionID, state)
 		changed := req
 		changed.IdempotencyKey = state
 		if _, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), changed); !errors.Is(err, session.ErrConflict) {

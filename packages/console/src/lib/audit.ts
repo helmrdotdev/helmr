@@ -81,7 +81,7 @@ export type AuditDetails =
   | { old_retention_seconds: number | null; new_retention_seconds: number | null }
   | { cause_agent_id?: string; reason?: string; before: AccessSnapshot | null; after: AccessSnapshot | null }
   | { cause_agent_id: string; reason: string }
-  | { revision: number; selected_agent_edges_removed: number; ineffective_assignments_removed: number; mixed_assignments_preserved: number; slack_connection_disconnected: string | null; trigger_activations_sealed: number }
+  | { revision: number; selected_agent_edges_removed: number; ineffective_assignments_removed: number; mixed_assignments_preserved: number; slack_connection_disconnected: string | null; trigger_activations_sealed: number; sessions_cancelled: number }
   | { method: string; provider?: string; subject?: string; device_code_id?: string; authorizing_credential_id?: string }
   | { reason: string; operation?: string }
   | { tool: string }
@@ -90,7 +90,7 @@ export type AuditDetails =
   | { kind: string; request_id: string; reason?: string }
   | { request_id: string; hold_id?: string }
   | { image_build_id: string } | { hold_id: string } | { checkpoint_id: string }
-  | { sequence?: number; request_id?: string }
+  | { sequence?: number; request_id?: string; how?: "close" | "cancel" | "idle" }
   | { from: string; to: string; result_count?: number; environment_ids?: string[]; requested_environment_id?: string; actions?: string[]; operation_id?: string; event_id?: string; actor_kind?: string; actor_id?: string; target_kind?: string; target_id?: string; target_user_id?: string; slack_team_id?: string; slack_user_id?: string; outcome?: string };
 export type AuditEvent = AuditMetadata & {
   actor_kind: AuditActorKind; restricted: AuditRestrictedSection[];

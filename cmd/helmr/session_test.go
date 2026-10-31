@@ -44,7 +44,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 				t.Fatalf("close request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(api.SessionCloseReceipt{
-				ID: "operation-2", SessionID: testSessionID, Status: "accepted",
+				SessionID: testSessionID, Status: "closing",
 			})
 		default:
 			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
@@ -99,7 +99,7 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "session_id: "+testSessionID) ||
-		!strings.Contains(out.String(), "status: accepted") {
+		!strings.Contains(out.String(), "status: closing") {
 		t.Fatalf("close output = %q", out.String())
 	}
 }

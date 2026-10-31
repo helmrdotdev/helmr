@@ -26,7 +26,7 @@ func TestSessionStartRequiresCurrentSetupAuthority(t *testing.T) {
 			case "held":
 				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,gen_random_uuid(),$2,'process_failed','system')`, f.env, e.SessionID)
 			case "cancelled":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, f.env, e.SessionID)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE environment_id=$1 AND id=$2`, f.env, e.SessionID)
 			case "ready", "stopping":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status=$3 WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID, mode)
 			case "failed":

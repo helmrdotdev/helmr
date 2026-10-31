@@ -15,9 +15,16 @@ import (
 
 type sessionLifecyclePosition struct{ environment, session uuid.UUID }
 
-const terminalProcessPhysicallyStopped = `s.status IN ('closed','cancelled') AND p.status='stopping' AND p.fenced_at IS NULL
+const terminalProcessPhysicallyStopped = `s.status='closed' AND p.status='stopping' AND p.fenced_at IS NULL
  AND l.fenced_at IS NOT NULL
  AND NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=p.environment_id AND live.computer_id=p.computer_id AND live.fenced_at IS NULL)`
+
+// mayBecomeIdle selects an open Session row s that the idle reconciler can
+// start timing: nothing is running, nothing runnable is queued and every child
+// is closed. Busy Sessions are not visited until their work settles.
+const mayBecomeIdle = `NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='running')
+ AND NOT EXISTS(SELECT 1 FROM sessions child WHERE child.environment_id=s.environment_id AND child.parent_session_id=s.id AND child.status<>'closed')
+ AND (NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued') OR ` + db.SessionHeldSQL + `)`
 
 // RunSessionLifecycle owns deadline settlement and accepted terminal-control convergence
 // independently of guest connections. The process root cancels and joins it.
@@ -53,36 +60,7 @@ func reconcileSessionLifecycle(ctx context.Context, auditPolicy auditpolicy.Poli
 	// a blocked or failing root permanently exclude later Sessions from a batch.
 	scanCtx, cancelScan := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelScan()
-	rows, err := database.Query(scanCtx, `SELECT environment_id,session_id FROM (
-  SELECT environment_id,id AS session_id FROM sessions s WHERE status='open' AND close_after_idle_ms IS NOT NULL
-   AND (idle_since IS NULL OR extract(epoch FROM (clock_timestamp()-idle_since))*1000>=close_after_idle_ms
-    OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=s.environment_id AND save.computer_id=s.computer_id AND save.requested_at>=s.idle_since AND (save.turn_id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=save.environment_id AND t.id=save.turn_id AND t.session_id=s.id))))
-  UNION
- SELECT s.environment_id,s.id FROM sessions s JOIN computer_leases l ON (l.environment_id,l.computer_id)=(s.environment_id,s.computer_id) WHERE s.status IN ('open','closing') AND l.fenced_at IS NULL AND l.storage_pressure_since<=clock_timestamp()-interval '30 seconds'
-  UNION
-  SELECT environment_id,session_id FROM turns WHERE status='running' AND deadline_at<=clock_timestamp()
-  UNION
-  SELECT environment_id,session_id FROM session_processes WHERE stop_deadline_at<=clock_timestamp() AND fenced_at IS NULL AND failure_recorded_at IS NULL
-  UNION
-  SELECT environment_id,id AS session_id FROM sessions s WHERE status='closing'
-   AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
-   AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running'))
-   AND (EXISTS(SELECT 1 FROM sessions child WHERE child.environment_id=s.environment_id AND child.parent_session_id=s.id AND child.status='open')
-    OR NOT EXISTS(SELECT 1 FROM sessions child WHERE child.environment_id=s.environment_id AND child.parent_session_id=s.id AND child.status NOT IN ('closed','cancelled')))
-  UNION
-  SELECT s.environment_id,s.id FROM sessions s
-   JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
-   JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
-   WHERE `+terminalProcessPhysicallyStopped+`
- ) candidates WHERE (environment_id,session_id)>($1,$2) ORDER BY environment_id,session_id LIMIT 100`, after.environment, after.session)
-	if err != nil {
-		return after, false, err
-	}
-	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (sessionLifecyclePosition, error) {
-		var p sessionLifecyclePosition
-		err := row.Scan(&p.environment, &p.session)
-		return p, err
-	})
+	candidates, err := lifecycleCandidates(scanCtx, database, after)
 	if err != nil {
 		return after, false, err
 	}
@@ -104,7 +82,7 @@ func reconcileSessionLifecycle(ctx context.Context, auditPolicy auditpolicy.Poli
 			err = expireSessionDeadline(ctx, auditPolicy, database, candidate.environment, candidate.session)
 		}
 		if err == nil {
-			err = reconcileSessionIdle(ctx, database, candidate.environment, candidate.session)
+			err = reconcileSessionIdle(ctx, auditPolicy, database, candidate.environment, candidate.session)
 		}
 		if err == nil {
 			err = ReconcileSessionClosure(ctx, auditPolicy, database, candidate.environment, candidate.session)
@@ -121,6 +99,40 @@ func reconcileSessionLifecycle(ctx context.Context, auditPolicy auditpolicy.Poli
 		after = sessionLifecyclePosition{}
 	}
 	return after, more, errors.Join(failures...)
+}
+
+// lifecycleCandidates returns the next page of Sessions that may need
+// lifecycle reconciliation after the given position.
+func lifecycleCandidates(ctx context.Context, database db.TxDB, after sessionLifecyclePosition) ([]sessionLifecyclePosition, error) {
+	rows, err := database.Query(ctx, `SELECT environment_id,session_id FROM (
+  SELECT environment_id,id AS session_id FROM sessions s WHERE status='open' AND close_after_idle_ms IS NOT NULL
+   AND ((idle_since IS NULL AND `+mayBecomeIdle+`) OR extract(epoch FROM (clock_timestamp()-idle_since))*1000>=close_after_idle_ms
+    OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=s.environment_id AND save.computer_id=s.computer_id AND save.requested_at>=s.idle_since AND (save.turn_id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=save.environment_id AND t.id=save.turn_id AND t.session_id=s.id))))
+  UNION
+ SELECT s.environment_id,s.id FROM sessions s JOIN computer_leases l ON (l.environment_id,l.computer_id)=(s.environment_id,s.computer_id) WHERE s.status IN ('open','closing') AND l.fenced_at IS NULL AND l.storage_pressure_since<=clock_timestamp()-interval '30 seconds'
+  UNION
+  SELECT environment_id,session_id FROM turns WHERE status='running' AND deadline_at<=clock_timestamp()
+  UNION
+  SELECT environment_id,session_id FROM session_processes WHERE stop_deadline_at<=clock_timestamp() AND fenced_at IS NULL AND failure_recorded_at IS NULL
+  UNION
+  SELECT environment_id,id AS session_id FROM sessions s WHERE status='closing'
+   AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='running')
+   AND CASE WHEN EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued') THEN `+db.SessionHeldSQL+`
+    ELSE NOT EXISTS(SELECT 1 FROM sessions child WHERE child.environment_id=s.environment_id AND child.parent_session_id=s.id AND child.status<>'closed') END
+  UNION
+  SELECT s.environment_id,s.id FROM sessions s
+   JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
+   JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
+   WHERE `+terminalProcessPhysicallyStopped+`
+ ) candidates WHERE (environment_id,session_id)>($1,$2) ORDER BY environment_id,session_id LIMIT 100`, after.environment, after.session)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (sessionLifecyclePosition, error) {
+		var p sessionLifecyclePosition
+		err := row.Scan(&p.environment, &p.session)
+		return p, err
+	})
 }
 
 // A parked process has no live guest to acknowledge a later close/cancel. The

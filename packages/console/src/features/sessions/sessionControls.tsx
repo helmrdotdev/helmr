@@ -1,10 +1,9 @@
 import { useQueryClient } from "@tanstack/solid-query";
-import { createSignal, For, Show, type JSX } from "solid-js";
-import type { ExecutionScope } from "../../lib/computers";
+import { createSignal, Show, type JSX } from "solid-js";
 import { errorMessage } from "../../lib/error";
 import { useScope } from "../../lib/scope";
 import {
-  cancelSession, closeSession, getSessionCloseScope, interruptSession, interruptTurn, resumeSession, sessionConsolePath,
+  cancelSession, closeSession, getSessionClosePreview, interruptSession, interruptTurn, resumeSession,
   type SessionAddress,
 } from "../../lib/sessions";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
@@ -27,7 +26,7 @@ export function createSessionControls(props: {
   const scope = useScope();
   const cache = useQueryClient();
   const [control, setControl] = createSignal<Control>();
-  const [closePreview, setClosePreview] = createSignal<{ members: ExecutionScope; key: string; address: SessionAddress }>();
+  const [closePreview, setClosePreview] = createSignal<{ sessions: number; key: string; address: SessionAddress }>();
   const [error, setError] = createSignal<string>();
   const keys = new Map<string, string>();
   const changed = () => Promise.all([props.onChanged(), cache.invalidateQueries({ queryKey: ["sessions"] })]);
@@ -35,7 +34,7 @@ export function createSessionControls(props: {
   const prepareClose = async () => {
     setError(undefined);
     const address = props.address();
-    try { setClosePreview({ members: await getSessionCloseScope(address), key: crypto.randomUUID(), address }); }
+    try { setClosePreview({ sessions: (await getSessionClosePreview(address)).sessions, key: crypto.randomUUID(), address }); }
     catch (cause) { setError(sessionError(cause)); }
   };
   const perform = async (operation: Control, address: SessionAddress) => {
@@ -65,12 +64,11 @@ export function createSessionControls(props: {
       <Show when={closePreview()} keyed>
         {target => (
           <ConfirmDialog title="Close session" confirmLabel="Close session" tone="danger" target={<IDText value={target.address.sessionID} />} environment={environmentChip(scope.selectedEnvironment())} errorMessage={sessionError} onClose={() => setClosePreview(undefined)} onConfirm={async () => {
-            await closeSession(target.address, { idempotency_key: target.key, expected_scope: target.members.digest });
-            props.onReceipt?.("Close accepted. Accepted work will settle before closure. Wake cannot undo closure; other work may still occupy the computer.");
+            await closeSession(target.address, { idempotency_key: target.key });
+            props.onReceipt?.("Close accepted. Running work will finish before closure; held work and open questions are cancelled. Wake cannot undo closure; other work may still occupy the computer.");
             await changed();
           }}>
-            <p>Close this session{target.members.sessions.length > 1 ? " and its owned sessions" : ""}? New messages will no longer be accepted. Native background tasks stop when their session closes. Wake cannot undo this operation.</p>
-            <For each={target.members.sessions}>{id => <div><IDText value={id} mode="link" href={sessionConsolePath(id)} /></div>}</For>
+            <p>Close this session{target.sessions > 1 ? ` and the sessions it owns (${target.sessions} sessions)` : ""}? New messages will no longer be accepted. Running work finishes; queued work that is held and open questions are cancelled. Native background tasks stop when their session closes. Wake cannot undo this operation.</p>
           </ConfirmDialog>
         )}
       </Show>
@@ -100,7 +98,7 @@ export function createSessionControls(props: {
                 Request this running turn to stop. Queued work can proceed after stopping is confirmed. Existing session holds remain in force.
               </Show>
               <Show when={operation.kind === "cancel"}>
-                Cancel queued turns and request that active work in this session and its owned children stop. Retained inputs remain available for inspection. Other sessions sharing the computer are not cancelled.
+                Cancel queued turns, request that active work in this session and its owned children stop, and close them. Retained inputs remain available for inspection. Other sessions sharing the computer are not cancelled.
               </Show>
             </ConfirmDialog>
           );

@@ -100,8 +100,6 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 	}
 	if status == "open" {
 		if private && (action == "sleep" || action == "close") {
-			var scope session.ExecutionScope
-			var err error
 			var link uuid.UUID
 			if err := tx.QueryRow(ctx, `SELECT l.id FROM slack_user_links l WHERE l.installation_id=$1 AND l.slack_user_id=$2 AND l.revoked_at IS NULL`, target.Installation, actor).Scan(&link); err != nil {
 				return "", nil, err
@@ -118,33 +116,39 @@ func lifecyclePresentationFromState(ctx context.Context, tx pgx.Tx, config Proje
 				if err := auth.Require(p, auth.PermissionComputersHibernate, auth.Scope{OrgID: p.OrgID, ProjectID: p.ProjectID, EnvironmentID: p.EnvironmentID}, access.ErrDenied); err != nil {
 					return "", nil, err
 				}
-				scope, err = session.ReadComputerExecutionScope(ctx, tx, target.Environment, *computerID)
+				scope, err := session.ReadComputerExecutionScope(ctx, tx, target.Environment, *computerID)
+				if err != nil {
+					return "", nil, err
+				}
+				members := append(append([]string{}, scope.Sessions...), scope.Commands...)
+				var detail strings.Builder
+				detail.WriteString(fmt.Sprintf("Affected scope: %d Sessions, %d active Commands.\n", len(scope.Sessions), len(scope.Commands)))
+				for i, id := range members {
+					if i == 12 {
+						detail.WriteString("Additional members are listed in Console.\n")
+						break
+					}
+					detail.WriteString(id + "\n")
+				}
+				blocks = append(blocks, map[string]any{"type": "section", "text": plainText(strings.TrimSpace(detail.String()))})
+				if err = add("hibernate", "Hibernate Computer", scope.Digest, *computerID); err != nil {
+					return "", nil, err
+				}
 			} else if action == "close" {
-				scope, err = session.SessionCloseScope(ctx, tx, caller, target.Environment, target.Session)
+				count, err := session.SessionClosePreview(ctx, tx, caller, target.Environment, target.Session)
+				if err != nil {
+					return "", nil, err
+				}
+				detail := "Closing affects this Session only."
+				if count > 1 {
+					detail = fmt.Sprintf("Closing affects %d Sessions: this Session and the Sessions it owns.", count)
+				}
+				blocks = append(blocks, map[string]any{"type": "section", "text": plainText(detail + " Running work finishes; held work and open questions are cancelled.")})
+				if err = add("confirm_close", "Close Session", "", uuid.Nil()); err != nil {
+					return "", nil, err
+				}
 			} else {
 				return text, blocks, nil
-			}
-			if err != nil {
-				return "", nil, err
-			}
-			members := append(append([]string{}, scope.Sessions...), scope.Commands...)
-			var detail strings.Builder
-			detail.WriteString(fmt.Sprintf("Affected scope: %d Sessions, %d active Commands.\n", len(scope.Sessions), len(scope.Commands)))
-			for i, id := range members {
-				if i == 12 {
-					detail.WriteString("Additional members are listed in Console.\n")
-					break
-				}
-				detail.WriteString(id + "\n")
-			}
-			blocks = append(blocks, map[string]any{"type": "section", "text": plainText(strings.TrimSpace(detail.String()))})
-			if action == "sleep" {
-				err = add("hibernate", "Hibernate Computer", scope.Digest, *computerID)
-			} else {
-				err = add("confirm_close", "Close Session", scope.Digest, uuid.Nil())
-			}
-			if err != nil {
-				return "", nil, err
 			}
 		} else {
 			if computerID != nil {

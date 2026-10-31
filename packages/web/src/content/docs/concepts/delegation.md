@@ -106,10 +106,14 @@ A spawned child belongs to the Session that spawned it:
 - `ctx.session.parent` in the child's `init` identifies its parent.
 - The parent's Turn returning or failing does not wait for or stop its
   children. Wait for results explicitly.
-- A parent with open children is not idle, so it does not close on
-  `closeAfterIdle` while they run.
-- Controls apply to the owned tree. Cancelling or interrupting a Session also
-  applies to its children; see [Sessions](/docs/concepts/sessions#controls).
+- A parent with children that are not closed is not idle, so it does not close
+  on `closeAfterIdle` while they remain. A child held only by an interrupt on
+  its parent is idle when nothing runs, so it closes on its own
+  `closeAfterIdle`; its held queued Turns are cancelled.
+- Controls apply to the owned tree. Closing, cancelling or interrupting a
+  Session also applies to its children. Closing an interrupted parent cancels
+  the held queued work in the tree rather than waiting for a resume; see
+  [Sessions](/docs/concepts/sessions#controls).
 - If the root Session is bound to a Slack thread, its children report into the
   same thread as delegated work. See [Slack](/docs/concepts/slack).
 

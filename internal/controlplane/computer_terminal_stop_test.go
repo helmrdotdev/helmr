@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
-func TestCancelledParkedComputerBecomesDeletableAfterLifecycleReconciliation(t *testing.T) {
+func TestCancelledParkedComputerDeletionSettlesProcessThroughLifecycle(t *testing.T) {
 	f := sessiontest.New(t)
 	// A retained checkpoint has already allowed source physical cleanup without
 	// terminating its logical process. The Agent tests cover that publication path.
@@ -27,9 +27,12 @@ func TestCancelledParkedComputerBecomesDeletableAfterLifecycleReconciliation(t *
 	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete"}
-	if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
-		t.Fatalf("unsettled process deletion: %v", err)
+	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete", CancelSessions: session.ComputerSessionCancellation(auditpolicy.Policy{RetentionSeconds: 3600})}
+	// The closed Session's parked process does not delay deletion; it settles
+	// through the deleting Computer's lifecycle.
+	result, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion)
+	if err != nil || result.ComputerID != f.Computer || result.Replayed {
+		t.Fatalf("unexpected deletion receipt: %+v %v", result, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -44,15 +47,15 @@ func TestCancelledParkedComputerBecomesDeletableAfterLifecycleReconciliation(t *
 	}()
 	limit := time.Now().Add(5 * time.Second)
 	for {
-		result, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion)
-		if err == nil {
-			if result.ComputerID != f.Computer || result.Replayed {
-				t.Fatalf("unexpected deletion receipt: %+v", result)
-			}
+		var stopped bool
+		if err := f.Pool.QueryRow(t.Context(), `SELECT bool_and(fenced_at IS NOT NULL) FROM session_processes WHERE session_id=$1`, f.Session).Scan(&stopped); err != nil {
+			t.Fatal(err)
+		}
+		if stopped {
 			break
 		}
-		if !errors.Is(err, computer.ErrBusy) || time.Now().After(limit) {
-			t.Fatalf("terminal parked Computer deletion never converged: %v", err)
+		if time.Now().After(limit) {
+			t.Fatal("terminal parked process never settled after deletion")
 		}
 		time.Sleep(time.Millisecond)
 	}

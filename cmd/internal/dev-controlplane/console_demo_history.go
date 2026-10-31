@@ -30,7 +30,7 @@ type demoHistory struct {
 type demoSessionRow struct {
 	id, agent, computer, root, parent, origin string
 	depth                                     int
-	status                                    string
+	status, closeHow                          string
 	generation                                int64
 	createdAt                                 time.Time
 	eligibleAt, expiredAt                     time.Time
@@ -279,7 +279,10 @@ func (s *demoLog) control(id, kind, callerKind, callerID, hold string, turn *dem
 		return
 	}
 	s.h.controls = append(s.h.controls, c)
-	s.event(nil, "session."+kind, data)
+	// Cancellation is recorded only by the session.closed event.
+	if kind != "cancel" {
+		s.event(nil, "session."+kind, data)
+	}
 }
 
 func (s *demoLog) release(h *demoHold) {
@@ -288,15 +291,15 @@ func (s *demoLog) release(h *demoHold) {
 }
 
 // close ends an idle Session and records its process's physical stop.
-func (s *demoLog) close(closeEvent map[string]any, controlID string) {
+func (s *demoLog) close(controlID string) {
+	s.row.closeHow = "idle"
 	if controlID != "" {
 		s.control(controlID, "close", "user", defaultUserID, "", nil)
-	} else {
-		s.event(nil, "session.close", closeEvent)
+		s.row.closeHow = "close"
 	}
 	s.row.status = "closed"
 	s.row.generation++
-	s.event(nil, "session.closed", nil)
+	s.event(nil, "session.closed", map[string]any{"how": s.row.closeHow})
 	s.wait(4 * time.Second)
 	s.stopProcess("stopped")
 	s.event(nil, "session.process_stopped", nil)
@@ -346,10 +349,10 @@ func (h *demoHistory) write(ctx context.Context, tx pgx.Tx, environment string, 
 		if root == "" {
 			root = s.id
 		}
-		b.Queue(`INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at,close_after_idle_ms,history_eligible_at,history_expired_at,origin_user_id)
-VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'00000000-0000-7000-8000-000000000101')`,
+		b.Queue(`INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,status,close_how,authority_generation,next_turn_seq,next_event_seq,created_at,close_after_idle_ms,history_eligible_at,history_expired_at,origin_user_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,NULLIF($17,''),$10,$11,$12,$13,$14,$15,$16,'00000000-0000-7000-8000-000000000101')`,
 			environment, s.id, s.agent, demoSeedDeploymentID, s.computer, root, demoNullable(s.parent), s.depth, s.status, s.generation,
-			s.nextTurn, s.nextEvent, s.createdAt, demoNullableInt(s.closeAfterIdleMS), demoTime(s.eligibleAt), demoTime(s.expiredAt))
+			s.nextTurn, s.nextEvent, s.createdAt, demoNullableInt(s.closeAfterIdleMS), demoTime(s.eligibleAt), demoTime(s.expiredAt), s.closeHow)
 	}
 	for _, p := range h.procs {
 		var failure any

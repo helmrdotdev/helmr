@@ -45,7 +45,10 @@ test("events validate their producer-specific payload before exposing narrowed d
   const answer = { ask_id: id, answer: { selected: [{ id: "allow", value: true }] }, answered_by_user_id: id }
   expect(parseSessionEventData("ask.answered", answer)).toEqual(answer)
   expect(() => parseSessionEventData("ask.answered", { ...answer, answered_by_api_key_id: id })).toThrow()
-  expect(parseSessionEventData("session.close", { reason: "close_after_idle" })).toEqual({ reason: "close_after_idle" })
+  expect(() => parseSessionEventData("session.close", { reason: "close_after_idle" })).toThrow()
+  expect(parseSessionEventData("session.closed", { how: "idle" })).toEqual({ how: "idle" })
+  expect(() => parseSessionEventData("session.closed", {})).toThrow()
+  expect(() => parseSessionEventData("session.closed", { how: "cancelled" })).toThrow()
   expect(parseSessionEventData("session.resume", { controlId: id, holdId: id })).toEqual({ controlId: id, holdId: id })
 })
 

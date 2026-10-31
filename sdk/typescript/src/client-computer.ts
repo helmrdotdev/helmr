@@ -193,7 +193,7 @@ export function createClientComputerRef(
       request: ComputerDeleteRequest = {},
       options: RequestOptions = {},
     ): Promise<ComputerDeleteReceipt> {
-      return parseComputerDeleteReceipt(await transport.request("DELETE", path, {
+      return parseComputerDeleteReceipt(await transport.request("DELETE", request.dryRun ? `${path}?dry_run=true` : path, {
         body: request.idempotencyKey === undefined ? {} : { idempotency_key: request.idempotencyKey },
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       }))

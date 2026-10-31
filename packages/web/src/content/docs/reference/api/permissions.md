@@ -109,7 +109,8 @@ records an audit event in the same transaction.
 
 [Agent deletion](/docs/reference/api/agents) requires a human session with
 `agents.delete` on the target. Restore requires `agents.restore`. Neither requires
-assignment or connection management permissions. Deletion includes fixed cleanup
+assignment or connection management permissions. Deleting cancels its Sessions
+and the Sessions they started; `agents.delete` is enough. Deletion includes fixed cleanup
 of the Agent's connection and selected access edges. It removes that Agent from selected
 assignments. Assignments with no remaining effect are removed; assignments that
 still grant other Agent targets or non-Agent permissions are preserved. An empty
@@ -135,7 +136,7 @@ Agents or all current and future Agents in that environment.
 | --- | --- | --- | --- |
 | `agents.read` | Agent | Yes | List/read the authorized Agent's definition and retained status, including deleted status; not other Agents or full deployment catalogs. |
 | `sessions.create` | Agent | Yes | Create a Session with initial input, an optional key and Slack destination. Returns a receipt without granting history or control. |
-| `agents.delete` | Agent | No | Preview and apply explicit Agent deletion, including its fixed cleanup effects; current-deployment and unsettled-work blockers remain. |
+| `agents.delete` | Agent | No | Preview and apply Agent deletion. Deleting cancels its Sessions and the Sessions they started, without a separate Session cancel permission. The Agent must be absent from the current deployment. |
 | `agents.restore` | Agent | No | Preview and restore a deleted Agent identity. Does not restore removed selected grants or Slack connections; broad grants apply again and existing parent Sessions may create children immediately, before another deployment includes the Agent. |
 | `agent_connections.read` | Agent | No | Read the Agent's Slack connection status/setup metadata, without credential values. |
 | `agent_connections.configure` | Agent | No | Register the Agent's connection, replace supplied app credentials and authorize or reauthorize installation through verified OAuth. Does not grant credential export or disconnection. |
@@ -146,7 +147,7 @@ Agents or all current and future Agents in that environment.
 | `sessions.resume` | Agent | Yes | Resume matching suspended work. |
 | `sessions.interrupt` | Agent | Yes | Interrupt the addressed Session/Turn using existing interruption semantics. |
 | `sessions.cancel` | Agent | Yes | Cancel the addressed Session using existing cancellation semantics. |
-| `sessions.close` | Agent | Yes | Inspect the close-scope preview and request Session closure using existing child/settlement constraints. |
+| `sessions.close` | Agent | Yes | Preview how many Sessions a close affects and request Session closure. |
 | `deployments.read` | Environment | Yes | Read deployment list, current deployment, record and events; not Session conversations or Computer stdout/stderr. |
 | `deployments.publish` | Environment | Yes | Obtain upload plan, finalize bundle and register immutable deployment definitions/code. Publication/preparation may execute code with configured credentials. |
 | `deployments.promote` | Environment | Yes | Activate or roll back to an existing deployment; changes current definitions and scheduled admission. No upload authority. |
@@ -161,7 +162,7 @@ Agents or all current and future Agents in that environment.
 | `computers.wake` | Environment | Yes | Explicitly wake a Computer, subject to existing state constraints. |
 | `computers.hibernate` | Environment | Yes | Explicitly hibernate a Computer with existing busy/settlement checks. |
 | `computers.update` | Environment | Yes | Change deletion-after-unused policy; shortening it can promptly cause deletion. |
-| `computers.delete` | Environment | Yes | Delete the Computer through the platform API with existing settlement rules. |
+| `computers.delete` | Environment | Yes | Preview and apply Computer deletion. Deleting cancels its Sessions and the Sessions they started, and its unfinished Commands, without a separate cancel permission. |
 | `secrets.read` | Environment | Yes | Read Secret names/IDs, versions and non-value metadata. Never retrieve stored plaintext. |
 | `secrets.create` | Environment | Yes | Create a Secret under a new name using newly supplied material. A revoked name is set again by rotating it. |
 | `secrets.rotate` | Environment | Yes | Set the next value of an existing Secret, including reactivating a revoked Secret. New work and the next protected request use the new value. |

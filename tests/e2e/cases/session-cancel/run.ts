@@ -12,10 +12,10 @@ await verify("session-cancel", async ({ client, marker, computer, startAgent, ob
   objects.turn_ids.push(queued.id)
   await session.cancel({ idempotencyKey: `cancel-session:${marker}` })
   await Promise.all([waitTurn(turn, ["cancelled"]), waitTurn(queued, ["cancelled"])])
-  assertEqual((await session.get()).status, "cancelled", "Session cancellation did not settle")
+  assertEqual((await session.get()).status, "closed", "Session cancellation did not close it")
   let cursor: string | undefined, found = false
   do {
-    const page = await client.sessions.list({ status: "cancelled", limit: 100, cursor })
+    const page = await client.sessions.list({ status: "closed", limit: 100, cursor })
     found ||= page.items.some(item => item.id === session.id)
     cursor = page.nextCursor
   } while (!found && cursor !== undefined)

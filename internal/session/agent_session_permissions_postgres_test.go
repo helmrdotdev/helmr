@@ -70,11 +70,11 @@ func TestSessionPermissionsKeepSelectedAgentBounds(t *testing.T) {
 	// Closing a parent cannot silently close a hidden child on another Agent.
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET parent_session_id=$1,requester_session_id=$1,root_session_id=$1,causal_depth=1 WHERE id=$2`, f.session, peer.session)
 	err = db.RunTx(ctx, f.pool, func(tx pgx.Tx) error {
-		_, err := session.SessionCloseScope(ctx, tx, caller, f.env, f.session)
+		_, err := session.SessionClosePreview(ctx, tx, caller, f.env, f.session)
 		return err
 	})
 	if !errors.Is(err, session.ErrDenied) {
-		t.Fatal("hidden close scope exposed", err)
+		t.Fatal("hidden close preview exposed", err)
 	}
 	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "cross-agent-close"}); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("cross-Agent cascade accepted", err)
@@ -121,4 +121,49 @@ func TestSessionPermissionsKeepSelectedAgentBounds(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT g.id,g.environment_id,$2 FROM role_grants g JOIN roles r ON r.id=g.role_id CROSS JOIN LATERAL unnest(r.permissions) p(permission) WHERE g.member_id=$1 AND p.permission='sessions.send'`, member, otherAgent)
 	checkRelations(true)
 
+}
+
+func TestSessionClosePreviewAuthorizesTheSessionsCloseActsOn(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	child := ownedFixture(t, f)
+	otherAgent, closer := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'other');
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
+ UPDATE sessions SET agent_id=$2 WHERE id=$4;
+ INSERT INTO users(id,display_name) VALUES($5,'Closer');
+ INSERT INTO org_members(id,org_id,user_id) SELECT uuidv7(),org_id,$5 FROM environments WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, otherAgent, f.agent, child.session, closer)
+	var org uuid.UUID
+	if err := f.pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.env).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	member := dbtest.GrantMember(t, f.pool, org, closer, &f.env, "sessions.close")
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE role_grants SET all_agents=false WHERE member_id=$1;
+ INSERT INTO role_grant_agents(grant_id,environment_id,agent_id) SELECT id,environment_id,$2 FROM role_grants WHERE member_id=$1`, pgx.QueryExecModeSimpleProtocol, member, f.agent)
+	caller := session.UserCaller((sessiontest.Fixture{Pool: f.pool, User: closer, Environment: f.env}).Principal(t))
+	preview := func() (int64, error) {
+		var count int64
+		err := db.RunTx(ctx, f.pool, func(tx pgx.Tx) error {
+			var err error
+			count, err = session.SessionClosePreview(ctx, tx, caller, f.env, f.session)
+			return err
+		})
+		return count, err
+	}
+	closeRequest := session.SessionControlRequest{EnvironmentID: f.env, SessionID: f.session, Kind: "close", IdempotencyKey: "close"}
+	// An open child on an Agent the caller cannot close denies both.
+	if _, err := preview(); !errors.Is(err, session.ErrDenied) {
+		t.Fatalf("preview with an open hidden child: %v", err)
+	}
+	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, closeRequest); !errors.Is(err, session.ErrDenied) {
+		t.Fatalf("close with an open hidden child: %v", err)
+	}
+	// A closed child is not acted on, so neither checks it.
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, child.session)
+	if count, err := preview(); err != nil || count != 1 {
+		t.Fatalf("preview with a closed hidden child: %d %v", count, err)
+	}
+	if r, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, closeRequest); err != nil || r.Status != "closed" {
+		t.Fatalf("close with a closed hidden child: %+v %v", r, err)
+	}
 }

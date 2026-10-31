@@ -258,7 +258,7 @@ const holders = await client.computers.list({ secret: "DATABASE_PASSWORD" })
 | `commands.list({ cursor?, limit? }?, options?)` | `CursorPage<ComputerUsage>` | Commands currently using the Computer, including pending cleanup; `limit` 1–100. |
 | `exec(request, options?)` | `CommandRef` | Admits a Command. See [Commands](#client-commands). |
 | `update({ deleteAfterUnused }, options?)` | `Computer` | Changes retention. Requires the `computers.update` permission. |
-| `delete({ idempotencyKey? }?, options?)` | `{ computerId }` | Requests deletion. |
+| `delete({ idempotencyKey?, dryRun? }?, options?)` | `{ computerId, sessionsCancelled, commandsCancelled }` | Requests deletion. Deleting cancels its Sessions and the Sessions they started, and its unfinished Commands. `dryRun` reports the counts without changing anything. |
 
 ```ts
 interface ComputerCommandRequest {

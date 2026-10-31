@@ -90,7 +90,7 @@ func (s *Server) changeAgent(w http.ResponseWriter, r *http.Request, restore boo
 func agentChangeResponse(result deployment.AgentChange) api.AgentChangeResponse {
 	out := api.AgentChangeResponse{Agent: result.Agent, CurrentDeploymentID: result.CurrentDeploymentID, DefinedInCurrent: result.DefinedInCurrent, DeletedAt: result.DeletedAt, Revision: result.Revision, CanApply: result.CanApply, Changed: result.Changed, Effects: api.AgentDeletionEffects(result.Effects), Warnings: result.Warnings, Blockers: []api.AgentDeletionBlocker{}}
 	for _, b := range result.Blockers {
-		out.Blockers = append(out.Blockers, api.AgentDeletionBlocker(b))
+		out.Blockers = append(out.Blockers, api.AgentDeletionBlocker{Code: b})
 	}
 	return out
 }

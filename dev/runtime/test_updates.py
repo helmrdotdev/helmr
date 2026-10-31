@@ -269,7 +269,7 @@ class UpdateTests(unittest.TestCase):
 
     def test_persistence_stops_on_terminal_session_without_checkpoint(self):
         for action in ['wait-parked', 'verify-restored', 'wait-aborted']:
-            for status in ['closed', 'cancelled']:
+            for status in ['closed']:
                 row = {'session_status': status}
                 result = subprocess.CompletedProcess([], 0, stdout=json.dumps(row))
                 with self.subTest(action=action, status=status), patch.object(host, 'service_run', return_value=result) as query:

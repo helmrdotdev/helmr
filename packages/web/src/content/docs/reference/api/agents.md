@@ -56,20 +56,18 @@ Both operations return HTTP 200 with status plus:
 
 - `can_apply`: whether the inspected prerequisites allow the operation;
 - `changed`: whether this request changed the deletion state (false for previews);
-- `blockers`: entries with `code`, total `count`, optional `session_ids` and
-  `samples_incomplete`;
-- `effects`: counts of `selected_agent_edges_removed`,
+- `blockers`: entries with a `code`;
+- `effects`: counts of `sessions_cancelled`, `selected_agent_edges_removed`,
   `ineffective_assignments_removed`, `mixed_assignments_preserved` and
   `trigger_activations_sealed`, plus nullable `slack_connection_disconnected`;
 - `warnings`: explanatory strings for the operator, including access loss and
   the limits of Restore.
 
-A deletion preview returns HTTP 200 even when `can_apply` is false. Blocker codes
-are `defined_in_current`, `sessions_active` and `cleanup_pending`. Resolve current
-membership by promoting a Deployment without the Agent; close active Sessions
-and wait for execution cleanup. Session samples contain at most 20 IDs per blocker
-and require Session viewing permission. `count` remains the total; when IDs are
-withheld or truncated, `samples_incomplete` is true.
+A deletion preview returns HTTP 200 even when `can_apply` is false. The only
+blocker code is `defined_in_current`; resolve it by promoting a Deployment
+without the Agent. Deleting cancels its Sessions and the Sessions they started,
+including ones of other Agents, with no separate Session permission.
+`sessions_cancelled` counts them; their execution cleanup continues afterward.
 
 Preview effects describe the proposed cleanup. Applying rechecks authorization,
 revision and dependencies; a preview is not a reservation. Refresh after a

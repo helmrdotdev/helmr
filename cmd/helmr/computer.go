@@ -137,10 +137,11 @@ func computerDeleteCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
 	var idempotencyKey string
+	var dryRun bool
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use:   "delete",
-		Short: "Delete a Computer.",
+		Short: "Delete a Computer, cancelling its Sessions and unfinished Commands.",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			controlPlane, scope, err := scopedComputerClient(command, projectID, environmentID)
@@ -153,20 +154,21 @@ func computerDeleteCommand() *cobra.Command {
 			}
 			receipt, err := controlPlane.DeleteComputer(command.Context(), computerID, api.DeleteComputerRequest{
 				IdempotencyKey: idempotencyKey,
-			}, scope)
+			}, dryRun, scope)
 			if err != nil {
 				return err
 			}
 			if jsonOutput {
 				return writeJSON(command.OutOrStdout(), receipt)
 			}
-			_, err = fmt.Fprintln(command.OutOrStdout(), receipt.ComputerID)
+			_, err = fmt.Fprintf(command.OutOrStdout(), "computer_id: %s\nsessions_cancelled: %d\ncommands_cancelled: %d\n", receipt.ComputerID, receipt.SessionsCancelled, receipt.CommandsCancelled)
 			return err
 		},
 	}
 	addScopeFlags(command, &projectID, &environmentID)
 	address.add(command)
 	command.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "Count the Sessions and Commands deletion would cancel without changing state.")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON.")
 	return command
 }

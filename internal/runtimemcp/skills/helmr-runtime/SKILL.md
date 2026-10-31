@@ -97,9 +97,12 @@ not proof that execution has stopped.
   each hold. Only interrupts you placed can be released this way; other
   interrupts and storage pressure holds stay in force. Other holds can still prevent progress. It does not replay
   interrupted input.
-- `close_session` closes admission while already accepted work drains.
-- `cancel_session` cancels pending work and requests cessation of active work
-  in the subtree. Check the affected state before reporting cancellation done.
+- `close_session` closes admission while running and unblocked queued work
+  drains. Queued work that a hold blocks and pending questions are cancelled.
+  The result reports the Session status: `closing` or `closed`.
+- `cancel_session` cancels pending work, requests cessation of active work in
+  the subtree and closes it at once. The result reports status `closed`.
+  Closing or cancelling a closed Session changes nothing.
 
 All calls remain subject to the current Session's authority and admission
 state. Reading this skill grants no additional access. The MCP transport is

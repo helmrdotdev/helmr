@@ -58,10 +58,18 @@ export interface ComputerCommandRequest {
 
 export interface ComputerDeleteRequest {
   readonly idempotencyKey?: string
+  /** Count what deletion would cancel without changing anything. */
+  readonly dryRun?: boolean
 }
 
+/**
+ * Deletion cancels the Computer's Sessions and the Sessions they started, and its
+ * unfinished Commands. A dry run reports the same counts and changes nothing.
+ */
 export interface ComputerDeleteReceipt {
   readonly computerId: string
+  readonly sessionsCancelled: number
+  readonly commandsCancelled: number
 }
 
 export interface ComputerExecutionRequest {
@@ -243,11 +251,18 @@ export function parseComputerDeleteReceipt(
   value: unknown,
 ): ComputerDeleteReceipt {
   const response = computerObject(value, "Computer delete response")
+  const count = (key: string) => {
+    const n = response[key]
+    if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 0) throw new Error(`Computer delete response.${key} is invalid`)
+    return n
+  }
   return Object.freeze({
     computerId: resourceID(
       response["computer_id"],
       "Computer delete response.computer_id",
     ),
+    sessionsCancelled: count("sessions_cancelled"),
+    commandsCancelled: count("commands_cancelled"),
   })
 }
 

@@ -158,7 +158,10 @@ applicable platform/organization custody scope.
 `session.close_requested`, `session.cancel_requested`,
 `session.interrupt_requested`, `session.resume_requested`, and
 `turn.interrupt_requested` record accepted control requests. Terminal events
-record their actual effects separately. `template.refresh_requested` likewise
+record their actual effects separately: a Session that closes, whether by
+close, cancel or its idle policy, records one `session.closed` fact whose
+details carry `how` (`close`, `cancel` or `idle`). Closing or
+cancelling a Session that is already closed records nothing. `template.refresh_requested` likewise
 records acceptance, including a new request that joins an existing build.
 `audit.retention_observed` records a process's observed retention policy.
 Checkpoint, hold and image-build references use `checkpoint_id`, `hold_id` and

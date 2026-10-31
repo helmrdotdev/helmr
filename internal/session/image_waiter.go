@@ -91,12 +91,17 @@ func ExpireImageWaiter(ctx context.Context, auditPolicy auditpolicy.Policy, pool
 				return err
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE sessions SET status='closing' WHERE environment_id=$1 AND computer_id=$2 AND status='open'`, env, computerID); err != nil {
+		// Close the Sessions of this Computer with the Sessions they own.
+		rows, err = tx.Query(ctx, `WITH RECURSIVE tree AS (SELECT id FROM sessions WHERE environment_id=$1 AND computer_id=$2
+   UNION SELECT s.id FROM sessions s JOIN tree t ON s.parent_session_id=t.id WHERE s.environment_id=$1)
+   SELECT id FROM tree`, env, computerID)
+		if err != nil {
 			return err
 		}
-		if err = notifySessionsChanged(ctx, tx, env, after...); err != nil {
+		owned, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
 			return err
 		}
-		return drainClosingSessions(ctx, auditPolicy, tx, env, after)
+		return beginClose(ctx, auditPolicy, tx, env, owned, "close")
 	}))
 }

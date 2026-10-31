@@ -50,7 +50,7 @@ for (const cancelFails of [false, true]) {
         expect(request.method).toBe("POST")
         expect((await request.json()).idempotency_key).toContain(sessionId)
         if (cancelFails) return Response.json({ error: { code: "invalid_state", message: "cannot cancel" } }, { status: 409 })
-        return Response.json({ id: "01900000-0000-7000-8000-000000000002", session_id: sessionId, status: "accepted" })
+        return Response.json({ session_id: sessionId, status: "closed" })
       },
     })
     try {

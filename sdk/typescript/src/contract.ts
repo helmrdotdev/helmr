@@ -31,7 +31,7 @@ export interface SessionOperationOptions {
   readonly idempotencyKey?: string
 }
 
-export type SessionStatus = "open" | "closing" | "closed" | "cancelled"
+export type SessionStatus = "open" | "closing" | "closed"
 /** A Computer rollback that lost acknowledged file changes. `holdId` is null for a notice to a Session that keeps running. */
 export interface RecoveryGap {
  readonly holdId:string|null; readonly computerId:string; readonly leaseEpoch:number; readonly recoverySaveId:string|null; readonly restoredAt:string|null; readonly affectedTurnIds:readonly string[]
@@ -100,15 +100,15 @@ export interface TurnListQuery {
   readonly limit?: number
 }
 
+/** The Session status after a close: `closing` while work drains, or `closed`. */
 export interface SessionCloseReceipt {
-  readonly id: string
   readonly sessionId: string
-  readonly status: "accepted"
+  readonly status: "closing" | "closed"
 }
+/** A cancelled Session is always `closed`. */
 export interface SessionCancelReceipt {
-  readonly id: string
   readonly sessionId: string
-  readonly status: "accepted"
+  readonly status: "closed"
 }
 export interface SessionInterruptReceipt {
   readonly id: string
@@ -150,6 +150,7 @@ export interface TurnDeadlineInterruption {
 /** Counted harness failures reported by `session.process_failed`. */
 export type ProcessFailureReason = "process_failed" | "stop_deadline_elapsed" | "execution_lost"
 type ControlEventData = Readonly<{ controlId: string; holdId?: string }>
+export type SessionCloseHow = "close" | "cancel" | "idle"
 type MessageEventData<S extends string, D extends string = S> = Readonly<{ message_id: string; status: S; delivery: D; reason?: string }>
 interface SessionEventData {
   "message.admitted": MessageEventData<"admitted">
@@ -171,8 +172,8 @@ interface SessionEventData {
   "turn.interrupt": ControlEventData
   "turn.interrupted": (EmptyEventData & Readonly<{ reason?: never }>) | ComputerLossInterruption | TurnDeadlineInterruption
   "turn.cancelled": EmptyEventData
-  "session.cancelled": EmptyEventData
-  "session.closed": EmptyEventData
+  /** How the Session closed: a close, a cancel, or its idle policy. */
+  "session.closed": Readonly<{ how: SessionCloseHow }>
   "session.process_stopped": EmptyEventData
   "session.storage_pressure": Readonly<{computerId:string;leaseEpoch:number;holdId:string;state:"paused"|"resolved"|"stopped"}>
   "session.recovery_gap": RecoveryGap
@@ -180,8 +181,7 @@ interface SessionEventData {
   "session.process_failed": Readonly<{ processEpoch: number; reason: ProcessFailureReason; holdId: string | null }>
   "session.interrupt": ControlEventData
   "session.resume": ControlEventData
-  "session.close": ControlEventData | Readonly<{ reason: "close_after_idle" }>
-  "session.cancel": ControlEventData
+  "session.close": ControlEventData
 }
 export type SessionEventKind = keyof SessionEventData
 export type SessionEvent = Readonly<{

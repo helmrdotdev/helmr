@@ -812,7 +812,7 @@ def observe_persistence(cfg, session_id, action):
             raise RuntimeError('observation exceeds 256 KiB')
         observed = json.loads(raw) if raw else None
         status = observed.get('session_status') if observed else None
-        if status in ['closed', 'cancelled']:
+        if status == 'closed':
             raise RuntimeError(f"Session ended with {status} before {action}")
         return persistence_matches(observed, action)
     wait_for(check, action, seconds=180)

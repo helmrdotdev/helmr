@@ -206,13 +206,13 @@ func (s *Server) closeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := session.ControlSession(r.Context(), s.auditPolicy, s.tx, caller, session.SessionControlRequest{
-		EnvironmentID: environment, SessionID: sessionID, Kind: "close", IdempotencyKey: request.IdempotencyKey, ExpectedScope: request.ExpectedScope,
+		EnvironmentID: environment, SessionID: sessionID, Kind: "close", IdempotencyKey: request.IdempotencyKey,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.SessionCloseReceipt{ID: result.ID.String(), SessionID: result.SessionID.String(), Status: "accepted"})
+	writeJSON(w, http.StatusOK, api.SessionCloseReceipt{SessionID: result.SessionID.String(), Status: result.Status})
 }
 
 func (s *Server) cancelSessionHTTP(w http.ResponseWriter, r *http.Request) {
@@ -238,7 +238,7 @@ func (s *Server) cancelSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeAgentHTTPError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.SessionCancelReceipt{ID: result.ID.String(), SessionID: result.SessionID.String(), Status: "accepted"})
+	writeJSON(w, http.StatusOK, api.SessionCancelReceipt{SessionID: result.SessionID.String(), Status: result.Status})
 }
 
 func (s *Server) resumeSessionHTTP(w http.ResponseWriter, r *http.Request) {

@@ -88,7 +88,8 @@ func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, 
 	if err := tx.QueryRow(ctx, `SELECT computer_id,status FROM sessions WHERE environment_id=$1 AND id=$2`, target.Environment, target.Session).Scan(&computerID, &status); err != nil {
 		return nil, err
 	}
-	if status != "open" && c.Action != "help" {
+	// Close and its confirmation report the state of a Session that is not open.
+	if status != "open" && c.Action != "help" && c.Action != "close" && c.Action != "confirm_close" {
 		return nil, session.ErrTerminal
 	}
 	if c.Action == "sleep" {
@@ -104,7 +105,7 @@ func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		}
 	}
 	if c.Action == "close" {
-		if _, err := session.SessionCloseScope(ctx, tx, caller, target.Environment, target.Session); err != nil {
+		if _, err := session.SessionClosePreview(ctx, tx, caller, target.Environment, target.Session); err != nil {
 			return nil, err
 		}
 	}
@@ -119,7 +120,7 @@ func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		}
 		return json.Marshal(receipt)
 	case "confirm_close":
-		receipt, err := session.ControlSession(ctx, auditPolicy, tx, caller, session.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "close", IdempotencyKey: "slack:" + id.String(), ExpectedScope: c.Scope})
+		receipt, err := session.ControlSession(ctx, auditPolicy, tx, caller, session.SessionControlRequest{EnvironmentID: target.Environment, SessionID: target.Session, Kind: "close", IdempotencyKey: "slack:" + id.String()})
 		if err != nil {
 			return nil, err
 		}

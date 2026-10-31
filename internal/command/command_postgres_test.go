@@ -565,16 +565,20 @@ func TestCommandStandaloneComputerCreateReplayAndDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: first.ComputerID, IdempotencyKey: "delete"}
-	if _, err = computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
-		t.Fatalf("delete live Command: %v", err)
+	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: first.ComputerID, IdempotencyKey: "delete", CancelSessions: session.ComputerSessionCancellation(auditpolicy.Policy{RetentionSeconds: 3600})}
+	preview := deletion
+	preview.DryRun = true
+	if counted, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, preview); err != nil || counted.CommandsCancelled != 1 {
+		t.Fatalf("delete preview %+v %v", counted, err)
 	}
-	if _, err = Cancel(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), f.ref(uuid.UUID(cmd.ID.Bytes))); err != nil {
-		t.Fatal(err)
-	}
+	// Deletion cancels the live Command instead of waiting for it.
 	deleted, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion)
-	if err != nil || deleted.ComputerID != first.ComputerID {
+	if err != nil || deleted.ComputerID != first.ComputerID || deleted.CommandsCancelled != 1 {
 		t.Fatalf("delete %+v %v", deleted, err)
+	}
+	var status string
+	if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM commands WHERE id=$1`, cmd.ID).Scan(&status); err != nil || status != "cancelled" {
+		t.Fatalf("deleted Computer Command: %s %v", status, err)
 	}
 	again, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion)
 	if err != nil || !again.Replayed {

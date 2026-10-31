@@ -183,7 +183,7 @@ func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectio
 		return projectContent(ctx, tx, o, e, "question", question.Question, false, &question.ID)
 	case "ask.answered", "ask.cancelled":
 		return projectQuestionState(ctx, tx, o, e)
-	case "turn.failed", "turn.interrupted", "turn.cancelled", "session.closed", "session.cancelled":
+	case "turn.failed", "turn.interrupted", "turn.cancelled", "session.closed":
 		if _, err := tx.Exec(ctx, `UPDATE slack_posts SET closed_at=COALESCE(closed_at,clock_timestamp()),next_attempt_at=CASE WHEN error='rate_limited' THEN next_attempt_at ELSE LEAST(next_attempt_at,clock_timestamp()) END WHERE thread_source_id=$1 AND role='intermediate' AND ($2::uuid IS NULL OR turn_id=$2)`, o.participant, e.turn); err != nil {
 			return err
 		}

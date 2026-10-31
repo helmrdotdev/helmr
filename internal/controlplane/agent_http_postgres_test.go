@@ -303,7 +303,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	call(keyInterruptPath, interrupter, interruptBody, http.StatusUnauthorized)
 
 	// Closing rejects new input but retains already admitted Turns. Both external
-	// transports use current close authority and durable, caller-scoped receipts.
+	// transports use current close authority; closing a closing Session records nothing.
 	toClose := decode(call(start, owner, `{"input":[{"type":"text","text":"1"}],"idempotency_key":"close-target"}`, http.StatusOK))
 	closePath := base + "/sessions/" + toClose.SessionID + "/close"
 	keyClosePath := "/v1/sessions/" + toClose.SessionID + "/close"
@@ -323,7 +323,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	}
 	for _, transport := range []struct{ path, token string }{{closePath, owner}, {keyClosePath, closer}} {
 		var receipt, replay api.SessionCloseReceipt
-		if err := json.Unmarshal(call(transport.path, transport.token, closeBody, http.StatusOK), &receipt); err != nil || receipt.ID == "" || receipt.SessionID != toClose.SessionID || receipt.Status != "accepted" {
+		if err := json.Unmarshal(call(transport.path, transport.token, closeBody, http.StatusOK), &receipt); err != nil || receipt.SessionID != toClose.SessionID || receipt.Status != "closing" {
 			t.Fatalf("close receipt: %+v %v", receipt, err)
 		}
 		if err := json.Unmarshal(call(transport.path, transport.token, closeBody, http.StatusOK), &replay); err != nil || replay != receipt {
@@ -331,7 +331,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 		}
 	}
 	var retainedClosing bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status='closing' AND t.status='queued' AND (SELECT count(*)=2 FROM session_controls c WHERE c.environment_id=s.environment_id AND c.session_id=s.id AND c.kind='close') FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.id=$1 AND t.id=$2`, toClose.SessionID, toClose.Turn.TurnID).Scan(&retainedClosing); err != nil || !retainedClosing {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status='closing' AND t.status='queued' AND (SELECT count(*)=1 FROM session_controls c WHERE c.environment_id=s.environment_id AND c.session_id=s.id AND c.kind='close') FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id) WHERE s.id=$1 AND t.id=$2`, toClose.SessionID, toClose.Turn.TurnID).Scan(&retainedClosing); err != nil || !retainedClosing {
 		t.Fatalf("close discarded work or duplicated controls: %v %v", retainedClosing, err)
 	}
 	expectCode(call(base+"/sessions/"+toClose.SessionID+"/enqueue", owner, `{"input":[{"type":"text","text":"2"}]}`, http.StatusConflict), "admission_unavailable")
@@ -450,7 +450,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	call("/v1/sessions/"+first.SessionID+"/cancel", issue(auth.PermissionSessionsCreate), cancelBody, http.StatusForbidden)
 	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/cancel", first.SessionID), owner, cancelBody, http.StatusForbidden)
 	var cancellation api.SessionCancelReceipt
-	if err := json.Unmarshal(call(cancelPath, owner, cancelBody, http.StatusOK), &cancellation); err != nil || cancellation.ID == "" || cancellation.SessionID != first.SessionID || cancellation.Status != "accepted" {
+	if err := json.Unmarshal(call(cancelPath, owner, cancelBody, http.StatusOK), &cancellation); err != nil || cancellation.SessionID != first.SessionID || cancellation.Status != "closed" {
 		t.Fatalf("cancel receipt: %+v %v", cancellation, err)
 	}
 	var replay api.SessionCancelReceipt
@@ -467,7 +467,6 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(canceller))
 	call("/v1/sessions/"+keyAdmission.SessionID+"/cancel", canceller, cancelBody, http.StatusUnauthorized)
 
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed' WHERE id=$1`, first.SessionID)
 	expectCode(call(enqueue, owner, `{"input":[{"type":"text","text":"6"}]}`, http.StatusConflict), "admission_unavailable")
 
 }

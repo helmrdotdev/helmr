@@ -182,11 +182,11 @@ func TestAgentDefinitionHTTP(t *testing.T) {
  UPDATE template_definitions SET cpu_millis=1000,memory_bytes=536870912 WHERE environment_id=$1;
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, definition.ComputerSeedProfile)
 	consumer := issue(auth.PermissionSessionsCreate)
-	closePath := "/v1/sessions/" + f.Session.String() + "/close-scope"
+	closePath := "/v1/sessions/" + f.Session.String() + "/close-preview"
 	get(closePath, consumer, http.StatusForbidden)
-	get("/v1/sessions/"+uuid.NewV7().String()+"/close-scope", consumer, http.StatusForbidden)
+	get("/v1/sessions/"+uuid.NewV7().String()+"/close-preview", consumer, http.StatusForbidden)
 	get(closePath, reader, http.StatusForbidden)
-	get(sessionPath+"/close-scope", owner, http.StatusOK)
+	get(sessionPath+"/close-preview", owner, http.StatusOK)
 	get(closePath, issue(auth.PermissionSessionsClose), http.StatusOK)
 
 	for _, path := range []string{"/v1/agents", "/v1/agents/agent", "/v1/agents" + selected, "/v1/agents/agent" + selected} {

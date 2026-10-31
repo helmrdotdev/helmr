@@ -398,7 +398,7 @@ func TestHoldCanReleaseMatchesControlSession(t *testing.T) {
 	closing.TurnID = running.TurnID
 	hold := insertChildHold(t, f, child, holdCase{"process_failed", "system"})
 	for _, state := range []string{"open", "closing"} {
-		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status=$2 WHERE id=$1`, f.session, state)
+		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status=$2,close_how=CASE WHEN $2='open' THEN NULL ELSE 'close' END WHERE id=$1`, f.session, state)
 		view, err := session.RuntimeGetSession(t.Context(), f.pool, closing, child.session)
 		if err != nil || len(view.Holds) != 1 || view.Holds[0].ID != hold {
 			t.Fatalf("%s parent view: %+v %v", state, view.Holds, err)

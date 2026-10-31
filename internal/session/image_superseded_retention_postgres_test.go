@@ -10,6 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -75,7 +76,7 @@ func TestSupersededImageRetainsPinsAndNewestThenReclaimsDeletedComputerPayload(t
 	if err := f.pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.env).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, computer.Deletion{Principal: sessiontestPrincipal(t, f.fixture), Scope: scope, ComputerID: oldComputer, IdempotencyKey: "delete-old-pin"}); err != nil {
+	if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, computer.Deletion{Principal: sessiontestPrincipal(t, f.fixture), Scope: scope, ComputerID: oldComputer, IdempotencyKey: "delete-old-pin", CancelSessions: session.ComputerSessionCancellation(auditpolicy.Policy{RetentionSeconds: 3600})}); err != nil {
 		t.Fatal(err)
 	}
 	for range 3 {

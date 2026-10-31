@@ -149,20 +149,25 @@ func TestAgentDeletePrerequisitesAndRollback(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.h.pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.env)
 	sess := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$2,0,$5)`, f.env, sess, f.agent, f.dep, f.user)
-	if r := f.change(t, false, true, "", 200); r.CanApply || len(r.Blockers) != 1 || r.Blockers[0].Code != "sessions_active" || len(r.Blockers[0].SessionIDs) != 1 {
+	// An open Session does not block deletion; the preview counts it.
+	if r := f.change(t, false, true, "", 200); !r.CanApply || len(r.Blockers) != 0 || r.Effects.SessionsCancelled != 1 {
 		t.Fatalf("live %+v", r)
 	}
-	f.change(t, false, false, "1", 409)
-	dbtest.MustExec(t, t.Context(), f.h.pool, `UPDATE sessions SET status='closed' WHERE id=$1`, sess)
 	grant := f.selectedGrant(t, []string{"sessions.create"}, f.agent)
 	dbtest.MustExec(t, t.Context(), f.h.pool, `CREATE FUNCTION reject_agent_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='agent.deleted' THEN RAISE EXCEPTION 'injected audit failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_agent_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_agent_audit()`)
 	f.change(t, false, false, "1", 500)
 	var intact bool
-	if err := f.h.pool.QueryRow(t.Context(), `SELECT (SELECT deleted_at IS NULL AND revision=1 FROM agents WHERE id=$1) AND EXISTS(SELECT 1 FROM role_grant_agents WHERE grant_id=$2 AND agent_id=$1)`, f.agent, grant).Scan(&intact); err != nil || !intact {
+	if err := f.h.pool.QueryRow(t.Context(), `SELECT (SELECT deleted_at IS NULL AND revision=1 FROM agents WHERE id=$1) AND EXISTS(SELECT 1 FROM role_grant_agents WHERE grant_id=$2 AND agent_id=$1) AND (SELECT status='open' FROM sessions WHERE id=$3)`, f.agent, grant, sess).Scan(&intact); err != nil || !intact {
 		t.Fatalf("partial cleanup %v %v", intact, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.h.pool, `DROP TRIGGER reject_agent_audit ON audit_events`)
-	f.change(t, false, false, "1", 200)
+	if r := f.change(t, false, false, "1", 200); !r.Changed || r.Effects.SessionsCancelled != 1 {
+		t.Fatalf("delete %+v", r)
+	}
+	var cancelled bool
+	if err := f.h.pool.QueryRow(t.Context(), `SELECT status='closed' AND close_how='cancel' FROM sessions WHERE id=$1`, sess).Scan(&cancelled); err != nil || !cancelled {
+		t.Fatalf("deletion did not cancel the Session: %v %v", cancelled, err)
+	}
 }
 
 func TestAgentDeleteScopedManagerVisibilityAndSelfLockout(t *testing.T) {
@@ -177,10 +182,9 @@ func TestAgentDeleteScopedManagerVisibilityAndSelfLockout(t *testing.T) {
 	sess := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.h.pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$2,0,$5)`, f.env, sess, f.agent, f.dep, f.user)
 	preview := scoped.change(t, false, true, "", 200)
-	if preview.CanApply || len(preview.Blockers) != 1 || preview.Blockers[0].Count != 1 || len(preview.Blockers[0].SessionIDs) != 0 || !preview.Blockers[0].SamplesIncomplete || len(preview.Warnings) != 2 {
-		t.Fatalf("hidden preview %+v", preview)
+	if !preview.CanApply || len(preview.Blockers) != 0 || preview.Effects.SessionsCancelled != 1 || len(preview.Warnings) != 1 {
+		t.Fatalf("scoped preview %+v", preview)
 	}
-	dbtest.MustExec(t, t.Context(), f.h.pool, `UPDATE sessions SET status='closed' WHERE id=$1`, sess)
 	scoped.change(t, false, false, "1", 200)
 	scoped.change(t, true, true, "", 404)
 	scoped.request(t, http.MethodGet, f.base+"/status", token, "", "", 404)

@@ -70,11 +70,11 @@ INSERT INTO deployment_events(environment_id,deployment_id,kind,message,accepted
 ($1::uuid,$2::uuid,'deployment.promoted','Deployment promoted',now()-interval '3 days');
 INSERT INTO computers(environment_id,id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,storage_reservation_bytes,image_spec_id,preparation_deadline_at,preparation_failed_at)
 VALUES($1::uuid,$6::uuid,$3::uuid,$2::uuid,1000,536870912,34359738368,$3::uuid,now()-interval '1 hour',now()-interval '1 hour');
-INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,status,authority_generation,next_turn_seq,next_event_seq,created_at,origin_user_id) VALUES
-($1::uuid,$7::uuid,$4::uuid,$2::uuid,$6::uuid,$7::uuid,0,'closed',2,2,4,now()-interval '2 hours','00000000-0000-7000-8000-000000000101'),
-($1::uuid,$12::uuid,$10::uuid,$2::uuid,$6::uuid,$12::uuid,0,'open',1,1,1,now()-interval '90 minutes','00000000-0000-7000-8000-000000000101'),
-($1::uuid,$13::uuid,$11::uuid,$2::uuid,$6::uuid,$13::uuid,0,'open',1,2,3,now()-interval '50 minutes','00000000-0000-7000-8000-000000000101'),
-($1::uuid,$14::uuid,$10::uuid,$2::uuid,$6::uuid,$14::uuid,0,'closed',2,2,4,now()-interval '1 day','00000000-0000-7000-8000-000000000101');
+INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,status,close_how,authority_generation,next_turn_seq,next_event_seq,created_at,origin_user_id) VALUES
+($1::uuid,$7::uuid,$4::uuid,$2::uuid,$6::uuid,$7::uuid,0,'closed','close',2,2,4,now()-interval '2 hours','00000000-0000-7000-8000-000000000101'),
+($1::uuid,$12::uuid,$10::uuid,$2::uuid,$6::uuid,$12::uuid,0,'open',NULL,1,1,1,now()-interval '90 minutes','00000000-0000-7000-8000-000000000101'),
+($1::uuid,$13::uuid,$11::uuid,$2::uuid,$6::uuid,$13::uuid,0,'open',NULL,1,2,3,now()-interval '50 minutes','00000000-0000-7000-8000-000000000101'),
+($1::uuid,$14::uuid,$10::uuid,$2::uuid,$6::uuid,$14::uuid,0,'closed','cancel',2,2,4,now()-interval '1 day','00000000-0000-7000-8000-000000000101');
 INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id,created_at)
 VALUES($1::uuid,$17::uuid,$12::uuid,'interrupt','user','00000000-0000-7000-8000-000000000101',now()-interval '80 minutes');
 INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,error_code,error_message,processing_closed_at,terminal_at) VALUES
@@ -84,12 +84,12 @@ INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kin
 INSERT INTO session_events(environment_id,session_id,seq,turn_id,kind,data,created_at) VALUES
 ($1::uuid,$7::uuid,1,$8::uuid,'turn.queued','{}',now()-interval '2 hours'),
 ($1::uuid,$7::uuid,2,$8::uuid,'turn.failed','{"code":"preparation_deadline"}',now()-interval '1 hour'),
-($1::uuid,$7::uuid,3,NULL,'session.closed','{}',now()-interval '1 hour'),
+($1::uuid,$7::uuid,3,NULL,'session.closed','{"how":"close"}',now()-interval '1 hour'),
 ($1::uuid,$13::uuid,1,$15::uuid,'turn.queued','{}',now()-interval '50 minutes'),
 ($1::uuid,$13::uuid,2,$15::uuid,'turn.failed','{"code":"tool_error"}',now()-interval '30 minutes'),
 ($1::uuid,$14::uuid,1,$16::uuid,'turn.queued','{}',now()-interval '1 day'),
 ($1::uuid,$14::uuid,2,$16::uuid,'turn.cancelled','{}',now()-interval '23 hours'),
-($1::uuid,$14::uuid,3,NULL,'session.closed','{}',now()-interval '23 hours');
+($1::uuid,$14::uuid,3,NULL,'session.closed','{"how":"cancel"}',now()-interval '23 hours');
 UPDATE sessions SET history_eligible_at=now()-interval '1 hour' WHERE environment_id=$1::uuid AND id=$7::uuid;
 UPDATE sessions SET history_eligible_at=now()-interval '23 hours' WHERE environment_id=$1::uuid AND id=$14::uuid;
 `, pgx.QueryExecModeSimpleProtocol, demoSeedEnvironmentID, demoSeedDeploymentID, demoSeedSpecID,
@@ -485,7 +485,7 @@ func seedDemoLongSession(h *demoHistory, now time.Time) {
 		s.triage(turn, next())
 	}
 	s.wait(12 * time.Minute)
-	s.close(nil, demoUUID(8205))
+	s.close(demoUUID(8205))
 }
 
 // seedDemoChildSession is a demo-reporter Session spawned with JSON input by
@@ -511,9 +511,9 @@ func seedDemoChildSession(h *demoHistory, parent *demoLog, origin *demoTurn, id,
 	s.complete(t, demoContent(summary), map[string]any{"words": 182, "status": "draft"})
 	s.wait(10 * time.Second)
 	s.control(demoUUID(8206), "close", "session", parent.row.id, "", nil)
-	s.row.status = "closed"
+	s.row.status, s.row.closeHow = "closed", "close"
 	s.row.generation++
-	s.event(nil, "session.closed", nil)
+	s.event(nil, "session.closed", map[string]any{"how": "close"})
 	s.wait(4 * time.Second)
 	s.stopProcess("stopped")
 	s.event(nil, "session.process_stopped", nil)
@@ -532,9 +532,9 @@ func seedDemoCancelledChildSession(h *demoHistory, parent *demoLog, origin *demo
 	s.output(t, demoText("Drafting the refund notice for Pied Piper…"))
 	s.wait(45 * time.Second)
 	s.settle(t, "cancelled")
-	s.row.status = "cancelled"
+	s.row.status, s.row.closeHow = "closed", "cancel"
 	s.row.generation++
-	s.event(nil, "session.cancelled", nil)
+	s.event(nil, "session.closed", map[string]any{"how": "cancel"})
 	s.control(demoUUID(8207), "cancel", "session", parent.row.id, "", nil)
 	s.wait(4 * time.Second)
 	s.stopProcess("stopped")
@@ -571,7 +571,7 @@ func seedDemoJSONSession(h *demoHistory, now time.Time) {
 		"dry_run": true,
 	})
 	s.wait(15 * time.Minute)
-	s.close(map[string]any{"reason": "close_after_idle"}, "")
+	s.close("")
 }
 
 // seedDemoExpiredSession is closed and its history content has expired under
@@ -596,7 +596,7 @@ func seedDemoExpiredSession(h *demoHistory, now time.Time) {
 	s.wait(60 * time.Second)
 	s.fail(t, "tool_error", "The legacy attachment store refused the export token.")
 	s.wait(30 * time.Minute)
-	s.close(nil, demoUUID(8208))
+	s.close(demoUUID(8208))
 	h.expire(demoSeedExpiredSessionID, now.Add(-3*time.Hour))
 }
 

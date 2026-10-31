@@ -52,7 +52,7 @@ func TestSlackLifecycleCommandsConfirmWithoutCreatingWork(t *testing.T) {
 	}
 }
 
-func TestSlackCloseConfirmationRejectsChangedScopeAndWrongActor(t *testing.T) {
+func TestSlackCloseConfirmationShowsCountAndRequiresItsActor(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
 	id := f.threadMessage(t, "close", "!close", time.Now())
@@ -63,6 +63,9 @@ func TestSlackCloseConfirmationRejectsChangedScopeAndWrongActor(t *testing.T) {
 	}
 	var body struct {
 		Blocks []struct {
+			Text struct {
+				Text string `json:"text"`
+			} `json:"text"`
 			Elements []struct {
 				Value string `json:"value"`
 			} `json:"elements"`
@@ -70,6 +73,9 @@ func TestSlackCloseConfirmationRejectsChangedScopeAndWrongActor(t *testing.T) {
 	}
 	if err = json.Unmarshal(feedback.payload, &body); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(string(feedback.payload), "Closing affects this Session only.") {
+		t.Fatalf("close confirmation lacks its count: %s", feedback.payload)
 	}
 	var claims controlEnvelope
 	for _, b := range body.Blocks {
@@ -82,7 +88,7 @@ func TestSlackCloseConfirmationRejectsChangedScopeAndWrongActor(t *testing.T) {
 			}
 		}
 	}
-	if claims.Action != "confirm_close" || claims.Actor != "human" || claims.Scope == "" {
+	if claims.Action != "confirm_close" || claims.Actor != "human" || claims.Scope != "" {
 		t.Fatalf("confirmation unbound: %+v", claims)
 	}
 	wrongActorRaw, _ := json.Marshal(controlGesture{Control: claims})
@@ -94,7 +100,6 @@ func TestSlackCloseConfirmationRejectsChangedScopeAndWrongActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.receiptStatus(t, wrongActor.ID, "rejected")
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.Session)
 	raw, _ := json.Marshal(controlGesture{Control: claims})
 	receipt, err := receiveGesture(t.Context(), f.Pool, inboundGesture{Installation: f.installation, Key: "confirm:" + uuid.NewV7().String(), Actor: "human", OccurredAt: time.Now(), ExpiresAt: time.Now().Add(time.Minute), Payload: raw})
 	if err != nil {
@@ -103,10 +108,10 @@ func TestSlackCloseConfirmationRejectsChangedScopeAndWrongActor(t *testing.T) {
 	if err = admitControl(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, receipt.ID); err != nil {
 		t.Fatal(err)
 	}
-	f.receiptStatus(t, receipt.ID, "rejected")
+	f.receiptStatus(t, receipt.ID, "accepted")
 	var status string
-	if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, f.Session).Scan(&status); err != nil || status != "open" {
-		t.Fatalf("stale confirmation closed Session: %s %v", status, err)
+	if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, f.Session).Scan(&status); err != nil || status == "open" {
+		t.Fatalf("confirmed close left the Session open: %s %v", status, err)
 	}
 }
 

@@ -8,20 +8,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const executionReleased = `s.status IN ('closed','cancelled')
+const historyReleased = `s.status='closed'
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.fenced_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('queued','running'))
  AND NOT EXISTS(SELECT 1 FROM turn_messages m WHERE m.environment_id=s.environment_id AND m.session_id=s.id AND m.status IN ('admitted','started'))
  AND NOT EXISTS(SELECT 1 FROM turn_asks a WHERE a.environment_id=s.environment_id AND a.session_id=s.id AND a.status='pending')
  AND NOT EXISTS(SELECT 1 FROM computer_saves save JOIN turns t ON t.environment_id=save.environment_id AND t.id=save.turn_id WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND save.status IN ('requested','captured'))
- AND NOT EXISTS(SELECT 1 FROM checkpoint_processes m JOIN checkpoints k ON k.environment_id=m.environment_id AND k.id=m.checkpoint_id WHERE m.environment_id=s.environment_id AND m.session_id=s.id AND k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL)`
-
-const historyReleased = executionReleased + `
+ AND NOT EXISTS(SELECT 1 FROM checkpoint_processes m JOIN checkpoints k ON k.environment_id=m.environment_id AND k.id=m.checkpoint_id WHERE m.environment_id=s.environment_id AND m.session_id=s.id AND k.status NOT IN ('cancelled','lost') AND k.controls_reconciled_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM slack_thread_sources p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND p.projected_event_seq<s.next_event_seq-1)
  AND NOT EXISTS(SELECT 1 FROM sessions child JOIN slack_thread_sources src ON (src.environment_id,src.session_id)=(child.environment_id,child.id)
  JOIN slack_threads thread ON thread.id=src.thread_id
  WHERE child.environment_id=s.environment_id AND child.parent_session_id=s.id AND thread.front_session_id=s.id AND
- (child.status NOT IN ('closed','cancelled') OR src.projected_event_seq<child.next_event_seq-1 OR
+ (child.status<>'closed' OR src.projected_event_seq<child.next_event_seq-1 OR
  EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=child.environment_id AND p.session_id=child.id AND p.fenced_at IS NULL)))
  AND NOT EXISTS(SELECT 1 FROM slack_posts p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND
  ((p.delivery_disposed_at IS NULL AND (p.status IN ('pending','sending','uncertain') OR p.inflight_attempt_id IS NOT NULL OR p.stream_status IN ('open','uncertain') OR (p.status='posted' AND p.desired_revision<>p.confirmed_revision))) OR (p.delivery_disposed_at IS NOT NULL AND p.status='sending' AND p.claimed_until>clock_timestamp())))`

@@ -219,7 +219,8 @@ and machine results stay in Console; children alone do not open extra posts.
 Slack's native Stop creates an interrupt hold on the front Session and its owned
 work. It settles queued work too, so old requests do not replay on resume.
 Processing remains visible while cessation is unconfirmed. The cessation notice
-appears only after the owned work has stopped.
+appears only after the owned work has stopped. Stop on a closing Session is refused: its running work
+finishes and its queued work and questions are already cancelled.
 
 A later accepted human message in the same bound thread releases holds created
 by native Slack Stop in that thread, and the front Session's process failure and

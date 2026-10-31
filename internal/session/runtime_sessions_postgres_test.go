@@ -113,7 +113,7 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	view, err := session.RuntimeGetSession(t.Context(), f.pool, caller, independent.session)
-	if err != nil || view.Status != "cancelled" || view.InitialTurnID == nil || *view.InitialTurnID != requestedTurn.TurnID || view.InitialTurnStatus == nil || *view.InitialTurnStatus != "cancelled" || view.RequesterSessionID == nil || *view.RequesterSessionID != f.session {
+	if err != nil || view.Status != "closed" || view.InitialTurnID == nil || *view.InitialTurnID != requestedTurn.TurnID || view.InitialTurnStatus == nil || *view.InitialTurnStatus != "cancelled" || view.RequesterSessionID == nil || *view.RequesterSessionID != f.session {
 		t.Fatalf("retained initial receipt: %+v %v", view, err)
 	}
 	page, err := session.RuntimeListSessions(t.Context(), f.pool, caller, session.RuntimeSessionListRequest{Relation: "owned", Limit: 100})
@@ -135,7 +135,7 @@ func TestRuntimeSessionDiscoveryRetainsRelationsAndReceipts(t *testing.T) {
 	if len(seen) != 2 || !seen[owned.session] || !seen[independent.session] {
 		t.Fatalf("requester scope: %v", seen)
 	}
-	page, err = session.RuntimeListSessions(t.Context(), f.pool, caller, session.RuntimeSessionListRequest{Relation: "requested", Statuses: []string{"cancelled"}, Limit: 100})
+	page, err = session.RuntimeListSessions(t.Context(), f.pool, caller, session.RuntimeSessionListRequest{Relation: "requested", Statuses: []string{"closed"}, Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != independent.session {
 		t.Fatalf("terminal filter: %+v %v", page, err)
 	}

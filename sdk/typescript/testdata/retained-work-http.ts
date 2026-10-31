@@ -53,7 +53,7 @@ if (releasedReplay.id !== interrupted.id || releasedReplay.holdId !== interrupte
   throw new Error("SDK interrupt retry recreated a released hold")
 const closing = await session.close({ idempotencyKey: "sdk-close" })
 const closingReplay = await session.close({ idempotencyKey: "sdk-close" })
-if (closing.id !== closingReplay.id || closing.status !== "accepted" ||
+if (closing.status !== "closing" || closingReplay.status !== "closing" ||
     (await session.get()).status !== "closing" ||
     (await first.get()).status !== "queued")
   throw new Error("SDK close did not preserve admitted work and its receipt")

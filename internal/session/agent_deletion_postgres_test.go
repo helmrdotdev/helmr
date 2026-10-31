@@ -6,7 +6,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/agent"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -23,7 +22,7 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
 	target, child := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agents(environment_id,id,key,deleted_at) VALUES($1,$2,'child-agent',clock_timestamp());
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,false,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3;
- INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,status) VALUES($1,$4,$2,$5,$6,$6,$6,1,$7,'closed');`, pgx.QueryExecModeSimpleProtocol, f.env, target, f.agent, child, f.deployment, f.session, f.user)
+ INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,status,close_how) VALUES($1,$4,$2,$5,$6,$6,$6,1,$7,'closed','close');`, pgx.QueryExecModeSimpleProtocol, f.env, target, f.agent, child, f.deployment, f.session, f.user)
 	sessiontest.PublishRuntimeAgentSet(t, sessiontest.Fixture{Pool: f.pool, Environment: f.env, Deployment: f.deployment}, "agent", "child-agent")
 	turn := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET computer_id=$3 WHERE environment_id=$1 AND id=$2; INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,request_digest,terminal_at,processing_closed_at) VALUES($1,$4,$2,$3,1,'cancelled','session',$5,'spawn',$2,decode(repeat('00',32),'hex'),clock_timestamp(),clock_timestamp())`, pgx.QueryExecModeSimpleProtocol, f.env, child, f.computer, turn, f.session)
@@ -78,33 +77,57 @@ func TestDeletedChildAgentPreservesHistoryAndParentControls(t *testing.T) {
 
 }
 
-func TestAgentDeletionWaitsForTerminalSessionProcessCleanup(t *testing.T) {
-	f := newFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, f.env, f.session)
-	err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		blockers, err := session.AgentDeletionBlockers(t.Context(), tx, f.env, f.agent, true)
-		if err != nil {
-			return err
-		}
-		if len(blockers) != 1 || blockers[0].Code != "cleanup_pending" || blockers[0].Count != 1 {
-			t.Fatalf("unfenced cleanup: %+v", blockers)
-		}
-		return nil
-	})
+func TestAgentDeletionCancelsSessionsAndCleanupContinues(t *testing.T) {
+	f := newAdmissionFixture(t)
+	ctx := t.Context()
+	queued := f.enqueue(t, "queued")
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE environments SET current_deployment_id=NULL WHERE id=$1`, f.env)
+	var orgID uuid.UUID
+	if err := f.pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, f.env).Scan(&orgID); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.GrantMember(t, f.pool, orgID, f.user, nil, "assignments.create")
+	dbtest.GrantMember(t, f.pool, orgID, f.user, &f.env, "agents.delete")
+	principal, err := access.HumanInEnvironment(ctx, f.pool, f.human, f.env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.env, f.session)
-	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		blockers, err := session.AgentDeletionBlockers(t.Context(), tx, f.env, f.agent, true)
-		if err == nil && len(blockers) != 0 {
-			t.Fatalf("fenced process still blocks deletion: %+v", blockers)
-		}
-		return err
-	}); err != nil {
+	scope := auth.Scope{OrgID: principal.OrgID, ProjectID: principal.ProjectID, EnvironmentID: principal.EnvironmentID}
+	preview, err := deployment.ChangeAgent(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "agent", "", false, true)
+	if err != nil || !preview.CanApply || len(preview.Blockers) != 0 || preview.Effects.SessionsCancelled != 1 {
+		t.Fatalf("preview %+v %v", preview, err)
+	}
+	var status string
+	if err := f.pool.QueryRow(ctx, `SELECT status FROM sessions WHERE id=$1`, f.session).Scan(&status); err != nil || status != "open" {
+		t.Fatalf("preview changed the Session: %s %v", status, err)
+	}
+	deleted, err := deployment.ChangeAgent(ctx, f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "agent", "1", false, false)
+	if err != nil || !deleted.Changed || deleted.Effects.SessionsCancelled != 1 {
+		t.Fatalf("delete %+v %v", deleted, err)
+	}
+	var how, turn string
+	var stopping bool
+	if err := f.pool.QueryRow(ctx, `SELECT s.status,s.close_how,(SELECT status FROM turns WHERE id=$2),EXISTS(SELECT 1 FROM session_processes p WHERE p.session_id=s.id AND p.status='stopping' AND p.fenced_at IS NULL)
+ FROM sessions s WHERE s.id=$1`, f.session, queued.TurnID).Scan(&status, &how, &turn, &stopping); err != nil || status != "closed" || how != "cancel" || turn != "cancelled" || !stopping {
+		t.Fatalf("deleted Agent Session: %s %s %s stopping=%v %v", status, how, turn, stopping, err)
+	}
+	// Background cleanup still settles the process of a deleted Agent's Session.
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='deleted Agent closure' WHERE computer_id=$1 AND fenced_at IS NULL`, f.computer)
+	if err := session.ReconcileTerminalSessionStop(ctx, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
-
+	var fenced bool
+	if err := f.pool.QueryRow(ctx, `SELECT bool_and(fenced_at IS NOT NULL AND status='stopped') FROM session_processes WHERE session_id=$1`, f.session).Scan(&fenced); err != nil || !fenced {
+		t.Fatalf("deleted Agent process cleanup: %v %v", fenced, err)
+	}
+	// A repeated cancel of the closed Session records nothing.
+	before := countRows(t, f, f.session)
+	if receipt, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "after-delete")); !errors.Is(err, session.ErrAgentDeleted) && (err != nil || receipt.Status != "closed") {
+		t.Fatalf("cancel after delete: %+v %v", receipt, err)
+	}
+	if after := countRows(t, f, f.session); after != before {
+		t.Fatalf("cancel after delete wrote rows: %v -> %v", before, after)
+	}
 }
 
 func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
@@ -159,22 +182,27 @@ func TestAgentDeleteSerializesPinnedAndScheduledAdmission(t *testing.T) {
 			if admissionErr != nil && !errors.Is(admissionErr, session.ErrAgentDeleted) {
 				t.Fatal(admissionErr)
 			}
+			// Deletion either precedes admission, or cancels the admitted Session.
 			var isDeleted bool
 			var sessions int
-			if err := f.pool.QueryRow(t.Context(), `SELECT deleted_at IS NOT NULL,(SELECT count(*) FROM sessions WHERE environment_id=$1 AND agent_id=$2) FROM agents WHERE environment_id=$1 AND id=$2`, f.env, target).Scan(&isDeleted, &sessions); err != nil {
+			if err := f.pool.QueryRow(t.Context(), `SELECT deleted_at IS NOT NULL,(SELECT count(*) FROM sessions WHERE environment_id=$1 AND agent_id=$2 AND status<>'closed') FROM agents WHERE environment_id=$1 AND id=$2`, f.env, target).Scan(&isDeleted, &sessions); err != nil {
 				t.Fatal(err)
 			}
 			if (isDeleted && sessions != 0) || (!isDeleted && sessions != 1) {
 				t.Fatalf("race left deleted=%v sessions=%d errors=%v/%v", isDeleted, sessions, deletionErr, admissionErr)
 			}
 			if isDeleted && kind == "schedule" {
+				var before int
+				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE environment_id=$1 AND agent_id=$2`, f.env, target).Scan(&before); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := deployment.ChangeAgent(t.Context(), f.pool, auditpolicy.Policy{RetentionSeconds: 3600}, principal, scope, "child-agent", "2", true, false); err != nil {
 					t.Fatal(err)
 				}
 				if err := agent.EvaluateTrigger(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.env, activation); err != nil {
 					t.Fatal(err)
 				}
-				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE environment_id=$1 AND agent_id=$2`, f.env, target).Scan(&sessions); err != nil || sessions != 0 {
+				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE environment_id=$1 AND agent_id=$2`, f.env, target).Scan(&sessions); err != nil || sessions != before {
 					t.Fatalf("restore replayed schedule: %d %v", sessions, err)
 				}
 			}

@@ -88,7 +88,7 @@ func reconcileUnused(ctx context.Context, auditPolicy auditpolicy.Policy, databa
 			return nil
 		}
 		var busy bool
-		if err := tx.QueryRow(ctx, computerBusySQL, env, id).Scan(&busy); err != nil {
+		if err := tx.QueryRow(ctx, unusedComputerBusySQL, env, id).Scan(&busy); err != nil {
 			return err
 		}
 		if busy {

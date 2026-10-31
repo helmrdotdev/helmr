@@ -397,11 +397,14 @@ client.sessions.ref(id: string): SessionRef
 | `events.stream({ after? }?, options?)` | `AsyncIterableIterator<SessionEvent>` | Follows pages from `after`, polling when caught up. Stop it with `signal`. |
 | `interrupt({ idempotencyKey? }?, options?)` | `SessionInterruptReceipt` | Holds the Session and its owned descendants. Receipt includes `holdId`. |
 | `resume({ holdId, idempotencyKey? }, options?)` | `SessionResumeReceipt` | Releases the exact hold. |
-| `close({ idempotencyKey? }?, options?)` | `SessionCloseReceipt` | Stops new admission and drains accepted work. |
-| `cancel({ idempotencyKey? }?, options?)` | `SessionCancelReceipt` | Cancels queued and active work in the owned tree. |
+| `close({ idempotencyKey? }?, options?)` | `SessionCloseReceipt` | Stops new admission and drains work that can run; held queued Turns and pending questions are cancelled. |
+| `cancel({ idempotencyKey? }?, options?)` | `SessionCancelReceipt` | Cancels queued and active work in the owned tree and closes it. |
 
-Control receipts have `{ id, sessionId, status: "accepted" }` (plus `holdId` for
-interrupt and resume). They confirm acceptance, not that execution has stopped.
+Interrupt and resume receipts have `{ id, sessionId, status: "accepted", holdId }`.
+Close and cancel receipts have `{ sessionId, status }`, the Session status after
+the request: `closing` or `closed` for close, `closed` for cancel. Closing or
+cancelling a closed Session returns its status and changes nothing. Receipts do
+not confirm that execution has stopped.
 For control semantics see [Sessions](/docs/concepts/sessions). Event kinds and
 payloads are listed in [Session events](/docs/reference/events).
 
@@ -414,7 +417,7 @@ payloads are listed in [Session events](/docs/reference/events).
 | `computerId`, `parentSessionId`, `requesterSessionId` | `string \| null` |
 | `key` | `string`, optional |
 | `slackChannelId` | `string`, optional |
-| `status` | `"open" \| "closing" \| "closed" \| "cancelled"` |
+| `status` | `"open" \| "closing" \| "closed"` |
 | `closeAfterIdle` | `Retention` (`Duration` or `"never"`) |
 | `idleSince` | `string \| null` |
 | `initialTurn` | `{ id, status } \| null` |

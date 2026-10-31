@@ -110,7 +110,15 @@ func RuntimeAsk(ctx context.Context, auditPolicy auditpolicy.Policy,
 		if err := auditActorFact(ctx, tx, auditPolicy, runtimeAuditEvidence(e), audit.Event{EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, TurnID: turn, Action: "input.requested", Outcome: "accepted", TargetKind: "input_request", TargetID: id, Details: audit.LifecycleDetails{Sequence: sequence, Generation: e.ProcessEpoch}}); err != nil {
 			return err
 		}
-		return publication.accept(ctx, tx, e.EnvironmentID, e.SessionID, turn, sequence)
+		if err := publication.accept(ctx, tx, e.EnvironmentID, e.SessionID, turn, sequence); err != nil {
+			return err
+		}
+		// A closing Session never waits for a person; its questions are cancelled.
+		var closing bool
+		if err := tx.QueryRow(ctx, `SELECT status='closing' FROM sessions WHERE environment_id=$1 AND id=$2`, e.EnvironmentID, e.SessionID).Scan(&closing); err != nil || !closing {
+			return err
+		}
+		return cancelAsk(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e.EnvironmentID, e.SessionID, turn, id)
 	}))
 }
 

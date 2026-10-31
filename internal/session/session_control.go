@@ -33,7 +33,6 @@ type SessionControlRequest struct {
 	TurnID         uuid.UUID
 	Kind           string
 	IdempotencyKey string
-	ExpectedScope  string
 	HoldID         uuid.UUID
 	// Observed binds delayed control delivery to the execution generation it saw.
 	Observed *ControlObservation
@@ -47,17 +46,22 @@ type ControlObservation struct {
 	NextTurnSequence    int64
 }
 
+// SessionControlReceipt identifies an accepted control. Close and cancel also
+// report the Session status after the request; on a Session that is already
+// closing (close) or closed (close and cancel), they record nothing and leave
+// ID unset.
 type SessionControlReceipt struct {
 	ID        uuid.UUID
 	SessionID uuid.UUID
 	HoldID    uuid.UUID
+	Status    string
 }
 
 // ControlSession serializes controls with admission and settlement under the
 // ownership root. Retried acceptance never repeats its lifecycle transition.
 func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
 	var result SessionControlReceipt
-	if (req.ExpectedScope != "" && req.Kind != "close") || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) ||
+	if req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) ||
 		caller.ID == uuid.Nil() ||
 		(req.Kind != "interrupt" && req.Kind != "turn_interrupt" && req.Kind != "resume" && req.Kind != "close" && req.Kind != "cancel") ||
 		(req.Kind == "turn_interrupt") != (req.TurnID != uuid.Nil()) ||
@@ -70,8 +74,7 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 		HoldID          uuid.UUID
 		Observed        *ControlObservation
 		InterruptQueued bool
-		ExpectedScope   string `json:",omitempty"`
-	}{req.HoldID, req.Observed, req.InterruptQueued, req.ExpectedScope})
+	}{req.HoldID, req.Observed, req.InterruptQueued})
 	digest, err := digestJSON(payload)
 	if err != nil {
 		return result, err
@@ -131,6 +134,16 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 		if req.Kind == "resume" {
 			targets = []uuid.UUID{req.SessionID}
 		}
+		if req.Kind == "close" {
+			// Close acts only on the Session and the owned Sessions that are not
+			// closed; SessionClosePreview checks the same set.
+			targets = nil
+			for _, id := range ids {
+				if id == req.SessionID || locked[id].lifecycle != "closed" {
+					targets = append(targets, id)
+				}
+			}
+		}
 		for _, id := range targets {
 			if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, id, controlPermission(req.Kind)); err != nil {
 				return err
@@ -158,7 +171,7 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 			if hold != nil {
 				result.HoldID = *hold
 			}
-			return nil
+			return readLifecycleStatus(ctx, tx, req, &result)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
@@ -170,14 +183,11 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 				return err
 			}
 		}
-		if req.ExpectedScope != "" {
-			scope, err := ReadSessionCloseScope(ctx, tx, req.EnvironmentID, req.SessionID)
-			if err != nil {
-				return err
-			}
-			if scope.Digest != req.ExpectedScope {
-				return ErrControlScopeChanged
-			}
+		// Close and cancel are idempotent on their outcome. Cancel still settles a
+		// closing Session, which has not finished.
+		if lifecycle := locked[req.SessionID].lifecycle; (req.Kind == "close" && lifecycle != "open") || (req.Kind == "cancel" && lifecycle == "closed") {
+			result = SessionControlReceipt{SessionID: req.SessionID, Status: lifecycle}
+			return nil
 		}
 		if req.Observed != nil {
 			var matches bool
@@ -212,7 +222,8 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 				return err
 			}
 		case "interrupt":
-			if locked[req.SessionID].lifecycle == "closed" || locked[req.SessionID].lifecycle == "cancelled" {
+			// A closing Session already drains; a hold on it would be released at once.
+			if locked[req.SessionID].lifecycle != "open" {
 				return ErrNotReady
 			}
 			result.HoldID = uuid.NewV7()
@@ -227,6 +238,10 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 				return err
 			}
 			if err = advanceControlAuthority(ctx, tx, req.EnvironmentID, ids); err != nil {
+				return err
+			}
+			// A closing owned Session never waits on the inherited hold.
+			if err = drainClosingSessions(ctx, auditPolicy, tx, req.EnvironmentID, ids); err != nil {
 				return err
 			}
 		case "resume":
@@ -264,29 +279,26 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 			if err = settleControlledTurns(ctx, auditPolicy, tx, caller, req.EnvironmentID, ids, true, false); err != nil {
 				return err
 			}
-			changed, err := tx.Query(ctx, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=ANY($2) AND status NOT IN ('closed','cancelled') RETURNING id`, req.EnvironmentID, ids)
+			rows, err := tx.Query(ctx, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=ANY($2) AND status<>'closed' RETURNING id`, req.EnvironmentID, ids)
 			if err != nil {
 				return err
 			}
-			cancelled, err := pgx.CollectRows(changed, pgx.RowTo[uuid.UUID])
+			cancelled, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 			if err != nil {
 				return err
 			}
 			for _, id := range cancelled {
-				if err = auditOperation(ctx, tx, auditPolicy, caller, auth.PermissionSessionsCancel, audit.Event{EnvironmentID: req.EnvironmentID, SessionID: id, Action: "session.cancelled", Outcome: "cancelled", TargetKind: "session", TargetID: id, Details: audit.LifecycleDetails{RequestID: result.ID}}); err != nil {
-					return err
-				}
-				if err = event(ctx, tx, req.EnvironmentID, id, uuid.Nil(), "session.cancelled"); err != nil {
+				if err = finishClose(ctx, auditPolicy, tx, req.EnvironmentID, id, "cancel"); err != nil {
 					return err
 				}
 			}
-			// Idle processes must also stop on cancellation; independent peers
-			// sharing their Computer are not included in this ownership set.
-			stoppingRows, err := tx.Query(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=ANY($2) AND fenced_at IS NULL AND status IN ('starting','ready') RETURNING session_id`, req.EnvironmentID, ids)
+			// Processes of owned Sessions that closed earlier must stop too;
+			// independent peers sharing their Computer are not in this set.
+			rows, err = tx.Query(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=ANY($2) AND fenced_at IS NULL AND status IN ('starting','ready') RETURNING session_id`, req.EnvironmentID, ids)
 			if err != nil {
 				return err
 			}
-			stopping, err := pgx.CollectRows(stoppingRows, pgx.RowTo[uuid.UUID])
+			stopping, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
 			if err != nil {
 				return err
 			}
@@ -296,10 +308,15 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 				}
 			}
 		case "close":
-			if _, err = tx.Exec(ctx, `UPDATE sessions SET status='closing' WHERE environment_id=$1 AND id=$2 AND status='open'`, req.EnvironmentID, req.SessionID); err != nil {
+			// Record acceptance before any Session in the tree closes.
+			data, err := controlEventData(result)
+			if err != nil {
 				return err
 			}
-			if err = drainClosingSessions(ctx, auditPolicy, tx, req.EnvironmentID, ids); err != nil {
+			if err = eventData(ctx, tx, req.EnvironmentID, req.SessionID, uuid.Nil(), "session.close", data); err != nil {
+				return err
+			}
+			if err = beginClose(ctx, auditPolicy, tx, req.EnvironmentID, ids, "close"); err != nil {
 				return err
 			}
 		}
@@ -337,15 +354,18 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 		if err = auditOperation(ctx, tx, auditPolicy, caller, controlPermission(req.Kind), audit.Event{EnvironmentID: req.EnvironmentID, SessionID: req.SessionID, TurnID: req.TurnID, Action: action, Outcome: "accepted", TargetKind: targetKind, TargetID: targetID, Details: audit.SessionControlDetails{RequestID: result.ID, HoldID: result.HoldID}}); err != nil {
 			return err
 		}
-		data, err := json.Marshal(struct {
-			ControlID uuid.UUID `json:"controlId"`
-			HoldID    any       `json:"holdId,omitempty"`
-		}{result.ID, nullableID(result.HoldID)})
+		data, err := controlEventData(result)
 		if err != nil {
 			return err
 		}
-		if req.Kind == "turn_interrupt" {
+		switch req.Kind {
+		case "turn_interrupt":
 			return eventData(ctx, tx, req.EnvironmentID, req.SessionID, req.TurnID, "turn.interrupt", data)
+		case "cancel":
+			// session.closed records the outcome; cancellation has no separate event.
+			return readLifecycleStatus(ctx, tx, req, &result)
+		case "close":
+			return readLifecycleStatus(ctx, tx, req, &result)
 		}
 		return eventData(ctx, tx, req.EnvironmentID, req.SessionID, uuid.Nil(), "session."+req.Kind, data)
 	})
@@ -353,6 +373,20 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 		return SessionControlReceipt{}, hideMissing(err)
 	}
 	return result, nil
+}
+
+func controlEventData(result SessionControlReceipt) (json.RawMessage, error) {
+	return json.Marshal(struct {
+		ControlID uuid.UUID `json:"controlId"`
+		HoldID    any       `json:"holdId,omitempty"`
+	}{result.ID, nullableID(result.HoldID)})
+}
+
+func readLifecycleStatus(ctx context.Context, tx pgx.Tx, req SessionControlRequest, result *SessionControlReceipt) error {
+	if req.Kind != "close" && req.Kind != "cancel" {
+		return nil
+	}
+	return tx.QueryRow(ctx, `SELECT status FROM sessions WHERE environment_id=$1 AND id=$2`, req.EnvironmentID, req.SessionID).Scan(&result.Status)
 }
 
 // ReconcileSessionClosure advances an accepted close after Turn settlement.
@@ -376,10 +410,74 @@ func ReconcileSessionClosure(ctx context.Context, auditPolicy auditpolicy.Policy
 	})
 }
 
+// beginClose stops admission throughout a locked ownership tree at once and
+// records how it closes. Sessions already closing keep their recorded reason.
+func beginClose(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, how string) error {
+	rows, err := tx.Query(ctx, `UPDATE sessions SET status='closing',close_how=$3 WHERE environment_id=$1 AND id=ANY($2) AND status='open' RETURNING id`, env, ids, how)
+	if err != nil {
+		return err
+	}
+	closing, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+	if err != nil {
+		return err
+	}
+	if len(closing) > 0 {
+		if err = notifySessionsChanged(ctx, tx, env, closing...); err != nil {
+			return err
+		}
+	}
+	return drainClosingSessions(ctx, auditPolicy, tx, env, ids)
+}
+
+// drainClosingSessions settles the closing Sessions of a locked ownership tree.
+// Close drains only work that can run: queued Turns that a hold blocks and
+// pending questions are cancelled, while running and unblocked queued Turns
+// finish. A Session closes once its Turns have settled and its children closed.
 func drainClosingSessions(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID) error {
-	// A parent seals its children only after its own accepted work drains.
-	// Iterate top down so each newly sealed child's work is checked in turn.
-	rows, err := tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND id=ANY($2) ORDER BY (parent_session_id IS NOT NULL),id`, env, ids)
+	rows, err := tx.Query(ctx, `UPDATE turns t SET status='cancelled',terminal_at=clock_timestamp(),processing_closed_at=COALESCE(t.processing_closed_at,clock_timestamp())
+ FROM sessions s WHERE s.environment_id=$1 AND s.id=ANY($2) AND s.status='closing'
+ AND t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued' AND `+db.SessionHeldSQL+`
+ RETURNING t.id,t.session_id`, env, ids)
+	if err != nil {
+		return err
+	}
+	blocked, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (settledTurn, error) {
+		var turn settledTurn
+		err := row.Scan(&turn.id, &turn.session)
+		return turn, err
+	})
+	if err != nil {
+		return err
+	}
+	for _, turn := range blocked {
+		if err = settleTerminatedTurn(ctx, auditPolicy, tx, env, turn, "cancelled", func(e audit.Event) error {
+			e.Outcome = "cancelled"
+			return auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, e)
+		}); err != nil {
+			return err
+		}
+	}
+	rows, err = tx.Query(ctx, `SELECT a.session_id,a.turn_id,a.id FROM turn_asks a JOIN sessions s ON (s.environment_id,s.id)=(a.environment_id,a.session_id)
+ WHERE a.environment_id=$1 AND a.session_id=ANY($2) AND s.status='closing' AND a.status='pending' ORDER BY a.session_id,a.created_event_seq FOR UPDATE OF a`, env, ids)
+	if err != nil {
+		return err
+	}
+	type pendingAsk struct{ session, turn, id uuid.UUID }
+	asks, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (pendingAsk, error) {
+		var a pendingAsk
+		err := row.Scan(&a.session, &a.turn, &a.id)
+		return a, err
+	})
+	if err != nil {
+		return err
+	}
+	for _, a := range asks {
+		if err = cancelAsk(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), env, a.session, a.turn, a.id); err != nil {
+			return err
+		}
+	}
+	// Close the deepest Sessions first so a parent can close in the same pass.
+	rows, err = tx.Query(ctx, `SELECT id FROM sessions WHERE environment_id=$1 AND id=ANY($2) AND status='closing' ORDER BY causal_depth DESC,id`, env, ids)
 	if err != nil {
 		return err
 	}
@@ -388,48 +486,45 @@ func drainClosingSessions(ctx context.Context, auditPolicy auditpolicy.Policy, t
 		return err
 	}
 	for _, id := range ordered {
-		rows, err := tx.Query(ctx, `UPDATE sessions child SET status='closing'
- FROM sessions parent WHERE child.environment_id=$1 AND parent.environment_id=$1 AND parent.id=$2
- AND child.parent_session_id=parent.id AND parent.status='closing' AND child.status='open'
- AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=parent.id AND status IN ('queued','running')) RETURNING child.id`, env, id)
-		if err != nil {
-			return err
-		}
-		changed, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-		if err != nil {
-			return err
-		}
-		if len(changed) > 0 {
-			if err := notifySessionsChanged(ctx, tx, env, changed...); err != nil {
-				return err
-			}
-		}
-	}
-	// Close leaves first. Lifecycle closure requests process stop; it does not
-	// release allocation or claim physical convergence.
-	slices.Reverse(ordered)
-	for _, id := range ordered {
-		tag, err := tx.Exec(ctx, `UPDATE sessions s SET status='closed',authority_generation=authority_generation+1
+		var how string
+		err := tx.QueryRow(ctx, `UPDATE sessions s SET status='closed',authority_generation=authority_generation+1
  WHERE environment_id=$1 AND id=$2 AND status='closing'
  AND NOT EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=s.id AND status IN ('queued','running'))
- AND NOT EXISTS(SELECT 1 FROM sessions c WHERE c.environment_id=$1 AND c.parent_session_id=s.id AND c.status NOT IN ('closed','cancelled'))`, env, id)
+ AND NOT EXISTS(SELECT 1 FROM sessions c WHERE c.environment_id=$1 AND c.parent_session_id=s.id AND c.status<>'closed')
+ RETURNING close_how`, env, id).Scan(&how)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() == 0 {
-			continue
-		}
-		if _, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=$2 AND status IN ('starting','ready') AND fenced_at IS NULL`, env, id); err != nil {
-			return err
-		}
-		if err = auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: id, Action: "session.closed", TargetKind: "session", TargetID: id, Details: audit.LifecycleDetails{}}); err != nil {
-			return err
-		}
-		if err = event(ctx, tx, env, id, uuid.Nil(), "session.closed"); err != nil {
+		if err = finishClose(ctx, auditPolicy, tx, env, id, how); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// finishClose records a closed Session. A closed Session holds nothing: its
+// holds are released and its process is asked to stop. Lifecycle closure does
+// not release allocation or claim physical convergence.
+func finishClose(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, id uuid.UUID, how string) error {
+	if _, err := tx.Exec(ctx, `UPDATE session_holds SET released_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2 AND released_at IS NULL`, env, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=$2 AND status IN ('starting','ready') AND fenced_at IS NULL`, env, id); err != nil {
+		return err
+	}
+	if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: id, Action: "session.closed", TargetKind: "session", TargetID: id, Details: audit.LifecycleDetails{How: how}}); err != nil {
+		return err
+	}
+	data, err := json.Marshal(struct {
+		How string `json:"how"`
+	}{how})
+	if err != nil {
+		return err
+	}
+	return eventData(ctx, tx, env, id, uuid.Nil(), "session.closed", data)
 }
 
 func authorizeExternalControl(ctx context.Context, tx pgx.Tx, caller Caller, env, target uuid.UUID, kind string) error {
@@ -484,25 +579,36 @@ func advanceControlAuthority(ctx context.Context, tx pgx.Tx, env uuid.UUID, ids 
 	return notifySessionsChanged(ctx, tx, env, ids...)
 }
 
+type settledTurn struct {
+	id, session uuid.UUID
+	epoch       *int64
+}
+
 // Turn-bound saves remain ordered Computer cuts owned by save reconciliation,
 // even after their Turn is interrupted. Never infer capture absence here.
 func settleControlledTurns(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, caller Caller, env uuid.UUID, ids []uuid.UUID, cancel, interruptQueued bool) error {
-	status := "interrupted"
+	status, permission, outcome := "interrupted", auth.PermissionSessionsInterrupt, "succeeded"
 	if cancel {
-		status = "cancelled"
+		status, permission, outcome = "cancelled", auth.PermissionSessionsCancel, "cancelled"
 	}
+	return settleTurns(ctx, auditPolicy, tx, env, ids, status, cancel || interruptQueued, func(e audit.Event) error {
+		e.Outcome = outcome
+		return auditOperation(ctx, tx, auditPolicy, caller, permission, e)
+	})
+}
+
+// settleTurns ends the running Turns of the locked Sessions, and their queued
+// Turns when withQueued is set, as status. An interrupted process is asked to
+// stop; a cancelled one stops when its Session closes.
+func settleTurns(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env uuid.UUID, ids []uuid.UUID, status string, withQueued bool, record func(audit.Event) error) error {
 	rows, err := tx.Query(ctx, `UPDATE turns SET status=$3,terminal_at=clock_timestamp(),processing_closed_at=COALESCE(processing_closed_at,clock_timestamp())
- WHERE environment_id=$1 AND session_id=ANY($2) AND (status='running' OR ($4 AND status IN ('queued')) OR ($5 AND status='queued'))
- RETURNING id,session_id,process_epoch`, env, ids, status, cancel, interruptQueued)
+ WHERE environment_id=$1 AND session_id=ANY($2) AND (status='running' OR ($4 AND status='queued'))
+ RETURNING id,session_id,process_epoch`, env, ids, status, withQueued)
 	if err != nil {
 		return err
 	}
-	type settled struct {
-		id, session uuid.UUID
-		epoch       *int64
-	}
-	turns, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (settled, error) {
-		var turn settled
+	turns, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (settledTurn, error) {
+		var turn settledTurn
 		err := row.Scan(&turn.id, &turn.session, &turn.epoch)
 		return turn, err
 	})
@@ -510,34 +616,29 @@ func settleControlledTurns(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		return err
 	}
 	for _, turn := range turns {
-		if turn.epoch != nil && !cancel {
+		if turn.epoch != nil && status == "interrupted" {
 			if err = requestProcessStop(ctx, tx, env, turn.session, turn.id, *turn.epoch); err != nil {
 				return err
 			}
 		}
-		if turn.epoch != nil && cancel {
-			if _, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND fenced_at IS NULL AND status IN ('ready','starting')`, env, turn.session, *turn.epoch); err != nil {
-				return err
-			}
-		}
-		if err = cancelTurnAsks(ctx, auditPolicy, tx, env, turn.session, turn.id); err != nil {
-			return err
-		}
-		if err = rejectTurnMessages(ctx, auditPolicy, tx, env, turn.session, turn.id, true, "turn_terminated"); err != nil {
-			return err
-		}
-		permission, outcome := auth.PermissionSessionsInterrupt, "succeeded"
-		if cancel {
-			permission, outcome = auth.PermissionSessionsCancel, "cancelled"
-		}
-		if err = auditOperation(ctx, tx, auditPolicy, caller, permission, audit.Event{EnvironmentID: env, SessionID: turn.session, TurnID: turn.id, Action: "turn." + status, Outcome: outcome, TargetKind: "turn", TargetID: turn.id, Details: audit.LifecycleDetails{}}); err != nil {
-			return err
-		}
-		if err = event(ctx, tx, env, turn.session, turn.id, "turn."+status); err != nil {
+		if err = settleTerminatedTurn(ctx, auditPolicy, tx, env, turn, status, record); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func settleTerminatedTurn(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env uuid.UUID, turn settledTurn, status string, record func(audit.Event) error) error {
+	if err := cancelTurnAsks(ctx, auditPolicy, tx, env, turn.session, turn.id); err != nil {
+		return err
+	}
+	if err := rejectTurnMessages(ctx, auditPolicy, tx, env, turn.session, turn.id, true, "turn_terminated"); err != nil {
+		return err
+	}
+	if err := record(audit.Event{EnvironmentID: env, SessionID: turn.session, TurnID: turn.id, Action: "turn." + status, TargetKind: "turn", TargetID: turn.id, Details: audit.LifecycleDetails{}}); err != nil {
+		return err
+	}
+	return event(ctx, tx, env, turn.session, turn.id, "turn."+status)
 }
 
 // The first stop owns its deadline and target until current-epoch convergence.

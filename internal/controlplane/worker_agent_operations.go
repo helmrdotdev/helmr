@@ -364,6 +364,10 @@ func (server *Server) workerAgentControlSession(w http.ResponseWriter, r *http.R
 		return
 	}
 	value := map[string]any{"id": receipt.ID.String(), "sessionId": receipt.SessionID.String(), "status": "accepted"}
+	if input.Kind == "close" || input.Kind == "cancel" {
+		// Close and cancel report the Session status they leave behind.
+		value = map[string]any{"sessionId": receipt.SessionID.String(), "status": receipt.Status}
+	}
 	if receipt.HoldID != uuid.Nil() {
 		value["holdId"] = receipt.HoldID.String()
 	}
