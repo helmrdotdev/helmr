@@ -107,11 +107,8 @@ func PrepareSessionDelivery(ctx context.Context, pool db.TxBeginner, host worker
 
 func desiredSessionControl(ctx context.Context, tx pgx.Tx, e Execution) (string, error) {
 	var stopped, held bool
-	err := tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
- SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
- UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
-) SELECT s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL),
- EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
+	err := tx.QueryRow(ctx, `SELECT s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL),
+ `+db.SessionHeldSQL+`
  FROM sessions s
  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
  WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&stopped, &held)
@@ -215,7 +212,7 @@ func ObserveSessionStopped(ctx context.Context, auditPolicy auditpolicy.Policy, 
 			return err
 		}
 		if kind != "shutdown" {
-			if err = recordSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, "Session process stopped unexpectedly", "process_failed"); err != nil {
+			if err = recordSessionFailure(ctx, auditPolicy, tx, auditWorkerActor(host, e), e, failureProcessFailed); err != nil {
 				return err
 			}
 		}
@@ -231,10 +228,7 @@ func readCurrentSessionDelivery(ctx context.Context, tx pgx.Tx, host workergroup
 		return SessionDelivery{}, false, ErrDenied
 	}
 	var result SessionDelivery
-	err := tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
- SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
- UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
- ) SELECT p.control_sequence,p.control_generation,p.control_kind,p.control_acknowledged_at IS NOT NULL,COALESCE(p.control_error,''),p.stop_sequence,p.stop_turn_id,p.stop_deadline_at,LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
+	err := tx.QueryRow(ctx, `SELECT p.control_sequence,p.control_generation,p.control_kind,p.control_acknowledged_at IS NOT NULL,COALESCE(p.control_error,''),p.stop_sequence,p.stop_turn_id,p.stop_deadline_at,LEAST(l.expires_at,clock_timestamp()+interval '30 seconds')
  FROM session_processes p
  JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id)
  JOIN computer_leases l ON (l.environment_id,l.computer_id,l.epoch)=(p.environment_id,p.computer_id,p.computer_lease_epoch)
@@ -251,7 +245,7 @@ func readCurrentSessionDelivery(ctx context.Context, tx pgx.Tx, host workergroup
  AND m.session_id=p.session_id AND m.process_epoch=p.epoch)))
  AND p.attachment_sequence=$10 AND p.control_attachment=$10 AND p.control_generation=s.authority_generation
  AND p.control_kind=CASE WHEN s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped') OR (p.stop_deadline_at IS NOT NULL AND p.stop_turn_id IS NULL) THEN 'shutdown'
- WHEN EXISTS(SELECT 1 FROM session_holds hold JOIN ancestors a ON a.id=hold.session_id WHERE hold.environment_id=$1 AND hold.released_at IS NULL AND (hold.session_id=$2 OR hold.scope='subtree')) THEN 'suspend' ELSE 'resume' END`,
+ WHEN `+db.SessionHeldSQL+` THEN 'suspend' ELSE 'resume' END`,
 		e.EnvironmentID, e.SessionID, e.ProcessEpoch, e.LeaseEpoch, host.HostID, host.Epoch, host.GroupID, host.GroupClaimVersion, host.HostClaimVersion, attachment).Scan(&result.Sequence, &result.Generation, &result.Kind, &result.Acknowledged, &result.Error, &result.StopSequence, &result.StopTurnID, &result.StopDeadline, &result.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SessionDelivery{}, false, nil

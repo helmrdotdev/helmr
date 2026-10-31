@@ -41,10 +41,11 @@ export function parseSessionEventData(kind: SessionEventKind, value: unknown): S
       if (!Array.isArray(data["affectedTurnIds"])) throw new Error("Invalid recovery gap affected Turns")
       if (data["restoredAt"] !== null && (typeof data["restoredAt"] !== "string" || Number.isNaN(Date.parse(data["restoredAt"])))) throw new Error("Invalid recovery gap restore timestamp")
       if ((data["recoverySaveId"]===null)!==(data["restoredAt"]===null)) throw new Error("Recovery gap restore point is inconsistent")
-      return {holdId:id("holdId"),computerId:id("computerId"),leaseEpoch:sequence("leaseEpoch"),recoverySaveId:data["recoverySaveId"]===null?null:id("recoverySaveId"),restoredAt:data["restoredAt"] as string|null,affectedTurnIds:data["affectedTurnIds"].map(v=>resourceID(v,"affected Turn"))}
+      return {holdId:data["holdId"]===null?null:id("holdId"),computerId:id("computerId"),leaseEpoch:sequence("leaseEpoch"),recoverySaveId:data["recoverySaveId"]===null?null:id("recoverySaveId"),restoredAt:data["restoredAt"] as string|null,affectedTurnIds:data["affectedTurnIds"].map(v=>resourceID(v,"affected Turn"))}
     }
-    case "session.process_failed": return { holdId: id("holdId"), processEpoch: sequence("processEpoch") }
-    case "session.deadline": return { holdId: id("holdId") }
+    case "session.process_failed":
+      if (data["reason"] !== "process_failed" && data["reason"] !== "stop_deadline_elapsed" && data["reason"] !== "execution_lost") throw new Error("Invalid process failure reason")
+      return { processEpoch: sequence("processEpoch"), reason: data["reason"], holdId: data["holdId"] === null ? null : id("holdId") }
     case "session.close":
       if (data["reason"] === "close_after_idle") return { reason: "close_after_idle" }
       return { controlId: id("controlId"), ...(data["holdId"] === undefined ? {} : { holdId: id("holdId") }) }
@@ -53,6 +54,7 @@ export function parseSessionEventData(kind: SessionEventKind, value: unknown): S
     case "turn.failed": return data["code"] === undefined ? {} : { code: text("code") }
     case "turn.interrupted":
       if (Object.keys(data).length === 0) return {}
+      if (Object.keys(data).length === 1 && data["reason"] === "turn_deadline_elapsed") return { reason: "turn_deadline_elapsed" }
       if (Object.keys(data).length !== 4 || data["reason"] !== "computer_execution_lost" || typeof data["recoveryGap"] !== "boolean") throw new Error("Invalid Computer loss interruption data")
       return { reason: "computer_execution_lost", computerId: id("computerId"), leaseEpoch: sequence("leaseEpoch"), recoveryGap: data["recoveryGap"] }
     default:

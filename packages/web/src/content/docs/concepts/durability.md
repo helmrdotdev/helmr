@@ -97,24 +97,29 @@ If the Session's process exits unexpectedly while a Turn runs:
 
 - the running Turn ends `interrupted`, and its pending questions and messages
   are cancelled or rejected;
-- the Session is held, so nothing else runs until someone resumes it;
-- queued inputs stay queued.
+- the event log records `session.process_failed`;
+- queued inputs stay queued and run on a new process.
+
+A process that fails, cannot stop within its stop deadline, or loses its
+execution three times in a row with no Turn finishing in between holds the
+Session with a `process_failed` hold, so nothing else runs until someone resumes
+it. A Turn that finishes, completed or failed, resets the count, and so does
+releasing the hold. A recoverable Computer loss does not count.
 
 Helmr never replays the interrupted input automatically. Re-send it, or send a
 new input, when you decide it is safe.
 
 ## Reconstruction
 
-Reconstruction is explicit. Inspect the Session's holds and resume the one
-placed by the failure:
+When the Session next has input to run, Helmr starts a new process on the same
+Computer and runs `init` again. A held Session waits until its hold is
+released. Inspect the Session's holds and resume the `process_failed` hold:
 
 ```sh
 helmr session resume SESSION_ID --hold HOLD_ID
 ```
 
-In TypeScript, call `session.resume({ holdId })` on a session reference. When
-the Session next has input to run, Helmr starts a new process on the same
-Computer and runs `init` again. In that process `ctx.recovery.kind` is
+In TypeScript, call `session.resume({ holdId })` on a session reference. In that process `ctx.recovery.kind` is
 `"reconstructed"` and `ctx.recovery.reason` is `"process_replaced"`; in a
 Session's first process it is `"initial"`.
 
@@ -155,21 +160,27 @@ save has ever been published, Helmr can use that Computer's retained initial
 work environment. An unavailable newer save is not replaced with an older or
 initial image.
 
-If completed requests were not covered by the restored save, Helmr holds every
-attached conversation and shows the restore point and the number of affected
-completed requests in that conversation. Their file changes and native
-conversation history may be missing; their committed results and replies
-remain available. Choose Resume in Console, resume the exact hold through the
-SDK or CLI, or send a new Slack mention after the recovery notice. This
-acknowledges only the recovery hold for that conversation; other holds remain.
-Completed handlers never run again automatically.
+If completed requests were not covered by the restored save, Helmr holds each
+conversation with affected completed requests and shows the restore point and
+the number of affected completed requests in that conversation. Their file
+changes and native conversation history may be missing; their committed results
+and replies remain available. Choose Resume in Console, resume the exact hold
+through the SDK or CLI, or send a new Slack mention after the recovery notice.
+This acknowledges only the recovery hold for that conversation; other holds
+remain. Completed handlers never run again automatically.
+
+Other conversations on the same Computer, and conversations started there while
+an affected conversation is still held, receive the same recovery notice
+without a hold and keep running.
 
 When no completed work is missing, restoration needs no recovery-gap
 acknowledgement and queued requests continue automatically. A request that was
 still running ends as interrupted. Its Slack thread receives one message asking
-you to mention the agent again; Console shows the interrupted outcome. If a
-recovery-gap notice already explains that loss, Helmr does not send a second
-interruption notice. Interrupted work is never replayed. If the retained disk or
+you to mention the agent again; Console shows the interrupted outcome. If the
+conversation is held by a recovery gap for that loss, its acknowledgement
+request explains it and Helmr does not send a second interruption notice; a
+conversation that only receives the recovery notice still gets the interruption
+message. Interrupted work is never replayed. If the retained disk or
 its encryption keys are unavailable, the Computer remains unavailable rather
 than silently using a different environment.
 

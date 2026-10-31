@@ -52,7 +52,7 @@ func TestWorkerAgentStartBindsPinnedBundleAndRechecksAfterRead(t *testing.T) {
 			}
 			if mode == "hold during read" {
 				store.onRead = func() {
-					dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,gen_random_uuid(),$2,'local','test')`, f.Environment, f.Session)
+					dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,gen_random_uuid(),$2,'process_failed','system')`, f.Environment, f.Session)
 				}
 			}
 			server := httptest.NewServer(newPostgresServer(t, f.Pool, func(cfg *ServerConfig) { cfg.CAS = store }))
@@ -85,7 +85,7 @@ func TestWorkerAgentStartBindsPinnedBundleAndRechecksAfterRead(t *testing.T) {
 					t.Fatalf("changed release pin: %v", err)
 				}
 				release.BundleDigest = response.BundleDigest
-				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,gen_random_uuid(),$2,'local','test')`, f.Environment, f.Session)
+				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,gen_random_uuid(),$2,'process_failed','system')`, f.Environment, f.Session)
 				if _, err = client.ReleaseAgentStart(t.Context(), release); !httpclient.IsStatus(err, http.StatusConflict) {
 					t.Fatalf("held release: %v", err)
 				}

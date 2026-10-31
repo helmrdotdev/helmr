@@ -98,7 +98,7 @@ func reconcileStoragePressureTx(ctx context.Context, auditPolicy auditpolicy.Pol
 		if prolonged && hold == nil {
 			value := uuid.NewV7()
 			hold = &value
-			if _, err = tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,kind) VALUES($1,$2,$3,'local','Waiting for saving to recover','storage_pressure')`, env, *hold, id); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'storage_pressure','system')`, env, *hold, id); err != nil {
 				return err
 			}
 			state = "paused"
@@ -141,9 +141,6 @@ func reconcileStoragePressureTx(ctx context.Context, auditPolicy auditpolicy.Pol
 					return err
 				}
 				if err = advanceControlAuthority(ctx, tx, env, []uuid.UUID{id}); err != nil {
-					return err
-				}
-				if _, err = tx.Exec(ctx, `UPDATE session_holds SET reason=$3 WHERE environment_id=$1 AND id=$2 AND released_at IS NULL`, env, *hold, "The request was stopped because storage stayed full. Saving is still retrying. New requests will wait until space is available."); err != nil {
 					return err
 				}
 				if err = storagePressureEvent(ctx, tx, env, id, computerID, epoch, *hold, "stopped", *turn); err != nil {

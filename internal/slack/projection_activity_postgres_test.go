@@ -300,7 +300,7 @@ func TestOwnedActivityTurnInterruptAcknowledgementStopsOnlyThatCard(t *testing.T
 		t.Fatal("later turn reopened old stop", nextStopping)
 	}
 	// A new unrelated Session hold must not reopen the old Turn's stop observation.
-	_, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, Kind: "interrupt", IdempotencyKey: "later-hold", Reason: "fixture"})
+	_, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: child.Session, Kind: "interrupt", IdempotencyKey: "later-hold"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -221,9 +221,10 @@ work. It settles queued work too, so old requests do not replay on resume.
 Processing remains visible while cessation is unconfirmed. The cessation notice
 appears only after the owned work has stopped.
 
-A later accepted human message in the same bound thread releases only holds
-created by native Slack Stop and admits new work. Other administrative holds
-remain. A message arriving before cessation waits for that confirmation before
+A later accepted human message in the same bound thread releases holds created
+by native Slack Stop in that thread, and the front Session's process failure and
+recovery holds, then admits new work. The sender needs `sessions.resume` for
+that release. Interrupts placed from the CLI, API or Console remain. A message arriving before cessation waits for that confirmation before
 execution can resume. Repeated Stop gestures for the same execution reuse the
 existing native Stop hold.
 

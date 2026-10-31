@@ -24,13 +24,13 @@ func TestSessionStartRequiresCurrentSetupAuthority(t *testing.T) {
 			case "stale attachment":
 				sequence++
 			case "held":
-				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,gen_random_uuid(),$2,'local','test')`, f.env, e.SessionID)
+				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,gen_random_uuid(),$2,'process_failed','system')`, f.env, e.SessionID)
 			case "cancelled":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, f.env, e.SessionID)
 			case "ready", "stopping":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status=$3 WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID, mode)
 			case "failed":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET failure_recorded_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET failure_recorded_at=clock_timestamp(),failure_reason='process_failed' WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID)
 			case "expired":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1`, f.env)
 			case "acquiring":

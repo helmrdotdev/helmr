@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"time"
 	"uuid"
 
@@ -64,14 +65,19 @@ const sessionActivityColumn = `jsonb_build_object(
  'reconstruction_required',p.failure_recorded_at IS NOT NULL,'stop',CASE WHEN p.stop_deadline_at IS NOT NULL THEN ` + processStopFields + ` END)
  FROM session_processes p WHERE p.environment_id=sessions.environment_id AND p.session_id=sessions.id ORDER BY p.epoch DESC LIMIT 1))`
 
+// HoldView is one hold in effect for a Session. A hold on an ancestor the
+// caller cannot read keeps only its kind and creation time.
 type HoldView struct {
 	RecoveryGap *RecoveryGap
 	Kind        string
 	ID          uuid.UUID
 	SessionID   uuid.UUID
-	Scope       string
-	Reason      string
+	IssuerKind  string
+	IssuerID    *uuid.UUID
 	CreatedAt   time.Time
+	// CanRelease is whether ControlSession accepts this caller's resume of
+	// the hold, posted to SessionID.
+	CanRelease bool
 }
 
 type TurnView struct {
@@ -142,12 +148,8 @@ const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=s
  id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,key,status,created_at,(SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id WHERE t.environment_id=sessions.environment_id AND t.front_session_id=sessions.id),requester_session_id,
  (SELECT t.id FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_id,
  (SELECT t.status FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_status,
- (WITH RECURSIVE ancestors AS (
-   SELECT s.id,s.parent_session_id FROM sessions s WHERE s.environment_id=sessions.environment_id AND s.id=sessions.id
-   UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=sessions.environment_id
-  ) SELECT COALESCE(jsonb_agg(jsonb_build_object('ID',h.id,'SessionID',h.session_id,'Scope',h.scope,'Kind',h.kind,'RecoveryGap',h.recovery_gap || jsonb_build_object('holdId',h.id,'computerId',h.recovery_computer_id,'leaseEpoch',h.recovery_lease_epoch),'Reason',h.reason,'CreatedAt',h.created_at) ORDER BY h.created_at,h.id),'[]'::jsonb)
-  FROM session_holds h JOIN ancestors a ON a.id=h.session_id
-  WHERE h.environment_id=sessions.environment_id AND h.released_at IS NULL AND (h.session_id=sessions.id OR h.scope='subtree')) AS effective_holds,(SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(sessions.environment_id,sessions.agent_id,sessions.deployment_id)),close_after_idle_ms,idle_since,` + sessionActivityColumn
+ (SELECT COALESCE(jsonb_agg(jsonb_build_object('ID',h.id,'SessionID',h.session_id,'Kind',h.kind,'IssuerKind',h.issuer_kind,'IssuerID',h.issuer_id,'RecoveryGap',h.recovery_gap || jsonb_build_object('holdId',h.id,'computerId',h.recovery_computer_id,'leaseEpoch',h.recovery_lease_epoch),'CreatedAt',h.created_at) ORDER BY h.created_at,h.id),'[]'::jsonb)
+  FROM sessions s CROSS JOIN LATERAL (` + db.SessionHoldsSQL + `) h WHERE s.environment_id=sessions.environment_id AND s.id=sessions.id) AS effective_holds,(SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(sessions.environment_id,sessions.agent_id,sessions.deployment_id)),close_after_idle_ms,idle_since,` + sessionActivityColumn
 
 func scanSession(row pgx.Row, extra ...any) (SessionView, error) {
 	var v SessionView
@@ -193,7 +195,7 @@ func getSession(ctx context.Context, tx pgx.Tx, env, id uuid.UUID) (SessionView,
 	return result, err
 }
 
-func ListSessions(ctx context.Context, policy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req SessionListRequest) (SessionPage, error) {
+func ListSessions(ctx context.Context, pool db.TxBeginner, caller Caller, req SessionListRequest) (SessionPage, error) {
 	result := SessionPage{Sessions: []SessionView{}}
 	err := db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`); err != nil {
@@ -208,10 +210,7 @@ func ListSessions(ctx context.Context, policy auditpolicy.Policy, pool db.TxBegi
 		if err != nil {
 			return err
 		}
-		if err := redactSessionRelations(ctx, tx, caller, req.EnvironmentID, result.Sessions); err != nil {
-			return err
-		}
-		return recordSessionHoldsRead(ctx, policy, tx, caller, req.EnvironmentID, result.Sessions)
+		return redactSessionRelations(ctx, tx, caller, req.EnvironmentID, result.Sessions)
 	})
 	if err != nil {
 		return SessionPage{}, hideMissing(err)
@@ -414,6 +413,35 @@ func redactSessionRelations(ctx context.Context, tx pgx.Tx, caller Caller, env u
 		cache[id] = err == nil
 		return err == nil, nil
 	}
+	type release struct {
+		session          uuid.UUID
+		kind, issuerKind string
+		issuerID         uuid.UUID
+	}
+	releases := make(map[release]bool)
+	var controlGate *bool
+	releasable := func(hold HoldView) (bool, error) {
+		if controlGate == nil {
+			allowed, err := callerMayControl(ctx, tx, caller, env)
+			if err != nil {
+				return false, err
+			}
+			controlGate = &allowed
+		}
+		if !*controlGate {
+			return false, nil
+		}
+		key := release{hold.SessionID, hold.Kind, hold.IssuerKind, uuid.Nil()}
+		if hold.IssuerID != nil {
+			key.issuerID = *hold.IssuerID
+		}
+		if allowed, ok := releases[key]; ok {
+			return allowed, nil
+		}
+		allowed, err := holdReleasable(ctx, tx, caller, env, hold)
+		releases[key] = allowed
+		return allowed, err
+	}
 	for i := range views {
 		view := &views[i]
 		for _, field := range []**uuid.UUID{&view.ParentSessionID, &view.RequesterSessionID} {
@@ -440,29 +468,50 @@ func redactSessionRelations(ctx context.Context, tx pgx.Tx, caller Caller, env u
 				return err
 			}
 			if !allowed {
-				hold.ID = uuid.Nil()
-				hold.SessionID = uuid.Nil()
-				hold.Reason = "An ancestor session is held"
-				hold.RecoveryGap = nil
+				*hold = HoldView{Kind: hold.Kind, CreatedAt: hold.CreatedAt}
+				continue
+			}
+			if hold.CanRelease, err = releasable(*hold); err != nil {
+				return err
 			}
 		}
 	}
 	return nil
 }
 
-// Metadata discovery records only selections containing unredacted free-form holds.
-func recordSessionHoldsRead(ctx context.Context, policy auditpolicy.Policy, tx pgx.Tx, caller Caller, env uuid.UUID, views []SessionView) error {
-	for _, view := range views {
-		for _, hold := range view.Holds {
-			if hold.ID != uuid.Nil() {
-				if err := RecordContentRead(ctx, policy, tx, caller, env, view.ID); err != nil {
-					return err
-				}
-				break
-			}
+// callerMayControl applies ControlSession's caller-state check: a runtime
+// caller must still be able to enqueue, so a closing caller cannot release.
+// The caller is already locked by the runtime read.
+func callerMayControl(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID) (bool, error) {
+	if caller.Kind != "session" {
+		return true, nil
+	}
+	o, err := lockSession(ctx, tx, env, caller.ID)
+	if err == nil {
+		err = authorizeEnqueue(ctx, tx, caller, env, o)
+	}
+	if errors.Is(err, ErrDenied) || errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// holdReleasable applies ControlSession's resume checks for one visible hold
+// without changing state.
+func holdReleasable(ctx context.Context, tx pgx.Tx, caller Caller, env uuid.UUID, hold HoldView) (bool, error) {
+	if hold.Kind == "storage_pressure" || !callerMayRelease(caller, hold.Kind, hold.IssuerKind, hold.IssuerID) {
+		return false, nil
+	}
+	err := authorizeTarget(ctx, tx, caller, env, hold.SessionID, auth.PermissionSessionsResume)
+	if err == nil && caller.Kind == "session" {
+		if err = requireOwnedTarget(ctx, tx, env, caller.ID, hold.SessionID); err == nil {
+			err = requireMCPTarget(ctx, tx, caller, "resume_session", hold.SessionID)
 		}
 	}
-	return nil
+	if errors.Is(err, ErrDenied) || errors.Is(err, ErrAgentDeleted) || errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // AuthorizeSessionRead checks a metadata-only invalidation subscription without

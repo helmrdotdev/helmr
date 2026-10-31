@@ -32,17 +32,24 @@ export interface SessionOperationOptions {
 }
 
 export type SessionStatus = "open" | "closing" | "closed" | "cancelled"
+/** A Computer rollback that lost acknowledged file changes. `holdId` is null for a notice to a Session that keeps running. */
 export interface RecoveryGap {
- readonly holdId:string; readonly computerId:string; readonly leaseEpoch:number; readonly recoverySaveId:string|null; readonly restoredAt:string|null; readonly affectedTurnIds:readonly string[]
+ readonly holdId:string|null; readonly computerId:string; readonly leaseEpoch:number; readonly recoverySaveId:string|null; readonly restoredAt:string|null; readonly affectedTurnIds:readonly string[]
 }
+/** Why a Session is held. Only an interrupt also holds the Session's descendants. */
+export type SessionHoldKind = "interrupt" | "process_failed" | "recovery_gap" | "storage_pressure"
+/**
+ * A hold in effect for a Session. `id` and `sessionId` are null for a hold on
+ * an ancestor the caller cannot read. `canRelease` reports whether the caller
+ * may resume it; resume it on `sessionId`.
+ */
 export interface SessionHold {
- readonly recoveryGap?: RecoveryGap
- readonly kind: "control" | "recovery_gap" | "storage_pressure"
-  readonly id: string
-  readonly sessionId: string
-  readonly scope: "local" | "subtree"
-  readonly reason: string
+  readonly recoveryGap?: RecoveryGap
+  readonly kind: SessionHoldKind
+  readonly id: string | null
+  readonly sessionId: string | null
   readonly createdAt: string
+  readonly canRelease: boolean
 }
 export interface ProcessStop {
   readonly processEpoch: number
@@ -63,7 +70,8 @@ export interface Session {
   readonly id: string
   readonly deploymentId: string
   readonly computerId: string | null
-  readonly rootSessionId: string
+  /** Null when the caller cannot read the root Session. */
+  readonly rootSessionId: string | null
   readonly slackChannelId?: string
   readonly parentSessionId: string | null
   readonly requesterSessionId: string | null
@@ -135,6 +143,12 @@ export interface ComputerLossInterruption {
   readonly leaseEpoch: number
   readonly recoveryGap: boolean
 }
+/** The Turn reached its maximum duration. Its process stops and queued Turns continue. */
+export interface TurnDeadlineInterruption {
+  readonly reason: "turn_deadline_elapsed"
+}
+/** Counted harness failures reported by `session.process_failed`. */
+export type ProcessFailureReason = "process_failed" | "stop_deadline_elapsed" | "execution_lost"
 type ControlEventData = Readonly<{ controlId: string; holdId?: string }>
 type MessageEventData<S extends string, D extends string = S> = Readonly<{ message_id: string; status: S; delivery: D; reason?: string }>
 interface SessionEventData {
@@ -155,15 +169,15 @@ interface SessionEventData {
   "turn.completed": EmptyEventData
   "turn.failed": Readonly<{ code?: string }>
   "turn.interrupt": ControlEventData
-  "turn.interrupted": (EmptyEventData & Readonly<{ reason?: never }>) | ComputerLossInterruption
+  "turn.interrupted": (EmptyEventData & Readonly<{ reason?: never }>) | ComputerLossInterruption | TurnDeadlineInterruption
   "turn.cancelled": EmptyEventData
   "session.cancelled": EmptyEventData
   "session.closed": EmptyEventData
   "session.process_stopped": EmptyEventData
   "session.storage_pressure": Readonly<{computerId:string;leaseEpoch:number;holdId:string;state:"paused"|"resolved"|"stopped"}>
   "session.recovery_gap": RecoveryGap
-  "session.process_failed": Readonly<{ holdId: string; processEpoch: number }>
-  "session.deadline": Readonly<{ holdId: string }>
+  /** `holdId` is set once consecutive failures hold the Session. */
+  "session.process_failed": Readonly<{ processEpoch: number; reason: ProcessFailureReason; holdId: string | null }>
   "session.interrupt": ControlEventData
   "session.resume": ControlEventData
   "session.close": ControlEventData | Readonly<{ reason: "close_after_idle" }>

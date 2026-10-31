@@ -188,7 +188,7 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 		valid = ok && d.ImageBuildID != (TemplateRefreshDetails{}).ImageBuildID
 	case "session.hold_created", "session.hold_released":
 		d, ok := details.(SessionHoldDetails)
-		valid = ok && d.HoldID != (SessionHoldDetails{}).HoldID && d.Generation >= 0 && (d.Reason == "storage_pressure" || d.Reason == "process_failed" || d.Reason == "deadline_elapsed" || d.Reason == "stop_deadline_elapsed" || d.Reason == "execution_lost")
+		valid = ok && d.HoldID != (SessionHoldDetails{}).HoldID && d.Generation >= 0 && (d.Reason == "storage_pressure" || d.Reason == "process_failed" || d.Reason == "stop_deadline_elapsed" || d.Reason == "execution_lost")
 	case "computer.restore_completed", "computer.checkpoint_published":
 		d, ok := details.(CheckpointDetails)
 		valid = ok && d.CheckpointID != (CheckpointDetails{}).CheckpointID && d.Generation >= 0

@@ -75,7 +75,7 @@ func TestSlackStatusAggregatesWorkBeforeAttentionAndRefreshesIdle(t *testing.T) 
 	peer, participant, hold := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,root_session_id,id,id,1,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE id=$1;
  INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($3,$4,$5,$2);
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($5,$6,$2,'local','needs attention')`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment, hold)
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($5,$6,$2,'process_failed','system')`, pgx.QueryExecModeSimpleProtocol, f.Session, peer, participant, f.thread, f.Environment, hold)
 	f.due(t)
 	suspended := f.claim(t, "processing")
 	if err := FinishStatus(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, suspended, DeliveryResult{Disposition: Acknowledged}); err != nil {
@@ -110,7 +110,7 @@ func TestSlackStatusAmbiguityAndStaleCompletionCannotClearNewWork(t *testing.T) 
 		t.Fatalf("overlapping claim: %+v %v", claim, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_threads SET claimed_until=clock_timestamp()-interval '1 second' WHERE id=$1;
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($2,$3,$4,'local','attention')`, pgx.QueryExecModeSimpleProtocol, f.thread, f.Environment, uuid.NewV7(), f.Session)
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($2,$3,$4,'process_failed','system')`, pgx.QueryExecModeSimpleProtocol, f.thread, f.Environment, uuid.NewV7(), f.Session)
 	f.due(t)
 	current := f.claim(t, "processing")
 	if allowed, err := statusClaimAuthorized(t.Context(), f.Pool, old); err != nil || allowed {
@@ -178,7 +178,7 @@ func TestSlackStatusTerminalChildDoesNotMaskWorkingFront(t *testing.T) {
 	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, caller, session.EnqueueRequest{EnvironmentID: f.Environment, SessionID: f.Session, IdempotencyKey: "work", Input: json.RawMessage(`[]`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause", Reason: "attention"}); err != nil {
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: peer, Kind: "interrupt", IdempotencyKey: "pause"}); err != nil {
 		t.Fatal(err)
 	}
 	suspended := f.claim(t, "processing")

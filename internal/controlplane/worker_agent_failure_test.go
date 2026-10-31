@@ -76,7 +76,12 @@ func TestWorkerAgentHoldBeforeTurn(t *testing.T) {
 		}
 	}
 	view, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), f.Environment, f.Session)
-	if err != nil || len(view.Holds) != 1 || view.Holds[0].Scope != "local" || view.Holds[0].Reason != "setup_failed" {
+	// A setup failure before any Turn counts once and does not hold yet.
+	var reason string
+	if err != nil || len(view.Holds) != 0 {
 		t.Fatalf("hold inspection: %+v %v", view, err)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT failure_reason FROM session_processes WHERE session_id=$1`, f.Session).Scan(&reason); err != nil || reason != "process_failed" {
+		t.Fatalf("setup failure: %q %v", reason, err)
 	}
 }

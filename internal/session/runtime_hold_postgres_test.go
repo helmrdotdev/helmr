@@ -3,14 +3,13 @@ package session_test
 import (
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func TestRuntimeHoldDuringSetupIsLocalAndIdempotent(t *testing.T) {
+func TestRuntimeHoldDuringSetupCountsOnceWithoutHolding(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	queued := f.enqueue(t, "queued")
@@ -22,14 +21,14 @@ func TestRuntimeHoldDuringSetupIsLocalAndIdempotent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A setup failure with no Turn counts once and does not hold yet.
 	var count int
-	var hold uuid.UUID
 	var status string
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("holds %d: %v", count, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_holds)+(SELECT count(*) FROM session_processes WHERE session_id=$1 AND failure_reason<>'process_failed')`, f.session).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("holds or wrong reason %d: %v", count, err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND scope='local' AND reason='setup_failed'`, f.session).Scan(&hold); err != nil {
-		t.Fatal(err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='session.process_failed' AND convert_from(data,'UTF8')::jsonb @> '{"reason":"process_failed","holdId":null}'`, f.session).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("failure events %d: %v", count, err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, queued.TurnID).Scan(&status); err != nil || status != "queued" {
 		t.Fatalf("queued input %s: %v", status, err)
@@ -41,18 +40,13 @@ func TestRuntimeHoldDuringSetupIsLocalAndIdempotent(t *testing.T) {
 	if dispatch, err := dispatchTurnForTest(t.Context(), peer.pool, peer.execution()); err != nil || dispatch.TurnID != next.TurnID {
 		t.Fatalf("peer stopped: %+v %v", dispatch, err)
 	}
-	req := controlRequest(f, "resume", "release-setup")
-	req.HoldID = hold
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
-		t.Fatal(err)
-	}
 	if err := session.RuntimeHold(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
 	}, f.pool, *f.host(), f.execution(), "setup_failed"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("retry recreated hold %d: %v", count, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='session.process_failed'`, f.session).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("retry recounted failure %d: %v", count, err)
 	}
 }
 

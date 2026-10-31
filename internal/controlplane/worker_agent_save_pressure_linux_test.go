@@ -101,7 +101,7 @@ func proveNativeDiskRecovery(ctx context.Context, pool *pgxpool.Pool, apiClient 
 			if hold != "" || h.RecoveryGap == nil || len(h.RecoveryGap.AffectedTurnIDs) != 1 || h.RecoveryGap.AffectedTurnIDs[0] != original.Turn.TurnID {
 				return errors.New("unexpected recovery gap identity or affected Turn count")
 			}
-			hold = h.ID
+			hold = *h.ID
 		}
 	}
 	if (hold == "") != published || len(view.Holds) != map[bool]int{true: 0, false: 1}[published] {

@@ -9,6 +9,7 @@ import { createMemo, createSignal, For, Show } from "solid-js";
 import { loadError } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
 import {
+  holdNotice,
   listSessions,
   sessionConsolePath,
   type Session,
@@ -51,7 +52,7 @@ function SessionRow(props: { session: Session; agentColumn: boolean; menu: Actio
       <td>
         <span class="inline-flex items-center gap-2">
           <StatusBadge resource="session" status={props.session.status} />
-          <Show when={props.session.holds.length > 0}><HeldLabel title={props.session.holds.map(hold => hold.reason).join("\n")} /></Show>
+          <Show when={props.session.holds.length > 0}><HeldLabel title={props.session.holds.map(hold => holdNotice(hold, props.session.id)).join("\n")} /></Show>
         </span>
       </td>
       <Show when={props.agentColumn}>

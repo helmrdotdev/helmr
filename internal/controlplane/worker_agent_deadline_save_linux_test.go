@@ -127,12 +127,12 @@ func verifyNativeDeadlineSave(ctx context.Context, pool *pgxpool.Pool, env uuid.
       ELSE s.publication_evidence IS NOT NULL AND (s.root_id IS NOT NULL OR s.payload_retired_at IS NOT NULL) END)
  AND queued.session_id=t.session_id AND queued.seq=2 AND queued.status=$9
  AND queued.started_at IS NULL AND queued.process_epoch IS NULL
- AND h.scope='subtree' AND h.issuer_kind IN ('user','api_key') AND h.released_at IS NULL
+ AND h.kind='interrupt' AND h.issuer_kind IN ('user','api_key') AND h.released_at IS NULL
  AND (SELECT count(*)=1 FROM session_holds other WHERE other.environment_id=t.environment_id AND other.session_id=t.session_id)
  AND EXISTS(SELECT 1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.session_id=t.session_id
       AND e.kind='session.interrupt' AND convert_from(e.data,'UTF8')::jsonb->>'holdId'=h.id::text)
  AND (SELECT count(*)=1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.turn_id=t.id AND e.kind='turn.completed')
- AND NOT EXISTS(SELECT 1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.turn_id=t.id AND e.kind='session.deadline')
+ AND NOT EXISTS(SELECT 1 FROM session_events e WHERE e.environment_id=t.environment_id AND e.turn_id=t.id AND e.kind='turn.interrupted')
  FROM turns t JOIN computer_saves s ON(s.environment_id,s.turn_id)=(t.environment_id,t.id)
  JOIN turns queued ON queued.environment_id=t.environment_id AND queued.id=$5
  JOIN session_holds h ON(h.environment_id,h.session_id)=(t.environment_id,t.session_id) AND h.id=$6

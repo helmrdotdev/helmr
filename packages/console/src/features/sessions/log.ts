@@ -2,7 +2,7 @@ import type { JsonValue, SessionEventKind } from "../../../../../sdk/typescript/
 import type { Content } from "../../../../../sdk/typescript/src/content";
 import type { NormalizedQuestion } from "../../../../../sdk/typescript/src/question";
 import { parseSessionEventData } from "../../../../../sdk/typescript/src/internal/session-event";
-import { messageDeliveryNotice, storagePressureNotice, type SessionEvent, type SessionTurn } from "../../lib/sessions";
+import { messageDeliveryNotice, recoveryGapNotice, storagePressureNotice, type RecoveryGap, type SessionEvent, type SessionTurn } from "../../lib/sessions";
 import { formatID } from "../../ui/id";
 import { byteLength, preview } from "../../ui/payload";
 import type { Tone } from "../../ui/styles";
@@ -12,7 +12,7 @@ export type LogView = "all" | "output" | "problems";
 // What the agent produced or asked.
 export const isOutput = (kind: string) => kind === "turn.output" || kind.startsWith("ask.");
 
-const problems = new Set(["turn.failed", "turn.interrupted", "message.rejected", "slack.delivery_unavailable", "session.process_failed", "session.deadline"]);
+const problems = new Set(["turn.failed", "turn.interrupted", "message.rejected", "slack.delivery_unavailable", "session.process_failed"]);
 export const isProblem = (kind: string) => problems.has(kind);
 
 export function eventTone(kind: string): Tone {
@@ -60,7 +60,6 @@ const words: Record<string, string> = {
   "session.closed": "session closed",
   "session.cancelled": "session cancelled",
   "session.process_stopped": "process stopped",
-  "session.deadline": "session deadline reached; work is held",
   "ask.cancelled": "question cancelled",
 };
 
@@ -97,7 +96,11 @@ export function eventSummary(event: SessionEvent, parsed = parseEvent(event)): s
     case "message.rejected":
       return `${messageDeliveryNotice(event) ?? "Message not delivered."}${typeof data["reason"] === "string" ? ` · ${data["reason"]}` : ""}`;
     case "slack.delivery_unavailable": return `Slack update for #${String(data["source_seq"] ?? "?")} not posted · ${String(data["reason"] ?? "")}`;
-    case "session.process_failed": return `process ${String(data["processEpoch"] ?? "")} failed; work is held`;
+    case "session.process_failed": return `process ${String(data["processEpoch"] ?? "")} failed${typeof data["reason"] === "string" ? ` · ${data["reason"]}` : ""}${typeof data["holdId"] === "string" ? "; work is held" : "; queued work continues"}`;
+    case "turn.interrupted":
+      if (data["reason"] === "turn_deadline_elapsed") return "stopped after the maximum turn duration; queued work continues";
+      break;
+    case "session.recovery_gap": return recoveryGapNotice(data as unknown as RecoveryGap);
     case "session.close": if (data["reason"] === "close_after_idle") return "closing after idle"; break;
   }
   return words[event.kind] ?? preview(data);
@@ -124,7 +127,7 @@ const recordRules: Record<string, RecordRule> = {
   },
   "ask.answered": { open: ["data", "data.answer", "data.answer.selected"], pinned: () => ["data.answer"] },
   "slack.delivery_unavailable": { open: ["data"], pinned: () => ["data.reason", "data.source_seq"] },
-  "session.process_failed": { open: ["data"], pinned: () => ["data.processEpoch"] },
+  "session.process_failed": { open: ["data"], pinned: () => ["data.processEpoch", "data.reason", "data.holdId"] },
 };
 for (const kind of ["message.admitted", "message.started", "message.delivered", "message.rejected"])
   recordRules[kind] = { open: ["data"], pinned: () => ["data.message_id", "data.status", "data.delivery", "data.reason"] };

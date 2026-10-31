@@ -50,7 +50,7 @@ func TestOverviewSummarizesVisibleWork(t *testing.T) {
 	// queued work; counts cover every Session, not only those listed.
 	child := f.requestedPeer(t)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET parent_session_id=$2,root_session_id=$2 WHERE environment_id=$1 AND id=$3;
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'subtree','paused','user',$4)`, pgx.QueryExecModeSimpleProtocol, f.env, f.session, child.session, f.user)
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'interrupt','user',$4)`, pgx.QueryExecModeSimpleProtocol, f.env, f.session, child.session, f.user)
 	if o, err = session.ReadOverview(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env); err != nil || o.ActiveCount != 2 || o.Held != 2 || len(o.Active) != 2 || o.Active[0].State != "held" || o.Active[1].State != "held" || o.Agents[0].Active != 2 {
 		t.Fatalf("held %+v %v", o, err)
 	}

@@ -16,7 +16,8 @@ export type Session = {
   id: string;
   deployment_id: string;
   computer_id: string | null;
-  root_session_id: string;
+  // Null when the root session is not readable.
+  root_session_id: string | null;
   parent_session_id: string | null;
   requester_session_id: string | null;
   initial_turn: { id: string; status: SessionTurn["status"] } | null;
@@ -25,15 +26,17 @@ export type Session = {
   suspension: "manual" | "after_turn";
   close_after_idle_ms: number | null;
   created_at: string;
-  holds: {
-    id: string;
-    session_id: string;
-    scope: "local" | "subtree";
-    reason: string;
-    kind: "control" | "recovery_gap" | "storage_pressure";
-    recovery_gap?: RecoveryGap;
-    created_at: string;
-  }[];
+  holds: SessionHold[];
+};
+// A hold in effect for a session. A hold on an ancestor that is not readable
+// has null identifiers. Resume posts to session_id when can_release is true.
+export type SessionHold = {
+  id: string | null;
+  session_id: string | null;
+  kind: "interrupt" | "process_failed" | "recovery_gap" | "storage_pressure";
+  recovery_gap?: RecoveryGap;
+  created_at: string;
+  can_release: boolean;
 };
 export type SessionTurn = {
   stop?: ProcessStop;
@@ -263,7 +266,7 @@ export function watchSession(address: SessionAddress, changed: () => void): () =
 }
 
 export type RecoveryGap = {
-  holdId: string;
+  holdId: string | null;
   computerId: string;
   leaseEpoch: number;
   recoverySaveId: string | null;
@@ -273,7 +276,19 @@ export type RecoveryGap = {
 
 export function recoveryGapNotice(gap: RecoveryGap): string {
   const point = gap.restoredAt ? new Date(gap.restoredAt).toLocaleString() : "the initial work environment";
+  if (gap.holdId === null) return `This computer was restored to ${point}. File changes made after that point may be missing. No completed requests in this session were affected, and new requests can run.`;
   return `This computer was restored to ${point}. File changes and native conversation history for ${gap.affectedTurnIds.length} completed requests in this conversation may be missing. Replies remain available. Completed requests will not run again.`;
+}
+
+// What a hold means for the session it is shown on.
+export function holdNotice(hold: SessionHold, sessionID: string): string {
+  const inherited = hold.session_id !== sessionID;
+  switch (hold.kind) {
+    case "interrupt": return inherited ? "Held by an interrupt on a parent session." : "Held by an interrupt. Queued work waits until it is resumed.";
+    case "process_failed": return "Held after the session process failed repeatedly. Queued work waits until it is resumed.";
+    case "recovery_gap": return hold.recovery_gap ? recoveryGapNotice(hold.recovery_gap) : "Held after the computer was restored with missing file changes.";
+    case "storage_pressure": return "Held while storage is full. Queued work resumes when space is available. Stopped requests will not restart automatically.";
+  }
 }
 
 export function resumeSession(address: SessionAddress, input: { idempotency_key: string; hold_id: string }): Promise<SessionReceipt> {

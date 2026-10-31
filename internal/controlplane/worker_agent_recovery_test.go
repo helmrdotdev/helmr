@@ -78,9 +78,10 @@ func TestWorkerAgentStartupRecoveryFencesOnlyReportedPriorAllocations(t *testing
 		}
 	}
 	assertLease(true)
-	var holds, attention int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*),count(*) FILTER (WHERE session_id=$1 AND scope='local' AND kind='control' AND released_at IS NULL AND recovery_computer_id IS NULL AND recovery_lease_epoch IS NULL) FROM session_holds`, f.Session).Scan(&holds, &attention); err != nil || holds != 1 || attention != 1 {
-		t.Fatalf("failure reconciliation %d %v", holds, err)
+	// One execution loss is a counted failure, reported once and without a hold.
+	var holds, failures int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_holds),(SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='session.process_failed' AND convert_from(data,'UTF8')::jsonb @> '{"reason":"execution_lost","holdId":null}')`, f.Session).Scan(&holds, &failures); err != nil || holds != 0 || failures != 1 {
+		t.Fatalf("failure reconciliation %d %d %v", holds, failures, err)
 	}
 	if row, err := q.ActivateWorkerHost(t.Context(), activation); err != nil || row.Status != "active" {
 		t.Fatalf("cleaned worker cannot activate: %s %v", row.Status, err)

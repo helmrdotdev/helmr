@@ -78,10 +78,7 @@ func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, e Execution, ses
 	var targetCPU, targetMemory int64
 	var ownCPU, ownMemory int64
 	var maxResident, maxCPU, maxMemory int64
-	err := tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
-        SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
-        UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
-    ) SELECT target.cpu_millis,target.memory_bytes,own.reserved_cpu_millis,own.reserved_memory_bytes,env.max_resident_computers,env.max_cpu_millis,env.max_memory_bytes
+	err := tx.QueryRow(ctx, `SELECT target.cpu_millis,target.memory_bytes,own.reserved_cpu_millis,own.reserved_memory_bytes,env.max_resident_computers,env.max_cpu_millis,env.max_memory_bytes
       FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
       JOIN computers target ON (target.environment_id,target.id)=(s.environment_id,s.computer_id)
       JOIN environments env ON env.id=s.environment_id
@@ -91,7 +88,7 @@ func runtimeWaitRetainsCapacity(ctx context.Context, tx pgx.Tx, e Execution, ses
         AND target.id<>own.computer_id
         AND target.preparation_failed_at IS NULL AND target.integrity_fault_at IS NULL AND target.deleted_at IS NULL
         AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=target.id AND l.fenced_at IS NULL)
-        AND NOT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))`, e.EnvironmentID, session, turn, e.SessionID, e.ProcessEpoch).Scan(&targetCPU, &targetMemory, &ownCPU, &ownMemory, &maxResident, &maxCPU, &maxMemory)
+        AND `+db.NoSessionHoldsSQL, e.EnvironmentID, session, turn, e.SessionID, e.ProcessEpoch).Scan(&targetCPU, &targetMemory, &ownCPU, &ownMemory, &maxResident, &maxCPU, &maxMemory)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

@@ -59,8 +59,9 @@ store. See [Durability](/docs/concepts/durability#reconstruction).
 
 `ctx` also carries the Session (`id`, optional `key`, optional `parent`), the
 Computer and Deployment IDs, and `ctx.signal`, which aborts when the Session
-process is shutting down. If `init` throws, the Session is held and its first
-input stays queued for explicit recovery.
+process is shutting down. If `init` throws, the process fails and its first
+input stays queued for a new process. Three consecutive process failures hold
+the Session for explicit recovery.
 
 ## `turn`
 
@@ -98,8 +99,9 @@ the Session is created; later deployments do not change existing Sessions.
 Closing on idle uses the normal [close](/docs/concepts/sessions#controls)
 lifecycle.
 
-When a Turn exceeds `maxTurnDuration`, it ends as `interrupted` and the Session
-is held until someone resumes it.
+When a Turn exceeds `maxTurnDuration`, it ends as `interrupted` and its process
+stops. Queued Turns continue on a new process. A process that does not stop
+within its stop deadline counts as a process failure.
 
 ## Running a harness inside an Agent
 

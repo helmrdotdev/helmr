@@ -75,12 +75,15 @@ the Turn's identity and status remain.
 ## After a failure
 
 A `failed` Turn normally leaves the Session open, and the next queued Turn
-runs. If the harness's work cannot be stopped cleanly after the failure, the
-Session is held instead.
+runs. If the harness's work cannot be stopped cleanly after the failure, that
+counts as a process failure and the next Turn runs on a new process.
 
 An exact-Turn interrupt lets the next queued Turn run once processing has
-stopped. Session interruption, `maxTurnDuration`, and process loss hold the
-Session until someone resumes it. Worker loss restores eligible saved files;
+stopped. A Turn that exceeds `maxTurnDuration` ends `interrupted`, its process
+stops, and the next queued Turn runs on a new process. When the process fails,
+the next queued Turn also runs on a new process; three consecutive process
+failures hold the Session until someone resumes it. Session interruption holds
+the Session too. Worker loss restores eligible saved files;
 missing completed work requires the recovery acknowledgement described in
 [Durability](/docs/concepts/durability#worker-loss). Helmr never replays a
 completed, interrupted or failed Turn. Retrying business work and reconciling

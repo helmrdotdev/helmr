@@ -21,15 +21,18 @@ has `sessionId`, nullable `turnId`, numeric `sequence`, `createdAt`, `kind` and 
 | `ask.created`, `ask.answered`, `ask.cancelled` | Question lifecycle; use exact ask reads for current prompt/control/answer. |
 | `session.interrupt`, `session.resume`, `session.close`, `session.cancel` | Accepted Session controls. |
 | `session.closed`, `session.cancelled` | Session lifecycle facts. |
-| `session.process_stopped`, `session.process_failed`, `session.deadline` | Runtime process or deadline facts. |
-| `session.recovery_gap` | Restore point and affected completed-request count for this conversation; acknowledgement is required. |
+| `session.process_stopped` | The Session's process stopped. |
+| `session.process_failed` | A counted process failure: `processEpoch`, `reason` (`process_failed`, `stop_deadline_elapsed` or `execution_lost`) and `holdId`, which is `null` until consecutive failures hold the Session. |
+| `session.recovery_gap` | Restore point, Computer and affected completed requests for this conversation. `holdId` is set when this conversation is held for acknowledgement and `null` for a notice. |
 | `session.storage_pressure` | A storage episode became `paused`, `stopped` or `resolved`. |
 | `slack.delivery_unavailable` | The pinned Slack destination cannot currently deliver. |
 
 When Computer loss interrupts a running request, `turn.interrupted` includes
 `reason: "computer_execution_lost"`, `computerId`, `leaseEpoch` and `recoveryGap`.
-The latter records whether this conversation's recovery-gap notice explains the
-same loss. Other interruption causes keep their existing payloads. This outcome
+The latter records whether this conversation is held by the recovery gap of the
+same loss, whose acknowledgement request then explains it. A Turn that exceeds `maxTurnDuration` ends with
+`reason: "turn_deadline_elapsed"`; its process stops and queued Turns continue.
+Other interruption causes keep their existing payloads. This outcome
 does not replay the request or prevent otherwise eligible queued work from
 continuing after recovery.
 

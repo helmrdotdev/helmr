@@ -16,11 +16,13 @@ var (
 	ExpireSessionDeadline        = expireSessionDeadline
 	HideMissing                  = hideMissing
 	LockSession                  = lockSession
+	ProcessFailureHoldThreshold  = processFailureHoldThreshold
 	ProcessStopTimeout           = processStopTimeout
 	ReconcileProcessStopDeadline = reconcileProcessStopDeadline
 	ReconcileSessionIdle         = reconcileSessionIdle
 	ReconcileSessionLifecycle    = reconcileSessionLifecycle
 	ReconcileTerminalSessionStop = reconcileTerminalSessionStop
+	RecordSessionFailure         = recordSessionFailure
 )
 
 // Session reports the Session a lifecycle scan stopped at.

@@ -758,14 +758,12 @@ column session_holds.created_at timestamp with time zone not null default clock_
 column session_holds.environment_id uuid not null
 column session_holds.id uuid not null
 column session_holds.issuer_id uuid
-column session_holds.issuer_kind text not null default 'system'::text
-column session_holds.kind text not null default 'control'::text
-column session_holds.reason text not null
+column session_holds.issuer_kind text not null
+column session_holds.kind text not null
 column session_holds.recovery_computer_id uuid
 column session_holds.recovery_gap jsonb
 column session_holds.recovery_lease_epoch bigint
 column session_holds.released_at timestamp with time zone
-column session_holds.scope text not null
 column session_holds.session_id uuid not null
 column session_mcp_scopes.created_at timestamp with time zone not null default clock_timestamp()
 column session_mcp_scopes.environment_id uuid not null
@@ -786,6 +784,7 @@ column session_processes.control_kind text
 column session_processes.control_sequence bigint not null default 0
 column session_processes.environment_id uuid not null
 column session_processes.epoch bigint not null
+column session_processes.failure_reason text
 column session_processes.failure_recorded_at timestamp with time zone
 column session_processes.fenced_at timestamp with time zone
 column session_processes.session_id uuid not null
@@ -1940,14 +1939,13 @@ constraint session_events f FOREIGN KEY (environment_id, session_id, turn_id) RE
 constraint session_events p PRIMARY KEY (environment_id, session_id, seq)
 constraint session_events u UNIQUE (environment_id, session_id, turn_id, operation_id)
 constraint session_holds c CHECK ((issuer_kind = 'system'::text) = (issuer_id IS NULL))
+constraint session_holds c CHECK ((kind = 'interrupt'::text) = (issuer_kind <> 'system'::text))
 constraint session_holds c CHECK ((kind = 'recovery_gap'::text) = (recovery_computer_id IS NOT NULL))
 constraint session_holds c CHECK ((kind = 'recovery_gap'::text) = (recovery_gap IS NOT NULL))
 constraint session_holds c CHECK ((kind = 'recovery_gap'::text) = (recovery_lease_epoch IS NOT NULL))
 constraint session_holds c CHECK (issuer_kind = ANY (ARRAY['user'::text, 'api_key'::text, 'session'::text, 'system'::text]))
-constraint session_holds c CHECK (kind = ANY (ARRAY['control'::text, 'recovery_gap'::text, 'storage_pressure'::text]))
-constraint session_holds c CHECK (octet_length(reason) <= 4096)
+constraint session_holds c CHECK (kind = ANY (ARRAY['interrupt'::text, 'process_failed'::text, 'recovery_gap'::text, 'storage_pressure'::text]))
 constraint session_holds c CHECK (recovery_lease_epoch > 0)
-constraint session_holds c CHECK (scope = ANY (ARRAY['local'::text, 'subtree'::text]))
 constraint session_holds f FOREIGN KEY (environment_id, recovery_computer_id, recovery_lease_epoch) REFERENCES computer_leases(environment_id, computer_id, epoch)
 constraint session_holds f FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id)
 constraint session_holds f FOREIGN KEY (environment_id, session_id, recovery_computer_id) REFERENCES sessions(environment_id, id, computer_id)
@@ -1960,6 +1958,7 @@ constraint session_mcp_scopes f FOREIGN KEY (environment_id, session_id, process
 constraint session_mcp_scopes p PRIMARY KEY (environment_id, id)
 constraint session_mcp_scopes u UNIQUE (environment_id, session_id, process_epoch, policy_digest)
 constraint session_mcp_scopes u UNIQUE (environment_id, session_id, process_epoch, slot)
+constraint session_processes c CHECK ((failure_recorded_at IS NULL) = (failure_reason IS NULL))
 constraint session_processes c CHECK (NOT stderr_end_complete OR stderr_ended)
 constraint session_processes c CHECK (NOT stdout_end_complete OR stdout_ended)
 constraint session_processes c CHECK (attachment_sequence >= 0)
@@ -1968,6 +1967,7 @@ constraint session_processes c CHECK (control_generation >= 0)
 constraint session_processes c CHECK (control_kind = ANY (ARRAY['suspend'::text, 'resume'::text, 'shutdown'::text]))
 constraint session_processes c CHECK (control_sequence >= 0)
 constraint session_processes c CHECK (epoch > 0)
+constraint session_processes c CHECK (failure_reason = ANY (ARRAY['process_failed'::text, 'stop_deadline_elapsed'::text, 'execution_lost'::text, 'computer_lost'::text, 'secret_unavailable'::text]))
 constraint session_processes c CHECK (status <> 'stopped'::text OR fenced_at IS NOT NULL)
 constraint session_processes c CHECK (status = ANY (ARRAY['starting'::text, 'ready'::text, 'stopping'::text, 'lost'::text, 'stopped'::text]))
 constraint session_processes c CHECK (stderr_accepted_through = 0 AND stderr_last_sequence IS NULL AND stderr_last_digest IS NULL AND stderr_last_accepted_at IS NULL AND NOT stderr_ended OR stderr_accepted_through > 0 AND stderr_last_sequence IS NOT NULL AND stderr_last_sequence >= 1 AND stderr_last_sequence <= stderr_accepted_through AND stderr_last_accepted_at IS NOT NULL AND (stderr_last_digest IS NOT NULL OR stderr_expired_through = stderr_accepted_through))
@@ -2530,6 +2530,7 @@ index CREATE UNIQUE INDEX secret_exposures_command ON public.secret_exposures US
 index CREATE UNIQUE INDEX secret_exposures_image_build ON public.secret_exposures USING btree (environment_id, image_build_id, secret_id) WHERE (image_build_id IS NOT NULL)
 index CREATE UNIQUE INDEX secret_exposures_process ON public.secret_exposures USING btree (environment_id, session_id, process_epoch, secret_id) WHERE (session_id IS NOT NULL)
 index CREATE UNIQUE INDEX session_controls_interrupt_hold ON public.session_controls USING btree (environment_id, hold_id) WHERE (kind = 'interrupt'::text)
+index CREATE UNIQUE INDEX session_holds_one_process_failed ON public.session_holds USING btree (environment_id, session_id) WHERE ((kind = 'process_failed'::text) AND (released_at IS NULL))
 index CREATE UNIQUE INDEX session_holds_one_recovery_gap ON public.session_holds USING btree (environment_id, session_id) WHERE ((kind = 'recovery_gap'::text) AND (released_at IS NULL))
 index CREATE UNIQUE INDEX session_holds_one_storage_pressure ON public.session_holds USING btree (environment_id, session_id) WHERE ((kind = 'storage_pressure'::text) AND (released_at IS NULL))
 index CREATE UNIQUE INDEX session_processes_one_writer ON public.session_processes USING btree (environment_id, session_id) WHERE (fenced_at IS NULL)

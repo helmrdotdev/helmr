@@ -48,7 +48,7 @@ func verifyNativeSessionControls(ctx context.Context, pool *pgxpool.Pool, env uu
  AND following.status='completed'
  AND following.process_epoch=exact.process_epoch AND exact.process_epoch=interrupted.process_epoch
  AND following.started_at>=exact.terminal_at
- AND h.scope='subtree' AND h.issuer_kind='session' AND h.issuer_id=$3
+ AND h.kind='interrupt' AND h.issuer_kind='session' AND h.issuer_id=$3
  AND h.released_at>=h.created_at+interval '20 seconds'
  AND resumed.started_at>=h.released_at
  AND p.status='stopped' AND p.fenced_at>=resumed.terminal_at AND p.stop_turn_id IS NULL

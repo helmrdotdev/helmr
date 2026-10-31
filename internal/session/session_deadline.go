@@ -13,7 +13,7 @@ import (
 )
 
 // Deadline settlement uses server time after the ownership locks. It needs no
-// live worker or guest; native stop converges separately through Session control.
+// live worker or guest; the process stop converges through Session control.
 func expireSessionDeadline(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, env, session uuid.UUID) error {
 	return db.RunTx(ctx, pool, func(tx pgx.Tx) error {
 		// Bound lock contention without imposing a total runtime ceiling on a
@@ -28,6 +28,10 @@ func expireSessionDeadline(ctx context.Context, auditPolicy auditpolicy.Policy, 
 	})
 }
 
+// TurnDeadlineElapsed is the interruption reason of a Turn that reached its
+// maximum duration. Its process stops; queued Turns continue on a fresh one.
+const TurnDeadlineElapsed = "turn_deadline_elapsed"
+
 func expireSessionDeadlineTx(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, session uuid.UUID) error {
 	var turn uuid.UUID
 	var epoch int64
@@ -40,38 +44,32 @@ func expireSessionDeadlineTx(ctx context.Context, auditPolicy auditpolicy.Policy
 	if err != nil {
 		return err
 	}
-	hold := uuid.NewV7()
-	if _, err = tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','Turn deadline elapsed')`, env, hold, session); err != nil {
-		return err
-	}
-	if err = advanceControlAuthority(ctx, tx, env, []uuid.UUID{session}); err != nil {
+	// The stop deadline escalates a wedged harness to a counted failure.
+	if err = requestProcessStop(ctx, tx, env, session, uuid.Nil(), epoch); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 AND status IN ('ready','starting') AND fenced_at IS NULL`, env, session, epoch); err != nil {
 		return err
 	}
+	if err = advanceControlAuthority(ctx, tx, env, []uuid.UUID{session}); err != nil {
+		return err
+	}
 	// An ordered save remains owned by persistence even after its Turn expires.
 	// Deadline settlement never guesses whether capture or publication happened.
-	data, err := json.Marshal(struct {
-		HoldID uuid.UUID `json:"holdId"`
-	}{hold})
-	if err != nil {
-		return err
-	}
-	if err = eventData(ctx, tx, env, session, turn, "session.deadline", data); err != nil {
-		return err
-	}
 	if err := cancelTurnAsks(ctx, auditPolicy, tx, env, session, turn); err != nil {
 		return err
 	}
 	if err := rejectTurnMessages(ctx, auditPolicy, tx, env, session, turn, true, "turn_terminated"); err != nil {
 		return err
 	}
-	if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, Action: "session.hold_created", TargetKind: "session", TargetID: session, Details: audit.SessionHoldDetails{HoldID: hold, Reason: "deadline_elapsed", Generation: epoch}}); err != nil {
-		return err
-	}
 	if err := auditServiceFact(ctx, tx, auditPolicy, audit.ControlPlane, audit.Event{EnvironmentID: env, SessionID: session, TurnID: turn, Action: "turn.interrupted", TargetKind: "turn", TargetID: turn, Details: audit.LifecycleDetails{Generation: epoch}}); err != nil {
 		return err
 	}
-	return event(ctx, tx, env, session, turn, "turn.interrupted")
+	data, err := json.Marshal(struct {
+		Reason string `json:"reason"`
+	}{TurnDeadlineElapsed})
+	if err != nil {
+		return err
+	}
+	return eventData(ctx, tx, env, session, turn, "turn.interrupted", data)
 }

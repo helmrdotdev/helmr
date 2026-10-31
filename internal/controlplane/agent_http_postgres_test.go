@@ -207,18 +207,17 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	// both transports. Acceptance must not claim that execution has resumed.
 	systemHold, userHold, laterHold := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','session_continuation_lost');
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,$4,$3,'subtree','operator hold','user',$5);
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system');
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,$4,$3,'interrupt','user',$5);
  `, pgx.QueryExecModeSimpleProtocol, f.Environment, systemHold, first.SessionID, userHold, f.User)
 	resumePath := base + "/sessions/" + first.SessionID + "/resume"
 	keyResumePath := "/v1/sessions/" + first.SessionID + "/resume"
 	resumeBody := fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"explicit-recovery"}`, systemHold.String())
-	userResumeBody := fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"explicit-recovery"}`, userHold.String())
+	userResumeBody := fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"explicit-user-recovery"}`, userHold.String())
 	resumer := issue(auth.PermissionSessionsCreate, auth.PermissionSessionsResume)
 	call(resumePath, "", resumeBody, http.StatusUnauthorized)
 	call(resumePath, viewer, resumeBody, http.StatusForbidden)
 	call(keyResumePath, starter, resumeBody, http.StatusForbidden)
-	call(keyResumePath, resumer, userResumeBody, http.StatusForbidden)
 	call(fmt.Sprintf("/api/projects/project/environments/other/sessions/%s/resume", first.SessionID), owner, resumeBody, http.StatusForbidden)
 	call("/v1/sessions/"+f.Session.String()+"/resume", resumer, resumeBody, http.StatusForbidden)
 	for _, body := range []string{`{}`, `{"hold_id":"bad","idempotency_key":"r"}`, `{"hold_id":"00000000-0000-0000-0000-000000000000","idempotency_key":"r"}`, fmt.Sprintf(`{"hold_id":%q}`, systemHold.String()), fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"r","caller_id":"fake"}`, systemHold.String())} {
@@ -227,7 +226,8 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	call(keyResumePath, resumer, fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"absent"}`, uuid.NewV7().String()), http.StatusForbidden)
 	for _, transport := range []struct{ path, token, body, hold string }{
 		{keyResumePath, resumer, resumeBody, systemHold.String()},
-		{resumePath, owner, userResumeBody, userHold.String()},
+		// API keys and users alike release a person's interrupt with resume permission.
+		{keyResumePath, resumer, userResumeBody, userHold.String()},
 	} {
 		var receipt, retried api.SessionResumeReceipt
 		if err := json.Unmarshal(call(transport.path, transport.token, transport.body, http.StatusOK), &receipt); err != nil || receipt.ID == "" || receipt.SessionID != first.SessionID || receipt.HoldID != transport.hold || receipt.Status != "accepted" {
@@ -238,7 +238,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 			t.Fatal(err)
 		}
 		if transport.hold == systemHold.String() {
-			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','later recovery hold')`, f.Environment, laterHold, first.SessionID)
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.Environment, laterHold, first.SessionID)
 		}
 		if err := json.Unmarshal(call(transport.path, transport.token, transport.body, http.StatusOK), &retried); err != nil || retried != receipt {
 			t.Fatalf("resume retry: %+v %v", retried, err)
@@ -251,7 +251,7 @@ func TestAgentHTTPAdmission(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT released_at IS NOT NULL FROM session_holds WHERE id=$1) AND (SELECT released_at IS NULL FROM session_holds WHERE id=$2) AND (SELECT released_at IS NULL FROM session_holds WHERE id=$4) AND NOT EXISTS(SELECT 1 FROM turns WHERE session_id=$3 AND status<>'queued')`, systemHold, userHold, first.SessionID, laterHold).Scan(&exact); err != nil || !exact {
 				t.Fatalf("resume affected another hold or queued work: %v %v", exact, err)
 			}
-			expectCode(call(keyResumePath, resumer, userResumeBody, http.StatusConflict), "idempotency_conflict")
+			expectCode(call(keyResumePath, resumer, fmt.Sprintf(`{"hold_id":%q,"idempotency_key":"explicit-recovery"}`, userHold.String()), http.StatusConflict), "idempotency_conflict")
 		}
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(resumer))

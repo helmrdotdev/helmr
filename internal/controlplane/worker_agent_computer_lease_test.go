@@ -64,8 +64,9 @@ func TestWorkerAgentComputerLeaseRenewalAndPhysicalObservation(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status='lost' AND fenced_at IS NOT NULL AND fence_evidence IS NOT NULL FROM computer_leases`).Scan(&fenced); err != nil || !fenced {
 		t.Fatalf("physical observation missing %v %v", fenced, err)
 	}
-	var holds, attention int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*),count(*) FILTER (WHERE session_id=$1 AND scope='local' AND kind='control' AND released_at IS NULL AND recovery_computer_id IS NULL AND recovery_lease_epoch IS NULL) FROM session_holds`, f.Session).Scan(&holds, &attention); err != nil || holds != 1 || attention != 1 {
-		t.Fatalf("physical stop retries duplicated holds %d %v", holds, err)
+	// One execution loss is a counted failure, reported once and without a hold.
+	var holds, failures int
+	if err = f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_holds),(SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='session.process_failed' AND convert_from(data,'UTF8')::jsonb @> '{"reason":"execution_lost","holdId":null}')`, f.Session).Scan(&holds, &failures); err != nil || holds != 0 || failures != 1 {
+		t.Fatalf("physical stop retries duplicated failures %d %d %v", holds, failures, err)
 	}
 }

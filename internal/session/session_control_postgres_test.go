@@ -3,7 +3,6 @@ package session_test
 import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
-	"strings"
 	"sync"
 	"testing"
 	"uuid"
@@ -95,7 +94,7 @@ func TestSessionControlRetryAdditiveHoldAndExactResume(t *testing.T) {
 	if r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil || r != first {
 		t.Fatalf("released retry: %+v %v", r, err)
 	}
-	req.Reason = "different"
+	req.InterruptQueued = true
 	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("changed interruption: %v", err)
 	}
@@ -135,16 +134,25 @@ func TestSessionRuntimeControlsCannotEscapeOwnershipOrReleaseExternalHolds(t *te
 	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume); err != nil {
 		t.Fatal(err)
 	}
-	for _, issuer := range []string{"user", "system"} {
+	// A parent releases a system hold on its child, never an interrupt a person
+	// or API key placed there.
+	for _, issuer := range []string{"user", "api_key", "system"} {
 		hold := uuid.NewV7()
-		var issuerID any
-		if issuer == "user" {
-			issuerID = f.user
+		kind, issuerID := "interrupt", any(uuid.NewV7())
+		if issuer == "system" {
+			kind, issuerID = "process_failed", nil
 		}
-		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,$2,$3,'local','requires external recovery',$4,$5)`, f.env, hold, child.session, issuer, issuerID)
+		dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,$2,$3,$4,$5,$6)`, f.env, hold, child.session, kind, issuer, issuerID)
 		resume.IdempotencyKey, resume.HoldID = issuer, hold
-		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume); !errors.Is(err, session.ErrDenied) {
-			t.Fatalf("runtime released %s hold: %v", issuer, err)
+		_, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume)
+		if issuer == "system" {
+			if err != nil {
+				t.Fatalf("parent could not release child's process failure hold: %v", err)
+			}
+			continue
+		}
+		if !errors.Is(err, session.ErrDenied) {
+			t.Fatalf("runtime released %s interrupt: %v", issuer, err)
 		}
 		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {
 			t.Fatalf("authorized human release: %v", err)
@@ -229,17 +237,6 @@ func TestSessionHeldFinalizingSaveCompletesWithoutBlockingPeer(t *testing.T) {
 	}
 }
 
-func TestSessionControlRejectsInvalidStoredText(t *testing.T) {
-	f := newFixture(t)
-	for _, reason := range []string{strings.Repeat("x", 4097), "bad\x00reason", string([]byte{0xff})} {
-		req := controlRequest(f, "interrupt", "key")
-		req.Reason = reason
-		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrInvalidInput) {
-			t.Fatalf("invalid reason: %v", err)
-		}
-	}
-}
-
 func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
 	f := newFixture(t)
 	child := ownedFixture(t, f)
@@ -277,7 +274,7 @@ func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
 	}
 }
 
-func TestSessionControlAPIKeyRequiresExactPermissionAndHumanAttribution(t *testing.T) {
+func TestSessionControlAPIKeyRequiresExactPermission(t *testing.T) {
 	f := newFixture(t)
 	key := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO api_keys(id,org_id,project_id,environment_id,name,key_prefix,token_hash)
@@ -303,9 +300,10 @@ func TestSessionControlAPIKeyRequiresExactPermissionAndHumanAttribution(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	// API keys and users are alike: resume permission releases a user's interrupt.
 	resume.IdempotencyKey, resume.HoldID = "human", human.HoldID
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume); !errors.Is(err, session.ErrDenied) {
-		t.Fatalf("key released human hold without attribution: %v", err)
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, resume); err != nil {
+		t.Fatalf("key with resume permission could not release a user interrupt: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1`, key)
 	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, req); !errors.Is(err, session.ErrDenied) {
@@ -317,7 +315,7 @@ func TestSessionLocalHoldReleaseDoesNotInvalidateHealthyChild(t *testing.T) {
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	hold := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','setup failed')`, f.env, hold, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, hold, f.session)
 	resume := controlRequest(f, "resume", "release")
 	resume.HoldID = hold
 	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), resume); err != nil {

@@ -32,7 +32,7 @@ func TestRuntimeMCPScopeDenialPreservesTargetNondisclosure(t *testing.T) {
 	policy := auditpolicy.Policy{RetentionSeconds: 3600}
 	operations := map[string]func(uuid.UUID, uuid.UUID) error{
 		"inspect_session": func(target, turn uuid.UUID) error {
-			_, err := session.RuntimeGetSession(t.Context(), policy, f.pool, caller, target)
+			_, err := session.RuntimeGetSession(t.Context(), f.pool, caller, target)
 			return err
 		},
 		"inspect_turn": func(target, turn uuid.UUID) error {

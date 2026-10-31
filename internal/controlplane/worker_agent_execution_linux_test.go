@@ -727,8 +727,7 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 			SessionID       string `json:"sessionId"`
 			LostTurnID      string `json:"lostTurnId"`
 			RecoveredTurnID string `json:"recoveredTurnId"`
-			HoldID          string `json:"holdId"`
-			HoldReason      string `json:"holdReason"`
+			FailureReason   string `json:"failureReason"`
 		} `json:"nativeLosses"`
 		Turns []struct {
 			ID   string `json:"id"`
@@ -836,25 +835,25 @@ func runWorkerAgentNativeExecution(t *testing.T, mode nativeExecutionMode) {
 				t.Fatalf("native loss identity: %+v", loss)
 			}
 			providers[loss.Provider] = true
-			if loss.HoldReason != "session_continuation_lost" && loss.HoldReason != "turn_drain_failed" {
-				t.Fatalf("unexpected native loss hold: %q", loss.HoldReason)
+			if loss.FailureReason != "process_failed" {
+				t.Fatalf("unexpected native loss failure: %q", loss.FailureReason)
 			}
+			// One counted failure reconstructs the process without a hold.
 			var valid bool
 			err := database.Pool.QueryRow(ctx, `SELECT
  lost.status='interrupted' AND lost.result IS NULL
  AND recovered.status='completed' AND recovered.process_epoch=lost.process_epoch+1
- AND h.scope='local' AND h.issuer_kind='system' AND h.reason=$6 AND h.released_at IS NOT NULL
- AND recovered.started_at>=h.released_at
- AND old_process.status='stopped' AND old_process.failure_recorded_at IS NOT NULL
+ AND old_process.status='stopped' AND old_process.failure_reason='process_failed'
  AND old_process.fenced_at IS NOT NULL AND recovered.started_at>=old_process.fenced_at
- AND (SELECT count(*) FROM session_holds other WHERE other.environment_id=lost.environment_id AND other.session_id=lost.session_id AND other.created_at>=lost.started_at)=1
+ AND NOT EXISTS(SELECT 1 FROM session_holds other WHERE other.environment_id=lost.environment_id AND other.session_id=lost.session_id AND other.created_at>=lost.started_at)
+ AND (SELECT count(*) FROM session_events e WHERE e.environment_id=lost.environment_id AND e.session_id=lost.session_id AND e.kind='session.process_failed'
+  AND convert_from(e.data,'UTF8')::jsonb @> jsonb_build_object('processEpoch',lost.process_epoch,'reason','process_failed','holdId',NULL))=1
  FROM turns lost JOIN turns recovered ON recovered.environment_id=lost.environment_id AND recovered.session_id=lost.session_id
- JOIN session_holds h ON h.environment_id=lost.environment_id AND h.session_id=lost.session_id
  JOIN session_processes old_process ON (old_process.environment_id,old_process.session_id,old_process.epoch)=(lost.environment_id,lost.session_id,lost.process_epoch)
- WHERE lost.environment_id=$1 AND lost.session_id=$2 AND lost.id=$3 AND recovered.id=$4 AND h.id=$5`,
-				env, loss.SessionID, loss.LostTurnID, loss.RecoveredTurnID, loss.HoldID, loss.HoldReason).Scan(&valid)
+ WHERE lost.environment_id=$1 AND lost.session_id=$2 AND lost.id=$3 AND recovered.id=$4`,
+				env, loss.SessionID, loss.LostTurnID, loss.RecoveredTurnID).Scan(&valid)
 			if err != nil || !valid {
-				t.Fatalf("native loss hold/reconstruction evidence: %v %v", valid, err)
+				t.Fatalf("native loss reconstruction evidence: %v %v", valid, err)
 			}
 		}
 	}

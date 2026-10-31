@@ -350,14 +350,10 @@ func TestComputerCaptureLossPreservesStoppedMember(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !graceful {
-				var hold uuid.UUID
-				if err := f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1`, f.session).Scan(&hold); err != nil {
-					t.Fatal(err)
-				}
-				req := controlRequest(f, "resume", "release-stop-hold")
-				req.HoldID = hold
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
-					t.Fatal(err)
+				// One unexpected stop is a counted failure that does not hold.
+				var unexpected bool
+				if err := f.pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$1) AND (SELECT failure_reason='process_failed' FROM session_processes WHERE session_id=$1 AND epoch=1)`, f.session).Scan(&unexpected); err != nil || !unexpected {
+					t.Fatalf("unexpected stop failure: %v %v", unexpected, err)
 				}
 			}
 			for range 2 {
@@ -496,7 +492,7 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 				}
 				queued := r.f.enqueue(t, "queued-through-invalid-restore")
 				independent := uuid.NewV7()
-				dbtest.MustExec(t, t.Context(), r.f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','independent runtime crash')`, r.f.env, independent, r.f.session)
+				dbtest.MustExec(t, t.Context(), r.f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, r.f.env, independent, r.f.session)
 				if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
 					RetentionSeconds: 3600,
 				}, r.f.pool, r.host, current, uuid.NewV7(), uuid.Nil()); !errors.Is(err, dispatch.ErrDenied) {
@@ -520,13 +516,16 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 				if err := r.f.pool.QueryRow(t.Context(), `SELECT bool_and(status='lost' AND failure_recorded_at IS NOT NULL AND fenced_at IS NOT NULL) FROM session_processes WHERE computer_id=$1`, r.f.computer).Scan(&lost); err != nil || !lost {
 					t.Fatalf("captured generations not held/fenced: %v %v", lost, err)
 				}
-				wantHolds := 1 // The independent hold must survive.
+				// The independent hold survives. Without an eligible disk each member
+				// reports one counted execution loss, which does not hold yet.
+				reason := "computer_lost"
 				if !eligible {
-					wantHolds += 2
-				} // Each member also requires attention without an eligible disk.
+					reason = "execution_lost"
+				}
 				var holds int
-				if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != wantHolds {
-					t.Fatalf("eligible disk recovery changed independent attention holds=%d error=%v", holds, err)
+				var reasons bool
+				if err := r.f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_holds WHERE released_at IS NULL),(SELECT bool_and(failure_reason=$2) FROM session_processes WHERE computer_id=$1)`, r.f.computer, reason).Scan(&holds, &reasons); err != nil || holds != 1 || !reasons {
+					t.Fatalf("disk recovery changed independent attention holds=%d reasons=%v error=%v", holds, reasons, err)
 				}
 				sessiontest.ObserveProvisioning(t, sessiontest.Fixture{Pool: r.f.pool, Worker: r.f.worker, Group: r.f.group})
 				resume := controlRequest(r.f, "resume", "after-checkpoint-loss")
@@ -539,7 +538,7 @@ func TestComputerRestoreFailureWithdrawsOnlyExactRetainedCheckpoint(t *testing.T
 				}, r.f.pool, r.host, current, r.manifest.CheckpointID, uuid.Nil()); err != nil {
 					t.Fatal(err)
 				}
-				if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != wantHolds-1 {
+				if err := r.f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
 					t.Fatalf("replayed loss recreated hold: %d %v", holds, err)
 				}
 				var queuedIntact bool

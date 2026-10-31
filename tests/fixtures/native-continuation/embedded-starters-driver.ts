@@ -93,21 +93,20 @@ export async function runEmbeddedStarter(kind: "opencode" | "pi", client: HelmrC
     await observed(value => value.toolRunning)
     await control({ crash: true }).catch(() => {})
     assert.equal((await lost.wait({ signal })).status, "interrupted")
-    let hold
-    for (;;) {
-      const holds = (await session.get({ signal })).holds
-      hold = holds.find(value => value.kind === "control" && value.scope === "local" &&
-        ["session_continuation_lost", "turn_drain_failed", "Session runtime control failed"].includes(value.reason))
-      if (hold) {
-        assert.equal(holds.length, 1, `unexpected additional owner-failure holds: ${JSON.stringify(holds)}`)
+    // One owner crash is one process failure: it is reported without a hold
+    // and the next input reconstructs the process.
+    for (let cursor = 0; ;) {
+      const page = await session.events.list({ after: cursor, limit: 100 }, { signal })
+      const failure = page.records.find(event => event.kind === "session.process_failed")
+      if (failure?.kind === "session.process_failed") {
+        assert.equal(failure.data.holdId, null)
         break
       }
-      assert.equal(holds.length, 0, `unexpected owner-failure hold: ${JSON.stringify(holds)}`)
-      await delay(100, undefined, { signal })
+      if (page.hasMore) cursor = page.nextAfter
+      else await delay(100, undefined, { signal })
     }
+    assert.deepEqual((await session.get({ signal })).holds, [])
     const fresh = await session.enqueue(input("starter fresh reconstructed"), undefined, { signal })
-    assert.equal((await fresh.get({ signal })).status, "queued")
-    await session.resume({ holdId: hold.id, idempotencyKey: `${kind}-resume` }, { signal })
     const reconstructed = await completed(fresh)
     assert.equal(reconstructed.setups, 2); assert.notEqual(reconstructed.nonce, first.nonce)
     assert.equal(reconstructed.nativeSessionId, first.nativeSessionId)
@@ -116,7 +115,7 @@ export async function runEmbeddedStarter(kind: "opencode" | "pi", client: HelmrC
     assert.ok(JSON.stringify(state.inputs[0]).includes("starter remembered first"))
     assert.ok(JSON.stringify(state.inputs[0]).includes("starter fresh reconstructed"))
     assert.equal(state.admissions[0].toolRunning, false); assert.equal(state.admissions[0].toolFinished, false)
-    observations.reconstruction = { lostTurnId: lost.id, freshTurnId: fresh.id, hold, reconstructed, state }
+    observations.reconstruction = { lostTurnId: lost.id, freshTurnId: fresh.id, reconstructed, state }
     return { kind, sessionId: session.id, retained: true, steering: true, questions: true, joinedNativeStop: true, heldOwnerFailure: true, reconstruction: true }
   } finally {
     try { await writeFile(`${evidence}/${kind}-starter.json`, JSON.stringify(observations, null, 2) + "\n", { mode: 0o600 }) }

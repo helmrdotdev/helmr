@@ -126,7 +126,7 @@ export function overviewIssues(input: {
       id: `hold:${hold.id}`,
       tone: "warning",
       title: "A session is held",
-      detail: `${hold.agent} · ${hold.reason || "Waiting to be resumed"}`,
+      detail: `${hold.agent} · ${holdKindLabel(hold.hold_kind)}`,
       action: "Open",
       target: { kind: "session", sessionID: hold.session_id! },
     });
@@ -169,4 +169,15 @@ export function orderComputers(computers: readonly ComputerListItem[]): Computer
     .filter((c) => c.status === "available")
     .slice()
     .sort((a, b) => computerRank(a) - computerRank(b) || Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at));
+}
+
+// A short label for why a session is held.
+function holdKindLabel(kind: AttentionItem["hold_kind"]): string {
+  switch (kind) {
+    case "interrupt": return "interrupted";
+    case "process_failed": return "process failed repeatedly";
+    case "recovery_gap": return "restored with missing file changes";
+    case "storage_pressure": return "waiting for storage space";
+    default: return "waiting to be resumed";
+  }
 }

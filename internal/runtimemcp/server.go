@@ -102,7 +102,7 @@ func NewScopedHandler(invoke Invoke, policy mcppolicy.Policy) http.Handler {
 	addScoped[messageInput](server, policy, invoke, "send_turn", "Send text to an owned descendant's exact active Turn. A receipt confirms admission, not native delivery.")
 	addScoped[turnControlInput](server, policy, invoke, "interrupt_turn", "Interrupt an owned descendant's exact running Turn without holding its Session or stopping its children. Acceptance does not prove cessation; a non-running Turn returns turn_not_interruptible with its status and reason.")
 	addScoped[controlInput](server, policy, invoke, "interrupt_session", "Request interruption of an owned descendant and its subtree. A receipt is not proof that execution has stopped.")
-	addScoped[resumeInput](server, policy, invoke, "resume_session", "Release only the exact hold this Session placed on an owned descendant. This does not replay input.")
+	addScoped[resumeInput](server, policy, invoke, "resume_session", "Release an exact hold on an owned descendant, posted to the hold's session_id. Of interrupts, only those this Session placed can be released; storage pressure holds cannot. This does not replay input.")
 	addScoped[controlInput](server, policy, invoke, "close_session", "Close admission to an owned descendant while draining its accepted work.")
 	addScoped[controlInput](server, policy, invoke, "cancel_session", "Cancel pending work and request cessation of active work in an owned descendant's subtree.")
 	addScoped[sessionInput](server, policy, invoke, "inspect_session", "Inspect an accessible Session without expanding history access.")

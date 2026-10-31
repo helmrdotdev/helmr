@@ -405,43 +405,22 @@ try {
       process.stderr.write(JSON.stringify({ nativeProcessLossRequested: { provider, sessionId: started.session.id, lostTurnId: lost.id, recoveredTurnId: recovered.id, before: previous } }) + "\n")
       await lost.send(fixtureInput("lose-native-launcher"), undefined, { signal })
       assert.equal((await lost.wait({ signal })).status, "interrupted")
-      let holdId: string | undefined
-      let holdReason: string | undefined
-      for (;;) {
-        const session = await started.session.get({ signal })
-        if (session.holds.length) {
-          assert.equal(session.holds.length, 1, "native loss added multiple holds")
-          const hold = session.holds[0]!
-          assert.equal(hold.scope, "local")
-          assert(["session_continuation_lost", "turn_drain_failed"].includes(hold.reason), `unexpected native loss hold: ${hold.reason}`)
-          holdId = hold.id; holdReason = hold.reason; break
-        }
-        await delay(100, undefined, { signal })
-      }
-      // Actual work on the shared Computer must progress while this Session is
-      // held, with its successor still queued and setup not silently repeated.
-      for (;;) {
-        const page = await peer.session.events.list({ after: peerSequence, limit: 100 }, { signal })
-        peerSequence = page.nextAfter
-        if (!page.hasMore) break
-      }
-      const heldPeerStart = peerSequence
-      for (let sample = 0; sample < 5; sample++) peerSequence = await progress(peerSequence)
-      assert(peerSequence > heldPeerStart)
-      assert.equal((await recovered.get({ signal })).status, "queued")
-      const inspectSetup = await commands.exec({
-        command: ["/usr/local/bin/node", "--input-type=module", "-e", `
-          import assert from 'node:assert/strict';
-          import {readFile} from 'node:fs/promises';
-          assert.equal(JSON.parse(await readFile('/workspace/${started.session.id}/setup-count.json','utf8')),1);
-        `], timeout: "10s", idempotencyKey: `fixture-held-setup-${provider}`,
-      }, { signal })
-      const inspected = await inspectSetup.wait({ signal })
-      assert.equal(inspected.kind, "exited"); assert.equal(inspected.exitCode, 0)
-      process.stderr.write(JSON.stringify({ nativeProcessLossHeld: { provider, holdId, holdReason, heldPeerStart, heldPeerEnd: peerSequence } }) + "\n")
-      await started.session.resume({ holdId, idempotencyKey: `fixture-native-resume-${provider}` }, { signal })
+      // One process failure is not held: the successor runs on a new process
+      // that reconstructs setup state, while the lost Turn is not replayed.
       const resumed = await nativeOutcome(recovered, provider, 3)
       assert.equal(resumed.status, "completed", JSON.stringify(resumed))
+      assert.equal((await started.session.get({ signal })).holds.length, 0, "a single native loss held the Session")
+      let failureReason: string | undefined
+      for (let cursor = 0; ;) {
+        const page = await started.session.events.list({ after: cursor, limit: 100 }, { signal })
+        const failure = page.records.find(event => event.kind === "session.process_failed")
+        if (failure?.kind === "session.process_failed") {
+          assert.equal(failure.data.holdId, null)
+          failureReason = failure.data.reason; break
+        }
+        assert(page.hasMore, "native loss reported no process failure")
+        cursor = page.nextAfter
+      }
       const state = await recovered.get({ signal })
       const result = state.result as Record<string, unknown>
       assert.equal(result["count"], 1, "exceptional resume did not reconstruct setup state")
@@ -469,7 +448,7 @@ try {
       const historyResult = await history.wait({ signal })
       assert.equal(historyResult.kind, "exited"); assert.equal(historyResult.exitCode, 0)
       const evidence = { provider, sessionId: started.session.id, lostTurnId: lost.id, recoveredTurnId: recovered.id,
-        holdId, holdReason, heldPeerStart, heldPeerEnd: peerSequence, before: previous, after: result }
+        failureReason, before: previous, after: result }
       nativeLosses.push(evidence)
       process.stderr.write(JSON.stringify({ nativeProcessLossRecovered: evidence }) + "\n")
       turns.push(state)

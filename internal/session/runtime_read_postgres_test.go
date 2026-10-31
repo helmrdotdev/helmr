@@ -90,7 +90,7 @@ func TestRuntimeTurnObservationCreatedWorkAndFinalizing(t *testing.T) {
 			if err != nil || view.Status != "completed" || decodeErr != nil || result["result"] != 1 {
 				t.Fatalf("settled: %+v %v", view, err)
 			}
-			sessionID, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session)
+			sessionID, err := session.RuntimeGetSession(t.Context(), f.pool, caller, peer.session)
 			if err != nil || sessionID.InitialTurnID == nil || *sessionID.InitialTurnID != a.TurnID || sessionID.InitialTurnStatus == nil || *sessionID.InitialTurnStatus != "completed" {
 				t.Fatalf("completed discovery: %+v %v", sessionID, err)
 			}
@@ -121,7 +121,7 @@ func TestRuntimeTurnObservationRechecksCaller(t *testing.T) {
 			case "host":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET current_epoch=2`)
 			case "hold":
-				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','test')`, f.env, uuid.NewV7(), f.session)
+				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, uuid.NewV7(), f.session)
 			case "processing":
 				if err := closeProcessingForTest(t.Context(), f.pool, f.execution(), caller.TurnID); err != nil {
 					t.Fatal(err)

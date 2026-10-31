@@ -40,7 +40,7 @@ func TestSlackSharedConversationUsesExplicitSessionActions(t *testing.T) {
 	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), f.Environment, target); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("channel participation became Console history access", err)
 	}
-	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionListRequest{EnvironmentID: f.Environment, Limit: 100})
+	page, err := session.ListSessions(ctx, f.Pool, session.UserCaller(f.Principal(t)), session.SessionListRequest{EnvironmentID: f.Environment, Limit: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestSlackSharedConversationUsesExplicitSessionActions(t *testing.T) {
 			t.Fatal("shared creator gained personal list access")
 		}
 	}
-	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'local','personal','user',$4),($1,uuidv7(),$3,'local','shared','user',$4)`, f.Environment, f.Session, target, f.User)
+	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'interrupt','user',$4),($1,uuidv7(),$3,'interrupt','user',$4)`, f.Environment, f.Session, target, f.User)
 	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), f.Environment)
 	if !errors.Is(err, session.ErrDenied) || attention.HoldCount != 0 || len(attention.Holds) != 0 {
 		t.Fatalf("shared creator gained personal attention access: %+v %v", attention, err)
@@ -159,7 +159,7 @@ func TestSlackAcceptedInputRespectsWorkAndPhysicalControls(t *testing.T) {
 			attachment := int64(1)
 			switch blocked {
 			case "hold":
-				dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'local','wait','user',$3)`, f.Environment, f.Session, f.User)
+				dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'interrupt','user',$3)`, f.Environment, f.Session, f.User)
 			case "storage":
 				dbtest.MustExec(t, ctx, f.Pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp() WHERE computer_id=$1`, f.Computer)
 			case "control":
@@ -196,12 +196,12 @@ func TestSharedRuntimeDiscoveryKeepsRelationshipsAndScheduleIsolation(t *testing
 	e := session.Execution{EnvironmentID: f.Environment, SessionID: f.Session, ProcessEpoch: 1, LeaseEpoch: 1, WorkerHostID: f.Worker, WorkerEpoch: 1, AuthorityGeneration: 1, AuthenticatedHostVersion: 1}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.MCPScope, ID: f.Session, Execution: e, Host: &workergroup.HostPrincipal{HostID: f.Worker, GroupID: f.Group, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}}
 	for _, relation := range []string{"owned", "requested"} {
-		page, err := session.RuntimeListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.RuntimeSessionListRequest{Relation: relation, Limit: 100})
+		page, err := session.RuntimeListSessions(ctx, f.Pool, caller, session.RuntimeSessionListRequest{Relation: relation, Limit: 100})
 		if err != nil || len(page.Sessions) != 0 {
 			t.Fatalf("unrelated channel listed: %+v %v", page, err)
 		}
 	}
-	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, other); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(ctx, f.Pool, caller, other); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("unrelated shared runtime read", err)
 	}
 	// Slack participation does not imply control; explicit actions apply to the Agent.
@@ -228,7 +228,7 @@ func TestSharedRuntimeDiscoveryKeepsRelationshipsAndScheduleIsolation(t *testing
 		}
 	}
 	for _, relation := range []string{"owned", "requested"} {
-		page, err := session.RuntimeListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, caller, session.RuntimeSessionListRequest{Relation: relation, Limit: 100})
+		page, err := session.RuntimeListSessions(ctx, f.Pool, caller, session.RuntimeSessionListRequest{Relation: relation, Limit: 100})
 		if err != nil || len(page.Sessions) != 0 {
 			t.Fatalf("schedule listed unrelated channel: %+v %v", page, err)
 		}

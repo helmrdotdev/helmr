@@ -26,7 +26,7 @@ describe("overviewIssues", () => {
       failures: [failure()],
       computers: [computer("c1", { execution_wait: { reason: "environment_limit" } }), computer("c2", { execution_wait: { reason: "scheduling" } }), computer("c3", { residency: "unavailable" }), computer("c4", { status: "deleted", residency: "unavailable" })],
       attention: [
-        item("hold", "2026-10-25T08:00:00Z", { reason: "Paused by an operator" }),
+        item("hold", "2026-10-25T08:00:00Z", { hold_kind: "process_failed" }),
         item("slack_reauthorization", "2026-10-25T09:00:00Z", { workspace_name: "Acme" }),
         item("question", "2026-10-25T09:00:00Z"),
         item("question", "2026-10-25T09:30:00Z", { agent: "agent" }),
@@ -43,6 +43,7 @@ describe("overviewIssues", () => {
     ]);
     expect(issues[0]!.target).toEqual({ kind: "turn", sessionID: "s1", turnID: "t1" });
     expect(issues[1]!.detail).toContain("computer limit");
+    expect(issues[3]!.detail).toBe("triage · process failed repeatedly");
     expect(issues[5]!.detail).toBe("Asked by triage, agent");
   });
 

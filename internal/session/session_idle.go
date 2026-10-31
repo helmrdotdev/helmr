@@ -23,14 +23,11 @@ func reconcileSessionIdle(ctx context.Context, database db.TxBeginner, env, sess
 			return err
 		}
 		var busy, physicalBusy bool
-		err := tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
-   SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
-   UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON a.parent_session_id=s.id WHERE s.environment_id=$1
-  ) SELECT
+		err := tx.QueryRow(ctx, `SELECT
    EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=$2 AND status IN ('queued','running'))
    OR EXISTS(SELECT 1 FROM turn_messages WHERE environment_id=$1 AND session_id=$2 AND status IN ('admitted','started'))
    OR EXISTS(SELECT 1 FROM turn_asks WHERE environment_id=$1 AND session_id=$2 AND status='pending')
-   OR EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
+   OR EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=$1 AND s.id=$2 AND `+db.SessionHeldSQL+`)
    OR EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND parent_session_id=$2 AND status NOT IN ('closed','cancelled'))
    , EXISTS(SELECT 1 FROM computer_saves save JOIN sessions s ON s.environment_id=save.environment_id AND s.computer_id=save.computer_id WHERE s.environment_id=$1 AND s.id=$2 AND save.status IN ('requested','captured') AND (save.turn_id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=save.environment_id AND t.id=save.turn_id AND t.session_id=s.id)))
    OR EXISTS(SELECT 1 FROM session_processes p JOIN sessions s ON (s.environment_id,s.id)=(p.environment_id,p.session_id) WHERE p.environment_id=$1 AND p.session_id=$2 AND p.fenced_at IS NULL AND (p.stop_deadline_at IS NOT NULL OR p.status<>'ready' OR p.control_acknowledged_at IS NULL OR p.control_error IS NOT NULL OR p.control_attachment<>p.attachment_sequence OR p.control_generation<>s.authority_generation OR p.control_kind IS DISTINCT FROM 'resume'))

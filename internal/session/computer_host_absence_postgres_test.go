@@ -183,14 +183,10 @@ func TestComputerHostAbsencePreservesStoppedMember(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !graceful {
-				var hold uuid.UUID
-				if err := f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1`, f.session).Scan(&hold); err != nil {
-					t.Fatal(err)
-				}
-				req := controlRequest(f, "resume", "release-stop-hold")
-				req.HoldID = hold
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
-					t.Fatal(err)
+				// One unexpected stop is a counted failure that does not hold.
+				var unexpected bool
+				if err := f.pool.QueryRow(t.Context(), `SELECT NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$1) AND (SELECT failure_reason='process_failed' FROM session_processes WHERE session_id=$1 AND epoch=1)`, f.session).Scan(&unexpected); err != nil || !unexpected {
+					t.Fatalf("unexpected stop failure: %v %v", unexpected, err)
 				}
 			}
 			for range 2 {

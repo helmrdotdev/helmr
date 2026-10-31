@@ -92,8 +92,11 @@ not proof that execution has stopped.
   interrupted this way. Confirm the target's outcome afterward.
 - `interrupt_session` places a hold and requests interruption of the Session
   and its subtree. Retain the returned `holdId` and check state afterward.
-- `resume_session` releases the exact hold you placed, using that `holdId`.
-  Other holds can still prevent progress. It does not replay interrupted input.
+- `resume_session` releases one exact hold on an owned descendant: post the
+  hold's `id` to its `session_id`. `inspect_session` reports `can_release` for
+  each hold. Only interrupts you placed can be released this way; other
+  interrupts and storage pressure holds stay in force. Other holds can still prevent progress. It does not replay
+  interrupted input.
 - `close_session` closes admission while already accepted work drains.
 - `cancel_session` cancels pending work and requests cessation of active work
   in the subtree. Check the affected state before reporting cancellation done.

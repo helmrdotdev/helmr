@@ -260,7 +260,8 @@ func TestComputerCaptureSourceLossRequiresFenceAndRetainsHolds(t *testing.T) {
 	req := f.captureRequest()
 	beginCapture(t, f, req)
 
-	// Independent user holds survive alongside the ineligible-recovery hold.
+	// Independent user holds survive; one ineligible-recovery loss is reported
+	// as a counted failure without adding a hold.
 	for _, member := range []fixture{f, peer} {
 		if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, member.caller(), controlRequest(member, "interrupt", "independent")); err != nil {
 			t.Fatal(err)
@@ -292,12 +293,13 @@ func TestComputerCaptureSourceLossRequiresFenceAndRetainsHolds(t *testing.T) {
 		t.Fatalf("physical stop retained capture: %v %v", lost, err)
 	}
 	for _, member := range []fixture{f, peer} {
-		var holds, generation int
-		if err := f.pool.QueryRow(t.Context(), `SELECT authority_generation,(SELECT count(*) FROM session_holds WHERE session_id=s.id AND released_at IS NULL) FROM sessions s WHERE id=$1`, member.session).Scan(&generation, &holds); err != nil {
+		var holds, generation, failures int
+		if err := f.pool.QueryRow(t.Context(), `SELECT authority_generation,(SELECT count(*) FROM session_holds WHERE session_id=s.id AND released_at IS NULL),
+ (SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='session.process_failed' AND convert_from(data,'UTF8')::jsonb @> '{"reason":"execution_lost","holdId":null}') FROM sessions s WHERE id=$1`, member.session).Scan(&generation, &holds, &failures); err != nil {
 			t.Fatal(err)
 		}
-		if holds != 2 || generation != 3 {
-			t.Fatalf("loss duplicated or omitted control: holds=%d generation=%d", holds, generation)
+		if holds != 1 || generation != 2 || failures != 1 {
+			t.Fatalf("loss duplicated or omitted control: holds=%d generation=%d failures=%d", holds, generation, failures)
 		}
 	}
 }

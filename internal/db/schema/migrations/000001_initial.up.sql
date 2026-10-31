@@ -1552,6 +1552,7 @@ CREATE TABLE session_processes (
     stop_deadline_at timestamptz,
     control_acknowledged_at timestamptz,
     failure_recorded_at timestamptz,
+    failure_reason text CHECK (failure_reason IN ('process_failed', 'stop_deadline_elapsed', 'execution_lost', 'computer_lost', 'secret_unavailable')),
     control_error text,
     fenced_at timestamptz,
     stdout_accepted_through bigint NOT NULL DEFAULT 0 CHECK (stdout_accepted_through>=0),
@@ -1573,6 +1574,7 @@ CREATE TABLE session_processes (
     stderr_last_digest bytea CHECK (stderr_last_digest IS NULL OR octet_length(stderr_last_digest)=32),
     stderr_last_accepted_at timestamptz,
     CHECK (stop_turn_id IS NULL OR stop_deadline_at IS NOT NULL),
+    CHECK ((failure_recorded_at IS NULL) = (failure_reason IS NULL)),
     CHECK ((stdout_accepted_through=0 AND stdout_last_sequence IS NULL AND stdout_last_digest IS NULL AND stdout_last_accepted_at IS NULL AND NOT stdout_ended)
         OR (stdout_accepted_through>0 AND stdout_last_sequence IS NOT NULL AND stdout_last_sequence BETWEEN 1 AND stdout_accepted_through AND stdout_last_accepted_at IS NOT NULL
         AND (stdout_last_digest IS NOT NULL OR stdout_expired_through=stdout_accepted_through))),
@@ -1720,9 +1722,7 @@ CREATE TABLE session_holds (
     id uuid NOT NULL,
     environment_id uuid NOT NULL,
     session_id uuid NOT NULL,
-    scope text NOT NULL CHECK (scope IN ('local', 'subtree')),
-    reason text NOT NULL CHECK (octet_length(reason) <= 4096),
-    kind text NOT NULL DEFAULT 'control' CHECK (kind IN ('control','recovery_gap','storage_pressure')),
+    kind text NOT NULL CHECK (kind IN ('interrupt','process_failed','recovery_gap','storage_pressure')),
     recovery_computer_id uuid,
     recovery_lease_epoch bigint CHECK (recovery_lease_epoch > 0),
     recovery_gap jsonb,
@@ -1733,15 +1733,18 @@ CREATE TABLE session_holds (
     FOREIGN KEY (environment_id, recovery_computer_id, recovery_lease_epoch)
         REFERENCES computer_leases(environment_id, computer_id, epoch),
     CHECK ((kind='recovery_gap') = (recovery_gap IS NOT NULL)),
-    issuer_kind text NOT NULL DEFAULT 'system' CHECK (issuer_kind IN ('user', 'api_key', 'session', 'system')),
+    issuer_kind text NOT NULL CHECK (issuer_kind IN ('user', 'api_key', 'session', 'system')),
     issuer_id uuid,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     released_at timestamptz,
     PRIMARY KEY (environment_id, id),
     UNIQUE (environment_id, session_id, id),
     FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id),
-    CHECK ((issuer_kind='system') = (issuer_id IS NULL))
+    CHECK ((issuer_kind='system') = (issuer_id IS NULL)),
+    CHECK ((kind='interrupt') = (issuer_kind<>'system'))
 );
+
+CREATE UNIQUE INDEX session_holds_one_process_failed ON session_holds(environment_id,session_id) WHERE kind='process_failed' AND released_at IS NULL;
 
 CREATE UNIQUE INDEX session_holds_one_recovery_gap ON session_holds(environment_id,session_id) WHERE kind='recovery_gap' AND released_at IS NULL;
 

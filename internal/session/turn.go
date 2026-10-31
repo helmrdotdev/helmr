@@ -434,13 +434,9 @@ func authorizeSessionInput(ctx context.Context, tx pgx.Tx, caller Caller, env uu
 		if caller.Execution.AuthorityGeneration != o.generation || (o.lifecycle != "open" && !(steering && o.lifecycle == "closing" && caller.TurnID != uuid.Nil())) {
 			return ErrDenied
 		}
-		err := tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
-          SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
-          UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
-        ) SELECT NOT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
-        AND EXISTS(SELECT 1 FROM sessions s
+		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions s
           JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
-          WHERE s.environment_id=$1 AND s.id=$2 AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL)
+          WHERE s.environment_id=$1 AND s.id=$2 AND c.integrity_fault_at IS NULL AND c.deleted_at IS NULL AND `+db.NoSessionHoldsSQL+`)
         AND ($3::uuid IS NULL OR EXISTS(SELECT 1 FROM turns WHERE environment_id=$1 AND session_id=$2 AND id=$3 AND process_epoch=$4 AND status='running' AND processing_closed_at IS NULL AND (deadline_at IS NULL OR deadline_at>clock_timestamp())))`, env, caller.ID, nullableID(caller.TurnID), caller.Execution.ProcessEpoch).Scan(&allowed)
 		if err != nil {
 			return err
@@ -552,10 +548,7 @@ func dispatchReady(ctx context.Context, tx pgx.Tx, e Execution) (owners, error) 
 		return o, err
 	}
 	var blocked bool
-	err = tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
-          SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
-          UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1
-        ) SELECT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=$1 AND s.id=$2 AND `+db.SessionHeldSQL+`)
         OR EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$3 AND computer_lease_epoch<>$4 AND status IN ('requested','captured'))`, e.EnvironmentID, e.SessionID, o.computer, e.LeaseEpoch).Scan(&blocked)
 	if err != nil {
 		return o, err

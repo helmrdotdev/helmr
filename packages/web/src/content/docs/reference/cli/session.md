@@ -73,7 +73,7 @@ Text output prints `session_id` and, when present, `turn_id`. JSON output contai
 | Command | Description |
 | --- | --- |
 | `list` | One page of Sessions. Text output: `ID AGENT STATUS COMPUTER_ID` per line, then `next_cursor` when more remain. |
-| `get` | Session state, including the Computer and current holds. Text output includes `hold_id`, `hold_session_id` (the Session that owns the hold), `hold_scope` and `hold_reason` for each hold. |
+| `get` | Session state, including the Computer and current holds. Text output includes `hold_id` and `hold_session_id` (the Session that owns the hold, omitted for a hold on an unreadable ancestor), `hold_kind` and `can_release` for each hold. |
 | `enqueue` | Always admits a new Turn. Prints `session_id`, `turn_id` and `sequence`. |
 
 `list` flags:

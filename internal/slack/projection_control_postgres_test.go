@@ -104,7 +104,7 @@ func TestSlackProjectionDiscoversLaterPhysicalFenceWithoutNewEvent(t *testing.T)
 	}
 	// This is the persisted shape of loss followed by later physical fencing:
 	// the second observation does not need another execution failure event.
-	if _, err := f.Pool.Exec(t.Context(), `UPDATE session_processes SET status='lost',failure_recorded_at=clock_timestamp() WHERE session_id=$1`, f.Session); err != nil {
+	if _, err := f.Pool.Exec(t.Context(), `UPDATE session_processes SET status='lost',failure_recorded_at=clock_timestamp(),failure_reason='process_failed' WHERE session_id=$1`, f.Session); err != nil {
 		t.Fatal(err)
 	}
 	projectAllActivity(t, f)

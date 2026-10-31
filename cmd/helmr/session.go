@@ -54,10 +54,11 @@ func sessionGetCommand() *cobra.Command {
 				}
 			}
 			for _, hold := range session.Holds {
-				fmt.Fprintf(cmd.OutOrStdout(), "hold_id: %s\nhold_session_id: %s\nhold_scope: %s\n", hold.ID, hold.SessionID, hold.Scope)
-				if hold.Reason != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "hold_reason: %s\n", hold.Reason)
+				// A hold on an ancestor the caller cannot read has no identity.
+				if hold.ID != nil && hold.SessionID != nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "hold_id: %s\nhold_session_id: %s\n", *hold.ID, *hold.SessionID)
 				}
+				fmt.Fprintf(cmd.OutOrStdout(), "hold_kind: %s\ncan_release: %t\n", hold.Kind, hold.CanRelease)
 			}
 			return nil
 		},

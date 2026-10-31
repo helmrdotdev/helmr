@@ -142,7 +142,7 @@ func TestSlackClosedStatusWaitsForLaterPhysicalFenceProjection(t *testing.T) {
 	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, session.UserCaller(f.Principal(t)), session.SessionControlRequest{EnvironmentID: f.Environment, SessionID: f.Session, Kind: "cancel", IdempotencyKey: "cancel"}); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='lost',failure_recorded_at=clock_timestamp() WHERE session_id=$1`, f.Session)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='lost',failure_recorded_at=clock_timestamp(),failure_reason='process_failed' WHERE session_id=$1`, f.Session)
 	projectAllActivity(t, f)
 	var before int64
 	if err := f.Pool.QueryRow(t.Context(), `SELECT next_event_seq FROM sessions WHERE id=$1`, f.Session).Scan(&before); err != nil {

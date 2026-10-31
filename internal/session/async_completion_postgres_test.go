@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
 func TestAsyncCompletionCoveragePrefixIsImmutableAcrossConcurrentResult(t *testing.T) {
@@ -126,13 +127,13 @@ func TestAsyncCompletionCheckpointSaveIsNotCoalesced(t *testing.T) {
 	}
 }
 
-func TestComputerRecoveryGapHoldsIdleSessionsAndPreservesIndependentHolds(t *testing.T) {
+func TestComputerRecoveryGapHoldsAffectedSessionAndNotifiesPeers(t *testing.T) {
 	f := newFixture(t)
 	idle := f.peer(t)
 	// The peer has no live process but still shares the Computer's files.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, idle.session)
 	independent := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','independent runtime crash')`, f.env, independent, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, independent, f.session)
 	// Complete before installing the independent hold in a separate peer Session.
 	active := f.peer(t)
 	turn, save := active.finalize(t, "uncovered")
@@ -144,22 +145,28 @@ func TestComputerRecoveryGapHoldsIdleSessionsAndPreservesIndependentHolds(t *tes
 			t.Fatal(err)
 		}
 	}
+	// Only the Session whose completed Turn lost its save is held; the peers
+	// are notified once each and keep their own holds unchanged.
 	var valid bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT
- (SELECT count(*)=3 FROM session_holds WHERE kind='recovery_gap' AND released_at IS NULL)
+ (SELECT count(*)=1 FROM session_holds WHERE kind='recovery_gap' AND released_at IS NULL AND session_id=$2)
+ AND NOT EXISTS(SELECT 1 FROM session_holds WHERE kind='recovery_gap' AND session_id<>$2)
  AND (SELECT count(*)=3 FROM session_events WHERE kind='session.recovery_gap')
  AND (SELECT convert_from(data,'UTF8')::jsonb->'affectedTurnIds'=jsonb_build_array($1::uuid::text) FROM session_events WHERE session_id=$2 AND kind='session.recovery_gap')
- AND (SELECT convert_from(data,'UTF8')::jsonb->'affectedTurnIds'='[]'::jsonb FROM session_events WHERE session_id=$3 AND kind='session.recovery_gap')
+ AND (SELECT convert_from(data,'UTF8')::jsonb @> '{"holdId":null,"affectedTurnIds":[]}' FROM session_events WHERE session_id=$3 AND kind='session.recovery_gap')
+ AND (SELECT convert_from(data,'UTF8')::jsonb @> '{"holdId":null,"affectedTurnIds":[]}' FROM session_events WHERE session_id=$6 AND kind='session.recovery_gap')
  AND (SELECT status='completed' FROM turns WHERE id=$1)
  AND (SELECT status='failed' FROM computer_saves WHERE id=$4)
- AND (SELECT released_at IS NULL FROM session_holds WHERE id=$5)`, turn.TurnID, active.session, idle.session, save.ID, independent).Scan(&valid); err != nil || !valid {
+ AND (SELECT released_at IS NULL FROM session_holds WHERE id=$5)`, turn.TurnID, active.session, idle.session, save.ID, independent, f.session).Scan(&valid); err != nil || !valid {
 		t.Fatalf("sticky gap witness %v %v", valid, err)
 	}
 	var hold uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND kind='recovery_gap'`, f.session).Scan(&hold); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND kind='recovery_gap'`, active.session).Scan(&hold); err != nil {
 		t.Fatal(err)
 	}
-	req := controlRequest(f, "resume", "acknowledge-gap")
+	// The acknowledged Session has queued work, which needs capacity.
+	sessiontest.ObserveProvisioning(t, sessiontest.Fixture{Pool: f.pool, Worker: f.worker, Group: f.group})
+	req := controlRequest(active, "resume", "acknowledge-gap")
 	req.HoldID = hold
 	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
 		t.Fatal(err)
@@ -369,22 +376,20 @@ func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.
 			}, f.pool, f.env, f.computer, 1); err != nil {
 				t.Fatal(err)
 			}
-			want := 1
+			// An ineligible disk recovery is a counted execution loss; a
+			// recoverable one is not. Neither holds after one loss.
+			want := "execution_lost"
 			if state == "initial" || state == "published" || state == "capacity" {
-				want = 0
+				want = "computer_lost"
 			}
 			check := func() {
 				t.Helper()
-				var count int
-				if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1 AND released_at IS NULL`, f.session).Scan(&count); err != nil || count != want {
-					t.Fatalf("attention holds=%d want=%d error=%v", count, want, err)
-				}
-			}
-			if state == "integrity" {
-				reason := "execution_lost"
-				var captured bool
-				if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'reason'=$2) FROM audit_events WHERE action='session.hold_created' AND session_id=$1`, f.session, reason).Scan(&captured); err != nil || !captured {
-					t.Fatalf("hold cause %s: %v %v", reason, captured, err)
+				var holds, events int
+				var reason string
+				if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_holds WHERE session_id=$1 AND released_at IS NULL),
+ (SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='session.process_failed'),
+ (SELECT failure_reason FROM session_processes WHERE session_id=$1 AND epoch=1)`, f.session).Scan(&holds, &events, &reason); err != nil || holds != 0 || reason != want || (events == 1) != (want == "execution_lost") || events > 1 {
+					t.Fatalf("loss holds=%d failures=%d reason=%q want=%q error=%v", holds, events, reason, want, err)
 				}
 			}
 			// Expiry is still physically unfenced, and capacity may be absent.
@@ -400,12 +405,17 @@ func TestComputerLossPreservesAttentionOnlyForIneligibleDiskRecovery(t *testing.
 }
 
 func TestComputerLossInterruptionCauseOnlyDescribesRunningLostTurn(t *testing.T) {
-	for _, state := range []string{"no-gap", "gap", "user-interrupted", "pressure-stopped"} {
+	for _, state := range []string{"no-gap", "gap", "gap-peer", "user-interrupted", "pressure-stopped"} {
 		t.Run(state, func(t *testing.T) {
 			f := newFixture(t)
 			checkpointImageExposure(t, f)
 			if state == "gap" {
 				f.finalize(t, "completed-with-unsaved-files")
+			}
+			// An unaffected peer is notified rather than held; its interruption
+			// is not explained by a hold, so Slack still reports the lost request.
+			if state == "gap-peer" {
+				f.peer(t).finalize(t, "peer-completed-with-unsaved-files")
 			}
 			running := f.enqueue(t, "running")
 			if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
@@ -461,7 +471,9 @@ func TestComputerLossInterruptionCauseOnlyDescribesRunningLostTurn(t *testing.T)
  (SELECT count(*)=1 FROM session_events WHERE turn_id=$1 AND kind='turn.interrupted')
  AND (SELECT status='interrupted' FROM turns WHERE id=$1)
  AND (SELECT status='queued' FROM turns WHERE id=$2)
- AND NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$3 AND kind='control' AND released_at IS NULL)`, running.TurnID, queued.TurnID, f.session).Scan(&valid); err != nil || !valid {
+ AND NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$3 AND kind IN ('interrupt','process_failed') AND released_at IS NULL)
+ AND ($4::text<>'gap-peer' OR (NOT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$3)
+  AND EXISTS(SELECT 1 FROM session_events WHERE session_id=$3 AND kind='session.recovery_gap' AND convert_from(data,'UTF8')::jsonb @> '{"holdId":null}')))`, running.TurnID, queued.TurnID, f.session, state).Scan(&valid); err != nil || !valid {
 				t.Fatalf("loss replayed work or added attention hold: %v %v", valid, err)
 			}
 		})
@@ -490,7 +502,7 @@ func TestInitialRootRecoveryKeepsOldEpochGapAndRetainedMetadata(t *testing.T) {
 		t.Fatalf("durable gap view %+v %v", view, err)
 	}
 	metadata := view.Holds[0].RecoveryGap
-	if metadata.HoldID != view.Holds[0].ID || metadata.ComputerID != f.computer || metadata.LeaseEpoch != 1 || metadata.RecoverySaveID != nil || metadata.RestoredAt != nil || len(metadata.AffectedTurnIDs) != 1 || metadata.AffectedTurnIDs[0] != lost.TurnID {
+	if metadata.HoldID == nil || *metadata.HoldID != view.Holds[0].ID || metadata.ComputerID != f.computer || metadata.LeaseEpoch != 1 || metadata.RecoverySaveID != nil || metadata.RestoredAt != nil || len(metadata.AffectedTurnIDs) != 1 || metadata.AffectedTurnIDs[0] != lost.TurnID {
 		t.Fatalf("initial environment metadata %+v", metadata)
 	}
 	var notices int
@@ -506,21 +518,34 @@ func TestInitialRootRecoveryKeepsOldEpochGapAndRetainedMetadata(t *testing.T) {
 	if _, err := allocator.AllocateRecoveredLease(t.Context(), f.env, f.computer, 2, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("recovery bypassed acknowledgment %v", err)
 	}
-	req := controlRequest(f, "resume", "acknowledge-initial-state")
-	req.HoldID = view.Holds[0].ID
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
-		t.Fatal(err)
+	// The unaffected peer is notified, not held.
+	if peerView, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, peer.session); err != nil || len(peerView.Holds) != 0 {
+		t.Fatalf("unaffected peer held %+v %v", peerView, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE image_specs SET seed=jsonb_build_object('profile',$2::text) WHERE environment_id=$1`, f.env, definition.ComputerSeedProfile)
-	// Expiring the event stream cannot discard unresolved hold-owned facts.
+	// Expiring the event stream cannot discard unresolved hold-owned facts: a
+	// Session joining while the affected hold is unreleased is still notified.
 	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM session_events WHERE kind='session.recovery_gap'`)
 	admitted, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), session.StartRequest{EnvironmentID: f.env, Agent: "agent", ComputerID: f.computer, IdempotencyKey: "joined-after-loss", Input: json.RawMessage(`[{"type":"text","text":"continue"}]`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, admitted.SessionID)
-	if err != nil || len(joined.Holds) != 1 || joined.Holds[0].RecoveryGap == nil || len(joined.Holds[0].RecoveryGap.AffectedTurnIDs) != 0 || joined.Holds[0].RecoveryGap.HoldID != joined.Holds[0].ID || joined.Holds[0].RecoveryGap.ComputerID != f.computer || joined.Holds[0].RecoveryGap.LeaseEpoch != 1 {
-		t.Fatalf("joined gap %+v %v", joined, err)
+	if err != nil || len(joined.Holds) != 0 {
+		t.Fatalf("joined Session held %+v %v", joined, err)
+	}
+	var raw []byte
+	if err := f.pool.QueryRow(t.Context(), `SELECT data FROM session_events WHERE session_id=$1 AND kind='session.recovery_gap'`, admitted.SessionID).Scan(&raw); err != nil {
+		t.Fatalf("joined notice: %v", err)
+	}
+	var notice session.RecoveryGap
+	if err := json.Unmarshal(raw, &notice); err != nil || notice.HoldID != nil || notice.ComputerID != f.computer || notice.LeaseEpoch != 1 || len(notice.AffectedTurnIDs) != 0 {
+		t.Fatalf("joined notice %s %v", raw, err)
+	}
+	req := controlRequest(f, "resume", "acknowledge-initial-state")
+	req.HoldID = view.Holds[0].ID
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
+		t.Fatal(err)
 	}
 	recovered, err := allocator.AllocateRecoveredLease(t.Context(), f.env, f.computer, 2, f.worker)
 	if err != nil || !recovered.DiskOnlyRecovery || recovered.RestoredFrom != nil {
@@ -567,9 +592,9 @@ func TestInitialRootRecoveryKeepsOldEpochGapAndRetainedMetadata(t *testing.T) {
 	var valid bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT
  (SELECT status='failed' AND covered_by_save_id IS NULL FROM computer_saves WHERE id=$1)
- AND (SELECT count(*)=1 FROM session_holds WHERE session_id=$2 AND kind='recovery_gap' AND released_at IS NULL)
- AND (SELECT recovery_gap->'affectedTurnIds'='[]'::jsonb FROM session_holds WHERE session_id=$2 AND kind='recovery_gap' AND released_at IS NULL)
- AND (SELECT status='completed' FROM turns WHERE id=$3)`, failed.ID, peer.session, lost.TurnID).Scan(&valid); err != nil || !valid {
+ AND NOT EXISTS(SELECT 1 FROM session_holds WHERE kind='recovery_gap' AND released_at IS NULL)
+ AND (SELECT recovery_gap->'affectedTurnIds'=jsonb_build_array($3::uuid) FROM session_holds WHERE session_id=$2 AND kind='recovery_gap')
+ AND (SELECT status='completed' FROM turns WHERE id=$3)`, failed.ID, f.session, lost.TurnID).Scan(&valid); err != nil || !valid {
 		t.Fatalf("new epoch erased gap %v %v", valid, err)
 	}
 }

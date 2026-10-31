@@ -118,17 +118,21 @@ Sessions.
 
 ## Holds
 
-A hold pauses dispatch: queued Turns wait and no new Turn starts. A Session can
-be held because someone interrupted it, a Turn exceeded `maxTurnDuration`,
-`init` failed, or the Session's process or host was lost. Read the Session to
-see its holds, each with an ID, owning Session, scope and reason. An interrupt
-on an ancestor holds its owned descendants too.
+A hold pauses dispatch: queued Turns wait and no new Turn starts. Each hold has
+a kind: `interrupt` (someone interrupted the Session), `process_failed` (its
+process, including `init`, failed three times in a row), `recovery_gap` (a
+restore lost completed work) or `storage_pressure` (storage stayed full). Read
+the Session to see its holds, each with an ID, owning Session, kind and
+`can_release`. An interrupt on an ancestor holds its owned descendants too;
+other kinds hold only their Session.
 
-Resume releases one exact hold. Inspect the reason first: after a failure,
+Resume releases one exact hold. Inspect its kind first: after a failure,
 resuming starts a new process that reruns `init`. Helmr never replays an
 interrupted Turn automatically; reconciling external effects and retrying
-business work belong to the application. A hold
-placed by a person can only be released by a person. See
+business work belong to the application. Releasing a hold requires
+`sessions.resume` on the held Session. A storage pressure hold is released only
+when storage recovers. A Session can release holds on Sessions it spawned;
+of interrupts, only the ones it placed itself. See
 [Durability](/docs/concepts/durability).
 
 A held Session is not idle, so `closeAfterIdle` does not close it.

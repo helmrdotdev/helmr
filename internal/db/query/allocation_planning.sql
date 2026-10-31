@@ -2,9 +2,9 @@
 -- Planning counts physical Computer/preparation demand once. Session processes
 -- and Commands on a resident Computer consume its existing allocation.
 WITH RECURSIVE held AS (
- SELECT environment_id,session_id,scope FROM session_holds WHERE released_at IS NULL
+ SELECT environment_id,session_id,kind='interrupt' AS propagates FROM session_holds WHERE released_at IS NULL
  UNION
- SELECT s.environment_id,s.id,'subtree'::text FROM sessions s JOIN held h ON h.environment_id=s.environment_id AND h.session_id=s.parent_session_id AND h.scope='subtree'
+ SELECT s.environment_id,s.id,true FROM sessions s JOIN held h ON h.environment_id=s.environment_id AND h.session_id=s.parent_session_id AND h.propagates
 ), demand AS (
  SELECT p.environment_id,p.id owner_id,'preparation'::text kind,d.cpu_millis,d.memory_bytes,
  NULL::uuid required_worker_group_id,''::text required_vm_platform_id,0::integer required_vm_vcpu_count,

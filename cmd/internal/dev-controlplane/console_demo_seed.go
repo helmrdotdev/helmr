@@ -75,8 +75,8 @@ INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_s
 ($1::uuid,$12::uuid,$10::uuid,$2::uuid,$6::uuid,$12::uuid,0,'open',1,1,1,now()-interval '90 minutes','00000000-0000-7000-8000-000000000101'),
 ($1::uuid,$13::uuid,$11::uuid,$2::uuid,$6::uuid,$13::uuid,0,'open',1,2,3,now()-interval '50 minutes','00000000-0000-7000-8000-000000000101'),
 ($1::uuid,$14::uuid,$10::uuid,$2::uuid,$6::uuid,$14::uuid,0,'closed',2,2,4,now()-interval '1 day','00000000-0000-7000-8000-000000000101');
-INSERT INTO session_holds(environment_id,id,session_id,scope,reason,created_at)
-VALUES($1::uuid,$17::uuid,$12::uuid,'local','Waiting for approval before changing the demo billing plan',now()-interval '80 minutes');
+INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id,created_at)
+VALUES($1::uuid,$17::uuid,$12::uuid,'interrupt','user','00000000-0000-7000-8000-000000000101',now()-interval '80 minutes');
 INSERT INTO turns(environment_id,id,session_id,computer_id,seq,status,caller_kind,caller_id,admission_method,target_id,idempotency_key,request_digest,input,error_code,error_message,processing_closed_at,terminal_at) VALUES
 ($1::uuid,$8::uuid,$7::uuid,$6::uuid,1,'failed','user','00000000-0000-7000-8000-000000000101','create',$4::uuid,'demo-create',decode(repeat('00',32),'hex'),'[{"type":"text","text":"Demo input"}]',NULL,NULL,now()-interval '1 hour',now()-interval '1 hour'),
 ($1::uuid,$15::uuid,$13::uuid,$6::uuid,1,'failed','user','00000000-0000-7000-8000-000000000101','create',$11::uuid,'demo-report',decode(repeat('00',32),'hex'),'[{"type":"text","text":"Summarize this week''s demo tickets"}]','tool_error',convert_to('The demo ticket export timed out.','UTF8'),now()-interval '30 minutes',now()-interval '30 minutes'),
@@ -399,7 +399,7 @@ func seedDemoLongSession(h *demoHistory, now time.Time) {
 	s.wait(30 * time.Second)
 	s.output(t, demoText("Drafting a refund reply under the 30-day policy…"))
 	s.wait(20 * time.Second)
-	hold := s.hold(demoUUID(8301), "subtree", "Pausing while billing confirms the refund policy", "user", defaultUserID)
+	hold := s.hold(demoUUID(8301), "interrupt", "user", defaultUserID)
 	s.settle(t, "interrupted")
 	s.control(demoUUID(8202), "interrupt", "user", defaultUserID, hold.id, nil)
 	s.wait(5 * time.Second)
@@ -438,7 +438,8 @@ func seedDemoLongSession(h *demoHistory, now time.Time) {
 	s.output(t, demoText("Urgent tickets now escalate to #support-escalations."))
 	s.wait(5 * time.Second)
 	s.complete(t, demoContent("Escalation routing is set to #support-escalations."), map[string]any{"channel": "#support-escalations", "urgent_tickets": 2})
-	// Turn 31 is interrupted when its process fails; the system hold is resumed.
+	// Turn 31 is interrupted when its process fails once; queued work continues
+	// on a fresh process without a hold.
 	s.wait(25 * time.Minute)
 	tk = next()
 	t = s.enqueue(demoUUID(1031), user, "triage-process-loss", demoContent(fmt.Sprintf("Triage ticket #%d: %s", tk.number, tk.subject)))
@@ -447,13 +448,9 @@ func seedDemoLongSession(h *demoHistory, now time.Time) {
 	s.wait(25 * time.Second)
 	s.output(t, demoText(fmt.Sprintf("Reading ticket #%d from %s (%s plan).", tk.number, tk.customer, tk.plan)))
 	s.wait(30 * time.Second)
+	s.event(nil, "session.process_failed", map[string]any{"processEpoch": s.epoch, "reason": "process_failed", "holdId": nil})
 	s.settle(t, "interrupted")
 	s.stopProcess("lost")
-	failureHold := s.hold(demoUUID(8302), "local", "Session process failed", "system", "")
-	s.event(nil, "session.process_failed", map[string]any{"holdId": failureHold.id, "processEpoch": s.epoch})
-	s.wait(12 * time.Minute)
-	s.release(failureHold)
-	s.control(demoUUID(8204), "resume", "user", defaultUserID, failureHold.id, nil)
 	s.wait(20 * time.Second)
 	s.startProcess()
 	for turn := 32; turn <= 33; turn++ {

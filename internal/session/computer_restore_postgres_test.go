@@ -236,9 +236,10 @@ func TestComputerRestoreRetriesOnlyBeforeConsumption(t *testing.T) {
 	if err := f.f.pool.QueryRow(ctx, `SELECT status='lost' AND failure_recorded_at IS NOT NULL AND fenced_at IS NOT NULL FROM session_processes WHERE session_id=$1`, f.f.session).Scan(&lost); err != nil || !lost {
 		t.Fatalf("consumed physical owner not lost: %v %v", lost, err)
 	}
-	var holds int
-	if err := f.f.pool.QueryRow(ctx, `SELECT count(*) FROM session_holds WHERE environment_id=$1 AND released_at IS NULL`, f.f.env).Scan(&holds); err != nil || holds != len(second.Grants) {
-		t.Fatalf("ineligible recovery holds=%d: %v", holds, err)
+	// Each member reports one counted execution loss, below the hold threshold.
+	var holds, failures int
+	if err := f.f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM session_holds WHERE environment_id=$1 AND released_at IS NULL),(SELECT count(*) FROM session_processes WHERE environment_id=$1 AND failure_reason='execution_lost')`, f.f.env).Scan(&holds, &failures); err != nil || holds != 0 || failures != len(second.Grants) {
+		t.Fatalf("ineligible recovery holds=%d failures=%d: %v", holds, failures, err)
 	}
 }
 
@@ -286,7 +287,7 @@ func TestComputerRestoreRetainsStopsAndHolds(t *testing.T) {
 	}
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=$2`, f.f.env, peer)
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.f.env, peer)
-	dbtest.MustExec(t, ctx, f.f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','explicit hold')`, f.f.env, uuid.NewV7(), f.f.session)
+	dbtest.MustExec(t, ctx, f.f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.f.env, uuid.NewV7(), f.f.session)
 	p := f.prepare(t)
 	if len(p.StoppedSessions) != 1 || p.StoppedSessions[0].SessionId != peer.String() {
 		t.Fatal("cancelled captured member was not stopped")

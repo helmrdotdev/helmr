@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"strings"
 	"time"
@@ -73,7 +74,7 @@ func (t activityTask) presentation() (string, string) {
 // A child alone never opens a new Slack post or publishes its transcript.
 func projectActivity(ctx context.Context, tx pgx.Tx, o projectionOwner, authorized time.Time) error {
 	rows, err := tx.Query(ctx, `SELECT t.id,s.id,COALESCE(t.origin_turn_id,s.origin_turn_id),a.key,t.seq,t.status,
- EXISTS(SELECT 1 FROM session_holds h WHERE h.environment_id=s.environment_id AND h.released_at IS NULL AND (h.session_id=s.id OR (h.session_id=s.root_session_id AND h.scope='subtree'))),
+ `+db.SessionHeldSQL+`,
  p.status,p.epoch IS NOT NULL,
  COALESCE(p.control_kind='suspend' AND p.control_acknowledged_at IS NOT NULL AND p.control_error IS NULL AND p.control_generation=s.authority_generation AND p.control_attachment=p.attachment_sequence,false),
  COALESCE((p.stop_deadline_at IS NOT NULL AND (p.stop_turn_id=t.id OR p.stop_turn_id IS NULL)) OR p.status='stopping',false),COALESCE(p.stop_turn_id=t.id,false),t.created_at,t.caller_kind='session' AND t.caller_id=$2

@@ -83,29 +83,13 @@ func proveNativePressureStopFailure(ctx context.Context, pool *pgxpool.Pool, api
 	if err := awaitLossCondition(ctx, func() (bool, error) { s, err := read(); return s.Fenced, err }); err != nil {
 		return err
 	}
-	var held bool
-	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM session_processes WHERE environment_id=$1 AND session_id=$2)=1
- AND (SELECT status='queued' FROM turns WHERE environment_id=$1 AND id=$3)`, env, started.SessionID, next.TurnID).Scan(&held); err != nil || !held {
-		return fmt.Errorf("replacement began before failure acknowledgement: %t %v", held, err)
-	}
-	view, err := apiClient.RetrieveSession(ctx, started.SessionID, client.EnvironmentScopeOptions{})
-	if err != nil {
-		return err
-	}
-	// Pressure clears independently. The runtime-failure acknowledgement must remain.
-	var failureHold string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND released_at IS NULL AND kind='control' AND scope='local' AND issuer_kind='system'`, env, started.SessionID).Scan(&failureHold); err != nil {
-		return err
-	}
-	found := false
-	for _, hold := range view.Holds {
-		found = found || hold.ID == failureHold
-	}
-	if !found {
-		return errors.New("Session failure acknowledgement was not exposed")
-	}
-	if _, err := apiClient.ResumeSession(ctx, started.SessionID, api.ResumeSessionRequest{HoldID: failureHold, IdempotencyKey: "pressure-acknowledge-failure"}, client.EnvironmentScopeOptions{}); err != nil {
-		return err
+	// The elapsed stop deadline is one counted failure: it is reported without
+	// a hold, and queued work continues on a new process once this one is fenced.
+	var reported bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_events WHERE environment_id=$1 AND session_id=$2 AND kind='session.process_failed'
+ AND convert_from(data,'UTF8')::jsonb @> jsonb_build_object('processEpoch',$3::bigint,'reason','stop_deadline_elapsed','holdId',NULL))
+ AND NOT EXISTS(SELECT 1 FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND kind='process_failed')`, env, started.SessionID, failed.ProcessEpoch).Scan(&reported); err != nil || !reported {
+		return fmt.Errorf("stop deadline failure was not reported without a hold: %t %v", reported, err)
 	}
 	var completed api.AgentTurn
 	if err := awaitLossCondition(ctx, func() (bool, error) {

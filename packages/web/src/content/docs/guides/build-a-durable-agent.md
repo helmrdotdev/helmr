@@ -117,8 +117,9 @@ helmr session events SESSION_ID --project demo --env staging
 ## When the process is lost
 
 If the Session's process is lost while a Turn runs, that Turn ends
-`interrupted` and the Session is held. Helmr does not replay the input.
-Find the hold and resume:
+`interrupted` and queued input runs on a new process. Helmr does not replay the
+interrupted input. After three consecutive process failures the Session is
+held; find the hold and resume:
 
 ```sh
 helmr session get SESSION_ID --project demo --env staging

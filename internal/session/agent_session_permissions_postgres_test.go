@@ -38,11 +38,11 @@ func TestSessionPermissionsKeepSelectedAgentBounds(t *testing.T) {
 	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("other Agent history exposed", err)
 	}
-	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 1})
+	page, err := session.ListSessions(ctx, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 1})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session || page.NextCursor != uuid.Nil() {
 		t.Fatalf("selected filter/pagination: %+v %v", page, err)
 	}
-	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'local','visible','user',$4),($1,uuidv7(),$3,'local','hidden','user',$4)`, f.env, f.session, peer.session, f.user)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,uuidv7(),$2,'interrupt','user',$4),($1,uuidv7(),$3,'interrupt','user',$4)`, f.env, f.session, peer.session, f.user)
 	attention, err := session.ListAttention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env)
 	if err != nil || attention.HoldCount != 1 || len(attention.Holds) != 1 || attention.Holds[0].SessionID != f.session {
 		t.Fatalf("attention escaped: %+v %v", attention, err)
@@ -83,14 +83,14 @@ func TestSessionPermissionsKeepSelectedAgentBounds(t *testing.T) {
 	// visible Session. Both direct reads and list rows use the same visibility.
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET parent_session_id=NULL,requester_session_id=NULL,root_session_id=id,causal_depth=0 WHERE id=$1;
  UPDATE sessions SET parent_session_id=$1,requester_session_id=$1,root_session_id=$1,causal_depth=1 WHERE id=$2;
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id) VALUES($3,uuidv7(),$1,'subtree','hidden ancestor details','user',$4)`, pgx.QueryExecModeSimpleProtocol, peer.session, f.session, f.env, f.user)
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($3,uuidv7(),$1,'interrupt','user',$4)`, pgx.QueryExecModeSimpleProtocol, peer.session, f.session, f.env, f.user)
 	checkRelations := func(visible bool) {
 		t.Helper()
 		view, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, f.session)
 		if err != nil {
 			t.Fatal(err)
 		}
-		page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
+		page, err := session.ListSessions(ctx, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,10 +109,10 @@ func TestSessionPermissionsKeepSelectedAgentBounds(t *testing.T) {
 			}
 			hold := row.Holds[0]
 			if visible {
-				if row.RootSessionID != peer.session || row.ParentSessionID == nil || *row.ParentSessionID != peer.session || row.RequesterSessionID == nil || *row.RequesterSessionID != peer.session || hold.SessionID != peer.session || hold.ID == uuid.Nil() || hold.Reason != "hidden ancestor details" {
+				if row.RootSessionID != peer.session || row.ParentSessionID == nil || *row.ParentSessionID != peer.session || row.RequesterSessionID == nil || *row.RequesterSessionID != peer.session || hold.SessionID != peer.session || hold.ID == uuid.Nil() || hold.Kind != "interrupt" {
 					t.Fatalf("visible relations lost: %+v", row)
 				}
-			} else if row.RootSessionID != uuid.Nil() || row.ParentSessionID != nil || row.RequesterSessionID != nil || hold.SessionID != uuid.Nil() || hold.ID != uuid.Nil() || hold.Reason != "An ancestor session is held" || hold.RecoveryGap != nil {
+			} else if row.RootSessionID != uuid.Nil() || row.ParentSessionID != nil || row.RequesterSessionID != nil || hold.SessionID != uuid.Nil() || hold.ID != uuid.Nil() || hold.Kind != "interrupt" || hold.CanRelease || hold.RecoveryGap != nil {
 				t.Fatalf("hidden relations exposed: %+v", row)
 			}
 		}

@@ -286,12 +286,14 @@ returns the `holdId`.
 
 ### `resume_session`
 
-Release a hold that this Session placed on an owned descendant. Interrupted
-input is not replayed.
+Release a hold on an owned descendant. Post the hold's `id` to its
+`session_id`; `inspect_session` reports `can_release` for each hold. Of
+interrupts, only those this Session placed can be released this way; storage
+pressure holds cannot. Interrupted input is not replayed.
 
 | Input | Type | Description |
 | --- | --- | --- |
-| `sessionId` | string | Required. |
+| `sessionId` | string | Required. The held Session, the hold's `session_id`. |
 | `holdId` | string | Required. The exact hold to release. |
 | `idempotencyKey` | string | Required. |
 
@@ -306,8 +308,9 @@ Result: `{ "id", "sessionId", "status": "accepted", "holdId" }`.
 Result: one Session with `id`, `agent`, `template`, `deployment_id`, `computer_id`,
 `root_session_id`, `parent_session_id`, `requester_session_id`, `initial_turn`
 (`{ id, status }` or `null`), `key?`, `slack_channel_id?`, `status`,
-`close_after_idle_ms`, `idle_since`, `holds` and `created_at`. Inspection does
-not grant access to the Session's history.
+`close_after_idle_ms`, `idle_since`, `holds` and `created_at`. Each hold is
+`{ id, session_id, kind, created_at, recovery_gap?, can_release }`. Inspection
+does not grant access to the Session's history.
 
 ### `list_sessions`
 

@@ -193,12 +193,17 @@ func projectEvent(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectio
 			if err := json.Unmarshal(e.data, &cause); err != nil {
 				return err
 			}
+			switch {
+			case cause.Reason == session.TurnDeadlineElapsed:
+				text = "This request stopped after the maximum Turn duration. Queued requests continue."
 			// The event-time gap fact survives acknowledgement before projection.
-			// Its existing notice already asks the user to continue.
-			if cause.Reason != session.ComputerExecutionLost || cause.RecoveryGap {
+			// A held conversation's recovery notice already explains the loss; a
+			// notified peer still gets the interruption message.
+			case cause.Reason == session.ComputerExecutionLost && !cause.RecoveryGap:
+				text = "This request was interrupted because its work environment was lost. Mention me to try again."
+			default:
 				return nil
 			}
-			text = "This request was interrupted because its work environment was lost. Mention me to try again."
 		} else if e.kind != "turn.failed" {
 			return nil
 		}

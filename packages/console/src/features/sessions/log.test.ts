@@ -24,6 +24,11 @@ test("summarises every event kind without its kind", () => {
   expect(eventSummary(event(6, "session.close", null, { reason: "close_after_idle" }))).toBe("closing after idle");
   expect(eventSummary(event(7, "future.kind", null, { anything: 1 }))).toBe("{anything: 1}");
   expect(eventSummary(event(8, "turn.output", "a", null))).toBe("content expired");
+  const id = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33";
+  expect(eventSummary(event(9, "turn.interrupted", "a", { reason: "turn_deadline_elapsed" }))).toBe("stopped after the maximum turn duration; queued work continues");
+  expect(eventSummary(event(10, "session.process_failed", null, { processEpoch: 2, reason: "process_failed", holdId: null }))).toBe("process 2 failed · process_failed; queued work continues");
+  expect(eventSummary(event(11, "session.process_failed", null, { processEpoch: 3, reason: "execution_lost", holdId: id }))).toBe("process 3 failed · execution_lost; work is held");
+  expect(eventSummary(event(12, "session.recovery_gap", null, { holdId: null, computerId: id, leaseEpoch: 1, recoverySaveId: null, restoredAt: null, affectedTurnIds: [] }))).toContain("No completed requests in this session were affected");
 });
 
 test("classifies kinds into output and problems", () => {

@@ -12,7 +12,7 @@ import { ConfirmDialog } from "../../ui/Dialog";
 import { IDText } from "../../ui/IDText";
 import { environmentChip } from "../projects/display";
 
-type Control = { kind: "interrupt" | "cancel" } | { kind: "turn_interrupt"; turnID: string } | { kind: "resume"; holdID: string };
+type Control = { kind: "interrupt" | "cancel" } | { kind: "turn_interrupt"; turnID: string } | { kind: "resume"; sessionID: string; holdID: string };
 const LABELS = { interrupt: "Interrupt session", cancel: "Cancel session", turn_interrupt: "Interrupt turn", resume: "Resume" };
 const sessionError = (error: unknown) => errorMessage(error, "The operation could not be completed.");
 
@@ -47,7 +47,7 @@ export function createSessionControls(props: {
     else if (operation.kind === "turn_interrupt") await interruptTurn(address, operation.turnID, input);
     else if (operation.kind === "interrupt") await interruptSession(address, input);
     else await cancelSession(address, input);
-    props.onReceipt?.(operation.kind === "resume" ? "Resume requested. Completed requests will not run again. Other reasons for pausing remain in place." : `${LABELS[operation.kind]} requested. The log shows when work stops. Completed results remain available.`);
+    props.onReceipt?.(operation.kind === "resume" ? "Resume requested. Completed requests will not run again. Other holds remain in place." : `${LABELS[operation.kind]} requested. The log shows when work stops. Completed results remain available.`);
     keys.delete(operationKey);
     await changed();
   };
@@ -76,7 +76,8 @@ export function createSessionControls(props: {
       </Show>
       <Show when={control()} keyed>
         {operation => {
-          const address = props.address();
+          // A hold is released on the session that holds it, which may be an ancestor.
+          const address = operation.kind === "resume" ? { ...props.address(), sessionID: operation.sessionID } : props.address();
           return (
             <ConfirmDialog
               title={LABELS[operation.kind]}
@@ -93,7 +94,7 @@ export function createSessionControls(props: {
                 Request running work and initialization in this session and its owned children to stop, and hold queued work. Completed results remain available. Interrupted turns do not restart when the hold is released.
               </Show>
               <Show when={operation.kind === "resume"}>
-                Continue from the restored computer state. Completed requests will not run again. Other reasons for pausing remain in place.
+                Release this hold so queued work can continue. Completed requests will not run again. Other holds remain in place.
               </Show>
               <Show when={operation.kind === "turn_interrupt"}>
                 Request this running turn to stop. Queued work can proceed after stopping is confirmed. Existing session holds remain in force.
@@ -108,5 +109,5 @@ export function createSessionControls(props: {
     </>
   );
 
-  return { items, Dialogs, error, clearError: () => setError(undefined), interruptTurn: (turnID: string) => setControl({ kind: "turn_interrupt", turnID }), resume: (holdID: string) => setControl({ kind: "resume", holdID }) };
+  return { items, Dialogs, error, clearError: () => setError(undefined), interruptTurn: (turnID: string) => setControl({ kind: "turn_interrupt", turnID }), resume: (sessionID: string, holdID: string) => setControl({ kind: "resume", sessionID, holdID }) };
 }

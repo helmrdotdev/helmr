@@ -69,10 +69,7 @@ func admitMessage(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx
 		return false, err
 	}
 	var held bool
-	if err = tx.QueryRow(ctx, `WITH RECURSIVE ancestors AS (
- SELECT id,parent_session_id FROM sessions WHERE environment_id=$1 AND id=$2
- UNION ALL SELECT s.id,s.parent_session_id FROM sessions s JOIN ancestors a ON s.id=a.parent_session_id WHERE s.environment_id=$1)
- SELECT EXISTS(SELECT 1 FROM session_holds h JOIN ancestors a ON a.id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND (h.session_id=$2 OR h.scope='subtree'))`, req.EnvironmentID, req.SessionID).Scan(&held); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT `+db.SessionHeldSQL+` FROM sessions s WHERE s.environment_id=$1 AND s.id=$2`, req.EnvironmentID, req.SessionID).Scan(&held); err != nil {
 		return false, err
 	}
 	if held {

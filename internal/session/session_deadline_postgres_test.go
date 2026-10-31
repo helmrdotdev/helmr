@@ -17,7 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
+func TestSessionDeadlineStopsOnlyItsProcessAndPreservesSave(t *testing.T) {
 	for _, finalizing := range []bool{false, true} {
 		name := "running"
 		if finalizing {
@@ -66,30 +66,17 @@ func TestSessionDeadlineHoldsOnlyItsSessionAndPreservesSave(t *testing.T) {
 					t.Fatalf("Turn %s: %s %v", id, state, err)
 				}
 			}
-			var hold uuid.UUID
-			if err := f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND scope='local' AND issuer_kind='system'`, f.session).Scan(&hold); err != nil {
-				t.Fatal(err)
-			}
 			var holds int
-			if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 1 {
-				t.Fatalf("holds %d: %v", holds, err)
+			if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&holds); err != nil || holds != 0 {
+				t.Fatalf("deadline held: %d %v", holds, err)
 			}
 			var pending bool
-			if err := f.pool.QueryRow(t.Context(), `SELECT status='stopping' AND fenced_at IS NULL FROM session_processes WHERE session_id=$1`, f.session).Scan(&pending); err != nil || !pending {
-				t.Fatalf("deadline claimed physical stop: %v %v", pending, err)
+			if err := f.pool.QueryRow(t.Context(), `SELECT status='stopping' AND fenced_at IS NULL AND stop_deadline_at IS NOT NULL AND stop_turn_id IS NULL FROM session_processes WHERE session_id=$1`, f.session).Scan(&pending); err != nil || !pending {
+				t.Fatalf("deadline claimed physical stop or skipped stop deadline: %v %v", pending, err)
 			}
-			release := controlRequest(f, "resume", "release-deadline")
-			release.HoldID = hold
-			if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), release); err != nil {
-				t.Fatal(err)
-			}
-			if err := session.ExpireSessionDeadline(t.Context(), auditpolicy.Policy{
-				RetentionSeconds: 3600,
-			}, f.pool, f.env, f.session); err != nil {
-				t.Fatal(err)
-			}
-			if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
-				t.Fatalf("deadline replayed hold: %d %v", holds, err)
+			var interruptions int
+			if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_events WHERE turn_id=$1 AND kind='turn.interrupted' AND convert_from(data,'UTF8')::jsonb='{"reason":"turn_deadline_elapsed"}'`, active.TurnID).Scan(&interruptions); err != nil || interruptions != 1 {
+				t.Fatalf("deadline interruption events %d %v", interruptions, err)
 			}
 		})
 	}

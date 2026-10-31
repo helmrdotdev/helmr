@@ -31,7 +31,7 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// A public subtree hold is distinct from the failed process's local hold.
+			// A public interrupt is independent of the failed process's report.
 			if alreadyInterrupted {
 				if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "public-stop")); err != nil {
 					t.Fatal(err)
@@ -54,26 +54,16 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			if err = f.pool.QueryRow(t.Context(), `SELECT failure_recorded_at IS NOT NULL,status='stopping' AND fenced_at IS NULL FROM session_processes WHERE session_id=$1`, f.session).Scan(&held, &unfenced); err != nil || !held || !unfenced {
 				t.Fatalf("failure intent: %v %v %v", held, unfenced, err)
 			}
-			var holds int
-			var hold uuid.UUID
-			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE scope='local' AND reason='Session runtime control failed'`).Scan(&holds); err != nil || holds != 1 {
-				t.Fatalf("local holds %d %v", holds, err)
+			// One failure is reported once and does not hold the Session.
+			failures := func() (holds, events int) {
+				t.Helper()
+				if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_holds WHERE kind='process_failed'),(SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='session.process_failed')`, f.session).Scan(&holds, &events); err != nil {
+					t.Fatal(err)
+				}
+				return holds, events
 			}
-			if err = f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE scope='local' AND reason='Session runtime control failed'`).Scan(&hold); err != nil {
-				t.Fatal(err)
-			}
-			req := controlRequest(f, "resume", "release-failure")
-			req.HoldID = hold
-			if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
-				t.Fatal(err)
-			}
-			if err = session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
-				RetentionSeconds: 3600,
-			}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
-				t.Fatal(err)
-			}
-			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE scope='local' AND released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
-				t.Fatalf("retry recreated local hold: %d %v", holds, err)
+			if holds, events := failures(); holds != 0 || events != 1 {
+				t.Fatalf("failure holds %d events %d", holds, events)
 			}
 			next := peer.enqueue(t, "peer")
 			if got, err := dispatchTurnForTest(t.Context(), peer.pool, peer.execution()); err != nil || got.TurnID != next.TurnID {
@@ -84,8 +74,8 @@ func TestSessionRuntimeFailureIsDurableAndLocal(t *testing.T) {
 			}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 				t.Fatal(err)
 			}
-			if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE scope='local' AND released_at IS NULL`).Scan(&holds); err != nil || holds != 0 {
-				t.Fatalf("physical stop recreated local hold: %d %v", holds, err)
+			if holds, events := failures(); holds != 0 || events != 1 {
+				t.Fatalf("physical stop recorded another failure: holds %d events %d", holds, events)
 			}
 		})
 	}
@@ -112,9 +102,9 @@ func TestSessionRuntimeFailurePreservesResult(t *testing.T) {
 	if err = completedTurnForTest(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	var held bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$1 AND scope='local' AND released_at IS NULL)`, f.session).Scan(&held); err != nil || !held {
-		t.Fatalf("completion cleared failure hold %v %v", held, err)
+	var recorded bool
+	if err = f.pool.QueryRow(t.Context(), `SELECT failure_reason='process_failed' FROM session_processes WHERE session_id=$1 AND epoch=1`, f.session).Scan(&recorded); err != nil || !recorded {
+		t.Fatalf("completion cleared failure fact %v %v", recorded, err)
 	}
 }
 

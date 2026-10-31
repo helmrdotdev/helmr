@@ -88,12 +88,15 @@ const overviewAgentsSQL = `SELECT a.key,GREATEST(0,LEAST(23,floor(extract(epoch 
  GROUP BY 1,2`
 
 // Work in progress starts from the small sets of running and queued Turns (one
-// arm each, so each uses its partial index) and unreleased holds. A subtree hold on a Session covers its children.
+// arm each, so each uses its partial index) and unreleased holds. An interrupt on a Session covers its descendants.
 const overviewActiveCTE = `WITH candidates AS (
   SELECT session_id FROM turns WHERE environment_id=$1 AND status='running'
   UNION SELECT session_id FROM turns WHERE environment_id=$1 AND status='queued'
   UNION SELECT session_id FROM session_holds WHERE environment_id=$1 AND released_at IS NULL
-  UNION SELECT s.id FROM session_holds h JOIN sessions s ON s.environment_id=h.environment_id AND s.parent_session_id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND h.scope='subtree'
+  UNION (WITH RECURSIVE descendants AS (
+   SELECT s.id FROM session_holds h JOIN sessions s ON s.environment_id=h.environment_id AND s.parent_session_id=h.session_id WHERE h.environment_id=$1 AND h.released_at IS NULL AND h.kind='interrupt'
+   UNION SELECT s.id FROM sessions s JOIN descendants d ON s.parent_session_id=d.id WHERE s.environment_id=$1)
+   SELECT id FROM descendants)
  ), visible AS (
   SELECT id,agent_id,parent_session_id,requester_session_id,origin_slack_connection_id,origin_activation_id,origin_api_key_id FROM sessions
   WHERE ` + overviewReadable + ` AND status IN ('open','closing') AND id IN (SELECT session_id FROM candidates)
@@ -103,7 +106,7 @@ const overviewActiveCTE = `WITH candidates AS (
    COALESCE(h.at,r.at,q.at) AS since,
    CASE WHEN v.requester_session_id IS NOT NULL THEN 'session' WHEN v.origin_slack_connection_id IS NOT NULL THEN 'slack' WHEN v.origin_activation_id IS NOT NULL THEN 'trigger' WHEN v.origin_api_key_id IS NOT NULL THEN 'api_key' ELSE 'user' END AS origin
   FROM visible v JOIN agents a ON (a.environment_id,a.id)=($1,v.agent_id)
-  CROSS JOIN LATERAL (SELECT min(created_at) AS at FROM session_holds WHERE environment_id=$1 AND released_at IS NULL AND (session_id=v.id OR (scope='subtree' AND session_id=v.parent_session_id))) h
+  CROSS JOIN LATERAL (SELECT min(hold.created_at) AS at FROM sessions s CROSS JOIN LATERAL (` + db.SessionHoldsSQL + `) hold WHERE s.environment_id=$1 AND s.id=v.id) h
   CROSS JOIN LATERAL (SELECT min(started_at) AS at FROM turns WHERE environment_id=$1 AND session_id=v.id AND status='running') r
   CROSS JOIN LATERAL (SELECT min(created_at) AS at FROM turns WHERE environment_id=$1 AND session_id=v.id AND status='queued') q
   WHERE COALESCE(h.at,r.at,q.at) IS NOT NULL
