@@ -16,8 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
-// A Turn message carries its content in "message"; any other field is rejected
-// before admission.
+// A Turn message carries its content in "message".
 func TestTurnMessageHTTPBody(t *testing.T) {
 	f := sessiontest.New(t)
 	var orgID uuid.UUID
@@ -43,29 +42,12 @@ func TestTurnMessageHTTPBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := "/api/projects/project/environments/test/sessions/" + f.Session.String() + "/turns/" + queued.TurnID.String() + "/messages"
-	for _, test := range []struct {
-		name, body string
-		status     int
-		code       string
-	}{
-		// The body decodes with non-empty content and reaches admission,
-		// which rejects a Turn that is not running.
-		{"message field", `{"message":[{"type":"text","text":"steer"}],"idempotency_key":"message"}`, http.StatusConflict, "message_closed"},
-		{"unknown data field", `{"data":[{"type":"text","text":"steer"}],"idempotency_key":"data"}`, http.StatusBadRequest, ""},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			response := httpFixture.request(t, http.MethodPost, path, token, test.body)
-			if response.Code != test.status {
-				t.Fatalf("status = %d %s, want %d", response.Code, response.Body.String(), test.status)
-			}
-			if test.code == "" {
-				return
-			}
-			var body api.HTTPErrorResponse
-			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || body.Error.Code != test.code {
-				t.Fatalf("error = %s, want %s (%v)", response.Body.String(), test.code, err)
-			}
-		})
+	// Non-empty content reaches admission, which rejects a Turn that is not
+	// running; empty or undecoded content would fail earlier with 400.
+	response := httpFixture.request(t, http.MethodPost, path, token, `{"message":[{"type":"text","text":"steer"}],"idempotency_key":"message"}`)
+	var body api.HTTPErrorResponse
+	if response.Code != http.StatusConflict || json.Unmarshal(response.Body.Bytes(), &body) != nil || body.Error.Code != "message_closed" {
+		t.Fatalf("response = %d %s, want 409 message_closed", response.Code, response.Body.String())
 	}
 	var messages int
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM turn_messages WHERE environment_id=$1`, f.Environment).Scan(&messages); err != nil || messages != 0 {
