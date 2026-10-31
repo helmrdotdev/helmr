@@ -52,25 +52,6 @@ func (i ExternalIdentity) Verifies(email string) bool {
 	return false
 }
 
-// SignIn records the external identity, creating its user on first sign-in,
-// and issues a login session that selects no organization in one
-// transaction. It returns the raw session token.
-func SignIn(ctx context.Context, txb db.TxBeginner, cfg Config, external ExternalIdentity) (rawSession string, resultErr error) {
-	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Evidence: audit.Unauthenticated("failed", "provider_assertion"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
-	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		user, err := upsertExternalIdentity(ctx, tx, cfg, external)
-		if err != nil {
-			return err
-		}
-		rawSession, err = startLoginSession(ctx, tx, cfg, user, external.DisplayName, nil)
-		return err
-	})
-	if err != nil {
-		return "", err
-	}
-	return rawSession, nil
-}
-
 // ResolveInvitation hashes a raw invitation token and loads the pending
 // invitation it names. It returns the invitation and the token hash that an
 // invitation sign-in started from it carries.
@@ -87,34 +68,6 @@ func ResolveInvitation(ctx context.Context, q db.Querier, cfg Config, rawToken s
 		return org.PendingInvitation{}, nil, acceptanceError(err)
 	}
 	return invitation, tokenHash, nil
-}
-
-// SignInWithInvitation accepts the invitation whose token hashes to
-// invitationTokenHash for the external identity, which must verify the
-// invitee email, and issues a login session for the invitation's organization.
-// It returns the raw session token.
-func SignInWithInvitation(ctx context.Context, txb db.TxBeginner, cfg Config, invitationTokenHash []byte, external ExternalIdentity) (rawSession string, resultErr error) {
-	defer recordAuthenticationFailure(ctx, txb, cfg, audit.Event{Evidence: audit.Unauthenticated("failed", "provider_assertion"), Action: "identity.sign_in", TargetKind: "login_session"}, &resultErr)
-	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
-		q := db.New(tx)
-		invitation, err := org.PendingInvitationByTokenHash(ctx, q, invitationTokenHash)
-		if err != nil {
-			return acceptanceError(err)
-		}
-		if !external.Verifies(invitation.InviteeEmail) {
-			return ErrWrongAccount
-		}
-		user, err := upsertExternalIdentity(ctx, tx, cfg, external)
-		if err != nil {
-			return err
-		}
-		rawSession, err = startLoginSession(ctx, tx, cfg, user, external.DisplayName, &invitation)
-		return err
-	})
-	if err != nil {
-		return "", err
-	}
-	return rawSession, nil
 }
 
 // signedInUser carries the actual credential proof into session issuance.
@@ -202,10 +155,6 @@ func provedUser(user, identity, key uuid.UUID, epoch int64, at time.Time, method
 }
 func randomHandle() ([]byte, error) { h := make([]byte, 32); _, err := rand.Read(h); return h, err }
 
-func startLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedInUser, displayName string, invitation *org.PendingInvitation) (string, error) {
-	// Invitations are accepted separately after explicit user consent.
-	return issueLoginSession(ctx, tx, cfg, user, pgtype.UUID{})
-}
 func acceptanceError(err error) error {
 	if errors.Is(err, org.ErrInvitationNotFound) {
 		return ErrInvalidToken
@@ -215,10 +164,10 @@ func acceptanceError(err error) error {
 	}
 	return err
 }
-func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedInUser, orgID pgtype.UUID) (string, error) {
-	if orgID.Valid {
-		return "", ErrOrganizationRequired
-	}
+
+// issueLoginSession starts a browser session that selects no organization;
+// invitations are accepted separately after explicit consent.
+func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedInUser) (string, error) {
 	raw, err := auth.GenerateOpaque(loginSessionTokenBytes)
 	if err != nil {
 		return "", err
@@ -351,7 +300,7 @@ func SignInBrowserProvider(ctx context.Context, database db.TxBeginner, cfg Conf
 			if sessionBound {
 				return ErrInvalidToken
 			}
-			result, err = issueLoginSession(ctx, tx, cfg, user, pgtype.UUID{})
+			result, err = issueLoginSession(ctx, tx, cfg, user)
 			return err
 		}
 		hash, err := auth.HashToken(cfg.sessionKey, raw)

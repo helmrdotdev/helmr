@@ -23,7 +23,7 @@ import (
 )
 
 func TestConsoleUpdateStreamRequiresCurrentSessionAuthority(t *testing.T) {
-	for _, mode := range []string{"membership-with-notification", "source-without-notification", "logout-without-notification"} {
+	for _, mode := range []string{"membership-with-notification", "logout-without-notification"} {
 		t.Run(mode, func(t *testing.T) {
 			f := sessiontest.New(t)
 			queries := db.New(f.Pool)
@@ -111,10 +111,8 @@ func TestConsoleUpdateStreamRequiresCurrentSessionAuthority(t *testing.T) {
 				if _, err := f.Pool.Exec(t.Context(), `SELECT pg_notify('helmr_changes',$1)`, "session:"+f.Session.String()); err != nil {
 					t.Fatal(err)
 				}
-			} else if mode == "logout-without-notification" {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			} else {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id IN (SELECT identity_id FROM login_sessions WHERE user_id=$1)`, f.User)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
 			}
 			for scanner.Scan() {
 				if scanner.Text() == "event: change" {

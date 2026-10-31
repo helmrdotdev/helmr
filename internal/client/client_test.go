@@ -330,7 +330,6 @@ func TestDeviceCodeFlowClient(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(api.DeviceTokenResponse{
 				AccessToken: "helmr_session_test",
-				TokenType:   "bearer",
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
@@ -353,7 +352,7 @@ func TestDeviceCodeFlowClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if token.AccessToken != "helmr_session_test" || token.TokenType != "bearer" {
+	if token.AccessToken != "helmr_session_test" {
 		t.Fatalf("token = %+v", token)
 	}
 	if got := strings.Join(paths, ","); got != "/api/auth/device/start,/api/auth/device/token" {

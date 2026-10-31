@@ -348,6 +348,12 @@ func (s *Server) sessionPrincipalFromToken(r *http.Request, rawSession string) (
 	if (bearer && p.Channel != "cli") || (!bearer && p.Channel != "browser") {
 		return auth.Principal{}, auth.ErrUnauthenticated
 	}
+	if p.Channel == "cli" {
+		// Use keeps a CLI login alive; failing to record it must not fail the request.
+		if err := identity.ExtendCLISession(r.Context(), s.tx, p.SessionID); err != nil {
+			s.log.Warn("extend CLI session failed", "session_id", p.SessionID, "error", err)
+		}
+	}
 	return p, nil
 }
 

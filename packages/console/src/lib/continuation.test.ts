@@ -14,7 +14,7 @@ test("preserves the requested page, query and fragment across login and onboardi
 });
 
 test("rejects external, malformed, and looping destinations", () => {
-  for (const path of [undefined, "", "https://evil.test", "//evil.test", "/\\evil.test", "/%2f/evil.test", "/%5cevil.test", "/bad\npath", "/%zz", "/login", "/%6cogin", "/admin/login", "/admin/login?next=/admin/login", "/runs/../login", "/auth/github/callback?code=secret", "/auth/magic-link/callback", "/organizations/new?next=/", "/projects/new?next=/projects/new", "/access-required", "/" + "x".repeat(256)]) {
+  for (const path of [undefined, "", "https://evil.test", "//evil.test", "/\\evil.test", "/%2f/evil.test", "/%5cevil.test", "/bad\npath", "/%zz", "/login", "/%6cogin", "/admin/login", "/admin/login?next=/admin/login", "/runs/../login", "/auth/github/callback?code=secret", "/organizations/new?next=/", "/projects/new?next=/projects/new", "/access-required", "/" + "x".repeat(256)]) {
     expect(returnPath(path)).toBe("/");
   }
   expect(returnPath("/runs/../sessions?state=waiting")).toBe("/sessions?state=waiting");

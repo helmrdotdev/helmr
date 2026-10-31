@@ -7,7 +7,7 @@ sidebarLabel: login
 # `helmr login`, `logout`, `whoami` and `completion`
 
 ```text
-helmr login [URL] [--no-browser] [--confirm]
+helmr login [URL] [--no-browser]
 helmr logout [URL]
 helmr whoami [--json]
 helmr completion SHELL
@@ -25,7 +25,6 @@ login for that control plane origin.
 | --- | --- |
 | `URL` | Control plane origin. Cannot be combined with `--api-url`. |
 | `--no-browser` | Print the URL without opening a browser. |
-| `--confirm` | Confirm the saved CLI login in the browser for sensitive changes. Requires an existing login. |
 
 The origin is chosen from, in order: `URL` or `--api-url`, `HELMR_API_URL`, the
 saved default origin, then `https://helmr.dev`, the planned managed service.
@@ -37,31 +36,21 @@ An expired or denied request needs a new `helmr login`. CLI login does not
 require a Project; commands that act in an Environment still need
 `--project` and `--env`, or `HELMR_PROJECT` and `HELMR_ENV`.
 
-### Confirming sensitive changes
+### Approving a login
 
 A CLI login is bound to the account and organization approved in the browser.
 To authorize another organization, run `helmr login` again and approve that
 organization.
 
-When a sensitive command requires fresh authentication, an interactive terminal
-opens the browser confirmation flow. You can also start it explicitly:
+Approving needs a browser that signed in within the last hour. When the browser's
+sign-in is older, the approval page asks you to confirm your sign-in, then you
+approve. That approval is the CLI's proof: CLI commands, including sensitive ones,
+never ask you to confirm again.
 
-```sh
-helmr login --confirm
-# After browser confirmation, run your original command again.
-```
-
-Confirmation replaces the existing CLI session for the same account and organization.
-Queued work and open streams using the old session lose access at their next
-authority check. Commands are never automatically replayed after confirmation.
-Non-interactive commands print guidance instead of opening confirmation; JSON
-output retains the error without starting an interactive flow.
-`--no-browser` can be combined with `--confirm` to print the approval URL.
-
-CLI sessions expire after thirty days without explicit human activity. Successful
-commands in an interactive terminal record activity; background polling does not
-extend the expiry. Browser logout does not log out the CLI, but account-wide
-revocation and removing the sign-in method used to approve the CLI can retire CLI access.
+A CLI login expires thirty days after its last request. Browser logout does not
+log out the CLI, and removing a sign-in method does not log out a saved CLI login,
+even the one used to approve it. Signing out other sessions, signing out
+everywhere or changing your login email in the Console logs out every CLI login.
 
 ## `helmr logout`
 

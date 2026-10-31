@@ -46,7 +46,7 @@ async function fixture(context: BrowserContext, options: { loggedIn?: boolean; n
         state.orgRequired = false;
         return json({ id: "org-1", name: body.name, slug: body.slug }, 201);
       case "/api/auth/device/status":
-        return json({ status: state.status, confirmation:false, consent:{account_name:state.name,org_name:state.orgName,org_id:state.orgID,proof:"fixture-consent"}, expires_at: new Date(Date.now() + 600_000).toISOString() });
+        return json({ status: state.status, consent:{account_name:state.name,org_name:state.orgName,proof:"fixture-consent"}, expires_at: new Date(Date.now() + 600_000).toISOString() });
       case "/api/auth/device/approve":
       case "/api/auth/device/deny":
         state.approved.push(body);
@@ -96,7 +96,7 @@ for (const method of ["github", "email"] as const) {
     await page.getByRole("button", { name: "Approve", exact: true }).click();
     await expect(page.getByRole("heading", { name: "CLI authorized" })).toBeVisible();
     await expect(page.getByText("Return to your terminal to finish signing in.")).toBeVisible();
-    expect(state.approved).toEqual([{ user_code: "ABCD-EFGH", org_id: "org-1" }]);
+    expect(state.approved).toEqual([{ user_code: "ABCD-EFGH" }]);
   });
 }
 
@@ -167,7 +167,7 @@ test("a changed account requires another explicit review and approval", async ({
   await context.route("**/api/auth/device/approve", async (route) => {
     attempts++;
     if (attempts === 1) return route.fulfill({ status: 409, json: { error: { code: "device_identity_changed", message: "Account changed. Review again." } } });
-    expect(route.request().postDataJSON()).toEqual({ user_code: "CHANGED", org_id: "org-2" });
+    expect(route.request().postDataJSON()).toEqual({ user_code: "CHANGED" });
     return route.fulfill({ json: { status: "approved" } });
   });
   await page.getByRole("button", { name: "Approve", exact: true }).click();
@@ -345,6 +345,26 @@ for (const method of ["email", "github"] as const) {
   expect(attempts).toBe(2);expect(state.approved).toHaveLength(1);
  });
 }
+
+test("CLI approval with an old sign-in says why, and approves after confirming", async ({page,context}) => {
+ const state=await fixture(context,{loggedIn:true});
+ let attempts=0;
+ await context.route("**/api/auth/device/approve",route=>{
+  attempts++;
+  if(attempts===1)return route.fulfill({status:403,json:{error:{code:"recent_authentication_required",message:"Sign in again to confirm it's you, then retry."}}});
+  return route.fallback();
+ });
+ await page.goto("/auth/device?code=RETAINED");
+ await page.getByRole("button",{name:"Approve",exact:true}).click();
+ const dialog=page.getByRole("dialog",{name:"Confirm your sign-in"});
+ await expect(dialog).toBeVisible();
+ await dialog.getByRole("button",{name:"Cancel",exact:true}).click();
+ await expect(page.getByText("Approving a CLI login needs a recent sign-in. Confirm your sign-in, then approve again.")).toBeVisible();
+ expect(state.approved).toEqual([]);
+ await page.getByRole("button",{name:"Approve",exact:true}).click();
+ await expect(page.getByRole("heading",{name:"CLI authorized"})).toBeVisible();
+ expect(attempts).toBe(2);expect(state.approved).toHaveLength(1);
+});
 
 test("credential removal keeps its confirmation open through sign-in confirmation and cancellation", async ({page,context}, testInfo) => {
  await fixture(context,{loggedIn:true});

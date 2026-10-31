@@ -2404,7 +2404,7 @@ CREATE TABLE audit_events (
     CHECK (authentication_origin<>'internal' OR (actor_component IS NOT NULL AND credential_kind IS NULL)),
     CHECK (authentication_result='verified' OR (credential_id IS NULL AND credential_version IS NULL AND runtime_generation IS NULL AND process_epoch IS NULL)),
     CHECK (authentication_result<>'verified' OR credential_kind IS NOT NULL),
-    CHECK (identity_provider IS NULL OR (credential_kind IS NOT NULL AND credential_kind IN ('provider_assertion','magic_link'))),
+    CHECK (identity_provider IS NULL OR credential_kind='provider_assertion'),
     CHECK (actor_api_key_id IS NULL OR (credential_kind='api_key' AND credential_id IS NOT NULL AND credential_id=actor_api_key_id AND credential_version IS NOT NULL)),
     CHECK (actor_worker_host_id IS NULL OR (credential_kind='worker_host' AND credential_id IS NOT NULL AND credential_id=actor_worker_host_id AND credential_version IS NOT NULL)),
     CHECK (actor_session_id IS NULL OR (credential_kind='worker_host' AND credential_id IS NOT NULL AND credential_version IS NOT NULL AND runtime_generation IS NOT NULL)),
@@ -2412,7 +2412,7 @@ CREATE TABLE audit_events (
     CONSTRAINT audit_anonymous_operation CHECK (authentication_result NOT IN ('failed','absent') OR outcome IN ('denied','failed') OR
       (authentication_result='absent' AND action IN ('identity.device_started','identity.magic_link_requested'))),
     CONSTRAINT audit_user_credential_kind CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','magic_link','device_code')),
-    CONSTRAINT audit_user_credential_id CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('login_session','device_code','magic_link') OR credential_id IS NOT NULL),
+    CONSTRAINT audit_user_credential_id CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('login_session','device_code') OR credential_id IS NOT NULL),
     CONSTRAINT audit_user_provider CHECK (actor_user_id IS NULL OR credential_kind NOT IN ('provider_assertion') OR identity_provider IS NOT NULL),
     CHECK (actor_component IS NULL OR authentication_result<>'verified' OR (actor_component='capacity_controller' AND credential_kind='capacity_token')),
     CHECK (actor_session_id IS NOT NULL OR (runtime_generation IS NULL AND process_epoch IS NULL))

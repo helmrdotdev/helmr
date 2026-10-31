@@ -43,7 +43,6 @@ func TestLoginCommandStoresDeviceToken(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(api.DeviceTokenResponse{
 				AccessToken: "session_test",
-				TokenType:   "bearer",
 			})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)

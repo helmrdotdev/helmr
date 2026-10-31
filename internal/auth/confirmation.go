@@ -14,10 +14,15 @@ func (recentAuthenticationRequired) ErrorCode() string { return "recent_authenti
 
 var ErrRecentProofRequired error = recentAuthenticationRequired{}
 
-// RequireRecentProof is called after current-source admission. Consent/activity
-// does not refresh proof time. Slack sends security changes to the browser.
+// RequireRecentProof is called after admission. Activity does not refresh
+// proof time. Slack sends security changes to the browser. A CLI login was
+// approved from a browser signed in within the last hour, and that approval is
+// its proof, so CLI sessions never need recent proof again.
 func RequireRecentProof(p Principal) error {
 	if p.Kind != PrincipalKindSession && p.Kind != PrincipalKindOperator {
+		return nil
+	}
+	if p.Kind == PrincipalKindSession && p.Channel == "cli" && p.SlackLinkID == uuid.Nil() {
 		return nil
 	}
 	if p.SlackLinkID != uuid.Nil() || p.AuthenticatedAt.IsZero() || time.Since(p.AuthenticatedAt) > time.Hour {
@@ -26,16 +31,19 @@ func RequireRecentProof(p Principal) error {
 	return nil
 }
 
-// Viewing, ordinary work and unprivileged invitations stay outside confirmation.
+// Viewing, ordinary work, unprivileged invitations, creating a Secret under a
+// new name and connection setup stay outside confirmation; a connection's OAuth
+// authorization is its own proof. Group membership changes require recent
+// proof only when the Group carries Role assignments, which its owner checks.
 // Machine credentials retain their independently configured permission boundary.
 func RequireRecentFor(p Principal, permission Permission) error {
 	switch permission {
 	case PermissionRolesCreate, PermissionRolesUpdate, PermissionRolesDelete,
 		PermissionAssignmentsCreate, PermissionAssignmentsUpdate, PermissionAssignmentsDelete,
-		PermissionGroupsDelete, PermissionGroupsAddMember, PermissionGroupsRemoveMember,
+		PermissionGroupsDelete,
 		PermissionMembersRemove, PermissionAPIKeysCreate, PermissionAPIKeysUpdate, PermissionAPIKeysRotate, PermissionAPIKeysRevoke,
-		PermissionSecretsCreate, PermissionSecretsRotate, PermissionSecretsRevoke,
-		PermissionAgentConnectionsConfigure, PermissionAgentConnectionsDelete,
+		PermissionSecretsRotate, PermissionSecretsRevoke,
+		PermissionAgentConnectionsDelete,
 		PermissionAgentsDelete, PermissionAgentsRestore, PermissionComputersDelete,
 		PermissionComputersUpdate:
 		return RequireRecentProof(p)

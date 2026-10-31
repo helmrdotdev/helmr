@@ -1,7 +1,7 @@
 // Return destinations travel with each request, never in shared browser storage.
 const baseURL = "https://console.invalid";
 const intermediatePaths = new Set([
-  "/login", "/admin/login", "/auth/github/callback", "/auth/magic-link/callback",
+  "/login", "/admin/login", "/auth/github/callback",
   "/organizations/new", "/projects/new", "/access-required",
 ]);
 

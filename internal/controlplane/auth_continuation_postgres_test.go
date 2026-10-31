@@ -78,19 +78,19 @@ func TestAuthContinuationUsesExplicitOrganization(t *testing.T) {
 		t.Fatalf("status: %d %s", statusRead.Code, statusRead.Body)
 	}
 	consentHeader := http.Header{"X-Helmr-Device-Consent": []string{status.Consent.Proof}}
-	consent := func(org string) string {
-		body, _ := json.Marshal(api.DeviceAuthorizeRequest{UserCode: device.UserCode, OrgID: org})
-		return string(body)
-	}
-	if w := f.request(t, http.MethodPost, "/api/auth/device/approve", token, consent(orgA.String()), consentHeader); w.Code != 409 {
+	body, _ := json.Marshal(api.DeviceAuthorizeRequest{UserCode: device.UserCode})
+	// The consent proof binds the account, organization and code shown; an
+	// altered proof is refused.
+	other := http.Header{"X-Helmr-Device-Consent": []string{status.Consent.Proof + "x"}}
+	if w := f.request(t, http.MethodPost, "/api/auth/device/approve", token, string(body), other); w.Code != 409 {
 		t.Fatalf("changed selection: %d %s", w.Code, w.Body)
 	}
-	if w := f.request(t, http.MethodPost, "/api/auth/device/approve", token, consent(orgB.String()), consentHeader); w.Code != 200 {
+	if w := f.request(t, http.MethodPost, "/api/auth/device/approve", token, string(body), consentHeader); w.Code != 200 {
 		t.Fatalf("approve: %d %s", w.Code, w.Body)
 	}
 	w = exchange()
 	var issued api.DeviceTokenResponse
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &issued) != nil || issued.TokenType != "bearer" {
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &issued) != nil || issued.AccessToken == "" {
 		t.Fatalf("exchange: %d %s", w.Code, w.Body)
 	}
 	if status, result := contextRead(issued.AccessToken); status != 200 || result.ID != orgB.String() {
@@ -267,7 +267,7 @@ func TestDeviceConsentKeepsDisplayedAccountAndBrowser(t *testing.T) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &page) != nil || page.Consent == nil || page.Consent.AccountName != "First account" || page.Consent.OrganizationName != "Consent org" {
 		t.Fatalf("consent: %d %s", w.Code, w.Body)
 	}
-	body, _ := json.Marshal(api.DeviceAuthorizeRequest{UserCode: started.UserCode, OrgID: organization.String()})
+	body, _ := json.Marshal(api.DeviceAuthorizeRequest{UserCode: started.UserCode})
 	proof := http.Header{"X-Helmr-Device-Consent": []string{page.Consent.Proof}}
 	for _, token := range []string{otherAccount, otherSession} {
 		for _, action := range []string{"approve", "deny"} {

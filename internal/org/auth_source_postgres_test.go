@@ -11,8 +11,8 @@ import (
 	"uuid"
 )
 
-func TestOrganizationManagementRetainsOriginalHumanSource(t *testing.T) {
-	for _, change := range []string{"logout", "credential", "proof", "membership", "suspension"} {
+func TestOrganizationManagementRetainsOriginalHumanSession(t *testing.T) {
+	for _, change := range []string{"logout", "membership", "suspension"} {
 		t.Run(change, func(t *testing.T) {
 			f := newMemberFixture(t)
 			original := f.owner
@@ -22,11 +22,6 @@ func TestOrganizationManagementRetainsOriginalHumanSource(t *testing.T) {
 			switch change {
 			case "logout":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, original.Human.SessionID)
-			case "credential":
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, original.Human.IdentityID)
-			case "proof":
-				fresh := dbtest.BrowserPrincipal(t, f.pool, original.OrgID, original.UserID)
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET identity_id=$2 WHERE id=$1`, original.Human.SessionID, fresh.IdentityID)
 			case "membership":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET removed_at=clock_timestamp(),is_owner=false WHERE id=$1`, original.MemberID)
 				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO org_members(id,user_id,org_id,is_owner) VALUES($1,$2,$3,true)`, uuid.NewV7(), original.UserID, original.OrgID)
@@ -34,7 +29,7 @@ func TestOrganizationManagementRetainsOriginalHumanSource(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET suspended_at=clock_timestamp() WHERE id=$1`, original.MemberID)
 			}
 			if _, err := org.SavePermissionGroup(t.Context(), f.pool, original, uuid.Nil(), "After"); !errors.Is(err, org.ErrMemberManagementRequired) {
-				t.Fatalf("old source admitted %v", err)
+				t.Fatalf("retired session admitted %v", err)
 			}
 			if _, err := org.RecoverOwnAccess(t.Context(), f.pool, original); err == nil {
 				t.Fatal("stale source recovered owner access")
@@ -44,6 +39,15 @@ func TestOrganizationManagementRetainsOriginalHumanSource(t *testing.T) {
 				t.Fatalf("mutation committed %d %v", count, err)
 			}
 		})
+	}
+}
+
+func TestOrganizationManagementSurvivesRemovingTheSignInMethod(t *testing.T) {
+	f := newMemberFixture(t)
+	original := f.owner
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, original.Human.IdentityID)
+	if _, err := org.SavePermissionGroup(t.Context(), f.pool, original, uuid.Nil(), "After"); err != nil {
+		t.Fatal("a removed sign-in method ended the session", err)
 	}
 }
 

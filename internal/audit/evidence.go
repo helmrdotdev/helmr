@@ -305,13 +305,13 @@ func (e Evidence) Validate() error {
 	if c.Result != "verified" && (c.CredentialID != uuid.Nil() || c.CredentialVersion != 0 || e.RuntimeGeneration != 0 || e.ProcessEpoch != 0) {
 		return errors.New("unverified credential reference")
 	}
-	if c.CredentialKind != "" && !slices.Contains([]string{"login_session", "api_key", "worker_host", "capacity_token", "provider_assertion", "magic_link", "device_code", "email_code", "passkey", "slack_link"}, c.CredentialKind) {
+	if c.CredentialKind != "" && !slices.Contains([]string{"login_session", "api_key", "worker_host", "capacity_token", "provider_assertion", "device_code", "email_code", "passkey", "slack_link"}, c.CredentialKind) {
 		return errors.New("invalid credential kind")
 	}
 	if c.Result == "verified" && c.CredentialKind == "" {
 		return errors.New("verified credential kind required")
 	}
-	if c.Provider != "" && c.CredentialKind != "provider_assertion" && c.CredentialKind != "magic_link" {
+	if c.Provider != "" && c.CredentialKind != "provider_assertion" {
 		return errors.New("provider credential mismatch")
 	}
 	if len(c.Provider) > 64 || c.CredentialVersion < 0 || e.RuntimeGeneration < 0 || e.ProcessEpoch < 0 {
@@ -330,10 +330,10 @@ func (e Evidence) Validate() error {
 		return errors.New("invalid operator credential")
 	}
 	if a.UserID != uuid.Nil() {
-		if !slices.Contains([]string{"login_session", "provider_assertion", "magic_link", "device_code", "email_code", "passkey", "slack_link"}, c.CredentialKind) {
+		if !slices.Contains([]string{"login_session", "provider_assertion", "device_code", "email_code", "passkey", "slack_link"}, c.CredentialKind) {
 			return errors.New("invalid user credential")
 		}
-		if (c.CredentialKind == "login_session" || c.CredentialKind == "device_code" || c.CredentialKind == "magic_link") && c.CredentialID == uuid.Nil() {
+		if (c.CredentialKind == "login_session" || c.CredentialKind == "device_code") && c.CredentialID == uuid.Nil() {
 			return errors.New("user credential reference required")
 		}
 		if c.CredentialKind == "provider_assertion" && c.Provider == "" {
@@ -384,9 +384,6 @@ func (e *Refusal) Error() string { return e.Cause.Error() }
 func (e *Refusal) Unwrap() error { return e.Cause }
 func VerifiedDevice(user, device uuid.UUID) Evidence {
 	return Evidence{Actor: Actor{UserID: user}, Authentication: Authentication{Origin: "request", Result: "verified", CredentialKind: "device_code", CredentialID: device}, Authorization: NotEvaluated()}
-}
-func VerifiedMagicLink(user, link uuid.UUID, provider string) Evidence {
-	return Evidence{Actor: Actor{UserID: user}, Authentication: Authentication{Origin: "request", Result: "verified", CredentialKind: "magic_link", CredentialID: link, Provider: provider}, Authorization: NotEvaluated()}
 }
 
 // PrincipalCurrencyCheck records a failed transaction-time principal refresh.

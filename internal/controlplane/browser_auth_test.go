@@ -34,6 +34,7 @@ func TestIdentityErrorMapsHTTPContract(t *testing.T) {
 		{identity.ErrDeviceCodeNotFound, http.StatusNotFound, "not_found", "device code not found"},
 		{identity.ErrAPIKeyNotFound, http.StatusNotFound, "not_found", "api key not found"},
 		{identity.ErrDeviceApproverChanged, http.StatusConflict, "device_identity_changed", "Your signed-in account or organization changed. Review the current account before approving."},
+		{identity.ErrLastSignInMethod, http.StatusConflict, "last_sign_in_method", "Add another sign-in method before removing this one."},
 		{fmt.Errorf("record auth identity: %w", errors.New("connection reset")), http.StatusInternalServerError, "internal_error", "internal server error"},
 	} {
 		t.Run(test.err.Error(), func(t *testing.T) {

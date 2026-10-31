@@ -148,8 +148,6 @@ type ServerConfig struct {
 	CapacityToken                  string
 	AuthKey                        []byte
 	AppOrigin                      *url.URL
-	DeviceCodeTTL                  time.Duration
-	DevicePollEvery                time.Duration
 
 	OrganizationCreationAdminOnly bool
 }
@@ -302,11 +300,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		authProvider:               cfg.AuthProvider,
 		mailer:                     mailer,
 		emailCodeDelivery:          cfg.EmailCodeDelivery,
-		identity: identity.NewConfig(authKeys, identity.Lifetimes{
-			DeviceCode:         cfg.DeviceCodeTTL,
-			DevicePollInterval: cfg.DevicePollEvery,
-		}, cfg.AuditPolicy),
-		deploymentFinalizer: deployment.NewFinalizer(cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission, log, cfg.NetworkInstallation),
+		identity:                   identity.NewConfig(authKeys, cfg.AuditPolicy),
+		deploymentFinalizer:        deployment.NewFinalizer(cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission, log, cfg.NetworkInstallation),
 	}
 	router := chi.NewRouter()
 	router.Use(deploymentUploadTransport(cfg.DeploymentUploadLimits.IdleTimeout))
@@ -504,10 +499,9 @@ func (s *Server) mountAuthRoutes(r chi.Router) {
 	r.With(s.requireAccount).Post("/account/passkeys/complete", s.accountPasskeyComplete)
 	r.With(s.requireAccount).Delete("/account/credentials/{id}", s.removeCredential)
 	r.With(s.requireAccount).Post("/account/access/revoke-all", s.revokeAccountAccess)
+	r.With(s.requireAccount).Post("/account/access/revoke-others", s.revokeOtherAccess)
 	r.With(s.requireAccount).Patch("/account", s.updateAccountProfile)
 	r.Post("/auth/device/start", s.startDeviceCode)
-	r.With(s.requireSession).Post("/auth/device/confirm/start", s.startDeviceCode)
-	r.With(s.requireSession).Post("/auth/device/activity", s.deviceActivity)
 	r.Post("/auth/device/token", s.deviceToken)
 	r.Post("/auth/logout", s.logout)
 	r.Group(func(r chi.Router) {

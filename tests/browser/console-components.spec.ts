@@ -707,8 +707,8 @@ test("when no invitation email can be sent the form stays open with its addresse
     if (route.request().method() !== "POST") return route.fallback();
     posts++;
     return route.fulfill({ json: { results: [
-      { email: "ada@team.test", status: "failed", error: { code: "email_failed", message: "Invitation emails could not be sent" } },
-      { email: "lin@team.test", status: "failed", error: { code: "email_rejected", message: "The email server refused this address" } },
+      { email: "ada@team.test", status: "failed", error: { code: "email_failed", message: "The invitation email could not be sent" } },
+      { email: "lin@team.test", status: "failed", error: { code: "email_failed", message: "The invitation email could not be sent" } },
     ] } });
   });
   await page.goto(`/settings/members?${scope}`);
@@ -718,11 +718,31 @@ test("when no invitation email can be sent the form stays open with its addresse
   await emails.fill("Ada <ada@team.test>, lin@team.test");
   await expect(form.getByRole("list", { name: "Recipients" }).getByRole("listitem")).toHaveText(["ada@team.test", "lin@team.test"]);
   await form.getByRole("button", { name: "Invite", exact: true }).click();
-  await expect(form.getByRole("alert")).toHaveText("Invitation emails could not be sent. Nobody was invited. The email server refused lin@team.test.");
+  await expect(form.getByRole("alert")).toHaveText("Invitation emails could not be sent. Nobody was invited.");
   await expect(emails).toHaveValue("Ada <ada@team.test>, lin@team.test");
   await expect(page.getByRole("dialog", { name: "Invitations" })).toHaveCount(0);
   expect(posts).toBe(1);
   await expect(form.getByRole("button", { name: "Invite", exact: true })).toBeEnabled();
+});
+
+test("an invitation email that cannot be sent does not block the other addresses", async ({ page }) => {
+  await fixture(page, true);
+  await page.route("**/api/invitations", route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    return route.fulfill({ json: { results: [
+      { email: "ada@team.test", status: "invited" },
+      { email: "lin@team.test", status: "failed", error: { code: "email_failed", message: "The invitation email could not be sent" } },
+    ] } });
+  });
+  await page.goto(`/settings/members?${scope}`);
+  await page.getByRole("button", { name: "Invite members", exact: true }).click();
+  const form = page.getByRole("dialog", { name: "Invite members" });
+  await form.getByLabel("Emails", { exact: true }).fill("ada@team.test, lin@team.test");
+  await form.getByRole("button", { name: "Invite", exact: true }).click();
+  const results = page.getByRole("dialog", { name: "Invitations" });
+  await expect(form).toHaveCount(0);
+  await expect(results.getByText("Invited 1 person.", { exact: true })).toBeVisible();
+  await expect(results.getByRole("list", { name: "Not invited" }).getByRole("listitem")).toHaveText(["lin@team.test · Invitation email could not be sent"]);
 });
 
 test("without email delivery, inviting members is unavailable and says why", async ({ page }) => {

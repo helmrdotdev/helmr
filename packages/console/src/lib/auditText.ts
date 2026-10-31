@@ -50,7 +50,6 @@ const OVERRIDES: Record<string, string> = {
   "session.hold_released": "Released a hold on a session",
   "identity.sign_in": "Signed in",
   "identity.session_revoked": "Ended a sign-in session",
-  "identity.magic_link_requested": "Asked for a sign-in link",
   "identity.device_started": "Started signing in a device",
   "identity.device_authorized": "Approved a device sign-in",
   "identity.device_denied": "Denied a device sign-in",
@@ -248,7 +247,7 @@ export function checkFields(check: AuditCheck, names: AuditNames, links: { sessi
 
 const CREDENTIALS: Record<string, string> = {
   login_session: "Console sign-in session", api_key: "API key", worker_host: "Worker host credential", capacity_token: "Capacity token",
-  provider_assertion: "Sign-in provider", magic_link: "Sign-in link", device_code: "Device sign-in",
+  provider_assertion: "Sign-in provider", device_code: "Device sign-in",
 };
 const VERIFIED: Record<string, string> = { verified: "Verified on this request", failed: "Failed", absent: "No credential was presented" };
 

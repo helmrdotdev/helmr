@@ -40,11 +40,6 @@ func SessionPrincipal(ctx context.Context, database db.DBTX, sessionID, target u
 	} else {
 		p.OrgID = target
 	}
-	if p.Channel == "browser" {
-		if err = validateSource(ctx, database, p); err != nil {
-			return p, err
-		}
-	}
 	if p.OrgID != uuid.Nil() {
 		return attachMembership(ctx, database, p)
 	}
@@ -62,20 +57,6 @@ func humanReadError(err error) error {
 		return ErrDenied
 	}
 	return err
-}
-
-func validateSource(ctx context.Context, q db.DBTX, p auth.Principal) error {
-	var active bool
-	err := q.QueryRow(ctx, `SELECT
- EXISTS(SELECT 1 FROM auth_identities WHERE id=$1 AND user_id=$3 AND revoked_at IS NULL)
- OR EXISTS(SELECT 1 FROM passkey_credentials WHERE id=$2 AND user_id=$3 AND revoked_at IS NULL)`, p.IdentityID, p.PasskeyID, p.UserID).Scan(&active)
-	if err != nil {
-		return err
-	}
-	if !active {
-		return ErrDenied
-	}
-	return nil
 }
 
 func attachMembership(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Principal, error) {
@@ -120,8 +101,8 @@ func currentMember(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.P
 }
 
 // CurrentHuman additionally requires the live transport authority for new
-// operations, pending consent and streams. A later proof cannot substitute for
-// the source that authorized an in-flight operation.
+// operations, pending consent and streams. The sign-in method a session or link
+// recorded is history, not authority: removing that method does not end it.
 func CurrentHuman(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Principal, error) {
 	current, err := currentMember(ctx, q, prior)
 	if err != nil {
@@ -136,24 +117,14 @@ func CurrentHuman(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Pr
 		err = q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM slack_user_links l
  JOIN slack_installations i ON i.id=l.installation_id AND i.org_id=l.org_id AND i.team_id=l.team_id
  WHERE l.id=$1 AND l.user_id=$2 AND l.org_id=$3 AND l.member_id=$4 AND l.revoked_at IS NULL
- AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL
- AND l.access_epoch=$5 AND l.authenticated_at=$6
- AND l.identity_id IS NOT DISTINCT FROM $7 AND l.passkey_id IS NOT DISTINCT FROM $8)`, prior.SlackLinkID, prior.UserID, prior.OrgID, prior.MemberID, prior.AccessEpoch, prior.AuthenticatedAt, optionalID(prior.IdentityID), optionalID(prior.PasskeyID)).Scan(&active)
+ AND i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL)`, prior.SlackLinkID, prior.UserID, prior.OrgID, prior.MemberID).Scan(&active)
 	} else {
-		var channel string
-		if err := q.QueryRow(ctx, `SELECT id,channel FROM login_sessions WHERE id=$1 FOR SHARE`, prior.SessionID).Scan(&locked, &channel); err != nil {
+		if err := q.QueryRow(ctx, `SELECT id FROM login_sessions WHERE id=$1 FOR SHARE`, prior.SessionID).Scan(&locked); err != nil {
 			return prior, humanReadError(err)
 		}
-		if channel == "browser" {
-			if err := validateSource(ctx, q, prior); err != nil {
-				return prior, err
-			}
-		}
 		err = q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions s
- WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp()
- AND s.access_epoch=$3 AND s.authenticated_at>=$4
- AND s.identity_id IS NOT DISTINCT FROM $5 AND s.passkey_id IS NOT DISTINCT FROM $6
- AND (s.channel='browser' OR (s.channel='cli' AND s.org_id=$7 AND s.member_id=$8 AND s.authenticated_at=$4)))`, prior.SessionID, prior.UserID, prior.AccessEpoch, prior.AuthenticatedAt, optionalID(prior.IdentityID), optionalID(prior.PasskeyID), prior.OrgID, prior.MemberID).Scan(&active)
+ WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND s.access_epoch=$3
+ AND (s.channel='browser' OR (s.channel='cli' AND s.org_id=$4 AND s.member_id=$5)))`, prior.SessionID, prior.UserID, prior.AccessEpoch, prior.OrgID, prior.MemberID).Scan(&active)
 	}
 	if err != nil {
 		return prior, err
@@ -168,22 +139,15 @@ func Recent(p auth.Principal, now time.Time) bool {
 	return !p.AuthenticatedAt.IsZero() && !p.AuthenticatedAt.After(now) && now.Sub(p.AuthenticatedAt) <= time.Hour
 }
 
-func optionalID(id uuid.UUID) pgtype.UUID {
-	if id == uuid.Nil() {
-		return pgtype.UUID{}
-	}
-	return pgvalue.UUID(id)
-}
-
 // SlackPrincipal loads only an exact independently issued link. A later link
 // for the same Slack actor never restores authority saved under an older ID.
+// The link's issue time stands in for a sign-in time; member and account
+// retirement revoke the link itself.
 func SlackPrincipal(ctx context.Context, q db.DBTX, id uuid.UUID) (auth.Principal, error) {
 	p := auth.Principal{Kind: auth.PrincipalKindSession, SlackLinkID: id, Channel: "slack"}
-	var identity, key pgtype.UUID
-	err := q.QueryRow(ctx, `SELECT org_id,member_id,user_id,access_epoch,identity_id,passkey_id,authenticated_at FROM slack_user_links WHERE id=$1 AND revoked_at IS NULL`, id).Scan(&p.OrgID, &p.MemberID, &p.UserID, &p.AccessEpoch, &identity, &key, &p.AuthenticatedAt)
+	err := q.QueryRow(ctx, `SELECT l.org_id,l.member_id,l.user_id,u.access_epoch,l.linked_at FROM slack_user_links l JOIN users u ON u.id=l.user_id WHERE l.id=$1 AND l.revoked_at IS NULL`, id).Scan(&p.OrgID, &p.MemberID, &p.UserID, &p.AccessEpoch, &p.AuthenticatedAt)
 	if err != nil {
 		return p, humanReadError(err)
 	}
-	p.IdentityID, p.PasskeyID = nullableID(identity), nullableID(key)
 	return CurrentHuman(ctx, q, p)
 }

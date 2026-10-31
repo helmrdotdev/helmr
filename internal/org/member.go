@@ -94,10 +94,10 @@ type NewInvitation struct {
 	RawToken   string
 }
 
-// DeliverInvitations sends every new invitation of a request to its invitee
-// in one batch. It runs inside the request's transaction before commit; an
-// error rolls every invitation of the request back.
-type DeliverInvitations func(ctx context.Context, invitations []NewInvitation) error
+// DeliverInvitations sends each new invitation of a request to its invitee. It
+// runs inside the request's transaction before commit and returns one error
+// per invitation, in order: nil when that invitation was sent.
+type DeliverInvitations func(ctx context.Context, invitations []NewInvitation) []error
 
 // InvitationPosition is the sort key of the last invitation on a previous page.
 type InvitationPosition struct {
@@ -160,12 +160,13 @@ func ListInvitations(ctx context.Context, database db.TxBeginner, manager Managi
 // An address is refused on its own when it is invalid, belongs to an active
 // member or already has a pending invitation; expired invitations for an
 // address are revoked first. Every other address is invited in one
-// transaction, in address order: each invitation with its audit fact (under a
-// savepoint, so a refused address leaves the others in place), then deliver
-// sends the whole batch, in the same order, before commit. A failed delivery, or any other failure of the
-// transaction, rolls every invitation of the request back and fails each of
-// those addresses with that error; a delivery failure wraps
-// ErrInvitationNotDelivered. Raw tokens reach only deliver.
+// transaction, in address order: each invitation is written under a savepoint,
+// so a refused address leaves the others in place, then deliver sends them, in
+// the same order, before commit. An address whose email was not sent fails on
+// its own with an error wrapping ErrInvitationNotDelivered and leaves no
+// invitation; each sent invitation is recorded with its audit fact. Any other
+// failure of the transaction fails every address it would have invited with
+// that error. Raw tokens reach only deliver.
 func CreateInvitations(ctx context.Context, database db.TxBeginner, tokenKey []byte, inviter ManagingMember, input InvitationInput, deliver DeliverInvitations) ([]InvitationResult, error) {
 	if len(input.Emails) == 0 {
 		return nil, invalidInput("emails must name at least one address")
@@ -207,6 +208,7 @@ func CreateInvitations(ctx context.Context, database db.TxBeginner, tokenKey []b
 			return err
 		}
 		var batch []NewInvitation
+		var addresses []int
 		for _, i := range ordered {
 			var invitation db.Invitation
 			var rawToken string
@@ -223,12 +225,28 @@ func CreateInvitations(ctx context.Context, database db.TxBeginner, tokenKey []b
 				return err
 			}
 			batch = append(batch, NewInvitation{Invitation: invitation, RawToken: rawToken})
+			addresses = append(addresses, i)
 		}
 		if len(batch) == 0 {
 			return nil
 		}
-		if err := deliver(ctx, batch); err != nil {
-			return fmt.Errorf("%w: %w", ErrInvitationNotDelivered, err)
+		sent := deliver(ctx, batch)
+		if len(sent) != len(batch) {
+			return fmt.Errorf("%w: delivery reported %d results for %d invitations", ErrInvitationNotDelivered, len(sent), len(batch))
+		}
+		for n, created := range batch {
+			id := pgvalue.MustUUIDValue(created.Invitation.ID)
+			if sent[n] != nil {
+				// The invitation was never visible outside this transaction.
+				if _, err := tx.Exec(ctx, `DELETE FROM invitations WHERE org_id=$1 AND id=$2`, inviter.OrgID, id); err != nil {
+					return err
+				}
+				results[addresses[n]].Err = fmt.Errorf("%w: %w", ErrInvitationNotDelivered, sent[n])
+				continue
+			}
+			if err := audit.Append(ctx, tx, inviter.AuditPolicy, audit.Event{Evidence: inviter.Actor, OrgID: inviter.OrgID, Action: "invitation.created", TargetKind: "invitation", TargetID: id, Details: audit.InvitationCreatedDetails{ExpiresAt: pgvalue.TimePtr(created.Invitation.ExpiresAt)}}); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -296,9 +314,6 @@ func createInvitation(ctx context.Context, tx pgx.Tx, tokenKey []byte, inviter M
 	}
 	if err != nil {
 		return db.Invitation{}, "", fmt.Errorf("create invitation: %w", err)
-	}
-	if err := audit.Append(ctx, tx, inviter.AuditPolicy, audit.Event{Evidence: inviter.Actor, OrgID: inviter.OrgID, Action: "invitation.created", TargetKind: "invitation", TargetID: pgvalue.MustUUIDValue(invitation.ID), Details: audit.InvitationCreatedDetails{ExpiresAt: pgvalue.TimePtr(invitation.ExpiresAt)}}); err != nil {
-		return db.Invitation{}, "", err
 	}
 	return invitation, rawToken, nil
 }

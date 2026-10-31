@@ -52,8 +52,7 @@ const INVITATION_FAILURE_REASONS: Record<string, string> = {
   already_member: "Already a member",
   invitation_pending: "Already has a pending invitation",
   owner_role_required: "Has a pending owner invitation",
-  email_failed: "Invitation emails could not be sent",
-  email_rejected: "Refused by the email server",
+  email_failed: "Invitation email could not be sent",
 };
 
 function invitationFailureReason(result: InvitationResult): string {
@@ -91,11 +90,10 @@ function InviteMembersDialog(props: {
     setSubmitting(true);
     try {
       const results = await createInvitations({ emails: valid() });
-      // When no email could be sent nothing was created: keep the form and its
-      // addresses so the same invitations can be sent again.
-      if (results.every((result) => result.error?.code === "email_failed" || result.error?.code === "email_rejected")) {
-        const refused = results.find((result) => result.error?.code === "email_rejected");
-        setError(refused ? `${EMAIL_FAILED_MESSAGE} The email server refused ${refused.email}.` : EMAIL_FAILED_MESSAGE);
+      // Each address is invited on its own. When no email could be sent nothing
+      // was created: keep the form and its addresses so they can be sent again.
+      if (results.every((result) => result.error?.code === "email_failed")) {
+        setError(EMAIL_FAILED_MESSAGE);
         return;
       }
       await props.onInvited(results);

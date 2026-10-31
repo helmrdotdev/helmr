@@ -185,10 +185,12 @@ func CompleteAccountRepairRegistration(ctx context.Context, database db.TxBeginn
 		if err != nil {
 			return err
 		}
-		if err = invalidateAccount(ctx, tx, repair.user); err != nil {
+		// Consume this repair first so retiring the account's channels revokes
+		// only the other pending repairs.
+		if _, err = tx.Exec(ctx, `UPDATE account_repair_enrollments SET consumed_at=CASE WHEN id=$2 THEN clock_timestamp() ELSE consumed_at END,revoked_at=CASE WHEN id<>$2 THEN clock_timestamp() ELSE revoked_at END WHERE user_id=$1 AND consumed_at IS NULL`, repair.user, id); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE account_repair_enrollments SET consumed_at=CASE WHEN id=$2 THEN clock_timestamp() ELSE consumed_at END,revoked_at=CASE WHEN id<>$2 THEN clock_timestamp() ELSE revoked_at END WHERE user_id=$1 AND consumed_at IS NULL`, repair.user, id); err != nil {
+		if err = invalidateAccount(ctx, tx, repair.user); err != nil {
 			return err
 		}
 		_, err = tx.Exec(ctx, `UPDATE webauthn_challenges SET consumed_at=clock_timestamp() WHERE id=$1`, challenge)

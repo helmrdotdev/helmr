@@ -11,5 +11,5 @@ export function authenticationResponse(path: string, value: any): unknown {
   if (path === "/api/auth/config") return { deployment_mode: "cloud", methods: ["email", "passkey", "github"], email_delivery: value.email_delivery ?? true, app_origin: value.app_origin ?? "", signup_enabled: true, organization_creation_enabled: true, setup_required: false };
   if (path === "/api/organizations") return { organizations: organization ? [organization] : [] };
   if (path === "/admin/api/v1/me") return { id: "fixture-operator", expires_at: new Date(Date.now()+43200000).toISOString() };
-  return { ...organization, current_member: member, authentication: { method: "passkey", authenticated_at: new Date().toISOString(), reauthenticate_at: null }, onboarding: { project_required: value.project_required ?? false } };
+  return { ...organization, current_member: member, authentication: { authenticated_at: new Date().toISOString() }, onboarding: { project_required: value.project_required ?? false } };
 }

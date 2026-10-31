@@ -31,7 +31,7 @@ func (s *Server) organizationContext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "organization_required", message: "Choose an organization."}))
 		return
 	}
-	response := api.OrganizationContextResponse{ID: p.OrgID.String(), CurrentMember: api.CurrentMember{ID: p.MemberID.String(), UserID: p.UserID.String(), IsOwner: p.IsOwner, Permissions: sessionPermissions(p), PermissionScopes: []api.PermissionScope{}}, Authentication: api.AuthenticationContext{Method: "ordinary", AuthenticatedAt: p.AuthenticatedAt.UTC().Format(time.RFC3339Nano)}}
+	response := api.OrganizationContextResponse{ID: p.OrgID.String(), CurrentMember: api.CurrentMember{ID: p.MemberID.String(), UserID: p.UserID.String(), IsOwner: p.IsOwner, Permissions: sessionPermissions(p), PermissionScopes: []api.PermissionScope{}}, Authentication: api.AuthenticationContext{AuthenticatedAt: p.AuthenticatedAt.UTC().Format(time.RFC3339Nano)}}
 	var projects bool
 	if err := s.tx.QueryRow(r.Context(), `SELECT o.name,o.slug,COALESCE(m.display_name,u.display_name),EXISTS(SELECT 1 FROM projects WHERE org_id=o.id) FROM organizations o JOIN org_members m ON m.org_id=o.id JOIN users u ON u.id=m.user_id WHERE o.id=$1 AND m.id=$2`, p.OrgID, p.MemberID).Scan(&response.Name, &response.Slug, &response.CurrentMember.DisplayName, &projects); err != nil {
 		writeError(w, err)
@@ -86,14 +86,22 @@ func (s *Server) organizations(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, response)
 }
-func (s *Server) authConfig(w http.ResponseWriter, r *http.Request) {
-	response := api.AuthConfigResponse{DeploymentMode: s.deploymentMode, Methods: []string{"passkey"}, EmailDelivery: s.emailConfigured(), AppOrigin: s.appOrigin.String(), SignupEnabled: true, OrganizationCreationEnabled: !s.selfHostedMode() && !s.organizationCreationAdminOnly}
+
+// signInMethods are the account sign-in methods this deployment offers.
+// Email codes need email delivery, and GitHub needs its configured provider.
+func (s *Server) signInMethods() []string {
+	methods := []string{"passkey"}
 	if s.emailConfigured() {
-		response.Methods = append(response.Methods, "email")
+		methods = append(methods, "email")
 	}
 	if s.authProvider != nil {
-		response.Methods = append(response.Methods, "github")
+		methods = append(methods, "github")
 	}
+	return methods
+}
+
+func (s *Server) authConfig(w http.ResponseWriter, r *http.Request) {
+	response := api.AuthConfigResponse{DeploymentMode: s.deploymentMode, Methods: s.signInMethods(), EmailDelivery: s.emailConfigured(), AppOrigin: s.appOrigin.String(), SignupEnabled: true, OrganizationCreationEnabled: !s.selfHostedMode() && !s.organizationCreationAdminOnly}
 	if err := s.tx.QueryRow(r.Context(), `SELECT NOT EXISTS(SELECT 1 FROM org_members WHERE is_owner AND removed_at IS NULL)`).Scan(&response.SetupRequired); err != nil {
 		writeError(w, err)
 		return

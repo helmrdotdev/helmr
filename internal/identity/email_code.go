@@ -59,9 +59,6 @@ func StartEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Config
 		return EmailChallenge{}, ErrInvalidToken
 	}
 	purpose := "login"
-	if input.InvitationID != uuid.Nil() {
-		purpose = "invite"
-	}
 	if input.EmailChange {
 		purpose = "email_change"
 	}
@@ -231,7 +228,7 @@ func CompleteEmailChallenge(ctx context.Context, database db.TxBeginner, cfg Con
 			if existing.SessionID != uuid.Nil() {
 				return ErrWrongAccount
 			}
-			result.Token, err = issueLoginSession(ctx, tx, cfg, user, pgtype.UUID{})
+			result.Token, err = issueLoginSession(ctx, tx, cfg, user)
 			if err != nil {
 				return err
 			}
@@ -300,32 +297,28 @@ func confirmBrowserProof(ctx context.Context, tx pgx.Tx, cfg Config, id uuid.UUI
 	return raw, nil
 }
 
-func requireRecentAccount(ctx context.Context, q db.DBTX, p auth.Principal) error {
+// currentAccount reads the live browser session that presents this account.
+func currentAccount(ctx context.Context, q db.DBTX, p auth.Principal) (auth.Principal, error) {
 	if p.Channel != "browser" || p.UserID == uuid.Nil() || p.SessionID == uuid.Nil() {
-		return ErrInvalidToken
+		return auth.Principal{}, ErrInvalidToken
 	}
 	current, err := access.SessionPrincipal(ctx, q, p.SessionID, uuid.Nil())
 	if err != nil {
-		return err
+		return auth.Principal{}, err
 	}
 	if current.UserID != p.UserID || current.AccessEpoch != p.AccessEpoch {
-		return ErrInvalidToken
+		return auth.Principal{}, ErrInvalidToken
+	}
+	return current, nil
+}
+
+func requireRecentAccount(ctx context.Context, q db.DBTX, p auth.Principal) error {
+	current, err := currentAccount(ctx, q, p)
+	if err != nil {
+		return err
 	}
 	if !access.Recent(current, time.Now()) {
 		return ErrRecentProofRequired
 	}
 	return nil
-}
-
-func LoginChallengePurpose(ctx context.Context, q db.DBTX, id uuid.UUID, binding []byte) (string, error) {
-	var purpose string
-	err := q.QueryRow(ctx, `SELECT purpose FROM email_challenges WHERE id=$1 AND browser_hash=$2 AND purpose IN ('login','invite') AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp()`, id, binding).Scan(&purpose)
-	if isNoRows(err) {
-		return "", ErrInvalidToken
-	}
-	return purpose, err
-}
-
-func RequireRecentAccount(ctx context.Context, q db.DBTX, p auth.Principal) error {
-	return requireRecentAccount(ctx, q, p)
 }

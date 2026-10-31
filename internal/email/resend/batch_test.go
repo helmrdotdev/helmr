@@ -20,8 +20,9 @@ type batchRequest struct {
 }
 
 // newBatchServer serves the batch endpoint, failing the request numbered
-// failAt (1-based) when it is positive.
-func newBatchServer(t *testing.T, failAt int) (Sender, *[]batchRequest) {
+// failAt (1-based) when it is positive and rejecting each email addressed to
+// reject.
+func newBatchServer(t *testing.T, failAt int, reject string) (Sender, *[]batchRequest) {
 	t.Helper()
 	var mu sync.Mutex
 	var requests []batchRequest
@@ -45,11 +46,16 @@ func newBatchServer(t *testing.T, failAt int) (Sender, *[]batchRequest) {
 			_, _ = w.Write([]byte(`{"statusCode":422,"name":"validation_error","message":"rejected"}`))
 			return
 		}
-		data := make([]map[string]string, len(emails))
-		for i := range emails {
-			data[i] = map[string]string{"id": fmt.Sprintf("email-%d-%d", number, i)}
+		data := []map[string]string{}
+		errs := []map[string]any{}
+		for i, sent := range emails {
+			if reject != "" && strings.Join(sent.To, ",") == reject {
+				errs = append(errs, map[string]any{"index": i, "message": "invalid recipient"})
+				continue
+			}
+			data = append(data, map[string]string{"id": fmt.Sprintf("email-%d-%d", number, i)})
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data, "errors": errs})
 	}))
 	t.Cleanup(server.Close)
 	client := resendapi.NewCustomClient(server.Client(), "re_test")
@@ -70,10 +76,12 @@ func batchMessages(count int) []email.Message {
 }
 
 func TestResendSenderSendsBatchesOfAtMostOneHundred(t *testing.T) {
-	sender, requests := newBatchServer(t, 0)
+	sender, requests := newBatchServer(t, 0, "")
 	messages := batchMessages(205)
-	if err := sender.SendEmails(t.Context(), messages); err != nil {
-		t.Fatal(err)
+	for i, err := range sender.SendEmails(t.Context(), messages) {
+		if err != nil {
+			t.Fatalf("email %d: %v", i, err)
+		}
 	}
 	sizes := []int{100, 100, 5}
 	if len(*requests) != len(sizes) {
@@ -81,7 +89,7 @@ func TestResendSenderSendsBatchesOfAtMostOneHundred(t *testing.T) {
 	}
 	next := 0
 	for i, request := range *requests {
-		if len(request.emails) != sizes[i] || request.validation != "strict" {
+		if len(request.emails) != sizes[i] || request.validation != "permissive" {
 			t.Fatalf("request %d has %d emails, validation %q", i, len(request.emails), request.validation)
 		}
 		for _, sent := range request.emails {
@@ -94,24 +102,36 @@ func TestResendSenderSendsBatchesOfAtMostOneHundred(t *testing.T) {
 	}
 }
 
-func TestResendSenderStopsAtTheFirstFailedBatch(t *testing.T) {
-	sender, requests := newBatchServer(t, 2)
-	if err := sender.SendEmails(t.Context(), batchMessages(250)); err == nil {
-		t.Fatal("expected the failed batch to fail the send")
+func TestResendSenderFailsOnlyTheEmailsOfAFailedBatch(t *testing.T) {
+	sender, requests := newBatchServer(t, 2, "")
+	errs := sender.SendEmails(t.Context(), batchMessages(250))
+	if len(*requests) != 3 {
+		t.Fatalf("requests = %d, want every batch attempted", len(*requests))
 	}
-	if len(*requests) != 2 {
-		t.Fatalf("requests = %d, want the send to stop at the failed batch", len(*requests))
+	for i, err := range errs {
+		if failed := i >= 100 && i < 200; (err != nil) != failed {
+			t.Fatalf("email %d error = %v, want failed=%v", i, err, failed)
+		}
 	}
 }
 
-func TestResendSenderRejectsAnInvalidRecipientBeforeSending(t *testing.T) {
-	sender, requests := newBatchServer(t, 0)
+func TestResendSenderFailsOnlyTheRejectedEmail(t *testing.T) {
+	sender, _ := newBatchServer(t, 0, "person-1@example.test")
+	errs := sender.SendEmails(t.Context(), batchMessages(3))
+	if len(errs) != 3 || errs[0] != nil || errs[1] == nil || errs[2] != nil {
+		t.Fatalf("errors = %v, want only the rejected email to fail", errs)
+	}
+}
+
+func TestResendSenderFailsAnInvalidRecipientWithoutSendingIt(t *testing.T) {
+	sender, requests := newBatchServer(t, 0, "")
 	messages := batchMessages(2)
 	messages[1].To = "not an address"
-	if err := sender.SendEmails(t.Context(), messages); err == nil {
-		t.Fatal("expected invalid recipient error")
+	errs := sender.SendEmails(t.Context(), messages)
+	if len(errs) != 2 || errs[0] != nil || errs[1] == nil {
+		t.Fatalf("errors = %v, want only the invalid recipient to fail", errs)
 	}
-	if len(*requests) != 0 {
-		t.Fatalf("requests = %d, want none", len(*requests))
+	if len(*requests) != 1 || len((*requests)[0].emails) != 1 {
+		t.Fatalf("requests = %+v, want one request with the valid email", *requests)
 	}
 }

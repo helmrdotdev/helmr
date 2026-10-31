@@ -16,7 +16,7 @@ import (
 func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 	f := newIdentityFixture(t)
 	external := ExternalIdentity{Provider: "github", Subject: "subject-42", DisplayName: "Original", Email: "person@example.test", EmailVerified: true}
-	raw, err := SignIn(t.Context(), f.pool, f.cfg, external)
+	raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 		t.Fatal(issued, err)
 	}
 	external.DisplayName = "Renamed"
-	if _, err := SignIn(t.Context(), f.pool, f.cfg, external); err != nil {
+	if _, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT actor_identity->>'display_name'='Original' FROM audit_events WHERE action='identity.sign_in' AND target_id=$1`, principal.SessionID).Scan(&issued); err != nil || !issued {
@@ -42,7 +42,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := SignIn(t.Context(), f.pool, f.cfg, linked)
+	second, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, linked, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestAuditAuthenticationProvenanceAndAtomicCredentials(t *testing.T) {
 		t.Fatal("concurrent provider provenance", issued, err)
 	}
 	f.exec(t, `ALTER TABLE audit_events ADD CONSTRAINT reject_issuance CHECK(action<>'identity.sign_in') NOT VALID`)
-	if token, err := SignIn(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "rejected", DisplayName: "Must rollback", Email: "rollback@example.test", EmailVerified: true}); err == nil || token != "" {
+	if token, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "rejected", DisplayName: "Must rollback", Email: "rollback@example.test", EmailVerified: true}, "", false); err == nil || token != "" {
 		t.Fatal("released unaudited credential", token != "", err)
 	}
 	var absent bool
@@ -124,7 +124,7 @@ func (tx lostCommitTransaction) Commit(ctx context.Context) error {
 }
 func TestAuditAuthenticationLostCommitAcknowledgement(t *testing.T) {
 	f := newIdentityFixture(t)
-	_, err := SignIn(t.Context(), lostCommitAcknowledgement{f.pool}, f.cfg, ExternalIdentity{Provider: "github", Subject: "lost-ack", DisplayName: "Committed", Email: "committed@example.test", EmailVerified: true})
+	_, err := SignInBrowserProvider(t.Context(), lostCommitAcknowledgement{f.pool}, f.cfg, ExternalIdentity{Provider: "github", Subject: "lost-ack", DisplayName: "Committed", Email: "committed@example.test", EmailVerified: true}, "", false)
 	if !db.CommitOutcomeUnknown(err) {
 		t.Fatalf("expected uncertain commit: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestAuditAuthenticationLostCommitAcknowledgement(t *testing.T) {
 
 func TestAuditDeviceIssuanceLinksVerifiedAuthorization(t *testing.T) {
 	f := newIdentityFixture(t)
-	raw, err := SignIn(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "device-authorizer", DisplayName: "Approver", Email: "approver@example.test", EmailVerified: true})
+	raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, ExternalIdentity{Provider: "github", Subject: "device-authorizer", DisplayName: "Approver", Email: "approver@example.test", EmailVerified: true}, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestAuditDeviceIssuanceLinksVerifiedAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, DeviceConsent{OrgID: org.String()}, started.UserCode); err != nil {
+	if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, started.UserCode); err != nil {
 		t.Fatal(err)
 	}
 	issued, err := ExchangeDeviceCode(t.Context(), f.pool, f.cfg, started.DeviceCode)
@@ -188,7 +188,7 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 			t.Run(method+"/"+failure, func(t *testing.T) {
 				f := newIdentityFixture(t)
 				external := ExternalIdentity{Provider: "github", Subject: "custody", DisplayName: "User", Email: "custody@example.test", EmailVerified: true}
-				initial, err := SignIn(t.Context(), f.pool, f.cfg, external)
+				initial, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -198,7 +198,7 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 				}
 				org := f.organization(t, "custody")
 				f.member(t, org, p.UserID, "member")
-				issue := func() (string, error) { return SignIn(t.Context(), f.pool, f.cfg, external) }
+				issue := func() (string, error) { return SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false) }
 				if method == "email" {
 					c, b := emailChallenge(t, f, external.Email)
 					if err = MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
@@ -215,7 +215,7 @@ func TestAuditSignInCustodyCopiesAndRollback(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, DeviceConsent{OrgID: org.String()}, started.UserCode); err != nil {
+					if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, started.UserCode); err != nil {
 						t.Fatal(err)
 					}
 					issue = func() (string, error) { return ExchangeDeviceCode(t.Context(), f.pool, f.cfg, started.DeviceCode) }
@@ -266,7 +266,6 @@ func TestAuditDeviceDenialFailureKeepsDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consent := DeviceConsent{OrgID: org.String()}
 	started, err := StartDeviceCode(t.Context(), f.pool, f.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -274,7 +273,7 @@ func TestAuditDeviceDenialFailureKeepsDecision(t *testing.T) {
 	// A real owner transaction failure must remain a denial operation, not approval.
 	f.exec(t, `CREATE FUNCTION reject_device_decision() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected decision failure'; END $$;
  CREATE TRIGGER reject_device_decision BEFORE UPDATE ON device_codes FOR EACH ROW EXECUTE FUNCTION reject_device_decision()`)
-	if _, err := DenyDeviceCode(t.Context(), f.pool, f.cfg, approver, consent, started.UserCode); err == nil {
+	if _, err := DenyDeviceCode(t.Context(), f.pool, f.cfg, approver, started.UserCode); err == nil {
 		t.Fatal("injected failure ignored")
 	}
 	var valid bool

@@ -61,7 +61,7 @@ func TestAgentManagementUsesExactCurrentGrantAndStoredConnection(t *testing.T) {
 }
 
 func TestConnectionGrantCannotAdoptReplacementAuthority(t *testing.T) {
-	for _, change := range []string{"logout", "credential", "proof", "membership", "suspended"} {
+	for _, change := range []string{"logout", "membership", "suspended"} {
 		t.Run(change, func(t *testing.T) {
 			f, store, _ := credentialFixture(t)
 			prior := f.Principal(t)
@@ -72,11 +72,6 @@ func TestConnectionGrantCannotAdoptReplacementAuthority(t *testing.T) {
 			switch change {
 			case "logout":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, prior.SessionID)
-			case "credential":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, prior.IdentityID)
-			case "proof":
-				fresh := f.Principal(t)
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET identity_id=$2,authenticated_at=clock_timestamp() WHERE id=$1`, prior.SessionID, fresh.IdentityID)
 			case "membership":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET removed_at=clock_timestamp(),is_owner=false WHERE id=$1`, prior.MemberID)
 				dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO org_members(id,org_id,user_id,is_owner) VALUES($1,$2,$3,true)`, uuid.NewV7(), prior.OrgID, f.User)

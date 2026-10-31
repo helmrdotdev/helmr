@@ -72,7 +72,7 @@ func TestSlackConsentIsOneUseAndLinkHasIndependentLifetime(t *testing.T) {
 
 }
 
-func TestSlackConsentCannotReplaceItsSource(t *testing.T) {
+func TestSlackConsentSurvivesSigningInAgainInTheSameBrowser(t *testing.T) {
 	f, _, org := credentialFixture(t)
 	p := f.Principal(t)
 	actor := audit.FromPrincipal(p)
@@ -84,17 +84,28 @@ func TestSlackConsentCannotReplaceItsSource(t *testing.T) {
 	}
 	replacement := f.Principal(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET identity_id=$2,authenticated_at=clock_timestamp() WHERE id=$1`, p.SessionID, replacement.IdentityID)
-	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); !errors.Is(err, ErrUserLinkDenied) {
-		t.Fatal("consent adopted replacement source", err)
+	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); err != nil {
+		t.Fatal("consent in the same browser session was refused", err)
 	}
-	var count int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM slack_user_links WHERE revoked_at IS NULL`).Scan(&count); err != nil || count != 0 {
-		t.Fatal(count, err)
+}
+
+func TestSlackConsentNeedsTheBrowserSessionThatSawIt(t *testing.T) {
+	f, _, org := credentialFixture(t)
+	p := f.Principal(t)
+	who := UserIdentity{TeamID: "team", SlackUserID: "human"}
+	binding := make([]byte, 32)
+	id, err := PrepareUserLink(t.Context(), f.Pool, audit.FromPrincipal(p), org, f.User, f.installation, who, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := audit.FromPrincipal(f.Principal(t))
+	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, other, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); !errors.Is(err, ErrUserLinkDenied) {
+		t.Fatal("another browser session completed consent", err)
 	}
 }
 
 func TestRetiredSlackAuthorizationCanRelinkWithoutRevivingOldWork(t *testing.T) {
-	for _, scope := range []string{"account", "source", "member"} {
+	for _, scope := range []string{"account", "member"} {
 		t.Run(scope, func(t *testing.T) {
 			f, _, org := credentialFixture(t)
 			p := f.Principal(t)
@@ -108,14 +119,6 @@ func TestRetiredSlackAuthorizationCanRelinkWithoutRevivingOldWork(t *testing.T) 
 			if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_user_links WHERE user_id=$1 AND revoked_at IS NULL`, f.User).Scan(&old); err != nil {
 				t.Fatal(err)
 			}
-			if scope == "source" {
-				if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error { return RetireAccountAccess(t.Context(), tx, f.User, uuid.NewV7()) }); err != nil {
-					t.Fatal(err)
-				}
-				if _, err := access.SlackPrincipal(t.Context(), f.Pool, old); err != nil {
-					t.Fatal("unrelated source revoked", err)
-				}
-			}
 			pending, err := PrepareUserLink(t.Context(), f.Pool, actor, org, f.User, f.installation, who, make([]byte, 32))
 			if err != nil {
 				t.Fatal(err)
@@ -123,9 +126,7 @@ func TestRetiredSlackAuthorizationCanRelinkWithoutRevivingOldWork(t *testing.T) 
 			err = db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
 				switch scope {
 				case "account":
-					return RetireAccountAccess(t.Context(), tx, f.User, uuid.Nil())
-				case "source":
-					return RetireAccountAccess(t.Context(), tx, f.User, p.IdentityID)
+					return RetireAccountAccess(t.Context(), tx, f.User)
 				default:
 					return RetireMemberAccess(t.Context(), tx, org, p.MemberID)
 				}
@@ -139,11 +140,11 @@ func TestRetiredSlackAuthorizationCanRelinkWithoutRevivingOldWork(t *testing.T) 
 			if err = linkTestUser(t.Context(), f.Pool, policy, actor, org, f.User, f.installation, who); err != nil {
 				t.Fatal("fresh relink", err)
 			}
-			if _, err = access.SlackPrincipal(t.Context(), f.Pool, old); scope == "source" && err != nil || scope != "source" && !errors.Is(err, access.ErrDenied) {
+			if _, err = access.SlackPrincipal(t.Context(), f.Pool, old); !errors.Is(err, access.ErrDenied) {
 				t.Fatal("unexpected old link lifetime", err)
 			}
 			var fresh uuid.UUID
-			if err = f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_user_links WHERE user_id=$1 AND revoked_at IS NULL`, f.User).Scan(&fresh); err != nil || (scope == "source") != (fresh == old) {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT id FROM slack_user_links WHERE user_id=$1 AND revoked_at IS NULL`, f.User).Scan(&fresh); err != nil || fresh == old {
 				t.Fatal(fresh, err)
 			}
 			if _, err = access.SlackPrincipal(t.Context(), f.Pool, fresh); err != nil {
@@ -153,28 +154,8 @@ func TestRetiredSlackAuthorizationCanRelinkWithoutRevivingOldWork(t *testing.T) 
 	}
 }
 
-func TestSlackConsentAcceptsSameSourceReproof(t *testing.T) {
-	f, _, org := credentialFixture(t)
-	p := f.Principal(t)
-	actor := audit.FromPrincipal(p)
-	who := UserIdentity{TeamID: "team", SlackUserID: "reconfirmed-human"}
-	binding := make([]byte, 32)
-	id, err := PrepareUserLink(t.Context(), f.Pool, actor, org, f.User, f.installation, who, binding)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET authenticated_at=clock_timestamp() WHERE id=$1`, p.SessionID)
-	if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); err != nil {
-		t.Fatal("same source reproof invalidated consent", err)
-	}
-	var currentProof bool
-	if err = f.Pool.QueryRow(t.Context(), `SELECT l.authenticated_at=s.authenticated_at FROM slack_user_links l JOIN login_sessions s ON s.id=$1 WHERE l.user_id=$2 AND l.revoked_at IS NULL`, p.SessionID, f.User).Scan(&currentProof); err != nil || !currentProof {
-		t.Fatal(currentProof, err)
-	}
-}
-
-func TestSlackPendingConsentRetainsSourceAndMembership(t *testing.T) {
-	for _, change := range []string{"retire-original-after-reproof", "remove-reinvite", "browser-logout", "epoch"} {
+func TestSlackPendingConsentRetainsBrowserSessionAndMembership(t *testing.T) {
+	for _, change := range []string{"remove-reinvite", "browser-logout", "epoch"} {
 		t.Run(change, func(t *testing.T) {
 			f, _, org := credentialFixture(t)
 			p := f.Principal(t)
@@ -186,22 +167,6 @@ func TestSlackPendingConsentRetainsSourceAndMembership(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch change {
-			case "retire-original-after-reproof":
-				other := f.Principal(t)
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET identity_id=$2,authenticated_at=clock_timestamp() WHERE id=$1`, p.SessionID, other.IdentityID)
-				err = db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-					if _, e := tx.Exec(t.Context(), `SELECT id FROM users WHERE id=$1 FOR UPDATE`, f.User); e != nil {
-						return e
-					}
-					return RetireAccountAccess(t.Context(), tx, f.User, p.IdentityID)
-				})
-				if err != nil {
-					t.Fatal(err)
-				}
-				var retired bool
-				if err = f.Pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM slack_link_requests WHERE id=$1`, id).Scan(&retired); err != nil || !retired {
-					t.Fatal("original source was forgotten", retired, err)
-				}
 			case "remove-reinvite":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE id=$1; INSERT INTO org_members(id,org_id,user_id) VALUES($2,$3,$4)`, pgx.QueryExecModeSimpleProtocol, p.MemberID, uuid.NewV7(), org, f.User)
 			case "browser-logout":

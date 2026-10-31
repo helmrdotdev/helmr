@@ -37,6 +37,7 @@ var (
 	ErrDeviceCodeExpired        = errors.New("device code has expired")
 	ErrAPIKeyNotFound           = errors.New("api key not found")
 	ErrAPIKeyManagementRequired = errors.New("api key management permission is required")
+	ErrLastSignInMethod         = errors.New("add another sign-in method before removing this one")
 )
 
 // InputError reports a caller-supplied value that the identity domain
@@ -53,49 +54,30 @@ func invalidInput(format string, args ...any) error {
 	return InputError{message: fmt.Sprintf(format, args...)}
 }
 
+// A device code stays valid for ten minutes and is polled every five seconds.
 const (
-	defaultDeviceCodeTTL      = 10 * time.Minute
-	defaultDevicePollInterval = 5 * time.Second
+	deviceCodeTTL      = 10 * time.Minute
+	devicePollInterval = 5 * time.Second
 )
 
-// Lifetimes are how long issued credentials stay valid. A non-positive value
-// takes the default.
-type Lifetimes struct {
-	DeviceCode         time.Duration
-	DevicePollInterval time.Duration
-}
-
-// Config holds the keys that hash login credentials and device protocol lifetimes.
+// Config holds the keys that hash login credentials.
 type Config struct {
 	auditPolicy   auditpolicy.Policy
 	sessionKey    []byte
 	emailCodeKey  []byte
 	deviceCodeKey []byte
 	invitationKey []byte
-	lifetimes     Lifetimes
 }
 
 // NewConfig derives the identity configuration from the authentication keys.
-func NewConfig(keys auth.Keys, lifetimes Lifetimes, policy auditpolicy.Policy) Config {
-	if lifetimes.DeviceCode <= 0 {
-		lifetimes.DeviceCode = defaultDeviceCodeTTL
-	}
-	if lifetimes.DevicePollInterval <= 0 {
-		lifetimes.DevicePollInterval = defaultDevicePollInterval
-	}
+func NewConfig(keys auth.Keys, policy auditpolicy.Policy) Config {
 	return Config{
 		auditPolicy:   policy,
 		sessionKey:    keys.Session,
 		emailCodeKey:  keys.EmailCode,
 		deviceCodeKey: keys.DeviceCode,
 		invitationKey: keys.Invitation,
-		lifetimes:     lifetimes,
 	}
-}
-
-// Lifetimes returns the credential lifetimes with defaults applied.
-func (c Config) Lifetimes() Lifetimes {
-	return c.lifetimes
 }
 
 func normalizeEmail(email string) string {

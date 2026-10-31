@@ -339,7 +339,7 @@ func identityError(err error) error {
 		errors.Is(err, identity.ErrInvalidDeviceCode):
 		return badRequest(err)
 	case errors.Is(err, identity.ErrRecentProofRequired):
-		return forbidden(codedError{code: "recent_authentication_required", message: "Confirm this account with a retained sign-in method, then retry."})
+		return forbidden(codedError{code: "recent_authentication_required", message: "Sign in again to confirm it's you, then retry."})
 	case errors.Is(err, identity.ErrIdentityConflict), errors.Is(err, identity.ErrEnrollmentConflict):
 		return conflict(codedError{code: "identity_conflict", message: err.Error()})
 	case errors.Is(err, identity.ErrAccountProofRequired):
@@ -362,6 +362,8 @@ func identityError(err error) error {
 		return notFound(err)
 	case errors.Is(err, identity.ErrDeviceApproverChanged):
 		return conflict(codedError{code: "device_identity_changed", message: "Your signed-in account or organization changed. Review the current account before approving."})
+	case errors.Is(err, identity.ErrLastSignInMethod):
+		return conflict(codedError{code: "last_sign_in_method", message: "Add another sign-in method before removing this one."})
 	default:
 		return err
 	}
@@ -378,7 +380,9 @@ func (s *Server) writeIdentityError(w http.ResponseWriter, r *http.Request, err 
 }
 
 func (s *Server) githubLinkStart(w http.ResponseWriter, r *http.Request) {
-	if err := identity.RequireRecentAccount(r.Context(), s.tx, principalFromContext(r.Context())); err != nil {
+	// The account route just admitted this live browser session, so its sign-in
+	// time is current; linking completes only after recent proof is rechecked.
+	if err := auth.RequireRecentProof(principalFromContext(r.Context())); err != nil {
 		s.writeIdentityError(w, r, err)
 		return
 	}

@@ -101,10 +101,14 @@ func AcceptInvitation(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy,
 
 // ChangeMemberAccess retires independent member channels after the org owner
 // records the cutoff; ordinary account proof and other memberships survive.
+// Resuming only lifts the suspension: suspending already retired the channels.
 func ChangeMemberAccess(ctx context.Context, database db.TxBeginner, manager org.ManagingMember, id uuid.UUID, suspended *bool) error {
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		if err := org.ChangeMemberAccess(ctx, tx, manager, id, suspended); err != nil {
 			return err
+		}
+		if suspended != nil && !*suspended {
+			return nil
 		}
 		if err := slack.RetireMemberAccess(ctx, tx, manager.OrgID, id); err != nil {
 			return err
@@ -112,7 +116,7 @@ func ChangeMemberAccess(ctx context.Context, database db.TxBeginner, manager org
 		if _, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE org_id=$1 AND member_id=$2 AND revoked_at IS NULL`, manager.OrgID, id); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE device_codes SET status='denied',consumed_at=NULL WHERE org_id=$1 AND decided_by_member_id=$2 AND status='approved'`, manager.OrgID, id)
+		_, err := tx.Exec(ctx, `UPDATE device_codes SET status='denied' WHERE org_id=$1 AND decided_by_member_id=$2 AND status='approved'`, manager.OrgID, id)
 		return err
 	})
 }

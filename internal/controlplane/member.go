@@ -117,13 +117,11 @@ func decodeInvitationListCursor(raw string) (invitationListCursor, error) {
 }
 
 // createInvitations invites the requested addresses by email, which requires
-// configured email delivery. The invitations and their audit facts are created
-// in one transaction and their emails are sent as one batch before it
-// commits: a failed send rolls every invitation back and fails those
-// addresses. Two rare cases leave emails whose links do not resolve: the
-// commit failing after the emails were sent, and an SMTP server refusing a
-// recipient mid-batch after accepting the earlier messages (the refused
-// address is reported as such). Both report every address of the batch failed.
+// configured email delivery. The invitations are created in one transaction and
+// their emails are sent as one batch before it commits. Each address settles on
+// its own: one whose email was not sent fails and leaves no invitation, while
+// the others are invited. A commit failing after the emails were sent leaves
+// links that do not resolve and reports every address of the batch failed.
 func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 	if err := s.userAuthConfigured(); err != nil {
 		s.writeOperationError(w, r, unavailable(err))
@@ -157,7 +155,7 @@ func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 	created, err := org.CreateInvitations(ctx, s.tx, s.authKeys.Invitation, manager, org.InvitationInput{
 		Emails:        input.Emails,
 		ExpiresInDays: input.ExpiresInDays,
-	}, func(ctx context.Context, invitations []org.NewInvitation) error {
+	}, func(ctx context.Context, invitations []org.NewInvitation) []error {
 		messages := make([]email.Message, len(invitations))
 		for i, created := range invitations {
 			messages[i] = invitationEmailMessage(inviter.DisplayName, inviter.OrgName, created.Invitation, s.inviteURL(created.RawToken))
@@ -176,8 +174,8 @@ func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		results[i].Status = api.InvitationResultFailed
-		results[i].Error = invitationResultError(result.Email, result.Err)
-		if code := results[i].Error.Code; failure == nil && (code == "email_failed" || code == "email_rejected" || code == "internal_error") {
+		results[i].Error = invitationResultError(result.Err)
+		if code := results[i].Error.Code; failure == nil && (code == "email_failed" || code == "internal_error") {
 			failure = result.Err
 		}
 	}
@@ -191,11 +189,8 @@ func (s *Server) createInvitations(w http.ResponseWriter, r *http.Request) {
 // invitations of one request.
 const invitationRequestTimeout = 30 * time.Second
 
-// invitationResultError is the public error of one failed address. When an
-// SMTP server refused one recipient, that address says so; the others of the
-// batch share the delivery failure.
-func invitationResultError(address string, err error) *api.HTTPError {
-	var refused email.RecipientError
+// invitationResultError is the public error of one failed address.
+func invitationResultError(err error) *api.HTTPError {
 	var input org.InputError
 	switch {
 	case errors.As(err, &input):
@@ -206,10 +201,8 @@ func invitationResultError(address string, err error) *api.HTTPError {
 		return &api.HTTPError{Code: "invitation_pending", Message: err.Error()}
 	case errors.Is(err, org.ErrOwnerRoleRequired):
 		return &api.HTTPError{Code: "owner_role_required", Message: err.Error()}
-	case errors.As(err, &refused) && refused.Address == address:
-		return &api.HTTPError{Code: "email_rejected", Message: "The email server refused this address"}
 	case errors.Is(err, org.ErrInvitationNotDelivered):
-		return &api.HTTPError{Code: "email_failed", Message: "Invitation emails could not be sent"}
+		return &api.HTTPError{Code: "email_failed", Message: "The invitation email could not be sent"}
 	default:
 		return &api.HTTPError{Code: "internal_error", Message: "Invitation could not be created"}
 	}

@@ -583,6 +583,10 @@ func TestDirectDeliveryRevocationDuringConversationCheck(t *testing.T) {
 					case "link":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_user_links SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
 					case "account":
+						// Account retirement revokes the account's links and moves its epoch.
+						if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error { return RetireAccountAccess(t.Context(), tx, f.User) }); err != nil {
+							t.Fatal(err)
+						}
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.User)
 					case "membership":
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET suspended_at=clock_timestamp() WHERE user_id=$1`, f.User)

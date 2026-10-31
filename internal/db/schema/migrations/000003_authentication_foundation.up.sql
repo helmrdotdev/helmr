@@ -81,7 +81,7 @@ ALTER TABLE login_sessions ADD CONSTRAINT login_sessions_shape CHECK (
 CREATE TABLE email_challenges (
  id uuid PRIMARY KEY,
  email text NOT NULL CHECK (email=lower(btrim(email)) AND email<>''),
- purpose text NOT NULL CHECK (purpose IN ('login','invite','email_change')),
+ purpose text NOT NULL CHECK (purpose IN ('login','email_change')),
  code_mac bytea NOT NULL,
  generation bigint NOT NULL DEFAULT 0 CHECK (generation>=0),
  failed_attempts integer NOT NULL DEFAULT 0 CHECK (failed_attempts>=0),
@@ -150,16 +150,10 @@ CREATE TABLE webauthn_challenges (
 );
 ALTER TABLE device_codes DROP CONSTRAINT device_codes_org_id_decided_by_member_id_fkey;
 ALTER TABLE device_codes ADD COLUMN user_id uuid;
-ALTER TABLE device_codes ADD COLUMN identity_id uuid;
-ALTER TABLE device_codes ADD COLUMN passkey_id uuid;
-ALTER TABLE device_codes ADD COLUMN authenticated_at timestamptz;
 ALTER TABLE device_codes ADD COLUMN browser_session_id uuid REFERENCES login_sessions(id);
-ALTER TABLE device_codes ADD COLUMN replaces_session_id uuid REFERENCES login_sessions(id);
 ALTER TABLE device_codes ADD FOREIGN KEY (org_id,decided_by_member_id,user_id) REFERENCES org_members(org_id,id,user_id);
-ALTER TABLE device_codes ADD FOREIGN KEY (identity_id,user_id) REFERENCES auth_identities(id,user_id);
-ALTER TABLE device_codes ADD FOREIGN KEY (passkey_id,user_id) REFERENCES passkey_credentials(id,user_id);
 ALTER TABLE device_codes ADD CHECK (status NOT IN ('approved','consumed') OR
- (user_id IS NOT NULL AND decided_by_member_id IS NOT NULL AND authenticated_at IS NOT NULL AND browser_session_id IS NOT NULL AND num_nonnulls(identity_id,passkey_id)=1));
+ (user_id IS NOT NULL AND decided_by_member_id IS NOT NULL AND browser_session_id IS NOT NULL));
 
 -- Existing associations must complete fresh, scoped consent.
 DELETE FROM slack_user_links;
@@ -169,28 +163,16 @@ ALTER TABLE slack_user_links ADD COLUMN id uuid PRIMARY KEY;
 ALTER TABLE slack_user_links ADD COLUMN installation_id uuid NOT NULL;
 ALTER TABLE slack_user_links ADD COLUMN org_id uuid NOT NULL;
 ALTER TABLE slack_user_links ADD COLUMN member_id uuid NOT NULL;
-ALTER TABLE slack_user_links ADD COLUMN access_epoch bigint NOT NULL CHECK (access_epoch>=0);
-ALTER TABLE slack_user_links ADD COLUMN identity_id uuid;
-ALTER TABLE slack_user_links ADD COLUMN passkey_id uuid;
-ALTER TABLE slack_user_links ADD COLUMN authenticated_at timestamptz NOT NULL;
 ALTER TABLE slack_user_links ADD COLUMN revoked_at timestamptz;
 ALTER TABLE slack_user_links ADD FOREIGN KEY (installation_id,org_id,team_id) REFERENCES slack_installations(id,org_id,team_id);
 ALTER TABLE slack_user_links ADD FOREIGN KEY (org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id);
-ALTER TABLE slack_user_links ADD FOREIGN KEY (identity_id,user_id) REFERENCES auth_identities(id,user_id);
-ALTER TABLE slack_user_links ADD FOREIGN KEY (passkey_id,user_id) REFERENCES passkey_credentials(id,user_id);
-ALTER TABLE slack_user_links ADD CHECK (num_nonnulls(identity_id,passkey_id)=1);
 CREATE UNIQUE INDEX slack_user_links_live ON slack_user_links(installation_id,team_id,slack_user_id) WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX slack_user_links_live_account ON slack_user_links(installation_id,user_id) WHERE revoked_at IS NULL;
 CREATE TABLE slack_link_requests (
  id uuid PRIMARY KEY,
  user_id uuid NOT NULL REFERENCES users(id),
  member_id uuid NOT NULL,
- identity_id uuid,
- passkey_id uuid,
- CHECK(num_nonnulls(identity_id,passkey_id)=1),
  FOREIGN KEY(org_id,member_id,user_id) REFERENCES org_members(org_id,id,user_id),
- FOREIGN KEY(identity_id,user_id) REFERENCES auth_identities(id,user_id),
- FOREIGN KEY(passkey_id,user_id) REFERENCES passkey_credentials(id,user_id),
  installation_id uuid NOT NULL,
  org_id uuid NOT NULL,
  team_id text NOT NULL,
@@ -216,15 +198,15 @@ ALTER TABLE audit_events DROP CONSTRAINT audit_actor_count,
 ALTER TABLE audit_events ADD CONSTRAINT audit_actor_count CHECK (num_nonnulls(actor_operator_id,actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)<=1);
 ALTER TABLE audit_events ADD CONSTRAINT audit_actor_authentication CHECK ((num_nonnulls(actor_operator_id,actor_user_id,actor_api_key_id,actor_session_id,actor_worker_host_id,actor_component)=0) = (authentication_result IN ('failed','absent')));
 ALTER TABLE audit_events ADD CONSTRAINT audit_actor_identity_presence CHECK ((actor_user_id IS NOT NULL OR actor_operator_id IS NOT NULL) = (actor_identity IS NOT NULL));
-ALTER TABLE audit_events ADD CONSTRAINT audit_user_credential_kind CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','magic_link','device_code','email_code','passkey','slack_link'));
+ALTER TABLE audit_events ADD CONSTRAINT audit_user_credential_kind CHECK (actor_user_id IS NULL OR credential_kind IN ('login_session','provider_assertion','device_code','email_code','passkey','slack_link'));
 ALTER TABLE audit_events ADD CONSTRAINT audit_operator_identity CHECK (actor_operator_id IS NULL OR (actor_identity ?& ARRAY['source','display_name'] AND jsonb_typeof(actor_identity->'source')='string' AND actor_identity->>'source'='operator' AND jsonb_typeof(actor_identity->'display_name')='string' AND octet_length(actor_identity->>'display_name')>0 AND credential_kind IN ('login_session','passkey') AND credential_id IS NOT NULL));
 ALTER TABLE audit_events DROP CONSTRAINT audit_events_credential_kind_check;
-ALTER TABLE audit_events ADD CONSTRAINT audit_events_credential_kind_check CHECK (credential_kind IN ('login_session','api_key','worker_host','capacity_token','provider_assertion','magic_link','device_code','email_code','passkey','slack_link'));
+ALTER TABLE audit_events ADD CONSTRAINT audit_events_credential_kind_check CHECK (credential_kind IN ('login_session','api_key','worker_host','capacity_token','provider_assertion','device_code','email_code','passkey','slack_link'));
 
 -- Security mail is durable in the same transaction as the account mutation.
 CREATE TABLE account_security_notifications (
  id uuid PRIMARY KEY,
- event text NOT NULL CHECK (event IN ('identity.email_changed','identity.credential_added','identity.credential_removed','identity.access_revoked','identity.account_repaired')),
+ event text NOT NULL CHECK (event IN ('identity.email_changed','identity.credential_added','identity.credential_removed','identity.access_revoked','identity.other_access_revoked','identity.account_repaired')),
  recipient text NOT NULL,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),

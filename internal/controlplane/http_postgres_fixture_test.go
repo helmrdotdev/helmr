@@ -206,7 +206,7 @@ func (f httpPostgresFixture) authenticateRequest(request *http.Request, token st
 // cliSession exercises the consent/exchange route for bearer-only clients.
 func (f httpPostgresFixture) cliSession(t *testing.T, user, organization uuid.UUID) string {
 	t.Helper()
-	cfg := identity.NewConfig(f.keys, identity.Lifetimes{}, auditpolicy.Policy{RetentionSeconds: 3600})
+	cfg := identity.NewConfig(f.keys, auditpolicy.Policy{RetentionSeconds: 3600})
 	raw := f.session(t, user, organization)
 	p, err := identity.AuthenticateLoginSession(t.Context(), f.pool, cfg, raw, organization)
 	if err != nil {
@@ -216,7 +216,7 @@ func (f httpPostgresFixture) cliSession(t *testing.T, user, organization uuid.UU
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = identity.ApproveDeviceCode(t.Context(), f.pool, cfg, p, identity.DeviceConsent{OrgID: organization.String()}, device.UserCode); err != nil {
+	if _, err = identity.ApproveDeviceCode(t.Context(), f.pool, cfg, p, device.UserCode); err != nil {
 		t.Fatal(err)
 	}
 	result, err := identity.ExchangeDeviceCode(t.Context(), f.pool, cfg, device.DeviceCode)
