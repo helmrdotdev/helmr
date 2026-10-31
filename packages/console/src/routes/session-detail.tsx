@@ -19,7 +19,7 @@ import {
   askConsolePath,
   getSession,
   watchSession,
-  recoveryGapNotice,
+  holdNotice,
   listAsks,
   sessionConsolePath,
   type Session,
@@ -130,7 +130,7 @@ function SessionDetailContent() {
           {(current) => (
             <div class={ui.sectionStack}>
               <SessionProperties session={current()} />
-              <NeedsYou session={current()} log={log} address={address()} canResume={can("sessions.resume")} onResume={controls.resume} />
+              <NeedsYou session={current()} log={log} address={address()} onResume={controls.resume} />
               <Show when={receipt()}>
                 {(text) => <Notice tone="info" onDismiss={() => setReceipt(undefined)}>{text()}</Notice>}
               </Show>
@@ -202,7 +202,7 @@ function Property(props: { label: string; children: JSX.Element }) {
 
 // What needs a person now: a running Turn waiting on a question, holds and a
 // stopped or failed process. Nothing renders when nothing waits.
-function NeedsYou(props: { session: Session; log: SessionLog; address: SessionAddress; canResume: boolean; onResume: (holdID: string) => void }) {
+function NeedsYou(props: { session: Session; log: SessionLog; address: SessionAddress; onResume: (sessionID: string, holdID: string) => void }) {
   // The active Turn comes from the timeline, so the notice does not depend on
   // which part of the log is loaded.
   const active = () => props.log.activeTurn();
@@ -238,15 +238,13 @@ function NeedsYou(props: { session: Session; log: SessionLog; address: SessionAd
         {hold => (
           <Notice tone="warning" role="status">
             <span>
-              <Show when={hold.kind === "recovery_gap" && hold.session_id === props.session.id} fallback={<>Held: {hold.reason || "paused"} ({hold.scope === "subtree" ? "this session and its children" : "this session"}).</>}>
-                {hold.recovery_gap ? recoveryGapNotice(hold.recovery_gap) : hold.reason}
+              {holdNotice(hold, props.session.id)}
+              <Show when={hold.session_id !== null && hold.session_id !== props.session.id ? hold.session_id : undefined}>
+                {held => <> Held on <IDText value={held()} mode="link" href={sessionConsolePath(held())} />.</>}
               </Show>
-              <Show when={hold.session_id !== "00000000-0000-0000-0000-000000000000" && hold.session_id !== props.session.id}> Inherited from <IDText value={hold.session_id} mode="link" href={sessionConsolePath(hold.session_id)} />.</Show>
-              <Show when={hold.kind === "storage_pressure"}>{" "}Queued work resumes when space is available. Stopped requests will not restart automatically.</Show>
-              <Show when={hold.kind === "recovery_gap" && hold.session_id === props.session.id && props.canResume}>
-                {" "}<button type="button" class={ui.secondaryButton} onClick={() => props.onResume(hold.id)}>Resume</button>
+              <Show when={hold.can_release && hold.id !== null && hold.session_id !== null}>
+                {" "}<button type="button" class={ui.secondaryButton} onClick={() => props.onResume(hold.session_id!, hold.id!)}>Resume</button>
               </Show>
-              <Show when={hold.session_id !== "00000000-0000-0000-0000-000000000000" && hold.kind !== "storage_pressure" && !(hold.kind === "recovery_gap" && hold.session_id === props.session.id && props.canResume)}>{" "}Resume held work from the CLI.</Show>
             </span>
           </Notice>
         )}
@@ -258,8 +256,8 @@ function NeedsYou(props: { session: Session; log: SessionLog; address: SessionAd
           </Notice>
         )}
       </Show>
-      <Show when={props.session.activity.process?.reconstruction_required}>
-        <Notice tone="danger" role="status">The session process failed and needs recovery before work continues.</Notice>
+      <Show when={props.session.activity.process?.reconstruction_required && !props.session.holds.some(hold => hold.kind === "process_failed")}>
+        <Notice tone="danger" role="status">The session process failed. The log shows what happened to queued work.</Notice>
       </Show>
     </>
   );

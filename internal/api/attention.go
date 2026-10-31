@@ -21,8 +21,8 @@ type AttentionItem struct {
 	TurnID    *string   `json:"turn_id,omitempty"`
 	// A Question's first text part, shortened to one line.
 	Prompt *string `json:"prompt,omitempty"`
-	// A hold's reason.
-	Reason *string `json:"reason,omitempty"`
+	// A hold's kind: interrupt, process_failed, recovery_gap or storage_pressure.
+	HoldKind *string `json:"hold_kind,omitempty"`
 	// A failed Turn's sequence in its Session and error code.
 	TurnSequence *int64  `json:"turn_sequence,omitempty"`
 	ErrorCode    *string `json:"error_code,omitempty"`

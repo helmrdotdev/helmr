@@ -130,12 +130,10 @@ func TestAuditDeadlineSettlementRollsBackAndDoesNotRecreate(t *testing.T) {
 	if err := fail(); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND actor_component='control_plane' AND action IN ('turn.interrupted','session.hold_created')`, f.session).Scan(&count); err != nil || count != 2 {
+	// A deadline interrupts its Turn without holding the Session.
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND actor_component='control_plane' AND action='turn.interrupted' AND (details->>'generation')::bigint=$2
+ AND NOT EXISTS(SELECT 1 FROM audit_events WHERE session_id=$1 AND action='session.hold_created')`, f.session, f.execution().ProcessEpoch).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("deadline facts: %d %v", count, err)
-	}
-	var holdValid bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'reason'='deadline_elapsed' AND (details->>'generation')::bigint=$2) FROM audit_events WHERE action='session.hold_created' AND session_id=$1`, f.session, f.execution().ProcessEpoch).Scan(&holdValid); err != nil || !holdValid {
-		t.Fatalf("deadline hold details: %v %v", holdValid, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM audit_events WHERE session_id=$1`, f.session)
 	if err := fail(); err != nil {
@@ -176,8 +174,9 @@ func TestAuditWorkerStopAttributionAndRollback(t *testing.T) {
 	}
 	var count int
 	var valid bool
+	// One unexpected stop is a counted failure below the hold threshold.
 	err = f.pool.QueryRow(t.Context(), `SELECT count(*),bool_and(actor_worker_host_id IS NOT NULL AND credential_id=$2 AND credential_version=$3) FROM audit_events WHERE session_id=$1 AND action IN ('turn.interrupted','session.hold_created')`, f.session, f.host().HostID, f.host().HostClaimVersion).Scan(&count, &valid)
-	if err != nil || count != 2 || !valid {
+	if err != nil || count != 1 || !valid {
 		t.Fatalf("worker facts: %d %v %v", count, valid, err)
 	}
 }
@@ -293,41 +292,6 @@ func TestAuditMCPAmbiguousAdmissionDoesNotRecordRefusal(t *testing.T) {
 	var admitted, refused int
 	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FILTER(WHERE action='mcp.admitted'),count(*) FILTER(WHERE action='mcp.refused') FROM audit_events`).Scan(&admitted, &refused); err != nil || admitted != 1 || refused != 0 {
 		t.Fatal("ambiguous admission misclassified", admitted, refused, err)
-	}
-}
-
-func TestAuditSessionHoldReadsWithholdOnCaptureFailure(t *testing.T) {
-	f := newAdmissionFixture(t)
-	policy := auditpolicy.Policy{RetentionSeconds: 3600}
-	receipt, err := session.Start(t.Context(), policy, f.pool, nil, f.caller(), f.startRequest("hold-disclosure"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','confidential hold text')`, f.env, uuid.NewV7(), receipt.SessionID)
-	view, err := session.GetSession(t.Context(), policy, f.pool, f.caller(), f.env, receipt.SessionID)
-	if err != nil || len(view.Holds) != 1 {
-		t.Fatalf("get: %+v %v", view, err)
-	}
-	page, err := session.ListSessions(t.Context(), policy, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
-	if err != nil || len(page.Sessions) == 0 {
-		t.Fatalf("list: %+v %v", page, err)
-	}
-	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE session_id=$1 AND action='session.content_read'`, receipt.SessionID).Scan(&count); err != nil || count != 2 {
-		t.Fatalf("capture: %d %v", count, err)
-	}
-	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_hold_read_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit unavailable'; END $$`)
-	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER reject_hold_read_audit BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION reject_hold_read_audit()`)
-	view, err = session.GetSession(t.Context(), policy, f.pool, f.caller(), f.env, receipt.SessionID)
-	if !errors.Is(err, audit.ErrCapture) || len(view.Holds) != 0 {
-		t.Fatalf("get escaped: %+v %v", view, err)
-	}
-	page, err = session.ListSessions(t.Context(), policy, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
-	if !errors.Is(err, audit.ErrCapture) || len(page.Sessions) != 0 {
-		t.Fatalf("list escaped: %+v %v", page, err)
-	}
-	if err := session.AuthorizeSessionRead(t.Context(), f.pool, f.caller(), f.env, receipt.SessionID); err != nil {
-		t.Fatalf("metadata subscription: %v", err)
 	}
 }
 

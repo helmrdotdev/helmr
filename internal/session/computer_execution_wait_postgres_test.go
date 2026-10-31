@@ -58,7 +58,7 @@ func TestComputerExecutionWaitAdmissionAndHolds(t *testing.T) {
 	if _, err := a.AllocateFreshLease(t.Context(), f.env, id, 1, f.worker); !errors.Is(err, dispatch.ErrNotReady) {
 		t.Fatalf("quota did not block admission: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) SELECT environment_id,$3,id,'subtree','operator hold' FROM sessions WHERE environment_id=$1 AND computer_id=$2`, f.env, id, uuid.NewV7())
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) SELECT environment_id,$3,id,'interrupt','user',$3 FROM sessions WHERE environment_id=$1 AND computer_id=$2`, f.env, id, uuid.NewV7())
 	assertExecutionWait(t, f, id, "")
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_holds SET released_at=clock_timestamp() WHERE environment_id=$1`, f.env)
 	assertExecutionWait(t, f, id, "environment_limit")
@@ -72,7 +72,7 @@ func TestComputerExecutionWaitAdmissionAndHolds(t *testing.T) {
 
 func TestComputerExecutionWaitIdleAndErrors(t *testing.T) {
 	f, _, id := freshComputerAllocationFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) SELECT environment_id,$3,id,'local','operator hold' FROM sessions WHERE environment_id=$1 AND computer_id=$2`, f.env, id, uuid.NewV7())
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) SELECT environment_id,$3,id,'process_failed','system' FROM sessions WHERE environment_id=$1 AND computer_id=$2`, f.env, id, uuid.NewV7())
 	assertExecutionWait(t, f, id, "")
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed' WHERE environment_id=$1 AND computer_id=$2`, f.env, id)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_holds SET released_at=clock_timestamp() WHERE environment_id=$1`, f.env)

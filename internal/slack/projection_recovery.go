@@ -12,26 +12,31 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func recoveryNotice(kind string, data []byte) (string, string, error) {
+// recoveryNotice renders one recovery event. A recovery gap is posted once per
+// event; a storage pressure episode updates one post per hold.
+func recoveryNotice(e projectionEvent) (string, string, error) {
 	var value struct {
-		HoldID     string     `json:"holdId"`
+		HoldID     *string    `json:"holdId"`
 		RestoredAt *time.Time `json:"restoredAt"`
 		Affected   []string   `json:"affectedTurnIds"`
 		State      string     `json:"state"`
 	}
-	if err := json.Unmarshal(data, &value); err != nil {
+	if err := json.Unmarshal(e.data, &value); err != nil {
 		return "", "", err
 	}
-	if value.HoldID == "" {
-		return "", "", errors.New("recovery notice has no hold identity")
-	}
-	if kind == "session.recovery_gap" {
+	if e.kind == "session.recovery_gap" {
 		point := "the initial work environment"
 		if value.RestoredAt != nil {
 			point = value.RestoredAt.UTC().Format("2006-01-02 15:04:05 UTC")
 		}
-		text := fmt.Sprintf("This Computer was restored to %s. File changes and native conversation history for %d completed requests in this conversation may be missing. Replies remain available. Mention me to continue, or choose Resume in Console. Completed requests will not run again.", point, len(value.Affected))
-		return "recovery:" + value.HoldID, text, nil
+		text := fmt.Sprintf("This Computer was restored to %s. File changes made after that point may be missing. No completed requests in this conversation were affected, and new requests can run.", point)
+		if value.HoldID != nil {
+			text = fmt.Sprintf("This Computer was restored to %s. File changes and native conversation history for %d completed requests in this conversation may be missing. Replies remain available. Mention me to continue, or choose Resume in Console. Completed requests will not run again.", point, len(value.Affected))
+		}
+		return fmt.Sprintf("recovery:%d", e.sequence), text, nil
+	}
+	if value.HoldID == nil || *value.HoldID == "" {
+		return "", "", errors.New("storage pressure notice has no hold identity")
 	}
 	text := ""
 	switch value.State {
@@ -44,13 +49,12 @@ func recoveryNotice(kind string, data []byte) (string, string, error) {
 	default:
 		return "", "", errors.New("invalid storage pressure notice state")
 	}
-	return "pressure:" + value.HoldID, text, nil
+	return "pressure:" + *value.HoldID, text, nil
 }
 
-// One durable post per hold is updated through the pressure episode. Frozen
-// in-flight mutations retain their original revision and reconcile normally.
+// Frozen in-flight mutations retain their original revision and reconcile normally.
 func projectRecoveryNotice(ctx context.Context, tx pgx.Tx, o projectionOwner, e projectionEvent) error {
-	key, text, err := recoveryNotice(e.kind, e.data)
+	key, text, err := recoveryNotice(e)
 	if err != nil {
 		return err
 	}

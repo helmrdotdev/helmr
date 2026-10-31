@@ -140,7 +140,8 @@ func TestPressureStopDeadlineSurvivesRecurrenceAndExpiresUnderPressure(t *testin
 		t.Fatalf("failed=%v Computer live=%v err=%v", failed, computerLive, err)
 	}
 	var deadlineCaptured bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 FROM audit_events WHERE action='session.hold_created' AND session_id=$1 AND details->>'reason'='stop_deadline_elapsed'`, f.session).Scan(&deadlineCaptured); err != nil || !deadlineCaptured {
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT failure_reason='stop_deadline_elapsed' FROM session_processes WHERE session_id=$1)
+ AND (SELECT count(*)=1 FROM session_events WHERE session_id=$1 AND kind='session.process_failed' AND convert_from(data,'UTF8')::jsonb @> '{"reason":"stop_deadline_elapsed","holdId":null}')`, f.session).Scan(&deadlineCaptured); err != nil || !deadlineCaptured {
 		t.Fatalf("stop deadline cause: %v %v", deadlineCaptured, err)
 	}
 

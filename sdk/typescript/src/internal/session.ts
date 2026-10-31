@@ -34,7 +34,7 @@ export function parseSession(value: unknown): Session {
     template: parseAuthoredIdentifier(v["template"], "Session.template"),
     deploymentId: resourceID(v["deployment_id"], "Session.deployment_id"),
     computerId: v["computer_id"] === null ? null : resourceID(v["computer_id"], "Session.computer_id"),
-    rootSessionId: resourceID(v["root_session_id"], "Session.root_session_id"),
+    rootSessionId: nullableID(v["root_session_id"], "Session.root_session_id"),
     ...(v["slack_channel_id"] === undefined ? {} : { slackChannelId: slackStartOption({ channelId: v["slack_channel_id"] }).channel_id }),
     parentSessionId: nullableID(
       v["parent_session_id"],
@@ -53,23 +53,21 @@ export function parseSession(value: unknown): Session {
     holds: Object.freeze(
       v["holds"].map((value) => {
         const h = objectValue(value, "Session hold")
-        if (h["scope"] !== "local" && h["scope"] !== "subtree")
-          throw new Error("Session hold.scope is invalid")
-        if (h["kind"] !== "control" && h["kind"] !== "recovery_gap" && h["kind"] !== "storage_pressure") throw new Error("Session hold.kind is invalid")
-        if ((h["kind"]==="recovery_gap") !== (h["recovery_gap"]!==undefined)) throw new Error("Session recovery hold metadata is inconsistent")
-        if (typeof h["reason"] !== "string")
-          throw new Error("Session hold.reason is invalid")
+        if (h["kind"] !== "interrupt" && h["kind"] !== "process_failed" && h["kind"] !== "recovery_gap" && h["kind"] !== "storage_pressure") throw new Error("Session hold.kind is invalid")
+        // A redacted ancestor hold has no identity and no recovery details.
+        if ((h["id"] === null) !== (h["session_id"] === null)) throw new Error("Session hold identity is inconsistent")
+        if (h["id"] !== null && (h["kind"]==="recovery_gap") !== (h["recovery_gap"]!==undefined)) throw new Error("Session recovery hold metadata is inconsistent")
+        if (h["id"] === null && (h["recovery_gap"] !== undefined || h["can_release"] !== false)) throw new Error("Session redacted hold is inconsistent")
         return Object.freeze({
-          id: resourceID(h["id"], "Session hold.id"),
-          sessionId: resourceID(h["session_id"], "Session hold.session_id"),
-          scope: h["scope"],
+          id: nullableID(h["id"], "Session hold.id"),
+          sessionId: nullableID(h["session_id"], "Session hold.session_id"),
           kind: h["kind"],
           ...(h["recovery_gap"]===undefined?{}:{recoveryGap:parseSessionEventData("session.recovery_gap",h["recovery_gap"]) as import("../contract").RecoveryGap}),
-          reason: h["reason"],
           createdAt: timestampString(
             h["created_at"],
             "Session hold.created_at",
           ),
+          canRelease: booleanValue(h["can_release"], "Session hold.can_release"),
         })
       }),
     ),
@@ -214,7 +212,6 @@ const eventKinds: readonly SessionEventKind[] = [
   "session.process_failed",
   "session.recovery_gap",
   "session.storage_pressure",
-  "session.deadline",
   "session.interrupt",
   "session.resume",
   "session.close",

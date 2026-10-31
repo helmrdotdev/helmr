@@ -114,7 +114,7 @@ func TestRuntimeMCPScopeCeilingAndTrustedAssociation(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET runtime_mcp_policy=$3 WHERE environment_id=$1 AND agent_id=$2`, f.env, f.agent, maximum.Bytes())
 	caller := issueScope(t, f, "")
 	peer := f.requestedPeer(t)
-	if _, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{}, f.pool, caller, peer.session); err != nil {
+	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, peer.session); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := session.RuntimeListComputers(t.Context(), f.pool, caller, computer.ListPage{}); !errors.Is(err, session.ErrRuntimeMCPDenied) {
@@ -131,12 +131,12 @@ func TestRuntimeMCPScopeCeilingAndTrustedAssociation(t *testing.T) {
 	bad := caller
 	bad.MCPScopeID = foreign.MCPScopeID
 	for _, candidate := range []session.Caller{bad, func() session.Caller { c := caller; c.MCPScopeID = uuid.Nil(); return c }(), func() session.Caller { c := caller; c.Execution.ProcessEpoch++; return c }(), func() session.Caller { c := caller; c.Execution.AuthorityGeneration++; return c }()} {
-		if _, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{}, f.pool, candidate, peer.session); err == nil {
+		if _, err := session.RuntimeGetSession(t.Context(), f.pool, candidate, peer.session); err == nil {
 			t.Fatal("invalid association or current authority accepted")
 		}
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_mcp_scopes SET policy_digest=decode(repeat('00',32),'hex') WHERE environment_id=$1 AND id=$2`, f.env, caller.MCPScopeID)
-	if _, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{}, f.pool, caller, peer.session); !errors.Is(err, session.ErrRuntimeMCPDenied) {
+	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, peer.session); !errors.Is(err, session.ErrRuntimeMCPDenied) {
 		t.Fatalf("corrupt digest: %v", err)
 	}
 }
@@ -158,7 +158,7 @@ func TestRuntimeMCPScopeReceiptPlacementAndControls(t *testing.T) {
 	if err != nil || retry.SessionID != created.SessionID || retry.TurnID != created.TurnID {
 		t.Fatalf("new placement retry %+v %v", retry, err)
 	}
-	if _, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{}, f.pool, newOnly, created.SessionID); !errors.Is(err, session.ErrRuntimeMCPDenied) {
+	if _, err := session.RuntimeGetSession(t.Context(), f.pool, newOnly, created.SessionID); !errors.Is(err, session.ErrRuntimeMCPDenied) {
 		t.Fatalf("creation gave observation implicitly: %v", err)
 	}
 	empty := issueScope(t, f, `{"allow":[]}`)
@@ -197,7 +197,7 @@ func TestRuntimeMCPScopeHeldDescriptorContinuity(t *testing.T) {
 	if err != nil || scope.ID != caller.MCPScopeID {
 		t.Fatalf("held descriptor lost continuity: %v", err)
 	}
-	if _, err := session.RuntimeGetSession(t.Context(), auditpolicy.Policy{}, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(t.Context(), f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("descriptor issuance released held effects: %v", err)
 	}
 }

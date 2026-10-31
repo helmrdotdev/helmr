@@ -69,7 +69,7 @@ func assertAgentCLIHTTP(t *testing.T, serverURL, key, owner, project, environmen
 			t.Fatalf("interrupt=%+v err=%v", hold, err)
 		}
 		session, err = cp.RetrieveSession(t.Context(), session.ID, scope)
-		if err != nil || len(session.Holds) != 1 || session.Holds[0].ID != hold.HoldID || session.Holds[0].Scope != "subtree" {
+		if err != nil || len(session.Holds) != 1 || session.Holds[0].ID == nil || *session.Holds[0].ID != hold.HoldID || session.Holds[0].Kind != "interrupt" || !session.Holds[0].CanRelease {
 			t.Fatalf("holds=%+v err=%v", session, err)
 		}
 		if _, err := cp.ResumeSession(t.Context(), session.ID, api.ResumeSessionRequest{HoldID: hold.HoldID}, scope); err != nil {

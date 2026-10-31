@@ -7,6 +7,7 @@ import (
 	"math"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/audit"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -202,7 +203,10 @@ func RefuseRevokedSessionStart(ctx context.Context, auditPolicy auditpolicy.Poli
 			return err
 		}
 		// This is stop intent, never evidence that the physical process is absent.
-		if _, err = tx.Exec(ctx, `UPDATE session_processes SET failure_recorded_at=clock_timestamp(),status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch); err != nil {
+		if err = recordSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, failureSecretUnavailable); err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE session_processes SET status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch); err != nil {
 			return err
 		}
 		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)

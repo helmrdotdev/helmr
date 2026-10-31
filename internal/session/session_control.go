@@ -35,7 +35,6 @@ type SessionControlRequest struct {
 	IdempotencyKey string
 	ExpectedScope  string
 	HoldID         uuid.UUID
-	Reason         string
 	// Observed binds delayed control delivery to the execution generation it saw.
 	Observed *ControlObservation
 	// InterruptQueued discards instructions admitted before this interrupt.
@@ -59,21 +58,20 @@ type SessionControlReceipt struct {
 func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req SessionControlRequest) (SessionControlReceipt, error) {
 	var result SessionControlReceipt
 	if (req.ExpectedScope != "" && req.Kind != "close") || req.IdempotencyKey == "" || len(req.IdempotencyKey) > 512 || !utf8.ValidString(req.IdempotencyKey) || strings.ContainsRune(req.IdempotencyKey, 0) ||
-		len(req.Reason) > 4096 || !utf8.ValidString(req.Reason) || strings.ContainsRune(req.Reason, 0) || caller.ID == uuid.Nil() ||
+		caller.ID == uuid.Nil() ||
 		(req.Kind != "interrupt" && req.Kind != "turn_interrupt" && req.Kind != "resume" && req.Kind != "close" && req.Kind != "cancel") ||
 		(req.Kind == "turn_interrupt") != (req.TurnID != uuid.Nil()) ||
 		(req.Kind == "resume") != (req.HoldID != uuid.Nil()) ||
-		(req.Kind != "interrupt" && (req.Reason != "" || req.InterruptQueued || req.Observed != nil)) ||
+		(req.Kind != "interrupt" && (req.InterruptQueued || req.Observed != nil)) ||
 		(req.Observed != nil && (req.Observed.AuthorityGeneration < 1 || req.Observed.NextTurnSequence < 1)) {
 		return result, ErrInvalidInput
 	}
 	payload, _ := json.Marshal(struct {
 		HoldID          uuid.UUID
-		Reason          string
 		Observed        *ControlObservation
 		InterruptQueued bool
 		ExpectedScope   string `json:",omitempty"`
-	}{req.HoldID, req.Reason, req.Observed, req.InterruptQueued, req.ExpectedScope})
+	}{req.HoldID, req.Observed, req.InterruptQueued, req.ExpectedScope})
 	digest, err := digestJSON(payload)
 	if err != nil {
 		return result, err
@@ -127,14 +125,14 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 		} else if err = authorizeExternalControl(ctx, tx, caller, req.EnvironmentID, req.SessionID, req.Kind); err != nil {
 			return err
 		}
-		for _, id := range ids {
-			authorize := authorizeTarget
-			if req.Kind == "resume" && id != req.SessionID && (locked[id].lifecycle == "closed" || locked[id].lifecycle == "cancelled") {
-				// Settled descendants cannot resume execution. Retain authority
-				// checks without making their deleted Agent block the live tree.
-				authorize = authorizeTargetAuthority
-			}
-			if err := authorize(ctx, tx, caller, req.EnvironmentID, id, controlPermission(req.Kind)); err != nil {
+		// Releasing a hold is authorized on the held Session alone; descendants
+		// stopped by an interrupt need no separate grant to continue.
+		targets := ids
+		if req.Kind == "resume" {
+			targets = []uuid.UUID{req.SessionID}
+		}
+		for _, id := range targets {
+			if err := authorizeTarget(ctx, tx, caller, req.EnvironmentID, id, controlPermission(req.Kind)); err != nil {
 				return err
 			}
 		}
@@ -218,8 +216,8 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 				return ErrNotReady
 			}
 			result.HoldID = uuid.NewV7()
-			if _, err = tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id)
- VALUES($1,$2,$3,'subtree',$4,$5,$6)`, req.EnvironmentID, result.HoldID, req.SessionID, req.Reason, caller.Kind, caller.ID); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id)
+ VALUES($1,$2,$3,'interrupt',$4,$5)`, req.EnvironmentID, result.HoldID, req.SessionID, caller.Kind, caller.ID); err != nil {
 				return err
 			}
 			if err = settleControlledTurns(ctx, auditPolicy, tx, caller, req.EnvironmentID, ids, false, req.InterruptQueued); err != nil {
@@ -239,16 +237,15 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 					}
 				}
 			}
-			var issuer, scope, holdKind string
+			var issuer, holdKind string
 			var issuerID *uuid.UUID
-			if err = tx.QueryRow(ctx, `SELECT issuer_kind,issuer_id,scope,kind FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND id=$3`, req.EnvironmentID, req.SessionID, req.HoldID).Scan(&issuer, &issuerID, &scope, &holdKind); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT issuer_kind,issuer_id,kind FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND id=$3`, req.EnvironmentID, req.SessionID, req.HoldID).Scan(&issuer, &issuerID, &holdKind); err != nil {
 				return err
 			}
 			if holdKind == "storage_pressure" {
 				return ErrNotReady
 			}
-			if (issuer == "user" && caller.Kind != "user") ||
-				(caller.Kind == "session" && (issuer != "session" || issuerID == nil || *issuerID != caller.ID)) {
+			if !callerMayRelease(caller, holdKind, issuer, issuerID) {
 				return ErrDenied
 			}
 			tag, err := tx.Exec(ctx, `UPDATE session_holds SET released_at=clock_timestamp() WHERE environment_id=$1 AND id=$2 AND released_at IS NULL`, req.EnvironmentID, req.HoldID)
@@ -256,7 +253,7 @@ func ControlSession(ctx context.Context, auditPolicy auditpolicy.Policy, pool db
 				return err
 			}
 			if tag.RowsAffected() > 0 {
-				if scope == "local" {
+				if holdKind != "interrupt" {
 					ids = []uuid.UUID{req.SessionID}
 				}
 				if err = advanceControlAuthority(ctx, tx, req.EnvironmentID, ids); err != nil {
@@ -584,6 +581,13 @@ func (e TurnNotInterruptibleError) ErrorDetails() map[string]json.RawMessage {
 	status, _ := json.Marshal(e.Status)
 	reason, _ := json.Marshal(e.Reason())
 	return map[string]json.RawMessage{"status": status, "reason": reason}
+}
+
+// callerMayRelease is the caller rule for releasing a releasable hold. A
+// Session releases system holds in the subtree it spawned and only the
+// interrupts it placed itself. Users and API keys release any releasable hold.
+func callerMayRelease(caller Caller, holdKind, issuerKind string, issuerID *uuid.UUID) bool {
+	return caller.Kind != "session" || holdKind != "interrupt" || (issuerKind == "session" && issuerID != nil && *issuerID == caller.ID)
 }
 
 func controlPermission(kind string) auth.Permission {

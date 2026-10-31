@@ -30,11 +30,7 @@ func HasQueuedDemand(ctx context.Context, database db.DBTX, workerGroupID uuid.U
  JOIN worker_groups g ON g.region_id=project.default_region_id AND g.id=$1
  JOIN computers c ON (c.environment_id,c.id)=(s.environment_id,s.computer_id)
  WHERE s.status IN ('open','closing') AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
- AND NOT EXISTS(WITH RECURSIVE ancestors AS (
-   SELECT s.id,s.parent_session_id
-   UNION ALL SELECT parent.id,parent.parent_session_id FROM sessions parent JOIN ancestors a ON parent.id=a.parent_session_id WHERE parent.environment_id=s.environment_id)
-   SELECT 1 FROM session_holds hold JOIN ancestors a ON a.id=hold.session_id
-   WHERE hold.environment_id=s.environment_id AND hold.released_at IS NULL AND (hold.session_id=s.id OR hold.scope='subtree'))
+ AND `+db.NoSessionHoldsSQL+`
  AND ((EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
      AND (NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id
        AND (p.fenced_at IS NULL OR p.epoch=9223372036854775807))

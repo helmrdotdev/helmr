@@ -28,7 +28,7 @@ test("console demo shows its waiting work on the Overview and retained history i
   // Session with work in progress.
   const attention = page.getByRole("region", { name: /^Needs attention/ });
   const held = attention.getByRole("listitem").filter({ hasText: "A session is held" });
-  await expect(held).toContainText("demo-triage · Waiting for approval before changing the demo billing plan");
+  await expect(held).toContainText("demo-triage · interrupted");
   await expect(held.getByRole("link", { name: "Open", exact: true })).toHaveAttribute("href", "/sessions/00000000-0000-7000-8000-000000000702");
   const running = page.getByRole("region", { name: "Running now", exact: true });
   await expect(running.getByRole("link", { name: "000000000702", exact: true })).toHaveAttribute("href", "/sessions/00000000-0000-7000-8000-000000000702");

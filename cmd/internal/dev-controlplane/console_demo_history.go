@@ -73,9 +73,9 @@ type demoProcess struct {
 }
 
 type demoHold struct {
-	id, session, scope, reason string
-	issuerKind, issuerID       string
-	createdAt, releasedAt      time.Time
+	id, session, kind     string
+	issuerKind, issuerID  string
+	createdAt, releasedAt time.Time
 }
 
 type demoControl struct {
@@ -257,8 +257,8 @@ func (s *demoLog) advanceMessage(t *demoTurn, m *demoMessage, status string) {
 	s.event(t, "message."+status, map[string]any{"message_id": m.id, "status": status, "delivery": status})
 }
 
-func (s *demoLog) hold(id, scope, reason, issuerKind, issuerID string) *demoHold {
-	h := &demoHold{id: id, session: s.row.id, scope: scope, reason: reason, issuerKind: issuerKind, issuerID: issuerID, createdAt: s.at}
+func (s *demoLog) hold(id, kind, issuerKind, issuerID string) *demoHold {
+	h := &demoHold{id: id, session: s.row.id, kind: kind, issuerKind: issuerKind, issuerID: issuerID, createdAt: s.at}
 	s.h.holds = append(s.h.holds, h)
 	s.row.generation++
 	return h
@@ -352,8 +352,12 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'00000000-0000-
 			s.nextTurn, s.nextEvent, s.createdAt, demoNullableInt(s.closeAfterIdleMS), demoTime(s.eligibleAt), demoTime(s.expiredAt))
 	}
 	for _, p := range h.procs {
-		b.Queue(`INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,fenced_at,failure_recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-			environment, p.session, p.epoch, p.computer, p.leaseEpoch, p.status, demoTime(p.fencedAt), demoTime(p.failedAt))
+		var failure any
+		if !p.failedAt.IsZero() {
+			failure = "process_failed"
+		}
+		b.Queue(`INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status,fenced_at,failure_recorded_at,failure_reason) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			environment, p.session, p.epoch, p.computer, p.leaseEpoch, p.status, demoTime(p.fencedAt), demoTime(p.failedAt), failure)
 	}
 	for _, t := range h.turns {
 		status := t.status
@@ -411,8 +415,8 @@ VALUES($1,$2,$3,$4,$5,$6,'published',$7,$8,$8,$9,'Turn completion captured','Tur
 			environment, e.session, e.seq, demoNullable(e.turn), e.kind, e.data, demoTime(e.expiredAt), e.at)
 	}
 	for _, hold := range h.holds {
-		b.Queue(`INSERT INTO session_holds(environment_id,id,session_id,scope,reason,issuer_kind,issuer_id,created_at,released_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-			environment, hold.id, hold.session, hold.scope, hold.reason, hold.issuerKind, demoNullable(hold.issuerID), hold.createdAt, demoTime(hold.releasedAt))
+		b.Queue(`INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id,created_at,released_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+			environment, hold.id, hold.session, hold.kind, hold.issuerKind, demoNullable(hold.issuerID), hold.createdAt, demoTime(hold.releasedAt))
 	}
 	for _, c := range h.controls {
 		b.Queue(`INSERT INTO session_controls(environment_id,id,session_id,kind,caller_kind,caller_id,idempotency_key,request_digest,hold_id,turn_id,accepted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,

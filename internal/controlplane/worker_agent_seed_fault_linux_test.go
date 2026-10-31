@@ -338,17 +338,17 @@ func verifyNativeLateSeedFault(t *testing.T, parent context.Context, pool *pgxpo
 	}
 	var acknowledged []string
 	for _, hold := range view.Holds {
-		if hold.Kind != "recovery_gap" || hold.Scope != "local" || hold.RecoveryGap == nil || hold.RecoveryGap.ComputerID != computer || hold.RecoveryGap.LeaseEpoch != lease {
+		if hold.Kind != "recovery_gap" || hold.RecoveryGap == nil || hold.RecoveryGap.ComputerID != computer || hold.RecoveryGap.LeaseEpoch != lease {
 			t.Fatalf("unexpected hold after fenced seed loss: %+v", hold)
 		}
 		queued, err := c.RetrieveSessionTurn(ctx, next.SessionID, next.TurnID, client.EnvironmentScopeOptions{})
 		if err != nil || queued.Status != "queued" {
 			t.Fatalf("recovery gap did not hold the next Turn: %+v: %v", queued, err)
 		}
-		if _, err := c.ResumeSession(ctx, started.SessionID, api.ResumeSessionRequest{HoldID: hold.ID, IdempotencyKey: "ack-late-seed-gap-" + hold.ID}, client.EnvironmentScopeOptions{}); err != nil {
+		if _, err := c.ResumeSession(ctx, started.SessionID, api.ResumeSessionRequest{HoldID: *hold.ID, IdempotencyKey: "ack-late-seed-gap-" + *hold.ID}, client.EnvironmentScopeOptions{}); err != nil {
 			t.Fatal(err)
 		}
-		acknowledged = append(acknowledged, hold.ID)
+		acknowledged = append(acknowledged, *hold.ID)
 	}
 	second := turnResult(next)
 	var recovered struct {

@@ -147,7 +147,8 @@ export async function runClaudeStarter(client: HelmrClient, computerId: string, 
     assert.notEqual(afterCancel.ownerPid, afterRetained.ownerPid)
     Object.assign(observations.cancellation!, { admission })
 
-    // A lost native owner requires the ordinary Helmr hold/reconstruction path.
+    // A lost native owner is one process failure: the next input reconstructs
+    // the process without a hold.
     await control({ toolCase: "lost", actions: [tool("Bash", { command: command("lost"), description: "Fixture lifetime lock", run_in_background: true }), "hold"] })
     const lost = await session.enqueue(input("starter owner failure"), undefined, { signal })
     const lostApproval = await pendingAsk(lost)
@@ -155,17 +156,9 @@ export async function runClaudeStarter(client: HelmrClient, computerId: string, 
     await observed(value => value.held === 3 && value.toolRunning)
     await control({ crash: true }).catch(() => {})
     assert.equal((await lost.wait({ signal })).status, "interrupted")
-    let hold
-    for (;;) {
-      const current = await session.get({ signal })
-      hold = current.holds.find(value => ["session_continuation_lost", "turn_drain_failed"].includes(value.reason))
-      if (hold) break
-      await delay(100, undefined, { signal })
-    }
     const fresh = await session.enqueue(input("starter fresh reconstructed"), undefined, { signal })
-    assert.equal((await fresh.get({ signal })).status, "queued")
-    await session.resume({ holdId: hold.id, idempotencyKey: "starter-resume" }, { signal })
     const reconstructed = await completed(fresh)
+    assert.deepEqual((await session.get({ signal })).holds, [])
     assert.equal(reconstructed.setups, 2)
     assert.notEqual(reconstructed.nonce, first.nonce)
     assert.equal(reconstructed.nativeSessionId, first.nativeSessionId)
@@ -175,7 +168,7 @@ export async function runClaudeStarter(client: HelmrClient, computerId: string, 
     assert.ok(JSON.stringify(state.inputs[0]).includes("starter fresh reconstructed"))
     assert.equal(state.toolRunning, false)
     assert.equal(state.toolFinished, null)
-    observations.reconstruction = { lostTurnId: lost.id, freshTurnId: fresh.id, hold, reconstructed, state }
+    observations.reconstruction = { lostTurnId: lost.id, freshTurnId: fresh.id, reconstructed, state }
     return { sessionId: session.id, retained: true, steering: true, questions: true, joinedBackgroundStop: true, heldOwnerFailure: true, reconstruction: true, orphanReaping: true }
   } finally {
     try { await writeFile(`${evidence}/claude-starter.json`, JSON.stringify(observations, null, 2) + "\n", { mode: 0o600 }) }

@@ -213,12 +213,15 @@ describe("Session lifecycle client", () => {
         created_at: createdAt,
         updated_at: createdAt,
         active_turn_id: null,
-        holds: [{id:holdId,session_id:sessionId,scope:"local",kind:"control",reason:"recovery_required",created_at:createdAt}],
+        holds: [
+          {id:holdId,session_id:sessionId,kind:"process_failed",created_at:createdAt,can_release:true},
+          {id:null,session_id:null,kind:"interrupt",created_at:createdAt,can_release:false},
+        ],
       },
     ])
     expect(await client.sessions.get(sessionId)).toMatchObject({
       status: "closing",
-      holds: [{ id:holdId,scope:"local",kind:"control",reason:"recovery_required" }],
+      holds: [{ id:holdId,sessionId,kind:"process_failed",canRelease:true },{ id:null,sessionId:null,kind:"interrupt",canRelease:false }],
     })
   })
   test("controls carry exact target identities", async () => {

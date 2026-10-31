@@ -21,7 +21,7 @@ func TestSessionIdleClosesOnlyContinuouslyQuiescentSession(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$1`, f.session)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=1000,idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
 	hold := uuid.NewV7()
-	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','human pause')`, f.env, hold, f.session)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, hold, f.session)
 	if err := session.ReconcileSessionIdle(ctx, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}

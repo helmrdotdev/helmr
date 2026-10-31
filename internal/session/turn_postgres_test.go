@@ -277,7 +277,7 @@ func TestRuntimePeerAdmissionRequiresCurrentAuthority(t *testing.T) {
 	if _, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, stale, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("stale ownership retry: %v", err)
 	}
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','operator interrupt')`, f.env, uuid.New(), f.session); err != nil {
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, uuid.New(), f.session); err != nil {
 		t.Fatal(err)
 	}
 	if receipt, err := session.Enqueue(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); err != nil || receipt.TurnID != first.TurnID {
@@ -423,7 +423,7 @@ func TestSaveRequiresRecordedResult(t *testing.T) {
 func TestRuntimePeerInputQueuesWithoutReleasingTargetHold(t *testing.T) {
 	f := newFixture(t)
 	peer := f.requestedPeer(t) // Independently rooted target requested by the caller.
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','human interrupt')`, f.env, uuid.New(), peer.session); err != nil {
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, uuid.New(), peer.session); err != nil {
 		t.Fatal(err)
 	}
 	caller := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, Host: f.host(), Execution: f.execution()}

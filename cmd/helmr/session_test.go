@@ -65,9 +65,9 @@ func TestSessionCommandsUseSessionID(t *testing.T) {
 	if !strings.Contains(out.String(), "session_status: closing") ||
 		strings.Contains(out.String(), "agent_id:") ||
 		!strings.Contains(out.String(), "agent: worker") ||
-		!strings.Contains(out.String(), "hold_scope: local") ||
+		!strings.Contains(out.String(), "hold_kind: interrupt\ncan_release: true") ||
 		!strings.Contains(out.String(), "hold_id: "+holdID) ||
-		!strings.Contains(out.String(), "hold_reason: interrupted") {
+		strings.Contains(out.String(), "hold_scope") || strings.Contains(out.String(), "hold_reason") {
 		t.Fatalf("get output = %q", out.String())
 	}
 

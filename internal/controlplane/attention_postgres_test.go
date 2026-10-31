@@ -76,10 +76,10 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	// Sessions that are no longer open do not wait on anyone.
 	held, closed := attentionSession(t, f), attentionSession(t, f)
 	hold := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,created_at) VALUES($1,$2,$3,'local','Approve the deploy',clock_timestamp()-interval '3 hours');
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason,released_at) VALUES($1,$4,$3,'local','released',clock_timestamp());
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$5,$6,'local','closed');
- UPDATE sessions SET status='closed' WHERE environment_id=$1 AND id=$6`, pgx.QueryExecModeSimpleProtocol, f.Environment, hold, held, uuid.NewV7(), uuid.NewV7(), closed)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id,created_at) VALUES($1,$2,$3,'interrupt','user',$7,clock_timestamp()-interval '3 hours');
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id,released_at) VALUES($1,$4,$3,'interrupt','user',$7,clock_timestamp());
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,$5,$6,'interrupt','user',$7);
+ UPDATE sessions SET status='closed' WHERE environment_id=$1 AND id=$6`, pgx.QueryExecModeSimpleProtocol, f.Environment, hold, held, uuid.NewV7(), uuid.NewV7(), closed, f.User)
 
 	// A failed Turn that still stands. A failure followed by another Turn, one
 	// older than a day and one in a closed Session have been dealt with.
@@ -181,7 +181,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	if c := owner.Counts; (c.Question == nil || *c.Question != 1) || (c.Hold == nil || *c.Hold != 1) || (c.FailedTurn == nil || *c.FailedTurn != 1) || c.SlackReauthorization == nil || *c.SlackReauthorization != 1 {
 		t.Fatalf("owner counts: %+v", c)
 	}
-	if item := owner.Items[0]; item.ID != hold.String() || *item.SessionID != held.String() || *item.Reason != "Approve the deploy" || item.Agent != "agent" || item.TurnID != nil {
+	if item := owner.Items[0]; item.ID != hold.String() || *item.SessionID != held.String() || *item.HoldKind != "interrupt" || item.Agent != "agent" || item.TurnID != nil {
 		t.Fatalf("hold: %+v", item)
 	}
 	if item := owner.Items[1]; item.ID != failed.String() || *item.TurnID != failed.String() || *item.SessionID != failing.String() || *item.TurnSequence != 1 || *item.ErrorCode != "agent_error" {
@@ -201,12 +201,12 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 		for i := range ids {
 			ids[i] = uuid.NewV7()
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) SELECT $1,id,$2,'local','overlap' FROM unnest($3::uuid[]) AS id`, f.Environment, failing, ids)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) SELECT $1,id,$2,'interrupt','user',$2 FROM unnest($3::uuid[]) AS id`, f.Environment, failing, ids)
 		view := read(h.session(t, f.User, org))
 		if view.Counts.Hold == nil || *view.Counts.Hold != 102 {
 			t.Fatalf("capped count: %+v", view.Counts)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND reason='overlap'`, f.Environment, failing)
+		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND id=ANY($3::uuid[])`, f.Environment, failing, ids)
 	})
 	t.Run("disclosure withheld on capture failure", func(t *testing.T) {
 		token := h.session(t, f.User, org)
@@ -233,7 +233,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
  INSERT INTO agents(environment_id,id,key) VALUES($1,$6,'second-agent');
  INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) VALUES($1,$6,$4,$4,false,'{"kind":"unrestricted"}');
  INSERT INTO sessions(environment_id,id,agent_id,deployment_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$7,$6,$4,$7,0,$12);
- INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$8,$7,'local','Second hold');
+ INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$8,$7,'process_failed','system');
  INSERT INTO slack_app_registrations(transport,id,org_id,app_id,client_id,credential_revision,credential_ciphertext,credential_nonce,created_by_user_id) VALUES('http',$9,$2,'second-app','second-client',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),$12);
  INSERT INTO slack_installations(id,app_registration_id,org_id,app_id,team_id,bot_user_id,credential_revision,credential_ciphertext,credential_nonce,granted_scopes,connected_by_user_id,authorization_lost_at) VALUES($10,$9,$2,'second-app','team','bot',1,decode(repeat('11',16),'hex'),decode(repeat('22',12),'hex'),ARRAY['chat:write'],$12,clock_timestamp());
  INSERT INTO slack_connections(id,environment_id,agent_id,slack_app_registration_id,slack_installation_id,created_by_user_id,org_id) VALUES($11,$1,$6,$9,$10,$12,(SELECT org_id FROM slack_app_registrations WHERE id=$9))`, pgx.QueryExecModeSimpleProtocol, second, org, project, secondDeployment, "sha256:"+strings.Repeat("2", 64), secondAgent, secondSession, secondHold, secondRegistration, secondInstallation, secondConnection, f.User)

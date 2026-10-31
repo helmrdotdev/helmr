@@ -15,7 +15,7 @@ export type AttentionItem = {
   session_id?: string;
   turn_id?: string;
   prompt?: string;
-  reason?: string;
+  hold_kind?: "interrupt" | "process_failed" | "recovery_gap" | "storage_pressure";
   turn_sequence?: number;
   error_code?: string;
   workspace_name?: string | null;

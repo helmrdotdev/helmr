@@ -27,7 +27,7 @@ func TestRelatedWorkFiltersBeforePaginationAndRetainsCurrentVisibility(t *testin
 	req := session.SessionListRequest{EnvironmentID: f.env, RelatedUserID: contributor, Limit: 1}
 	seen := map[uuid.UUID]string{}
 	for {
-		page, err := session.ListSessions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
+		page, err := session.ListSessions(t.Context(), f.pool, f.caller(), req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,7 +55,7 @@ func TestRelatedWorkIncludesRetainedAnswers(t *testing.T) {
 	}
 	contributor := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO users(id,display_name) VALUES($1,'Former approver'); UPDATE turn_asks SET answered_by_user_id=$1,question=NULL,answer=NULL,payload_expired_at=clock_timestamp() WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, contributor, ask)
-	page, err := session.ListSessions(t.Context(), policy, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, RelatedUserID: contributor, Limit: 100})
+	page, err := session.ListSessions(t.Context(), f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, RelatedUserID: contributor, Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session || page.Sessions[0].RelatedVia != "answered" {
 		t.Fatalf("answer contribution: %+v %v", page, err)
 	}
@@ -78,7 +78,7 @@ func TestRelatedWorkOutlivesAdmissionAuditAndCredentialRecords(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `DELETE FROM login_sessions WHERE id=$1; DELETE FROM auth_identities WHERE id=$2`, pgx.QueryExecModeSimpleProtocol, caller.Human.SessionID, caller.Human.IdentityID)
 	f.human = dbtest.BrowserPrincipal(t, f.pool, caller.Human.OrgID, f.user)
-	page, err := session.ListSessions(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, RelatedUserID: f.user, Limit: 100})
+	page, err := session.ListSessions(t.Context(), f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, RelatedUserID: f.user, Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session || page.Sessions[0].RelatedVia != "initiated" {
 		t.Fatal("lost business attribution", page, err)
 	}

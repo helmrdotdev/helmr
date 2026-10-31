@@ -250,7 +250,7 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 			report.check("runtime.attention", "pass", "Environment attention counts are readable.", nil)
 			if doctor {
 				if attention.Counts.Hold != nil {
-					diagnosticCount(&report, "sessions.holds", *attention.Counts.Hold, "Sessions on hold", "Inspect held Sessions and resolve the recorded hold reason.", true)
+					diagnosticCount(&report, "sessions.holds", *attention.Counts.Hold, "Sessions on hold", "Inspect held Sessions and resolve each hold by its kind.", true)
 				}
 				if attention.Counts.FailedTurn != nil {
 					diagnosticCount(&report, "turns.failed", *attention.Counts.FailedTurn, "failed Turns requiring attention", "Read the affected Session events before retrying.", false)

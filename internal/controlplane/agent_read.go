@@ -61,7 +61,7 @@ func (s *Server) listAgentSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	result, err := session.ListSessions(r.Context(), s.auditPolicy, s.tx, caller, session.SessionListRequest{EnvironmentID: env, Before: before, Limit: limit, Agent: r.URL.Query().Get("agent"), Key: key, Statuses: r.URL.Query()["status"], ParentSessionID: parent, RequesterSessionID: requester, RelatedUserID: relatedUser})
+	result, err := session.ListSessions(r.Context(), s.tx, caller, session.SessionListRequest{EnvironmentID: env, Before: before, Limit: limit, Agent: r.URL.Query().Get("agent"), Key: key, Statuses: r.URL.Query()["status"], ParentSessionID: parent, RequesterSessionID: requester, RelatedUserID: relatedUser})
 	if err != nil {
 		s.writeAgentHTTPError(w, r, err)
 		return
@@ -170,15 +170,24 @@ func agentOptionalID(id *uuid.UUID) *string {
 	value := id.String()
 	return &value
 }
+
+// A relation the caller cannot read is redacted to the nil identifier.
+func agentRedactableID(id uuid.UUID) *string {
+	if id == uuid.Nil() {
+		return nil
+	}
+	value := id.String()
+	return &value
+}
 func agentSessionResponse(v session.SessionView) api.AgentSession {
-	result := api.AgentSession{RelatedVia: v.RelatedVia, Permissions: v.Permissions, Suspension: v.Suspension, AgentDefinitionID: v.AgentDefinitionID, TemplateDefinitionID: v.TemplateDefinitionID, CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: agentUTCTime(v.IdleSince), ID: v.ID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: agentOptionalID(v.ComputerID), RootSessionID: v.RootSessionID.String(), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
+	result := api.AgentSession{RelatedVia: v.RelatedVia, Permissions: v.Permissions, Suspension: v.Suspension, AgentDefinitionID: v.AgentDefinitionID, TemplateDefinitionID: v.TemplateDefinitionID, CloseAfterIdleMs: v.CloseAfterIdleMs, IdleSince: agentUTCTime(v.IdleSince), ID: v.ID.String(), DeploymentID: v.DeploymentID.String(), ComputerID: agentOptionalID(v.ComputerID), RootSessionID: agentRedactableID(v.RootSessionID), ParentSessionID: agentOptionalID(v.ParentSessionID), SlackChannelID: v.SlackChannelID, Key: v.Key, Status: v.Status, CreatedAt: v.CreatedAt.UTC(), Holds: []api.AgentSessionHold{}}
 	result.Activity = agentActivityResponse(v.Activity)
 	result.RequesterSessionID = agentOptionalID(v.RequesterSessionID)
 	if v.InitialTurnID != nil && v.InitialTurnStatus != nil {
 		result.InitialTurn = &api.AgentSessionInitialTurn{ID: v.InitialTurnID.String(), Status: *v.InitialTurnStatus}
 	}
 	for _, h := range v.Holds {
-		result.Holds = append(result.Holds, api.AgentSessionHold{ID: h.ID.String(), SessionID: h.SessionID.String(), Scope: h.Scope, Kind: h.Kind, RecoveryGap: agentRecoveryGapResponse(h.RecoveryGap), Reason: h.Reason, CreatedAt: h.CreatedAt.UTC()})
+		result.Holds = append(result.Holds, api.AgentSessionHold{ID: agentRedactableID(h.ID), SessionID: agentRedactableID(h.SessionID), Kind: h.Kind, RecoveryGap: agentRecoveryGapResponse(h.RecoveryGap), CreatedAt: h.CreatedAt.UTC(), CanRelease: h.CanRelease})
 	}
 	return result
 }
@@ -307,5 +316,5 @@ func agentRecoveryGapResponse(v *session.RecoveryGap) *api.AgentRecoveryGap {
 	for i, id := range v.AffectedTurnIDs {
 		ids[i] = id.String()
 	}
-	return &api.AgentRecoveryGap{HoldID: v.HoldID.String(), ComputerID: v.ComputerID.String(), LeaseEpoch: v.LeaseEpoch, RecoverySaveID: agentOptionalID(v.RecoverySaveID), RestoredAt: agentUTCTime(v.RestoredAt), AffectedTurnIDs: ids}
+	return &api.AgentRecoveryGap{HoldID: agentOptionalID(v.HoldID), ComputerID: v.ComputerID.String(), LeaseEpoch: v.LeaseEpoch, RecoverySaveID: agentOptionalID(v.RecoverySaveID), RestoredAt: agentUTCTime(v.RestoredAt), AffectedTurnIDs: ids}
 }

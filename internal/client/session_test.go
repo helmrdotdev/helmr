@@ -154,7 +154,7 @@ func TestSessionReads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if session.Status != "closing" || session.AgentDefinitionID != "worker" || len(session.Holds) != 1 || session.Holds[0].ID != testHoldID || session.Holds[0].Scope != "local" || session.Holds[0].Reason != "interrupted" {
+			if session.Status != "closing" || session.AgentDefinitionID != "worker" || len(session.Holds) != 1 || session.Holds[0].ID == nil || *session.Holds[0].ID != testHoldID || session.Holds[0].Kind != "interrupt" || !session.Holds[0].CanRelease {
 				t.Fatalf("session = %+v", session)
 			}
 			for _, explicit := range []bool{false, true} {

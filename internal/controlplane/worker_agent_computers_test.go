@@ -100,7 +100,7 @@ func TestWorkerAgentMCPListsOnlyWorkloadComputers(t *testing.T) {
 	if response := call(cursor); response.Error != nil {
 		t.Fatalf("fresh page: %+v", response)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','test')`, f.Environment, uuid.NewV7(), f.Session)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.Environment, uuid.NewV7(), f.Session)
 	if response := call(cursor); response.Error == nil || response.Error.Code != "authority_changed" {
 		t.Fatalf("held page: %+v", response)
 	}

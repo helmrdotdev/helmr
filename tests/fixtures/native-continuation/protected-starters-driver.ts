@@ -105,17 +105,13 @@ export async function runProtectedStarters(client: HelmrClient, fixture: { origi
       assert(lossState.versions.length > 0 && lossState.versions.every(version => version === 1), "rotation changed the admitted process's pinned version")
       await command(`import {readFile} from 'node:fs/promises'; const {port}=JSON.parse(await readFile(${JSON.stringify(`/workspace/protected-${kind}/${session.id}/control.json`)},'utf8')); const response=await fetch('http://127.0.0.1:'+port+'/crash',{method:'POST'}); if(!response.ok)throw new Error('owner crash refused'); await response.text();`, "owner-loss")
       assert.equal((await lost.wait({ signal })).status, "interrupted")
-      let recoveryHold
-      for (;;) {
-        recoveryHold = (await session.get({ signal })).holds.find(value => value.kind === "control" && value.scope === "local" && ["session_continuation_lost", "turn_drain_failed", "Session runtime control failed"].includes(value.reason))
-        if (recoveryHold) break
-        await delay(100, undefined, { signal })
-      }
       if (beforeLoss.handshakes > 0) await observed(value => value.closed === value.handshakes)
       await hold(false)
+      // One owner loss is one process failure; the fresh input reconstructs
+      // the process without a Session hold.
       const fresh = await session.enqueue(fixtureInput("protected reconstructed fresh"), undefined, { signal })
-      await session.resume({ holdId: recoveryHold.id, idempotencyKey: `${name}-resume` }, { signal })
       const reconstructed = await completed(fresh)
+      assert.deepEqual((await session.get({ signal })).holds, [])
       assert.notEqual(reconstructed.nonce, first.nonce)
       assert.equal(reconstructed[identity], first[identity])
       const recovered = await observed(value => JSON.stringify(value.requests).includes("protected reconstructed fresh"))
@@ -137,7 +133,7 @@ export async function runProtectedStarters(client: HelmrClient, fixture: { origi
       assert.notEqual(revoked.status, "completed")
       const finalState = await observed(value => value.handshakes === value.closed && value.activeHTTP === 0)
       assert.equal(finalState.unauthorized, finalState.unauthenticatedPreconnects); assert.equal(finalState.fallback, 0)
-      records.push({ kind, durationMs: Date.now() - startedAt, sessionId: session.id, first, second, afterInterrupt, reconstructed, recoveryHold, newOwner, revoked, observation: finalState })
+      records.push({ kind, durationMs: Date.now() - startedAt, sessionId: session.id, first, second, afterInterrupt, reconstructed, newOwner, revoked, observation: finalState })
       await writeFile(`${evidence}/protected-starters.json`, JSON.stringify(records) + "\n", { mode: 0o600 })
     } catch (error) {
       primaryError = error

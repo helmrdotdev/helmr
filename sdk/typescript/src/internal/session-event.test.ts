@@ -21,6 +21,20 @@ test("interruption data distinguishes ordinary stops from exact Computer loss", 
     { ...loss, unexpected: true },
   ]) expect(() => parseSessionEventData("turn.interrupted", data)).toThrow()
   expect(() => parseSessionEventData("turn.completed", loss)).toThrow()
+  expect(parseSessionEventData("turn.interrupted", { reason: "turn_deadline_elapsed" })).toEqual({ reason: "turn_deadline_elapsed" })
+  expect(() => parseSessionEventData("turn.interrupted", { reason: "turn_deadline_elapsed", holdId: id })).toThrow()
+})
+
+test("process failures and recovery notices carry an optional hold", () => {
+  for (const holdId of [null, id]) {
+    for (const reason of ["process_failed", "stop_deadline_elapsed", "execution_lost"]) {
+      expect(parseSessionEventData("session.process_failed", { processEpoch: 2, reason, holdId })).toEqual({ processEpoch: 2, reason, holdId } as never)
+    }
+    const gap = { holdId, computerId: id, leaseEpoch: 1, recoverySaveId: null, restoredAt: null, affectedTurnIds: [] }
+    expect(parseSessionEventData("session.recovery_gap", gap)).toEqual(gap)
+  }
+  expect(() => parseSessionEventData("session.process_failed", { processEpoch: 2, reason: "computer_lost", holdId: null })).toThrow()
+  expect(() => parseSessionEventData("session.process_failed", { processEpoch: 2, reason: "process_failed" })).toThrow()
 })
 
 test("events validate their producer-specific payload before exposing narrowed data", () => {

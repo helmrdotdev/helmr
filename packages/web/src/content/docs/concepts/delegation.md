@@ -136,7 +136,7 @@ again to keep waiting. `inspect_turn` reads the current state without waiting.
 | `send_turn` | Send text to an owned descendant's active Turn. |
 | `inspect_session` | Read one accessible Session. |
 | `list_sessions` | List owned children (`relation: "owned"`) or all work this Session requested (`"requested"`). |
-| `interrupt_session`, `resume_session`, `close_session`, `cancel_session` | Control an owned descendant. `resume_session` releases only the exact hold this Session placed. |
+| `interrupt_session`, `resume_session`, `close_session`, `cancel_session` | Control an owned descendant. `resume_session` releases a hold on an owned descendant; of interrupts, only those this Session placed. |
 
 Control tools return receipts. A receipt confirms that Helmr accepted the
 request, not that the work has stopped.

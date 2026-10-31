@@ -29,7 +29,7 @@ type AttentionItem struct {
 	TurnID    *uuid.UUID
 	Agent     string
 	At        time.Time
-	// The Question's first text part, the hold's reason, or the failed Turn's
+	// The Question's first text part, the hold's kind, or the failed Turn's
 	// error code.
 	Summary      string
 	TurnSequence *int64
@@ -70,7 +70,7 @@ const attentionHoldsFromSQL = `
  WHERE h.environment_id=$1 AND h.released_at IS NULL AND s.status='open'
  AND ` + attentionAccessSQL
 
-const attentionHoldsSQL = `SELECT h.id,h.session_id,ag.key,h.created_at,h.reason,count(*) OVER ()` + attentionHoldsFromSQL + `
+const attentionHoldsSQL = `SELECT h.id,h.session_id,ag.key,h.created_at,h.kind,count(*) OVER ()` + attentionHoldsFromSQL + `
  ORDER BY h.created_at,h.id LIMIT $4`
 const attentionHoldsCountSQL = `SELECT count(*)` + attentionHoldsFromSQL
 

@@ -42,7 +42,7 @@ func TestSessionCreateReceiptAndExplicitAgentActions(t *testing.T) {
 	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, first.SessionID); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("create-only disclosed own history", err)
 	}
-	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, Limit: 1})
+	page, err := session.ListSessions(ctx, f.pool, f.caller(), session.SessionListRequest{EnvironmentID: f.env, Limit: 1})
 	if err != nil || len(page.Sessions) != 0 {
 		t.Fatal("create-only list disclosed history", page, err)
 	}
@@ -94,14 +94,14 @@ func TestScopedRuntimeRelationsAndQueuedRevocation(t *testing.T) {
 	peer := f.peer(t)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET requester_session_id=NULL,causal_depth=0 WHERE environment_id=$1 AND id=$2`, f.env, peer.session)
 	caller := runtimeReadCaller(t, f)
-	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(ctx, f.pool, caller, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("same-origin peer readable", err)
 	}
 	if _, _, err := session.RuntimeListComputers(ctx, f.pool, caller, computer.ListPage{Limit: 10}); err != nil {
 		t.Fatal("scoped runtime listed Computers", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET requester_session_id=$1,causal_depth=1 WHERE id=$2`, f.session, peer.session)
-	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); err != nil {
+	if _, err := session.RuntimeGetSession(ctx, f.pool, caller, peer.session); err != nil {
 		t.Fatal("direct requested root denied", err)
 	}
 	// Accepted input and runtime reads survive the original user losing access.
@@ -114,7 +114,7 @@ func TestScopedRuntimeRelationsAndQueuedRevocation(t *testing.T) {
 	if err := f.pool.QueryRow(ctx, `SELECT status='running' AND processing_closed_at IS NULL FROM turns WHERE id=$1`, queued.TurnID).Scan(&failed); err != nil || !failed {
 		t.Fatal("denied queue not settled", failed, err)
 	}
-	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, peer.session); err != nil {
+	if _, err := session.RuntimeGetSession(ctx, f.pool, caller, peer.session); err != nil {
 		t.Fatal("accepted runtime read denied", err)
 	}
 }
@@ -159,14 +159,14 @@ func TestScopedAPIKeyIdentityAndLineageNeverUpgrade(t *testing.T) {
 	if _, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, f.env, peer.session); err != nil {
 		t.Fatal("explicit run-view path denied", err)
 	}
-	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, runtime, peer.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(ctx, f.pool, runtime, peer.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("later elevation widened scoped runtime", err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE id=$1`, key)
 	if _, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, caller, req); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("revoked key returned receipt", err)
 	}
-	if _, err := session.RuntimeGetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, runtime, f.session); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.RuntimeGetSession(ctx, f.pool, runtime, f.session); !errors.Is(err, session.ErrDenied) {
 		t.Fatal("revoked key runtime remained authorized", err)
 	}
 }
@@ -214,7 +214,7 @@ func TestAPIKeySelectedAgentSessionVisibilityAndRevocation(t *testing.T) {
 	hidden := f.peer(t)
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$2,'hidden'); INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,runtime_mcp_policy) SELECT environment_id,$2,deployment_id,template_id,has_init,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$3; UPDATE sessions SET agent_id=$2 WHERE id=$4`, pgx.QueryExecModeSimpleProtocol, f.env, hiddenAgent, f.agent, hidden.session)
 	caller := session.Caller{Kind: "api_key", ID: key}
-	page, err := session.ListSessions(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
+	page, err := session.ListSessions(ctx, f.pool, caller, session.SessionListRequest{EnvironmentID: f.env, Limit: 100})
 	if err != nil || len(page.Sessions) != 1 || page.Sessions[0].ID != f.session {
 		t.Fatalf("selected visibility: %+v %v", page, err)
 	}

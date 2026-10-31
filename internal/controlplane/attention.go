@@ -40,7 +40,7 @@ func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range waiting.Holds {
 		value := attentionItem(api.AttentionHold, item)
-		value.Reason = &item.Summary
+		value.HoldKind = &item.Summary
 		response.Items = append(response.Items, value)
 	}
 	for _, item := range waiting.FailedTurns {

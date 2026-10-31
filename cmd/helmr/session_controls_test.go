@@ -94,7 +94,7 @@ func TestSessionGetDisplaysInheritedHoldOwner(t *testing.T) {
 		if r.Method != "GET" || r.URL.Path != "/v1/sessions/"+testSessionID {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"id":"` + testSessionID + `","status":"open","holds":[{"id":"` + hold + `","session_id":"` + parent + `","scope":"subtree","reason":""}]}`))
+		_, _ = w.Write([]byte(`{"id":"` + testSessionID + `","status":"open","holds":[{"id":"` + hold + `","session_id":"` + parent + `","kind":"interrupt","can_release":false},{"id":null,"session_id":null,"kind":"interrupt","can_release":false}]}`))
 	}))
 	defer server.Close()
 	t.Setenv(helmrAPIURLEnv, server.URL)
@@ -107,7 +107,8 @@ func TestSessionGetDisplaysInheritedHoldOwner(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), "hold_id: "+hold+"\nhold_session_id: "+parent+"\nhold_scope: subtree") || strings.Contains(out.String(), "hold_reason:") {
+	// A redacted ancestor hold prints only its kind and release state.
+	if !strings.Contains(out.String(), "hold_id: "+hold+"\nhold_session_id: "+parent+"\nhold_kind: interrupt\ncan_release: false\nhold_kind: interrupt\ncan_release: false\n") || strings.Contains(out.String(), "hold_scope") {
 		t.Fatalf("inherited hold owner missing: %s", out.String())
 	}
 }

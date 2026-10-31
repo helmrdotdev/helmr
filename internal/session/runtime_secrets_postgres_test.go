@@ -232,7 +232,7 @@ func TestRuntimeSecretExposureRejectsStaleStartupWithoutRecording(t *testing.T) 
 			case "attachment":
 				attachment++
 			case "hold":
-				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','test')`, f.env, uuid.NewV7(), e.SessionID)
+				dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, uuid.NewV7(), e.SessionID)
 			case "revoked":
 				if _, err := store.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, id, "before-delivery"); err != nil {
 					t.Fatal(err)

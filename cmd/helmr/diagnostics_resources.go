@@ -68,7 +68,7 @@ func collectDiagnosticRecentTurns(ctx context.Context, cp *client.Client, scope 
 			failed++
 		}
 	}
-	diagnosticCount(report, "sessions.holds", holds, "holds in the latest 10 Sessions", "Inspect held Sessions and resolve their hold reasons.", true)
+	diagnosticCount(report, "sessions.holds", holds, "holds in the latest 10 Sessions", "Inspect held Sessions and resolve each hold by its kind.", true)
 	diagnosticCount(report, "turns.failed", failed, "latest failed Turns within 24 hours in open Sessions among the latest 10 Sessions", "Read the affected Session events before retrying.", false)
 }
 

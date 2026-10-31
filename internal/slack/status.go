@@ -114,7 +114,7 @@ func aggregateStatus(ctx context.Context, tx pgx.Tx, thread, env uuid.UUID) (str
  SELECT id AS participant,id,parent_session_id FROM visible
  UNION ALL SELECT a.participant,s.id,s.parent_session_id FROM ancestors a JOIN sessions s ON s.environment_id=$2 AND s.id=a.parent_session_id
  ), held AS (
- SELECT DISTINCT a.participant AS id FROM session_holds h JOIN ancestors a ON h.session_id=a.id WHERE h.environment_id=$2 AND h.released_at IS NULL AND (a.id=a.participant OR h.scope='subtree') AND EXISTS(SELECT 1 FROM visible v WHERE v.id=a.participant AND v.status NOT IN ('closed','cancelled'))
+ SELECT DISTINCT a.participant AS id FROM session_holds h JOIN ancestors a ON h.session_id=a.id WHERE h.environment_id=$2 AND h.released_at IS NULL AND (a.id=a.participant OR h.kind='interrupt') AND EXISTS(SELECT 1 FROM visible v WHERE v.id=a.participant AND v.status NOT IN ('closed','cancelled'))
  ), waiting AS (
  SELECT id FROM held UNION SELECT q.session_id FROM turn_asks q JOIN visible v ON q.session_id=v.id WHERE q.environment_id=$2 AND q.status='pending'
  ) SELECT CASE WHEN

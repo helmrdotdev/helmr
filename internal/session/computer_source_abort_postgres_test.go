@@ -84,7 +84,7 @@ func TestSourceAbortCommitConsumesImageAndWaitsForControls(t *testing.T) {
 	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("dispatch before controls: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','explicit human hold')`, f.env, uuid.NewV7(), peer.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, uuid.NewV7(), peer.session)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
 	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
@@ -169,7 +169,8 @@ func TestSourceAbortCancellationAndLossPreserveRecoveryHolds(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for sessionID, want := range map[uuid.UUID]int{f.session: 2, peer.session: 0} {
+	// Only the independent interrupt holds; the loss is one counted failure.
+	for sessionID, want := range map[uuid.UUID]int{f.session: 1, peer.session: 0} {
 		var count int
 		if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1`, sessionID).Scan(&count); err != nil || count != want {
 			t.Fatalf("Session %s holds %d want %d: %v", sessionID, count, want, err)
@@ -345,9 +346,10 @@ func TestCompletedSourceAbortHistoryCannotOwnLaterLoss(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT status='lost' AND capture_request IS NULL FROM checkpoints WHERE id=$1`, req.CheckpointID).Scan(&lost); err != nil || !lost {
 		t.Fatalf("current capture not lost: %v %v", lost, err)
 	}
-	var count int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE environment_id=$1`, f.env).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("current ineligible loss holds %d: %v", count, err)
+	// The current ineligible loss is one counted failure, below the hold threshold.
+	var count, failures int
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_holds WHERE environment_id=$1),(SELECT count(*) FROM session_processes WHERE environment_id=$1 AND failure_reason='execution_lost')`, f.env).Scan(&count, &failures); err != nil || count != 0 || failures != 1 {
+		t.Fatalf("current ineligible loss holds %d failures %d: %v", count, failures, err)
 	}
 
 }

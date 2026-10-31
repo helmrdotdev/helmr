@@ -70,7 +70,7 @@ type AgentSession struct {
 	ID                   string                   `json:"id"`
 	DeploymentID         string                   `json:"deployment_id"`
 	ComputerID           *string                  `json:"computer_id"`
-	RootSessionID        string                   `json:"root_session_id"`
+	RootSessionID        *string                  `json:"root_session_id"`
 	SlackChannelID       *string                  `json:"slack_channel_id,omitempty"`
 	ParentSessionID      *string                  `json:"parent_session_id"`
 	RequesterSessionID   *string                  `json:"requester_session_id"`
@@ -85,21 +85,24 @@ type AgentSessionInitialTurn struct {
 	Status string `json:"status"`
 }
 type AgentRecoveryGap struct {
-	HoldID          string     `json:"holdId"`
+	HoldID          *string    `json:"holdId"`
 	ComputerID      string     `json:"computerId"`
 	LeaseEpoch      int64      `json:"leaseEpoch"`
 	RecoverySaveID  *string    `json:"recoverySaveId"`
 	RestoredAt      *time.Time `json:"restoredAt"`
 	AffectedTurnIDs []string   `json:"affectedTurnIds"`
 }
+
+// AgentSessionHold is a hold in effect for a Session. ID and SessionID are null
+// for a hold on an ancestor the caller cannot read. CanRelease reports whether
+// the caller may resume it by posting to SessionID.
 type AgentSessionHold struct {
 	RecoveryGap *AgentRecoveryGap `json:"recovery_gap,omitempty"`
 	Kind        string            `json:"kind"`
-	ID          string            `json:"id"`
-	SessionID   string            `json:"session_id"`
-	Scope       string            `json:"scope"`
-	Reason      string            `json:"reason"`
+	ID          *string           `json:"id"`
+	SessionID   *string           `json:"session_id"`
 	CreatedAt   time.Time         `json:"created_at"`
+	CanRelease  bool              `json:"can_release"`
 }
 type AgentTurnError struct {
 	Code    string  `json:"code"`

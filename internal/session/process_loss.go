@@ -43,9 +43,9 @@ func LoseLeaseProcesses(ctx context.Context, auditPolicy auditpolicy.Policy, tx 
 }
 
 // The caller holds all owner/Computer locks. The failure marker makes a later
-// physical fence or checkpoint-loss reconciliation safe after explicit hold release.
+// physical fence or checkpoint-loss reconciliation safe.
 // ComputerLossDisposition distinguishes a recoverable Computer loss from an
-// independent runtime crash. Only the latter installs a generic crash hold.
+// independent runtime crash. Only the latter counts toward a failure hold.
 type ComputerLossDisposition bool
 
 const (
@@ -62,7 +62,8 @@ func LoseProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx,
 const ComputerExecutionLost = "computer_execution_lost"
 
 // ComputerLossInterruption is an event-time fact, independent of later process
-// reconstruction, hold acknowledgment or event projection timing.
+// reconstruction, hold acknowledgment or event projection timing. RecoveryGap
+// is whether the Session is held by a recovery gap when the Turn is lost.
 type ComputerLossInterruption struct {
 	Reason      string    `json:"reason"`
 	ComputerID  uuid.UUID `json:"computerId"`
@@ -95,13 +96,20 @@ func loseProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx,
 		}
 		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
 	}
-	if !recorded && !terminal && disposition == ComputerLossRequiresAttention {
-		if err := recordSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, "Computer execution authority lost without an eligible continuation", "execution_lost"); err != nil {
+	if !recorded {
+		reason := failureComputerLost
+		if disposition == ComputerLossRequiresAttention {
+			reason = failureExecutionLost
+		}
+		if err := recordSessionFailure(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, reason); err != nil {
 			return err
 		}
 	}
 	var interruption json.RawMessage
 	if lossComputer != uuid.Nil() {
+		// Recovery gap settlement precedes process loss. Only a Session held by
+		// the gap has its interruption explained by the acknowledgement request;
+		// a notified peer still learns that its running request was lost.
 		var gap bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND kind='recovery_gap' AND released_at IS NULL)`, e.EnvironmentID, e.SessionID).Scan(&gap); err != nil {
 			return err
@@ -114,7 +122,7 @@ func loseProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx,
 	if err := interruptRunningSessionTurnWithData(ctx, auditPolicy, tx, audit.Internal(audit.ControlPlane), e, interruption); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE session_processes SET status='lost',failure_recorded_at=COALESCE(failure_recorded_at,clock_timestamp()),
+	_, err = tx.Exec(ctx, `UPDATE session_processes SET status='lost',
  fenced_at=CASE WHEN $4 THEN COALESCE(fenced_at,clock_timestamp()) ELSE fenced_at END
  WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, physicalStopped)
 	if err != nil {

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { addEvent, makeTurn, serveSession, sessionPath, sessionURL, sessionWith, settleTurn, turnID, type SessionData, expandTurns, notifySessionChanged } from "./fixtures/session-log";
+import { addEvent, base, makeTurn, serveSession, sessionPath, sessionURL, sessionWith, settleTurn, turnID, type SessionData, expandTurns, notifySessionChanged } from "./fixtures/session-log";
 
 const now = new Date().toISOString();
 const log = (page: Page) => page.getByRole("region", { name: "Log" });
@@ -24,8 +24,8 @@ async function onControl(page: Page, action: string, handle: (body: unknown) => 
 test("retained queue shows independent holds and cancellation preserves input", async ({ page }) => {
   const data = sessionWith({
     holds: [
-      { id: "hold-a", session_id: "00000000-0000-7000-8000-000000000900", scope: "local", reason: "Operator pause", created_at: now },
-      { id: "hold-b", session_id: "00000000-0000-7000-8000-000000000900", scope: "subtree", reason: "Secret revoked", created_at: now },
+      { id: "hold-a", session_id: "00000000-0000-7000-8000-000000000900", kind: "process_failed", created_at: now, can_release: false },
+      { id: "hold-b", session_id: "00000000-0000-7000-8000-000000000900", kind: "interrupt", created_at: now, can_release: false },
     ],
   }, [makeTurn(1)]);
   await serveSession(page, data);
@@ -39,8 +39,9 @@ test("retained queue shows independent holds and cancellation preserves input", 
   await page.goto(sessionURL);
   await expandTurns(page);
   await expect(inputLine(page, 1)).toContainText("original input");
-  await expect(page.getByText("Held: Operator pause (this session).", { exact: false })).toBeVisible();
-  await expect(page.getByText("Held: Secret revoked (this session and its children).", { exact: false })).toBeVisible();
+  await expect(page.getByText("Held after the session process failed repeatedly.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Held by an interrupt. Queued work waits until it is resumed.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0);
   await chooseSessionAction(page, "Cancel session");
   await expect(page.getByText("Other sessions sharing the computer are not cancelled.", { exact: false })).toBeVisible();
   await page.getByRole("dialog").getByRole("button", { name: "Cancel session", exact: true }).click();
@@ -124,7 +125,7 @@ test("expired Turn content remains distinct from empty input and a null result",
 for (const action of ["interrupt", "cancel"] as const) {
   test(`${action} retries preserve identity`, async ({ page }) => {
     const label = { interrupt: "Interrupt session", cancel: "Cancel session" }[action];
-    const data = sessionWith({ holds: [{ id: "owned-hold", session_id: "00000000-0000-7000-8000-000000000900", scope: "subtree", reason: "Operator pause", created_at: now }] }, [makeTurn(1)]);
+    const data = sessionWith({ holds: [{ id: "owned-hold", session_id: "00000000-0000-7000-8000-000000000900", kind: "interrupt", created_at: now, can_release: false }] }, [makeTurn(1)]);
     await serveSession(page, data);
     const attempts: unknown[] = [];
     await onControl(page, action, body => {
@@ -149,14 +150,49 @@ for (const action of ["interrupt", "cancel"] as const) {
   });
 }
 
-test("inherited hold links its owner and cannot be released on a child", async ({ page }) => {
+test("inherited hold links its owner and offers Resume only when releasable", async ({ page }) => {
   const owner = "00000000-0000-7000-8000-000000000796";
-  await serveSession(page, sessionWith({ holds: [{ id: "parent-hold", session_id: owner, scope: "subtree", reason: "Parent paused", created_at: now }] }, [makeTurn(1)]));
+  const data = sessionWith({ holds: [{ id: "parent-hold", session_id: owner, kind: "interrupt", created_at: now, can_release: false }] }, [makeTurn(1)]);
+  await serveSession(page, data, ["sessions.read", "sessions.resume"]);
+  const mutations: unknown[] = [];
+  // Resume is posted to the Session that holds the hold, not the one shown.
+  await page.route(`**${base}/sessions/${owner}/resume`, async route => {
+    mutations.push(route.request().postDataJSON());
+    data.session["holds"] = [];
+    await route.fulfill({ json: { id: "resume-receipt", session_id: owner, hold_id: "parent-hold", status: "accepted" } });
+  });
   await page.goto(sessionURL);
   await expandTurns(page);
-  await expect(page.getByText("Held: Parent paused (this session and its children).", { exact: false })).toBeVisible();
-  await expect(page.locator("form")).toHaveCount(0);
+  await expect(page.getByText("Held by an interrupt on a parent session.", { exact: false })).toBeVisible();
   await expect(page.getByRole("link", { name: "000000000796", exact: true })).toHaveAttribute("href", `/sessions/${owner}`);
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0);
+  await expect(page.getByText(/resume held work from the CLI/i)).toHaveCount(0);
+  data.session["holds"] = [{ id: "parent-hold", session_id: owner, kind: "interrupt", created_at: now, can_release: true }];
+  await notifySessionChanged(page);
+  await page.getByRole("button", { name: "Resume", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Resume", exact: true }).click();
+  await expect(page.getByText("Held by an interrupt on a parent session.", { exact: false })).toHaveCount(0);
+  expect(mutations).toEqual([{ hold_id: "parent-hold", idempotency_key: expect.any(String) }]);
+});
+
+test("a hold on an unreadable ancestor shows its kind without identity", async ({ page }) => {
+  await serveSession(page, sessionWith({ root_session_id: null, holds: [{ id: null, session_id: null, kind: "interrupt", created_at: now, can_release: false }] }, [makeTurn(1)]), ["sessions.read", "sessions.resume"]);
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  await expect(page.getByText("Held by an interrupt on a parent session.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Held on", { exact: false })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0);
+});
+
+test("the log explains a deadline interruption and a recovery notice", async ({ page }) => {
+  const data = sessionWith({}, [makeTurn(1, { status: "interrupted", terminal_at: now })]);
+  addEvent(data, 1, "turn.interrupted", { reason: "turn_deadline_elapsed" });
+  addEvent(data, null, "session.recovery_gap", { holdId: null, computerId: turnID(1), leaseEpoch: 1, recoverySaveId: null, restoredAt: null, affectedTurnIds: [] });
+  await serveSession(page, data);
+  await page.goto(sessionURL);
+  await expandTurns(page);
+  await expect(log(page).getByText("stopped after the maximum turn duration; queued work continues", { exact: false })).toBeVisible();
+  await expect(log(page).getByText("No completed requests in this session were affected", { exact: false })).toBeVisible();
 });
 
 for (const status of ["open", "closing", "closed", "cancelled"] as const) {
@@ -251,9 +287,9 @@ test("retained structured inputs render without treating JSON values as text par
 test("recovery notice reports this conversation and Resume releases only its recovery hold", async ({ page }) => {
   const recoveryHold = "00000000-0000-7000-8000-000000000711";
   const owner = "00000000-0000-7000-8000-000000000900";
-  const operatorHold = { id: "operator-hold", session_id: owner, scope: "local", kind: "control", reason: "Operator pause", created_at: now };
+  const operatorHold = { id: "operator-hold", session_id: owner, kind: "interrupt", created_at: now, can_release: false };
   const data = sessionWith({ holds: [operatorHold, {
-    id: recoveryHold, session_id: owner, scope: "local", kind: "recovery_gap", reason: "Recovery confirmation required", created_at: now,
+    id: recoveryHold, session_id: owner, kind: "recovery_gap", created_at: now, can_release: true,
     recovery_gap: { holdId: recoveryHold, computerId: turnID(1), leaseEpoch: 1, recoverySaveId: null, restoredAt: null, affectedTurnIds: [turnID(1)] },
   }] }, [makeTurn(1, { status: "completed", terminal_at: now, response: [{ type: "text", text: "Previously delivered answer" }], result: null })]);
   await serveSession(page, data, ["sessions.read", "sessions.resume"]);
@@ -273,7 +309,7 @@ test("recovery notice reports this conversation and Resume releases only its rec
   await expect(dialog.getByText("Completed requests will not run again.", { exact: false })).toBeVisible();
   await dialog.getByRole("button", { name: "Resume", exact: true }).click();
   await expect(page.getByText("This computer was restored", { exact: false })).toHaveCount(0);
-  await expect(page.getByText("Operator pause", { exact: false })).toBeVisible();
+  await expect(page.getByText("Held by an interrupt.", { exact: false })).toBeVisible();
   expect(mutations).toEqual([{ hold_id: recoveryHold, idempotency_key: expect.any(String) }]);
 });
 
@@ -306,7 +342,7 @@ test("a failed Session snapshot retries without another change notification", as
   await expect(page.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0);
   const hold = "00000000-0000-7000-8000-000000000712";
   data.session["holds"] = [{
-    id: hold, session_id: data.session["id"], scope: "local", kind: "recovery_gap", reason: "Recovery confirmation required", created_at: now,
+    id: hold, session_id: data.session["id"], kind: "recovery_gap", created_at: now, can_release: true,
     recovery_gap: { holdId: hold, computerId: turnID(1), leaseEpoch: 1, recoverySaveId: null, restoredAt: null, affectedTurnIds: [turnID(1)] },
   }];
   let reads = 0;
@@ -332,9 +368,9 @@ test("a failed Session snapshot retries without another change notification", as
 
 test("current storage hold stays authoritative across paginated pressure history", async ({ page }) => {
   const stopped = "The request was stopped because storage stayed full";
+  const held = "Held while storage is full.";
   const data = sessionWith({ holds: [{
-    id: "pressure-hold", session_id: "00000000-0000-7000-8000-000000000900", scope: "local", kind: "storage_pressure",
-    reason: `${stopped}. Saving is still retrying; new requests will wait until space is available.`, created_at: now,
+    id: "pressure-hold", session_id: "00000000-0000-7000-8000-000000000900", kind: "storage_pressure", created_at: now, can_release: false,
   }] }, [makeTurn(1, { status: "interrupted", terminal_at: now })]);
   addEvent(data, 1, "session.storage_pressure", { holdId: "pressure-hold", state: "paused" });
   for (let index = 0; index < 1000; index++) addEvent(data, 1, "turn.output", [{ type: "text", text: `progress ${index}` }]);
@@ -342,13 +378,14 @@ test("current storage hold stays authoritative across paginated pressure history
   const requests = await serveSession(page, data);
   await page.goto(sessionURL);
   await expandTurns(page);
-  await expect(page.getByRole("status").filter({ hasText: `${stopped}. Saving is still retrying;` })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: held })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0);
   await expect(log(page).getByText("Work was paused while storage was full.", { exact: true })).toBeVisible();
   await expect(log(page).getByText(`${stopped}. Local changes are retained while this environment remains available; recovery may omit changes not yet saved.`, { exact: true })).toBeVisible();
   expect(requests.events).toContain("?after=1000&limit=1000");
   data.session["holds"] = [];
   addEvent(data, 1, "session.storage_pressure", { holdId: "pressure-hold", state: "resolved" });
   await notifySessionChanged(page);
-  await expect(page.getByRole("status").filter({ hasText: `${stopped}. Saving is still retrying;` })).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: held })).toHaveCount(0);
   await expect(log(page).getByText("Storage recovered and queued work was allowed to continue.", { exact: false })).toBeVisible();
 });

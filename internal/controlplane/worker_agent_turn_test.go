@@ -49,7 +49,7 @@ func TestWorkerAgentTurnDispatchUsesCurrentAttachment(t *testing.T) {
 			t.Fatalf("%s admitted: %+v %v", wrong, next, err)
 		}
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,gen_random_uuid(),$2,'local','test')`, f.Environment, f.Session)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,gen_random_uuid(),$2,'process_failed','system')`, f.Environment, f.Session)
 	if next, err := client.NextAgentTurn(t.Context(), request); err != nil || next != nil {
 		t.Fatalf("held queue: %+v %v", next, err)
 	}

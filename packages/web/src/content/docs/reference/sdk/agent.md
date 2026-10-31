@@ -418,7 +418,7 @@ payloads are listed in [Session events](/docs/reference/events).
 | `closeAfterIdle` | `Retention` (`Duration` or `"never"`) |
 | `idleSince` | `string \| null` |
 | `initialTurn` | `{ id, status } \| null` |
-| `holds` | `{ id, sessionId, scope: "local" \| "subtree", kind, reason, recoveryGap?, createdAt }[]` |
+| `holds` | `{ id, sessionId, kind: "interrupt" \| "process_failed" \| "recovery_gap" \| "storage_pressure", recoveryGap?, createdAt, canRelease }[]`. `id` and `sessionId` are `null` for a hold on an unreadable ancestor. Resume a hold on its `sessionId`. |
 | `createdAt` | `string` |
 
 ### `TurnRef`

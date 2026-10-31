@@ -94,7 +94,7 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
 		t.Fatalf("manual resume cleared automatic pressure hold %v", err)
 	}
 	independent := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','user pause')`, f.env, independent, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, independent, f.session)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_leases SET storage_pressure_since=clock_timestamp()-interval '301 seconds'`)
 	// The durable lifecycle owns timeout even without another worker report.
 	for range 2 {
@@ -107,8 +107,8 @@ func TestStoragePressureUsesServerBudgetQueuesThenResolvesExactHold(t *testing.T
  AND (SELECT status='queued' FROM turns WHERE id=$2)
  AND (SELECT status='active' AND fenced_at IS NULL FROM computer_leases)
  AND (SELECT count(*)=1 FROM session_events WHERE kind='session.storage_pressure' AND turn_id=$1 AND convert_from(data,'UTF8')::jsonb->>'state'='stopped')
- AND (SELECT reason='The request was stopped because storage stayed full. Saving is still retrying. New requests will wait until space is available.' AND released_at IS NULL FROM session_holds WHERE id=$3)
- AND (SELECT reason='Waiting for saving to recover' FROM session_holds WHERE session_id=$4 AND kind='storage_pressure' AND released_at IS NULL)`, running.TurnID, queued.TurnID, pressureHold, peer.session).Scan(&valid); err != nil || !valid {
+ AND (SELECT kind='storage_pressure' AND released_at IS NULL FROM session_holds WHERE id=$3)
+ AND (SELECT count(*)=1 FROM session_holds WHERE session_id=$4 AND kind='storage_pressure' AND released_at IS NULL)`, running.TurnID, queued.TurnID, pressureHold, peer.session).Scan(&valid); err != nil || !valid {
 		t.Fatalf("pressure timeout custody %v %v", valid, err)
 	}
 	report(false)

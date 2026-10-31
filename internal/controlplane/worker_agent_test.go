@@ -62,7 +62,7 @@ func TestWorkerAgentAdmissionFences(t *testing.T) {
 		code      string
 	}{
 		{"old generation", "UPDATE sessions SET authority_generation=2", 200, "authority_changed"},
-		{"held", "INSERT INTO session_holds(environment_id,id,session_id,scope,reason) SELECT environment_id,gen_random_uuid(),id,'local','test' FROM sessions", 200, "authority_changed"},
+		{"held", "INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) SELECT environment_id,gen_random_uuid(),id,'process_failed','system' FROM sessions", 200, "authority_changed"},
 		{"expired lease", "UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second'", 200, "authority_changed"},
 		{"replaced host epoch", "UPDATE worker_hosts SET current_epoch=2", 401, ""},
 		{"revoked host claims", "UPDATE worker_hosts SET claim_version=2", 401, ""},
@@ -98,7 +98,7 @@ func TestWorkerAgentAuthorityDoesNotReleaseHold(t *testing.T) {
 	client := newWorkerHTTPClient(t, handler, f.Pool, f.Worker)
 	dbtest.MustExec(t, t.Context(), f.Pool, "UPDATE sessions SET authority_generation=2")
 	dbtest.MustExec(t, t.Context(), f.Pool, "UPDATE session_processes SET status='starting'")
-	dbtest.MustExec(t, t.Context(), f.Pool, "INSERT INTO session_holds(environment_id,id,session_id,scope,reason) SELECT environment_id,gen_random_uuid(),id,'local','test' FROM sessions")
+	dbtest.MustExec(t, t.Context(), f.Pool, "INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) SELECT environment_id,gen_random_uuid(),id,'process_failed','system' FROM sessions")
 	var grant workerapi.AgentAuthorityResponse
 	client.post(t, "/worker/v1/sessions/authority", runtimeTestSession(f), http.StatusOK, &grant)
 	if grant.AuthorityGeneration != 2 {
@@ -166,7 +166,7 @@ func TestWorkerAgentCommittedReceiptSurvivesAdmissionRevocation(t *testing.T) {
 			}
 			switch change {
 			case "hold":
-				dbtest.MustExec(t, t.Context(), f.Pool, "INSERT INTO session_holds(environment_id,id,session_id,scope,reason) SELECT environment_id,gen_random_uuid(),id,'local','test' FROM sessions")
+				dbtest.MustExec(t, t.Context(), f.Pool, "INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) SELECT environment_id,gen_random_uuid(),id,'process_failed','system' FROM sessions")
 			case "generation":
 				dbtest.MustExec(t, t.Context(), f.Pool, "UPDATE sessions SET authority_generation=2")
 			case "origin-ended":

@@ -23,7 +23,7 @@ func (s *Server) workerAgentInspectSession(w http.ResponseWriter, r *http.Reques
 		s.writeAgentAdmissionError(w, r, request.RequestID, session.ErrInvalidInput)
 		return
 	}
-	view, err := session.RuntimeGetSession(r.Context(), s.auditPolicy, s.tx, caller, id)
+	view, err := session.RuntimeGetSession(r.Context(), s.tx, caller, id)
 	if err != nil {
 		s.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return
@@ -56,7 +56,7 @@ func (s *Server) workerAgentListSessions(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
-	page, err := session.RuntimeListSessions(r.Context(), s.auditPolicy, s.tx, caller, query)
+	page, err := session.RuntimeListSessions(r.Context(), s.tx, caller, query)
 	if err != nil {
 		s.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return

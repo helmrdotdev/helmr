@@ -131,9 +131,10 @@ func TestSlackMentionAcknowledgesOnlyEarlierConversationRecoveryGap(t *testing.T
 	f := newStatusFixture(t)
 	f.link(t)
 	stale := f.reply(t, "before-recovery", false)
-	gap, other := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason,kind,recovery_computer_id,recovery_lease_epoch,recovery_gap) VALUES($1,$2,$3,'local','Recovery acknowledgement required','recovery_gap',$4,1,jsonb_build_object('recoverySaveId',null,'restoredAt',null,'affectedTurnIds','[]'::jsonb))`, f.Environment, gap, f.Session, f.Computer)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,scope,reason) VALUES($1,$2,$3,'local','Independent operator hold')`, f.Environment, other, f.Session)
+	gap, other, failure := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,recovery_computer_id,recovery_lease_epoch,recovery_gap) VALUES($1,$2,$3,'recovery_gap','system',$4,1,jsonb_build_object('recoverySaveId',null,'restoredAt',null,'affectedTurnIds','[]'::jsonb))`, f.Environment, gap, f.Session, f.Computer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,$2,$3,'interrupt','api_key',gen_random_uuid())`, f.Environment, other, f.Session)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.Environment, failure, f.Session)
 	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), stale); err != nil {
 		t.Fatal(err)
 	}
@@ -145,8 +146,25 @@ func TestSlackMentionAcknowledgesOnlyEarlierConversationRecoveryGap(t *testing.T
 	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), fresh); err != nil {
 		t.Fatal(err)
 	}
+	// System holds are released; an interrupt placed outside Slack stays.
 	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT h.released_at IS NOT NULL AND o.released_at IS NULL AND r.status='accepted' AND t.status='queued' FROM session_holds h JOIN session_holds o ON o.id=$2 JOIN slack_requests r ON r.id=$3 JOIN turns t ON t.id=r.turn_id WHERE h.id=$1`, gap, other, fresh).Scan(&exact); err != nil || !exact {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT h.released_at IS NOT NULL AND p.released_at IS NOT NULL AND o.released_at IS NULL AND r.status='accepted' AND t.status='queued' FROM session_holds h JOIN session_holds o ON o.id=$2 JOIN session_holds p ON p.id=$4 JOIN slack_requests r ON r.id=$3 JOIN turns t ON t.id=r.turn_id WHERE h.id=$1`, gap, other, fresh, failure).Scan(&exact); err != nil || !exact {
 		t.Fatalf("recovery acknowledgement scope: %v %v", exact, err)
+	}
+}
+
+func TestSlackMentionWithoutResumeKeepsSystemHolds(t *testing.T) {
+	f := newStatusFixture(t)
+	f.link(t)
+	failure := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.Environment, failure, f.Session)
+	f.SetPermissions(t, "sessions.read", "sessions.send", "sessions.interrupt")
+	incoming := f.reply(t, "without-resume", false)
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, nil, f.admissionClient(t), incoming); err != nil {
+		t.Fatal(err)
+	}
+	var exact bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status='rejected' AND r.error='permission_denied' AND h.released_at IS NULL FROM slack_requests r JOIN session_holds h ON h.id=$2 WHERE r.id=$1`, incoming, failure).Scan(&exact); err != nil || !exact {
+		t.Fatalf("mention without resume: %v %v", exact, err)
 	}
 }

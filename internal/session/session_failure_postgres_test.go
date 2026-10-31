@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
+func TestUnexpectedSessionStopCountsOnlyFailedSession(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	active := f.enqueue(t, "active")
@@ -37,13 +37,14 @@ func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 			t.Fatalf("turn %s: %s %v", id, state, err)
 		}
 	}
-	var hold uuid.UUID
+	// One unexpected stop is a counted failure of this Session only.
 	var count int
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&count); err != nil || count != 1 {
+	var reason string
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("holds %d: %v", count, err)
 	}
-	if err = f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND scope='local' AND issuer_kind='system'`, f.session).Scan(&hold); err != nil {
-		t.Fatal(err)
+	if err = f.pool.QueryRow(t.Context(), `SELECT failure_reason FROM session_processes WHERE session_id=$1`, f.session).Scan(&reason); err != nil || reason != "process_failed" {
+		t.Fatalf("failure %q: %v", reason, err)
 	}
 	if _, err = session.RenewRuntimeAuthority(t.Context(), f.pool, *f.host(), f.execution()); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("stopped authority: %v", err)
@@ -52,18 +53,13 @@ func TestUnexpectedSessionStopHoldsOnlyFailedSession(t *testing.T) {
 	if got, err := dispatchTurnForTest(t.Context(), peer.pool, peer.execution()); err != nil || got.TurnID != next.TurnID {
 		t.Fatalf("peer dispatch %+v: %v", got, err)
 	}
-	req := controlRequest(f, "resume", "release-process-failure")
-	req.HoldID = hold
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
-		t.Fatal(err)
-	}
 	if err = session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
 	}, f.pool, *f.host(), f.execution(), a.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE released_at IS NULL`).Scan(&count); err != nil || count != 0 {
-		t.Fatalf("retry recreated hold %d: %v", count, err)
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_events WHERE session_id=$1 AND kind='session.process_failed'`, f.session).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("retry recounted failure %d: %v", count, err)
 	}
 }
 
@@ -95,9 +91,9 @@ func TestUnexpectedSessionStopPreservesRecordedResult(t *testing.T) {
 	if err = completedTurnForTest(t.Context(), f.pool, f.env, f.session, result.TurnID); err != nil {
 		t.Fatal(err)
 	}
-	var held bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM session_holds WHERE session_id=$1 AND released_at IS NULL)`, f.session).Scan(&held); err != nil || !held {
-		t.Fatalf("completion cleared loss hold: %v %v", held, err)
+	var recorded bool
+	if err = f.pool.QueryRow(t.Context(), `SELECT failure_reason='process_failed' FROM session_processes WHERE session_id=$1`, f.session).Scan(&recorded); err != nil || !recorded {
+		t.Fatalf("completion cleared loss fact: %v %v", recorded, err)
 	}
 }
 

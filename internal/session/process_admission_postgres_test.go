@@ -81,42 +81,6 @@ func TestProcessAdmissionSetupReceiptPrecedesTurnDispatch(t *testing.T) {
 	}
 }
 
-func TestProcessAdmissionFailedSetupRetainsInputUntilExplicitResume(t *testing.T) {
-	f, a, e := startingSessionFixture(t)
-	attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
-		RetentionSeconds: 3600,
-	}, f.pool, *f.host(), e, attachment.Sequence); err != nil {
-		t.Fatal(err)
-	}
-	if err := session.ObserveSessionStopped(t.Context(), auditpolicy.Policy{
-		RetentionSeconds: 3600,
-	}, f.pool, *f.host(), e, attachment.Sequence); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("setup failure retried without resume: %v", err)
-	}
-	var hold uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE environment_id=$1 AND session_id=$2 AND released_at IS NULL`, f.env, e.SessionID).Scan(&hold); err != nil {
-		t.Fatal(err)
-	}
-	var queued bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT status='queued' AND process_epoch IS NULL AND started_at IS NULL FROM turns WHERE environment_id=$1 AND session_id=$2`, f.env, e.SessionID).Scan(&queued); err != nil || !queued {
-		t.Fatalf("failed setup consumed input: %v %v", queued, err)
-	}
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume-setup", HoldID: hold}); err != nil {
-		t.Fatal(err)
-	}
-	r, err := a.AllocateSessionProcess(t.Context(), f.env, e.SessionID, 2)
-	if err != nil || r.Epoch != 2 || r.Status != "starting" {
-		t.Fatalf("explicit resumed setup: %+v %v", r, err)
-	}
-}
-
 func TestProcessReadinessSupersededByShutdown(t *testing.T) {
 	f, _, e := startingSessionFixture(t)
 	attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), e)
@@ -263,13 +227,7 @@ func TestProcessAdmissionPreservesAcceptedWorkAfterAccessRevocation(t *testing.T
 	}, f.pool, *f.host(), e, attachment.Sequence); err != nil {
 		t.Fatal(err)
 	}
-	var hold uuid.UUID
-	if err = f.pool.QueryRow(t.Context(), `SELECT id FROM session_holds WHERE session_id=$1 AND released_at IS NULL`, e.SessionID).Scan(&hold); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.SessionControlRequest{EnvironmentID: f.env, SessionID: e.SessionID, Kind: "resume", IdempotencyKey: "resume", HoldID: hold}); err != nil {
-		t.Fatal(err)
-	}
+	// One setup failure is not held; the next admission reconstructs.
 	if _, err = f.pool.Exec(t.Context(), `DELETE FROM permission_group_members WHERE member_id IN (SELECT id FROM org_members WHERE user_id=$1)`, f.user); err != nil {
 		t.Fatal(err)
 	}
