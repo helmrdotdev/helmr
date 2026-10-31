@@ -61,13 +61,14 @@ When `init` is absent, `ctx.initResult` is `undefined`.
 | `turn` | yes | Handles one Turn. Its return value is validated by `resultSchema` when supplied and becomes the machine `result`. |
 | `inputSchema` | no | Validates incoming JSON before the handler; `turn.input` is the schema output. Without it, input is conversational text content. |
 | `resultSchema` | no | Validates or transforms the handler return value before successful settlement. The persisted result must be finite JSON. |
-| `closeAfterIdle` | no | Idle retention for new Sessions: a `Duration` or `"never"`. Default `"7d"`. |
+| `closeAfterIdle` | no | Closes a Session after it stays idle this long: a `Duration` or `"never"`. Default `"7d"`. |
+| `hibernateAfterIdle` | no | Hibernates the Session's Computer after the Session stays idle this long: a `Duration` or `"never"`. Default `"never"`. Background work on the Computer pauses until it wakes. See [Durability](/docs/concepts/durability#hibernation). |
 | `maxTurnDuration` | no | A `Duration` after which a running Turn reaches its deadline. No limit when omitted. |
 | `triggers` | no | Cron triggers. See [Triggers](/docs/reference/sdk/triggers). |
 
-A `closeAfterIdle` option on `client.sessions.create()` (or `closeAfterIdleMs` on
-the runtime MCP `spawn`/`start` tools) overrides the definition for that new
-Session. Enqueuing later work keeps the Session's existing policy.
+Both periods belong to the Agent definition. A Session uses the values of the
+Deployment it is pinned to; a later Deployment changes them only for new
+Sessions. To use different values, deploy a different Agent.
 
 ### Typed invocation
 
@@ -339,7 +340,6 @@ client.sessions.create(request: SessionCreateRequest, options?: RequestOptions):
 interface SessionCreateRequest<A extends AgentContract = AgentContract<string, JsonValue, JsonValue>> {
   readonly agent: A["id"]
   readonly input?: AgentInput<A>
-  readonly closeAfterIdle?: Retention
   readonly slack?: Readonly<{ channelId: string }>
   readonly computer?: Readonly<{ id: string }>
   readonly key?: string
@@ -349,7 +349,6 @@ interface SessionCreateRequest<A extends AgentContract = AgentContract<string, J
 interface SessionCreateReceipt {
   readonly session: SessionRef
   readonly turn: TurnRef | null
-  readonly closeAfterIdle: Retention         // resolved policy; "never" when disabled
 }
 ```
 
@@ -357,7 +356,6 @@ interface SessionCreateReceipt {
 | --- | --- |
 | `agent` | Authored Agent ID in the current Deployment. |
 | `input` | Optional initial Turn input. Omit for zero Turns; supplied input must be finite JSON and match the Agent contract. |
-| `closeAfterIdle` | Overrides the definition's idle retention for a new Session. |
 | `slack.channelId` | Opens the Session in a Slack channel, by raw channel ID (for example `C0123456789`). See [Slack](/docs/concepts/slack). |
 | `computer.id` | Runs on an existing Computer. Omit to assign one from the pinned Template definition on first input. |
 | `key` | Unique Session identity within its Agent. An occupied key conflicts. |
@@ -418,7 +416,7 @@ payloads are listed in [Session events](/docs/reference/events).
 | `key` | `string`, optional |
 | `slackChannelId` | `string`, optional |
 | `status` | `"open" \| "closing" \| "closed"` |
-| `closeAfterIdle` | `Retention` (`Duration` or `"never"`) |
+| `closeAfterIdle` | `Retention` (`Duration` or `"never"`), from the pinned Agent definition |
 | `idleSince` | `string \| null` |
 | `initialTurn` | `{ id, status } \| null` |
 | `holds` | `{ id, sessionId, kind: "interrupt" \| "process_failed" \| "recovery_gap" \| "storage_pressure", recoveryGap?, createdAt, canRelease }[]`. `id` and `sessionId` are `null` for a hold on an unreadable ancestor. Resume a hold on its `sessionId`. |

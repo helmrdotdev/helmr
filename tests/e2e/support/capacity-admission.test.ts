@@ -86,7 +86,7 @@ test("native admission tracks only success and aborts an in-flight request at th
     bodies.push(String(init?.body))
     if (bodies.length === 1) return Response.json({ error: { code: capacityError.code, message: capacityError.message } }, { status: 503 })
     if (bodies.length === 2) return Response.json({ session_id: session,
-      turn: { session_id: session, turn_id: turn, sequence: 1 }, close_after_idle_ms: null })
+      turn: { session_id: session, turn_id: turn, sequence: 1 } })
     inFlightSignal = init?.signal ?? undefined
     await delay(1000, undefined, { signal: inFlightSignal })
     throw new Error("request did not abort")

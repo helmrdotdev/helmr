@@ -69,11 +69,10 @@ type EnqueueRequest struct {
 }
 
 type Admission struct {
-	CloseAfterIdleMs *int64
-	SessionID        uuid.UUID
-	TurnID           uuid.UUID
-	Sequence         int64
-	Created          bool
+	SessionID uuid.UUID
+	TurnID    uuid.UUID
+	Sequence  int64
+	Created   bool
 }
 
 type owners struct {

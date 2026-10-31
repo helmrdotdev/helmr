@@ -69,7 +69,8 @@ Types exported from `@helmr/sdk`, grouped by area:
 - `Duration` is a positive safe integer number of milliseconds, or a string of
   a positive integer followed by `ms`, `s`, `m`, `h` or `d` (for example
   `"30s"`, `"7d"`). Compound and fractional strings are rejected. Retention
-  options (`closeAfterIdle`, `deleteAfterUnused`) also accept `"never"`.
+  options (`closeAfterIdle`, `hibernateAfterIdle`, `deleteAfterUnused`) also
+  accept `"never"`.
 - Input is always an array of text parts (`InputContent`); omit initial input to create a Session with zero Turns; explicit empty initial input is rejected.
   Output, responses and question prompts use `Content`, which also allows JSON
   parts. Machine results and answers are JSON.

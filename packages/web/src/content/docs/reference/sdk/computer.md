@@ -47,7 +47,7 @@ Returns a frozen definition with `kind: "template"`. Throws `TypeError` when
 | `prepare` | no | Preparation function. Runs with a `PrepareContext` to set up the Computer's filesystem (for example cloning a repository and installing dependencies) before the Computer is used. |
 | `refresh.every` | yes, with `refresh` | Best-effort interval between background preparations after promotion. A usable build already in progress satisfies the interval; missed intervals are coalesced. |
 | `refresh.maxAge` | no | Maximum age of a prepared image a new Computer may start from; an older one is prepared again first. |
-| `deleteAfterUnused` | no | Retention after the Computer becomes unused: a `Duration` or `"never"`. Default `"7d"`. |
+| `deleteAfterUnused` | no | Deletes a Computer created from this Template after it stays unused this long: a `Duration` or `"never"`. Default `"7d"`. A Computer always uses its origin Template's value; to keep a long-lived Computer longer, create it from a Template with a longer period. |
 | `secrets` | no | Secret bindings available to processes on the Computer. |
 | `prepareSecrets` | no | Secret bindings available to `prepare`. Nonempty bindings require a callback. |
 
@@ -227,13 +227,12 @@ interface ComputerCreateRequest {
   readonly template: string
   readonly key?: string
   readonly secrets?: readonly SecretBinding[]
-  readonly deleteAfterUnused?: Duration      // or "never"
   readonly idempotencyKey?: string
 }
 ```
 
 `create` uses the current Deployment. `template` is the identifier declared in `template({ id, ... })`. `key` is an optional immutable lookup value; it does not make creation
-get-or-create. `deleteAfterUnused` overrides the definition.
+get-or-create. Unused retention comes from the Template definition.
 
 `ComputerListQuery` is either `{ secret?, cursor?, limit? }` or an exact lookup
 `{ key }`, which does not accept `secret`, `cursor` or `limit`. `ComputerListItem` is a
@@ -257,7 +256,6 @@ const holders = await client.computers.list({ secret: "DATABASE_PASSWORD" })
 | `sessions.list({ cursor?, limit? }?, options?)` | `CursorPage<ComputerUsage>` | Sessions currently using the Computer, including pending cleanup; `limit` 1–100. |
 | `commands.list({ cursor?, limit? }?, options?)` | `CursorPage<ComputerUsage>` | Commands currently using the Computer, including pending cleanup; `limit` 1–100. |
 | `exec(request, options?)` | `CommandRef` | Admits a Command. See [Commands](#client-commands). |
-| `update({ deleteAfterUnused }, options?)` | `Computer` | Changes retention. Requires the `computers.update` permission. |
 | `delete({ idempotencyKey?, dryRun? }?, options?)` | `{ computerId, sessionsCancelled, commandsCancelled }` | Requests deletion. Deleting cancels its Sessions and the Sessions they started, and its unfinished Commands. `dryRun` reports the counts without changing anything. |
 
 ```ts
@@ -291,10 +289,10 @@ Session/Command lifecycle statuses. Each collection has a separate cursor.
 | `residency` | `"cold" \| "starting" \| "running" \| "parking" \| "parked" \| "restoring" \| "unavailable"` |
 | `executionWait` | `{ reason: "scheduling" \| "environment_limit" \| "saving" }` or `null` |
 | `error` | `{ code, message }`, present when `residency` is `unavailable` |
-| `deleteAfterUnused` | `Duration` (`"never"` when disabled) |
+| `deleteAfterUnused` | `Duration` (`"never"` when disabled), from the origin Template |
 | `unusedSince` | `string \| null` |
 | `secrets` | `SecretBinding[]` |
-| `lastActivityAt`, `createdAt`, `updatedAt` | `string` |
+| `createdAt`, `updatedAt` | `string` |
 
 ## Client: Commands
 

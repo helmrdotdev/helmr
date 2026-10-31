@@ -51,8 +51,6 @@ func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 		return decodeDetail[MCPDetails], true
 	case "region.created", "region.updated":
 		return decodeDetail[RegionDetails], true
-	case "computer.retention_changed":
-		return decodeDetail[ComputerRetentionDetails], true
 	case "computer.wake_requested", "computer.hibernate_requested", "computer.wake_settled", "computer.hibernate_settled":
 		return decodeDetail[ComputerControlDetails], true
 	case "session.close_requested", "session.cancel_requested", "session.interrupt_requested", "session.resume_requested", "turn.interrupt_requested":

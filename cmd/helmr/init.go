@@ -250,13 +250,11 @@ export const helloComputer = template({
   id: "hello",
   image: image("hello").from("node:24-bookworm-slim").workdir("/app"),
   resources: { cpu: 1, memory: "1GiB" },
-  deleteAfterUnused: "1m",
 })
 
 export const hello = agent({
   id: "hello",
   template: helloComputer,
-  closeAfterIdle: "30m",
   async turn(turn) {
     await turn.respond("Hello from Helmr")
     return { ok: true }

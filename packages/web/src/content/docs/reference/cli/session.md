@@ -65,7 +65,7 @@ a conflict, including for closed Sessions. Discover an existing Session with
 `--slack-channel` optionally chooses one Slack channel ID.
 
 Text output prints `session_id` and, when present, `turn_id`. JSON output contains
-`session_id`, `close_after_idle_ms`, and `turn`: either `null` or an object with
+`session_id` and `turn`: either `null` or an object with
 `session_id`, `turn_id`, and `sequence`.
 
 ## Sessions

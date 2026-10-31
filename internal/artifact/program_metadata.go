@@ -76,6 +76,7 @@ func cloneProgramDefinition(d ProgramDefinition) ProgramDefinition {
 		value := *d.Agent
 		value.RuntimeMcp = slices.Clone(value.RuntimeMcp)
 		value.CloseAfterIdleMs = cloneInt64(value.CloseAfterIdleMs)
+		value.HibernateAfterIdleMs = cloneInt64(value.HibernateAfterIdleMs)
 		value.MaxTurnDurationMs = cloneInt64(value.MaxTurnDurationMs)
 		value.Triggers = maps.Clone(value.Triggers)
 		for id, trigger := range value.Triggers {
@@ -91,6 +92,7 @@ func cloneProgramDefinition(d ProgramDefinition) ProgramDefinition {
 		value.Seed.Config.Env = slices.Clone(value.Seed.Config.Env)
 		value.Seed.Config.Entrypoint = slices.Clone(value.Seed.Config.Entrypoint)
 		value.Seed.Config.Cmd = slices.Clone(value.Seed.Config.Cmd)
+		value.DeleteAfterUnusedMs = cloneInt64(value.DeleteAfterUnusedMs)
 		value.Resources.DiskMiB = cloneInt64(value.Resources.DiskMiB)
 		if value.Refresh != nil {
 			refresh := *value.Refresh

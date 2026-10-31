@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"slices"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -17,6 +18,43 @@ import (
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/protobuf/proto"
 )
+
+// UnusedComputerHibernateAfter is how long a Computer with no open Session and
+// no unsettled Command stays running before it hibernates.
+const UnusedComputerHibernateAfter = 10 * time.Minute
+
+// captureAllowedSQL decides whether a Computer may hibernate now. An accepted
+// hibernate request always allows it. Otherwise, while no wake is pending:
+//   - with open Sessions, every one of them must allow automatic hibernation
+//     and have been idle for its own period. A Session's clock is the latest
+//     of its idle clock, the last Command settlement on the Computer and the
+//     last wake request. A closing Session always waits for its close to
+//     finish;
+//   - with no such Session and no unsettled Command, the Computer must have
+//     been unused for UnusedComputerHibernateAfter since its last Session closed,
+//     its last Command settled, its last wake request or its creation.
+//
+// Work in progress (running Turns, runnable queued Turns, unsettled Commands
+// and saves) is rejected separately by the busy check. Internal saves never
+// move any clock.
+const captureAllowedSQL = `WITH c AS (SELECT
+  (SELECT max(terminal_at) FROM commands WHERE environment_id=$1 AND computer_id=$2) AS settled,
+  (SELECT max(accepted_at) FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 AND kind='wake') AS woke)
+SELECT
+ EXISTS(SELECT 1 FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 AND kind='hibernate' AND status='accepted')
+ OR (NOT EXISTS(SELECT 1 FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 AND kind='wake' AND status='accepted')
+ AND CASE WHEN EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing'))
+  THEN NOT EXISTS(SELECT 1 FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)
+   WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing')
+   AND (s.status='closing' OR d.hibernate_after_idle_ms IS NULL OR s.idle_since IS NULL
+    OR GREATEST(s.idle_since,c.settled,c.woke)+d.hibernate_after_idle_ms*interval '1 millisecond'>clock_timestamp()))
+  ELSE NOT EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND terminal_at IS NULL)
+   AND GREATEST(
+    (SELECT created_at FROM computers WHERE environment_id=$1 AND id=$2),
+    (SELECT max(e.created_at) FROM sessions s JOIN session_events e ON (e.environment_id,e.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.computer_id=$2 AND e.kind='session.closed'),
+    c.settled,c.woke)+$3::bigint*interval '1 millisecond'<=clock_timestamp()
+  END)
+FROM c`
 
 // ComputerCaptureRequest is supplied only by authenticated worker transport.
 // The channel credential is checked against the lease and never logged.
@@ -95,12 +133,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 			return err
 		}
 		var permitted bool
-		if err = tx.QueryRow(ctx, `SELECT
- EXISTS(SELECT 1 FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 AND kind='hibernate' AND status='accepted')
- OR (EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing'))
- AND NOT EXISTS(SELECT 1 FROM computer_controls WHERE environment_id=$1 AND computer_id=$2 AND kind='wake' AND status='accepted')
- AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing')
- AND ((SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id))<>'after_turn' OR NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.seq>s.suspension_after_seq AND t.started_at IS NOT NULL AND t.terminal_at IS NOT NULL))))`, req.EnvironmentID, req.ComputerID).Scan(&permitted); err != nil {
+		if err = tx.QueryRow(ctx, captureAllowedSQL, req.EnvironmentID, req.ComputerID, UnusedComputerHibernateAfter.Milliseconds()).Scan(&permitted); err != nil {
 			return err
 		}
 		if !permitted {

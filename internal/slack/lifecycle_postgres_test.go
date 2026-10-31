@@ -48,6 +48,9 @@ func TestSlackLifecycleCommandsConfirmWithoutCreatingWork(t *testing.T) {
 			if !strings.Contains(string(feedback.payload), "blocks") {
 				t.Fatalf("no controls: %s", feedback.payload)
 			}
+			if command == "sleep" && (!strings.Contains(string(feedback.payload), "Hibernating pauses this Session.") || strings.Contains(string(feedback.payload), f.Session.String())) {
+				t.Fatalf("hibernate confirmation lacks its count or lists identities: %s", feedback.payload)
+			}
 		})
 	}
 }
@@ -88,7 +91,7 @@ func TestSlackCloseConfirmationShowsCountAndRequiresItsActor(t *testing.T) {
 			}
 		}
 	}
-	if claims.Action != "confirm_close" || claims.Actor != "human" || claims.Scope != "" {
+	if claims.Action != "confirm_close" || claims.Actor != "human" {
 		t.Fatalf("confirmation unbound: %+v", claims)
 	}
 	wrongActorRaw, _ := json.Marshal(controlGesture{Control: claims})
@@ -167,7 +170,7 @@ func TestSlackLifecycleDiscoveryTracksStateWithoutPeriodicCardWrites(t *testing.
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('e',64));
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension,runtime_mcp_policy) SELECT environment_id,agent_id,$3,template_id,has_init,'after_turn',runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,hibernate_after_idle_ms,runtime_mcp_policy) SELECT environment_id,agent_id,$3,template_id,has_init,60000,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, promoted)
 	drain()
 	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_revision FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&after); err != nil || after != before {
@@ -190,7 +193,7 @@ func TestSlackLifecycleRendersSampledState(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(t.Context(), `UPDATE agent_definitions d SET suspension='after_turn' FROM sessions s WHERE s.id=$1 AND (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)`, f.Session); err != nil {
+		if _, err = tx.Exec(t.Context(), `UPDATE agent_definitions d SET hibernate_after_idle_ms=60000 FROM sessions s WHERE s.id=$1 AND (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)`, f.Session); err != nil {
 			return err
 		}
 		text, _, err := lifecyclePresentationFromState(t.Context(), tx, testProjectionConfig(), target, "help", "", false, snapshot)

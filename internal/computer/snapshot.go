@@ -52,7 +52,6 @@ type Snapshot struct {
 	DeploymentID        string                    `json:"deployment_id"`
 	Status              Status                    `json:"status"`
 	Secrets             []secretbinding.Reference `json:"secrets"`
-	LastActivityAt      time.Time                 `json:"last_activity_at"`
 	CreatedAt           time.Time                 `json:"created_at"`
 	UpdatedAt           time.Time                 `json:"updated_at"`
 }
@@ -72,7 +71,6 @@ type ListItem struct {
 	DefinitionKey       string
 	DeploymentID        string
 	Status              Status
-	LastActivityAt      time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	// SecretExposure is set only when listing by Secret.
@@ -138,7 +136,7 @@ const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t
  CASE WHEN c.integrity_fault_at IS NOT NULL THEN jsonb_build_object('code','computer_recovery_required','message','Computer requires recovery')
  WHEN c.preparation_failed_at IS NOT NULL THEN jsonb_build_object('code','computer_preparation_failed','message','Computer preparation failed')
  WHEN l.status='lost' THEN jsonb_build_object('code','computer_recovery_required','message','Computer execution state is unavailable') END,
- c.last_activity_at,c.created_at,c.updated_at,c.delete_after_unused_ms,c.unused_since,
+ c.created_at,c.updated_at,(SELECT d.delete_after_unused_ms FROM template_definitions d WHERE (d.environment_id,d.template_id,d.deployment_id)=(c.environment_id,c.origin_template_id,c.origin_deployment_id)),c.unused_since,
  CASE WHEN c.deleted_at IS NOT NULL OR c.integrity_fault_at IS NOT NULL OR c.preparation_failed_at IS NOT NULL
  OR c.initial_root_id IS NULL OR c.image_id IS NULL OR l.status IN ('lost','acquiring') OR cp.status='restoring'
  OR NOT (EXISTS(SELECT 1 FROM computer_controls control WHERE control.environment_id=c.environment_id AND control.computer_id=c.id AND control.kind='wake' AND control.status='accepted')
@@ -162,8 +160,8 @@ const computerProjection = `SELECT c.id::text,c.key,(SELECT key FROM templates t
 
 func scanComputer(row pgx.Row, extra ...any) (ListItem, error) {
 	var item ListItem
-	err := row.Scan(append([]any{&item.ID, &item.Key, &item.DefinitionKey, &item.DeploymentID, &item.Status, &item.Residency, &item.Error, &item.LastActivityAt, &item.CreatedAt, &item.UpdatedAt, &item.DeleteAfterUnusedMs, &item.UnusedSince, &item.waitCandidate, &item.waitCPU, &item.waitMemory, &item.ExecutionControl}, extra...)...)
-	item.LastActivityAt, item.CreatedAt, item.UpdatedAt = item.LastActivityAt.UTC(), item.CreatedAt.UTC(), item.UpdatedAt.UTC()
+	err := row.Scan(append([]any{&item.ID, &item.Key, &item.DefinitionKey, &item.DeploymentID, &item.Status, &item.Residency, &item.Error, &item.CreatedAt, &item.UpdatedAt, &item.DeleteAfterUnusedMs, &item.UnusedSince, &item.waitCandidate, &item.waitCPU, &item.waitMemory, &item.ExecutionControl}, extra...)...)
+	item.CreatedAt, item.UpdatedAt = item.CreatedAt.UTC(), item.UpdatedAt.UTC()
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -201,7 +199,7 @@ func Read(ctx context.Context, database db.DBTX, scope Scope, id uuid.UUID) (Sna
 	if refs == nil {
 		refs = []secretbinding.Reference{}
 	}
-	return Snapshot{ExecutionControl: item.ExecutionControl, ExecutionWait: item.ExecutionWait, DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince, ID: item.ID, Key: item.Key, DefinitionKey: item.DefinitionKey, DeploymentID: item.DeploymentID, Status: item.Status, Residency: item.Residency, Error: item.Error, Secrets: refs, LastActivityAt: item.LastActivityAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}, nil
+	return Snapshot{ExecutionControl: item.ExecutionControl, ExecutionWait: item.ExecutionWait, DeleteAfterUnusedMs: item.DeleteAfterUnusedMs, UnusedSince: item.UnusedSince, ID: item.ID, Key: item.Key, DefinitionKey: item.DefinitionKey, DeploymentID: item.DeploymentID, Status: item.Status, Residency: item.Residency, Error: item.Error, Secrets: refs, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}, nil
 }
 func FindByKey(ctx context.Context, database db.DBTX, scope Scope, key string) (ListItem, error) {
 	item, err := scanComputer(database.QueryRow(ctx, computerProjection+` AND c.key=$4`, scope.OrgID, scope.ProjectID, scope.EnvironmentID, key))

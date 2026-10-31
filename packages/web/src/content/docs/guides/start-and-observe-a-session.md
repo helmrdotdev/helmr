@@ -172,7 +172,7 @@ await session.close()
 
 | Call | Result |
 | --- | --- |
-| `client.sessions.create({ agent: name, ...request })` | `{ session, turn, closeAfterIdle }`. Pass `computer: { id }` to use an existing Computer. |
+| `client.sessions.create({ agent: name, ...request })` | `{ session, turn }`. Pass `computer: { id }` to use an existing Computer. |
 | `session.events.list({ after?, limit? })` | One page: `records`, `nextAfter`, `hasMore`. |
 | `session.events.stream({ after? })` | An async iterator that keeps polling for new records until aborted. |
 | `turn.wait({ timeout })` | `{ status: "settled", outcome }` or `{ status: "timeout" }`. Without `timeout`, waits for the outcome. |

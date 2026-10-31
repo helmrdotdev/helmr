@@ -133,13 +133,6 @@ type AuditSecretExposureDetails struct {
 
 func (AuditSecretExposureDetails) auditDetails() {}
 
-type AuditComputerRetentionDetails struct {
-	Before *int64 `json:"before_ms"`
-	After  *int64 `json:"after_ms"`
-}
-
-func (AuditComputerRetentionDetails) auditDetails() {}
-
 type AuditComputerControlDetails struct {
 	Reason    string    `json:"reason,omitempty"`
 	RequestID uuid.UUID `json:"request_id"`

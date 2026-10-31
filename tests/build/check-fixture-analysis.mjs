@@ -73,8 +73,8 @@ try {
       throw new Error("ordinary dev workflows must be schedule-free")
     if (name === "execution") {
       const captureAbort = agents.filter(d => d.declaredId === "verification-capture-abort")
-      if (captureAbort.length !== 1 || captureAbort[0].manifest.suspension !== "after_turn")
-        throw new Error("capture-abort requires automatic suspension after its initial Turns complete")
+      if (captureAbort.length !== 1 || captureAbort[0].manifest.hibernateAfterIdleMs !== 1000)
+        throw new Error("capture-abort requires automatic hibernation shortly after its initial Turns complete")
     }
     if (name === "schedule" && (agents.length !== 1 || agents[0].declaredId !== "schedule-smoke" ||
       agents[0].manifest.maxTurnDurationMs !== 300000 ||

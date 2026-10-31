@@ -166,7 +166,7 @@ if (!file) throw Error("source.file failed");
 let called = false;
 const client = new HelmrClient({url:"https://example.invalid",apiKey:"fixture",fetch:async (url, init)=>{
  if(String(url)!=="https://example.invalid/v1/sessions" || init?.method!=="POST") throw Error("SDK wire contract");
- called=true; return Response.json({session_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",turn:{session_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",turn_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",sequence:1},close_after_idle_ms:604800000});
+ called=true; return Response.json({session_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",turn:{session_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",turn_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31",sequence:1}});
 }});
 await client.sessions.create({ agent: "preview-hello", input:[{type:"text",text:"hello"}],computer:client.computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32") });
 if(!called) throw Error("SDK request missing");

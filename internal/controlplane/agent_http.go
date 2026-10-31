@@ -92,7 +92,7 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := slack.Start(r.Context(), s.auditPolicy, s.tx, s.secretProxy, preflight, caller, session.StartRequest{
 		EnvironmentID: environment, Agent: request.Agent, ComputerID: computerID,
-		CloseAfterIdle: request.CloseAfterIdle, SessionKey: request.Key, SlackChannelID: slackChannelID, IdempotencyKey: request.IdempotencyKey, Input: request.Input,
+		SessionKey: request.Key, SlackChannelID: slackChannelID, IdempotencyKey: request.IdempotencyKey, Input: request.Input,
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, r, err)
@@ -103,7 +103,7 @@ func (s *Server) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		admission := agentAdmission(result)
 		turn = &admission
 	}
-	writeJSON(w, http.StatusOK, api.CreateSessionResponse{SessionID: result.SessionID.String(), Turn: turn, CloseAfterIdleMs: result.CloseAfterIdleMs})
+	writeJSON(w, http.StatusOK, api.CreateSessionResponse{SessionID: result.SessionID.String(), Turn: turn})
 }
 
 func (s *Server) enqueueSessionHTTP(w http.ResponseWriter, r *http.Request) {
@@ -324,8 +324,6 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, r *http.Request, err
 		s.writeOperationError(w, r, conflict(codedError{code: "agent_deleted", message: err.Error()}))
 	case errors.Is(err, session.ErrDenied), errors.Is(err, computer.ErrDenied), errors.Is(err, agent.ErrDenied):
 		s.writeOperationError(w, r, forbidden(errors.Join(errors.New("agent or Session operation is not authorized"), err)))
-	case errors.Is(err, session.ErrControlScopeChanged):
-		s.writeOperationError(w, r, conflict(codedError{code: "control_scope_changed", message: "The affected Sessions or Commands changed. Close this confirmation and review the scope again."}))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict):
 		s.writeOperationError(w, r, conflict(codedError{code: "idempotency_conflict", message: "request conflicts with its recorded identity"}))
 	case errors.Is(err, computer.ErrSecretUnavailable):

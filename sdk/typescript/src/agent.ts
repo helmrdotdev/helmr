@@ -32,6 +32,7 @@ export interface TemplateDefinition {
   /** Replaces preparation outbound policy; omission inherits network. */
   readonly prepareNetwork?: NetworkPolicy
   readonly prepare?: (prepare: PrepareContext) => MaybePromise<void>
+  /** Deletes a Computer made from this Template after it stays unused this long. Omitted: 7 days. */
   readonly deleteAfterUnused?: Retention
   readonly refresh?: { readonly every: Duration; readonly maxAge?: Duration }
   readonly secrets?: readonly SecretBinding[]
@@ -107,7 +108,6 @@ export const triggers = Object.freeze({
     return Object.freeze({ id, cron: expression, timezone: options.timezone, input: options.input, ...(options.slack === undefined ? {} : { slack: Object.freeze({ channelId: slackStartOption(options.slack).channel_id }) }) })
   },
 })
-export type SuspensionPolicy = "manual" | "after_turn"
 
 type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false
 export type AgentDefinition<I = InputContent, O = JsonValue, S = undefined, ID extends string = string, Wire = I, Returned = O> = JsonCheck<O> & AgentContract<ID, Wire, O> & {
@@ -116,8 +116,13 @@ export type AgentDefinition<I = InputContent, O = JsonValue, S = undefined, ID e
   readonly runtimeMcp?: RuntimeMcpPolicy
   readonly template: TemplateDefinition
   readonly turn: (turn: Turn<I>, ctx: AgentContext<S>) => MaybePromise<Returned>
-  readonly suspension?: SuspensionPolicy
+  /** Closes a Session after it stays idle this long. Omitted: 7 days. */
   readonly closeAfterIdle?: Retention
+  /**
+   * Hibernates the Session's Computer after the Session stays idle this long.
+   * Background work on the Computer pauses until it wakes. Omitted: "never".
+   */
+  readonly hibernateAfterIdle?: Retention
   readonly maxTurnDuration?: Duration
   readonly triggers?: readonly CronTrigger<Wire>[]
 } & ([S] extends [undefined] ? { readonly init?: (ctx: InitContext) => MaybePromise<S> } : { readonly init: (ctx: InitContext) => MaybePromise<S> })
@@ -149,8 +154,13 @@ type AgentConfig<ID extends string, SI extends Schema, SO extends Schema, State,
   readonly runtimeMcp?: RuntimeMcpPolicy
   readonly template: TemplateDefinition
   readonly turn: (turn: Turn<NoInfer<Parsed<SI>>>, ctx: AgentContext<NoInfer<State>>) => MaybePromise<Returned<SO, O>>
-  readonly suspension?: SuspensionPolicy
+  /** Closes a Session after it stays idle this long. Omitted: 7 days. */
   readonly closeAfterIdle?: Retention
+  /**
+   * Hibernates the Session's Computer after the Session stays idle this long.
+   * Background work on the Computer pauses until it wakes. Omitted: "never".
+   */
+  readonly hibernateAfterIdle?: Retention
   readonly maxTurnDuration?: Duration
   readonly triggers?: readonly CronTrigger<NoInfer<Accepted<SI>>>[]
 } & SchemaField<"inputSchema", SI> & SchemaField<"resultSchema", SO>

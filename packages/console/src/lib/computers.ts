@@ -17,7 +17,6 @@ export type Computer = {
   residency: "cold" | "starting" | "running" | "parking" | "parked" | "restoring" | "unavailable";
   error?: { code: string; message: string };
   secrets: ComputerSecret[];
-  last_activity_at: string;
   created_at: string;
   updated_at: string;
 };
@@ -85,10 +84,11 @@ function environmentPath(scope: ComputerScope): string {
   return `/api/projects/${encodeURIComponent(scope.projectID)}/environments/${encodeURIComponent(scope.environmentID)}`;
 }
 
-export type ExecutionScope = { digest: string; sessions: string[]; commands: string[] };
-export function getComputerExecutionScope(id: string, scope: ComputerScope): Promise<ExecutionScope> {
-  return request(`${computerPath(id,scope)}/execution-scope`);
+// The open sessions a hibernate request would pause.
+export type HibernatePreview = { sessions: number };
+export function getComputerHibernatePreview(id: string, scope: ComputerScope): Promise<HibernatePreview> {
+  return request(`${computerPath(id,scope)}/hibernate-preview`);
 }
-export function controlComputerExecution(id: string, scope: ComputerScope, action: "hibernate" | "wake", key: string, expectedScope?: string): Promise<NonNullable<Computer["execution_control"]>> {
-  return postJson(`${computerPath(id,scope)}/${action}`, { idempotency_key: key, expected_scope: expectedScope });
+export function controlComputerExecution(id: string, scope: ComputerScope, action: "hibernate" | "wake", key: string): Promise<NonNullable<Computer["execution_control"]>> {
+  return postJson(`${computerPath(id,scope)}/${action}`, { idempotency_key: key });
 }

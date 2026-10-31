@@ -114,7 +114,7 @@ func applyLifecycleControl(ctx context.Context, auditPolicy auditpolicy.Policy, 
 		if computerID == nil || (c.Action == "hibernate" && *computerID != c.Computer) {
 			return nil, session.ErrNotReady
 		}
-		receipt, err := session.ControlComputerExecution(ctx, auditPolicy, tx, caller, session.ComputerExecutionRequest{EnvironmentID: target.Environment, ComputerID: *computerID, Kind: c.Action, IdempotencyKey: "slack:" + id.String(), ExpectedScope: c.Scope, OpenSessionID: target.Session})
+		receipt, err := session.ControlComputerExecution(ctx, auditPolicy, tx, caller, session.ComputerExecutionRequest{EnvironmentID: target.Environment, ComputerID: *computerID, Kind: c.Action, IdempotencyKey: "slack:" + id.String(), OpenSessionID: target.Session})
 		if err != nil {
 			return nil, err
 		}

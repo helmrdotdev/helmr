@@ -17,10 +17,10 @@ func (f fixture) executionRequest(kind, key string) session.ComputerExecutionReq
 	return session.ComputerExecutionRequest{EnvironmentID: f.env, ComputerID: f.computer, Kind: kind, IdempotencyKey: key}
 }
 
-func TestComputerManualPolicyNeedsExplicitHibernate(t *testing.T) {
+func TestComputerWithoutIdlePeriodNeedsExplicitHibernate(t *testing.T) {
 	f := newFixture(t)
 	if _, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("manual capture: %v", err)
+		t.Fatalf("capture without idle period: %v", err)
 	}
 	req := f.executionRequest("hibernate", "sleep")
 	accepted, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req)
@@ -56,45 +56,6 @@ func TestComputerHibernateRequiresNoForegroundAndNewInputCancelsIntent(t *testin
 	req.IdempotencyKey = "busy"
 	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, computer.ErrBusy) {
 		t.Fatalf("queued work: %v", err)
-	}
-}
-
-func TestComputerAfterTurnRequiresEveryMemberAndWakeRearms(t *testing.T) {
-	f := newFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET suspension='after_turn' WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, f.env, f.agent, f.deployment)
-	if _, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("no completed turn: %v", err)
-	}
-	a, save := f.finalize(t, "first")
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='fixture settled' WHERE id=$1`, save.ID)
-	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, a.TurnID); err != nil {
-		t.Fatal(err)
-	}
-	peer := f.peer(t)
-	manualAgent := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO agents(environment_id,id,key) VALUES($1,$4,'manual-peer');
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension,runtime_mcp_policy) SELECT environment_id,$4,deployment_id,template_id,has_init,'manual',runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3;
- UPDATE sessions SET agent_id=$4 WHERE environment_id=$1 AND id=$5`, pgx.QueryExecModeSimpleProtocol, f.env, f.agent, f.deployment, manualAgent, peer.session)
-	if _, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("manual peer: %v", err)
-	}
-	// Closing/fencing the peer is irrelevant to the original member's policy.
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, peer.session)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, peer.session)
-	wake, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("wake", "already-awake"))
-	if err != nil || wake.Status != "completed" {
-		t.Fatalf("wake: %+v %v", wake, err)
-	}
-	if _, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); !errors.Is(err, session.ErrNotReady) {
-		t.Fatalf("old turn rearmed capture: %v", err)
-	}
-	b, save := f.finalize(t, "second")
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='fixture settled' WHERE id=$1`, save.ID)
-	if err := completedTurnForTest(t.Context(), f.pool, f.env, f.session, b.TurnID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := session.BeginComputerCapture(t.Context(), f.pool, *f.host(), f.captureRequest()); err != nil {
-		t.Fatalf("new completion: %v", err)
 	}
 }
 
@@ -157,35 +118,36 @@ func TestComputerParkedProjectionAndRejectedWakePreserveCheckpoint(t *testing.T)
 	}
 }
 
-func TestComputerHibernateConfirmationBindsSharedMembership(t *testing.T) {
+func TestComputerHibernatePreviewCountsOpenSessions(t *testing.T) {
 	f := newFixture(t)
-	var scope session.ExecutionScope
-	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		var err error
-		scope, err = session.ReadComputerExecutionScope(t.Context(), tx, f.env, f.computer)
-		return err
-	}); err != nil {
-		t.Fatal(err)
+	preview := func() int64 {
+		t.Helper()
+		var count int64
+		if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
+			var err error
+			count, err = session.ComputerHibernatePreview(t.Context(), tx, f.caller(), f.env, f.computer)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return count
 	}
-	req := f.executionRequest("hibernate", "confirmed")
-	req.ExpectedScope = scope.Digest
+	if got := preview(); got != 1 {
+		t.Fatalf("one Session: %d", got)
+	}
 	peer := f.peer(t)
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrConflict) {
-		t.Fatalf("stale shared membership accepted: %v", err)
+	if got := preview(); got != 2 {
+		t.Fatalf("shared Computer: %d", got)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, peer.session)
+	if got := preview(); got != 1 {
+		t.Fatalf("closed peer counted: %d", got)
 	}
 	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		var err error
-		scope, err = session.ReadComputerExecutionScope(t.Context(), tx, f.env, f.computer)
+		_, err := session.ComputerHibernatePreview(t.Context(), tx, f.caller(), f.env, uuid.NewV7())
 		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if len(scope.Sessions) != 2 {
-		t.Fatalf("missing shared Session %s: %+v", peer.session, scope)
-	}
-	req.ExpectedScope = scope.Digest
-	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); err != nil {
-		t.Fatalf("current confirmation rejected: %v", err)
+	}); !errors.Is(err, session.ErrDenied) {
+		t.Fatalf("missing Computer: %v", err)
 	}
 }
 

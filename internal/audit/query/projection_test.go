@@ -223,7 +223,7 @@ func TestAuditCatalogProjection(t *testing.T) {
 		audit.AuthenticationDetails{Method: "login"}, audit.SessionRevokedDetails{Reason: "logout"}, audit.MessageRejectedDetails{Reason: "turn_closed"},
 		audit.SearchDetails{ReadModel: "organization", From: now.Add(-time.Hour), To: now},
 		audit.SecretExposureDetails{ExposureID: id, VersionID: id}, audit.MCPDetails{Tool: "list_agents"},
-		audit.ComputerRetentionDetails{}, audit.ComputerControlDetails{RequestID: id},
+		audit.ComputerControlDetails{RequestID: id},
 		audit.ComputerControlDetails{RequestID: id, Reason: "operation_failed"},
 		audit.SessionControlDetails{RequestID: id}, audit.TemplateRefreshDetails{ImageBuildID: id},
 		audit.SessionHoldDetails{HoldID: id, Reason: "storage_pressure"}, audit.CheckpointDetails{CheckpointID: id}, audit.LifecycleDetails{},

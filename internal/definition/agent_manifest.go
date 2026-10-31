@@ -13,14 +13,14 @@ import (
 )
 
 type AgentManifest struct {
-	RuntimeMcp           json.RawMessage        `json:"runtimeMcp,omitempty"`
-	TemplateDefinitionID string                 `json:"templateDefinitionId"`
-	InputKind            string                 `json:"inputKind"`
-	InputSchema          *InputSchemaDiscovery  `json:"inputSchema,omitempty"`
-	HasInit              bool                   `json:"hasInit"`
-	Suspension           string                 `json:"suspension,omitempty"`
-	CloseAfterIdleNever  bool                   `json:"closeAfterIdleNever,omitempty"`
-	CloseAfterIdleMs     *int64                 `json:"closeAfterIdleMs,omitempty"`
+	RuntimeMcp           json.RawMessage       `json:"runtimeMcp,omitempty"`
+	TemplateDefinitionID string                `json:"templateDefinitionId"`
+	InputKind            string                `json:"inputKind"`
+	InputSchema          *InputSchemaDiscovery `json:"inputSchema,omitempty"`
+	HasInit              bool                  `json:"hasInit"`
+	// CloseAfterIdleMs and HibernateAfterIdleMs are always present; null means never.
+	CloseAfterIdleMs     *int64                 `json:"closeAfterIdleMs"`
+	HibernateAfterIdleMs *int64                 `json:"hibernateAfterIdleMs"`
 	MaxTurnDurationMs    *int64                 `json:"maxTurnDurationMs,omitempty"`
 	Triggers             map[string]CronTrigger `json:"triggers"`
 }
@@ -38,42 +38,29 @@ type ComputerRefresh struct {
 }
 
 type TemplateInputManifest struct {
-	DeleteAfterUnusedMs    *int64            `json:"deleteAfterUnusedMs,omitempty"`
-	DeleteAfterUnusedNever bool              `json:"deleteAfterUnusedNever,omitempty"`
-	ImageBuild             ImageBuild        `json:"imageBuild"`
-	Resources              ResourcesManifest `json:"resources"`
-	Network                json.RawMessage   `json:"network"`
-	PrepareNetwork         json.RawMessage   `json:"prepareNetwork,omitempty"`
-	Prepare                bool              `json:"prepare"`
-	Refresh                *ComputerRefresh  `json:"refresh,omitempty"`
-	Secrets                []SecretBinding   `json:"secrets"`
-	PrepareSecrets         []SecretBinding   `json:"prepareSecrets"`
-}
-
-func (m AgentManifest) SuspensionPolicy() string {
-	if m.Suspension == "" {
-		return "manual"
-	}
-	return m.Suspension
+	// DeleteAfterUnusedMs is always present; null means never.
+	DeleteAfterUnusedMs *int64            `json:"deleteAfterUnusedMs"`
+	ImageBuild          ImageBuild        `json:"imageBuild"`
+	Resources           ResourcesManifest `json:"resources"`
+	Network             json.RawMessage   `json:"network"`
+	PrepareNetwork      json.RawMessage   `json:"prepareNetwork,omitempty"`
+	Prepare             bool              `json:"prepare"`
+	Refresh             *ComputerRefresh  `json:"refresh,omitempty"`
+	Secrets             []SecretBinding   `json:"secrets"`
+	PrepareSecrets      []SecretBinding   `json:"prepareSecrets"`
 }
 
 func ValidateAgentManifest(m AgentManifest) error {
 	if _, err := mcppolicy.Normalize(m.RuntimeMcp, nil); err != nil {
 		return fmt.Errorf("%w runtimeMcp: %w", ErrInvalidRuntimeMcpPolicy, err)
 	}
-	if m.SuspensionPolicy() != "manual" && m.SuspensionPolicy() != "after_turn" {
-		return errors.New("invalid agent suspension policy")
-	}
 	if err := ValidateInputContract(m.InputKind, m.InputSchema); err != nil {
 		return err
-	}
-	if m.CloseAfterIdleNever && m.CloseAfterIdleMs != nil {
-		return errors.New("conflicting idle close policy")
 	}
 	if !ValidDeclaredID(m.TemplateDefinitionID) {
 		return errors.New("agent templateDefinitionId is invalid")
 	}
-	for _, duration := range []*int64{m.CloseAfterIdleMs, m.MaxTurnDurationMs} {
+	for _, duration := range []*int64{m.CloseAfterIdleMs, m.HibernateAfterIdleMs, m.MaxTurnDurationMs} {
 		if duration != nil && !positiveSafeInteger(*duration) {
 			return errors.New("agent duration must be positive safe integer milliseconds")
 		}
@@ -128,16 +115,15 @@ func ValidateSecretBindings(refs []SecretBinding) error {
 // TemplateManifest records the resolved base seed and authored preparation inputs.
 // A seed is not an eligible prepared revision; preparation must publish that output.
 type TemplateManifest struct {
-	DeleteAfterUnusedMs    *int64               `json:"deleteAfterUnusedMs,omitempty"`
-	DeleteAfterUnusedNever bool                 `json:"deleteAfterUnusedNever,omitempty"`
-	Seed                   ComputerSeedManifest `json:"seed"`
-	Resources              ResourcesManifest    `json:"resources"`
-	Network                json.RawMessage      `json:"network"`
-	PrepareNetwork         json.RawMessage      `json:"prepareNetwork,omitempty"`
-	Prepare                bool                 `json:"prepare"`
-	Refresh                *ComputerRefresh     `json:"refresh,omitempty"`
-	Secrets                []SecretBinding      `json:"secrets"`
-	PrepareSecrets         []SecretBinding      `json:"prepareSecrets"`
+	DeleteAfterUnusedMs *int64               `json:"deleteAfterUnusedMs"`
+	Seed                ComputerSeedManifest `json:"seed"`
+	Resources           ResourcesManifest    `json:"resources"`
+	Network             json.RawMessage      `json:"network"`
+	PrepareNetwork      json.RawMessage      `json:"prepareNetwork,omitempty"`
+	Prepare             bool                 `json:"prepare"`
+	Refresh             *ComputerRefresh     `json:"refresh,omitempty"`
+	Secrets             []SecretBinding      `json:"secrets"`
+	PrepareSecrets      []SecretBinding      `json:"prepareSecrets"`
 }
 type ComputerSeedManifest struct {
 	Profile        string            `json:"profile"`
@@ -147,7 +133,7 @@ type ComputerSeedManifest struct {
 }
 
 func ValidateTemplateManifest(m TemplateManifest) error {
-	if err := ValidateUnusedPolicy(m.DeleteAfterUnusedMs, m.DeleteAfterUnusedNever); err != nil {
+	if err := ValidateUnusedPolicy(m.DeleteAfterUnusedMs); err != nil {
 		return err
 	}
 	if m.Seed.Profile != ComputerSeedProfile || m.Seed.MediaType != ComputerSeedMediaType {
@@ -164,8 +150,8 @@ func ValidateTemplateManifest(m TemplateManifest) error {
 
 var computerSeedDigest = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-func ValidateUnusedPolicy(duration *int64, never bool) error {
-	if duration != nil && (never || !positiveSafeInteger(*duration)) {
+func ValidateUnusedPolicy(duration *int64) error {
+	if duration != nil && !positiveSafeInteger(*duration) {
 		return errors.New("invalid Computer unused retention")
 	}
 	return nil

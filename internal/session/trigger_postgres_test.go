@@ -30,7 +30,7 @@ func seedTrigger(t *testing.T, f fixture, at time.Time) uuid.UUID {
 }
 func TestTriggerAdmissionConcurrentRetryAndPinnedDeployment(t *testing.T) {
 	f := newAdmissionFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET suspension='after_turn' WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, f.env, f.agent, f.deployment)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET close_after_idle_ms=60000 WHERE environment_id=$1 AND agent_id=$2 AND deployment_id=$3`, f.env, f.agent, f.deployment)
 	due := time.Now().UTC().Truncate(time.Minute).Add(-time.Minute)
 	trigger := seedTrigger(t, f, due)
 	// This historical activation remains eligible within grace even after a
@@ -38,7 +38,7 @@ func TestTriggerAdmissionConcurrentRetryAndPinnedDeployment(t *testing.T) {
 	current := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) SELECT environment_id,$2,'sha256:'||repeat('e',64) FROM deployments WHERE environment_id=$1 AND id=$3;
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) SELECT environment_id,$2,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$3;
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension,runtime_mcp_policy) SELECT environment_id,agent_id,$2,template_id,has_init,'manual',runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$3;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,close_after_idle_ms,runtime_mcp_policy) SELECT environment_id,agent_id,$2,template_id,has_init,NULL,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$3;
  UPDATE environments SET current_deployment_id=$2 WHERE id=$1;
  UPDATE trigger_activations SET active_until=$4 WHERE environment_id=$1 AND id=$5;`, pgx.QueryExecModeSimpleProtocol, f.env, current, f.deployment, due.Add(time.Minute), trigger)
 	var wg sync.WaitGroup
@@ -64,8 +64,8 @@ func TestTriggerAdmissionConcurrentRetryAndPinnedDeployment(t *testing.T) {
 		t.Fatal("scheduled creation repeated or lost acceptance", captured, err)
 	}
 	view, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, scheduledSession)
-	if err != nil || view.Suspension != "after_turn" {
-		t.Fatalf("scheduled policy ignored deployment pin: %q %v", view.Suspension, err)
+	if err != nil || view.CloseAfterIdleMs == nil || *view.CloseAfterIdleMs != 60000 {
+		t.Fatalf("scheduled policy ignored deployment pin: %v %v", view.CloseAfterIdleMs, err)
 	}
 	var valid bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(o.disposition='admitted' AND o.scheduled_at=$3 AND s.deployment_id=$4 AND s.root_session_id=s.id AND s.requester_session_id IS NULL AND s.parent_session_id IS NULL AND s.computer_id<>$5 AND s.status='open' AND t.status='queued' AND t.seq=1 AND t.caller_kind='schedule' AND t.caller_id=$2 AND t.input='[{"text":"scheduled","type":"text"}]'::bytea) FROM trigger_occurrences o JOIN sessions s ON (s.environment_id,s.id)=(o.environment_id,o.session_id) JOIN turns t ON (t.environment_id,t.id)=(o.environment_id,o.turn_id) WHERE o.environment_id=$1 AND o.activation_id=$2`, f.env, trigger, due, f.deployment, f.computer).Scan(&valid); err != nil || !valid {

@@ -112,7 +112,8 @@ func TestEmptySessionAccountingAndControls(t *testing.T) {
 				t.Fatalf("rejected input leaked resource or token: %v %v", valid, err)
 			}
 			if kind == "idle" {
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET idle_since=clock_timestamp()-interval '1 hour',close_after_idle_ms=1 WHERE id=$1`, a.SessionID)
+				setIdleClose(t, f.pool, a.SessionID, 1)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET idle_since=clock_timestamp()-interval '1 hour' WHERE id=$1`, a.SessionID)
 				if err := session.ReconcileSessionIdle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, a.SessionID); err != nil {
 					t.Fatal(err)
 				}

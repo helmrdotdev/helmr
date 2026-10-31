@@ -188,8 +188,8 @@ VALUES($5,$5,$5,'1.16.1','6.0.0','console-demo',$5,$5,$5,$7::timestamptz);
 INSERT INTO worker_pools(id,worker_group_id,name,status,created_at,updated_at) VALUES($2::uuid,$1::uuid,'console-demo-retired','disabled',$6::timestamptz,$7::timestamptz);
 INSERT INTO worker_hosts(id,resource_id,worker_group_id,worker_pool_id,status,current_epoch,current_service_id,epoch_started_at,activated_at,vm_platform_id,observed_at,lost_at,created_at,updated_at)
 VALUES($3::uuid,'console-demo-retired-host',$1::uuid,$2::uuid,'lost',1,$4::uuid,$6::timestamptz,$6::timestamptz,$5,$7::timestamptz,$7::timestamptz,$6::timestamptz,$7::timestamptz);
-INSERT INTO computers(environment_id,id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,initial_root_digest,initial_payload_retired_at,deleted_at,created_at,updated_at,last_activity_at)
-VALUES($8::uuid,$10::uuid,$11::uuid,$12::uuid,1000,536870912,$13::bytea,$7::timestamptz,$7::timestamptz,$6::timestamptz,$7::timestamptz,$7::timestamptz-interval '30 minutes');
+INSERT INTO computers(environment_id,id,origin_template_id,origin_deployment_id,cpu_millis,memory_bytes,initial_root_digest,initial_payload_retired_at,deleted_at,created_at,updated_at)
+VALUES($8::uuid,$10::uuid,$11::uuid,$12::uuid,1000,536870912,$13::bytea,$7::timestamptz,$7::timestamptz,$6::timestamptz,$7::timestamptz);
 `, pgx.QueryExecModeSimpleProtocol, demoSeedRetiredGroupID, demoSeedRetiredPoolID, demoSeedRetiredHostID, demoSeedRetiredServiceID, platform,
 		computerCreated, computerDeleted, demoSeedEnvironmentID, demoSHA("retired-group-token"), demoSeedHistoryComputerID, demoSeedSpecID, demoSeedDeploymentID,
 		demoSHA("history-computer-root")); err != nil {
@@ -545,7 +545,7 @@ func seedDemoCancelledChildSession(h *demoHistory, parent *demoLog, origin *demo
 // seedDemoJSONSession starts from structured JSON input rather than text and
 // closes after its idle period.
 func seedDemoJSONSession(h *demoHistory, now time.Time) {
-	s := h.session(&demoSessionRow{id: demoSeedJSONSessionID, agent: demoSeedAgentID, computer: demoSeedHistoryComputerID, status: "open", generation: 1, createdAt: now.Add(-6 * time.Hour), closeAfterIdleMS: 900000}, 2)
+	s := h.session(&demoSessionRow{id: demoSeedJSONSessionID, agent: demoSeedAgentID, computer: demoSeedHistoryComputerID, status: "open", generation: 1, createdAt: now.Add(-6 * time.Hour)}, 2)
 	t := s.enqueue(demoUUID(1111), demoUserCaller("create", demoSeedAgentID), "renewal-check", demoJSON(map[string]any{
 		"accounts": []any{
 			map[string]any{"id": "acct_acme", "renewal": "2026-11-01", "seats": 250},

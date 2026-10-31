@@ -9,7 +9,6 @@ import { verificationComputer } from "../agent/agent"
 export const executionLifecycleAgent = agent({
   id: "verification-execution-lifecycle",
   template: verificationComputer,
-  suspension: "manual",
   closeAfterIdle: "never",
   maxTurnDuration: "2m",
   init: async () => {

@@ -136,7 +136,8 @@ unaffected. Other Session input surfaces are unaffected.
 
 ### Computer and Session controls
 
-The thread's control card shows the Computer state and effective close policy.
+The thread's control card shows the Computer state and the Agent's automatic
+hibernation and close periods.
 Use its Hibernate/Wake button or More to recover the other actions. Commands are
 also available in an existing Session thread:
 
@@ -148,7 +149,8 @@ also available in an existing Session thread:
 | `!help` | Show policies, scope and controls. |
 
 These are whole-message commands, with the same quote/code exclusions as mute.
-Sleep and Close show affected members privately and recheck scope at confirmation.
+Sleep shows privately how many open Sessions hibernation pauses; Close shows
+how many Sessions it closes. Both recheck authorization at confirmation.
 Active foreground work prevents Hibernate; use native Stop deliberately or wait.
 Close is terminal and does not promise to free a Computer occupied by other work.
 An accepted operation is distinct from completed hibernation, waking or closure.

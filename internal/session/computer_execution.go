@@ -22,7 +22,6 @@ type ComputerExecutionRequest struct {
 	Kind           string
 	IdempotencyKey string
 	OpenSessionID  uuid.UUID
-	ExpectedScope  string
 }
 
 // ControlComputerExecution owns membership and authorization for the whole VM.
@@ -72,15 +71,6 @@ func ControlComputerExecution(ctx context.Context, auditPolicy auditpolicy.Polic
 		if err != nil || found {
 			return err
 		}
-		if req.ExpectedScope != "" {
-			scope, err := ReadComputerExecutionScope(ctx, tx, req.EnvironmentID, req.ComputerID)
-			if err != nil {
-				return err
-			}
-			if scope.Digest != req.ExpectedScope {
-				return ErrControlScopeChanged
-			}
-		}
 		var sleeping, awake bool
 		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM checkpoints WHERE environment_id=$1 AND computer_id=$2 AND status='ready'),
    EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=$1 AND l.computer_id=$2 AND l.status='active' AND l.fenced_at IS NULL AND l.initialized_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=l.environment_id AND cp.computer_id=l.computer_id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL))))`, req.EnvironmentID, req.ComputerID).Scan(&sleeping, &awake); err != nil {
@@ -108,11 +98,8 @@ func ControlComputerExecution(ctx context.Context, auditPolicy auditpolicy.Polic
 					return err
 				}
 			}
-			// Wake arms after_turn against a future completion, including on a VM
-			// that was already awake. Existing holds and Turn identities are untouched.
-			if _, err = tx.Exec(ctx, `UPDATE sessions SET suspension_after_seq=next_turn_seq-1 WHERE environment_id=$1 AND computer_id=$2 AND status='open'`, req.EnvironmentID, req.ComputerID); err != nil {
-				return err
-			}
+			// The recorded wake request restarts the automatic hibernation clock,
+			// including on a VM that was already awake.
 		}
 		result, err = computer.RequestExecutionControl(ctx, tx, req.EnvironmentID, req.ComputerID, caller.Kind, caller.ID, req.Kind, req.IdempotencyKey, complete)
 		if err != nil {

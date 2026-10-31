@@ -175,9 +175,6 @@ func marshalDetails(action string, details Details) ([]byte, error) {
 	case "region.created", "region.updated":
 		d, ok := details.(RegionDetails)
 		valid = ok && len(d.RegionID) > 0 && len(d.RegionID) <= 128
-	case "computer.retention_changed":
-		d, ok := details.(ComputerRetentionDetails)
-		valid = ok && (d.Before == nil || *d.Before > 0) && (d.After == nil || *d.After > 0)
 	case "computer.wake_requested", "computer.hibernate_requested", "computer.wake_settled", "computer.hibernate_settled":
 		d, ok := details.(ComputerControlDetails)
 		valid = ok && d.RequestID != (ComputerControlDetails{}).RequestID

@@ -202,7 +202,7 @@ List Computers visible to this Session.
 
 Result: `{ "computers": [Computer], "next_cursor"?: string }`. Each Computer has
 `id`, `key?`, `template`, `deployment_id`, `status`, `residency`, `error?`,
-`delete_after_unused_ms`, `unused_since`, `last_activity_at`, `created_at` and
+`delete_after_unused_ms`, `unused_since`, `created_at` and
 `updated_at`. A finite creation rule with `computer: "caller"` permits only the
 caller's own logical Computer ID. Other Computers cannot be selected for runtime
 creation. Discovery is limited to the caller’s workload and permitted relations.
@@ -224,10 +224,10 @@ Session records the caller as its requester but is not owned by it.
 | `input` | text-part array | Required. Initial Turn input, delivered unchanged. |
 | `idempotencyKey` | string | Required. |
 | `computerId` | string | Optional. Omit for `new` placement. Under a finite scope, an explicit ID must be the caller's Computer and requires a `computer: "caller"` rule. Unrestricted scopes retain ordinary existing-Computer authorization. |
-| `closeAfterIdleMs` | integer or `null` | Optional. Idle retention in positive milliseconds; `null` disables idle closure. Omit to inherit the definition. |
 
-Result: `{ "sessionId", "turnId", "sequence", "closeAfterIdleMs" }`.
-Runtime creation has no Session key.
+Result: `{ "sessionId", "turnId", "sequence" }`.
+Runtime creation has no Session key. The new Session's idle periods come from
+the target Agent definition.
 
 ### `enqueue`
 

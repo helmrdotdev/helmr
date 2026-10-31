@@ -631,8 +631,6 @@ CREATE TABLE template_definitions (
     refresh_every_ms bigint CHECK (refresh_every_ms > 0),
     max_image_age_ms bigint CHECK (max_image_age_ms > 0),
     delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
-    delete_after_unused_never boolean NOT NULL DEFAULT false,
-    CHECK (NOT delete_after_unused_never OR delete_after_unused_ms IS NULL),
     PRIMARY KEY (environment_id, template_id, deployment_id),
     FOREIGN KEY (environment_id, template_id) REFERENCES templates(environment_id, id),
     FOREIGN KEY (environment_id, deployment_id) REFERENCES deployments(environment_id, id),
@@ -663,10 +661,8 @@ CREATE TABLE agent_definitions (
     input_schema jsonb,
     CHECK ((input_kind='text' AND input_schema IS NULL) OR (input_kind='json' AND input_schema IS NOT NULL AND jsonb_typeof(input_schema)='object')),
     max_turn_duration_ms bigint CHECK (max_turn_duration_ms > 0),
-    suspension text NOT NULL DEFAULT 'manual' CHECK (suspension IN ('manual','after_turn')),
     close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
-    close_after_idle_never boolean NOT NULL DEFAULT false,
-    CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL),
+    hibernate_after_idle_ms bigint CHECK (hibernate_after_idle_ms > 0),
     PRIMARY KEY (environment_id, agent_id, deployment_id),
     FOREIGN KEY (environment_id, template_id, deployment_id) REFERENCES template_definitions(environment_id, template_id, deployment_id),
     FOREIGN KEY (environment_id, agent_id) REFERENCES agents(environment_id, id),
@@ -989,12 +985,10 @@ CREATE TABLE computers (
     id uuid NOT NULL,
     execution_deadline_at timestamptz,
     environment_id uuid NOT NULL REFERENCES environments(id),
-    delete_after_unused_ms bigint CHECK (delete_after_unused_ms > 0),
     unused_since timestamptz,
     key text CHECK (key IS NULL OR octet_length(key) BETWEEN 1 AND 512),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    last_activity_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     initial_root_id uuid,
     initial_root_digest bytea CHECK (octet_length(initial_root_digest)=32),
     initial_payload_retired_at timestamptz,
@@ -1062,8 +1056,8 @@ CREATE TABLE computer_controls (
     CHECK ((status='failed')=(error_code IS NOT NULL))
 );
 CREATE UNIQUE INDEX computer_controls_pending ON computer_controls(environment_id,computer_id) WHERE status='accepted';
+CREATE INDEX computer_controls_wake ON computer_controls(environment_id,computer_id,accepted_at) WHERE kind='wake';
 
-CREATE INDEX computers_unused_policy ON computers(environment_id, id) WHERE deleted_at IS NULL AND delete_after_unused_ms IS NOT NULL;
 
 CREATE UNIQUE INDEX computers_key ON computers(environment_id, key) WHERE key IS NOT NULL;
 
@@ -1240,6 +1234,8 @@ CREATE TABLE commands (
 CREATE INDEX commands_pending ON commands(created_at, id) WHERE status='pending';
 
 CREATE INDEX commands_unreconciled ON commands(environment_id, computer_id, computer_lease_epoch) WHERE computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL;
+
+CREATE INDEX commands_settled ON commands(environment_id, computer_id, terminal_at) WHERE terminal_at IS NOT NULL;
 
 -- Scoped platform mutation identity survives response expiry. Domain mutation and
 -- target binding commit together; an unfinished acquisition is never durable work.
@@ -1482,8 +1478,6 @@ CREATE TABLE sessions (
     FOREIGN KEY (environment_id,origin_activation_id) REFERENCES trigger_activations(environment_id,id),
     CHECK (num_nonnulls(origin_user_id,origin_api_key_id,origin_activation_id)=1),
     CHECK (origin_slack_connection_id IS NULL OR origin_user_id IS NOT NULL),
-    suspension_after_seq bigint NOT NULL DEFAULT 0 CHECK (suspension_after_seq>=0),
-    close_after_idle_ms bigint CHECK (close_after_idle_ms > 0),
     idle_since timestamptz,
     history_eligible_at timestamptz,
     history_expired_at timestamptz,
@@ -1531,11 +1525,13 @@ CREATE TABLE sessions (
     CHECK ((requester_session_id IS NULL AND causal_depth=0) OR (requester_session_id IS NOT NULL AND causal_depth>0))
 );
 
-CREATE INDEX sessions_idle_policy ON sessions(environment_id, id) WHERE status='open' AND close_after_idle_ms IS NOT NULL;
+CREATE INDEX sessions_open ON sessions(environment_id, id) WHERE status='open';
 
 CREATE INDEX sessions_closing ON sessions(environment_id, id) WHERE status='closing';
 
 CREATE INDEX sessions_children ON sessions(environment_id, parent_session_id) WHERE parent_session_id IS NOT NULL;
+
+CREATE INDEX sessions_computer ON sessions(environment_id, computer_id) WHERE computer_id IS NOT NULL;
 
 CREATE TABLE session_processes (
     environment_id uuid NOT NULL,
@@ -1925,6 +1921,8 @@ CREATE TABLE session_events (
 );
 
 CREATE INDEX session_events_expired_floor ON session_events(environment_id, session_id, seq) WHERE payload_expired_at IS NOT NULL;
+
+CREATE INDEX session_events_closed ON session_events(environment_id, session_id) INCLUDE (created_at) WHERE kind='session.closed';
 
 CREATE TABLE turn_asks (
     id uuid NOT NULL,
