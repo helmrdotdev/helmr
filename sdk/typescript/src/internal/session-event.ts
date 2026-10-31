@@ -46,10 +46,10 @@ export function parseSessionEventData(kind: SessionEventKind, value: unknown): S
     case "session.process_failed":
       if (data["reason"] !== "process_failed" && data["reason"] !== "stop_deadline_elapsed" && data["reason"] !== "execution_lost") throw new Error("Invalid process failure reason")
       return { processEpoch: sequence("processEpoch"), reason: data["reason"], holdId: data["holdId"] === null ? null : id("holdId") }
-    case "session.close":
-      if (data["reason"] === "close_after_idle") return { reason: "close_after_idle" }
-      return { controlId: id("controlId"), ...(data["holdId"] === undefined ? {} : { holdId: id("holdId") }) }
-    case "session.interrupt": case "session.resume": case "session.cancel": case "turn.interrupt":
+     case "session.closed":
+      if (Object.keys(data).length !== 1 || (data["how"] !== "close" && data["how"] !== "cancel" && data["how"] !== "idle")) throw new Error("Invalid Session close event data")
+      return { how: data["how"] }
+    case "session.interrupt": case "session.resume": case "session.close": case "turn.interrupt":
       return { controlId: id("controlId"), ...(data["holdId"] === undefined ? {} : { holdId: id("holdId") }) }
     case "turn.failed": return data["code"] === undefined ? {} : { code: text("code") }
     case "turn.interrupted":

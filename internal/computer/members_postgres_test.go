@@ -17,7 +17,7 @@ func TestComputerUsageCollectionsFilterBeforePagination(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A terminal Session with an unfenced process remains current usage.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Session)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Session)
 	second := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id) VALUES($1,$2,$3,$4,$5,$2,0,(SELECT origin_user_id FROM sessions WHERE environment_id=$1 ORDER BY created_at,id LIMIT 1))`, f.Environment, second, f.Agent, f.Deployment, f.Computer)
 	// Commands are newer than both Sessions: a combined page followed by filtering would lose Sessions.

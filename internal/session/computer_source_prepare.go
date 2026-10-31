@@ -67,7 +67,7 @@ func PrepareComputerSourceAbort(ctx context.Context, pool db.TxBeginner, host wo
 		for _, member := range r.Members {
 			var generation int64
 			var terminal bool
-			if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped') FROM sessions s  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, member.Session, member.Epoch).Scan(&generation, &terminal); err != nil {
+			if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status='closed' OR p.status IN ('stopping','lost','stopped') FROM sessions s  JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, member.Session, member.Epoch).Scan(&generation, &terminal); err != nil {
 				return err
 			}
 			identity := &agentv1.SessionIdentity{SessionId: member.Session.String(), ProcessEpoch: member.Epoch}

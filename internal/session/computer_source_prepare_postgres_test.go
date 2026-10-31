@@ -18,7 +18,7 @@ func TestSourceAbortPreparationUsesCurrentAuthorityAndPreservesState(t *testing.
 	prior, _ := sourceAbort(t, f)
 	checkpoint := uuid.MustParse(prior.Capture.CheckpointId)
 	observed := abortReceipt(prior, false, false)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
 	p, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, checkpoint, 1, prior.Envelope.ChannelCredential, observed)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestSourceAbortPreparationRefreshesTerminalSetOnlyBeforeInstallation(t *tes
 	if err := session.ValidateComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, original, observed); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
 	p, err := session.PrepareComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, uuid.MustParse(original.Capture.CheckpointId), 1, original.Envelope.ChannelCredential, observed)
 	if err != nil {
 		t.Fatal(err)

@@ -186,7 +186,8 @@ A Computer is unused when all its Sessions are finished, its Commands have
 settled and its disk saves are complete. After `deleteAfterUnused`, Helmr deletes
 it. New work resets that interval. Change the policy on an existing Computer
 with `client.computers.ref(id).update({ deleteAfterUnused })`, or delete it
-explicitly.
+explicitly. Deleting cancels its Sessions and the Sessions they started, and its
+unfinished Commands; `computers.delete` is enough.
 
 ## Commands
 

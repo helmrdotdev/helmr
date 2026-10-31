@@ -33,7 +33,7 @@ func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 	if deleted || since != nil {
 		t.Fatal("open member did not reset unused clock")
 	}
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET status='closed' WHERE id=$1`, f.Session)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, f.Session)
 	if _, err := reconcileUnused(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Environment, f.Computer); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 func TestComputerUnusedRestartsAfterSaveBetweenScans(t *testing.T) {
 	f := sessiontest.New(t)
 	ctx := t.Context()
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET status='closed' WHERE id=$1`, f.Session)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, f.Session)
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, f.Session)
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET delete_after_unused_ms=60000,unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,status,failure_evidence) VALUES($1,$2,$3,1,1,'failed','settled capture failure')`, f.Environment, uuid.NewV7(), f.Computer)

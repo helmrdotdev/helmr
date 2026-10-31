@@ -36,7 +36,7 @@ func TestSessionMutations(t *testing.T) {
 		{"exact message", "/turns/" + testTurnID + "/messages", `{"message":{"type":"continue"}}`, `{"id":"operation-1","turn_id":"` + testTurnID + `","message_id":"message-1","status":"accepted"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
 			return c.SendSessionMessage(ctx, testSessionID, testTurnID, api.SessionMessageRequest{Message: data, IdempotencyKey: key}, s)
 		}},
-		{"close", "/close", `{}`, `{"id":"operation-1","session_id":"` + testSessionID + `","status":"closing"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
+		{"close", "/close", `{}`, `{"session_id":"` + testSessionID + `","status":"closing"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
 			return c.CloseSession(ctx, testSessionID, api.CloseSessionRequest{IdempotencyKey: key}, s)
 		}},
 		{"resume", "/resume", `{"hold_id":"` + testHoldID + `"}`, `{"id":"operation-1","session_id":"` + testSessionID + `","hold_id":"` + testHoldID + `","status":"ready"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {

@@ -22,6 +22,7 @@ var (
 	ReconcileSessionIdle         = reconcileSessionIdle
 	ReconcileSessionLifecycle    = reconcileSessionLifecycle
 	ReconcileTerminalSessionStop = reconcileTerminalSessionStop
+	LifecycleCandidates          = lifecycleCandidates
 	RecordSessionFailure         = recordSessionFailure
 )
 

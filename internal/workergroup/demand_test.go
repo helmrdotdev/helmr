@@ -26,7 +26,7 @@ func TestQueuedDemandRespectsRegionHoldsAndProcessState(t *testing.T) {
 		{name: "exhausted process epoch", change: `DELETE FROM session_mcp_scopes WHERE environment_id=$1 AND session_id=$2; UPDATE session_processes SET epoch=9223372036854775807 WHERE environment_id=$1 AND session_id=$2`},
 		{name: "local hold", change: `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$3,$2,'process_failed','system')`},
 		{name: "released hold", change: `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,released_at) VALUES($1,$3,$2,'process_failed','system',clock_timestamp())`, want: true},
-		{name: "closed", change: `UPDATE sessions SET status='closed' WHERE environment_id=$1 AND id=$2`},
+		{name: "closed", change: `UPDATE sessions SET status='closed',close_how='close' WHERE environment_id=$1 AND id=$2`},
 		{name: "other region", change: `INSERT INTO regions(id,display_name) VALUES('elsewhere','Elsewhere'); UPDATE projects SET default_region_id='elsewhere' WHERE id=(SELECT project_id FROM environments WHERE id=$1)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

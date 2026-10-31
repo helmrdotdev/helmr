@@ -85,6 +85,7 @@ export type {
   TurnStatus,
   Session,
   SessionStatus,
+  SessionCloseHow,
   SessionOperationOptions,
   SessionMessageReceipt,
   SessionEventKind,

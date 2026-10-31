@@ -23,6 +23,8 @@ type LifecycleDetails struct {
 	Sequence   int64     `json:"sequence,omitempty"`
 	Generation int64     `json:"generation,omitempty"`
 	RequestID  uuid.UUID `json:"request_id,omitzero"`
+	// How records how a Session closed: close, cancel or idle.
+	How string `json:"how,omitempty"`
 }
 
 func (LifecycleDetails) auditDetails() {}

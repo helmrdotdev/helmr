@@ -98,10 +98,10 @@ rejected transactions use no additional committed tokens.
 | Control | Effect |
 | --- | --- |
 | Turn interrupt | Interrupts exactly one running Turn without a hold or effects on owned Sessions. The next Turn can run once the handler has stopped. Queued and settled targets are rejected. |
-| Session interrupt | Stops the running Turn as `interrupted` and places a hold on this Session and the Sessions it owns. Queued Turns stay queued. |
+| Session interrupt | Stops the running Turn as `interrupted` and places a hold on this Session and the Sessions it owns. Queued Turns stay queued. A closing or closed Session cannot be interrupted. |
 | Resume | Releases one hold by ID. Queued Turns continue; the interrupted Turn is not replayed. |
-| Close | Rejects new Turns and lets already-admitted Turns finish, then closes the Session and the Sessions it owns. Existing holds remain. |
-| Cancel | Stops the running Turn and cancels queued Turns, as `cancelled`, throughout the Session and the Sessions it owns. |
+| Close | Rejects new Turns throughout the Session and the Sessions it owns, and drains the work that can run: running Turns finish and unblocked queued Turns run. Queued Turns that a hold blocks and pending questions are cancelled, so close never waits on a hold or an unanswered question. Each Session closes once its work has settled and the Sessions it owns have closed. |
+| Cancel | Stops the running Turn and cancels queued Turns, as `cancelled`, throughout the Session and the Sessions it owns, and closes them at once. Cancel also ends a Session that is closing. |
 
 ```sh
 helmr session interrupt SESSION_ID
@@ -111,8 +111,14 @@ helmr session close SESSION_ID
 helmr session cancel SESSION_ID
 ```
 
-Each control returns an acceptance receipt; stopping processes can finish
-later. Controls on a Session do not affect independent Sessions it started.
+A Session is `open`, `closing` while a close drains, or `closed`. Its
+`session.closed` event records how it closed: `close`, `cancel` or `idle`. A
+closed Session releases its holds and reports none. Close and cancel return the
+Session status; closing or cancelling a closed Session, or closing one that is
+already closing, changes nothing.
+
+Each control returns a receipt; stopping processes can finish later. Controls
+on a Session do not affect independent Sessions it started.
 See [Delegation](/docs/concepts/delegation) for owned and independent
 Sessions.
 
@@ -135,7 +141,10 @@ when storage recovers. A Session can release holds on Sessions it spawned;
 of interrupts, only the ones it placed itself. See
 [Durability](/docs/concepts/durability).
 
-A held Session is not idle, so `closeAfterIdle` does not close it.
+A hold does not keep a Session open. Queued Turns that a hold blocks are not
+work, so a held Session with nothing running is idle and `closeAfterIdle`
+closes it like any close, cancelling those Turns. This includes owned Sessions
+held by an interrupt on their parent.
 
 ## Events
 

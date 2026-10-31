@@ -135,10 +135,7 @@ func TestCancelledProcessAbsentBeforeSetupCanBeReclaimed(t *testing.T) {
 	if err = f.pool.QueryRow(t.Context(), `SELECT org_id,project_id FROM environments WHERE id=$1`, f.env).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 		t.Fatal(err)
 	}
-	deletion := computer.Deletion{Principal: sessiontestPrincipal(t, f), Scope: scope, ComputerID: computerID, IdempotencyKey: "delete-cancelled"}
-	if _, err = computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, deletion); !errors.Is(err, computer.ErrBusy) {
-		t.Fatalf("unproved stop permitted deletion: %v", err)
-	}
+	deletion := computer.Deletion{Principal: sessiontestPrincipal(t, f), Scope: scope, ComputerID: computerID, IdempotencyKey: "delete-cancelled", CancelSessions: session.ComputerSessionCancellation(auditpolicy.Policy{RetentionSeconds: 3600})}
 	delivery, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), e, current.Sequence)
 	if err != nil || delivery.Kind != "shutdown" {
 		t.Fatalf("cancelled control: %+v %v", delivery, err)

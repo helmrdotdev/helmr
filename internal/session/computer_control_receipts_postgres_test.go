@@ -127,7 +127,7 @@ func TestComputerCompletionRequiresDurableReceipts(t *testing.T) {
 				case "kind":
 					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET control_kind='suspend' WHERE environment_id=$1 AND session_id=$2`, f.env, f.session)
 				case "shutdown":
-					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, f.env, f.session)
+					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE environment_id=$1 AND id=$2`, f.env, f.session)
 					dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET control_kind='shutdown' WHERE environment_id=$1 AND session_id=$2`, f.env, f.session)
 				}
 				if err := complete(); !errors.Is(err, session.ErrNotReady) {

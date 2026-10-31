@@ -124,7 +124,7 @@ GET /api/projects/{project}/environments/{environment}/secrets
 GET /api/projects/{project}/environments/{environment}/secrets/{secret}
 GET /api/projects/{project}/environments/{environment}/sessions
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}
-GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/close-scope
+GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/close-preview
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/events
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/slack-delivery
 GET /api/projects/{project}/environments/{environment}/sessions/{sessionID}/turns
@@ -178,7 +178,7 @@ GET /v1/secrets
 GET /v1/secrets/{secret}
 GET /v1/sessions
 GET /v1/sessions/{sessionID}
-GET /v1/sessions/{sessionID}/close-scope
+GET /v1/sessions/{sessionID}/close-preview
 GET /v1/sessions/{sessionID}/events
 GET /v1/sessions/{sessionID}/turns
 GET /v1/sessions/{sessionID}/turns/{turnID}

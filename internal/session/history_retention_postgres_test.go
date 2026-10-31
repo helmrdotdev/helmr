@@ -128,7 +128,7 @@ func TestHistoryRetentionPendingSaveAndNever(t *testing.T) {
 func TestHistoryRetentionCheckpointObligation(t *testing.T) {
 	c := readyCheckpointFixture(t)
 	f := c.f
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE id=$1`, f.session)
 	fenceHistoryProcess(t, f)
 	reconcileHistory(t, f)
 	if historyClock(t, f) != nil {
@@ -145,10 +145,10 @@ func TestHistoryRetentionKeysetPassesObligatedPrefix(t *testing.T) {
 	f := newFixture(t)
 	for range 101 {
 		p := f.peer(t)
-		dbtest.MustExec(t, t.Context(), p.pool, `UPDATE sessions SET status='cancelled' WHERE id=$1`, p.session)
+		dbtest.MustExec(t, t.Context(), p.pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE id=$1`, p.session)
 	}
 	var last uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE status='cancelled' ORDER BY environment_id DESC,id DESC LIMIT 1`).Scan(&last); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT id FROM sessions WHERE status='closed' ORDER BY environment_id DESC,id DESC LIMIT 1`).Scan(&last); err != nil {
 		t.Fatal(err)
 	}
 	ready := f

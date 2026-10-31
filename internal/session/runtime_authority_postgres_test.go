@@ -56,7 +56,7 @@ func TestRuntimeAttachmentsAreMonotonicAcrossConcurrentRequests(t *testing.T) {
 
 func TestRuntimeAttachmentPreservesHeldClosingSession(t *testing.T) {
 	f := newFixture(t)
-	dbtest.MustExec(t, t.Context(), f.pool, "UPDATE sessions SET status='closing',authority_generation=2")
+	dbtest.MustExec(t, t.Context(), f.pool, "UPDATE sessions SET status='closing',close_how='close',authority_generation=2")
 	dbtest.MustExec(t, t.Context(), f.pool, "INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) SELECT environment_id,gen_random_uuid(),id,'process_failed','system' FROM sessions")
 	attachment, err := session.AcquireRuntimeAttachment(t.Context(), f.pool, *f.host(), f.execution())
 	if err != nil || attachment.Sequence != sessiontest.SeededAttachment+1 || attachment.Authority.Generation != 2 {

@@ -156,6 +156,14 @@ func admitNativeStop(ctx context.Context, auditPolicy auditpolicy.Policy, pool d
 			return rejectMessage(ctx, tx, id, "gesture_expired")
 		}
 		if errors.Is(err, session.ErrNotReady) || errors.Is(err, session.ErrTerminal) {
+			// Stop on a closing Session is refused; it already drains.
+			var closing bool
+			if statusErr := tx.QueryRow(ctx, `SELECT status='closing' FROM sessions WHERE environment_id=$1 AND id=$2`, env, front).Scan(&closing); statusErr != nil {
+				return statusErr
+			}
+			if closing {
+				return rejectMessage(ctx, tx, id, "session_closing")
+			}
 			return rejectMessage(ctx, tx, id, "stale_gesture")
 		}
 		if errors.Is(err, session.ErrDenied) {

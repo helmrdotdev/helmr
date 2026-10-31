@@ -128,7 +128,7 @@ func TestWorkerAgentComputerOwnerRetainsAuthorityAndReconcilesLostReplies(t *tes
 				t.Fatal(err)
 			}
 			if stopped {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='cancelled',authority_generation=2 WHERE id=$1`, f.Session)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=2 WHERE id=$1`, f.Session)
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, f.Session)
 			}
 			var prepared workerapi.AgentComputerInstallationResponse

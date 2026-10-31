@@ -8,6 +8,7 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -70,32 +71,18 @@ func (s *Server) controlComputerExecutionHTTP(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) computerExecutionScopeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.executionScopeHTTP(w, r, false)
-}
-func (s *Server) sessionCloseScopeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.executionScopeHTTP(w, r, true)
-}
-func (s *Server) executionScopeHTTP(w http.ResponseWriter, r *http.Request, close bool) {
-	permission, param := auth.PermissionComputersRead, "computerID"
-	if close {
-		permission, param = auth.PermissionSessionsClose, "sessionID"
-	}
-	caller, env, err := s.agentRequestAuthority(r, permission)
+	_, env, err := s.agentRequestAuthority(r, auth.PermissionComputersRead)
 	if err != nil {
 		s.writeAgentHTTPError(w, r, err)
 		return
 	}
-	id, err := ids.Parse(chi.URLParam(r, param))
+	id, err := ids.Parse(chi.URLParam(r, "computerID"))
 	if err != nil {
 		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
 	var scope session.ExecutionScope
 	err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
-		if close {
-			scope, err = session.SessionCloseScope(r.Context(), tx, caller, env, id)
-			return err
-		}
 		var exists bool
 		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2)`, env, id).Scan(&exists)
 		if err != nil {
@@ -112,4 +99,28 @@ func (s *Server) executionScopeHTTP(w http.ResponseWriter, r *http.Request, clos
 		return
 	}
 	writeJSON(w, http.StatusOK, scope)
+}
+
+// sessionClosePreviewHTTP reports how many Sessions a close would close.
+func (s *Server) sessionClosePreviewHTTP(w http.ResponseWriter, r *http.Request) {
+	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsClose)
+	if err != nil {
+		s.writeAgentHTTPError(w, r, err)
+		return
+	}
+	id, err := ids.Parse(chi.URLParam(r, "sessionID"))
+	if err != nil {
+		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
+		return
+	}
+	var count int64
+	err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
+		count, err = session.SessionClosePreview(r.Context(), tx, caller, env, id)
+		return err
+	})
+	if err != nil {
+		s.writeAgentHTTPError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, api.SessionClosePreview{Sessions: count})
 }

@@ -38,13 +38,10 @@ func agentChangeCommand(restore bool) *cobra.Command {
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "agent: %s\nrevision: %d\ncan_apply: %t\nchanged: %t\n", result.Agent, result.Revision, result.CanApply, result.Changed)
 		for _, b := range result.Blockers {
-			fmt.Fprintf(cmd.OutOrStdout(), "blocked: %s (%d)\n", b.Code, b.Count)
-			for _, id := range b.SessionIDs {
-				fmt.Fprintf(cmd.OutOrStdout(), "session: %s\n", id)
-			}
+			fmt.Fprintf(cmd.OutOrStdout(), "blocked: %s\n", b.Code)
 		}
 		e := result.Effects
-		fmt.Fprintf(cmd.OutOrStdout(), "selected_agent_edges_removed: %d\nineffective_assignments_removed: %d\nmixed_assignments_preserved: %d\ntrigger_activations_sealed: %d\n", e.SelectedAgentEdgesRemoved, e.IneffectiveAssignmentsRemoved, e.MixedAssignmentsPreserved, e.TriggerActivationsSealed)
+		fmt.Fprintf(cmd.OutOrStdout(), "sessions_cancelled: %d\nselected_agent_edges_removed: %d\nineffective_assignments_removed: %d\nmixed_assignments_preserved: %d\ntrigger_activations_sealed: %d\n", e.SessionsCancelled, e.SelectedAgentEdgesRemoved, e.IneffectiveAssignmentsRemoved, e.MixedAssignmentsPreserved, e.TriggerActivationsSealed)
 		if e.SlackConnectionDisconnected != nil {
 			fmt.Fprintf(cmd.OutOrStdout(), "slack_connection_disconnected: %s\n", *e.SlackConnectionDisconnected)
 		}

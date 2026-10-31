@@ -10,11 +10,11 @@ type AgentStatus struct {
 	DeletedAt           *time.Time `json:"deleted_at"`
 	Revision            int64      `json:"revision"`
 }
+
+// AgentDeletionBlocker names one prerequisite that keeps deletion from
+// applying.
 type AgentDeletionBlocker struct {
-	Code              string   `json:"code"`
-	Count             int64    `json:"count"`
-	SessionIDs        []string `json:"session_ids,omitempty"`
-	SamplesIncomplete bool     `json:"samples_incomplete"`
+	Code string `json:"code"`
 }
 type AgentDeletionEffects struct {
 	SelectedAgentEdgesRemoved     int     `json:"selected_agent_edges_removed"`
@@ -22,6 +22,7 @@ type AgentDeletionEffects struct {
 	MixedAssignmentsPreserved     int     `json:"mixed_assignments_preserved"`
 	SlackConnectionDisconnected   *string `json:"slack_connection_disconnected"`
 	TriggerActivationsSealed      int64   `json:"trigger_activations_sealed"`
+	SessionsCancelled             int64   `json:"sessions_cancelled"`
 }
 type AgentChangeResponse struct {
 	AgentStatus

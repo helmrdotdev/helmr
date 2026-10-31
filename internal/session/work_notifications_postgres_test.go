@@ -2,7 +2,6 @@ package session_test
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
@@ -116,40 +115,25 @@ func TestControlReceiptReplayDoesNotWakeExecution(t *testing.T) {
 }
 
 func TestClosingChildrenNotifyReadersBeforeTheirWorkDrains(t *testing.T) {
-	for _, reconcile := range []bool{false, true} {
-		t.Run(fmt.Sprintf("reconcile=%v", reconcile), func(t *testing.T) {
-			f := newFixture(t)
-			child := ownedFixture(t, f)
-			child.enqueue(t, "child")
-			if reconcile {
-				parent := f.enqueue(t, "parent")
-				if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
-					t.Fatal(err)
-				}
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET status='failed',terminal_at=clock_timestamp() WHERE id=$1`, parent.TurnID)
-			}
-			topics := dbtest.ListenChanges(t, f.pool)
-			if reconcile {
-				if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
-					t.Fatal(err)
-				}
-			} else if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
-				t.Fatal(err)
-			}
-			var state string
-			if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, child.session).Scan(&state); err != nil || state != "closing" {
-				t.Fatalf("child state=%s error=%v", state, err)
-			}
-			if got := topics(); !got["session:"+child.session.String()] {
-				t.Fatalf("child closing did not notify its readers: %v", got)
-			}
-			if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
-				t.Fatal(err)
-			}
-			if got := topics(); len(got) != 0 {
-				t.Fatalf("unchanged closing tree notified: %v", got)
-			}
-		})
+	f := newFixture(t)
+	child := ownedFixture(t, f)
+	child.enqueue(t, "child")
+	topics := dbtest.ListenChanges(t, f.pool)
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, child.session).Scan(&state); err != nil || state != "closing" {
+		t.Fatalf("child state=%s error=%v", state, err)
+	}
+	if got := topics(); !got["session:"+child.session.String()] {
+		t.Fatalf("child closing did not notify its readers: %v", got)
+	}
+	if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
+		t.Fatal(err)
+	}
+	if got := topics(); len(got) != 0 {
+		t.Fatalf("unchanged closing tree notified: %v", got)
 	}
 }
 
@@ -201,7 +185,7 @@ func TestIdleStopIntentNotifiesWithoutTurnOrNewHold(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE id=$1`, f.session)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE id=$1`, f.session)
 				stop = func() error {
 					return session.ObserveSessionFailure(t.Context(), auditpolicy.Policy{
 						RetentionSeconds: 3600,
@@ -210,7 +194,7 @@ func TestIdleStopIntentNotifiesWithoutTurnOrNewHold(t *testing.T) {
 			case "cancelled-child":
 				parent := f
 				f = ownedFixture(t, parent)
-				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled' WHERE id=$1`, f.session)
+				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE id=$1`, f.session)
 				stop = func() error {
 					_, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, parent.pool, parent.caller(), controlRequest(parent, "cancel", "cancel-tree"))
 					return err

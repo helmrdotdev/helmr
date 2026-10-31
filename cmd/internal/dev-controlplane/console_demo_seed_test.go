@@ -63,7 +63,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  (SELECT count(*) FROM computers WHERE environment_id=$1 AND preparation_failed_at IS NOT NULL),
  (SELECT count(*) FROM sessions WHERE environment_id=$1 AND status='open'),
  (SELECT count(*) FROM sessions WHERE environment_id=$1 AND status='closed'),
- (SELECT count(*) FROM sessions WHERE environment_id=$1 AND status='cancelled'),
+ (SELECT count(*) FROM sessions WHERE environment_id=$1 AND close_how='cancel'),
  (SELECT count(*) FROM turns WHERE environment_id=$1 AND status='failed'),
  (SELECT count(*) FROM session_holds WHERE environment_id=$1 AND released_at IS NULL),
  (SELECT count(*) FROM turns WHERE environment_id=$1 AND status IN ('queued','running'))+
@@ -79,7 +79,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
  `, demoSeedEnvironmentID).Scan(&definitions, &triggers, &computers, &openSessions, &closedSessions, &cancelledSessions, &failedTurns, &holds, &runnable, &events, &current); err != nil {
 		t.Fatal(err)
 	}
-	if !current || definitions != 3 || triggers != 1 || computers != 1 || openSessions != 3 || closedSessions != 6 || cancelledSessions != 1 || failedTurns != 5 || holds != 1 || events < 200 || runnable != 0 {
+	if !current || definitions != 3 || triggers != 1 || computers != 1 || openSessions != 3 || closedSessions != 7 || cancelledSessions != 2 || failedTurns != 5 || holds != 1 || events < 200 || runnable != 0 {
 		t.Fatalf("demo current/definitions/triggers/computers/open/closed/cancelled/failed/holds/events/runnable=%v/%d/%d/%d/%d/%d/%d/%d/%d/%d/%d", current, definitions, triggers, computers, openSessions, closedSessions, cancelledSessions, failedTurns, holds, events, runnable)
 	}
 	// Every Session's counters match its rows, each Turn has its own
@@ -92,7 +92,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
    OR s.next_turn_seq-1 <> (SELECT count(*) FROM turns t WHERE (t.environment_id,t.session_id)=(s.environment_id,s.id))
    OR s.next_turn_seq-1 <> (SELECT COALESCE(max(seq),0) FROM turns t WHERE (t.environment_id,t.session_id)=(s.environment_id,s.id))
    OR s.created_at > (SELECT min(created_at) FROM session_events e WHERE (e.environment_id,e.session_id)=(s.environment_id,s.id))
-   OR (s.status IN ('closed','cancelled')) <> (s.history_eligible_at IS NOT NULL)))+
+   OR (s.status='closed') <> (s.history_eligible_at IS NOT NULL)))+
  (SELECT count(*) FROM turns t WHERE t.environment_id=$1 AND NOT EXISTS(SELECT 1 FROM session_events e
    WHERE (e.environment_id,e.session_id)=(t.environment_id,t.session_id) AND e.turn_id=t.id AND e.kind='turn.queued'))+
  (SELECT count(*) FROM session_events WHERE environment_id=$1 AND kind='turn.finalizing')+

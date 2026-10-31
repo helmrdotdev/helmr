@@ -141,7 +141,6 @@ func sessionCloseCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), receipt)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", receipt.SessionID)
-			fmt.Fprintf(cmd.OutOrStdout(), "id: %s\n", receipt.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "status: %s\n", receipt.Status)
 			return nil
 		},
@@ -176,7 +175,6 @@ func sessionCancelCommand() *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), receipt)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "session_id: %s\n", receipt.SessionID)
-			fmt.Fprintf(cmd.OutOrStdout(), "id: %s\n", receipt.ID)
 			fmt.Fprintf(cmd.OutOrStdout(), "status: %s\n", receipt.Status)
 			return nil
 		},

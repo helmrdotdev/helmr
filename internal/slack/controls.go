@@ -61,8 +61,10 @@ func validControl(c controlEnvelope) bool {
 	switch c.Action {
 	case "sleep", "wake", "close", "help", "mute", "unmute":
 		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Scope == ""
-	case "hibernate", "confirm_close":
-		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Actor != "" && len(c.Scope) == 64 && (c.Action != "hibernate" || c.Computer != uuid.Nil())
+	case "hibernate":
+		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Actor != "" && len(c.Scope) == 64 && c.Computer != uuid.Nil()
+	case "confirm_close":
+		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Actor != "" && c.Scope == "" && c.Computer == uuid.Nil()
 	case "open_answer", "submit_choices":
 		return t.Turn != uuid.Nil() && t.Ask != uuid.Nil() && c.Actor == "" && c.SourceTimestamp == "" && c.OptionID == ""
 	case "choose":

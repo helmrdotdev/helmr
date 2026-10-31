@@ -2,7 +2,7 @@ import { parseAsk, parseAskPage } from "../../../../sdk/typescript/src/internal/
 import type { JsonValue } from "../../../../sdk/typescript/src/contract";
 import { postJson, request, selectedOrganization, expectedActorHeaders } from "./api";
 
-export type SessionStatus = "open" | "closing" | "closed" | "cancelled";
+export type SessionStatus = "open" | "closing" | "closed";
 type ProcessStop = { process_epoch: number; turn_id: string | null; state: "requested" | "stopping" | "stopped"; deadline: string };
 export type Session = {
   related_via?: "initiated" | "contributed" | "answered" | "descendant";
@@ -305,9 +305,11 @@ export function storagePressureNotice(event: SessionEvent): string | undefined {
   }
 }
 
-export function getSessionCloseScope(address: SessionAddress): Promise<import("./computers").ExecutionScope> {
-  return request(`${sessionAPIPath(address)}/close-scope`);
+// The number of sessions a close would close: this session and the sessions it
+// owns that are not closed yet.
+export function getSessionClosePreview(address: SessionAddress): Promise<{ sessions: number }> {
+  return request(`${sessionAPIPath(address)}/close-preview`);
 }
-export function closeSession(address: SessionAddress, input: { idempotency_key: string; expected_scope: string }): Promise<SessionReceipt> {
+export function closeSession(address: SessionAddress, input: { idempotency_key: string }): Promise<SessionReceipt> {
   return postJson(`${sessionAPIPath(address)}/close`, input);
 }

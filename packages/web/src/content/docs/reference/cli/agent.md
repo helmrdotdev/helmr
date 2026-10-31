@@ -71,7 +71,10 @@ reads the current revision before submitting the operation. A stale revision
 fails; refresh the preview before trying again. Apply does not prompt for an
 additional confirmation.
 
-Delete requires the Agent to be absent from the current Deployment and all its
-Sessions and execution cleanup to have finished. Restore does not recover removed
+Delete requires the Agent to be absent from the current Deployment. Deleting
+cancels its Sessions and the Sessions they started, including ones of other
+Agents; `agents.delete` is the only permission it needs. The preview reports
+their count as `sessions_cancelled`, and execution cleanup continues after
+deletion. Restore does not recover removed
 Role selections or Slack Connections, nor does it activate a Deployment or replay
 old scheduled work. See [Deleting and restoring an Agent](/docs/concepts/agents#deleting-and-restoring-an-agent).

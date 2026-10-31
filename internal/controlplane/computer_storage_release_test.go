@@ -49,16 +49,18 @@ func TestComputerDeletionReleasesStorageForFreshAdmission(t *testing.T) {
 			t.Fatalf("Computer status=%s want=%s error=%v", snapshot.Status, want, err)
 		}
 	}
-	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete"}
-	if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion); !errors.Is(err, computer.ErrBusy) {
-		t.Fatalf("live Session allowed deletion: %v", err)
+	deletion := computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: f.Computer, IdempotencyKey: "delete", CancelSessions: session.ComputerSessionCancellation(auditpolicy.Policy{RetentionSeconds: 3600})}
+	preview := deletion
+	preview.DryRun = true
+	if counted, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, preview); err != nil || counted.SessionsCancelled != 1 {
+		t.Fatalf("deletion preview: %+v %v", counted, err)
 	}
 	if err := start("before-delete"); !errors.Is(err, computer.ErrNotReady) {
 		t.Fatalf("full environment admitted new Computer: %v", err)
 	}
 	// Logical work has ended; the Worker has not yet confirmed physical stop.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1;
- UPDATE sessions SET status='closed' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment)
+ UPDATE sessions SET status='closed',close_how='close' WHERE environment_id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment)
 	if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, deletion); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +136,7 @@ func TestComputerDeletionReleasesUninitializedStorage(t *testing.T) {
 			if failed {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET preparation_failed_at=clock_timestamp() WHERE environment_id=$1 AND id=$2`, f.Environment, created.ComputerID)
 			}
-			if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: created.ComputerID, IdempotencyKey: "delete"}); err != nil {
+			if _, err := computer.Delete(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, computer.Deletion{Principal: f.Principal(t), Scope: scope, ComputerID: created.ComputerID, IdempotencyKey: "delete", CancelSessions: session.ComputerSessionCancellation(auditpolicy.Policy{RetentionSeconds: 3600})}); err != nil {
 				t.Fatal(err)
 			}
 			if err := computer.ReconcileDiskRetention(t.Context(), f.Pool); err != nil {

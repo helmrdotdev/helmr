@@ -80,7 +80,7 @@ func TestComputerAfterTurnRequiresEveryMemberAndWakeRearms(t *testing.T) {
 	}
 	// Closing/fencing the peer is irrelevant to the original member's policy.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, peer.session)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed' WHERE id=$1`, peer.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, peer.session)
 	wake, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.executionRequest("wake", "already-awake"))
 	if err != nil || wake.Status != "completed" {
 		t.Fatalf("wake: %+v %v", wake, err)
@@ -193,7 +193,7 @@ func TestComputerWakeFromClosedThreadDoesNotAdmitExecution(t *testing.T) {
 	f := newFixture(t)
 	req := f.executionRequest("wake", "closed-thread")
 	req.OpenSessionID = f.session
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed' WHERE id=$1`, f.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, f.session)
 	if _, err := session.ControlComputerExecution(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req); !errors.Is(err, session.ErrTerminal) {
 		t.Fatalf("closed thread wake: %v", err)
 	}

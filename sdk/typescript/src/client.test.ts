@@ -37,7 +37,7 @@ describe("HelmrClient Computers", () => {
 			}],
 		},
       { command_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36" },
-      { computer_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" },
+      { computer_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32", sessions_cancelled: 1, commands_cancelled: 0 },
     ]
     const client = new HelmrClient({
       url: "https://api.example.test",
@@ -117,7 +117,7 @@ describe("HelmrClient Computers", () => {
     expect(requests[4]!.init?.method).toBe("PATCH")
     expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({ delete_after_unused_ms: null })
 
-    await created.delete({ idempotencyKey: "delete-1" }, { signal })
+    expect(await created.delete({ idempotencyKey: "delete-1" }, { signal })).toEqual({ computerId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32", sessionsCancelled: 1, commandsCancelled: 0 })
     expect(requests[5]!.init?.method).toBe("DELETE")
     expect(JSON.parse(String(requests[5]!.init?.body))).toEqual({
       idempotency_key: "delete-1",
@@ -458,14 +458,14 @@ describe("HelmrClient Sessions", () => {
     })
 
     const page = await client.sessions.list({
-      status: ["open", "cancelled"],
+      status: ["open", "closing"],
       cursor: "cursor-previous",
       limit: 5,
     })
     expect(page).toEqual({ items: [], nextCursor: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc39" })
     await client.sessions.list({ status: "closed" })
     expect(requests).toEqual([
-      "https://api.example.test/v1/sessions?status=open&status=cancelled&cursor=cursor-previous&limit=5",
+      "https://api.example.test/v1/sessions?status=open&status=closing&cursor=cursor-previous&limit=5",
       "https://api.example.test/v1/sessions?status=closed",
     ])
     await expect(client.sessions.list({

@@ -161,11 +161,15 @@ func (c *Client) DeleteComputer(
 	ctx context.Context,
 	computerID string,
 	input api.DeleteComputerRequest,
+	dryRun bool,
 	opts ComputerScopeOptions,
 ) (api.DeleteComputerReceipt, error) {
 	path, err := c.computerResourcePath(computerID, "", opts)
 	if err != nil {
 		return api.DeleteComputerReceipt{}, err
+	}
+	if dryRun {
+		path += "?dry_run=true"
 	}
 	var response api.DeleteComputerReceipt
 	if err := c.deleteJSON(ctx, path, input, &response); err != nil {

@@ -1,8 +1,11 @@
 package controlplane
 
 import (
+	"errors"
 	"net/http"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -135,16 +138,26 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeOperationError(w, r, forbidden(permissionErr))
 		return
 	}
+	dryRun := false
+	for name, values := range r.URL.Query() {
+		if name != "dry_run" || len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+			s.writeOperationError(w, r, badRequest(errors.New("unsupported query parameter")))
+			return
+		}
+		dryRun = values[0] == "true"
+	}
 	result, err := computer.Delete(r.Context(), s.auditPolicy, s.tx, computer.Deletion{Principal: principal,
 		Scope:          computerScope(principal.OrgID, projectID, environmentID),
 		ComputerID:     computerID,
 		IdempotencyKey: idempotencyKey,
+		DryRun:         dryRun,
+		CancelSessions: session.ComputerSessionCancellation(s.auditPolicy),
 	})
 	if err != nil {
 		s.writeComputerError(w, r, err, computerDeleteOperation, "delete Computer failed")
 		return
 	}
-	writeJSON(w, http.StatusAccepted, api.DeleteComputerReceipt{ComputerID: result.ComputerID.String()})
+	writeJSON(w, http.StatusAccepted, api.DeleteComputerReceipt{ComputerID: result.ComputerID.String(), SessionsCancelled: result.SessionsCancelled, CommandsCancelled: result.CommandsCancelled})
 }
 
 // apiComputerSnapshot is the public Computer resource of an owner snapshot.

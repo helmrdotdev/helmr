@@ -23,8 +23,13 @@ type SessionMessageReceipt struct {
 }
 
 type CloseSessionRequest struct {
-	ExpectedScope  string `json:"expected_scope,omitempty"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
+}
+
+// SessionClosePreview counts the Sessions a close would close: the Session and
+// the Sessions it owns that are not closed yet.
+type SessionClosePreview struct {
+	Sessions int64 `json:"sessions"`
 }
 type CancelSessionRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
@@ -44,13 +49,16 @@ type ResumeSessionRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
+// SessionCloseReceipt reports the Session status after a close: closing while
+// accepted work drains, or closed.
 type SessionCloseReceipt struct {
-	ID        string `json:"id"`
 	SessionID string `json:"session_id"`
 	Status    string `json:"status"`
 }
+
+// SessionCancelReceipt reports the Session status after a cancel, which is
+// always closed.
 type SessionCancelReceipt struct {
-	ID        string `json:"id"`
 	SessionID string `json:"session_id"`
 	Status    string `json:"status"`
 }

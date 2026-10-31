@@ -114,16 +114,16 @@ func aggregateStatus(ctx context.Context, tx pgx.Tx, thread, env uuid.UUID) (str
  SELECT id AS participant,id,parent_session_id FROM visible
  UNION ALL SELECT a.participant,s.id,s.parent_session_id FROM ancestors a JOIN sessions s ON s.environment_id=$2 AND s.id=a.parent_session_id
  ), held AS (
- SELECT DISTINCT a.participant AS id FROM session_holds h JOIN ancestors a ON h.session_id=a.id WHERE h.environment_id=$2 AND h.released_at IS NULL AND (a.id=a.participant OR h.kind='interrupt') AND EXISTS(SELECT 1 FROM visible v WHERE v.id=a.participant AND v.status NOT IN ('closed','cancelled'))
+ SELECT DISTINCT a.participant AS id FROM session_holds h JOIN ancestors a ON h.session_id=a.id WHERE h.environment_id=$2 AND h.released_at IS NULL AND (a.id=a.participant OR h.kind='interrupt') AND EXISTS(SELECT 1 FROM visible v WHERE v.id=a.participant AND v.status<>'closed')
  ), waiting AS (
  SELECT id FROM held UNION SELECT q.session_id FROM turn_asks q JOIN visible v ON q.session_id=v.id WHERE q.environment_id=$2 AND q.status='pending'
  ) SELECT CASE WHEN
  EXISTS(SELECT 1 FROM session_processes p JOIN visible v ON p.session_id=v.id WHERE p.environment_id=$2 AND p.fenced_at IS NULL AND
- (p.status IN ('lost','stopping') OR p.stop_deadline_at IS NOT NULL OR p.control_error IS NOT NULL OR v.status IN ('closed','cancelled') OR
+ (p.status IN ('lost','stopping') OR p.stop_deadline_at IS NOT NULL OR p.control_error IS NOT NULL OR v.status='closed' OR
  (EXISTS(SELECT 1 FROM held h WHERE h.id=v.id) AND NOT COALESCE(p.control_kind='suspend' AND p.control_acknowledged_at IS NOT NULL AND p.control_generation=v.authority_generation AND p.control_attachment=p.attachment_sequence,false))))
  OR EXISTS(SELECT 1 FROM turns t JOIN visible v ON t.session_id=v.id WHERE t.environment_id=$2 AND t.status IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM waiting w WHERE w.id=v.id))
  THEN 'processing' WHEN EXISTS(SELECT 1 FROM waiting) THEN 'suspended'
- WHEN EXISTS(SELECT 1 FROM visible) AND NOT EXISTS(SELECT 1 FROM visible WHERE status NOT IN ('closed','cancelled')) THEN
+ WHEN EXISTS(SELECT 1 FROM visible) AND NOT EXISTS(SELECT 1 FROM visible WHERE status<>'closed') THEN
  CASE WHEN EXISTS(SELECT 1 FROM slack_thread_sources src JOIN session_events e ON (e.environment_id,e.session_id)=(src.environment_id,src.session_id) WHERE src.thread_id=$1 AND e.seq>src.projected_event_seq)
  OR EXISTS(SELECT 1 FROM slack_thread_sources src JOIN session_processes process ON (process.environment_id,process.session_id)=(src.environment_id,src.session_id) WHERE src.thread_id=$1 AND GREATEST(process.control_acknowledged_at,process.fenced_at,process.failure_recorded_at)>COALESCE(src.projected_control_at,'-infinity'::timestamptz))
  OR EXISTS(SELECT 1 FROM slack_posts post WHERE post.thread_id=$1 AND post.role<>'controls' AND post.delivery_disposed_at IS NULL AND (post.status IN ('pending','sending','uncertain') OR post.stream_status IN ('open','uncertain')))

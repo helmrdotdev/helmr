@@ -146,7 +146,7 @@ func validateSourceAbort(ctx context.Context, tx pgx.Tx, host workergroup.HostPr
 		}
 		var generation, processLease int64
 		var terminal, fenced bool
-		if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status IN ('closed','cancelled') OR p.status IN ('stopping','lost','stopped'),p.computer_lease_epoch,p.fenced_at IS NOT NULL
+		if err = tx.QueryRow(ctx, `SELECT s.authority_generation,s.status='closed' OR p.status IN ('stopping','lost','stopped'),p.computer_lease_epoch,p.fenced_at IS NOT NULL
    FROM sessions s
    JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
    WHERE s.environment_id=$1 AND s.id=$2 AND p.epoch=$3`, env, m.Session, m.Epoch).Scan(&generation, &terminal, &processLease, &fenced); err != nil {

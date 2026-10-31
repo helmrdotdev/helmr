@@ -140,7 +140,7 @@ func TestEnqueueConcurrentRetryAndRevocation(t *testing.T) {
 			t.Fatalf("duplicate receipt: %+v", a)
 		}
 	}
-	_, err := f.pool.Exec(t.Context(), `UPDATE sessions SET status='closed' WHERE environment_id=$1 AND id=$2`, f.env, f.session)
+	_, err := f.pool.Exec(t.Context(), `UPDATE sessions SET status='closed',close_how='close' WHERE environment_id=$1 AND id=$2`, f.env, f.session)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,7 +444,7 @@ func TestRuntimePeerInputQueuesWithoutReleasingTargetHold(t *testing.T) {
 	if status != "queued" || !held || kind != "session" || callerID != f.session {
 		t.Fatalf("admission changed hold or attribution: %s %t %s %v", status, held, kind, callerID)
 	}
-	if _, err = f.pool.Exec(t.Context(), `UPDATE sessions SET status='closing' WHERE environment_id=$1 AND id=$2`, f.env, peer.session); err != nil {
+	if _, err = f.pool.Exec(t.Context(), `UPDATE sessions SET status='closing',close_how='close' WHERE environment_id=$1 AND id=$2`, f.env, peer.session); err != nil {
 		t.Fatal(err)
 	}
 	req.IdempotencyKey = "after-close"

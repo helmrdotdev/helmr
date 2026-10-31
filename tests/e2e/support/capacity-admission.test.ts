@@ -82,7 +82,7 @@ test("native admission tracks only success and aborts an in-flight request at th
   const bodies: string[] = [], timers: number[] = []
   let inFlightSignal: AbortSignal | undefined
   const transport = spyOn(globalThis, "fetch").mockImplementation((async (url, init) => {
-    if (String(url).endsWith("/cancel")) return Response.json({ id: request.computer.id, session_id: session, status: "accepted" })
+    if (String(url).endsWith("/cancel")) return Response.json({ session_id: session, status: "closed" })
     bodies.push(String(init?.body))
     if (bodies.length === 1) return Response.json({ error: { code: capacityError.code, message: capacityError.message } }, { status: 503 })
     if (bodies.length === 2) return Response.json({ session_id: session,

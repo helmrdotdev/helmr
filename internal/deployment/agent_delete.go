@@ -21,9 +21,10 @@ import (
 type AgentChange struct {
 	RetainedAgent
 	CanApply, Changed bool
-	Blockers          []session.AgentDeletionBlocker
-	Effects           AgentDeletionEffects
-	Warnings          []string
+	// Blockers name the prerequisites that keep deletion from applying.
+	Blockers []string
+	Effects  AgentDeletionEffects
+	Warnings []string
 }
 type AgentDeletionEffects struct {
 	SelectedAgentEdgesRemoved     int
@@ -31,6 +32,7 @@ type AgentDeletionEffects struct {
 	MixedAssignmentsPreserved     int
 	SlackConnectionDisconnected   *string
 	TriggerActivationsSealed      int64
+	SessionsCancelled             int64
 }
 
 var ErrAgentDeletionBlocked = errors.New("agent deletion has unresolved prerequisites")
@@ -53,7 +55,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 	if restore {
 		permission = auth.PermissionAgentsRestore
 	}
-	result := AgentChange{Blockers: []session.AgentDeletionBlocker{}, Warnings: []string{}}
+	result := AgentChange{Blockers: []string{}, Warnings: []string{}}
 	if p.Kind != auth.PrincipalKindSession {
 		return result, ErrPermissionRequired
 	}
@@ -147,15 +149,12 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 			result.Warnings = append(result.Warnings, "Removed access and Slack connections will not be restored. Broad access assignments apply again, and existing parent Sessions can create children immediately. New independent Sessions and schedules require a deployment containing this Agent.")
 		} else {
 			if result.DefinedInCurrent {
-				result.Blockers = append(result.Blockers, session.AgentDeletionBlocker{Code: "defined_in_current", Count: 1})
+				result.Blockers = append(result.Blockers, "defined_in_current")
 			}
-			visible := current.HasPermission(auth.PermissionSessionsRead, scope)
-			blockers, err := session.AgentDeletionBlockers(ctx, tx, env, id, visible)
-			if err != nil {
+			result.CanApply = len(result.Blockers) == 0
+			if result.Effects.SessionsCancelled, err = session.CancelAgentSessions(ctx, policy, tx, env, id, m.Actor, true); err != nil {
 				return err
 			}
-			result.Blockers = append(result.Blockers, blockers...)
-			result.CanApply = len(result.Blockers) == 0
 			result.Effects.SelectedAgentEdgesRemoved, result.Effects.IneffectiveAssignmentsRemoved, result.Effects.MixedAssignmentsPreserved = grants.Counts()
 			if connection != nil {
 				v := connection.String()
@@ -168,9 +167,6 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 			broad.AgentID = ""
 			if !current.HasPermission(permission, broad) {
 				result.Warnings = append(result.Warnings, "Deletion removes your selected Agent management access. A manager with surviving broad access, or an owner using access recovery, must inspect status or restore it afterward.")
-			}
-			if !visible {
-				result.Warnings = append(result.Warnings, "Session details require Session viewing permission; only blocker counts are shown.")
 			}
 		}
 		if dryRun {
@@ -193,6 +189,11 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 			if err != nil {
 				return err
 			}
+			// Deletion ends the Agent's Sessions; their execution cleanup
+			// continues in the background.
+			if result.Effects.SessionsCancelled, err = session.CancelAgentSessions(ctx, policy, tx, env, id, m.Actor, false); err != nil {
+				return err
+			}
 			action = "agent.deleted"
 		}
 		if err = tx.QueryRow(ctx, `UPDATE agents SET deleted_at=CASE WHEN $3::boolean THEN NULL ELSE clock_timestamp() END,revision=revision+1 WHERE environment_id=$1 AND id=$2 RETURNING deleted_at,revision`, env, id, restore).Scan(&result.DeletedAt, &result.Revision); err != nil {
@@ -200,7 +201,7 @@ func ChangeAgent(ctx context.Context, database db.TxBeginner, policy auditpolicy
 		}
 		result.Changed = true
 		e := result.Effects
-		return audit.Append(ctx, tx, policy, audit.Event{Evidence: m.Actor, OrgID: p.OrgID, EnvironmentID: env, Action: action, TargetKind: "agent", TargetID: id, Details: audit.AgentChangeDetails{Revision: result.Revision, EdgesRemoved: e.SelectedAgentEdgesRemoved, AssignmentsRemoved: e.IneffectiveAssignmentsRemoved, MixedPreserved: e.MixedAssignmentsPreserved, ConnectionID: e.SlackConnectionDisconnected, ActivationsSealed: e.TriggerActivationsSealed}})
+		return audit.Append(ctx, tx, policy, audit.Event{Evidence: m.Actor, OrgID: p.OrgID, EnvironmentID: env, Action: action, TargetKind: "agent", TargetID: id, Details: audit.AgentChangeDetails{Revision: result.Revision, EdgesRemoved: e.SelectedAgentEdgesRemoved, AssignmentsRemoved: e.IneffectiveAssignmentsRemoved, MixedPreserved: e.MixedAssignmentsPreserved, ConnectionID: e.SlackConnectionDisconnected, ActivationsSealed: e.TriggerActivationsSealed, SessionsCancelled: e.SessionsCancelled}})
 	})
 	if errors.Is(err, access.ErrDenied) || slack.IsInstallationDenied(err) {
 		err = ErrPermissionRequired

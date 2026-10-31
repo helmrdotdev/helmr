@@ -190,6 +190,8 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			if direct {
 				text = "This action is out of date. Send a new message outside this thread or use the latest question controls to try again."
 			}
+		case "session_closing":
+			text = "This Session is closing, so Stop has nothing to hold. Running work finishes; queued work and open questions are cancelled."
 		case "session_unavailable":
 			text = "This Session is closed or unavailable. Mention the Agent in a new thread to start a new Session."
 			if direct {

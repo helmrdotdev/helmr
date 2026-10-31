@@ -8,7 +8,7 @@ const event = (sequence: number, kind: string, turn: string | null, data: Sessio
 test("groups a Turn's events where its first event is and keeps Session events in place", () => {
   const blocks = buildBlocks([
     event(1, "turn.queued", "a"), event(2, "turn.running", "a"), event(3, "turn.queued", "b"),
-    event(4, "turn.completed", "a"), event(5, "session.close", null, { reason: "close_after_idle" }), event(6, "turn.running", "b"),
+    event(4, "turn.completed", "a"), event(5, "session.closed", null, { how: "idle" }), event(6, "turn.running", "b"),
   ], id => ({ a: 1, b: 2 })[id]);
   expect(blocks.map(block => block.kind === "turn" ? `${block.sequence}:${block.events.map(e => e.sequence).join(",")}` : `s${block.event.sequence}`))
     .toEqual(["1:1,2,4", "2:3,6", "s5"]);
@@ -21,7 +21,8 @@ test("summarises every event kind without its kind", () => {
   expect(eventSummary(event(4, "ask.created", "a", { ask_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", question: { prompt: [{ type: "text", text: "Merge?" }], title: "Merge PR #8812?", type: "choice", options: [{ id: "merge", label: "Merge now", value: true }, { id: "wait", label: "Wait", value: false }] } })))
     .toBe("Merge PR #8812? · choice: Merge now / Wait");
   expect(eventSummary(event(5, "message.rejected", "a", { message_id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", status: "rejected", delivery: "uncertain" }))).toContain("delivery uncertain");
-  expect(eventSummary(event(6, "session.close", null, { reason: "close_after_idle" }))).toBe("closing after idle");
+  expect(eventSummary(event(7, "session.closed", null, { how: "cancel" }))).toBe("session cancelled");
+  expect(eventSummary(event(7, "session.closed", null, { how: "idle" }))).toBe("session closed after idle");
   expect(eventSummary(event(7, "future.kind", null, { anything: 1 }))).toBe("{anything: 1}");
   expect(eventSummary(event(8, "turn.output", "a", null))).toBe("content expired");
   const id = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33";

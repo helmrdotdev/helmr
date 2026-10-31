@@ -814,6 +814,7 @@ column sessions.agent_id uuid not null
 column sessions.authority_generation bigint not null default 1
 column sessions.causal_depth integer not null
 column sessions.close_after_idle_ms bigint
+column sessions.close_how text
 column sessions.computer_id uuid
 column sessions.created_at timestamp with time zone not null default clock_timestamp()
 column sessions.creation_caller_id uuid
@@ -1987,14 +1988,16 @@ constraint session_processes f FOREIGN KEY (environment_id, session_id, computer
 constraint session_processes f FOREIGN KEY (environment_id, session_id, stop_turn_id) REFERENCES turns(environment_id, session_id, id)
 constraint session_processes p PRIMARY KEY (environment_id, session_id, epoch)
 constraint session_processes u UNIQUE (environment_id, computer_id, session_id, epoch)
+constraint sessions c CHECK ((status = 'open'::text) = (close_how IS NULL))
 constraint sessions c CHECK (authority_generation > 0)
 constraint sessions c CHECK (causal_depth >= 0)
 constraint sessions c CHECK (close_after_idle_ms > 0)
+constraint sessions c CHECK (close_how = ANY (ARRAY['close'::text, 'cancel'::text, 'idle'::text]))
 constraint sessions c CHECK (creation_caller_kind = ANY (ARRAY['user'::text, 'api_key'::text, 'session'::text]))
 constraint sessions c CHECK (creation_idempotency_key IS NULL OR creation_digest IS NOT NULL)
 constraint sessions c CHECK (creation_method = ANY (ARRAY['create'::text, 'spawn'::text]))
 constraint sessions c CHECK (creation_turn_id IS NULL OR creation_digest IS NOT NULL AND computer_id IS NOT NULL)
-constraint sessions c CHECK (history_eligible_at IS NULL OR (status = ANY (ARRAY['closed'::text, 'cancelled'::text])))
+constraint sessions c CHECK (history_eligible_at IS NULL OR status = 'closed'::text)
 constraint sessions c CHECK (history_expired_at IS NULL OR history_eligible_at IS NOT NULL AND history_expired_at >= history_eligible_at)
 constraint sessions c CHECK (next_event_seq > 0)
 constraint sessions c CHECK (next_turn_seq > 0)
@@ -2007,7 +2010,7 @@ constraint sessions c CHECK (origin_slack_connection_id IS NULL OR origin_user_i
 constraint sessions c CHECK (origin_turn_id IS NULL OR requester_session_id IS NOT NULL)
 constraint sessions c CHECK (parent_session_id IS NULL AND root_session_id = id OR parent_session_id IS NOT NULL AND root_session_id = parent_session_id AND root_session_id <> id AND requester_session_id IS NOT NULL AND requester_session_id = parent_session_id)
 constraint sessions c CHECK (requester_session_id IS NULL AND causal_depth = 0 OR requester_session_id IS NOT NULL AND causal_depth > 0)
-constraint sessions c CHECK (status = ANY (ARRAY['open'::text, 'closing'::text, 'closed'::text, 'cancelled'::text]))
+constraint sessions c CHECK (status = ANY (ARRAY['open'::text, 'closing'::text, 'closed'::text]))
 constraint sessions c CHECK (suspension_after_seq >= 0)
 constraint sessions f FOREIGN KEY (environment_id, agent_id, deployment_id) REFERENCES agent_definitions(environment_id, agent_id, deployment_id)
 constraint sessions f FOREIGN KEY (environment_id, agent_id, origin_slack_connection_id) REFERENCES slack_connections(environment_id, agent_id, id)

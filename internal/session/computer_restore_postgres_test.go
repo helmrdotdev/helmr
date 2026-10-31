@@ -285,7 +285,7 @@ func TestComputerRestoreRetainsStopsAndHolds(t *testing.T) {
 	if peer == f.f.session {
 		peer = f.manifest.Members[0].SessionID
 	}
-	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=$2`, f.f.env, peer)
+	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=$2`, f.f.env, peer)
 	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND session_id=$2`, f.f.env, peer)
 	dbtest.MustExec(t, ctx, f.f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.f.env, uuid.NewV7(), f.f.session)
 	p := f.prepare(t)
@@ -325,7 +325,7 @@ func TestComputerRestoreRejectsChangedPhysicalMembership(t *testing.T) {
 			case "stale-generation":
 				dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE id=$1`, f.f.session)
 			case "stale-terminal-set":
-				dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET status='cancelled' WHERE id=$1`, f.f.session)
+				dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE id=$1`, f.f.session)
 			case "foreign-invalid-identity":
 				host = *f.f.host()
 				p.Envelope.WriterGeneration = 99
@@ -427,7 +427,7 @@ func TestComputerRestoreRefreshesStopsBeforeInstallation(t *testing.T) {
 	if err := session.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=$2`, f.f.env, f.f.session)
+	dbtest.MustExec(t, ctx, f.f.pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE environment_id=$1 AND id=$2`, f.f.env, f.f.session)
 	if err := session.ValidateComputerRestore(ctx, f.f.pool, f.host, f.f.env, first, restoreReceipt(first, false, false)); !errors.Is(err, session.ErrNotReady) {
 		t.Fatalf("stale controls validated: %v", err)
 	}

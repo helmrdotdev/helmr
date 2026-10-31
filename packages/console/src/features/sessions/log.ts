@@ -55,10 +55,8 @@ const words: Record<string, string> = {
   "turn.interrupt": "interrupt requested",
   "session.interrupt": "session interrupt requested",
   "session.resume": "session resume requested",
-  "session.cancel": "session cancel requested",
   "session.close": "session close requested",
   "session.closed": "session closed",
-  "session.cancelled": "session cancelled",
   "session.process_stopped": "process stopped",
   "ask.cancelled": "question cancelled",
 };
@@ -101,7 +99,7 @@ export function eventSummary(event: SessionEvent, parsed = parseEvent(event)): s
       if (data["reason"] === "turn_deadline_elapsed") return "stopped after the maximum turn duration; queued work continues";
       break;
     case "session.recovery_gap": return recoveryGapNotice(data as unknown as RecoveryGap);
-    case "session.close": if (data["reason"] === "close_after_idle") return "closing after idle"; break;
+    case "session.closed": return ({ close: "session closed", cancel: "session cancelled", idle: "session closed after idle" } as Record<string, string>)[String(data["how"])] ?? "session closed";
   }
   return words[event.kind] ?? preview(data);
 }

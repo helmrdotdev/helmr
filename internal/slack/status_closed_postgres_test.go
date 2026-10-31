@@ -109,7 +109,7 @@ func TestSlackClosedStatusFollowsExternalCloseCancelAndIdleExpiry(t *testing.T) 
 func TestSlackClosedStatusWaitsForAllContributorsAndFinalDelivery(t *testing.T) {
 	f := newStatusFixture(t)
 	peer := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed' WHERE id=$1;
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1;
  UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1;
  INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,causal_depth,origin_user_id,origin_api_key_id,origin_activation_id) SELECT environment_id,$2,agent_id,deployment_id,computer_id,$2,0,origin_user_id,origin_api_key_id,origin_activation_id FROM sessions WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Session, peer)
 	projectAllActivity(t, f)
@@ -117,7 +117,7 @@ func TestSlackClosedStatusWaitsForAllContributorsAndFinalDelivery(t *testing.T) 
 	f.assertAggregate(t, "closed")
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO slack_thread_sources(id,thread_id,environment_id,session_id) VALUES($1,$2,$3,$4)`, uuid.NewV7(), f.thread, f.Environment, peer)
 	f.assertAggregate(t, "active")
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed' WHERE id=$1`, peer)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, peer)
 	post := f.post(t, 1, "last-output", "lifecycle", nil)
 	f.assertAggregate(t, "processing")
 	claim := f.postClaim(t, post)

@@ -149,7 +149,7 @@ const sessionViewColumns = `(SELECT a.key FROM agents a WHERE a.environment_id=s
  (SELECT t.id FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_id,
  (SELECT t.status FROM turns t WHERE t.environment_id=sessions.environment_id AND t.session_id=sessions.id AND t.seq=1) AS initial_turn_status,
  (SELECT COALESCE(jsonb_agg(jsonb_build_object('ID',h.id,'SessionID',h.session_id,'Kind',h.kind,'IssuerKind',h.issuer_kind,'IssuerID',h.issuer_id,'RecoveryGap',h.recovery_gap || jsonb_build_object('holdId',h.id,'computerId',h.recovery_computer_id,'leaseEpoch',h.recovery_lease_epoch),'CreatedAt',h.created_at) ORDER BY h.created_at,h.id),'[]'::jsonb)
-  FROM sessions s CROSS JOIN LATERAL (` + db.SessionHoldsSQL + `) h WHERE s.environment_id=sessions.environment_id AND s.id=sessions.id) AS effective_holds,(SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(sessions.environment_id,sessions.agent_id,sessions.deployment_id)),close_after_idle_ms,idle_since,` + sessionActivityColumn
+  FROM sessions s CROSS JOIN LATERAL (` + db.SessionHoldsSQL + `) h WHERE s.environment_id=sessions.environment_id AND s.id=sessions.id AND s.status<>'closed') AS effective_holds,(SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(sessions.environment_id,sessions.agent_id,sessions.deployment_id)),close_after_idle_ms,idle_since,` + sessionActivityColumn
 
 func scanSession(row pgx.Row, extra ...any) (SessionView, error) {
 	var v SessionView
@@ -226,7 +226,7 @@ func listSessions(ctx context.Context, tx pgx.Tx, req SessionListRequest, filter
 		return result, ErrInvalidInput
 	}
 	for _, status := range req.Statuses {
-		if status != "open" && status != "closing" && status != "closed" && status != "cancelled" {
+		if status != "open" && status != "closing" && status != "closed" {
 			return result, ErrInvalidInput
 		}
 	}

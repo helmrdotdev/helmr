@@ -39,7 +39,6 @@ const FILTERS: SelectOption<SessionFilter>[] = [
   { value: "open", label: "Open" },
   { value: "closed", label: "Closed" },
   { value: "closing", label: "Closing" },
-  { value: "cancelled", label: "Cancelled" },
 ];
 
 const sessionsErrorMessage = (error: unknown) =>

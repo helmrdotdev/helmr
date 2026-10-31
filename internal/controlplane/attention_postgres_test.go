@@ -79,7 +79,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id,created_at) VALUES($1,$2,$3,'interrupt','user',$7,clock_timestamp()-interval '3 hours');
  INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id,released_at) VALUES($1,$4,$3,'interrupt','user',$7,clock_timestamp());
  INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind,issuer_id) VALUES($1,$5,$6,'interrupt','user',$7);
- UPDATE sessions SET status='closed' WHERE environment_id=$1 AND id=$6`, pgx.QueryExecModeSimpleProtocol, f.Environment, hold, held, uuid.NewV7(), uuid.NewV7(), closed, f.User)
+ UPDATE sessions SET status='closed',close_how='close' WHERE environment_id=$1 AND id=$6`, pgx.QueryExecModeSimpleProtocol, f.Environment, hold, held, uuid.NewV7(), uuid.NewV7(), closed, f.User)
 
 	// A failed Turn that still stands. A failure followed by another Turn, one
 	// older than a day and one in a closed Session have been dealt with.
@@ -93,7 +93,7 @@ func TestAttentionHTTPListsWaitingWorkOldestFirstUnderReadAuthority(t *testing.T
 	attentionFailedTurn(t, f, attentionSession(t, f), "old", 25)
 	stale := attentionSession(t, f)
 	attentionFailedTurn(t, f, stale, "closed", 1)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, f.Environment, stale)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed',close_how='cancel' WHERE environment_id=$1 AND id=$2`, f.Environment, stale)
 
 	// A Slack connection that lost its workspace authorization an hour ago.
 	registration, installation, connection := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()

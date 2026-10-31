@@ -143,7 +143,7 @@ export async function runProtectedStarters(client: HelmrClient, fixture: { origi
       const results = await Promise.allSettled([
         ...[session, newerSession].filter((value): value is SessionRef => !!value).map(async value => {
           const state = await value.get({ signal: cleanup })
-          if (state.status !== "closed" && state.status !== "cancelled") await value.cancel(undefined, { signal: cleanup })
+          if (state.status !== "closed") await value.cancel(undefined, { signal: cleanup })
         }),
         client.secrets.ref(name).revoke({ idempotencyKey: `${name}-revoke` }, { signal: cleanup }),
       ])

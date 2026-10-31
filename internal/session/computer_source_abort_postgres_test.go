@@ -146,7 +146,7 @@ func TestSourceAbortCancellationAndLossPreserveRecoveryHolds(t *testing.T) {
 	f := newFixture(t)
 	peer := f.peer(t)
 	p, _ := sourceAbort(t, f)
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
 	for _, g := range p.Grants {
 		if g.Identity.SessionId == peer.session.String() {
 			g.AuthorityGeneration++
@@ -181,7 +181,7 @@ func TestSourceAbortCancellationAndLossPreserveRecoveryHolds(t *testing.T) {
 		}
 	}
 	var cancelled bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT status='cancelled' FROM sessions WHERE id=$1`, peer.session).Scan(&cancelled); err != nil || !cancelled {
+	if err := f.pool.QueryRow(t.Context(), `SELECT status='closed' AND close_how='cancel' FROM sessions WHERE id=$1`, peer.session).Scan(&cancelled); err != nil || !cancelled {
 		t.Fatalf("loss changed cancellation %v %v", cancelled, err)
 	}
 }
@@ -201,7 +201,7 @@ func TestSourceAbortPreservesRecordedDiskCutAndLaterCancelledPeer(t *testing.T) 
 	if err := session.CommitComputerSourceAbort(t.Context(), f.pool, *f.host(), f.env, p, abortReceipt(p, true, false)); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='cancelled',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET status='closed',close_how='cancel',authority_generation=authority_generation+1 WHERE id=$1`, peer.session)
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, peer.session)
 	acknowledgeComputerMembers(t, f, *f.host(), p)
 	if err := session.CompleteComputerSourceAbort(t.Context(), auditpolicy.Policy{

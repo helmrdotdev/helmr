@@ -82,7 +82,7 @@ func projectDetails(event *api.AuditEvent, scope readScope, details audit.Detail
 		}
 		return api.AuditCheckpointDetails{CheckpointID: d.CheckpointID}, nil
 	case audit.LifecycleDetails:
-		public := api.AuditLifecycleDetails{Sequence: d.Sequence, RequestID: d.RequestID}
+		public := api.AuditLifecycleDetails{Sequence: d.Sequence, RequestID: d.RequestID, How: d.How}
 		if d.Generation != 0 {
 			restrict(event, api.AuditRestrictedDetails)
 		}

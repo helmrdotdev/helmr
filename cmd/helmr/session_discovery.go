@@ -51,7 +51,7 @@ func sessionListCommand() *cobra.Command {
 	cmd.Flags().StringVar(&key, "key", "", "Filter by explicit Session key; requires --agent.")
 	cmd.Flags().StringVar(&parent, "parent-session", "", "Filter by owning parent Session UUID.")
 	cmd.Flags().StringVar(&requester, "requester-session", "", "Filter by requesting Session UUID.")
-	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Filter by open, closing, closed or cancelled status.")
+	cmd.Flags().StringSliceVar(&statuses, "status", nil, "Filter by open, closing or closed status.")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor from the previous page.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum Sessions (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON page.")

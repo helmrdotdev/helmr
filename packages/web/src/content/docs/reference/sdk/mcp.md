@@ -273,16 +273,17 @@ Control an owned descendant and its subtree.
 | Tool | Effect |
 | --- | --- |
 | `interrupt_session` | Places a hold and requests interruption. A result is not proof that execution has stopped. |
-| `close_session` | Closes admission while accepted work drains. |
-| `cancel_session` | Cancels pending work and requests that active work stop. |
+| `close_session` | Closes admission while work that can run drains. Held queued work and pending questions are cancelled. |
+| `cancel_session` | Cancels pending work, requests that active work stop and closes the subtree. |
 
 | Input | Type | Description |
 | --- | --- | --- |
 | `sessionId` | string | Required. |
 | `idempotencyKey` | string | Required. |
 
-Result: `{ "id", "sessionId", "status": "accepted", "holdId"? }`. `interrupt_session`
-returns the `holdId`.
+`interrupt_session` returns `{ "id", "sessionId", "status": "accepted", "holdId" }`.
+`close_session` and `cancel_session` return `{ "sessionId", "status" }` with the
+Session status after the call: `closing` or `closed`.
 
 ### `resume_session`
 
@@ -320,7 +321,7 @@ initial Turn identities.
 | Input | Type | Description |
 | --- | --- | --- |
 | `relation` | `"owned" \| "requested"` | Required. `owned` lists direct children; `requested` also includes independent work this Session started. |
-| `status` | string array | Optional filter: `open`, `closing`, `closed`, `cancelled`. Omit for all. |
+| `status` | string array | Optional filter: `open`, `closing`, `closed`. Omit for all. |
 | `limit` | integer | Optional, 1–100. Default 50. |
 | `cursor` | string | Optional continuation cursor. |
 

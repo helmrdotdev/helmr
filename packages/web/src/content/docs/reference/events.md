@@ -19,8 +19,8 @@ has `sessionId`, nullable `turnId`, numeric `sequence`, `createdAt`, `kind` and 
 | `turn.output` | One normalized Content fragment in `data`, such as `[{ "type": "text", "text": "Working" }]`. |
 | `message.admitted`, `message.started`, `message.delivered`, `message.rejected` | Exact-Turn message acceptance and delivery facts. |
 | `ask.created`, `ask.answered`, `ask.cancelled` | Question lifecycle; use exact ask reads for current prompt/control/answer. |
-| `session.interrupt`, `session.resume`, `session.close`, `session.cancel` | Accepted Session controls. |
-| `session.closed`, `session.cancelled` | Session lifecycle facts. |
+| `session.interrupt`, `session.resume`, `session.close` | Accepted Session controls. An idle close records only `session.closed`. |
+| `session.closed` | The Session closed. `how` is `close`, `cancel` or `idle`. Cancel records only this event. |
 | `session.process_stopped` | The Session's process stopped. |
 | `session.process_failed` | A counted process failure: `processEpoch`, `reason` (`process_failed`, `stop_deadline_elapsed` or `execution_lost`) and `holdId`, which is `null` until consecutive failures hold the Session. |
 | `session.recovery_gap` | Restore point, Computer and affected completed requests for this conversation. `holdId` is set when this conversation is held for acknowledgement and `null` for a notice. |

@@ -148,10 +148,9 @@ export function parseSessionMessageReceipt(
 }
 export function parseSessionCloseReceipt(value: unknown): SessionCloseReceipt {
   const v = objectValue(value, "Close receipt")
-  if (v["status"] !== "accepted")
+  if (v["status"] !== "closing" && v["status"] !== "closed")
     throw new Error("Close receipt.status is invalid")
   return Object.freeze({
-    id: resourceID(v["id"], "Close receipt.id"),
     sessionId: resourceID(v["session_id"], "Close receipt.session_id"),
     status: v["status"],
   })
@@ -160,10 +159,9 @@ export function parseSessionCancelReceipt(
   value: unknown,
 ): SessionCancelReceipt {
   const v = objectValue(value, "Cancel receipt")
-  if (v["status"] !== "accepted")
+  if (v["status"] !== "closed")
     throw new Error("Cancel receipt.status is invalid")
   return Object.freeze({
-    id: resourceID(v["id"], "Cancel receipt.id"),
     sessionId: resourceID(v["session_id"], "Cancel receipt.session_id"),
     status: v["status"],
   })
@@ -206,7 +204,6 @@ const eventKinds: readonly SessionEventKind[] = [
   "turn.interrupt",
   "turn.interrupted",
   "turn.cancelled",
-  "session.cancelled",
   "session.closed",
   "session.process_stopped",
   "session.process_failed",
@@ -215,7 +212,6 @@ const eventKinds: readonly SessionEventKind[] = [
   "session.interrupt",
   "session.resume",
   "session.close",
-  "session.cancel",
 ]
 export function parseSessionEvent(value: unknown): SessionEvent {
   const v = objectValue(value, "Session event")
@@ -251,8 +247,7 @@ export function sessionStatus(
   if (
     value !== "open" &&
     value !== "closing" &&
-    value !== "closed" &&
-    value !== "cancelled"
+    value !== "closed"
   )
     throw new Error(`${label} is invalid`)
   return value

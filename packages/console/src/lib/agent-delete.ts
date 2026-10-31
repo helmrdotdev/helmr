@@ -4,13 +4,14 @@ import type { DefinitionScope, RetainedAgent } from "./definitions";
 export type AgentChange = RetainedAgent & {
   can_apply: boolean;
   changed: boolean;
-  blockers: { code: string; count: number; session_ids?: string[]; samples_incomplete: boolean }[];
+  blockers: { code: string }[];
   effects: {
     selected_agent_edges_removed: number;
     ineffective_assignments_removed: number;
     mixed_assignments_preserved: number;
     slack_connection_disconnected: string | null;
     trigger_activations_sealed: number;
+    sessions_cancelled: number;
   };
   warnings: string[];
 };

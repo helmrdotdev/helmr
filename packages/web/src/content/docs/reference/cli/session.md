@@ -84,7 +84,7 @@ Text output prints `session_id` and, when present, `turn_id`. JSON output contai
 | `--key KEY` | Filter by Session key. Requires `--agent`. |
 | `--parent-session SESSION_ID` | Sessions owned by this parent. |
 | `--requester-session SESSION_ID` | Sessions requested by this Session. |
-| `--status STATUS` | `open`, `closing`, `closed` or `cancelled`. Repeat the flag or separate values with commas. |
+| `--status STATUS` | `open`, `closing` or `closed`. Repeat the flag or separate values with commas. |
 | `--limit N` | Page size, 1–100. Default 50. |
 | `--cursor CURSOR` | Continuation cursor from the previous page. |
 
@@ -94,8 +94,8 @@ Text output prints `session_id` and, when present, `turn_id`. JSON output contai
 | --- | --- |
 | `interrupt` | Holds the Session and its owned descendants and requests interruption. Prints `id`, `session_id`, `hold_id` and `status`. |
 | `resume` | Releases the exact hold given by `--hold` (required). Target the Session shown as `hold_session_id`. |
-| `close` | Stops new admission and drains accepted work. Existing holds remain. |
-| `cancel` | Cancels queued Turns and stops active work in the owned tree. |
+| `close` | Stops new admission in the owned tree and drains work that can run. Held queued Turns and pending questions are cancelled. Prints the Session `status`: `closing` or `closed`. |
+| `cancel` | Cancels queued Turns, stops active work and closes the owned tree. Prints `status: closed`. |
 
 ## Events
 

@@ -112,8 +112,13 @@ type DeleteComputerRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
+// DeleteComputerReceipt reports what deleting a Computer cancels: its
+// Sessions and the Sessions they started, and its unfinished Commands. A dry
+// run reports the same counts without changing anything.
 type DeleteComputerReceipt struct {
-	ComputerID string `json:"computer_id"`
+	ComputerID        string `json:"computer_id"`
+	SessionsCancelled int64  `json:"sessions_cancelled"`
+	CommandsCancelled int64  `json:"commands_cancelled"`
 }
 
 type UpdateComputerRequest struct {

@@ -28,7 +28,7 @@ func TestDeletedComputerRootsWaitForPhysicalClosure(t *testing.T) {
 	// Deletion may be accepted after the Session process ends while its physical
 	// Computer is still shutting down. Fixture that accepted, unreconciled state.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$2;
- UPDATE sessions SET status='closed' WHERE environment_id=$1 AND computer_id=$2;
+ UPDATE sessions SET status='closed',close_how='close' WHERE environment_id=$1 AND computer_id=$2;
  UPDATE computers SET deleted_at=clock_timestamp() WHERE environment_id=$1 AND id=$2;
  UPDATE computer_leases SET status='releasing' WHERE environment_id=$1 AND computer_id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, f.computer)
 	if err := computer.ReconcileDiskRetention(t.Context(), f.pool); err != nil {

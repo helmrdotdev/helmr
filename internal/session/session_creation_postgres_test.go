@@ -113,7 +113,7 @@ func TestEmptySessionAccountingAndControls(t *testing.T) {
 			}
 			if kind == "idle" {
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE sessions SET idle_since=clock_timestamp()-interval '1 hour',close_after_idle_ms=1 WHERE id=$1`, a.SessionID)
-				if err := session.ReconcileSessionIdle(t.Context(), f.pool, f.env, a.SessionID); err != nil {
+				if err := session.ReconcileSessionIdle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, a.SessionID); err != nil {
 					t.Fatal(err)
 				}
 				if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, a.SessionID); err != nil {

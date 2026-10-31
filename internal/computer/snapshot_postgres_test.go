@@ -24,7 +24,7 @@ func TestComputerResidencyWithoutInitialRoot(t *testing.T) {
 			if err := f.Pool.QueryRow(ctx, `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
 				t.Fatal(err)
 			}
-			dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET status='closed' WHERE id=$1`, f.Session)
+			dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, f.Session)
 			dbtest.MustExec(t, ctx, f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, f.Session)
 			dbtest.MustExec(t, ctx, f.Pool, `UPDATE computer_leases SET status='lost',fenced_at=clock_timestamp(),fence_evidence='fixture physical stop' WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer)
 			if test.deleted {

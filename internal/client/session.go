@@ -60,7 +60,7 @@ func (c *Client) ListSessions(ctx context.Context, opts SessionListOptions) (api
 		}
 	}
 	for _, status := range opts.Statuses {
-		if status != "open" && status != "closing" && status != "closed" && status != "cancelled" {
+		if status != "open" && status != "closing" && status != "closed" {
 			return api.AgentSessionsPage{}, errors.New("invalid Session status")
 		}
 	}

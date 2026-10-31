@@ -56,7 +56,7 @@ func TestComputerContinuationControlsObservePostInstallChanges(t *testing.T) {
 				peer = uuid.MustParse(p.Grants[1].Identity.SessionId)
 			}
 			dbtest.MustExec(t, ctx, f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, uuid.NewV7(), f.session)
-			dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE environment_id=$1; UPDATE sessions SET status='cancelled' WHERE environment_id=$1 AND id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, peer)
+			dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET authority_generation=authority_generation+1 WHERE environment_id=$1; UPDATE sessions SET status='closed',close_how='cancel' WHERE environment_id=$1 AND id=$2`, pgx.QueryExecModeSimpleProtocol, f.env, peer)
 			controls, err := session.ReadComputerContinuationControls(ctx, f.pool, host, f.env, p, installed)
 			if err != nil {
 				t.Fatal(err)

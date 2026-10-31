@@ -113,6 +113,7 @@ type AuditAgentChangeDetails struct {
 	MixedPreserved     int     `json:"mixed_assignments_preserved"`
 	ConnectionID       *string `json:"slack_connection_disconnected"`
 	ActivationsSealed  int64   `json:"trigger_activations_sealed"`
+	SessionsCancelled  int64   `json:"sessions_cancelled"`
 }
 
 func (AuditAgentChangeDetails) auditDetails() {}
@@ -184,6 +185,7 @@ func (AuditFailureDetails) auditDetails() {}
 type AuditLifecycleDetails struct {
 	Sequence  int64     `json:"sequence,omitempty"`
 	RequestID uuid.UUID `json:"request_id,omitzero"`
+	How       string    `json:"how,omitempty"`
 }
 
 func (AuditLifecycleDetails) auditDetails() {}

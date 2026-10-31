@@ -3,6 +3,8 @@ package session_test
 import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
+	"github.com/jackc/pgx/v5"
+	"slices"
 	"sync"
 	"testing"
 	"uuid"
@@ -172,15 +174,18 @@ func TestSessionCancelSettlesQueueAndStopsOnlyOwnedProcesses(t *testing.T) {
 	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel")); err != nil {
 		t.Fatal(err)
 	}
-	if r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil || r != closeReceipt {
-		t.Fatalf("close receipt changed after escalation: %+v %v", r, err)
+	if closeReceipt.Status != "closing" || closeReceipt.ID == uuid.Nil() {
+		t.Fatalf("close receipt: %+v", closeReceipt)
+	}
+	if r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil || r.ID != closeReceipt.ID || r.Status != "closed" {
+		t.Fatalf("close retry after escalation: %+v %v", r, err)
 	}
 	var status string
 	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turns WHERE id=$1`, a.TurnID).Scan(&status); err != nil || status != "cancelled" {
 		t.Fatalf("queued turn: %s %v", status, err)
 	}
 	for _, target := range []fixture{f, child, peer} {
-		want := "cancelled"
+		want := "closed"
 		if target.session == peer.session {
 			want = "open"
 		}
@@ -237,20 +242,23 @@ func TestSessionHeldFinalizingSaveCompletesWithoutBlockingPeer(t *testing.T) {
 	}
 }
 
-func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
+func TestSessionCloseSealsOwnedTreeAndDrainsRunnableWork(t *testing.T) {
 	f := newFixture(t)
 	child := ownedFixture(t, f)
 	parentTurn := f.enqueue(t, "parent")
 	childTurn := child.enqueue(t, "child")
-	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil {
-		t.Fatal(err)
+	r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close"))
+	if err != nil || r.Status != "closing" {
+		t.Fatalf("close: %+v %v", r, err)
 	}
 	var lifecycle string
-	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, child.session).Scan(&lifecycle); err != nil || lifecycle != "open" {
-		t.Fatalf("child sealed before parent drained: %s %v", lifecycle, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, child.session).Scan(&lifecycle); err != nil || lifecycle != "closing" {
+		t.Fatalf("child not closing with its parent: %s %v", lifecycle, err)
 	}
-	if _, err := dispatchTurnForTest(t.Context(), f.pool, f.execution()); err != nil {
-		t.Fatalf("accepted closing work could not dispatch: %v", err)
+	for _, target := range []fixture{f, child} {
+		if _, err := dispatchTurnForTest(t.Context(), f.pool, target.execution()); err != nil {
+			t.Fatalf("accepted closing work could not dispatch: %v", err)
+		}
 	}
 	// Model settlement without requiring the independent storage-publication
 	// fixture. Closure must consume the same durable terminal state.
@@ -258,20 +266,196 @@ func TestSessionCloseDrainsParentBeforeSealingChildren(t *testing.T) {
 	if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, child.session).Scan(&lifecycle); err != nil || lifecycle != "closing" {
-		t.Fatalf("child not sealed: %s %v", lifecycle, err)
-	}
-	if _, err := dispatchTurnForTest(t.Context(), f.pool, child.execution()); err != nil {
-		t.Fatalf("accepted child work could not dispatch: %v", err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, f.session).Scan(&lifecycle); err != nil || lifecycle != "closing" {
+		t.Fatalf("parent closed before its child: %s %v", lifecycle, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET status='failed',terminal_at=clock_timestamp() WHERE id=$1`, childTurn.TurnID)
 	if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, child.session); err != nil {
 		t.Fatal(err)
 	}
 	var closed int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE status='closed'`).Scan(&closed); err != nil || closed != 2 {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM sessions WHERE status='closed' AND close_how='close'`).Scan(&closed); err != nil || closed != 2 {
 		t.Fatalf("closed Sessions %d: %v", closed, err)
 	}
+}
+
+func TestSessionCloseCancelsHeldQueuedTurnsAndReleasesHolds(t *testing.T) {
+	f := newFixture(t)
+	queued := f.enqueue(t, "held")
+	hold := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO session_holds(environment_id,id,session_id,kind,issuer_kind) VALUES($1,$2,$3,'process_failed','system')`, f.env, hold, f.session)
+	r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close"))
+	if err != nil || r.Status != "closed" {
+		t.Fatalf("close of a held Session waited: %+v %v", r, err)
+	}
+	var turn string
+	var released bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT status FROM turns WHERE id=$1),(SELECT released_at IS NOT NULL FROM session_holds WHERE id=$2)`, queued.TurnID, hold).Scan(&turn, &released); err != nil || turn != "cancelled" || !released {
+		t.Fatalf("held close: turn=%s released=%v %v", turn, released, err)
+	}
+	if kinds := eventKinds(t, f, f.session); !containsInOrder(kinds, "session.close", "turn.cancelled", "session.closed") {
+		t.Fatalf("close events: %v", kinds)
+	}
+}
+
+func TestSessionCloseCancelsPendingQuestionsWhileRunningTurnFinishes(t *testing.T) {
+	f, a, ask, q := askFixture(t)
+	r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close"))
+	if err != nil || r.Status != "closing" {
+		t.Fatalf("close: %+v %v", r, err)
+	}
+	var askStatus, turnStatus string
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT status FROM turn_asks WHERE id=$1),(SELECT status FROM turns WHERE id=$2)`, ask, a.TurnID).Scan(&askStatus, &turnStatus); err != nil || askStatus != "cancelled" || turnStatus != "running" {
+		t.Fatalf("close question/turn: %s %s %v", askStatus, turnStatus, err)
+	}
+	// A question asked while the Session closes never waits for a person.
+	late := uuid.NewV7()
+	if err := session.RuntimeAsk(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), f.execution(), a.TurnID, late, q); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM turn_asks WHERE id=$1`, late).Scan(&askStatus); err != nil || askStatus != "cancelled" {
+		t.Fatalf("question during close: %s %v", askStatus, err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turns SET status='failed',terminal_at=clock_timestamp(),processing_closed_at=clock_timestamp() WHERE id=$1`, a.TurnID)
+	if err := session.ReconcileSessionClosure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle string
+	if err := f.pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, f.session).Scan(&lifecycle); err != nil || lifecycle != "closed" {
+		t.Fatalf("drained Session: %s %v", lifecycle, err)
+	}
+}
+
+func TestSessionCloseOfInterruptedParentClosesItsChildren(t *testing.T) {
+	f := newFixture(t)
+	child := ownedFixture(t, f)
+	parentTurn := f.enqueue(t, "parent")
+	childTurn := child.enqueue(t, "child")
+	interrupt, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "stop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close"))
+	if err != nil || r.Status != "closed" {
+		t.Fatalf("close of an interrupted parent: %+v %v", r, err)
+	}
+	var parent, childStatus, parentTurnStatus, childTurnStatus string
+	var released bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT status FROM sessions WHERE id=$1),(SELECT status FROM sessions WHERE id=$2),(SELECT status FROM turns WHERE id=$3),(SELECT status FROM turns WHERE id=$4),(SELECT released_at IS NOT NULL FROM session_holds WHERE id=$5)`, f.session, child.session, parentTurn.TurnID, childTurn.TurnID, interrupt.HoldID).Scan(&parent, &childStatus, &parentTurnStatus, &childTurnStatus, &released); err != nil ||
+		parent != "closed" || childStatus != "closed" || parentTurnStatus != "cancelled" || childTurnStatus != "cancelled" || !released {
+		t.Fatalf("interrupted tree close: %s %s %s %s released=%v %v", parent, childStatus, parentTurnStatus, childTurnStatus, released, err)
+	}
+	for _, id := range []uuid.UUID{f.session, child.session} {
+		view, err := session.GetSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, id)
+		if err != nil || len(view.Holds) != 0 {
+			t.Fatalf("closed Session %s reports holds: %+v %v", id, view.Holds, err)
+		}
+	}
+}
+
+func TestSessionCancelReleasesHoldsAndRecordsOnlyClosure(t *testing.T) {
+	f := newFixture(t)
+	interrupt, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "stop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "cancel", "cancel"))
+	if err != nil || r.Status != "closed" {
+		t.Fatalf("cancel: %+v %v", r, err)
+	}
+	var released bool
+	var how, data string
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT released_at IS NOT NULL FROM session_holds WHERE id=$1),(SELECT close_how FROM sessions WHERE id=$2),(SELECT convert_from(data,'UTF8') FROM session_events WHERE session_id=$2 AND kind='session.closed')`, interrupt.HoldID, f.session).Scan(&released, &how, &data); err != nil || !released || how != "cancel" || data != `{"how":"cancel"}` {
+		t.Fatalf("cancel closure: released=%v how=%s data=%s %v", released, how, data, err)
+	}
+	for _, kind := range eventKinds(t, f, f.session) {
+		if kind == "session.cancel" || kind == "session.cancelled" {
+			t.Fatalf("cancel recorded %s", kind)
+		}
+	}
+	var audits []string
+	rows, err := f.pool.Query(t.Context(), `SELECT action FROM audit_events WHERE session_id=$1 AND action LIKE 'session.%' ORDER BY occurred_at,id`, f.session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var action string
+		if err := rows.Scan(&action); err != nil {
+			t.Fatal(err)
+		}
+		audits = append(audits, action)
+	}
+	if rows.Err() != nil || !containsInOrder(audits, "session.cancel_requested") || slices.Contains(audits, "session.cancelled") || !slices.Contains(audits, "session.closed") {
+		t.Fatalf("cancel audit: %v %v", audits, rows.Err())
+	}
+}
+
+func TestSessionCloseAndCancelOfClosedSessionRecordNothing(t *testing.T) {
+	f := newFixture(t)
+	closed, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close"))
+	if err != nil || closed.Status != "closed" {
+		t.Fatalf("close of an idle Session: %+v %v", closed, err)
+	}
+	before := countRows(t, f, f.session)
+	for _, kind := range []string{"close", "cancel"} {
+		r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, kind, "again-"+kind))
+		if err != nil || r.Status != "closed" || r.ID != uuid.Nil() {
+			t.Fatalf("%s of a closed Session: %+v %v", kind, r, err)
+		}
+	}
+	if after := countRows(t, f, f.session); after != before {
+		t.Fatalf("no-op controls wrote rows: %v -> %v", before, after)
+	}
+}
+
+func TestSessionCloseOfClosingSessionRecordsNothing(t *testing.T) {
+	f := newFixture(t)
+	f.enqueue(t, "draining")
+	if r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil || r.Status != "closing" {
+		t.Fatalf("close: %+v %v", r, err)
+	}
+	before := countRows(t, f, f.session)
+	if r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "again")); err != nil || r.Status != "closing" || r.ID != uuid.Nil() {
+		t.Fatalf("close of a closing Session: %+v %v", r, err)
+	}
+	if after := countRows(t, f, f.session); after != before {
+		t.Fatalf("close of a closing Session wrote rows: %v -> %v", before, after)
+	}
+}
+
+type recordedRows struct{ controls, events, audits int }
+
+func countRows(t *testing.T, f fixture, id uuid.UUID) recordedRows {
+	t.Helper()
+	var r recordedRows
+	if err := f.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM session_controls WHERE session_id=$1),(SELECT count(*) FROM session_events WHERE session_id=$1),(SELECT count(*) FROM audit_events WHERE session_id=$1)`, id).Scan(&r.controls, &r.events, &r.audits); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func eventKinds(t *testing.T, f fixture, id uuid.UUID) []string {
+	t.Helper()
+	rows, err := f.pool.Query(t.Context(), `SELECT kind FROM session_events WHERE session_id=$1 ORDER BY seq`, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return kinds
+}
+
+// containsInOrder reports whether want appears in got as a subsequence.
+func containsInOrder(got []string, want ...string) bool {
+	i := 0
+	for _, kind := range got {
+		if i < len(want) && kind == want[i] {
+			i++
+		}
+	}
+	return i == len(want)
 }
 
 func TestSessionControlAPIKeyRequiresExactPermission(t *testing.T) {
@@ -331,5 +515,24 @@ func TestSessionLocalHoldReleaseDoesNotInvalidateHealthyChild(t *testing.T) {
 	}
 	if err := f.pool.QueryRow(t.Context(), `SELECT authority_generation FROM sessions WHERE id=$1`, f.session).Scan(&generation); err != nil || generation != 2 {
 		t.Fatalf("noop release changed authority: %d %v", generation, err)
+	}
+}
+
+func TestSessionInterruptOfClosingSessionIsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.enqueue(t, "draining")
+	if r, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "close", "close")); err != nil || r.Status != "closing" {
+		t.Fatalf("close: %+v %v", r, err)
+	}
+	before := countRows(t, f, f.session)
+	if _, err := session.ControlSession(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "stop")); !errors.Is(err, session.ErrNotReady) {
+		t.Fatalf("interrupt of a closing Session: %v", err)
+	}
+	var holds int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM session_holds WHERE session_id=$1`, f.session).Scan(&holds); err != nil || holds != 0 {
+		t.Fatalf("refused interrupt created holds: %d %v", holds, err)
+	}
+	if after := countRows(t, f, f.session); after != before {
+		t.Fatalf("refused interrupt wrote rows: %v -> %v", before, after)
 	}
 }

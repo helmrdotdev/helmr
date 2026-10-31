@@ -288,7 +288,7 @@ func TestInitialCohortCancellationBeforeReadyPreservesCancelledOutcome(t *testin
 		t.Fatal(err)
 	}
 	var cancelled bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT s.status='cancelled' AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status<>'cancelled') AND NOT EXISTS(SELECT 1 FROM session_holds h WHERE h.environment_id=s.environment_id AND h.session_id=s.id AND h.released_at IS NULL) FROM sessions s WHERE s.environment_id=$1 AND s.id=$2`, f.env, sessionID).Scan(&cancelled); err != nil || !cancelled {
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.status='closed' AND s.close_how='cancel' AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status<>'cancelled') AND NOT EXISTS(SELECT 1 FROM session_holds h WHERE h.environment_id=s.environment_id AND h.session_id=s.id AND h.released_at IS NULL) FROM sessions s WHERE s.environment_id=$1 AND s.id=$2`, f.env, sessionID).Scan(&cancelled); err != nil || !cancelled {
 		t.Fatalf("physical loss replaced explicit cancellation: %v", err)
 	}
 }

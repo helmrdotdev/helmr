@@ -88,9 +88,10 @@ Validate application-specific input in the handler.
 | `closeAfterIdle` | Closes a Session after it has been idle this long. Default 7 days. A positive duration (`"30m"`, `"1d"`, or milliseconds) or `"never"`. |
 | `maxTurnDuration` | Limits running work, including human waits, until the result is durably recorded. Save finalization has its own recovery lifecycle. No default. |
 
-A Session is idle only when it has no queued or running Turns, pending
-questions, in-flight messages, holds, open child Sessions or unfinished disk
-saves. A Session creation request can set its own `closeAfterIdle` for a new Session.
+A Session is idle only when it has no running Turns, queued Turns that can run,
+pending questions, in-flight messages, child Sessions that are not closed or
+unfinished disk saves. A hold does not keep a Session open: queued Turns that a
+hold blocks are cancelled when it closes. A Session creation request can set its own `closeAfterIdle` for a new Session.
 Internal saves and retries do not restart the idle clock. Native starters explicitly use
 `suspension: "manual"` and `closeAfterIdle: "never"`. Other Agents retain the
 seven-day close default. Suspension policy is copied from the deployed Agent when
@@ -198,15 +199,14 @@ without requiring assignment or connection management permissions. API keys and 
 To delete an Agent:
 
 1. Promote a Deployment that omits the Agent.
-2. Close its open Sessions and wait for closing Sessions and execution cleanup
-   to finish. Deletion does not force-stop work for you.
-3. Open the Agent in **Agents → All agents**, choose **Delete**, and inspect the
+2. Open the Agent in **Agents → All agents**, choose **Delete**, and inspect the
    preview. Resolve any blockers, then confirm the refreshed preview.
 
-The preview reports current Deployment membership, active Sessions and pending
-cleanup. Session links require Session viewing permission; counts can be shown
-without exposing Session IDs. Deletion checks these prerequisites again when
-applied, so a successful preview does not reserve the Agent for deletion.
+The preview reports current Deployment membership and how many Sessions
+deletion cancels. Deleting cancels its Sessions and the Sessions they started,
+in the same change and with no separate Session permission; their execution
+cleanup continues afterward. Deletion checks its prerequisites again when applied, so a
+successful preview does not reserve the Agent for deletion.
 
 Delete retains the Agent identity, immutable Deployment definitions and existing
 Session and Trigger history, subject to their normal retention and viewing
