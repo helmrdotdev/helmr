@@ -38,13 +38,21 @@ type Link struct {
 	ExpiresAt time.Time
 }
 
-// Sender delivers email. SendEmails sends several messages as one batch with
-// the fewest provider calls; it reports an error when any message of the
-// batch may not have been sent. A provider that delivers message by message
-// (SMTP) may already have sent earlier messages of a batch that fails.
+// Sender delivers email. SendEmails sends several messages with the fewest
+// provider calls and returns one error per message, in order: nil when that
+// message was sent. One message that cannot be sent does not stop the others.
 type Sender interface {
 	SendEmail(ctx context.Context, message Message) error
-	SendEmails(ctx context.Context, messages []Message) error
+	SendEmails(ctx context.Context, messages []Message) []error
+}
+
+// FailAll reports err for each of count messages.
+func FailAll(count int, err error) []error {
+	errs := make([]error, count)
+	for i := range errs {
+		errs[i] = err
+	}
+	return errs
 }
 
 type Unconfigured struct{}
@@ -53,8 +61,8 @@ func (Unconfigured) SendEmail(context.Context, Message) error {
 	return errors.New("email sender is not configured")
 }
 
-func (Unconfigured) SendEmails(context.Context, []Message) error {
-	return errors.New("email sender is not configured")
+func (Unconfigured) SendEmails(_ context.Context, messages []Message) []error {
+	return FailAll(len(messages), errors.New("email sender is not configured"))
 }
 
 type LogSender struct {
@@ -74,13 +82,12 @@ func (m LogSender) SendEmail(_ context.Context, message Message) error {
 	return nil
 }
 
-func (m LogSender) SendEmails(ctx context.Context, messages []Message) error {
-	for _, message := range messages {
-		if err := m.SendEmail(ctx, message); err != nil {
-			return err
-		}
+func (m LogSender) SendEmails(ctx context.Context, messages []Message) []error {
+	errs := make([]error, len(messages))
+	for i, message := range messages {
+		errs[i] = m.SendEmail(ctx, message)
 	}
-	return nil
+	return errs
 }
 
 type SMTPSender struct {
@@ -102,45 +109,43 @@ func NewSMTPSender(addr string, username string, password string, from string) S
 }
 
 func (m SMTPSender) SendEmail(ctx context.Context, message Message) error {
-	return m.SendEmails(ctx, []Message{message})
-}
-
-// RecipientError reports the recipient whose message the SMTP server refused.
-// Messages before it in the batch were already sent.
-type RecipientError struct {
-	Address string
-	Err     error
-}
-
-func (e RecipientError) Error() string {
-	return fmt.Sprintf("send email to %s: %v", e.Address, e.Err)
-}
-
-func (e RecipientError) Unwrap() error {
-	return e.Err
+	return m.SendEmails(ctx, []Message{message})[0]
 }
 
 // SendEmails sends every message over one SMTP session, resetting the
-// transaction between messages. SMTP delivers message by message: when the
-// server refuses a message, the earlier ones were already sent, and the error
-// is a RecipientError naming the refused recipient. A failed QUIT after every
-// message was accepted is logged, not reported.
-func (m SMTPSender) SendEmails(ctx context.Context, messages []Message) error {
+// transaction between messages. A message the server refuses fails on its own
+// and the session continues with the next one; a failure of the session itself
+// fails every message not yet sent. A failed QUIT after every message was
+// handled is logged, not reported.
+func (m SMTPSender) SendEmails(ctx context.Context, messages []Message) []error {
+	errs := make([]error, len(messages))
 	if strings.TrimSpace(m.addr) == "" || strings.TrimSpace(m.from) == "" {
-		return errors.New("smtp email sender is not configured")
+		return FailAll(len(messages), errors.New("smtp email sender is not configured"))
 	}
 	from, err := mail.ParseAddress(m.from)
 	if err != nil {
-		return fmt.Errorf("invalid email sender: %w", err)
+		return FailAll(len(messages), fmt.Errorf("invalid email sender: %w", err))
 	}
 	recipients := make([]*mail.Address, len(messages))
+	pending := 0
 	for i, message := range messages {
 		if recipients[i], err = mail.ParseAddress(message.To); err != nil {
-			return fmt.Errorf("invalid email recipient: %w", err)
+			errs[i] = fmt.Errorf("invalid email recipient: %w", err)
+			continue
 		}
+		pending++
 	}
-	if len(messages) == 0 {
-		return nil
+	if pending == 0 {
+		return errs
+	}
+	// failRest fails every message that has not been handled yet.
+	failRest := func(from int, err error) []error {
+		for i := from; i < len(messages); i++ {
+			if recipients[i] != nil && errs[i] == nil {
+				errs[i] = err
+			}
+		}
+		return errs
 	}
 	host := m.addr
 	if parsedHost, _, splitErr := strings.Cut(m.addr, ":"); splitErr {
@@ -148,12 +153,12 @@ func (m SMTPSender) SendEmails(ctx context.Context, messages []Message) error {
 	}
 	// The session gets the per-message timeout once for connecting and once
 	// for each message.
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(len(messages)+1)*emailSMTPTimeout)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(pending+1)*emailSMTPTimeout)
 	defer cancel()
 	dialer := net.Dialer{Timeout: emailSMTPTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", m.addr)
 	if err != nil {
-		return err
+		return failRest(0, err)
 	}
 	defer conn.Close()
 	stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
@@ -163,34 +168,39 @@ func (m SMTPSender) SendEmails(ctx context.Context, messages []Message) error {
 	}
 	client, err := smtp.NewClient(conn, host)
 	if err != nil {
-		return err
+		return failRest(0, err)
 	}
 	defer client.Close()
 	if ok, _ := client.Extension("STARTTLS"); !ok {
-		return errors.New("smtp server does not support STARTTLS")
+		return failRest(0, errors.New("smtp server does not support STARTTLS"))
 	}
 	if err := client.StartTLS(&tls.Config{ServerName: host, MinVersion: tls.VersionTLS12, RootCAs: m.rootCAs}); err != nil {
-		return err
+		return failRest(0, err)
 	}
 	if m.username != "" || m.password != "" {
 		if err := client.Auth(smtp.PlainAuth("", m.username, m.password, host)); err != nil {
-			return err
+			return failRest(0, err)
 		}
 	}
+	started := false
 	for i, message := range messages {
-		if i > 0 {
+		if recipients[i] == nil {
+			continue
+		}
+		if started {
 			if err := client.Reset(); err != nil {
-				return err
+				return failRest(i, err)
 			}
 		}
+		started = true
 		if err := sendSMTPMessage(client, from, recipients[i], message); err != nil {
-			return RecipientError{Address: recipients[i].Address, Err: err}
+			errs[i] = fmt.Errorf("send email to %s: %w", recipients[i].Address, err)
 		}
 	}
 	if err := client.Quit(); err != nil {
-		slog.Default().Warn("smtp quit failed after delivering every message", "error", err)
+		slog.Default().Warn("smtp quit failed after handling every message", "error", err)
 	}
-	return nil
+	return errs
 }
 
 func sendSMTPMessage(client *smtp.Client, from *mail.Address, to *mail.Address, message Message) error {

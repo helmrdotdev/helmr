@@ -113,8 +113,8 @@ func TestDevEmailWritesInvitationLinksToTheLog(t *testing.T) {
 		t.Fatalf("dev email = %T with delivery %v, want the log sender and a delivery worker", mailer, delivery)
 	}
 	link := "http://127.0.0.1:8080/invite?token=dev-token"
-	if err := mailer.SendEmails(t.Context(), []email.Message{{To: "ada@example.test", Subject: "Invitation", Link: &email.Link{Email: "ada@example.test", Purpose: "invitation", URL: link}}}); err != nil {
-		t.Fatal(err)
+	if errs := mailer.SendEmails(t.Context(), []email.Message{{To: "ada@example.test", Subject: "Invitation", Link: &email.Link{Email: "ada@example.test", Purpose: "invitation", URL: link}}}); len(errs) != 1 || errs[0] != nil {
+		t.Fatal(errs)
 	}
 	if !strings.Contains(output.String(), link) || !strings.Contains(output.String(), "purpose=invitation") {
 		t.Fatalf("log = %q, want the invitation link", output.String())

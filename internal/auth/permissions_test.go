@@ -235,16 +235,36 @@ func TestRoleAssignmentLevelsPreserveAgentRefinement(t *testing.T) {
 	}
 }
 
-func TestConnectionConfigureRequiresRecentAuthentication(t *testing.T) {
-	p := Principal{Kind: PrincipalKindSession, AuthenticatedAt: time.Now().Add(-2 * time.Hour)}
-	if err := RequireRecentFor(p, PermissionAgentConnectionsConfigure); !errors.Is(err, ErrRecentProofRequired) {
-		t.Fatalf("stale sign-in configured connection: %v", err)
+func TestRecentAuthenticationCoversOnlyAccessAndDestructiveChanges(t *testing.T) {
+	stale := Principal{Kind: PrincipalKindSession, AuthenticatedAt: time.Now().Add(-2 * time.Hour)}
+	for _, permission := range []Permission{PermissionSecretsCreate, PermissionAgentConnectionsConfigure, PermissionAgentConnectionsRead, PermissionGroupsAddMember, PermissionGroupsRemoveMember, PermissionInvitationsCreate} {
+		if err := RequireRecentFor(stale, permission); err != nil {
+			t.Fatalf("%s required recent sign-in: %v", permission, err)
+		}
 	}
-	if err := RequireRecentFor(p, PermissionAgentConnectionsRead); err != nil {
-		t.Fatalf("connection read required recent sign-in: %v", err)
+	for _, permission := range []Permission{PermissionSecretsRotate, PermissionSecretsRevoke, PermissionAgentConnectionsDelete, PermissionRolesUpdate, PermissionAssignmentsCreate, PermissionGroupsDelete, PermissionAPIKeysCreate, PermissionMembersRemove, PermissionAgentsDelete} {
+		if err := RequireRecentFor(stale, permission); !errors.Is(err, ErrRecentProofRequired) {
+			t.Fatalf("stale sign-in allowed %s: %v", permission, err)
+		}
 	}
-	p.AuthenticatedAt = time.Now()
-	if err := RequireRecentFor(p, PermissionAgentConnectionsConfigure); err != nil {
-		t.Fatalf("recent sign-in denied configuration: %v", err)
+	recent := Principal{Kind: PrincipalKindSession, AuthenticatedAt: time.Now()}
+	if err := RequireRecentFor(recent, PermissionSecretsRotate); err != nil {
+		t.Fatalf("recent sign-in denied rotation: %v", err)
+	}
+}
+
+func TestRecentProofExemptsOnlyCLISessions(t *testing.T) {
+	old := time.Now().Add(-48 * time.Hour)
+	if err := RequireRecentProof(Principal{Kind: PrincipalKindSession, Channel: "cli", AuthenticatedAt: old}); err != nil {
+		t.Fatalf("CLI session needed recent proof: %v", err)
+	}
+	if err := RequireRecentProof(Principal{Kind: PrincipalKindSession, Channel: "browser", AuthenticatedAt: old}); !errors.Is(err, ErrRecentProofRequired) {
+		t.Fatalf("stale browser passed: %v", err)
+	}
+	if err := RequireRecentProof(Principal{Kind: PrincipalKindSession, Channel: "slack", SlackLinkID: uuid.NewV7(), AuthenticatedAt: time.Now()}); !errors.Is(err, ErrRecentProofRequired) {
+		t.Fatalf("Slack link passed: %v", err)
+	}
+	if err := RequireRecentProof(Principal{Kind: PrincipalKindOperator, Channel: "cli", AuthenticatedAt: old}); !errors.Is(err, ErrRecentProofRequired) {
+		t.Fatalf("stale operator passed: %v", err)
 	}
 }

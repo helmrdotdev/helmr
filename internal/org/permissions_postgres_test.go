@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/access"
@@ -257,5 +258,45 @@ func TestGrantAuditAtMaximumSelectedAgentSize(t *testing.T) {
 	var bounded bool
 	if err := f.pool.QueryRow(ctx, `SELECT bool_and(octet_length(details::text)<16384 AND NOT(details->'after' ? 'agent_keys')) FROM audit_events WHERE target_id=$1`, grants[0].ID).Scan(&bounded); err != nil || !bounded {
 		t.Fatalf("grant evidence unbounded: %v %v", bounded, err)
+	}
+}
+
+func TestGroupMembershipNeedsRecentProofOnlyWhenTheGroupCarriesAssignments(t *testing.T) {
+	f := newMemberFixture(t)
+	ctx := t.Context()
+	stale := f.owner
+	stale.Human.AuthenticatedAt = stale.Human.AuthenticatedAt.Add(-2 * time.Hour)
+	group, err := org.SavePermissionGroup(ctx, f.pool, f.owner, uuid.Nil(), "Unassigned team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = org.SetPermissionGroupMember(ctx, f.pool, stale, group.ID, f.member.MemberID, true); err != nil {
+		t.Fatal("adding to a Group without assignments required recent sign-in", err)
+	}
+	if err = org.SetPermissionGroupMember(ctx, f.pool, stale, group.ID, f.member.MemberID, false); err != nil {
+		t.Fatal("removing from a Group without assignments required recent sign-in", err)
+	}
+	role, err := org.SavePermissionRole(ctx, f.pool, f.owner, uuid.Nil(), org.RoleInput{Name: "Member readers", Permissions: []string{"members.read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = org.AssignRole(ctx, f.pool, f.owner, org.GrantInput{Subject: org.GrantSubject{Type: "group", GroupID: &group.ID}, RoleID: role.ID, AgentsMode: "none", ExpectedRoleRevision: role.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	if err = org.SetPermissionGroupMember(ctx, f.pool, stale, group.ID, f.member.MemberID, true); !errors.Is(err, auth.ErrRecentProofRequired) {
+		t.Fatal("stale sign-in added a member to an assigned Group", err)
+	}
+	var members int
+	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM permission_group_members WHERE group_id=$1`, group.ID).Scan(&members); err != nil || members != 0 {
+		t.Fatal("refused addition left a membership", members, err)
+	}
+	if err = org.SetPermissionGroupMember(ctx, f.pool, f.owner, group.ID, f.member.MemberID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err = org.SetPermissionGroupMember(ctx, f.pool, stale, group.ID, f.member.MemberID, false); !errors.Is(err, auth.ErrRecentProofRequired) {
+		t.Fatal("stale sign-in removed a member from an assigned Group", err)
+	}
+	if err = org.SetPermissionGroupMember(ctx, f.pool, f.owner, group.ID, f.member.MemberID, false); err != nil {
+		t.Fatal(err)
 	}
 }

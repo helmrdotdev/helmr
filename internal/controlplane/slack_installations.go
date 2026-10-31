@@ -3,7 +3,6 @@ package controlplane
 import (
 	"errors"
 	"net/http"
-	"time"
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
@@ -20,21 +19,18 @@ type SlackConfig struct {
 	Client      *slack.WebClient
 }
 
-// Retain the initiating browser authority across the provider redirect.
+// slackManagementSource binds the installation round trip to the browser
+// session and membership that started it.
 type slackManagementSource struct {
-	SessionID       uuid.UUID `json:"session_id"`
-	MemberID        uuid.UUID `json:"member_id"`
-	IdentityID      uuid.UUID `json:"identity_id"`
-	PasskeyID       uuid.UUID `json:"passkey_id"`
-	AccessEpoch     int64     `json:"access_epoch"`
-	AuthenticatedAt time.Time `json:"authenticated_at"`
+	SessionID uuid.UUID `json:"session_id"`
+	MemberID  uuid.UUID `json:"member_id"`
 }
 
 func slackManagementSourceFor(p auth.Principal) *slackManagementSource {
-	return &slackManagementSource{SessionID: p.SessionID, MemberID: p.MemberID, IdentityID: p.IdentityID, PasskeyID: p.PasskeyID, AccessEpoch: p.AccessEpoch, AuthenticatedAt: p.AuthenticatedAt}
+	return &slackManagementSource{SessionID: p.SessionID, MemberID: p.MemberID}
 }
 func (s *slackManagementSource) matches(p auth.Principal) bool {
-	return s != nil && s.SessionID == p.SessionID && s.MemberID == p.MemberID && s.IdentityID == p.IdentityID && s.PasskeyID == p.PasskeyID && s.AccessEpoch == p.AccessEpoch && s.AuthenticatedAt.Equal(p.AuthenticatedAt)
+	return s != nil && s.SessionID == p.SessionID && s.MemberID == p.MemberID
 }
 
 const browserAuthSlackInstallation browserAuthKind = "slack_installation"

@@ -74,7 +74,9 @@ const (
 )
 
 // InvitationResult is the outcome for one distinct address of the request:
-// invited, meaning the invitation was emailed, or failed with its error.
+// invited, meaning the invitation was emailed, or failed with its error, such
+// as already_member, invitation_pending, invalid_email or email_failed. Each
+// address succeeds or fails on its own.
 type InvitationResult struct {
 	Email  string                 `json:"email"`
 	Status InvitationResultStatus `json:"status"`

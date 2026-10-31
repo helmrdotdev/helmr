@@ -104,8 +104,8 @@ func TestSecretMutationPreservesTransactionCredentialFailure(t *testing.T) {
 	}
 }
 
-func TestSecretMutationRechecksExactHumanSource(t *testing.T) {
-	for _, retired := range []string{"logout", "source", "account", "membership", "old-proof"} {
+func TestSecretMutationRechecksExactHumanSession(t *testing.T) {
+	for _, retired := range []string{"logout", "account", "membership", "old-proof"} {
 		t.Run(retired, func(t *testing.T) {
 			d := dbtest.Open(t)
 			if err := schema.Up(t.Context(), d.DSN); err != nil {
@@ -132,8 +132,6 @@ func TestSecretMutationRechecksExactHumanSource(t *testing.T) {
 			switch retired {
 			case "logout":
 				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, p.SessionID)
-			case "source":
-				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, p.IdentityID)
 			case "account":
 				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, user)
 			case "membership":
@@ -144,14 +142,66 @@ func TestSecretMutationRechecksExactHumanSource(t *testing.T) {
 				p.AuthenticatedAt = p.AuthenticatedAt.Add(-2 * time.Hour)
 				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
 			}
-			_, createErr := store.Create(t.Context(), p, env, "DENIED", []byte("new"), "denied")
+			_, createErr := store.Create(t.Context(), p, env, "NEW_NAME", []byte("new"), "new-name")
 			_, rotateErr := store.Rotate(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), []byte("new"), "rotate")
 			_, revokeErr := store.Revoke(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), "revoke")
+			if retired == "old-proof" {
+				// Creating under a new name uses the current sign-in; replacing or
+				// revoking existing material needs recent proof.
+				if createErr != nil {
+					t.Fatalf("old proof could not create a Secret under a new name: %v", createErr)
+				}
+				for _, err := range []error{rotateErr, revokeErr} {
+					if !errors.Is(err, auth.ErrRecentProofRequired) {
+						t.Fatalf("old proof admitted mutation: %v", err)
+					}
+				}
+				return
+			}
 			for _, err := range []error{createErr, rotateErr, revokeErr} {
-				if !errors.Is(err, access.ErrDenied) && !errors.Is(err, auth.ErrRecentProofRequired) {
+				if !errors.Is(err, access.ErrDenied) {
 					t.Fatalf("retired source admitted mutation: %v", err)
 				}
 			}
 		})
+	}
+}
+
+func TestSecretCreateCannotReuseARevokedName(t *testing.T) {
+	d := dbtest.Open(t)
+	if err := schema.Up(t.Context(), d.DSN); err != nil {
+		t.Fatal(err)
+	}
+	env := seedSecretEnvironment(t, d.Pool)
+	var org uuid.UUID
+	if err := d.Pool.QueryRow(t.Context(), `SELECT org_id FROM environments WHERE id=$1`, env).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	user, member := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Manager')`, user)
+	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, member, org, user)
+	dbtest.GrantMember(t, d.Pool, org, user, &env, "secrets.create", "secrets.revoke")
+	p := dbtest.BrowserPrincipal(t, d.Pool, org, user)
+	store, err := New(db.New(d.Pool), d.Pool, make([]byte, 32), auditpolicy.Policy{RetentionSeconds: 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := store.Create(t.Context(), p, env, "RETIRED", []byte("original"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.Revoke(t.Context(), p, env, pgvalue.MustUUIDValue(row.ID), ""); err != nil {
+		t.Fatal(err)
+	}
+	// A revoked name stays reserved, so creating on it never issues new material
+	// under that name, with or without recent proof.
+	p.AuthenticatedAt = p.AuthenticatedAt.Add(-2 * time.Hour)
+	dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET authenticated_at=$2 WHERE id=$1`, p.SessionID, p.AuthenticatedAt)
+	if _, err = store.Create(t.Context(), p, env, "RETIRED", []byte("replacement"), ""); !db.IsUniqueViolation(err) {
+		t.Fatalf("create on a revoked name = %v, want the name to stay taken", err)
+	}
+	var count int
+	if err = d.Pool.QueryRow(t.Context(), `SELECT count(*) FROM secrets WHERE environment_id=$1 AND name='RETIRED'`, env).Scan(&count); err != nil || count != 1 {
+		t.Fatal(count, err)
 	}
 }

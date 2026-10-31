@@ -3,7 +3,7 @@ import { ApiError, postJson, request, selectedOrganization, setOrganization } fr
 export type Account = {user_id:string;display_name:string;profile_image_url:string;primary_email:string};
 export type OrganizationMembership = {id:string;name:string;slug:string;membership_id:string;authentication_required:string};
 export type AuthConfig = {deployment_mode:string;methods:string[];email_delivery:boolean;app_origin:string;signup_enabled:boolean;organization_creation_enabled:boolean;single_organization?:OrganizationMembership;setup_required:boolean};
-export type OrganizationContext = {id:string;name:string;slug:string;current_member:{id:string;user_id:string;display_name:string;is_owner:boolean;permissions:string[];permission_scopes:{project:string;environment:string;agent?:string;permissions:string[]}[]};authentication:{method:string;authenticated_at:string;reauthenticate_at:string|null};onboarding:{project_required:boolean}};
+export type OrganizationContext = {id:string;name:string;slug:string;current_member:{id:string;user_id:string;display_name:string;is_owner:boolean;permissions:string[];permission_scopes:{project:string;environment:string;agent?:string;permissions:string[]}[]};authentication:{authenticated_at:string};onboarding:{project_required:boolean}};
 // Console projection; account and organization have distinct API/proof sources.
 export type Me = Account & {
  org_id?:string;org_name?:string;app_origin:string;membership_id?:string;is_owner:boolean;
@@ -94,8 +94,7 @@ export async function logout(): Promise<void> {
 }
 
 export type DeviceCodeStatus = {
- confirmation: boolean;
- consent?:{account_name:string;org_id:string;org_name:string;proof:string};
+ consent?:{account_name:string;org_name:string;proof:string};
   status: "pending" | "approved" | "denied" | "consumed" | "expired";
   expires_at?: string;
 };
@@ -106,18 +105,10 @@ export async function getDeviceCodeStatus(userCode: string): Promise<DeviceCodeS
   );
 }
 
-type DeviceConsent = { org_id: string };
-
-export async function approveDeviceCode(userCode: string, consent: DeviceConsent,proof:string): Promise<DeviceCodeStatus> {
-  return postJson<{ user_code: string } & DeviceConsent, DeviceCodeStatus>("/api/auth/device/approve", {
-    user_code: userCode,
-    ...consent,
-  },{headers:{"X-Helmr-Device-Consent":proof}});
+export async function approveDeviceCode(userCode: string, proof: string): Promise<DeviceCodeStatus> {
+  return postJson<{ user_code: string }, DeviceCodeStatus>("/api/auth/device/approve", { user_code: userCode }, { headers: { "X-Helmr-Device-Consent": proof } });
 }
 
-export async function denyDeviceCode(userCode: string, consent: DeviceConsent,proof:string): Promise<DeviceCodeStatus> {
-  return postJson<{ user_code: string } & DeviceConsent, DeviceCodeStatus>("/api/auth/device/deny", {
-    user_code: userCode,
-    ...consent,
-  },{headers:{"X-Helmr-Device-Consent":proof}});
+export async function denyDeviceCode(userCode: string, proof: string): Promise<DeviceCodeStatus> {
+  return postJson<{ user_code: string }, DeviceCodeStatus>("/api/auth/device/deny", { user_code: userCode }, { headers: { "X-Helmr-Device-Consent": proof } });
 }

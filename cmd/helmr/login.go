@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/clistate"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
@@ -16,7 +15,7 @@ import (
 const defaultControlPlaneURL = "https://helmr.dev"
 
 func loginCommand() *cobra.Command {
-	var noBrowser, confirm bool
+	var noBrowser bool
 	cmd := &cobra.Command{
 		Use:   "login [URL]",
 		Short: "Authenticate this CLI with Helmr.",
@@ -35,45 +34,21 @@ func loginCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return deviceLogin(cmd, baseURL, confirm, noBrowser, nil)
+			return deviceLogin(cmd, baseURL, noBrowser)
 		},
 	}
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the login URL without opening a browser.")
-	cmd.Flags().BoolVar(&confirm, "confirm", false, "Confirm this saved CLI login for sensitive changes.")
 	return cmd
 }
 
-func deviceLogin(cmd *cobra.Command, baseURL string, confirm, noBrowser bool, confirmationClient *client.Client) error {
+func deviceLogin(cmd *cobra.Command, baseURL string, noBrowser bool) error {
 	controlPlane, err := client.New(baseURL)
 	if err != nil {
 		return err
 	}
-	var start api.DeviceStartResponse
-	if confirm {
-		if confirmationClient == nil {
-			state, stateErr := newCLIStateStore()
-			if stateErr != nil {
-				return stateErr
-			}
-			token, tokenErr := state.Token(baseURL)
-			if tokenErr != nil {
-				return fmt.Errorf("confirmation requires a saved login: %w", tokenErr)
-			}
-			var clientErr error
-			confirmationClient, clientErr = client.New(baseURL, client.WithBearerToken(token))
-			if clientErr != nil {
-				return clientErr
-			}
-		}
-		start, err = confirmationClient.StartDeviceConfirmation(cmd.Context())
-	} else {
-		start, err = controlPlane.StartDeviceCode(cmd.Context())
-	}
+	start, err := controlPlane.StartDeviceCode(cmd.Context())
 	if err != nil {
 		return err
-	}
-	if confirm {
-		fmt.Fprintln(cmd.ErrOrStderr(), "Approving confirmation replaces this CLI session. Queued work and open streams using the old session lose access at their next authority check. Retry your original command explicitly after confirmation; it will not be retried automatically.")
 	}
 	verificationURL := start.VerificationURIComplete
 	if verificationURL == "" {

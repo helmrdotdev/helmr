@@ -252,7 +252,7 @@ func finishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config,
 				}
 				raw, err = confirmBrowserProof(ctx, tx, cfg, target.session, hash, proved)
 			} else {
-				raw, err = issueLoginSession(ctx, tx, cfg, proved, pgtype.UUID{})
+				raw, err = issueLoginSession(ctx, tx, cfg, proved)
 			}
 		}
 		return err

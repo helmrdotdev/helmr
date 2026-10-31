@@ -230,6 +230,7 @@ POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/drain
 POST /admin/api/v1/worker-groups/{groupID}/pools/{poolID}/primary
 POST /admin/api/v1/worker-groups/{groupID}/token/rotate
 POST /api/account/access/revoke-all
+POST /api/account/access/revoke-others
 POST /api/account/activity
 POST /api/account/email-change/resend
 POST /api/account/email-change/start
@@ -237,9 +238,7 @@ POST /api/account/email-change/verify
 POST /api/account/passkeys/complete
 POST /api/account/passkeys/options
 POST /api/account/providers/github/link
-POST /api/auth/device/activity
 POST /api/auth/device/approve
-POST /api/auth/device/confirm/start
 POST /api/auth/device/deny
 POST /api/auth/device/start
 POST /api/auth/device/token

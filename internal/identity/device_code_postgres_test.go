@@ -5,6 +5,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/access"
 	"sync"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -20,10 +21,9 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consent := DeviceConsent{OrgID: orgID.String()}
 
 	started, err := StartDeviceCode(ctx, fixture.pool, fixture.cfg)
-	if err != nil || started.ExpiresIn != fixture.cfg.Lifetimes().DeviceCode || started.PollInterval != fixture.cfg.Lifetimes().DevicePollInterval {
+	if err != nil || started.ExpiresIn != deviceCodeTTL || started.PollInterval != devicePollInterval {
 		t.Fatalf("started = %+v, err = %v", started, err)
 	}
 	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, started.DeviceCode); !errors.Is(err, ErrAuthorizationPending) {
@@ -34,25 +34,20 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 		t.Fatalf("status = %+v, err = %v", state, err)
 	}
 
-	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, DeviceConsent{}, started.UserCode); !errors.Is(err, ErrOrganizationRequired) {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession, SessionID: uuid.NewV7()}, started.UserCode); !errors.Is(err, ErrOrganizationRequired) {
 		t.Fatalf("approval without organization error = %v", err)
 	}
-	for _, changed := range []DeviceConsent{{}, {OrgID: uuid.NewV7().String()}} {
-		if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, changed, started.UserCode); !errors.Is(err, ErrDeviceApproverChanged) {
-			t.Fatalf("changed consent %+v error = %v", changed, err)
-		}
-	}
-	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, ""); !errors.Is(err, ErrInvalidDeviceCode) {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, ""); !errors.Is(err, ErrInvalidDeviceCode) {
 		t.Fatalf("empty user code error = %v", err)
 	}
-	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, "ZZZZ-ZZZZ"); !errors.Is(err, ErrDeviceCodeNotFound) {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, "ZZZZ-ZZZZ"); !errors.Is(err, ErrDeviceCodeNotFound) {
 		t.Fatalf("unknown user code error = %v", err)
 	}
-	state, err = ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, started.UserCode)
+	state, err = ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, started.UserCode)
 	if err != nil || state.Status != "approved" {
 		t.Fatalf("approval = %+v, err = %v", state, err)
 	}
-	if _, err := DenyDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, started.UserCode); !errors.Is(err, ErrDeviceCodeNotFound) {
+	if _, err := DenyDeviceCode(ctx, fixture.pool, fixture.cfg, approver, started.UserCode); !errors.Is(err, ErrDeviceCodeNotFound) {
 		t.Fatalf("decided code denial error = %v", err)
 	}
 
@@ -85,13 +80,12 @@ func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consent := DeviceConsent{OrgID: orgID.String()}
 
 	denied, err := StartDeviceCode(ctx, fixture.pool, fixture.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state, err := DenyDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, denied.UserCode); err != nil || state.Status != "denied" {
+	if state, err := DenyDeviceCode(ctx, fixture.pool, fixture.cfg, approver, denied.UserCode); err != nil || state.Status != "denied" {
 		t.Fatalf("denial = %+v, err = %v", state, err)
 	}
 	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, denied.DeviceCode); !errors.Is(err, ErrDeviceAccessDenied) {
@@ -113,7 +107,7 @@ func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, expired.DeviceCode); !errors.Is(err, ErrDeviceCodeExpired) {
 		t.Fatalf("expired exchange error = %v", err)
 	}
-	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, consent, expired.UserCode); !errors.Is(err, ErrDeviceCodeNotFound) {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, expired.UserCode); !errors.Is(err, ErrDeviceCodeNotFound) {
 		t.Fatalf("expired approval error = %v", err)
 	}
 	if _, err := DeviceCodeStatus(ctx, fixture.queries, fixture.cfg, "ZZZZ-ZZZZ"); !errors.Is(err, ErrDeviceCodeNotFound) {
@@ -135,7 +129,7 @@ func TestDeviceCodePostgresFailedExchangeKeepsApprovedCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, DeviceConsent{OrgID: orgID.String()}, started.UserCode); err != nil {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, started.UserCode); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,7 +171,7 @@ func TestDeviceCodePostgresConcurrentExchangeIssuesOneSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, DeviceConsent{OrgID: orgID.String()}, started.UserCode); err != nil {
+	if _, err := ApproveDeviceCode(ctx, fixture.pool, fixture.cfg, approver, started.UserCode); err != nil {
 		t.Fatal(err)
 	}
 
@@ -214,15 +208,87 @@ func TestDeviceCodePostgresConcurrentExchangeIssuesOneSession(t *testing.T) {
 	}
 }
 
-func TestDeviceConfirmationReplacesOnlyExactLiveCLI(t *testing.T) {
-	for _, change := range []string{"success", "logout", "source", "membership", "stale-proof"} {
+func TestDeviceApprovalNeedsRecentBrowserSignIn(t *testing.T) {
+	f := newIdentityFixture(t)
+	ctx := t.Context()
+	user := f.user(t, "CLI user", "")
+	org := f.organization(t, "device-approval")
+	f.member(t, org, user, "member")
+	browser, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, f.session(t, user, uuid.Nil()), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, browser.SessionID)
+	stale, err := access.SessionPrincipal(ctx, f.pool, browser.SessionID, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err := StartDeviceCode(ctx, f.pool, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ApproveDeviceCode(ctx, f.pool, f.cfg, stale, start.UserCode); !errors.Is(err, ErrRecentProofRequired) {
+		t.Fatal("stale browser approved a CLI login", err)
+	}
+	if state, err := DeviceCodeStatus(ctx, f.queries, f.cfg, start.UserCode); err != nil || state.Status != "pending" {
+		t.Fatal("refused approval decided the code", state, err)
+	}
+	// Denying needs no recent sign-in.
+	denied, err := StartDeviceCode(ctx, f.pool, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = DenyDeviceCode(ctx, f.pool, f.cfg, stale, denied.UserCode); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp() WHERE id=$1`, browser.SessionID)
+	fresh, err := access.SessionPrincipal(ctx, f.pool, browser.SessionID, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ApproveDeviceCode(ctx, f.pool, f.cfg, fresh, start.UserCode); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := ExchangeDeviceCode(ctx, f.pool, f.cfg, start.DeviceCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, uuid.Nil())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The CLI session records how the approving browser session signed in.
+	var copied bool
+	if err = f.pool.QueryRow(ctx, `SELECT c.identity_id IS NOT DISTINCT FROM b.identity_id AND c.passkey_id IS NOT DISTINCT FROM b.passkey_id AND c.authenticated_at=b.authenticated_at
+ FROM login_sessions c, login_sessions b WHERE c.id=$1 AND b.id=$2`, cli.SessionID, browser.SessionID).Scan(&copied); err != nil || !copied {
+		t.Fatal("CLI session did not copy the browser sign-in", copied, err)
+	}
+	// A CLI login never needs recent proof, however old its sign-in is.
+	f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '20 days' WHERE id=$1`, cli.SessionID)
+	if cli, err = AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, uuid.Nil()); err != nil {
+		t.Fatal(err)
+	}
+	if err = auth.RequireRecentFor(cli, auth.PermissionSecretsRotate); err != nil {
+		t.Fatal("CLI login needed recent proof for a sensitive command", err)
+	}
+	// Removing the method the browser signed in with does not end the CLI.
+	f.session(t, user, uuid.Nil())
+	f.exec(t, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, browser.IdentityID)
+	if _, err = AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, uuid.Nil()); err != nil {
+		t.Fatal("removing the sign-in method ended the CLI", err)
+	}
+}
+
+func TestDeviceExchangeNeedsTheApprovingBrowserSession(t *testing.T) {
+	for _, change := range []string{"logout", "membership", "epoch"} {
 		t.Run(change, func(t *testing.T) {
 			f := newIdentityFixture(t)
 			ctx := t.Context()
 			user := f.user(t, "CLI user", "")
-			org := f.organization(t, "confirm")
-			f.member(t, org, user, "member")
-			browser, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, f.session(t, user, uuid.Nil()), org)
+			org := f.organization(t, "device-exchange")
+			member := f.member(t, org, user, "member")
+			rawBrowser := f.session(t, user, uuid.Nil())
+			browser, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, rawBrowser, org)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -230,73 +296,83 @@ func TestDeviceConfirmationReplacesOnlyExactLiveCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = ApproveDeviceCode(ctx, f.pool, f.cfg, browser, DeviceConsent{OrgID: org.String()}, start.UserCode); err != nil {
-				t.Fatal(err)
-			}
-			oldToken, err := ExchangeDeviceCode(ctx, f.pool, f.cfg, start.DeviceCode)
-			if err != nil {
-				t.Fatal(err)
-			}
-			old, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, oldToken, uuid.Nil())
-			if err != nil {
-				t.Fatal(err)
-			}
-			confirmation, err := StartDeviceConfirmation(ctx, f.pool, f.cfg, old)
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Browser approval may use another retained factor, but cannot change scope.
-			fresh, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, f.session(t, user, uuid.Nil()), org)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if change == "stale-proof" {
-				f.exec(t, `UPDATE login_sessions SET authenticated_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, fresh.SessionID)
-				fresh, err = access.SessionPrincipal(ctx, f.pool, fresh.SessionID, org)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err = ApproveDeviceCode(ctx, f.pool, f.cfg, fresh, DeviceConsent{OrgID: org.String()}, confirmation.UserCode); !errors.Is(err, ErrRecentProofRequired) {
-					t.Fatal(err)
-				}
-				if _, err = AuthenticateLoginSession(ctx, f.pool, f.cfg, oldToken, uuid.Nil()); err != nil {
-					t.Fatal("failed confirmation revoked old CLI", err)
-				}
-				return
-			}
-			if _, err = ApproveDeviceCode(ctx, f.pool, f.cfg, fresh, DeviceConsent{OrgID: org.String()}, confirmation.UserCode); err != nil {
+			if _, err = ApproveDeviceCode(ctx, f.pool, f.cfg, browser, start.UserCode); err != nil {
 				t.Fatal(err)
 			}
 			switch change {
 			case "logout":
-				if err = RevokeLoginSession(ctx, f.pool, f.cfg, oldToken); err != nil {
+				if err = RevokeLoginSession(ctx, f.pool, f.cfg, rawBrowser); err != nil {
 					t.Fatal(err)
 				}
-			case "source":
-				f.exec(t, `UPDATE auth_identities SET revoked_at=clock_timestamp() WHERE id=$1`, old.IdentityID)
 			case "membership":
-				f.exec(t, `UPDATE org_members SET suspended_at=clock_timestamp() WHERE id=$1`, old.MemberID)
+				f.exec(t, `UPDATE org_members SET suspended_at=clock_timestamp() WHERE id=$1`, member)
+			case "epoch":
+				f.exec(t, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, user)
 			}
-			token, err := ExchangeDeviceCode(ctx, f.pool, f.cfg, confirmation.DeviceCode)
-			if change != "success" && change != "source" {
-				if !errors.Is(err, ErrInvalidDeviceCode) {
-					t.Fatal("retired CLI replaced", err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = AuthenticateLoginSession(ctx, f.pool, f.cfg, oldToken, uuid.Nil()); err == nil {
-				t.Fatal("old CLI still valid")
-			}
-			renewed, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, token, uuid.Nil())
-			if err != nil || renewed.MemberID != old.MemberID || renewed.IdentityID != fresh.IdentityID {
-				t.Fatal(renewed, err)
-			}
-			if _, err = ExchangeDeviceCode(ctx, f.pool, f.cfg, confirmation.DeviceCode); !errors.Is(err, ErrInvalidDeviceCode) {
-				t.Fatal("replayed replacement", err)
+			if _, err = ExchangeDeviceCode(ctx, f.pool, f.cfg, start.DeviceCode); !errors.Is(err, ErrInvalidDeviceCode) {
+				t.Fatal("exchanged without the approving browser session", err)
 			}
 		})
+	}
+}
+
+func TestCLISessionUseExtendsExpiryAtMostHourly(t *testing.T) {
+	f := newIdentityFixture(t)
+	ctx := t.Context()
+	user := f.user(t, "CLI user", "")
+	org := f.organization(t, "device-expiry")
+	f.member(t, org, user, "member")
+	browser, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, f.session(t, user, uuid.Nil()), org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err := StartDeviceCode(ctx, f.pool, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ApproveDeviceCode(ctx, f.pool, f.cfg, browser, start.UserCode); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := ExchangeDeviceCode(ctx, f.pool, f.cfg, start.DeviceCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, err := AuthenticateLoginSession(ctx, f.pool, f.cfg, raw, uuid.Nil())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiry := func() (time.Time, time.Time) {
+		t.Helper()
+		var expires, active time.Time
+		if err := f.pool.QueryRow(ctx, `SELECT expires_at,last_human_activity_at FROM login_sessions WHERE id=$1`, cli.SessionID).Scan(&expires, &active); err != nil {
+			t.Fatal(err)
+		}
+		return expires, active
+	}
+	// Recent use: the row is not written again.
+	f.exec(t, `UPDATE login_sessions SET expires_at=clock_timestamp()+interval '5 days',last_human_activity_at=clock_timestamp()-interval '30 minutes' WHERE id=$1`, cli.SessionID)
+	before, beforeActive := expiry()
+	if err = ExtendCLISession(ctx, f.pool, cli.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if after, afterActive := expiry(); !after.Equal(before) || !afterActive.Equal(beforeActive) {
+		t.Fatal("use within the hour extended the CLI session", before, after)
+	}
+	// Use after an hour extends it to thirty days from now.
+	f.exec(t, `UPDATE login_sessions SET last_human_activity_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, cli.SessionID)
+	if err = ExtendCLISession(ctx, f.pool, cli.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := expiry(); time.Until(after) < 29*24*time.Hour {
+		t.Fatal("use after an hour did not extend the CLI session", after)
+	}
+	// Browser sessions are never extended this way.
+	f.exec(t, `UPDATE login_sessions SET expires_at=clock_timestamp()+interval '5 days',last_human_activity_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, browser.SessionID)
+	if err = ExtendCLISession(ctx, f.pool, browser.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	var browserExpiry time.Time
+	if err = f.pool.QueryRow(ctx, `SELECT expires_at FROM login_sessions WHERE id=$1`, browser.SessionID).Scan(&browserExpiry); err != nil || time.Until(browserExpiry) > 6*24*time.Hour {
+		t.Fatal("browser session extended", browserExpiry, err)
 	}
 }

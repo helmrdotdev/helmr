@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"errors"
 	"math/big"
 	"net"
 	"net/textproto"
@@ -158,13 +157,14 @@ func TestSMTPSenderSendsEveryMessageOverOneSession(t *testing.T) {
 	sender := NewSMTPSender(server.listener.Addr().String(), "", "", "Helmr <noreply@example.test>")
 	sender.rootCAs = server.roots
 
-	err := sender.SendEmails(t.Context(), []Message{
+	for _, err := range sender.SendEmails(t.Context(), []Message{
 		{To: "ada@example.test", Subject: "First", PlainText: "one"},
 		{To: "grace@example.test", Subject: "Second", PlainText: "two"},
 		{To: "lin@example.test", Subject: "Third", PlainText: "three"},
-	})
-	if err != nil {
-		t.Fatal(err)
+	}) {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -186,12 +186,27 @@ func TestSMTPSenderSendsEveryMessageOverOneSession(t *testing.T) {
 	}
 }
 
-func TestSMTPSenderRejectsABatchWithAnInvalidRecipientBeforeConnecting(t *testing.T) {
+func TestSMTPSenderFailsOnlyAnInvalidRecipient(t *testing.T) {
 	server := newFakeSMTPServer(t)
 	sender := NewSMTPSender(server.listener.Addr().String(), "", "", "noreply@example.test")
 	sender.rootCAs = server.roots
-	if err := sender.SendEmails(t.Context(), []Message{{To: "ada@example.test"}, {To: "not an address"}}); err == nil {
-		t.Fatal("expected invalid recipient error")
+	errs := sender.SendEmails(t.Context(), []Message{{To: "ada@example.test"}, {To: "not an address"}})
+	if len(errs) != 2 || errs[0] != nil || errs[1] == nil {
+		t.Fatalf("errors = %v, want only the invalid recipient to fail", errs)
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if len(server.messages) != 1 || server.messages[0].to != "RCPT TO:<ada@example.test>" {
+		t.Fatalf("messages = %+v", server.messages)
+	}
+}
+
+func TestSMTPSenderDoesNotSendWhenEveryRecipientIsInvalid(t *testing.T) {
+	server := newFakeSMTPServer(t)
+	sender := NewSMTPSender(server.listener.Addr().String(), "", "", "noreply@example.test")
+	sender.rootCAs = server.roots
+	if errs := sender.SendEmails(t.Context(), []Message{{To: "not an address"}}); len(errs) != 1 || errs[0] == nil {
+		t.Fatalf("errors = %v", errs)
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -200,20 +215,33 @@ func TestSMTPSenderRejectsABatchWithAnInvalidRecipientBeforeConnecting(t *testin
 	}
 }
 
-func TestSMTPSenderNamesTheRefusedRecipientAfterSendingEarlierMessages(t *testing.T) {
+func TestSMTPSenderContinuesAfterARefusedRecipient(t *testing.T) {
 	server := newFakeSMTPServer(t)
 	server.rejectRecipient = "grace@example.test"
 	sender := NewSMTPSender(server.listener.Addr().String(), "", "", "noreply@example.test")
 	sender.rootCAs = server.roots
-	err := sender.SendEmails(t.Context(), []Message{{To: "ada@example.test", Subject: "First"}, {To: "grace@example.test", Subject: "Second"}, {To: "lin@example.test", Subject: "Third"}})
-	var refused RecipientError
-	if !errors.As(err, &refused) || refused.Address != "grace@example.test" {
-		t.Fatalf("error = %v, want the refused recipient", err)
+	errs := sender.SendEmails(t.Context(), []Message{{To: "ada@example.test", Subject: "First"}, {To: "grace@example.test", Subject: "Second"}, {To: "lin@example.test", Subject: "Third"}})
+	if len(errs) != 3 || errs[0] != nil || errs[1] == nil || !strings.Contains(errs[1].Error(), "grace@example.test") || errs[2] != nil {
+		t.Fatalf("errors = %v, want only the refused recipient to fail", errs)
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if len(server.messages) != 1 || server.messages[0].to != "RCPT TO:<ada@example.test>" {
-		t.Fatalf("messages = %+v, want only the message before the refused one", server.messages)
+	if server.connections != 1 || len(server.messages) != 2 || server.messages[0].to != "RCPT TO:<ada@example.test>" || server.messages[1].to != "RCPT TO:<lin@example.test>" {
+		t.Fatalf("messages = %+v, want the messages around the refused one over one session", server.messages)
+	}
+}
+
+func TestSMTPSenderFailsEveryMessageWhenTheSessionCannotStart(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := listener.Addr().String()
+	_ = listener.Close()
+	sender := NewSMTPSender(addr, "", "", "noreply@example.test")
+	errs := sender.SendEmails(t.Context(), []Message{{To: "ada@example.test"}, {To: "lin@example.test"}})
+	if len(errs) != 2 || errs[0] == nil || errs[1] == nil {
+		t.Fatalf("errors = %v, want both to fail", errs)
 	}
 }
 
@@ -222,8 +250,10 @@ func TestSMTPSenderEncodesNonASCIISubjectsAndIgnoresAFailedQuit(t *testing.T) {
 	server.dropQuit = true
 	sender := NewSMTPSender(server.listener.Addr().String(), "", "", "noreply@example.test")
 	sender.rootCAs = server.roots
-	if err := sender.SendEmails(t.Context(), []Message{{To: "ada@example.test", Subject: "Zoë invited you to Café", PlainText: "body"}, {To: "lin@example.test", Subject: "Plain"}}); err != nil {
-		t.Fatalf("send with a dropped QUIT = %v", err)
+	for _, err := range sender.SendEmails(t.Context(), []Message{{To: "ada@example.test", Subject: "Zoë invited you to Café", PlainText: "body"}, {To: "lin@example.test", Subject: "Plain"}}) {
+		if err != nil {
+			t.Fatalf("send with a dropped QUIT = %v", err)
+		}
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()

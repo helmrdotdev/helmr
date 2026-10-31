@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -81,11 +80,7 @@ func controlPlaneClient(cmd *cobra.Command, additional ...client.Option) (*clien
 	if sessionScopedRoutes {
 		opts = append(opts, client.WithSessionScopedRoutes())
 	}
-	c, err := client.New(baseURL, append(opts, additional...)...)
-	if err == nil && sessionScopedRoutes {
-		rememberHumanClient(cmd, baseURL, c)
-	}
-	return c, err
+	return client.New(baseURL, append(opts, additional...)...)
 }
 
 func sessionControlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
@@ -116,11 +111,7 @@ func sessionControlPlaneClient(cmd *cobra.Command) (*client.Client, error) {
 		}
 		return nil, err
 	}
-	c, err := client.New(baseURL, client.WithBearerToken(bearer), client.WithSessionScopedRoutes())
-	if err == nil {
-		rememberHumanClient(cmd, baseURL, c)
-	}
-	return c, err
+	return client.New(baseURL, client.WithBearerToken(bearer), client.WithSessionScopedRoutes())
 }
 
 func cliControlPlaneURL(cmd *cobra.Command) string {
@@ -180,15 +171,4 @@ func isLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-// Only the client chosen for this invocation can refresh its human login.
-type humanCLIKey struct{}
-type humanCLIClient struct {
-	origin string
-	client *client.Client
-}
-
-func rememberHumanClient(cmd *cobra.Command, origin string, c *client.Client) {
-	cmd.SetContext(context.WithValue(cmd.Context(), humanCLIKey{}, humanCLIClient{origin, c}))
 }

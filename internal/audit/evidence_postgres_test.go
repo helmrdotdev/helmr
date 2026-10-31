@@ -111,9 +111,10 @@ func TestEvidenceDatabaseRejectsContradictoryCredentialShapes(t *testing.T) {
 	}
 	user, link, host, runtime := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO users(id,display_name) VALUES($1,'Account')`, user)
-	userEvent, runtimeEvent := uuid.NewV7(), uuid.NewV7()
+	userEvent, providerEvent, runtimeEvent := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	for _, event := range []audit.Event{
-		{ID: userEvent, Evidence: audit.VerifiedMagicLink(user, link, "email"), Action: "identity.sign_in", TargetKind: "login_session", Details: audit.AuthenticationDetails{Method: "magic_link", Provider: "email"}},
+		{ID: userEvent, Evidence: audit.VerifiedDevice(user, link), Action: "identity.sign_in", TargetKind: "login_session", Details: audit.AuthenticationDetails{Method: "device_authorization", DeviceCodeID: link}},
+		{ID: providerEvent, Evidence: audit.VerifiedLogin(user, "github"), Action: "identity.sign_in", TargetKind: "login_session", Details: audit.AuthenticationDetails{Method: "provider", Provider: "github", Subject: "subject"}},
 		{ID: runtimeEvent, OrgID: uuid.NewV7(), Evidence: audit.RuntimeActor(runtime, 1, 1, host, 1), Action: "mcp.admitted", Outcome: "accepted", TargetKind: "mcp", TargetID: runtime, Details: audit.MCPDetails{Tool: "list_agents"}},
 	} {
 		if err := db.RunTx(t.Context(), d.Pool, func(tx pgx.Tx) error {
@@ -126,10 +127,10 @@ func TestEvidenceDatabaseRejectsContradictoryCredentialShapes(t *testing.T) {
 		name, update string
 		id           uuid.UUID
 	}{
-		{"magic link requires consumed credential", "credential_id=NULL", userEvent},
-		{"provider incompatible with login session", "credential_kind='login_session'", userEvent},
-		{"provider assertion requires provider", "credential_kind='provider_assertion',identity_provider=NULL", userEvent},
-		{"internal execution cannot invent provider", "actor_user_id=NULL,actor_identity=NULL,actor_component='control_plane',authentication_origin='internal',authentication_result='not_attempted',credential_kind=NULL,credential_id=NULL", userEvent},
+		{"device sign-in requires consumed credential", "credential_id=NULL", userEvent},
+		{"provider incompatible with login session", "credential_kind='login_session'", providerEvent},
+		{"provider assertion requires provider", "identity_provider=NULL", providerEvent},
+		{"internal execution cannot invent provider", "actor_user_id=NULL,actor_identity=NULL,actor_component='control_plane',authentication_origin='internal',authentication_result='not_attempted',credential_kind=NULL,credential_id=NULL", providerEvent},
 		{"unproduced signature category", "credential_kind='request_signature'", userEvent},
 		{"internal provenance cannot authenticate user", "authentication_origin='internal'", userEvent},
 		{"unverified credential reference", "actor_user_id=NULL,actor_identity=NULL,authentication_result='failed',outcome='denied'", userEvent},

@@ -24,13 +24,7 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(err))
 		return
 	}
-	var authorization identity.DeviceAuthorization
-	var err error
-	if r.URL.Path == "/api/auth/device/confirm/start" {
-		authorization, err = identity.StartDeviceConfirmation(r.Context(), s.tx, s.identity, principalFromContext(r.Context()))
-	} else {
-		authorization, err = identity.StartDeviceCode(r.Context(), s.tx, s.identity)
-	}
+	authorization, err := identity.StartDeviceCode(r.Context(), s.tx, s.identity)
 	if err != nil {
 		s.writeIdentityError(w, r, err)
 		return
@@ -62,13 +56,13 @@ func (s *Server) deviceStatus(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, identity.ErrInvalidToken)
 		return
 	}
-	response := api.DeviceStatusResponse{Status: state.Status, Confirmation: state.Confirmation, ExpiresAt: state.ExpiresAt.Format(time.RFC3339)}
+	response := api.DeviceStatusResponse{Status: state.Status, ExpiresAt: state.ExpiresAt.Format(time.RFC3339)}
 	if state.Status == "pending" {
 		if p.MemberID == uuid.Nil() {
 			writeError(w, badRequest(codedError{code: "organization_required", message: "Choose an organization before approving this device."}))
 			return
 		}
-		view := &api.DeviceConsentView{OrganizationID: p.OrgID.String()}
+		view := &api.DeviceConsentView{}
 		if err := s.tx.QueryRow(r.Context(), `SELECT COALESCE(m.display_name,u.display_name,u.id::text),o.name FROM org_members m JOIN users u ON u.id=m.user_id JOIN organizations o ON o.id=m.org_id WHERE m.id=$1 AND m.org_id=$2 AND m.user_id=$3`, p.MemberID, p.OrgID, p.UserID).Scan(&view.AccountName, &view.OrganizationName); err != nil {
 			writeError(w, err)
 			return
@@ -91,7 +85,7 @@ func (s *Server) denyDeviceCode(w http.ResponseWriter, r *http.Request) {
 	s.decideDeviceCode(w, r, identity.DenyDeviceCode)
 }
 
-func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide func(ctx context.Context, q db.TxBeginner, cfg identity.Config, approver auth.Principal, consent identity.DeviceConsent, userCode string) (identity.DeviceCodeState, error)) {
+func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide func(ctx context.Context, q db.TxBeginner, cfg identity.Config, approver auth.Principal, userCode string) (identity.DeviceCodeState, error)) {
 	if err := s.userAuthConfigured(); err != nil {
 		writeError(w, unavailable(err))
 		return
@@ -106,8 +100,7 @@ func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide
 		s.writeIdentityError(w, r, identity.ErrDeviceApproverChanged)
 		return
 	}
-	consent := identity.DeviceConsent{OrgID: request.OrgID}
-	state, err := decide(r.Context(), s.tx, s.identity, principalFromContext(r.Context()), consent, request.UserCode)
+	state, err := decide(r.Context(), s.tx, s.identity, p, request.UserCode)
 	if err != nil {
 		s.writeIdentityError(w, r, err)
 		return
@@ -128,11 +121,7 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 	rawSession, err := identity.ExchangeDeviceCode(r.Context(), s.tx, s.identity, request.DeviceCode)
 	switch {
 	case err == nil:
-		writeJSON(w, http.StatusOK, api.DeviceTokenResponse{
-			AccessToken:      rawSession,
-			TokenType:        "bearer",
-			ExpiresInSeconds: int64((30 * 24 * time.Hour).Seconds()),
-		})
+		writeJSON(w, http.StatusOK, api.DeviceTokenResponse{AccessToken: rawSession})
 	case errors.Is(err, identity.ErrAuthorizationPending):
 		writeJSON(w, http.StatusAccepted, api.DeviceTokenResponse{Error: "authorization_pending"})
 	case errors.Is(err, identity.ErrDeviceAccessDenied):

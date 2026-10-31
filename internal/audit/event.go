@@ -99,7 +99,7 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 		return err
 	}
 	if (e.Authentication.Result == "absent" || e.Authentication.Result == "failed") && e.Outcome != "denied" && e.Outcome != "failed" {
-		if e.Authentication.Result != "absent" || !slices.Contains([]string{"identity.device_started", "identity.magic_link_requested", "identity.email_code_requested"}, e.Action) {
+		if e.Authentication.Result != "absent" || !slices.Contains([]string{"identity.device_started", "identity.email_code_requested"}, e.Action) {
 			return errors.New("established actor required for operation")
 		}
 	}

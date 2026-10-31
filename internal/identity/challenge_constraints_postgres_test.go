@@ -60,11 +60,10 @@ func TestDeviceCodeStateAndDeletedDecisionActor(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		consent := DeviceConsent{OrgID: orgID.String()}
 		if state == "denied" {
-			_, err = DenyDeviceCode(t.Context(), f.pool, f.cfg, principal, consent, started.UserCode)
+			_, err = DenyDeviceCode(t.Context(), f.pool, f.cfg, principal, started.UserCode)
 		} else {
-			_, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, principal, consent, started.UserCode)
+			_, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, principal, started.UserCode)
 		}
 		if err != nil {
 			t.Fatal(err)
@@ -112,7 +111,7 @@ func TestDeviceApprovalRequiresExactMemberBeforeExchange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, principal, DeviceConsent{OrgID: org.String()}, started.UserCode); err != nil {
+	if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, principal, started.UserCode); err != nil {
 		t.Fatal(err)
 	}
 	hash, err := userCodeHash(f.cfg, started.UserCode)

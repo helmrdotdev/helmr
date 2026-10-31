@@ -60,7 +60,6 @@ type Querier interface {
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
 	EnsureRegion(ctx context.Context, arg EnsureRegionParams) error
 	FenceWorkerHost(ctx context.Context, arg FenceWorkerHostParams) (FenceWorkerHostRow, error)
-	GetAccount(ctx context.Context, id pgtype.UUID) (User, error)
 	GetAccountByEmail(ctx context.Context, lower string) (User, error)
 	GetActiveInvitation(ctx context.Context, tokenHash []byte) (GetActiveInvitationRow, error)
 	GetActiveInvitationByID(ctx context.Context, id pgtype.UUID) (GetActiveInvitationByIDRow, error)
@@ -161,7 +160,6 @@ type Querier interface {
 	RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error)
 	RecordCasBlobReclamation(ctx context.Context, arg RecordCasBlobReclamationParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (RecordWorkerObservationRow, error)
-	RefreshLoginSession(ctx context.Context, arg RefreshLoginSessionParams) (int64, error)
 	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
 	RemoveOrgMember(ctx context.Context, arg RemoveOrgMemberParams) (OrgMember, error)
 	RequestCommandCancellation(ctx context.Context, arg RequestCommandCancellationParams) (Command, error)
@@ -172,9 +170,6 @@ type Querier interface {
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
 	RevokeExpiredInvitationsByEmail(ctx context.Context, arg RevokeExpiredInvitationsByEmailParams) ([]pgtype.UUID, error)
 	RevokeInvitation(ctx context.Context, arg RevokeInvitationParams) (int64, error)
-	RevokeLoginSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
-	RevokeLoginSessionsForMembership(ctx context.Context, memberID pgtype.UUID) error
-	RevokeLoginSessionsForUser(ctx context.Context, userID pgtype.UUID) (int64, error)
 	RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error)
 	RotateActiveAPIKey(ctx context.Context, arg RotateActiveAPIKeyParams) (APIKey, error)
 	RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error)

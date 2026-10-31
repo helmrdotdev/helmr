@@ -79,26 +79,6 @@ func (q *Queries) CreateAuthIdentity(ctx context.Context, arg CreateAuthIdentity
 	return i, err
 }
 
-const getAccount = `-- name: GetAccount :one
-SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, webauthn_user_handle FROM users WHERE id=$1
-`
-
-func (q *Queries) GetAccount(ctx context.Context, id pgtype.UUID) (User, error) {
-	row := q.db.QueryRow(ctx, getAccount, id)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.DisplayName,
-		&i.ProfileImageURL,
-		&i.PrimaryEmail,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.AccessEpoch,
-		&i.WebauthnUserHandle,
-	)
-	return i, err
-}
-
 const getAccountByEmail = `-- name: GetAccountByEmail :one
 SELECT id, display_name, profile_image_url, primary_email, created_at, updated_at, access_epoch, webauthn_user_handle FROM users WHERE lower(primary_email)=lower($1)
 `

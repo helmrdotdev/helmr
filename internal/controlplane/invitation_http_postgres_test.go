@@ -20,24 +20,33 @@ import (
 	"github.com/helmrdotdev/helmr/internal/org"
 )
 
-// batchInvitationSender records each batch of emails, or fails every batch
-// when err is set; onSend runs before it returns. It sends no single emails.
+// batchInvitationSender records each batch of emails and fails the emails to
+// the addresses in fail, or every email when err is set; onSend runs before it
+// returns. It sends no single emails.
 type batchInvitationSender struct {
 	email.Unconfigured
 	mu      sync.Mutex
 	batches [][]email.Message
 	err     error
+	fail    map[string]error
 	onSend  func(context.Context)
 }
 
-func (s *batchInvitationSender) SendEmails(ctx context.Context, messages []email.Message) error {
+func (s *batchInvitationSender) SendEmails(ctx context.Context, messages []email.Message) []error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.batches = append(s.batches, messages)
 	if s.onSend != nil {
 		s.onSend(ctx)
 	}
-	return s.err
+	errs := make([]error, len(messages))
+	for i, message := range messages {
+		errs[i] = s.err
+		if err, ok := s.fail[message.To]; ok {
+			errs[i] = err
+		}
+	}
+	return errs
 }
 
 func newInvitationHTTPFixture(t *testing.T, sender email.Sender) httpPostgresFixture {
@@ -216,7 +225,7 @@ func TestCreateInvitationsHTTPPostgresEmailsOneBatch(t *testing.T) {
 	})
 }
 
-func TestCreateInvitationsHTTPPostgresRollsBackAFailedBatch(t *testing.T) {
+func TestCreateInvitationsHTTPPostgresFailsEveryAddressOfAFailedBatch(t *testing.T) {
 	sender := &batchInvitationSender{err: errors.New("provider unavailable")}
 	fixture := newInvitationHTTPFixture(t, sender)
 	orgID, token := fixture.organizationOwner(t, "acme")
@@ -230,7 +239,7 @@ func TestCreateInvitationsHTTPPostgresRollsBackAFailedBatch(t *testing.T) {
 	}
 	for _, i := range []int{0, 2} {
 		result := response.Results[i]
-		if result.Status != api.InvitationResultFailed || result.Error == nil || result.Error.Code != "email_failed" || result.Error.Message != "Invitation emails could not be sent" {
+		if result.Status != api.InvitationResultFailed || result.Error == nil || result.Error.Code != "email_failed" || result.Error.Message != "The invitation email could not be sent" {
 			t.Fatalf("%s result = %+v", result.Email, result)
 		}
 	}
@@ -276,21 +285,31 @@ func TestCreateInvitationsHTTPPostgresRejectsTheRequestAsAWhole(t *testing.T) {
 	}
 }
 
-func TestCreateInvitationsHTTPPostgresNamesTheRefusedRecipient(t *testing.T) {
-	sender := &batchInvitationSender{err: email.RecipientError{Address: "grace@example.test", Err: errors.New("550 mailbox unavailable")}}
+func TestCreateInvitationsHTTPPostgresOneUndeliveredAddressDoesNotBlockTheOthers(t *testing.T) {
+	sender := &batchInvitationSender{fail: map[string]error{"grace@example.test": errors.New("550 mailbox unavailable")}}
 	fixture := newInvitationHTTPFixture(t, sender)
-	_, token := fixture.organizationOwner(t, "acme")
+	orgID, token := fixture.organizationOwner(t, "acme")
 	code, response, body := createInvitationsRequest(t, fixture, token, api.CreateInvitationsRequest{Emails: []string{"ada@example.test", "grace@example.test", "lin@example.test"}})
 	if code != http.StatusOK || len(response.Results) != 3 {
 		t.Fatalf("create invitations = %d %s", code, body)
 	}
-	for i, want := range []string{"email_failed", "email_rejected", "email_failed"} {
-		if result := response.Results[i]; result.Status != api.InvitationResultFailed || result.Error == nil || result.Error.Code != want {
+	for i, want := range []api.InvitationResultStatus{api.InvitationResultInvited, api.InvitationResultFailed, api.InvitationResultInvited} {
+		if result := response.Results[i]; result.Status != want {
 			t.Fatalf("%s result = %+v, want %s", result.Email, result, want)
 		}
 	}
-	if count := countInvitations(t, fixture, "ada@example.test", "grace@example.test", "lin@example.test"); count != 0 {
-		t.Fatalf("invitations = %d", count)
+	if result := response.Results[1]; result.Error == nil || result.Error.Code != "email_failed" || strings.Contains(result.Error.Message, "550") {
+		t.Fatalf("undelivered result = %+v", result)
+	}
+	if count := countInvitations(t, fixture, "ada@example.test", "lin@example.test"); count != 2 {
+		t.Fatalf("delivered invitations = %d", count)
+	}
+	if count := countInvitations(t, fixture, "grace@example.test"); count != 0 {
+		t.Fatalf("undelivered invitations = %d", count)
+	}
+	var facts int
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action='invitation.created' AND org_id=$1`, orgID).Scan(&facts); err != nil || facts != 2 {
+		t.Fatalf("audit facts = %d, err = %v", facts, err)
 	}
 }
 

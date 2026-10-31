@@ -722,6 +722,17 @@ func SetPermissionGroupMember(ctx context.Context, database db.TxBeginner, m Man
 				return nil
 			}
 		}
+		// The Group row lock excludes concurrent assignment to this Group, so a
+		// Group without Role assignments cannot change what the member can access.
+		var assigned bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM role_grants WHERE org_id=$1 AND group_id=$2)`, m.OrgID, group).Scan(&assigned); err != nil {
+			return err
+		}
+		if assigned {
+			if err := auth.RequireRecentProof(m.Human); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(ctx, `UPDATE permission_groups SET revision=revision+1,updated_at=clock_timestamp() WHERE org_id=$1 AND id=$2`, m.OrgID, group); err != nil {
 			return err
 		}

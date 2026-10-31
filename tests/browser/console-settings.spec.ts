@@ -175,6 +175,24 @@ test("Sign-in and security lists sign-in methods and confirms removal and sign-o
   await expect(page.getByRole("dialog", { name: "Sign out everywhere", exact: true })).toBeVisible();
 });
 
+test("Sign out other sessions confirms and keeps this browser on the page", async ({ page }) => {
+  await fixture(page);
+  let revoked = 0;
+  await page.route("**/api/account/access/revoke-others", route => { revoked++; return route.fulfill({ status: 204 }); });
+  await page.goto(`/settings/security?${scope}`);
+  const others = page.getByRole("region", { name: "Sign out other sessions", exact: true });
+  await expect(others).toContainText("This browser stays signed in.");
+  await others.getByRole("button", { name: "Sign out other sessions…", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Sign out other sessions", exact: true });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(revoked).toBe(0);
+  await others.getByRole("button", { name: "Sign out other sessions…", exact: true }).click();
+  await dialog.getByRole("button", { name: "Sign out other sessions", exact: true }).click();
+  await expect(page.getByText("Other sessions signed out.", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/security/);
+  expect(revoked).toBe(1);
+});
+
 test("Ownership lists owners for an owner and confirms each change", async ({ page }) => {
   await fixture(page);
   await page.goto(`/settings/ownership?${scope}`);

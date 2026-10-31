@@ -1,6 +1,6 @@
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createSignal, For, Show } from "solid-js";
-import { listSignInMethods, removeSignInMethod, revokeAllAccess, startGitHubLink, type SignInMethod } from "../lib/account";
+import { listSignInMethods, removeSignInMethod, revokeAllAccess, revokeOtherAccess, startGitHubLink, type SignInMethod } from "../lib/account";
 import { getAuthConfig } from "../lib/auth";
 import { errorMessage, loadError } from "../lib/error";
 import { useMe } from "../lib/me";
@@ -20,8 +20,9 @@ import { Tag } from "../ui/Tag";
 const COLUMNS = ["Sign-in method", "Type", "Added", "Last used", { label: "Actions", srOnly: true }] as const;
 const METHOD_NAMES: Record<string, string> = { passkey: "passkey", email: "email", github: "GitHub" };
 
-// How the account signs in, and the account-wide sign-out. Removing a method
-// needs a recent sign-in with another method; the confirmation dialog asks for it.
+// How the account signs in, and signing out other sessions or everywhere.
+// Removing a method needs a recent sign-in, which the confirmation dialog asks
+// for, and leaves existing sessions signed in.
 export function AccountSecurity() {
   const me = useMe();
   const cache = useQueryClient();
@@ -30,6 +31,7 @@ export function AccountSecurity() {
   const [adding, setAdding] = createSignal(false);
   const [removing, setRemoving] = createSignal<SignInMethod>();
   const [revoking, setRevoking] = createSignal(false);
+  const [revokingOthers, setRevokingOthers] = createSignal(false);
   const [linking, setLinking] = createSignal(false);
   const [notice, setNotice] = createSignal("");
   const [error, setError] = createSignal("");
@@ -66,6 +68,9 @@ export function AccountSecurity() {
           </DataTable>
         )}
       </QueryState>
+      <DangerZone title="Sign out other sessions" action={<button type="button" class={ui.dangerOutlineButton} onClick={() => { setNotice(""); setRevokingOthers(true); }}>Sign out other sessions…</button>}>
+        Signs out every other browser and CLI and revokes Slack access issued for this account. This browser stays signed in.
+      </DangerZone>
       <DangerZone title="Sign out everywhere" action={<button type="button" class={ui.dangerOutlineButton} onClick={() => setRevoking(true)}>Sign out everywhere…</button>}>
         Signs out every browser and CLI and revokes Slack access issued for this account. Accepted work continues; stop it from its own controls. Your sign-in methods and memberships stay. <Show when={me.data?.user_id}>{user => <a class={ui.monoLink} href={`/sessions?user_id=${encodeURIComponent(user())}`}>View your sessions</a>}</Show>
       </DangerZone>
@@ -73,9 +78,14 @@ export function AccountSecurity() {
     <Show when={adding()}><AddPasskeyDialog labels={methods.data?.credentials.map(method => method.label) ?? []} onClose={() => setAdding(false)} onAdded={async label => { await refresh(); setNotice(`Passkey “${label}” added.`); }} /></Show>
     <Show when={removing()}>{method => (
       <ConfirmDialog title="Remove sign-in method" confirmLabel="Remove method" busyLabel="Removing…" tone="danger" target={method().label} onClose={() => setRemoving(undefined)} onConfirm={async () => { await removeSignInMethod(method().id); await refresh(); setNotice("Sign-in method removed."); }}>
-        Access authenticated through this method, including CLI and Slack access, stops. Your other methods stay.
+        You can no longer sign in with this method. Browsers and CLI logins already signed in stay signed in; use Sign out other sessions to end them.
       </ConfirmDialog>
     )}</Show>
+    <Show when={revokingOthers()}>
+      <ConfirmDialog title="Sign out other sessions" confirmLabel="Sign out other sessions" busyLabel="Signing out…" tone="danger" onClose={() => setRevokingOthers(false)} onConfirm={async () => { await revokeOtherAccess(); setNotice("Other sessions signed out."); }}>
+        Every other browser and CLI login for this account signs out, and its Slack access is revoked. This browser stays signed in.
+      </ConfirmDialog>
+    </Show>
     <Show when={revoking()}>
       <ConfirmDialog title="Sign out everywhere" confirmLabel="Sign out everywhere" busyLabel="Signing out…" tone="danger" onClose={() => setRevoking(false)} onConfirm={async () => { await revokeAllAccess(); window.location.assign("/login"); }}>
         Every browser, including this one, and every CLI login for this account signs out, and its Slack access is revoked.

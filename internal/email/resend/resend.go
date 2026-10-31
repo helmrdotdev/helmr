@@ -62,33 +62,49 @@ func (sender Sender) SendEmail(ctx context.Context, message email.Message) error
 }
 
 // SendEmails sends the messages through the batch endpoint, up to 100 per
-// request. Each request is validated strictly, so it sends all of its emails
-// or none.
-func (sender Sender) SendEmails(ctx context.Context, messages []email.Message) error {
+// request. Each request is validated permissively, so an email the provider
+// rejects fails on its own; a request that fails as a whole fails each of its
+// emails.
+func (sender Sender) SendEmails(ctx context.Context, messages []email.Message) []error {
 	if strings.TrimSpace(sender.from) == "" || sender.batch == nil {
-		return errors.New("resend email sender is not configured")
+		return email.FailAll(len(messages), errors.New("resend email sender is not configured"))
 	}
-	params := make([]*resendapi.SendEmailRequest, len(messages))
+	errs := make([]error, len(messages))
+	var params []*resendapi.SendEmailRequest
+	var positions []int
 	for i, message := range messages {
 		request, err := sender.request(message)
 		if err != nil {
-			return err
+			errs[i] = err
+			continue
 		}
-		params[i] = request
+		params = append(params, request)
+		positions = append(positions, i)
 	}
-	for start := 0; start < len(messages); start += maxBatchEmails {
-		if err := sender.sendBatch(ctx, params[start:min(start+maxBatchEmails, len(messages))]); err != nil {
-			return err
+	for start := 0; start < len(params); start += maxBatchEmails {
+		end := min(start+maxBatchEmails, len(params))
+		for n, err := range sender.sendBatch(ctx, params[start:end]) {
+			errs[positions[start+n]] = err
 		}
 	}
-	return nil
+	return errs
 }
 
-func (sender Sender) sendBatch(ctx context.Context, params []*resendapi.SendEmailRequest) error {
+func (sender Sender) sendBatch(ctx context.Context, params []*resendapi.SendEmailRequest) []error {
 	ctx, cancel := context.WithTimeout(ctx, httpTimeout)
 	defer cancel()
-	_, err := sender.batch.SendWithOptions(ctx, params, &resendapi.BatchSendEmailOptions{BatchValidation: resendapi.BatchValidationStrict})
-	return err
+	response, err := sender.batch.SendWithOptions(ctx, params, &resendapi.BatchSendEmailOptions{BatchValidation: resendapi.BatchValidationPermissive})
+	if err != nil {
+		return email.FailAll(len(params), err)
+	}
+	errs := make([]error, len(params))
+	for _, rejected := range response.Errors {
+		if rejected.Index < 0 || rejected.Index >= len(params) {
+			return email.FailAll(len(params), fmt.Errorf("resend batch reported email %d of %d", rejected.Index, len(params)))
+		}
+		errs[rejected.Index] = errors.New(rejected.Message)
+	}
+	return errs
 }
 
 func (sender Sender) request(message email.Message) (*resendapi.SendEmailRequest, error) {

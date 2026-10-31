@@ -118,7 +118,7 @@ func TestEmailCodeInvitationRequiresConsent(t *testing.T) {
 	if err = MarkEmailDelivered(t.Context(), f.pool, c); err != nil {
 		t.Fatal(err)
 	}
-	done, err := CompleteEmailChallenge(t.Context(), f.pool, f.cfg, c.ID, b, c.Code, "", "invite")
+	done, err := CompleteEmailChallenge(t.Context(), f.pool, f.cfg, c.ID, b, c.Code, "", "login")
 	if err != nil {
 		t.Fatal(err)
 	}

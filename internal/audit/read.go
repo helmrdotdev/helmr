@@ -29,13 +29,13 @@ func DecodeDetails(action, outcome string, data []byte) (Details, error) {
 
 func detailDecoder(action string) (func([]byte) (Details, error), bool) {
 	switch action {
-	case "identity.profile_updated", "identity.email_changed", "identity.credential_added", "identity.credential_removed", "identity.access_revoked", "identity.account_repaired", "operator.sign_in", "operator.session_confirmed", "operator.session_revoked", "operator.credential_added", "operator.credential_removed", "operator.repaired":
+	case "identity.profile_updated", "identity.email_changed", "identity.credential_added", "identity.credential_removed", "identity.access_revoked", "identity.other_access_revoked", "identity.account_repaired", "operator.sign_in", "operator.session_confirmed", "operator.session_revoked", "operator.credential_added", "operator.credential_removed", "operator.repaired":
 		return decodeDetail[IdentitySecurityDetails], true
 	case "identity.session_revoked":
 		return decodeDetail[SessionRevokedDetails], true
 	case "message.rejected":
 		return decodeDetail[MessageRejectedDetails], true
-	case "identity.sign_in", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.magic_link_requested", "identity.email_code_requested":
+	case "identity.sign_in", "identity.device_authorized", "identity.device_started", "identity.device_denied", "identity.email_code_requested":
 		return decodeDetail[AuthenticationDetails], true
 	case "audit.searched":
 		return decodeDetail[SearchDetails], true

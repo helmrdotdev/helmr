@@ -6,7 +6,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/slack"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"uuid"
@@ -51,19 +50,6 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 	if occupied {
 		return "", ErrIdentityConflict
 	}
-	rows, readErr := tx.Query(ctx, `SELECT id FROM auth_identities WHERE user_id=$1 AND provider='email' AND revoked_at IS NULL`, user)
-	if readErr != nil {
-		return "", readErr
-	}
-	oldSources, readErr := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
-	if readErr != nil {
-		return "", readErr
-	}
-	for _, source := range oldSources {
-		if err := slack.RetireAccountAccess(ctx, tx, pgvalue.MustUUIDValue(user), source); err != nil {
-			return "", err
-		}
-	}
 	if _, err = tx.Exec(ctx, `UPDATE auth_identities SET revoked_at=clock_timestamp(),updated_at=clock_timestamp() WHERE user_id=$1 AND provider='email' AND revoked_at IS NULL`, user); err != nil {
 		return "", err
 	}
@@ -80,6 +66,10 @@ func completeEmailChange(ctx context.Context, tx pgx.Tx, cfg Config, challenge u
 		return "", err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE email_challenges SET consumed_at=clock_timestamp() WHERE id=$1`, challenge); err != nil {
+		return "", err
+	}
+	// A changed login address signs the account out everywhere but here.
+	if err = retireAccountChannels(ctx, tx, pgvalue.MustUUIDValue(user), pgvalue.MustUUIDValue(session)); err != nil {
 		return "", err
 	}
 	// Other mailbox-change requests were bound to the old address and must restart.

@@ -70,8 +70,14 @@ you cannot view or turn revocation into automatic cancellation. Schedules and
 organization-owned resources remain independently managed. A valid sign-in can
 establish new access after revoke-all; retire compromised credentials as well.
 
-Each browser session retains one current authentication source. Before removing
-that source, confirm with a sign-in method you will keep.
+Each session records the sign-in method and time it signed in with. Removing a
+sign-in method stops it from signing in again; browsers, CLI logins and Slack
+links that already signed in with it stay signed in. Use **Sign out other
+sessions** in Sign-in and security to end every session except the browser you
+are using, or **Sign out everywhere** to end this browser too. Neither needs a
+recent sign-in. Your last usable sign-in method cannot be removed: a passkey, a
+linked provider the deployment still offers, or email codes to your login address
+when email delivery is set up.
 
 ## Operator API authentication
 
@@ -110,23 +116,36 @@ prove mailbox ownership. A provider's reported email does not silently change
 an account's login email or merge accounts.
 
 Browser, CLI and Slack access have separate lifetimes. Logging out of one channel
-does not log out the others. Removing a sign-in method retires browser proof from
-that method; already-issued CLI and Slack access remains independent. Account-wide
-revocation retires all channels. Browser and CLI sessions
-expire after thirty days without explicit human activity. Background polling does
-not extend them. Removing an organization membership preserves the account and
-other organizations, and reinvitation creates a new membership lifetime.
+does not log out the others, and removing a sign-in method logs out none of them.
+Signing out other sessions retires every channel except this browser; signing out
+everywhere and changing your login email also end the others. Browser sessions
+expire after thirty days without explicit human activity. A CLI login expires
+thirty days after its last request. Removing an organization membership preserves
+the account and other organizations, and reinvitation creates a new membership
+lifetime.
+
+Changes that alter access or destroy something require a sign-in confirmed within
+the last hour: Roles and assignments, ownership, Group membership changes for
+Groups that carry assignments, API keys, rotating or revoking Secrets, removing
+members, deleting Groups and connections, deleting or restoring Agents, updating or
+deleting Computers, shortening Session history retention, and adding or removing
+sign-in methods and changing your login email. Other changes, such as creating a
+Secret, setting up a Slack connection, lengthening retention, changing your display
+name or signing out, use your current sign-in. When confirmation is needed, the
+Console asks you to confirm your sign-in and then retry.
 
 Use `helmr login` to authorize a CLI for the displayed account and organization.
-Sensitive CLI commands request browser confirmation; `helmr login --confirm` starts
-it explicitly. After confirmation, retry the original command yourself. A CLI token
-cannot switch to another organization by adding a request header. Confirmation replaces
-the old CLI session: open streams lose access, while accepted work continues.
-Retry the intended new operation explicitly after confirmation.
+Approving a CLI login needs a browser that signed in within the last hour; the
+approval page asks you to confirm your sign-in first when it is older. That
+approval is the CLI's proof, so CLI commands never ask for confirmation. A CLI
+token cannot switch to another organization by adding a request header.
 
 Members with `members.remove` can revoke a member's sessions or suspend/resume the
-member from **Members**. These operations affect only that organization, preserve
-credentials and grants, and require fresh authentication before access resumes.
+member from **Members**. These operations affect only that organization and
+preserve credentials and grants. Revoking sessions or suspending signs the member
+out of the organization, retires their CLI logins, device approvals and Slack links,
+and requires a sign-in after that point before access returns. Resuming only lifts
+the suspension; the member signs in again if they have not since the suspension.
 Owners cannot be suspended; resume a member before granting ownership. Account
 settings and sign-in confirmation remain available when organization access ends.
 
@@ -135,7 +154,7 @@ same installation can restore a still-valid link. Account or member revocation
 and explicit unlink retire the old link. Relinking creates new access. Resuming
 private delivery to earlier conversations requires explicit consent, the same
 Helmr account and Slack recipient, and current access. Removing a sign-in method
-does not revoke an issued link. Disconnecting Slack stops input and delivery;
+does not revoke an issued link; signing out other sessions or everywhere does. Disconnecting Slack stops input and delivery;
 accepted computation and result storage continue.
 
 ## Invite members
@@ -144,14 +163,11 @@ Members with Manage access invite people from **Members** in the Console. Paste 
 email addresses at once, separated by commas, semicolons, spaces or new lines.
 Invitees join without access; assign Roles directly or through Groups after they join.
 Owners appoint other owners separately. Each invitee receives an
-email with their invitation link, which expires after 7 days. An address that is
-invalid, already belongs to an active member or already has a pending invitation
-is reported without blocking the others. If the invitation emails cannot be
-sent, no invitation is created and the Console lists the addresses that were not
-invited. With SMTP delivery, a server that refuses one recipient partway through
-a batch may already have accepted emails for the addresses before it; those
-emails arrive, but their links don't work because no invitation was created.
-Invite those people again.
+email with their invitation link, which expires after 7 days. Each address is
+invited on its own: one that is invalid, already belongs to an active member,
+already has a pending invitation or whose email cannot be sent is reported
+without blocking the others. An address whose email cannot be sent gets no
+invitation; the Console lists it with the reason, and you can invite it again.
 
 Inviting members requires [email delivery](/docs/reference/env). Without it,
 members can't be invited.

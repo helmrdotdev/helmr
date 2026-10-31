@@ -75,17 +75,25 @@ func TestAccountChangesCancelBoundChallengesAcrossSessions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			open := func(id uuid.UUID) bool {
+				t.Helper()
+				var live bool
+				if err := f.pool.QueryRow(t.Context(), `SELECT revoked_at IS NULL AND consumed_at IS NULL FROM email_challenges WHERE id=$1`, id).Scan(&live); err != nil {
+					t.Fatal(err)
+				}
+				return live
+			}
 			for _, c := range emails[:2] {
-				if _, err = LoginChallengePurpose(t.Context(), f.pool, c.ID, binding); !errors.Is(err, ErrInvalidToken) {
-					t.Fatal("cancelled challenge still discoverable", err)
+				if open(c.ID) {
+					t.Fatal("cancelled challenge still open")
 				}
 				if _, err = ResendEmailChallenge(t.Context(), f.pool, f.cfg, c.ID, binding, "login"); !errors.Is(err, ErrInvalidToken) {
 					t.Fatal("cancelled challenge can resend", err)
 				}
 			}
 			for _, c := range []EmailChallenge{emails[2], anonymous} {
-				if _, err = LoginChallengePurpose(t.Context(), f.pool, c.ID, binding); err != nil {
-					t.Fatal("unrelated or unbound challenge cancelled", err)
+				if !open(c.ID) {
+					t.Fatal("unrelated or unbound challenge cancelled")
 				}
 			}
 			if operation == "revoke-all" {
@@ -100,12 +108,12 @@ func TestAccountChangesCancelBoundChallengesAcrossSessions(t *testing.T) {
 	}
 }
 
-func TestDeviceApprovalKeepsSourceAcrossBrowserReproof(t *testing.T) {
+func TestDeviceExchangeCopiesTheBrowserSignInAtExchange(t *testing.T) {
 	for _, change := range []string{"same-source", "different-source", "revoke-all"} {
 		t.Run(change, func(t *testing.T) {
 			f := newIdentityFixture(t)
 			external := ExternalIdentity{Provider: "github", Subject: "device-owner", DisplayName: "Owner", Email: "owner@example.test", EmailVerified: true}
-			raw, err := SignIn(t.Context(), f.pool, f.cfg, external)
+			raw, err := SignInBrowserProvider(t.Context(), f.pool, f.cfg, external, "", false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +131,7 @@ func TestDeviceApprovalKeepsSourceAcrossBrowserReproof(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, DeviceConsent{OrgID: org.String()}, device.UserCode); err != nil {
+			if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, p, device.UserCode); err != nil {
 				t.Fatal(err)
 			}
 			switch change {
@@ -138,18 +146,23 @@ func TestDeviceApprovalKeepsSourceAcrossBrowserReproof(t *testing.T) {
 				t.Fatal(err)
 			}
 			cli, err := ExchangeDeviceCode(t.Context(), f.pool, f.cfg, device.DeviceCode)
-			if change != "same-source" {
+			if change == "revoke-all" {
 				if err == nil {
-					t.Fatal("changed authority exchanged an old approval")
+					t.Fatal("revoked browser exchanged an old approval")
 				}
 				return
 			}
 			if err != nil {
-				t.Fatal(err)
+				t.Fatal("browser sign-in again blocked the approved CLI login", err)
 			}
 			issued, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, cli, uuid.Nil())
-			if err != nil || issued.IdentityID != p.IdentityID || issued.MemberID != p.MemberID || issued.AccessEpoch != p.AccessEpoch || !issued.AuthenticatedAt.Equal(p.AuthenticatedAt) {
-				t.Fatal("approval proof was replaced", issued, err)
+			if err != nil || issued.MemberID != p.MemberID || issued.AccessEpoch != p.AccessEpoch {
+				t.Fatal(issued, err)
+			}
+			var copied bool
+			if err = f.pool.QueryRow(t.Context(), `SELECT c.identity_id IS NOT DISTINCT FROM b.identity_id AND c.passkey_id IS NOT DISTINCT FROM b.passkey_id AND c.authenticated_at=b.authenticated_at
+ FROM login_sessions c, login_sessions b WHERE c.id=$1 AND b.id=$2`, issued.SessionID, p.SessionID).Scan(&copied); err != nil || !copied {
+				t.Fatal("CLI did not copy the browser's current sign-in", copied, err)
 			}
 		})
 	}

@@ -111,7 +111,7 @@ func (s *Server) removeCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err = identity.RemoveCredential(r.Context(), s.tx, s.identity, principalFromContext(r.Context()), id); err != nil {
+	if err = identity.RemoveCredential(r.Context(), s.tx, s.identity, principalFromContext(r.Context()), id, s.signInMethods()); err != nil {
 		s.writeIdentityError(w, r, err)
 		return
 	}
@@ -124,6 +124,13 @@ func (s *Server) revokeAccountAccess(w http.ResponseWriter, r *http.Request) {
 	}
 	clearSessionCookie(w, r)
 	clearBinding(w, r)
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) revokeOtherAccess(w http.ResponseWriter, r *http.Request) {
+	if err := identity.RevokeOtherAccess(r.Context(), s.tx, s.identity, principalFromContext(r.Context())); err != nil {
+		s.writeIdentityError(w, r, err)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) updateAccountProfile(w http.ResponseWriter, r *http.Request) {

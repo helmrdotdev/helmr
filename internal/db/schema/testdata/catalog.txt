@@ -367,7 +367,6 @@ column deployments.bundle_digest text not null
 column deployments.created_at timestamp with time zone not null default clock_timestamp()
 column deployments.environment_id uuid not null
 column deployments.id uuid not null
-column device_codes.authenticated_at timestamp with time zone
 column device_codes.browser_session_id uuid
 column device_codes.consumed_at timestamp with time zone
 column device_codes.created_at timestamp with time zone not null default now()
@@ -376,11 +375,8 @@ column device_codes.decided_by_member_id uuid
 column device_codes.device_code_hash bytea not null
 column device_codes.expires_at timestamp with time zone not null
 column device_codes.id uuid not null
-column device_codes.identity_id uuid
 column device_codes.org_id uuid
-column device_codes.passkey_id uuid
 column device_codes.poll_interval_seconds integer not null
-column device_codes.replaces_session_id uuid
 column device_codes.status text not null default 'pending'::text
 column device_codes.user_code_hash bytea not null
 column device_codes.user_id uuid
@@ -922,11 +918,9 @@ column slack_link_requests.consumed_at timestamp with time zone
 column slack_link_requests.created_at timestamp with time zone not null default clock_timestamp()
 column slack_link_requests.expires_at timestamp with time zone not null
 column slack_link_requests.id uuid not null
-column slack_link_requests.identity_id uuid
 column slack_link_requests.installation_id uuid not null
 column slack_link_requests.member_id uuid not null
 column slack_link_requests.org_id uuid not null
-column slack_link_requests.passkey_id uuid
 column slack_link_requests.revoked_at timestamp with time zone
 column slack_link_requests.slack_user_id text not null
 column slack_link_requests.team_id text not null
@@ -1055,15 +1049,11 @@ column slack_threads.status_confirmation text not null default 'unknown'::text
 column slack_threads.stream_status_repair boolean not null default false
 column slack_threads.team_id text not null
 column slack_threads.thread_ts text
-column slack_user_links.access_epoch bigint not null
-column slack_user_links.authenticated_at timestamp with time zone not null
 column slack_user_links.id uuid not null
-column slack_user_links.identity_id uuid
 column slack_user_links.installation_id uuid not null
 column slack_user_links.linked_at timestamp with time zone not null default clock_timestamp()
 column slack_user_links.member_id uuid not null
 column slack_user_links.org_id uuid not null
-column slack_user_links.passkey_id uuid
 column slack_user_links.revoked_at timestamp with time zone
 column slack_user_links.slack_user_id text not null
 column slack_user_links.team_id text not null
@@ -1325,7 +1315,7 @@ constraint account_repair_enrollments p PRIMARY KEY (id)
 constraint account_repair_enrollments u UNIQUE (capability_hash)
 constraint account_security_notifications c CHECK ((claim_id IS NULL) = (lease_until IS NULL))
 constraint account_security_notifications c CHECK (attempts >= 0)
-constraint account_security_notifications c CHECK (event = ANY (ARRAY['identity.email_changed'::text, 'identity.credential_added'::text, 'identity.credential_removed'::text, 'identity.access_revoked'::text, 'identity.account_repaired'::text]))
+constraint account_security_notifications c CHECK (event = ANY (ARRAY['identity.email_changed'::text, 'identity.credential_added'::text, 'identity.credential_removed'::text, 'identity.access_revoked'::text, 'identity.other_access_revoked'::text, 'identity.account_repaired'::text]))
 constraint account_security_notifications p PRIMARY KEY (id)
 constraint agent_definitions c CHECK ((runtime_mcp_policy = '{"kind": "unrestricted"}'::jsonb OR jsonb_typeof(runtime_mcp_policy) = 'object'::text AND (runtime_mcp_policy ->> 'kind'::text) = 'allow'::text AND jsonb_typeof(runtime_mcp_policy -> 'rules'::text) = 'array'::text AND (runtime_mcp_policy - ARRAY['kind'::text, 'rules'::text]) = '{}'::jsonb) IS TRUE)
 constraint agent_definitions c CHECK (NOT close_after_idle_never OR close_after_idle_ms IS NULL)
@@ -1372,11 +1362,11 @@ constraint audit_events c CHECK (authentication_origin = ANY (ARRAY['request'::t
 constraint audit_events c CHECK (authentication_result <> 'verified'::text OR credential_kind IS NOT NULL)
 constraint audit_events c CHECK (authentication_result = 'verified'::text OR credential_id IS NULL AND credential_version IS NULL AND runtime_generation IS NULL AND process_epoch IS NULL)
 constraint audit_events c CHECK (authentication_result = ANY (ARRAY['verified'::text, 'failed'::text, 'absent'::text, 'not_attempted'::text]))
-constraint audit_events c CHECK (credential_kind = ANY (ARRAY['login_session'::text, 'api_key'::text, 'worker_host'::text, 'capacity_token'::text, 'provider_assertion'::text, 'magic_link'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text]))
+constraint audit_events c CHECK (credential_kind = ANY (ARRAY['login_session'::text, 'api_key'::text, 'worker_host'::text, 'capacity_token'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text]))
 constraint audit_events c CHECK (credential_version > 0)
 constraint audit_events c CHECK (environment_id IS NULL OR project_id IS NOT NULL)
 constraint audit_events c CHECK (expires_at > recorded_at AND expires_at = (recorded_at + retention_seconds::double precision * '00:00:01'::interval))
-constraint audit_events c CHECK (identity_provider IS NULL OR credential_kind IS NOT NULL AND (credential_kind = ANY (ARRAY['provider_assertion'::text, 'magic_link'::text])))
+constraint audit_events c CHECK (identity_provider IS NULL OR credential_kind = 'provider_assertion'::text)
 constraint audit_events c CHECK (isfinite(occurred_at) AND isfinite(recorded_at) AND isfinite(expires_at))
 constraint audit_events c CHECK (jsonb_typeof(actor_identity) = 'object'::text AND pg_column_size(actor_identity) <= 4096)
 constraint audit_events c CHECK (jsonb_typeof(authorization_evidence) = 'object'::text AND pg_column_size(authorization_evidence) <= 16384 AND authorization_evidence ?& ARRAY['decision'::text, 'checks'::text] AND jsonb_typeof(authorization_evidence -> 'decision'::text) = 'string'::text AND ((authorization_evidence ->> 'decision'::text) = ANY (ARRAY['allowed'::text, 'denied'::text, 'not_evaluated'::text])) AND jsonb_typeof(authorization_evidence -> 'checks'::text) = 'array'::text AND ((authorization_evidence ->> 'decision'::text) = 'not_evaluated'::text) = (jsonb_array_length(authorization_evidence -> 'checks'::text) = 0))
@@ -1401,8 +1391,8 @@ constraint audit_events c audit_actor_authentication CHECK ((num_nonnulls(actor_
 constraint audit_events c audit_actor_count CHECK (num_nonnulls(actor_operator_id, actor_user_id, actor_api_key_id, actor_session_id, actor_worker_host_id, actor_component) <= 1)
 constraint audit_events c audit_actor_identity_presence CHECK ((actor_user_id IS NOT NULL OR actor_operator_id IS NOT NULL) = (actor_identity IS NOT NULL))
 constraint audit_events c audit_operator_identity CHECK (actor_operator_id IS NULL OR actor_identity ?& ARRAY['source'::text, 'display_name'::text] AND jsonb_typeof(actor_identity -> 'source'::text) = 'string'::text AND (actor_identity ->> 'source'::text) = 'operator'::text AND jsonb_typeof(actor_identity -> 'display_name'::text) = 'string'::text AND octet_length(actor_identity ->> 'display_name'::text) > 0 AND (credential_kind = ANY (ARRAY['login_session'::text, 'passkey'::text])) AND credential_id IS NOT NULL)
-constraint audit_events c audit_user_credential_id CHECK (actor_user_id IS NULL OR (credential_kind <> ALL (ARRAY['login_session'::text, 'device_code'::text, 'magic_link'::text])) OR credential_id IS NOT NULL)
-constraint audit_events c audit_user_credential_kind CHECK (actor_user_id IS NULL OR (credential_kind = ANY (ARRAY['login_session'::text, 'provider_assertion'::text, 'magic_link'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text])))
+constraint audit_events c audit_user_credential_id CHECK (actor_user_id IS NULL OR (credential_kind <> ALL (ARRAY['login_session'::text, 'device_code'::text])) OR credential_id IS NOT NULL)
+constraint audit_events c audit_user_credential_kind CHECK (actor_user_id IS NULL OR (credential_kind = ANY (ARRAY['login_session'::text, 'provider_assertion'::text, 'device_code'::text, 'email_code'::text, 'passkey'::text, 'slack_link'::text])))
 constraint audit_events c audit_user_identity_shape CHECK (actor_user_id IS NULL OR actor_identity ?& ARRAY['source'::text, 'display_name'::text] AND jsonb_typeof(actor_identity -> 'source'::text) = 'string'::text AND (actor_identity ->> 'source'::text) = 'account'::text AND jsonb_typeof(actor_identity -> 'display_name'::text) = 'string'::text AND octet_length(actor_identity ->> 'display_name'::text) > 0)
 constraint audit_events c audit_user_provider CHECK (actor_user_id IS NULL OR credential_kind <> 'provider_assertion'::text OR identity_provider IS NOT NULL)
 constraint audit_events p PRIMARY KEY (id)
@@ -1632,16 +1622,13 @@ constraint deployments c CHECK (bundle_digest ~ '^sha256:[0-9a-f]{64}$'::text)
 constraint deployments f FOREIGN KEY (environment_id) REFERENCES environments(id)
 constraint deployments p PRIMARY KEY (environment_id, id)
 constraint deployments u UNIQUE (environment_id, bundle_digest)
-constraint device_codes c CHECK ((status <> ALL (ARRAY['approved'::text, 'consumed'::text])) OR user_id IS NOT NULL AND decided_by_member_id IS NOT NULL AND authenticated_at IS NOT NULL AND browser_session_id IS NOT NULL AND num_nonnulls(identity_id, passkey_id) = 1)
+constraint device_codes c CHECK ((status <> ALL (ARRAY['approved'::text, 'consumed'::text])) OR user_id IS NOT NULL AND decided_by_member_id IS NOT NULL AND browser_session_id IS NOT NULL)
 constraint device_codes c CHECK (poll_interval_seconds > 0)
 constraint device_codes c CHECK (status = 'pending'::text AND org_id IS NULL AND decided_by_member_id IS NULL AND decided_at IS NULL AND consumed_at IS NULL OR (status = ANY (ARRAY['approved'::text, 'denied'::text])) AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NULL OR status = 'consumed'::text AND org_id IS NOT NULL AND decided_at IS NOT NULL AND consumed_at IS NOT NULL)
 constraint device_codes c CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'denied'::text, 'consumed'::text]))
 constraint device_codes f FOREIGN KEY (browser_session_id) REFERENCES login_sessions(id)
-constraint device_codes f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint device_codes f FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE
 constraint device_codes f FOREIGN KEY (org_id, decided_by_member_id, user_id) REFERENCES org_members(org_id, id, user_id)
-constraint device_codes f FOREIGN KEY (passkey_id, user_id) REFERENCES passkey_credentials(id, user_id)
-constraint device_codes f FOREIGN KEY (replaces_session_id) REFERENCES login_sessions(id)
 constraint device_codes p PRIMARY KEY (id)
 constraint device_codes u UNIQUE (device_code_hash)
 constraint device_codes u UNIQUE (user_code_hash)
@@ -1711,7 +1698,7 @@ constraint email_challenges c CHECK (email = lower(btrim(email)) AND email <> ''
 constraint email_challenges c CHECK (failed_attempts >= 0)
 constraint email_challenges c CHECK (generation >= 0)
 constraint email_challenges c CHECK (purpose <> 'email_change'::text OR session_id IS NOT NULL)
-constraint email_challenges c CHECK (purpose = ANY (ARRAY['login'::text, 'invite'::text, 'email_change'::text]))
+constraint email_challenges c CHECK (purpose = ANY (ARRAY['login'::text, 'email_change'::text]))
 constraint email_challenges f FOREIGN KEY (session_id) REFERENCES login_sessions(id)
 constraint email_challenges p PRIMARY KEY (id)
 constraint environments c CHECK (admission_burst > 0)
@@ -2108,12 +2095,9 @@ constraint slack_installations f FOREIGN KEY (org_id) REFERENCES organizations(i
 constraint slack_installations p PRIMARY KEY (id)
 constraint slack_installations u UNIQUE (id, app_registration_id)
 constraint slack_installations u UNIQUE (id, org_id, team_id)
-constraint slack_link_requests c CHECK (num_nonnulls(identity_id, passkey_id) = 1)
 constraint slack_link_requests f FOREIGN KEY (browser_session_id) REFERENCES login_sessions(id)
-constraint slack_link_requests f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint slack_link_requests f FOREIGN KEY (installation_id, org_id, team_id) REFERENCES slack_installations(id, org_id, team_id)
 constraint slack_link_requests f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
-constraint slack_link_requests f FOREIGN KEY (passkey_id, user_id) REFERENCES passkey_credentials(id, user_id)
 constraint slack_link_requests f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint slack_link_requests p PRIMARY KEY (id)
 constraint slack_method_limits f FOREIGN KEY (installation_id) REFERENCES slack_installations(id)
@@ -2227,14 +2211,10 @@ constraint slack_threads u UNIQUE (environment_id, front_session_id)
 constraint slack_threads u UNIQUE (id, environment_id)
 constraint slack_threads u UNIQUE (org_id, team_id, slack_channel_id, thread_ts)
 constraint slack_threads u UNIQUE (slack_channel_binding_id, opening_post_key)
-constraint slack_user_links c CHECK (access_epoch >= 0)
-constraint slack_user_links c CHECK (num_nonnulls(identity_id, passkey_id) = 1)
 constraint slack_user_links c CHECK (slack_user_id <> ''::text)
 constraint slack_user_links c CHECK (team_id <> ''::text)
-constraint slack_user_links f FOREIGN KEY (identity_id, user_id) REFERENCES auth_identities(id, user_id)
 constraint slack_user_links f FOREIGN KEY (installation_id, org_id, team_id) REFERENCES slack_installations(id, org_id, team_id)
 constraint slack_user_links f FOREIGN KEY (org_id, member_id, user_id) REFERENCES org_members(org_id, id, user_id)
-constraint slack_user_links f FOREIGN KEY (passkey_id, user_id) REFERENCES passkey_credentials(id, user_id)
 constraint slack_user_links f FOREIGN KEY (user_id) REFERENCES users(id)
 constraint slack_user_links p PRIMARY KEY (id)
 constraint slack_work_items f FOREIGN KEY (environment_id, session_id, turn_id) REFERENCES turns(environment_id, session_id, id)

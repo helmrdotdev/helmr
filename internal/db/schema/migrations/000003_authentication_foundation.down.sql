@@ -44,8 +44,7 @@ DROP TABLE webauthn_challenges;
 DROP TABLE account_repair_enrollments;
 DROP TABLE operator_passkey_enrollments;
 DROP TABLE email_challenges;
-ALTER TABLE device_codes DROP COLUMN user_id, DROP COLUMN identity_id, DROP COLUMN passkey_id,
- DROP COLUMN authenticated_at, DROP COLUMN browser_session_id, DROP COLUMN replaces_session_id;
+ALTER TABLE device_codes DROP COLUMN user_id, DROP COLUMN browser_session_id;
 ALTER TABLE device_codes ADD FOREIGN KEY (org_id,decided_by_member_id) REFERENCES org_members(org_id,id) ON DELETE SET NULL (decided_by_member_id);
 DELETE FROM login_sessions WHERE user_id IS NULL;
 ALTER TABLE login_sessions DROP CONSTRAINT login_sessions_shape, DROP CONSTRAINT login_sessions_owner;
@@ -60,7 +59,7 @@ ALTER TABLE login_sessions ADD FOREIGN KEY (user_id) REFERENCES users(id) ON DEL
 -- Revoked old links convey no usable authorization in the previous application.
 DELETE FROM slack_user_links;
 ALTER TABLE slack_user_links DROP COLUMN id, DROP COLUMN installation_id, DROP COLUMN org_id, DROP COLUMN member_id,
- DROP COLUMN access_epoch, DROP COLUMN identity_id, DROP COLUMN passkey_id, DROP COLUMN authenticated_at, DROP COLUMN revoked_at;
+ DROP COLUMN revoked_at;
 ALTER TABLE slack_user_links ADD PRIMARY KEY (team_id,slack_user_id);
 ALTER TABLE slack_user_links ADD UNIQUE (team_id,user_id);
 DROP TABLE passkey_credentials;

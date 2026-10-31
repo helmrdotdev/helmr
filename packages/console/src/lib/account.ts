@@ -21,3 +21,4 @@ export const verifyEmailChange = (challengeID: string, code: string) =>
 export const startGitHubLink = () => postJson<{}, { redirect_url: string }>("/api/account/providers/github/link", {});
 
 export const revokeAllAccess = () => postJson("/api/account/access/revoke-all", {});
+export const revokeOtherAccess = () => postJson("/api/account/access/revoke-others", {});

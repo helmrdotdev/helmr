@@ -41,7 +41,7 @@ func newIdentityFixture(t *testing.T) identityFixture {
 		pool:    database.Pool,
 		queries: db.New(database.Pool),
 		keys:    keys,
-		cfg:     NewConfig(keys, Lifetimes{}, auditpolicy.Policy{RetentionSeconds: 3600}),
+		cfg:     NewConfig(keys, auditpolicy.Policy{RetentionSeconds: 3600}),
 	}
 }
 
@@ -87,9 +87,9 @@ func (f identityFixture) invitation(t *testing.T, orgID uuid.UUID, email string,
 	var delivered org.NewInvitation
 	results, err := org.CreateInvitations(t.Context(), f.pool, f.keys.Invitation,
 		org.ManagingMember{Human: dbtest.BrowserPrincipal(t, f.pool, orgID, owner), Actor: audit.VerifiedLogin(owner, "fixture"), OrgID: orgID, UserID: owner, MemberID: memberID, AuditPolicy: auditpolicy.Policy{RetentionSeconds: 3600}}, org.InvitationInput{Emails: []string{email}},
-		func(_ context.Context, invitations []org.NewInvitation) error {
+		func(_ context.Context, invitations []org.NewInvitation) []error {
 			delivered = invitations[0]
-			return nil
+			return make([]error, len(invitations))
 		})
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func (f identityFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.UUID
 			return err
 		}
 		var err error
-		raw, err = issueLoginSession(t.Context(), tx, f.cfg, provedUser(userID, source, uuid.Nil(), epoch, at, "fixture"), pgtype.UUID{})
+		raw, err = issueLoginSession(t.Context(), tx, f.cfg, provedUser(userID, source, uuid.Nil(), epoch, at, "fixture"))
 		return err
 	})
 	if err != nil {

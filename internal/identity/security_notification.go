@@ -44,11 +44,12 @@ func CompleteSecurityNotification(ctx context.Context, q db.DBTX, n SecurityNoti
 
 func (n SecurityNotification) Text() string {
 	description := map[string]string{
-		"identity.email_changed":      "Your account email address was changed.",
-		"identity.credential_added":   "A sign-in method was added to your account.",
-		"identity.credential_removed": "A sign-in method was removed from your account.",
-		"identity.access_revoked":     "All human access to your account was revoked. Sign in again to continue.",
-		"identity.account_repaired":   "A deployment operator completed supervised account recovery and revoked previous access.",
+		"identity.email_changed":        "Your account email address was changed.",
+		"identity.credential_added":     "A sign-in method was added to your account.",
+		"identity.credential_removed":   "A sign-in method was removed from your account.",
+		"identity.access_revoked":       "All human access to your account was revoked. Sign in again to continue.",
+		"identity.other_access_revoked": "Your account was signed out of every other browser, CLI and Slack.",
+		"identity.account_repaired":     "A deployment operator completed supervised account recovery and revoked previous access.",
 	}[n.Event]
 	return description + "\nIf you did not request this change, contact your deployment administrator."
 }

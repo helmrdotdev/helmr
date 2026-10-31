@@ -23,7 +23,6 @@ func executeCommand(root *cobra.Command, args []string) error {
 	root.SetArgs(args)
 	cmd, err := root.ExecuteC()
 	if err == nil {
-		recordCLIActivity(cmd)
 		return nil
 	}
 	permissionCommand := false
@@ -45,9 +44,6 @@ func executeCommand(root *cobra.Command, args []string) error {
 				jsonOutput = parsed
 			}
 		}
-	}
-	if !jsonOutput {
-		confirmCLIIfNeeded(cmd, err)
 	}
 	if permissionCommand && jsonOutput {
 		var already map[string]json.RawMessage

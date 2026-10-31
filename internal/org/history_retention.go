@@ -22,10 +22,6 @@ func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, 
 		if err := lockAccessMembers(ctx, tx, &m, auth.PermissionProjectsUpdate); err != nil {
 			return err
 		}
-		// Admission verified this credential; only retention edits require recent proof.
-		if err := auth.RequireRecentProof(m.Human); err != nil {
-			return err
-		}
 		var old pgtype.Int8
 		if err := tx.QueryRow(ctx, `SELECT history_retention_seconds FROM projects WHERE org_id=$1 AND id=$2 FOR NO KEY UPDATE`, orgID, projectID).Scan(&old); isNoRows(err) {
 			return ErrProjectNotFound
@@ -34,6 +30,13 @@ func UpdateProjectHistoryRetention(ctx context.Context, database db.TxBeginner, 
 		}
 		if (seconds == nil && !old.Valid) || (seconds != nil && old.Valid && *seconds == old.Int64) {
 			return nil
+		}
+		// Shortening can delete remaining history on the next cleanup pass, so
+		// it needs recent proof; lengthening or disabling expiry deletes nothing.
+		if seconds != nil && (!old.Valid || *seconds < old.Int64) {
+			if err := auth.RequireRecentProof(m.Human); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE projects SET history_retention_seconds=$3,updated_at=now() WHERE org_id=$1 AND id=$2`, orgID, projectID, seconds); err != nil {
 			return fmt.Errorf("update project retention: %w", err)

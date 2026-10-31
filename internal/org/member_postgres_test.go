@@ -368,9 +368,9 @@ func TestOwnershipAuditNoOpAndRollback(t *testing.T) {
 // token delivered for it, or the error that refused the request or the address.
 func inviteOne(ctx context.Context, database db.TxBeginner, tokenKey []byte, inviter org.ManagingMember, input org.InvitationInput) (db.Invitation, string, error) {
 	var delivered org.NewInvitation
-	results, err := org.CreateInvitations(ctx, database, tokenKey, inviter, input, func(_ context.Context, invitations []org.NewInvitation) error {
+	results, err := org.CreateInvitations(ctx, database, tokenKey, inviter, input, func(_ context.Context, invitations []org.NewInvitation) []error {
 		delivered = invitations[0]
-		return nil
+		return make([]error, len(invitations))
 	})
 	if err != nil {
 		return db.Invitation{}, "", err
@@ -383,13 +383,13 @@ func inviteOne(ctx context.Context, database db.TxBeginner, tokenKey []byte, inv
 
 // recordDelivery delivers nothing and records each batch it was given.
 func recordDelivery(batches *[][]org.NewInvitation) org.DeliverInvitations {
-	return func(_ context.Context, invitations []org.NewInvitation) error {
+	return func(_ context.Context, invitations []org.NewInvitation) []error {
 		*batches = append(*batches, invitations)
-		return nil
+		return make([]error, len(invitations))
 	}
 }
 
-func TestCreateInvitationsPostgresDeliversOneBatchAndRefusesAddressesOnTheirOwn(t *testing.T) {
+func TestCreateInvitationsPostgresDeliversOneBatchAndSettlesAddressesOnTheirOwn(t *testing.T) {
 	fixture := newMemberFixture(t)
 	ctx := t.Context()
 	admin := fixture.admin
@@ -483,29 +483,72 @@ func TestCreateInvitationsPostgresDeliversOneBatchAndRefusesAddressesOnTheirOwn(
 		}
 	})
 
-	t.Run("a failed delivery rolls every invitation of the request back", func(t *testing.T) {
-		sendErr := errors.New("provider unavailable")
+	t.Run("a failed delivery fails only its own address", func(t *testing.T) {
+		sendErr := errors.New("mailbox unavailable")
 		results, err := org.CreateInvitations(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{
-			Emails: []string{"third@example.test", "member@example.test", "fourth@example.test"},
-		}, func(context.Context, []org.NewInvitation) error { return sendErr })
+			Emails: []string{"third@example.test", "member@example.test", "fourth@example.test", "fifth@example.test"},
+		}, func(_ context.Context, invitations []org.NewInvitation) []error {
+			errs := make([]error, len(invitations))
+			for i, created := range invitations {
+				if created.Invitation.InviteeEmail == "fourth@example.test" {
+					errs[i] = sendErr
+				}
+			}
+			return errs
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		for i, address := range []string{"third@example.test", "fourth@example.test"} {
-			result := results[i*2]
-			if result.Email != address || !errors.Is(result.Err, org.ErrInvitationNotDelivered) || !errors.Is(result.Err, sendErr) {
-				t.Fatalf("%s result = %+v", address, result)
-			}
+		if results[0].Email != "third@example.test" || results[0].Err != nil || results[3].Email != "fifth@example.test" || results[3].Err != nil {
+			t.Fatalf("delivered results = %+v", results)
+		}
+		if result := results[2]; result.Email != "fourth@example.test" || !errors.Is(result.Err, org.ErrInvitationNotDelivered) || !errors.Is(result.Err, sendErr) {
+			t.Fatalf("undelivered result = %+v", result)
 		}
 		if !errors.Is(results[1].Err, org.ErrInvitationActiveMember) {
 			t.Fatalf("refused address result = %+v", results[1])
 		}
-		var invitations, facts int
-		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM invitations WHERE invitee_email IN ('third@example.test', 'fourth@example.test')`).Scan(&invitations); err != nil || invitations != 0 {
-			t.Fatalf("invitations after failed delivery = %d, err = %v", invitations, err)
+		for address, want := range map[string]int{"third@example.test": 1, "fourth@example.test": 0, "fifth@example.test": 1} {
+			var invitations, facts int
+			if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM invitations WHERE invitee_email=$1`, address).Scan(&invitations); err != nil || invitations != want {
+				t.Fatalf("%s invitations = %d, err = %v, want %d", address, invitations, err, want)
+			}
+			if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events JOIN invitations ON invitations.id=audit_events.target_id WHERE action='invitation.created' AND invitee_email=$1`, address).Scan(&facts); err != nil || facts != want {
+				t.Fatalf("%s audit facts = %d, err = %v, want %d", address, facts, err, want)
+			}
 		}
-		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='invitation.created' AND target_id NOT IN (SELECT id FROM invitations)`).Scan(&facts); err != nil || facts != 0 {
-			t.Fatalf("audit facts after failed delivery = %d, err = %v", facts, err)
+		var orphans int
+		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM audit_events WHERE action='invitation.created' AND target_id NOT IN (SELECT id FROM invitations)`).Scan(&orphans); err != nil || orphans != 0 {
+			t.Fatalf("audit facts without invitations = %d, err = %v", orphans, err)
+		}
+		// The address that was not delivered can be invited again.
+		if _, _, err := inviteOne(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{Emails: []string{"fourth@example.test"}}); err != nil {
+			t.Fatal("retry after failed delivery", err)
+		}
+	})
+
+	t.Run("a failed delivery of every address creates nothing", func(t *testing.T) {
+		sendErr := errors.New("provider unavailable")
+		results, err := org.CreateInvitations(ctx, fixture.pool, fixture.tokenKey, admin, org.InvitationInput{
+			Emails: []string{"sixth@example.test", "seventh@example.test"},
+		}, func(_ context.Context, invitations []org.NewInvitation) []error {
+			errs := make([]error, len(invitations))
+			for i := range errs {
+				errs[i] = sendErr
+			}
+			return errs
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, result := range results {
+			if !errors.Is(result.Err, org.ErrInvitationNotDelivered) || !errors.Is(result.Err, sendErr) {
+				t.Fatalf("%s result = %+v", result.Email, result)
+			}
+		}
+		var invitations int
+		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM invitations WHERE invitee_email IN ('sixth@example.test', 'seventh@example.test')`).Scan(&invitations); err != nil || invitations != 0 {
+			t.Fatalf("invitations after failed delivery = %d, err = %v", invitations, err)
 		}
 	})
 

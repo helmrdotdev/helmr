@@ -30,9 +30,7 @@ type CurrentMember struct {
 	PermissionScopes []PermissionScope `json:"permission_scopes"`
 }
 type AuthenticationContext struct {
-	Method           string  `json:"method"`
-	AuthenticatedAt  string  `json:"authenticated_at"`
-	ReauthenticateAt *string `json:"reauthenticate_at"`
+	AuthenticatedAt string `json:"authenticated_at"`
 }
 type OrganizationOnboarding struct {
 	ProjectRequired bool `json:"project_required"`
@@ -104,20 +102,17 @@ type DeviceStartResponse struct {
 
 type DeviceConsentView struct {
 	AccountName      string `json:"account_name"`
-	OrganizationID   string `json:"org_id"`
 	OrganizationName string `json:"org_name"`
 	Proof            string `json:"proof"`
 }
 type DeviceStatusResponse struct {
-	Consent      *DeviceConsentView `json:"consent,omitempty"`
-	Confirmation bool               `json:"confirmation"`
-	Status       string             `json:"status"`
-	ExpiresAt    string             `json:"expires_at,omitempty"`
+	Consent   *DeviceConsentView `json:"consent,omitempty"`
+	Status    string             `json:"status"`
+	ExpiresAt string             `json:"expires_at,omitempty"`
 }
 
 type DeviceAuthorizeRequest struct {
 	UserCode string `json:"user_code"`
-	OrgID    string `json:"org_id"`
 }
 
 type DeviceTokenRequest struct {
@@ -125,8 +120,6 @@ type DeviceTokenRequest struct {
 }
 
 type DeviceTokenResponse struct {
-	AccessToken      string `json:"access_token,omitempty"`
-	TokenType        string `json:"token_type,omitempty"`
-	ExpiresInSeconds int64  `json:"expires_in_seconds,omitempty"`
-	Error            string `json:"error,omitempty"`
+	AccessToken string `json:"access_token,omitempty"`
+	Error       string `json:"error,omitempty"`
 }

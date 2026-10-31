@@ -62,7 +62,10 @@ func TestMemberAccessLifecyclePreservesOtherOrganization(t *testing.T) {
 	if err := ChangeMemberAccess(t.Context(), f.pool, manager, member, &suspended); err != nil {
 		t.Fatal(err)
 	}
-	check(during, a, false)
+	// Resuming keeps the suspension's cutoff: proof from before the suspension
+	// stays retired, while proof made after it is not cut off again.
+	check(fresh, a, false)
+	check(during, a, true)
 	check(f.session(t, user, a), a, true)
 	suspended = true
 	if err := ChangeMemberAccess(t.Context(), f.pool, manager, ownerID, &suspended); err == nil {
@@ -94,6 +97,71 @@ func TestMemberAccessLifecyclePreservesOtherOrganization(t *testing.T) {
 	var impossible bool
 	if err := f.pool.QueryRow(t.Context(), `SELECT is_owner AND suspended_at IS NOT NULL FROM org_members WHERE id=$1`, member).Scan(&impossible); err != nil || impossible {
 		t.Fatal("suspended owner", impossible, err)
+	}
+}
+
+func TestMemberResumeOnlyLiftsSuspension(t *testing.T) {
+	f := newIdentityFixture(t)
+	a := f.organization(t, "resume")
+	owner, user := f.user(t, "Owner", "owner@example.test"), f.user(t, "Member", "member@example.test")
+	ownerID := f.member(t, a, owner, "owner")
+	member := f.member(t, a, user, "member")
+	dbtest.GrantMember(t, f.pool, a, owner, nil, "members.remove")
+	managerProof := dbtest.BrowserPrincipal(t, f.pool, a, owner)
+	manager := org.ManagingMember{Human: managerProof, Actor: audit.FromPrincipal(managerProof), OrgID: a, UserID: owner, MemberID: ownerID, AuditPolicy: f.cfg.auditPolicy}
+	suspended, resumed := true, false
+	if err := ChangeMemberAccess(t.Context(), f.pool, manager, member, &suspended); err != nil {
+		t.Fatal(err)
+	}
+	if err := ChangeMemberAccess(t.Context(), f.pool, manager, member, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	var cutoff string
+	if err := f.pool.QueryRow(t.Context(), `SELECT reauthenticate_after::text FROM org_members WHERE id=$1`, member).Scan(&cutoff); err != nil {
+		t.Fatal(err)
+	}
+	browser, err := AuthenticateLoginSession(t.Context(), f.pool, f.cfg, f.session(t, user, uuid.Nil()), a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := StartDeviceCode(t.Context(), f.pool, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, browser, login.UserCode); err != nil {
+		t.Fatal(err)
+	}
+	cli, err := ExchangeDeviceCode(t.Context(), f.pool, f.cfg, login.DeviceCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := StartDeviceCode(t.Context(), f.pool, f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = ApproveDeviceCode(t.Context(), f.pool, f.cfg, browser, pending.UserCode); err != nil {
+		t.Fatal(err)
+	}
+	// Resuming an active member again changes nothing it did not suspend.
+	if err := ChangeMemberAccess(t.Context(), f.pool, manager, member, &resumed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = AuthenticateLoginSession(t.Context(), f.pool, f.cfg, cli, uuid.Nil()); err != nil {
+		t.Fatal("resume revoked a CLI session", err)
+	}
+	if _, err = ExchangeDeviceCode(t.Context(), f.pool, f.cfg, pending.DeviceCode); err != nil {
+		t.Fatal("resume denied an approved device code", err)
+	}
+	var after string
+	if err := f.pool.QueryRow(t.Context(), `SELECT reauthenticate_after::text FROM org_members WHERE id=$1`, member).Scan(&after); err != nil || after != cutoff {
+		t.Fatal("resume moved the suspension cutoff", cutoff, after, err)
+	}
+	// Suspending still retires the member's CLI access.
+	if err := ChangeMemberAccess(t.Context(), f.pool, manager, member, &suspended); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = AuthenticateLoginSession(t.Context(), f.pool, f.cfg, cli, uuid.Nil()); err == nil {
+		t.Fatal("suspension kept a CLI session")
 	}
 }
 

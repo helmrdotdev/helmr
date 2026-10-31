@@ -15,36 +15,27 @@ const approveDeviceCode = `-- name: ApproveDeviceCode :one
 UPDATE device_codes
    SET status = 'approved',
        user_id=$1,
-       identity_id=$2,
-       passkey_id=$3,
-       authenticated_at=$4,
-       browser_session_id=$5,
-       org_id = $6,
-       decided_by_member_id = $7,
+       browser_session_id=$2,
+       org_id = $3,
+       decided_by_member_id = $4,
        decided_at = now()
- WHERE user_code_hash = $8
+ WHERE user_code_hash = $5
    AND status = 'pending'
    AND expires_at > now()
-RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, identity_id, passkey_id, authenticated_at, browser_session_id, replaces_session_id
+RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, browser_session_id
 `
 
 type ApproveDeviceCodeParams struct {
-	UserID           pgtype.UUID        `json:"user_id"`
-	IdentityID       pgtype.UUID        `json:"identity_id"`
-	PasskeyID        pgtype.UUID        `json:"passkey_id"`
-	AuthenticatedAt  pgtype.Timestamptz `json:"authenticated_at"`
-	BrowserSessionID pgtype.UUID        `json:"browser_session_id"`
-	OrgID            pgtype.UUID        `json:"org_id"`
-	MemberID         pgtype.UUID        `json:"member_id"`
-	UserCodeHash     []byte             `json:"user_code_hash"`
+	UserID           pgtype.UUID `json:"user_id"`
+	BrowserSessionID pgtype.UUID `json:"browser_session_id"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	MemberID         pgtype.UUID `json:"member_id"`
+	UserCodeHash     []byte      `json:"user_code_hash"`
 }
 
 func (q *Queries) ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodeParams) (DeviceCode, error) {
 	row := q.db.QueryRow(ctx, approveDeviceCode,
 		arg.UserID,
-		arg.IdentityID,
-		arg.PasskeyID,
-		arg.AuthenticatedAt,
 		arg.BrowserSessionID,
 		arg.OrgID,
 		arg.MemberID,
@@ -64,11 +55,7 @@ func (q *Queries) ApproveDeviceCode(ctx context.Context, arg ApproveDeviceCodePa
 		&i.DecidedAt,
 		&i.ConsumedAt,
 		&i.UserID,
-		&i.IdentityID,
-		&i.PasskeyID,
-		&i.AuthenticatedAt,
 		&i.BrowserSessionID,
-		&i.ReplacesSessionID,
 	)
 	return i, err
 }
@@ -81,7 +68,7 @@ UPDATE device_codes
    AND status = 'approved'
    AND consumed_at IS NULL
    AND expires_at > now()
-RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, identity_id, passkey_id, authenticated_at, browser_session_id, replaces_session_id
+RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, browser_session_id
 `
 
 func (q *Queries) ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error) {
@@ -100,11 +87,7 @@ func (q *Queries) ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) 
 		&i.DecidedAt,
 		&i.ConsumedAt,
 		&i.UserID,
-		&i.IdentityID,
-		&i.PasskeyID,
-		&i.AuthenticatedAt,
 		&i.BrowserSessionID,
-		&i.ReplacesSessionID,
 	)
 	return i, err
 }
@@ -123,7 +106,7 @@ INSERT INTO device_codes (
     $4,
     $5
 )
-RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, identity_id, passkey_id, authenticated_at, browser_session_id, replaces_session_id
+RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, browser_session_id
 `
 
 type CreateDeviceCodeParams struct {
@@ -156,11 +139,7 @@ func (q *Queries) CreateDeviceCode(ctx context.Context, arg CreateDeviceCodePara
 		&i.DecidedAt,
 		&i.ConsumedAt,
 		&i.UserID,
-		&i.IdentityID,
-		&i.PasskeyID,
-		&i.AuthenticatedAt,
 		&i.BrowserSessionID,
-		&i.ReplacesSessionID,
 	)
 	return i, err
 }
@@ -174,7 +153,7 @@ UPDATE device_codes
  WHERE user_code_hash = $3
    AND status = 'pending'
    AND expires_at > now()
-RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, identity_id, passkey_id, authenticated_at, browser_session_id, replaces_session_id
+RETURNING id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, browser_session_id
 `
 
 type DenyDeviceCodeParams struct {
@@ -199,17 +178,13 @@ func (q *Queries) DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) 
 		&i.DecidedAt,
 		&i.ConsumedAt,
 		&i.UserID,
-		&i.IdentityID,
-		&i.PasskeyID,
-		&i.AuthenticatedAt,
 		&i.BrowserSessionID,
-		&i.ReplacesSessionID,
 	)
 	return i, err
 }
 
 const getDeviceCodeByUserCodeHash = `-- name: GetDeviceCodeByUserCodeHash :one
-SELECT id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, identity_id, passkey_id, authenticated_at, browser_session_id, replaces_session_id
+SELECT id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, browser_session_id
   FROM device_codes
  WHERE user_code_hash = $1
 `
@@ -230,17 +205,13 @@ func (q *Queries) GetDeviceCodeByUserCodeHash(ctx context.Context, userCodeHash 
 		&i.DecidedAt,
 		&i.ConsumedAt,
 		&i.UserID,
-		&i.IdentityID,
-		&i.PasskeyID,
-		&i.AuthenticatedAt,
 		&i.BrowserSessionID,
-		&i.ReplacesSessionID,
 	)
 	return i, err
 }
 
 const getDeviceCodeForPoll = `-- name: GetDeviceCodeForPoll :one
-SELECT id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, identity_id, passkey_id, authenticated_at, browser_session_id, replaces_session_id
+SELECT id, org_id, user_code_hash, device_code_hash, decided_by_member_id, status, expires_at, poll_interval_seconds, created_at, decided_at, consumed_at, user_id, browser_session_id
   FROM device_codes
  WHERE device_code_hash = $1
 `
@@ -261,11 +232,7 @@ func (q *Queries) GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byt
 		&i.DecidedAt,
 		&i.ConsumedAt,
 		&i.UserID,
-		&i.IdentityID,
-		&i.PasskeyID,
-		&i.AuthenticatedAt,
 		&i.BrowserSessionID,
-		&i.ReplacesSessionID,
 	)
 	return i, err
 }

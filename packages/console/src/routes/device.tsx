@@ -19,6 +19,7 @@ const DEVICE_MESSAGES = {
   ...AUTH_MESSAGES,
   not_found: "This device request was not found. It may have expired or already been used.",
   device_identity_changed: "Your account changed since this page loaded. Review the account and organization, then approve again.",
+  recent_authentication_required: "Approving a CLI login needs a recent sign-in. Confirm your sign-in, then approve again.",
 };
 
 const deviceFailure = (error: unknown, fallback: string): Failure => describeFailure(error, DEVICE_MESSAGES, fallback);
@@ -47,13 +48,12 @@ export function Device() {
 
   async function resolveDevice(approve: boolean) {
     const requestCode = code();
-    const identity = status.data?.consent;
-    if (!identity?.org_id) return;
-    const consent = { org_id: identity.org_id };
+    const consent = status.data?.consent;
+    if (!consent) return;
     setActionError(null);
     setBusy(approve ? "approve" : "deny");
     try {
-      const result = approve ? await approveDeviceCode(requestCode, consent,identity.proof) : await denyDeviceCode(requestCode, consent,identity.proof);
+      const result = approve ? await approveDeviceCode(requestCode, consent.proof) : await denyDeviceCode(requestCode, consent.proof);
       queryClient.setQueryData(["device-code", requestCode], result);
     } catch (error) {
       if (code() !== requestCode) return;
@@ -102,8 +102,7 @@ export function Device() {
                 <AuthSuccess title="This request was already used">Check your terminal for the login result.</AuthSuccess>
               </Match>
               <Match when={device().status === "pending"}>
-                <AuthTitle>{device().confirmation ? "Confirm CLI access" : "Authorize CLI"}</AuthTitle>
-                <Show when={device().confirmation}><AuthCopy>This replaces the existing CLI login for the same account and organization. Return to your terminal and explicitly retry your command after confirming.</AuthCopy></Show>
+                <AuthTitle>Authorize CLI</AuthTitle>
                 <AuthCopy>Only approve if you started this login. Check that this code matches your terminal.</AuthCopy>
                 <div class={ui.authCode} aria-label="Device code">{code()}</div>
                 <AuthFacts label="Request">

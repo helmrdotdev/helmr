@@ -719,8 +719,23 @@ func TestProjectUpdateIncludesRetentionWithOperationSpecificProof(t *testing.T) 
 	if _, err := UpdateProject(t.Context(), f.pool, stale, id, ProjectDetails{Name: "Ordinary edit"}); err != nil {
 		t.Fatal("ordinary edit required recent sign-in", err)
 	}
-	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, nil); !errors.Is(err, auth.ErrRecentProofRequired) {
-		t.Fatal("retention accepted stale proof", err)
+	// The project now keeps history without expiry: setting a period shortens it.
+	day := int64(24 * 60 * 60)
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, &day); !errors.Is(err, auth.ErrRecentProofRequired) {
+		t.Fatal("shortening retention accepted stale proof", err)
+	}
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, f.manager, id, &day); err != nil {
+		t.Fatal(err)
+	}
+	shorter, longer := day/2, 2*day
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, &shorter); !errors.Is(err, auth.ErrRecentProofRequired) {
+		t.Fatal("shortening retention accepted stale proof", err)
+	}
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, &longer); err != nil {
+		t.Fatal("lengthening retention required recent sign-in", err)
+	}
+	if err := UpdateProjectHistoryRetention(t.Context(), f.pool, stale, id, nil); err != nil {
+		t.Fatal("disabling expiry required recent sign-in", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE roles SET permissions=ARRAY['projects.read'] WHERE org_id=$1 AND builtin_key IS NULL`, f.orgID)
 	if _, err := UpdateProject(t.Context(), f.pool, f.manager, id, ProjectDetails{Name: "Denied"}); !errors.Is(err, ErrMemberManagementRequired) {

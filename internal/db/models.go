@@ -111,11 +111,7 @@ type DeviceCode struct {
 	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
 	ConsumedAt          pgtype.Timestamptz `json:"consumed_at"`
 	UserID              pgtype.UUID        `json:"user_id"`
-	IdentityID          pgtype.UUID        `json:"identity_id"`
-	PasskeyID           pgtype.UUID        `json:"passkey_id"`
-	AuthenticatedAt     pgtype.Timestamptz `json:"authenticated_at"`
 	BrowserSessionID    pgtype.UUID        `json:"browser_session_id"`
-	ReplacesSessionID   pgtype.UUID        `json:"replaces_session_id"`
 }
 
 type DiskObject struct {

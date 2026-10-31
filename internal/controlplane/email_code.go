@@ -122,12 +122,7 @@ func (s *Server) emailResend(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	purpose, err := identity.LoginChallengePurpose(r.Context(), s.tx, id, binding)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	c, err := identity.ResendEmailChallenge(r.Context(), s.tx, s.identity, id, binding, purpose)
+	c, err := identity.ResendEmailChallenge(r.Context(), s.tx, s.identity, id, binding, "login")
 	if err != nil {
 		s.writeIdentityError(w, r, err)
 		return
@@ -151,12 +146,7 @@ func (s *Server) emailVerify(w http.ResponseWriter, r *http.Request) {
 		s.writeIdentityError(w, r, err)
 		return
 	}
-	purpose, err := identity.LoginChallengePurpose(r.Context(), s.tx, id, binding)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	completed, err := identity.CompleteEmailChallenge(r.Context(), s.tx, s.identity, id, binding, request.Code, rawBrowserSession(r), purpose)
+	completed, err := identity.CompleteEmailChallenge(r.Context(), s.tx, s.identity, id, binding, request.Code, rawBrowserSession(r), "login")
 	if err != nil {
 		s.writeIdentityError(w, r, err)
 		return
