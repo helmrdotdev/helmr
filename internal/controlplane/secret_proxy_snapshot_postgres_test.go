@@ -162,8 +162,11 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 					if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
 						t.Fatal(err)
 					}
+					// Protected values resolve the current version per request.
 					expected := "old-a"
-
+					if when == "before" && change == "rotate" {
+						expected = "new-a"
+					}
 					if string(result.Values[f.markers[0]]) != expected {
 						t.Fatal("captured material changed")
 					}
@@ -211,7 +214,7 @@ func TestProtectedSnapshotCoverageAndExpiry(t *testing.T) {
 		t.Fatalf("prior transaction clock authorized expired token: rows=%d err=%v", len(rows), err)
 	}
 }
-func TestProtectedSnapshotPinsMultiSecretVersionsAcrossRotation(t *testing.T) {
+func TestProtectedSnapshotResolvesCurrentVersionsAfterRotation(t *testing.T) {
 	f := newSnapshotFixture(t, 2, true)
 	for i, id := range f.secrets {
 		if _, err := f.store.Rotate(t.Context(), dbtest.SecretManager(t, f.fixture.Pool, f.fixture.Environment), f.fixture.Environment, pgvalue.MustUUIDValue(id), []byte("new"), "rotate-"+string(rune('a'+i))); err != nil {
@@ -223,8 +226,8 @@ func TestProtectedSnapshotPinsMultiSecretVersionsAcrossRotation(t *testing.T) {
 		t.Fatalf("capture=%v err=%v", rows, err)
 	}
 	values, err := f.store.OpenProtectedCapture(rows, f.markers)
-	if err != nil || string(values[f.markers[0]]) != "old-a" || string(values[f.markers[1]]) != "old-b" {
-		t.Fatalf("pins changed: %v", err)
+	if err != nil || string(values[f.markers[0]]) != "new" || string(values[f.markers[1]]) != "new" {
+		t.Fatalf("rotation did not reach the next request: %v", err)
 	}
 }
 func TestProtectedPreparationReusesPersistedRoot(t *testing.T) {

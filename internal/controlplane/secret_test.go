@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"github.com/helmrdotdev/helmr/internal/api"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -69,9 +70,9 @@ func TestSecretListQueryRejectsUnknownAndInvalidValues(t *testing.T) {
 func TestSecretResponseUsesUTCTimestamps(t *testing.T) {
 	instant := time.Date(2026, 10, 9, 8, 0, 0, 0, time.FixedZone("fixture", 9*60*60))
 	timestamp := pgtype.Timestamptz{Time: instant, Valid: true}
-	response, err := secretResponse("fixture", "revoked", timestamp, timestamp, timestamp)
-	if err != nil {
-		t.Fatal(err)
+	response := secretResponse("fixture", timestamp, timestamp, timestamp)
+	if response.Status != api.SecretStatusRevoked {
+		t.Fatalf("status = %q", response.Status)
 	}
 	for _, value := range []time.Time{response.CreatedAt, *response.RotatedAt, *response.RevokedAt} {
 		if value.Location() != time.UTC || !value.Equal(instant) {

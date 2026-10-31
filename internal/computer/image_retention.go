@@ -9,14 +9,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Revocation permanently denies this image to all future allocations. Its
-// identity and preparation exposure history remain for existing Computers'
-// revocation checks. Their initial roots independently retain usable storage.
+// An image prepared with a revoked Secret is never pinned again; rotation makes
+// its version stale too, and a successor image replaces it. Its identity and
+// preparation exposure history remain for the raw-value inventory. Existing
+// Computers' initial roots independently retain usable storage.
 // An older but still eligible image is not an eviction candidate here.
 const retirableImage = `i.root_id IS NOT NULL
  AND NOT EXISTS(SELECT 1 FROM boot_seed_builds b WHERE b.environment_id=i.environment_id AND b.image_id=i.id AND b.worker_host_id IS NOT NULL AND b.fenced_at IS NULL)
  AND EXISTS(SELECT 1 FROM image_builds p WHERE p.environment_id=i.environment_id AND p.id=i.image_build_id AND p.fenced_at IS NOT NULL AND p.disk_released_at IS NOT NULL)
- AND EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON s.environment_id=x.environment_id AND s.id=x.secret_id WHERE x.environment_id=i.environment_id AND x.image_build_id=i.image_build_id AND s.status='revoked')`
+ AND EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON s.environment_id=x.environment_id AND s.id=x.secret_id WHERE x.environment_id=i.environment_id AND x.image_build_id=i.image_build_id AND s.revoked_at IS NOT NULL)`
 
 func retireRevokedComputerImages(ctx context.Context, database db.TxDB) error {
 	rows, err := database.Query(ctx, `SELECT i.environment_id,i.image_spec_id,i.id FROM images i

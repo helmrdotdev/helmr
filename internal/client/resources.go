@@ -107,7 +107,10 @@ func (c *Client) GetComputer(ctx context.Context, computerID string, opts Comput
 }
 
 type ComputerListOptions struct {
-	Key    *string
+	Key *string
+	// Secret lists only Computers that received a raw value of this Secret,
+	// directly or through their image.
+	Secret string
 	Cursor string
 	Limit  int32
 }
@@ -124,12 +127,15 @@ func (c *Client) ListComputers(
 	if query.Limit < 0 || query.Limit > 100 {
 		return api.ListComputersResponse{}, errors.New("limit must be in [1,100]")
 	}
-	if query.Key != nil && (query.Cursor != "" || query.Limit != 0) {
-		return api.ListComputersResponse{}, errors.New("key lookup does not accept cursor or limit")
+	if query.Key != nil && (query.Cursor != "" || query.Limit != 0 || query.Secret != "") {
+		return api.ListComputersResponse{}, errors.New("key lookup does not accept secret, cursor or limit")
 	}
 	values := url.Values{}
 	if query.Key != nil {
 		values.Set("key", *query.Key)
+	}
+	if query.Secret != "" {
+		values.Set("secret", query.Secret)
 	}
 	if query.Cursor != "" {
 		values.Set("cursor", query.Cursor)

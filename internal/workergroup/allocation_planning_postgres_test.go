@@ -73,7 +73,8 @@ func TestAllocationPlanningCountsPhysicalOwnersAndRetainsCharges(t *testing.T) {
 	assertCharge()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET max_cpu_millis=1024000 WHERE id=$1`, f.Environment)
 	secret := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($1,$2,'TOKEN','revoked',clock_timestamp())`, secret, f.Environment)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,current_version_id,revoked_at) VALUES($1,$2,'TOKEN',$1,clock_timestamp());
+ INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($1,$1,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'))`, pgx.QueryExecModeSimpleProtocol, secret, f.Environment)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Deployment, secret)
 	rows, err = q.ListAllocationPlanningDemand(t.Context(), db.ListAllocationPlanningDemandParams{RegionID: "test", WorkerGroupID: pgvalue.UUID(f.Group), RowLimit: 10})
 	if err != nil || len(rows) != 0 {

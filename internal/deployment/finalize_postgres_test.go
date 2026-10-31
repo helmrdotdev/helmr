@@ -225,7 +225,7 @@ func TestRegisterScopesLogicalSecretsAndPreservesReplays(t *testing.T) {
 		if err = f.pool.QueryRow(t.Context(), `SELECT count(*) FROM secret_bindings WHERE environment_id=$1 AND secret_id=$2`, env, secret).Scan(&bindings); err != nil || bindings != 2 {
 			t.Fatalf("Environment did not pin its own Secret: %d %v", bindings, err)
 		}
-		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=clock_timestamp() WHERE id=$1`, secret)
+		dbtest.MustExec(t, t.Context(), f.pool, `UPDATE secrets SET revoked_at=clock_timestamp() WHERE id=$1`, secret)
 		for _, key := range []string{request.idempotencyKey, "same-bundle-new-key"} {
 			replay := request
 			replay.idempotencyKey = key
@@ -299,7 +299,7 @@ func TestRegisterRechecksSecretAfterConcurrentRevocation(t *testing.T) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if _, err = tx.Exec(t.Context(), `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=clock_timestamp() WHERE id=$1`, secret); err != nil {
+	if _, err = tx.Exec(t.Context(), `UPDATE secrets SET revoked_at=clock_timestamp() WHERE id=$1`, secret); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(t.Context()); err != nil {

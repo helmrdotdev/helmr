@@ -13,8 +13,8 @@ const maxComputerSecretPlacements = 64
 
 var ErrDeliveryUnavailable = errors.New("secret delivery authority is unavailable")
 
-// ErrDeliveryRevoked denies an otherwise valid recorded delivery whose Secret
-// status or revocation generation no longer permits use.
+// ErrDeliveryRevoked refuses a new raw delivery because its Secret is revoked.
+// Values already delivered to running work are not affected.
 var ErrDeliveryRevoked = fmt.Errorf("secret delivery is no longer authorized: %w", ErrDeliveryUnavailable)
 
 type DeliveryEnvelope struct {
@@ -44,7 +44,6 @@ func (s *Store) OpenDeliveries(environmentID uuid.UUID, envelopes []DeliveryEnve
 			return nil, ErrDeliveryUnavailable
 		}
 		if envelope.Secret.EnvironmentID != pgvalue.UUID(environmentID) ||
-			envelope.Secret.Status != "active" ||
 			envelope.Version.SecretID != envelope.Secret.ID ||
 			!envelope.Version.ID.Valid ||
 			(envelope.PlacementKind != "env" && envelope.PlacementKind != "file") ||

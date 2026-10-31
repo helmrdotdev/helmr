@@ -18,9 +18,9 @@ const imageBuildSuccessorEligibilitySQL = `p.predecessor_build_id IS NULL AND p.
  AND EXISTS(SELECT 1 FROM images i WHERE i.environment_id=p.environment_id AND i.image_build_id=p.id)
  AND NOT EXISTS(SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS(
    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id AND s.status='active'))
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id AND s.revoked_at IS NULL))
  AND NOT EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.status<>'active')
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.revoked_at IS NOT NULL)
  AND EXISTS(SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
    WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND s.current_version_id<>x.version_id)
  AND NOT EXISTS(SELECT 1 FROM image_builds other WHERE other.environment_id=p.environment_id AND other.image_spec_id=p.image_spec_id

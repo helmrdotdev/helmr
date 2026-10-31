@@ -61,7 +61,7 @@ func AdmitProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx
 		return ProcessAllocation{}, err
 	}
 	// Foreign-key waits cannot turn an expired VM lease into fresh setup authority.
-	return result, executionPhysical(ctx, tx, Execution{EnvironmentID: env, SessionID: session, ProcessEpoch: epoch, LeaseEpoch: result.LeaseEpoch, WorkerHostID: host, WorkerEpoch: hostEpoch}, true, true)
+	return result, executionPhysical(ctx, tx, Execution{EnvironmentID: env, SessionID: session, ProcessEpoch: epoch, LeaseEpoch: result.LeaseEpoch, WorkerHostID: host, WorkerEpoch: hostEpoch}, true)
 }
 
 // AssignProcess shares initial-cohort and later admission eligibility.
@@ -72,6 +72,12 @@ func AssignProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.T
 		return false, failQueuedPermission(ctx, auditPolicy, tx, env, session)
 	} else if err != nil {
 		return false, err
+	}
+	if revoked, err := sessionRawSecretRevoked(ctx, tx, env, session); err != nil || revoked {
+		if err != nil {
+			return false, err
+		}
+		return false, failQueuedSecretUnavailable(ctx, auditPolicy, tx, env, session)
 	}
 	changed, err := tx.Exec(ctx, `INSERT INTO session_processes(environment_id,session_id,epoch,computer_id,computer_lease_epoch,status)
  SELECT s.environment_id,s.id,$3,c.id,l.epoch,'starting' FROM sessions s
@@ -87,7 +93,6 @@ func AssignProcess(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.T
  AND (SELECT COALESCE(max(p.epoch),0) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id)=$3::bigint-1
  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
  AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status IN ('running'))
- AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
  AND NOT EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.computer_id=c.id AND save.computer_lease_epoch<>l.epoch AND save.status IN ('requested','captured'))`, env, session, epoch, host, hostEpoch, freshLease)
 	if err != nil {
@@ -133,8 +138,9 @@ func LockInitialSessions(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID
 	return sessions, nil
 }
 
-// AuthorizeInitialSessions settles revoked queued work before reserving a VM.
-// A false result means every Session in this cohort lost current authority.
+// AuthorizeInitialSessions settles queued work that can never start before
+// reserving a VM: revoked authority, or a revoked raw Secret on its Computer.
+// A false result means no Session in this cohort can start.
 func AuthorizeInitialSessions(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env uuid.UUID, sessions []uuid.UUID) (bool, error) {
 	allowed := len(sessions) == 0
 	for _, id := range sessions {
@@ -143,13 +149,64 @@ func AuthorizeInitialSessions(ctx context.Context, auditPolicy auditpolicy.Polic
 			if err := failQueuedPermission(ctx, auditPolicy, tx, env, id); err != nil {
 				return false, err
 			}
+			continue
 		} else if err != nil {
 			return false, err
-		} else {
-			allowed = true
 		}
+		revoked, err := sessionRawSecretRevoked(ctx, tx, env, id)
+		if err != nil {
+			return false, err
+		}
+		if revoked {
+			if err := failQueuedSecretUnavailable(ctx, auditPolicy, tx, env, id); err != nil {
+				return false, err
+			}
+			continue
+		}
+		allowed = true
 	}
 	return allowed, nil
+}
+
+func sessionRawSecretRevoked(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (bool, error) {
+	var computerID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT computer_id FROM sessions WHERE environment_id=$1 AND id=$2 AND computer_id IS NOT NULL`, env, session).Scan(&computerID); errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return computer.RawSecretRevoked(ctx, tx, env, computerID)
+}
+
+// RefuseRevokedSessionStart settles a starting process whose start was refused
+// because its Computer gained a revoked raw Secret binding after assignment.
+// Its queued input fails with secret_unavailable and the process receives
+// ordinary stop intent, so the host stops retrying the start.
+func RefuseRevokedSessionStart(ctx context.Context, auditPolicy auditpolicy.Policy, database db.TxBeginner, e Execution) error {
+	return hideMissing(db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		if _, err := lockSession(ctx, tx, e.EnvironmentID, e.SessionID); err != nil {
+			return err
+		}
+		var starting bool
+		if err := tx.QueryRow(ctx, `SELECT status='starting' AND fenced_at IS NULL AND failure_recorded_at IS NULL FROM session_processes WHERE environment_id=$1 AND session_id=$2 AND epoch=$3 FOR NO KEY UPDATE`, e.EnvironmentID, e.SessionID, e.ProcessEpoch).Scan(&starting); err != nil {
+			return err
+		}
+		if !starting {
+			return nil
+		}
+		revoked, err := sessionRawSecretRevoked(ctx, tx, e.EnvironmentID, e.SessionID)
+		if err != nil || !revoked {
+			return err
+		}
+		if err = failQueuedSecretUnavailable(ctx, auditPolicy, tx, e.EnvironmentID, e.SessionID); err != nil {
+			return err
+		}
+		// This is stop intent, never evidence that the physical process is absent.
+		if _, err = tx.Exec(ctx, `UPDATE session_processes SET failure_recorded_at=clock_timestamp(),status='stopping' WHERE environment_id=$1 AND session_id=$2 AND epoch=$3`, e.EnvironmentID, e.SessionID, e.ProcessEpoch); err != nil {
+			return err
+		}
+		return notifySessionsChanged(ctx, tx, e.EnvironmentID, e.SessionID)
+	}))
 }
 
 func AssignInitialProcesses(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, r computer.ComputerAllocation, sessions []uuid.UUID) error {

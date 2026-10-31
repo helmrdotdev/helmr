@@ -47,9 +47,6 @@ func ReadComputerCheckpoint(ctx context.Context, pool db.TxBeginner, host worker
 		if target.Instance != identity.InstanceID {
 			return ErrDenied
 		}
-		if err := computer.RequireSecretsNotRevoked(ctx, tx, identity.EnvironmentID, identity.ComputerID); err != nil {
-			return err
-		}
 		eligible, err := computer.CheckpointDiskEligible(ctx, tx, identity.EnvironmentID, identity.ComputerID, r.Save)
 		if err != nil {
 			return err

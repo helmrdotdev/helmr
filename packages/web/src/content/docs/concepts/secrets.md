@@ -44,8 +44,9 @@ const computer = await client.computers.create({
 })
 ```
 
-Secret identifiers are immutable and unique within an Environment, including
-after revocation. Reuse the same identifier in different Environments for
+Secret identifiers are immutable and unique within an Environment. A Secret keeps
+its identity for its whole life: rotation and revocation change its state, not
+which Secret it is. Reuse the same identifier in different Environments for
 Environment-specific values. New Deployments and Computers require every declared
 Secret to be active in their target Environment. Successful retries keep their
 original binding, and rotation changes the value without changing the identifier.
@@ -64,8 +65,10 @@ collisions fail at launch. Managed runtime paths, runtime variables such as
 Use the environment variable directly in an HTTP header, such as
 `Authorization: Bearer <value>`. Helmr's proxy checks the Computer's execution
 authorization and the destination before replacing the placeholder with the
-owner's pinned Secret version. Invalid or revoked placeholders in inspected headers fail
-before the request is sent upstream.
+Secret's current value. Invalid placeholders in inspected headers fail before the
+request is sent upstream. A request that needs a revoked Secret fails with
+`502 Protected Secret is revoked; rotate it to resume`; requests that use other
+Secrets on the same Computer are unaffected.
 
 ### Allowed origins
 
@@ -177,26 +180,36 @@ restrict authorized administrators from choosing raw delivery.
 
 ## Rotation and revocation
 
-Protected requests use the Secret version pinned to the executing Command or
-Session process. Rotation does not change that pin or reset an established WebSocket.
-Restoring the same process from a Computer checkpoint preserves its pin.
-Reconstructing a Session process after process loss creates a new execution
-owner that selects the current version when admitted.
+Rotating a Secret sets its next version. The Secret keeps its identifier and
+bindings, and every Computer bound to it uses the new value without being
+recreated:
 
-Revocation blocks subsequent credential resolution and prevents renewal of the
-Computer lease. Existing sockets close when the Computer's shutdown completes;
-this can affect other Commands and Sessions on the same Computer. Loss of a
-Command's or Session process's authority denies new handshakes and its existing
-shutdown path closes its sockets. WebSocket authority is checked at the handshake,
-not for each frame or Turn. Traffic may continue between authority loss and
-completed shutdown; no fixed cutoff time is promised. Work already sent upstream
-cannot be recalled. Deleting or revoking a Helmr Secret does not invalidate the
-credential at its provider.
+- Protected requests resolve the Secret's current value per request, so the next
+  request uses the new value. Established WebSocket connections keep the value
+  resolved at their handshake.
+- Raw env and file values are selected when a Session process or Command starts.
+  Rotation does not rewrite running processes or values restored from
+  snapshots; the next process or Command receives the new value.
 
-Raw env and file values are selected when execution is admitted. Rotation does
-not rewrite running processes or values restored from snapshots. Revocation
-cannot erase values already delivered to a Computer or saved in its snapshots;
-remove those copies separately.
+Revoking a Secret stops Helmr from providing it. Nothing else changes:
+
+- Protected requests that need the Secret fail until it is rotated. Running
+  Sessions and Commands keep running.
+- New Session processes and Commands that need a raw value of the Secret are
+  refused with `secret_unavailable`. Running ones continue, and the values
+  already delivered stay where they are, including in snapshots and images.
+- New Computers and Deployments cannot bind the Secret.
+
+To resume, rotate the revoked Secret with its new value. Rotation reactivates
+the same Secret; there is no need to create it again, and creating a Secret with
+a revoked name is refused with `secret_revoked`.
+
+Revocation cannot recall a value that was already delivered or a request already
+sent upstream. Revoke the credential at its provider; that is the containment.
+Then find the Computers that received a raw value with
+`helmr computer list --secret NAME`, or from the Secret in the Console, and
+delete the ones you no longer trust. Computers marked as holding the value
+through their image received it during image preparation.
 
 Helmr does not refresh OAuth tokens or save credential changes made by a CLI back
 to a Secret. Manage token renewal separately and rotate the stored value when it

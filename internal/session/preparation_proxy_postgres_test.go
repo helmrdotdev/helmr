@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
 
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
@@ -38,7 +39,7 @@ func protectedPreparationAllocationFixture(t *testing.T) (preparationFixture, co
 	return f, delivery.Executor, a, marker
 }
 
-func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
+func TestPreparationProxyAllocationReusesTrustAndServesCurrentValue(t *testing.T) {
 	f, ref, a, marker := protectedPreparationAllocationFixture(t)
 	capture, err := computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID)
 	if err != nil || capture.Env["TOKEN"] != marker || len(capture.Env) != 1 || len(capture.Trust.Certificate) == 0 {
@@ -69,8 +70,12 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 		t.Fatal(err)
 	}
 	values, err := f.secrets.OpenProtectedCapture(rows, []string{marker})
-	if err != nil || string(values[marker]) != "v1" {
-		t.Fatalf("proxy did not use pinned version: %v", err)
+	if err != nil || string(values[marker]) != "v2" {
+		t.Fatalf("proxy served a non-current value: %v", err)
+	}
+	var pinned bool
+	if err = f.pool.QueryRow(t.Context(), `SELECT x.version_id<>s.current_version_id FROM secret_exposures x JOIN secrets s ON s.id=x.secret_id WHERE x.environment_id=$1 AND x.image_build_id=$2`, f.env, ref.ImageBuildID).Scan(&pinned); err != nil || !pinned {
+		t.Fatalf("exposure no longer records the built version: %v %v", pinned, err)
 	}
 	clear(values[marker])
 	unknown, _ := secretbinding.Placeholder("protected")
@@ -98,19 +103,94 @@ func TestPreparationProxyAllocationReusesTrustAndPinsExposure(t *testing.T) {
 	if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke-proxy"); err != nil {
 		t.Fatal(err)
 	}
-	if err := resolve("https://api.example.com", []string{marker}); err == nil {
-		t.Fatal("revoked Secret resolved")
+	if err := resolve("https://api.example.com", []string{marker}); !errors.Is(err, secret.ErrProtectedRevoked) {
+		t.Fatalf("revoked Secret resolved: %v", err)
 	}
 	// An already authorized snapshot may finish; it cannot select a new version.
 	values, err = f.secrets.OpenProtectedCapture(rows, []string{marker})
-	if err != nil || string(values[marker]) != "v1" {
+	if err != nil || string(values[marker]) != "v2" {
 		t.Fatalf("authorized overlap: %v", err)
 	}
 	clear(values[marker])
 }
 
+// Rotation, and revocation followed by rotation, reach the next build request.
+func TestPreparationProxyRotationReachesNextRequest(t *testing.T) {
+	f, ref, _, marker := protectedPreparationAllocationFixture(t)
+	if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
+		t.Fatal(err)
+	}
+	manager := dbtest.SecretManager(t, f.pool, f.env)
+	value := func() (string, error) {
+		rows, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{marker})
+		if err != nil {
+			return "", err
+		}
+		values, err := f.secrets.OpenProtectedCapture(rows, []string{marker})
+		defer clear(values[marker])
+		return string(values[marker]), err
+	}
+	if _, err := f.secrets.Rotate(t.Context(), manager, f.env, f.secretID, []byte("rotated"), ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := value(); err != nil || got != "rotated" {
+		t.Fatalf("after rotation = %q %v", got, err)
+	}
+	if _, err := f.secrets.Revoke(t.Context(), manager, f.env, f.secretID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := value(); !errors.Is(err, secret.ErrProtectedRevoked) {
+		t.Fatalf("while revoked: %v", err)
+	}
+	if _, err := f.secrets.Rotate(t.Context(), manager, f.env, f.secretID, []byte("reactivated"), ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := value(); err != nil || got != "reactivated" {
+		t.Fatalf("after reactivation = %q %v", got, err)
+	}
+}
+
+// Revoking Secret A during an image build fails only requests that need A;
+// protected Secret B on the same build keeps resolving.
+func TestPreparationProxyRevocationIsolatesOtherSecrets(t *testing.T) {
+	f, ref, _, marker := protectedPreparationAllocationFixture(t)
+	other, err := f.secrets.Create(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, "BUILD_OTHER_"+f.deployment.String(), []byte("other-v1"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherMarker, err := secretbinding.Placeholder("protected")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secret_bindings(environment_id,image_spec_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder)
+ SELECT environment_id,image_spec_id,$3,'env','OTHER_TOKEN','protected',ARRAY['https://api.example.com'],$4 FROM image_builds WHERE environment_id=$1 AND id=$2`, f.env, ref.ImageBuildID, other.ID, otherMarker)
+	if _, err = computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = computer.CaptureImageBuildProxyTrust(t.Context(), f.pool, *f.host(), ref.InstanceID); err != nil {
+		t.Fatalf("revoking A denied build transport: %v", err)
+	}
+	rows, err := computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", []string{otherMarker})
+	if err != nil {
+		t.Fatalf("revoking A denied protected B: %v", err)
+	}
+	values, err := f.secrets.OpenProtectedCapture(rows, []string{otherMarker})
+	if err != nil || string(values[otherMarker]) != "other-v1" {
+		t.Fatalf("protected B value: %v", err)
+	}
+	clear(values[otherMarker])
+	for _, markers := range [][]string{{marker}, {marker, otherMarker}} {
+		if _, err = computer.CaptureImageBuildProtectedSecrets(t.Context(), f.pool, *f.host(), ref.InstanceID, "https://api.example.com", markers); !errors.Is(err, secret.ErrProtectedRevoked) {
+			t.Fatalf("request needing revoked A %v: %v", markers, err)
+		}
+	}
+}
+
 func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
-	for _, transition := range []string{"capture", "failure", "physical stop", "deadline", "host epoch", "revocation"} {
+	for _, transition := range []string{"capture", "failure", "physical stop", "deadline", "host epoch"} {
 		t.Run(transition, func(t *testing.T) {
 			f, ref, _, marker := protectedPreparationAllocationFixture(t)
 			if _, err := computer.RecordImageBuildExposure(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, *f.host(), ref); err != nil {
@@ -151,13 +231,6 @@ func TestPreparationProxyClosesAuthorityAndClearsSigner(t *testing.T) {
 			case "host epoch":
 				dbtest.MustExec(t, t.Context(), f.pool, `UPDATE worker_hosts SET current_epoch=current_epoch+1 WHERE id=$1`, f.worker)
 				if err := dispatch.ExpireImageBuild(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
-					t.Fatal(err)
-				}
-			case "revocation":
-				if _, err := f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, f.secretID, "revoke-proxy"); err != nil {
-					t.Fatal(err)
-				}
-				if err := dispatch.ReconcileImageBuildRevocation(t.Context(), f.pool, f.env, ref.ImageBuildID); err != nil {
 					t.Fatal(err)
 				}
 			}

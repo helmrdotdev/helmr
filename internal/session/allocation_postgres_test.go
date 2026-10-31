@@ -267,9 +267,10 @@ func TestAllocationRestoreRetainsCheckpointShapeAndSingleWriter(t *testing.T) {
 	if _, err := exposed.secrets.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, exposed.secretID, "revoke-restore"); err != nil {
 		t.Fatal(err)
 	}
+	// Revoking a Secret prepared into the image does not stop the restore.
 	target := computer.LeaseIdentity{EnvironmentID: f.env, ComputerID: f.computer, InstanceID: replacement.InstanceID, Epoch: 3}
-	if _, err := a.DeliverLease(t.Context(), *f.host(), target); !errors.Is(err, dispatch.ErrAllocationClosed) {
-		t.Fatalf("revoked restore delivery not terminal: %v", err)
+	if _, err := a.DeliverLease(t.Context(), *f.host(), target); err != nil {
+		t.Fatalf("revoked image lineage stopped restore delivery: %v", err)
 	}
 	if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
@@ -458,7 +459,9 @@ func TestAllocationHostCapacitySerializesDifferentEnvironments(t *testing.T) {
 	}
 }
 
-func TestAllocationRevokedImageRequiresPhysicalStop(t *testing.T) {
+// Revocation stops providing the Secret only. A Computer whose image was
+// prepared with it keeps its lease delivery and readiness.
+func TestAllocationRevokedImageLineageKeepsDelivering(t *testing.T) {
 	for _, delivered := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before-delivery", true: "before-ready"}[delivered], func(t *testing.T) {
 			f, a, computerID := freshComputerAllocationFixture(t)
@@ -489,16 +492,11 @@ func TestAllocationRevokedImageRequiresPhysicalStop(t *testing.T) {
 			if _, err := a.DeliverLease(t.Context(), *f.host(), wrong); !errors.Is(err, dispatch.ErrDenied) {
 				t.Fatalf("wrong identity was not denied: %v", err)
 			}
-			if _, err := a.DeliverLease(t.Context(), *f.host(), identity); !errors.Is(err, dispatch.ErrAllocationClosed) {
-				t.Fatalf("revoked delivery not terminal: %v", err)
+			if _, err := a.DeliverLease(t.Context(), *f.host(), identity); err != nil {
+				t.Fatalf("revoked image lineage stopped delivery: %v", err)
 			}
-			if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); !errors.Is(err, dispatch.ErrAllocationClosed) {
-				t.Fatalf("revoked ready not terminal: %v", err)
-			}
-			if err := dispatch.ObserveLeaseStopped(t.Context(), auditpolicy.Policy{
-				RetentionSeconds: 3600,
-			}, f.pool, *f.host(), identity, uuid.Nil(), uuid.Nil()); err != nil {
-				t.Fatal(err)
+			if err := dispatch.ObserveFreshLeaseReady(t.Context(), f.pool, *f.host(), identity, r.Shape, r.BaseVersion); err != nil {
+				t.Fatalf("revoked image lineage stopped readiness: %v", err)
 			}
 		})
 	}

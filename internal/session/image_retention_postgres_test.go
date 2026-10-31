@@ -7,7 +7,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
@@ -60,8 +59,8 @@ func TestRevokedImagePayloadRetirementPreservesLineageAndComputerRoot(t *testing
 			}
 			if attached {
 				var lineage bool
-				if err := p.f.pool.QueryRow(t.Context(), `SELECT c.image_id=$3 AND c.initial_root_id IS NOT NULL AND EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id) FROM computers c WHERE environment_id=$1 AND id=$2`, p.f.env, computerID, image).Scan(&lineage); err != nil || !lineage {
-					t.Fatalf("historical revocation or Computer root lost: %v %v", lineage, err)
+				if err := p.f.pool.QueryRow(t.Context(), `SELECT c.image_id=$3 AND c.initial_root_id IS NOT NULL FROM computers c WHERE environment_id=$1 AND id=$2`, p.f.env, computerID, image).Scan(&lineage); err != nil || !lineage {
+					t.Fatalf("image lineage or Computer root lost: %v %v", lineage, err)
 				}
 			}
 			if _, err := computer.PinImage(t.Context(), p.f.pool, p.f.env, computerID); err == nil {

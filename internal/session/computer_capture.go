@@ -68,9 +68,6 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
 		if !bytes.Equal(lease.CredentialDigest, supplied[:]) {
 			return ErrDenied
 		}
-		if err = computer.RequireSecretsNotRevoked(ctx, tx, req.EnvironmentID, req.ComputerID); err != nil {
-			return err
-		}
 		var priorComputer uuid.UUID
 		var priorEpoch int64
 		var priorState string
@@ -123,7 +120,7 @@ func BeginComputerCapture(ctx context.Context, pool db.TxBeginner, host workergr
    OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)
    OR EXISTS(SELECT 1 FROM sessions s
      JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
-     WHERE s.environment_id=$1 AND s.computer_id=$2 AND p.fenced_at IS NULL AND (s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id)))`, req.EnvironmentID, req.ComputerID).Scan(&busy); err != nil {
+     WHERE s.environment_id=$1 AND s.computer_id=$2 AND p.fenced_at IS NULL AND (s.status IN ('closed','cancelled')))`, req.EnvironmentID, req.ComputerID).Scan(&busy); err != nil {
 			return err
 		}
 		if busy {
@@ -252,7 +249,7 @@ func computerExecutionDemand(ctx context.Context, tx pgx.Tx, env, computerID uui
  WHERE s.environment_id=$1 AND s.computer_id=$2 AND s.status IN ('open','closing') AND t.status='queued' AND `+db.NoSessionHoldsSQL+`)
  OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND (status='pending' OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)))
  OR EXISTS(SELECT 1 FROM sessions s JOIN session_processes p ON (p.environment_id,p.session_id)=(s.environment_id,s.id)
- WHERE s.environment_id=$1 AND s.computer_id=$2 AND p.fenced_at IS NULL AND (s.status IN ('closed','cancelled') OR EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id)))`, env, computerID).Scan(&pending)
+ WHERE s.environment_id=$1 AND s.computer_id=$2 AND p.fenced_at IS NULL AND (s.status IN ('closed','cancelled')))`, env, computerID).Scan(&pending)
 	return pending, err
 }
 

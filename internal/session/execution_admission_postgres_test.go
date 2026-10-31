@@ -369,27 +369,6 @@ func TestStaleProviderEvidenceDoesNotBlockUnrelatedExistingCapacity(t *testing.T
 	}
 }
 
-func TestRevokedPendingClaimDoesNotBlockOtherAdmissions(t *testing.T) {
-	f, _, revoked := freshComputerAllocationFixture(t)
-	secretID, version := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($1,$2,'revoked-planning-fixture','revoked',clock_timestamp());
- INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($3,$1,1,decode(repeat('00',12),'hex'),decode(repeat('00',16),'hex'));
- INSERT INTO secret_exposures(id,environment_id,image_build_id,secret_id,version_id) SELECT $4,c.environment_id,i.image_build_id,$1,$3 FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id) WHERE c.id=$5`, pgx.QueryExecModeSimpleProtocol, secretID, f.env, version, uuid.NewV7(), revoked)
-	claims, err := db.ReadPendingExecutionClaims(t.Context(), f.pool, f.group)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, claim := range claims {
-		if claim.ComputerID == revoked {
-			t.Fatal("revoked demand still reserves pending execution")
-		}
-	}
-	other := pendingCapacityComputer(t, f, f.env)
-	if err := admitCapacityComputer(t.Context(), f, f.env, other); err != nil {
-		t.Fatalf("revoked claim blocked unrelated admission: %v", err)
-	}
-}
-
 func TestSessionCloseDoesNotWaitForRegionalPlacement(t *testing.T) {
 	f := newFixture(t)
 	gate, err := f.pool.Begin(t.Context())

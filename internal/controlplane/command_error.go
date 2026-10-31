@@ -69,6 +69,8 @@ func commandError(err error, operation commandOperation) error {
 		return conflict(codedError{code: "execution_capacity_exhausted", message: err.Error()})
 	case errors.Is(err, workergroup.ErrStaleClaims):
 		return unauthorized(errors.New("worker authentication is required"))
+	case errors.Is(err, secret.ErrDeliveryRevoked):
+		return conflict(codedError{code: "secret_unavailable", message: secretRevokedForNewWork})
 	case errors.Is(err, secret.ErrDeliveryUnavailable):
 		return conflict(codedError{code: "secret_unavailable", message: "command Secret delivery is unavailable"})
 	case errors.Is(err, command.ErrChanged):

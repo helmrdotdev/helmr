@@ -22,7 +22,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 		t.Fatalf("exposure: %v", err)
 	}
 	var exposureAudit bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 AND bool_and(details->>'revocation_generation'='0') FROM audit_events WHERE environment_id=$1 AND target_id=$2 AND action='secret.exposed' AND details->>'image_build_id'=$3`, f.env, f.secretID, p.ID.String()).Scan(&exposureAudit); err != nil || !exposureAudit {
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*)=1 FROM audit_events WHERE environment_id=$1 AND target_id=$2 AND action='secret.exposed' AND details->>'image_build_id'=$3`, f.env, f.secretID, p.ID.String()).Scan(&exposureAudit); err != nil || !exposureAudit {
 		t.Fatalf("new exposure audit: %v %v", exposureAudit, err)
 	}
 	version := values[0].VersionID
@@ -81,7 +81,7 @@ func TestSecretExposureTypedOwnersAndPinnedVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	var retained bool
-	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)=3 AND bool_and(s.status='revoked' AND s.current_version_id IS NULL AND x.version_id=$2) FROM secret_exposures x JOIN secrets s ON s.environment_id=x.environment_id AND s.id=x.secret_id WHERE x.environment_id=$1`, f.env, version).Scan(&retained); err != nil || !retained {
+	if err = f.pool.QueryRow(t.Context(), `SELECT count(*)=3 AND bool_and(s.revoked_at IS NOT NULL AND s.current_version_id=$3 AND x.version_id=$2) FROM secret_exposures x JOIN secrets s ON s.environment_id=x.environment_id AND s.id=x.secret_id WHERE x.environment_id=$1`, f.env, version, next).Scan(&retained); err != nil || !retained {
 		t.Fatalf("version pins lost after revocation: %v %v", retained, err)
 	}
 

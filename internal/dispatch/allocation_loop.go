@@ -81,7 +81,6 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after AllocationPos
  SELECT c.environment_id,c.id,'computer',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id),0)+1,NULL::uuid FROM computers c
  WHERE c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL AND c.recovery_save_id IS NULL
  AND c.execution_deadline_at>statement_timestamp()
- AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.initialized_at IS NOT NULL))
  AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.epoch=9223372036854775807)
@@ -91,7 +90,6 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after AllocationPos
  WHERE c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL AND c.image_id IS NOT NULL AND ((c.recovery_save_id IS NULL AND c.initial_root_id IS NOT NULL AND EXISTS(SELECT 1 FROM computer_leases old WHERE old.environment_id=c.environment_id AND old.computer_id=c.id AND old.initialized_at IS NOT NULL)) OR (save.root_id IS NOT NULL AND save.status='published'))
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807))
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
- AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND (EXISTS(SELECT 1 FROM sessions s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.status IN ('open','closing') AND `+db.NoSessionHoldsSQL+` AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=c.environment_id AND cmd.computer_id=c.id AND cmd.status='pending'))
  UNION ALL
  SELECT cp.environment_id,cp.id,'restore',COALESCE((SELECT max(l.epoch) FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id),0)+1,NULL::uuid
@@ -99,11 +97,10 @@ func (a *Allocator) discoverAllocations(ctx context.Context, after AllocationPos
  AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=cp.environment_id AND l.computer_id=cp.computer_id AND (l.fenced_at IS NULL OR l.epoch=9223372036854775807))
  AND (EXISTS(SELECT 1 FROM computer_controls ctl WHERE ctl.environment_id=cp.environment_id AND ctl.computer_id=cp.computer_id AND ctl.kind='wake' AND ctl.status='accepted') OR EXISTS(SELECT 1 FROM sessions s JOIN turns t ON (t.environment_id,t.session_id)=(s.environment_id,s.id)
  WHERE s.environment_id=cp.environment_id AND s.computer_id=cp.computer_id AND s.status IN ('open','closing') AND t.status='queued' AND `+db.NoSessionHoldsSQL+`) OR EXISTS(SELECT 1 FROM commands cmd WHERE cmd.environment_id=cp.environment_id AND cmd.computer_id=cp.computer_id AND cmd.status='pending'))
- AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=cp.environment_id AND revoked.computer_id=cp.computer_id)
  UNION ALL
  SELECT s.environment_id,s.id,'process',COALESCE((SELECT max(p.epoch) FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id),0)+1,l.worker_host_id
  FROM sessions s JOIN computer_leases l ON (l.environment_id,l.computer_id)=(s.environment_id,s.computer_id)
- WHERE s.status IN ('open','closing') AND `+db.NoSessionHoldsSQL+` AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked WHERE revoked.environment_id=s.environment_id AND revoked.computer_id=s.computer_id) AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>statement_timestamp()
+ WHERE s.status IN ('open','closing') AND `+db.NoSessionHoldsSQL+` AND l.status='active' AND l.fenced_at IS NULL AND l.expires_at>statement_timestamp()
  AND EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued')
  AND NOT EXISTS(SELECT 1 FROM session_processes p WHERE p.environment_id=s.environment_id AND p.session_id=s.id AND (p.fenced_at IS NULL OR p.epoch=9223372036854775807))
  ) SELECT d.environment_id,d.kind,d.id,h.id,d.epoch FROM demand d JOIN environments e ON e.id=d.environment_id

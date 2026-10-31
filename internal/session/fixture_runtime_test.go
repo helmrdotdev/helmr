@@ -171,7 +171,7 @@ func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host 
 		}
 		var initial string
 		if err := tx.QueryRow(ctx, `SELECT 'sha256:'||encode(initial_root_digest,'hex') FROM computers WHERE environment_id=$1 AND id=$2
- AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2) FOR NO KEY UPDATE`, env, computerID).Scan(&initial); err != nil {
+ FOR NO KEY UPDATE`, env, computerID).Scan(&initial); err != nil {
 			return err
 		}
 		var restored *uuid.UUID
@@ -210,7 +210,7 @@ func bindComputerLeaseDiskForTest(ctx context.Context, pool db.TxBeginner, host 
 			return session.ErrConflict
 		}
 		var valid bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND fenced_at IS NULL AND status IN ('acquiring','active','releasing') AND expires_at>clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, env, computerID, epoch).Scan(&valid); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_leases WHERE environment_id=$1 AND computer_id=$2 AND epoch=$3 AND fenced_at IS NULL AND status IN ('acquiring','active','releasing') AND expires_at>clock_timestamp())`, env, computerID, epoch).Scan(&valid); err != nil {
 			return err
 		}
 		if !valid {

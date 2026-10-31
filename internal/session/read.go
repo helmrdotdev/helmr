@@ -14,7 +14,8 @@ import (
 )
 
 // SessionView reports retained work independently of current execution eligibility.
-// A revoked Computer does not revoke a human's authority to inspect its Sessions.
+// Losing execution eligibility does not remove a human's authority to inspect
+// a Computer's Sessions.
 type SessionView struct {
 	RelatedVia           string
 	Permissions          []string

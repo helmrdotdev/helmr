@@ -22,7 +22,7 @@ import (
 
 // This fixture inserts already allocated trust to isolate authenticated transport.
 // Agent allocation tests independently exercise transactional CA creation/rollback.
-func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testing.T) {
+func TestWorkerPreparationProtectedSecretsUseHostProxyAndCurrentVersion(t *testing.T) {
 	f, executor := preparationTransportFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp() WHERE id=$1`, f.Worker)
 	store, err := secret.New(db.New(f.Pool), f.Pool, bytes.Repeat([]byte{17}, 32), auditpolicy.Policy{RetentionSeconds: 3600})
@@ -87,8 +87,8 @@ func TestWorkerPreparationProtectedSecretsUseHostProxyAndPinnedVersion(t *testin
 		t.Fatal(err)
 	}
 	response, err := client.ResolveSecretProxy(t.Context(), request)
-	if err != nil || string(response.Values[marker]) != "protected-first" {
-		t.Fatalf("pinned host resolution: %v", err)
+	if err != nil || string(response.Values[marker]) != "protected-second" {
+		t.Fatalf("host resolution did not use the current value: %v", err)
 	}
 	clear(response.Values[marker])
 	request.Origin = "https://elsewhere.example.com"

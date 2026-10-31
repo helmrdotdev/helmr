@@ -22,9 +22,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretname"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+// secretRevokedForNewWork refuses new work that needs a revoked raw Secret value.
+const secretRevokedForNewWork = "A raw Secret binding is revoked; rotate the Secret to start new work"
 
 const (
 	secretListDefaultLimit = int32(50)
@@ -73,11 +75,7 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 		s.writeSecretMutationError(w, r, principal, request.Secret, "create", err)
 		return
 	}
-	response, err := secretSnapshotResponse(db.GetSecretSnapshotRow(record))
-	if err != nil {
-		s.writeOperationError(w, r, errors.New("project secret"))
-		return
-	}
+	response := secretSnapshotResponse(db.GetSecretSnapshotRow(record))
 	writeJSON(w, http.StatusCreated, response)
 }
 
@@ -121,18 +119,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 	response.Secrets = make([]api.SecretResponse, 0, len(rows))
 	for _, row := range rows {
-		projected, err := secretResponse(
-			row.Name,
-			row.Status,
-			row.CreatedAt,
-			row.RotatedAt,
-			row.RevokedAt,
-		)
-		if err != nil {
-			s.writeOperationError(w, r, errors.New("project secret"))
-			return
-		}
-		response.Secrets = append(response.Secrets, projected)
+		response.Secrets = append(response.Secrets, secretResponse(row.Name, row.CreatedAt, row.RotatedAt, row.RevokedAt))
 	}
 	if hasMore {
 		last := rows[len(rows)-1]
@@ -182,11 +169,7 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id string) {
 		s.writeOperationError(w, r, errors.New("load secret"))
 		return
 	}
-	response, err := secretSnapshotResponse(db.GetSecretSnapshotRow(record))
-	if err != nil {
-		s.writeOperationError(w, r, errors.New("project secret"))
-		return
-	}
+	response := secretSnapshotResponse(db.GetSecretSnapshotRow(record))
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -210,7 +193,7 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id string)
 		s.writeOperationError(w, r, fmt.Errorf("invalid secret rotate request JSON: %w", err))
 		return
 	}
-	idempotencyKey, err := requiredIdempotencyKey(request.IdempotencyKey)
+	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
 	if err != nil {
 		s.writeOperationError(w, r, badRequest(err))
 		return
@@ -242,11 +225,7 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id string)
 		s.writeSecretMutationError(w, r, principal, record.Name, "rotate", err)
 		return
 	}
-	response, err := secretSnapshotResponse(rotated)
-	if err != nil {
-		s.writeOperationError(w, r, errors.New("project secret"))
-		return
-	}
+	response := secretSnapshotResponse(rotated)
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -301,11 +280,7 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id string)
 		s.writeSecretMutationError(w, r, principal, record.Name, "revoke", err)
 		return
 	}
-	response, err := secretSnapshotResponse(revoked)
-	if err != nil {
-		s.writeOperationError(w, r, errors.New("project secret"))
-		return
-	}
+	response := secretSnapshotResponse(revoked)
 	writeJSON(w, http.StatusOK, response)
 }
 
@@ -340,7 +315,6 @@ func (s *Server) writeSecretMutationError(
 		s.writeOperationError(w, r, err)
 		return
 	}
-	var pgErr *pgconn.PgError
 	var expired idempotency.ExpiredError
 	var retryConflict idempotency.ConflictError
 	switch {
@@ -356,8 +330,10 @@ func (s *Server) writeSecretMutationError(
 		s.writeOperationError(w, r, badRequest(secret.ErrInvalidMutation))
 	case secret.IsUnavailable(err):
 		s.writeOperationError(w, r, conflict(err))
-	case errors.As(err, &pgErr) && pgErr.Code == "23505":
-		s.writeOperationError(w, r, conflict(errors.New("secret name already exists")))
+	case errors.Is(err, secret.ErrNameExists):
+		s.writeOperationError(w, r, conflict(secret.ErrNameExists))
+	case errors.Is(err, secret.ErrNameRevoked):
+		s.writeOperationError(w, r, conflict(codedError{code: "secret_revoked", message: "A Secret with this name is revoked; rotate it to set a new value."}))
 	case errors.Is(err, pgx.ErrNoRows):
 		s.writeOperationError(w, r, notFound(errors.New("secret not found")))
 	default:
@@ -448,37 +424,20 @@ func parseSecretID(raw string) (uuid.UUID, error) {
 	return id, nil
 }
 
-func requiredIdempotencyKey(raw string) (string, error) {
-	value, err := normalizeIdempotencyKey(raw)
-	if err != nil {
-		return "", err
-	}
-	if value == "" {
-		return "", errors.New("idempotency_key is required")
-	}
-	return value, nil
+func secretSnapshotResponse(record db.GetSecretSnapshotRow) api.SecretResponse {
+	return secretResponse(record.Name, record.CreatedAt, record.RotatedAt, record.RevokedAt)
 }
 
-func secretSnapshotResponse(record db.GetSecretSnapshotRow) (api.SecretResponse, error) {
-	return secretResponse(
-		record.Name,
-		record.Status,
-		record.CreatedAt,
-		record.RotatedAt,
-		record.RevokedAt,
-	)
-}
-
+// A Secret is revoked exactly while revoked_at is set.
 func secretResponse(
 	name string,
-	state string,
 	createdAt pgtype.Timestamptz,
 	rotatedAt pgtype.Timestamptz,
 	revokedAt pgtype.Timestamptz,
-) (api.SecretResponse, error) {
-	status, err := secretPublicStatus(state)
-	if err != nil {
-		return api.SecretResponse{}, err
+) api.SecretResponse {
+	status := api.SecretStatusActive
+	if revokedAt.Valid {
+		status = api.SecretStatusRevoked
 	}
 	createdAt.Time = createdAt.Time.UTC()
 	rotatedAt.Time = rotatedAt.Time.UTC()
@@ -489,16 +448,5 @@ func secretResponse(
 		CreatedAt: pgvalue.Time(createdAt),
 		RotatedAt: pgvalue.TimePtr(rotatedAt),
 		RevokedAt: pgvalue.TimePtr(revokedAt),
-	}, nil
-}
-
-func secretPublicStatus(state string) (api.SecretStatus, error) {
-	switch state {
-	case "active":
-		return api.SecretStatusActive, nil
-	case "revoked":
-		return api.SecretStatusRevoked, nil
-	default:
-		return "", fmt.Errorf("secret state %q has no public projection", state)
 	}
 }

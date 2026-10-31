@@ -71,7 +71,6 @@ type Querier interface {
 	GetCommandByIdempotencyReceipt(ctx context.Context, arg GetCommandByIdempotencyReceiptParams) (Command, error)
 	GetCommandLogState(ctx context.Context, arg GetCommandLogStateParams) (Command, error)
 	GetCommandTarget(ctx context.Context, arg GetCommandTargetParams) (GetCommandTargetRow, error)
-	GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecretValueParams) (SecretVersion, error)
 	GetDeviceCodeByUserCodeHash(ctx context.Context, userCodeHash []byte) (DeviceCode, error)
 	GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	GetEnvironment(ctx context.Context, arg GetEnvironmentParams) (Environment, error)

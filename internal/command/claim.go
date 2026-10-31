@@ -160,10 +160,19 @@ func claimNext(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, w
 			}
 			return ClaimResult{}, err
 		}
-		for _, b := range bindings {
-			if b.status != "active" {
-				return ClaimResult{}, secret.ErrDeliveryRevoked
+		if revokedRawBinding(bindings) {
+			if !c.ComputerLeaseEpoch.Valid {
+				if err = refuseRevokedDelivery(ctx, auditPolicy, tx, c); err != nil {
+					return ClaimResult{}, err
+				}
+				continue
 			}
+			// A started Command keeps running after revocation. Reattach to its
+			// existing process without delivering the revoked raw value again.
+			if err = producerStillAuthorized(ctx, tx, worker, lease, false); err != nil {
+				return ClaimResult{}, err
+			}
+			return ClaimResult{Start: &Start{TailOnly: true, Command: c, Lease: lease, RequestFingerprint: fingerprint}}, nil
 		}
 		if _, err = tx.Exec(ctx, `UPDATE commands SET computer_lease_epoch=$3,status='running',started_at=COALESCE(started_at,clock_timestamp()),
  revision=revision+CASE WHEN status='running' THEN 0 ELSE 1 END,updated_at=clock_timestamp()
@@ -204,7 +213,6 @@ func launchAvailable(ctx context.Context, tx db.DBTX, host workergroup.HostPrinc
 	err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computers c JOIN environments e ON e.id=c.environment_id
  WHERE c.environment_id=$1 AND c.id=$2 AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL
  AND c.initial_root_id IS NOT NULL AND c.preparation_failed_at IS NULL
- AND NOT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=c.environment_id AND cp.computer_id=c.id AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
  AND NOT EXISTS(SELECT 1 FROM computer_saves s WHERE s.environment_id=c.environment_id AND s.computer_id=c.id AND s.computer_lease_epoch<>$3 AND s.status IN ('requested','captured'))
  AND (NOT $4 OR EXISTS(SELECT 1 FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id JOIN worker_pools p ON p.id=h.worker_pool_id
@@ -241,7 +249,14 @@ func CheckStart(ctx context.Context, txb db.TxBeginner, host workergroup.HostPri
 			if err != nil {
 				return err
 			}
-			if !c.TerminalAt.Valid || c.OutputFenced || c.ProcessReconciledAt.Valid || !c.ComputerLeaseEpoch.Valid || c.ComputerLeaseEpoch.Int64 != lease.Epoch {
+			if !c.ComputerLeaseEpoch.Valid || c.ComputerLeaseEpoch.Int64 != lease.Epoch {
+				return pgx.ErrNoRows
+			}
+			// Tail-only covers retained output of a terminal Command and
+			// reattachment to a running one, which never launches a process.
+			retained := c.TerminalAt.Valid && !c.OutputFenced && !c.ProcessReconciledAt.Valid
+			reattach := !c.TerminalAt.Valid && (c.Status == "starting" || c.Status == "running") && !c.CancelRequestedAt.Valid
+			if !retained && !reattach {
 				return pgx.ErrNoRows
 			}
 			return producerStillAuthorized(ctx, tx, host, lease, false)
@@ -250,10 +265,8 @@ func CheckStart(ctx context.Context, txb db.TxBeginner, host workergroup.HostPri
 		if err != nil {
 			return err
 		}
-		for _, b := range bindings {
-			if b.status != "active" {
-				return secret.ErrDeliveryRevoked
-			}
+		if revokedRawBinding(bindings) {
+			return secret.ErrDeliveryRevoked
 		}
 		if err = lockComputer(ctx, tx, start.Lease.EnvironmentID, start.Lease.ComputerID); err != nil {
 			return err
@@ -270,12 +283,13 @@ func CheckStart(ctx context.Context, txb db.TxBeginner, host workergroup.HostPri
 }
 
 type runtimeBinding struct {
-	id                                      uuid.UUID
-	kind, target, mode, placeholder, status string
+	id                              uuid.UUID
+	kind, target, mode, placeholder string
+	revoked                         bool
 }
 
 func lockBindings(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]runtimeBinding, error) {
-	rows, err := tx.Query(ctx, `SELECT b.secret_id,b.placement_kind,b.placement_target,b.mode,COALESCE(b.placeholder,''),s.status
+	rows, err := tx.Query(ctx, `SELECT b.secret_id,b.placement_kind,b.placement_target,b.mode,COALESCE(b.placeholder,''),s.revoked_at IS NOT NULL
  FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
  WHERE b.environment_id=$1 AND b.computer_id=$2 ORDER BY s.id,b.placement_kind,b.placement_target FOR SHARE OF s`, env, computer)
 	if err != nil {
@@ -283,15 +297,40 @@ func lockBindings(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) ([]ru
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (runtimeBinding, error) {
 		var b runtimeBinding
-		err := row.Scan(&b.id, &b.kind, &b.target, &b.mode, &b.placeholder, &b.status)
+		err := row.Scan(&b.id, &b.kind, &b.target, &b.mode, &b.placeholder, &b.revoked)
 		return b, err
 	})
+}
+
+// A revoked raw binding refuses every new delivery of its value. Protected
+// bindings deliver only placeholders and resolve the Secret per request.
+func revokedRawBinding(bindings []runtimeBinding) bool {
+	for _, b := range bindings {
+		if b.mode == "raw" && b.revoked {
+			return true
+		}
+	}
+	return false
+}
+
+// refuseRevokedDelivery fails a Command that never started because it would
+// need a revoked raw value. Started Commands are never refused or cancelled.
+func refuseRevokedDelivery(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, c db.Command) error {
+	if _, err := tx.Exec(ctx, `UPDATE commands SET status='failed',failure_reason='guest_failure',
+ error='{"code":"secret_unavailable","retryable":false}'::jsonb,terminal_at=clock_timestamp(),terminal_reason_code='secret_unavailable',
+ result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
+ WHERE environment_id=$1 AND id=$2 AND computer_lease_epoch IS NULL AND terminal_at IS NULL`, c.EnvironmentID, c.ID); err != nil {
+		return err
+	}
+	return auditServiceFailure(ctx, tx, auditPolicy, c, audit.ControlPlane, "failed", "permission_denied")
 }
 func recordExposure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, worker workergroup.HostPrincipal, lease Lease, c db.Command, bindings []runtimeBinding) ([]secret.DeliveryEnvelope, map[string]string, error) {
 	env, id := uuid.UUID(c.EnvironmentID.Bytes), uuid.UUID(c.ID.Bytes)
 	ids := []uuid.UUID{}
 	for _, b := range bindings {
-		ids = append(ids, b.id)
+		if b.mode == "raw" {
+			ids = append(ids, b.id)
+		}
 	}
 	exposures, err := computer.RecordCommandExposures(ctx, tx, env, id, ids)
 	if err != nil {
@@ -299,28 +338,26 @@ func recordExposure(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.
 	}
 	actor := audit.AssignedWorker(worker.HostID, worker.HostClaimVersion, "computer", lease.ComputerID, lease.Epoch)
 	for _, exposure := range exposures {
-		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: env, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, RevocationGeneration: 0, CommandID: id}}); err != nil {
+		if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: actor, EnvironmentID: env, ComputerID: pgvalue.MustUUIDValue(c.ComputerID), Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: c.CallerKind, InitiatorID: pgvalue.MustUUIDValue(c.CallerID)}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, CommandID: id}}); err != nil {
 			return nil, nil, err
 		}
 	}
 	result := make([]secret.DeliveryEnvelope, 0, len(bindings))
 	protected := map[string]string{}
 	for _, b := range bindings {
+		if b.mode == "protected" {
+			protected[b.target] = secret.RuntimeSelector(env, "command", id, 0, b.placeholder)
+			continue
+		}
 		var version uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT version_id FROM secret_exposures WHERE environment_id=$1 AND command_id=$2 AND secret_id=$3`, env, id, b.id).Scan(&version); err != nil {
 			return nil, nil, err
-		}
-		if b.status != "active" {
-			return nil, nil, secret.ErrDeliveryRevoked
 		}
 		v, err := db.New(tx).GetSecretVersion(ctx, db.GetSecretVersionParams{EnvironmentID: c.EnvironmentID, SecretID: pgvalue.UUID(b.id), VersionID: pgvalue.UUID(version)})
 		if err != nil {
 			return nil, nil, err
 		}
-		result = append(result, secret.DeliveryEnvelope{Mode: b.mode, PlacementKind: b.kind, PlacementTarget: b.target, Secret: db.Secret{ID: pgvalue.UUID(b.id), EnvironmentID: c.EnvironmentID, Status: b.status}, Version: v})
-		if b.mode == "protected" {
-			protected[b.target] = secret.RuntimeSelector(env, "command", id, 0, b.placeholder)
-		}
+		result = append(result, secret.DeliveryEnvelope{Mode: b.mode, PlacementKind: b.kind, PlacementTarget: b.target, Secret: db.Secret{ID: pgvalue.UUID(b.id), EnvironmentID: c.EnvironmentID}, Version: v})
 	}
 	if len(protected) > 0 {
 		var certificate []byte

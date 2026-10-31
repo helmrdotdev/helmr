@@ -25,14 +25,14 @@ type Image struct {
 const usableImageSecretsSQL = `NOT EXISTS (SELECT 1 FROM secret_bindings binding WHERE binding.environment_id=spec.environment_id AND binding.image_spec_id=spec.id AND NOT EXISTS (
    SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
    WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND x.secret_id=binding.secret_id
-     AND s.status='active' AND s.current_version_id=x.version_id))
+     AND s.revoked_at IS NULL AND s.current_version_id=x.version_id))
  AND NOT EXISTS (SELECT 1 FROM secret_exposures x JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.status<>'active' OR s.current_version_id<>x.version_id))`
+   WHERE x.environment_id=p.environment_id AND x.image_build_id=p.id AND (s.revoked_at IS NOT NULL OR s.current_version_id<>x.version_id))`
 
 // PinImage resolves an admitted Computer's preparation without creating
 // another Computer or changing its reservation. Selection serializes with Secret
-// rotation/revocation. An existing pin is returned unchanged after rotation;
-// execution authorization separately enforces revocation of its retained lineage.
+// rotation/revocation. An existing pin is returned unchanged after rotation or
+// revocation; only new pins require every prepared Secret to be current.
 func PinImage(ctx context.Context, pool db.TxBeginner, env, computer uuid.UUID) (Image, error) {
 	var result Image
 	if env == uuid.Nil() || computer == uuid.Nil() {
@@ -157,18 +157,4 @@ func readComputerImage(ctx context.Context, tx pgx.Tx, env, spec, image uuid.UUI
 		return Image{}, uuid.Nil(), ErrConflict
 	}
 	return result, rootID, nil
-}
-
-// Execution checks may overlap a revoke and linearize before it. A check after
-// the revoke commits always denies, without waiting for lifecycle reconciliation.
-// This is not physical-stop evidence and is not used to block cleanup controls.
-func RequireSecretsNotRevoked(ctx context.Context, tx pgx.Tx, env, computer uuid.UUID) error {
-	var revoked bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM (`+db.RevokedComputerSecretsSQL+`) revoked_secrets WHERE environment_id=$1 AND computer_id=$2)`, env, computer).Scan(&revoked); err != nil {
-		return err
-	}
-	if revoked {
-		return ErrDenied
-	}
-	return nil
 }

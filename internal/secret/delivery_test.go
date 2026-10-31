@@ -25,7 +25,6 @@ func TestOpenDeliveriesUsesRecordedVersionAfterRotation(t *testing.T) {
 	secret := db.Secret{
 		ID:               pgvalue.UUID(secretID),
 		EnvironmentID:    pgvalue.UUID(environmentID),
-		Status:           "active",
 		CurrentVersionID: pgvalue.UUID(currentVersionID),
 	}
 	version := db.SecretVersion{
@@ -77,7 +76,6 @@ func TestOpenDeliveriesRejectsAuthorityMismatch(t *testing.T) {
 		Secret: db.Secret{
 			ID:            pgvalue.UUID(secretID),
 			EnvironmentID: pgvalue.UUID(environmentID),
-			Status:        "active",
 		},
 		Version: db.SecretVersion{
 			ID:       pgvalue.UUID(versionID),
@@ -89,7 +87,6 @@ func TestOpenDeliveriesRejectsAuthorityMismatch(t *testing.T) {
 		edit func(*DeliveryEnvelope)
 	}{
 		{name: "wrong environment", edit: func(value *DeliveryEnvelope) { value.Secret.EnvironmentID = pgvalue.UUID(uuid.New()) }},
-		{name: "revoked Secret", edit: func(value *DeliveryEnvelope) { value.Secret.Status = "revoked" }},
 		{name: "wrong Secret version owner", edit: func(value *DeliveryEnvelope) { value.Version.SecretID = pgvalue.UUID(uuid.New()) }},
 		{name: "invalid placement", edit: func(value *DeliveryEnvelope) { value.PlacementKind = "other" }},
 	} {

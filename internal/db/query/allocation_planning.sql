@@ -14,7 +14,7 @@ WITH RECURSIVE held AS (
  JOIN LATERAL (SELECT cpu_millis,memory_bytes FROM template_definitions d WHERE d.environment_id=p.environment_id AND d.image_spec_id=p.image_spec_id ORDER BY deployment_id,template_id LIMIT 1) d ON true
  WHERE p.status='queued' AND p.worker_host_id IS NULL AND p.deadline_at>statement_timestamp()
  AND NOT EXISTS(SELECT 1 FROM secret_bindings binding JOIN secrets secret ON secret.environment_id=binding.environment_id AND secret.id=binding.secret_id
- WHERE binding.environment_id=p.environment_id AND binding.image_spec_id=p.image_spec_id AND secret.status='revoked')
+ WHERE binding.environment_id=p.environment_id AND binding.image_spec_id=p.image_spec_id AND secret.revoked_at IS NOT NULL)
  UNION ALL
  SELECT c.environment_id,c.id,'computer',c.cpu_millis,c.memory_bytes,h.worker_group_id,COALESCE(cp.vm_platform_id,''),
  COALESCE(source.vm_vcpu_count,0),COALESCE(source.cpu_config_digest,''),COALESCE(source.reserved_cpu_millis,0),
@@ -26,19 +26,6 @@ WITH RECURSIVE held AS (
  WHERE NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=c.environment_id AND live.computer_id=c.id AND live.fenced_at IS NULL AND NOT EXISTS(SELECT 1 FROM checkpoints retained WHERE retained.environment_id=live.environment_id AND retained.computer_id=live.computer_id AND retained.source_lease_epoch=live.epoch AND retained.status='ready')) AND (
  c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
  AND (c.execution_deadline_at IS NULL OR c.execution_deadline_at>statement_timestamp())
- AND NOT EXISTS(SELECT 1 FROM (SELECT c.environment_id,c.id AS computer_id,x.secret_id
-    FROM computers c JOIN images i ON (i.environment_id,i.id)=(c.environment_id,c.image_id)
-    JOIN secret_exposures x ON (x.environment_id,x.image_build_id)=(i.environment_id,i.image_build_id)
-    JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id)
-    WHERE s.status='revoked'
-    UNION
-    SELECT p.environment_id,p.computer_id,x.secret_id FROM secret_exposures x
-    JOIN session_processes p ON (p.environment_id,p.session_id,p.epoch)=(x.environment_id,x.session_id,x.process_epoch)
-    JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE s.status='revoked'
-    UNION
-    SELECT c.environment_id,c.computer_id,x.secret_id FROM secret_exposures x
-    JOIN commands c ON (c.environment_id,c.id)=(x.environment_id,x.command_id)
-    JOIN secrets s ON (s.environment_id,s.id)=(x.environment_id,x.secret_id) WHERE s.status='revoked') revoked WHERE revoked.environment_id=c.environment_id AND revoked.computer_id=c.id)
  AND (c.execution_deadline_at>statement_timestamp() OR (cp.id IS NOT NULL) OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=c.environment_id AND save.id=c.recovery_save_id AND save.root_id IS NOT NULL AND save.status='published') OR (c.initial_root_id IS NOT NULL AND c.image_id IS NOT NULL AND c.recovery_save_id IS NULL
   AND NOT EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=c.environment_id AND l.computer_id=c.id AND l.fenced_at IS NULL)))
  AND (c.execution_deadline_at>statement_timestamp() OR EXISTS(SELECT 1 FROM computer_controls control WHERE control.environment_id=c.environment_id AND control.computer_id=c.id AND control.kind='wake' AND control.status='accepted')

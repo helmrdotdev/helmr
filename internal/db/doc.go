@@ -10,7 +10,4 @@
 // a generated query file belongs to the owner whose writes it performs. Reads
 // may cross owners. Models are generated only for tables a generated query
 // reads; owners that write their own SQL scan into their own types.
-//
-// RevokedComputerSecretsSQL is the one shared relation; its sqlc copy in
-// query/allocation_planning.sql is kept identical by a test here.
 package db

@@ -73,7 +73,19 @@ type ComputerListItem struct {
 	LastActivityAt      time.Time                 `json:"last_activity_at"`
 	CreatedAt           time.Time                 `json:"created_at"`
 	UpdatedAt           time.Time                 `json:"updated_at"`
+	// SecretExposure is present only when the list is filtered by Secret.
+	SecretExposure ComputerSecretExposure `json:"secret_exposure,omitempty"`
 }
+
+// ComputerSecretExposure says how a Computer came to hold a raw Secret value:
+// "received" directly by a process or Command, or "image" when its image was
+// prepared with the value, so the Computer may hold it.
+type ComputerSecretExposure string
+
+const (
+	ComputerSecretExposureReceived ComputerSecretExposure = "received"
+	ComputerSecretExposureImage    ComputerSecretExposure = "image"
+)
 
 type ListComputersResponse struct {
 	Computers  []ComputerListItem `json:"computers"`

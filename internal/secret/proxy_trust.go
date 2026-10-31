@@ -19,6 +19,10 @@ import (
 
 var ErrProxyTrustExpired = errors.New("computer Secret transport has expired; create a new Computer")
 
+// ErrProtectedRevoked refuses a protected request that needs a revoked Secret.
+// Rotating the Secret resumes protected requests without restarting work.
+var ErrProtectedRevoked = errors.New("protected Secret is revoked; rotate it to resume")
+
 // ErrWorkerClaimsStale refuses material captured for a Worker credential whose
 // claim versions changed. It is a freshness signal: the Worker re-authenticates.
 var ErrWorkerClaimsStale = errors.New("worker authentication claims are stale")

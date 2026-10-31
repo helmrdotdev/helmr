@@ -328,6 +328,8 @@ func (s *Server) writeAgentHTTPError(w http.ResponseWriter, r *http.Request, err
 		s.writeOperationError(w, r, conflict(codedError{code: "control_scope_changed", message: "The affected Sessions or Commands changed. Close this confirmation and review the scope again."}))
 	case errors.Is(err, session.ErrConflict), errors.Is(err, computer.ErrConflict):
 		s.writeOperationError(w, r, conflict(codedError{code: "idempotency_conflict", message: "request conflicts with its recorded identity"}))
+	case errors.Is(err, computer.ErrSecretUnavailable):
+		s.writeOperationError(w, r, conflict(codedError{code: "secret_unavailable", message: "A raw Secret binding on this Computer is revoked; rotate the Secret to start new work"}))
 	case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady), errors.Is(err, agent.ErrNotReady), errors.Is(err, session.ErrTerminal), errors.Is(err, computer.ErrTerminal):
 		// Unavailability also includes a closed Session. The code distinguishes
 		// admission state from conflicting identity without promising retryability.

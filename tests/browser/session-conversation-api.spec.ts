@@ -135,7 +135,7 @@ test("real API rejects a loaded question after organization scope loss and accep
   await expect(recordedAnswer(page)).toContainText("retained draft");
 });
 
-test("real Secret revocation preserves queued input for inspection and explicit cancellation", async ({ page }, testInfo) => {
+test("real Secret revocation stops provision only; running work and queued input continue", async ({ page }, testInfo) => {
   const f = await conversation(page);
   await f.grantEnvironmentPermissions(["secrets.read", "secrets.create", "secrets.rotate", "secrets.revoke"]);
   const created = await page.request.post(`${f.base}/secrets`, {
@@ -143,57 +143,35 @@ test("real Secret revocation preserves queued input for inspection and explicit 
   });
   expect(created.ok(), await created.text()).toBeTruthy();
   const secret = await created.json() as { secret: string };
-  // Exposure is a runtime fixture; revocation and its reconciliation use the real owners.
+  // Exposure is a runtime fixture; revocation uses the real owners.
   f.seed("expose-secret", secret.secret);
   await page.goto(f.sessionURL);
   await expandTurns(page);
   const enqueue = await page.request.post(`${f.base}/sessions/${f.sessionID}/enqueue`, { data: { input: [{ type: "text", text: "retained after revocation" }], idempotency_key: crypto.randomUUID() } });
   expect(enqueue.ok(), await enqueue.text()).toBeTruthy();
-  await page.reload();
-  await expandTurns(page);
-  await expect(page.getByText("retained after revocation", { exact: true }).first()).toBeVisible();
+  const turns = async () => (await (await page.request.get(`${f.base}/sessions/${f.sessionID}/turns`)).json()).turns.map((turn: { status: string }) => turn.status);
+  const before = await turns();
   await page.goto(`/settings/secrets?${f.scope}`);
   await page.getByRole("button", { name: "Actions for BROWSER_REVOCATION" }).click();
   await page.getByRole("menuitem", { name: "Revoke", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Revoke secret" });
-  await expect(dialog).toContainText("Pending inputs are retained but cannot run on affected computers.");
+  await expect(dialog).toContainText("Running work continues");
   await dialog.getByRole("button", { name: "Revoke", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText("Revoked", { exact: true })).toBeVisible();
-  const turns = async () => (await (await page.request.get(`${f.base}/sessions/${f.sessionID}/turns`)).json()).turns;
-  await expect.poll(async () => (await turns()).map((turn: { status: string }) => turn.status)).toEqual(["interrupted", "queued"]);
+  // Revocation changes only the Secret: no interruption, hold or cancelled ask.
+  expect(await turns()).toEqual(before);
+  const session = await (await page.request.get(`${f.base}/sessions/${f.sessionID}`)).json();
+  expect(session.holds).toEqual([]);
+  expect((await (await page.request.get(f.askBase)).json()).status).toBe("pending");
   await page.goto(f.sessionURL);
   await expandTurns(page);
-  await expect(page.getByText("Computer exposed to a revoked Secret", { exact: false })).toBeVisible();
   await expect(page.getByText("retained after revocation", { exact: true }).first()).toBeVisible();
-  expect((await (await page.request.get(f.askBase)).json()).status).toBe("cancelled");
-  await page.reload();
-  await expandTurns(page);
-  await expect(page.getByText("Send work from the CLI.", { exact: true })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("real-api-secret-blocked-queue.png"), fullPage: true });
-  const held = await (await page.request.get(`${f.base}/sessions/${f.sessionID}`)).json();
-  const release = await page.request.post(`${f.base}/sessions/${f.sessionID}/resume`, { data: { hold_id: held.holds[0].id, idempotency_key: crypto.randomUUID() } });
-  expect(release.ok(), await release.text()).toBeTruthy();
-  const released = await (await page.request.get(`${f.base}/sessions/${f.sessionID}`)).json();
-  expect(released.status).toBe("open");
-  expect(released.holds).toEqual([]);
-  const rejected = await page.request.post(`${f.base}/sessions/${f.sessionID}/enqueue`, {
-    data: { input: [{ type: "text", text: "must not bypass revoked Computer" }], idempotency_key: crypto.randomUUID() },
-  });
-  expect(rejected.status()).toBe(409);
-  expect((await rejected.json()).error.code).toBe("admission_unavailable");
-  expect((await turns()).map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
-    ["interrupted", [{ type: "text", text: "retained" }]], ["queued", [{ type: "text", text: "retained after revocation" }]],
-  ]);
-  await page.getByRole("button", { name: "Session actions", exact: true }).click();
-  await page.getByRole("menu", { name: "Session actions" }).getByRole("menuitem", { name: "Cancel session", exact: true }).click();
-  const cancel = page.getByRole("dialog", { name: "Cancel session", exact: true });
-  await cancel.getByRole("button", { name: "Cancel session", exact: true }).click();
-  await expect(cancel).toHaveCount(0);
-  await expect.poll(async () => (await turns()).map((turn: { status: string; input: unknown }) => [turn.status, turn.input])).toEqual([
-    ["interrupted", [{ type: "text", text: "retained" }]], ["cancelled", [{ type: "text", text: "retained after revocation" }]],
-  ]);
-  await page.reload();
-  await expandTurns(page);
-  await expect(page.getByText("retained after revocation", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Computer exposed to a revoked Secret", { exact: false })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("real-api-secret-revoked-running.png"), fullPage: true });
+  // Rotating the revoked Secret reactivates the same identity.
+  const rotated = await page.request.post(`${f.base}/secrets/BROWSER_REVOCATION/rotate`, { data: { value: "synthetic-rotated-value" } });
+  expect(rotated.ok(), await rotated.text()).toBeTruthy();
+  expect((await rotated.json()).status).toBe("active");
+  expect(await turns()).toEqual(before);
 });

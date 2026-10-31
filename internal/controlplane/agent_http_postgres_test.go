@@ -417,13 +417,8 @@ func TestAgentHTTPAdmission(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE api_keys SET revoked_at=clock_timestamp() WHERE token_hash=$1`, auth.HashAPIKey(starter))
 	call("/v1/sessions", starter, `{"input":[{"type":"text","text":"5"}],"idempotency_key":"key-start"}`, http.StatusUnauthorized)
-	// A revoked Computer cannot run retained input, but current control authority
-	// can still cancel it over either external transport.
-	var retainedComputer uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM sessions WHERE id=$1`, first.SessionID).Scan(&retainedComputer); err != nil {
-		t.Fatal(err)
-	}
-	f.PinRevokedImage(t, retainedComputer)
+	// Retained input stays readable, and current control authority can cancel
+	// it over either external transport.
 	reader := issue(auth.PermissionSessionsRead)
 	for _, transport := range []struct{ path, token string }{{base + "/sessions/" + first.SessionID, viewer}, {"/v1/sessions/" + first.SessionID, reader}} {
 		response := httpFixture.request(t, http.MethodGet, transport.path, transport.token, "")

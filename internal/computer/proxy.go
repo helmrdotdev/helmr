@@ -33,9 +33,6 @@ const computerProxyAuthority = `WITH authority AS (
    AND EXISTS(SELECT 1 FROM worker_pools p WHERE p.id=h.worker_pool_id AND p.status='active')))
  AND c.deleted_at IS NULL AND c.integrity_fault_at IS NULL AND c.preparation_failed_at IS NULL
  AND NOT EXISTS(SELECT 1 FROM image_builds p WHERE p.allocation_id=l.allocation_id)
- AND NOT EXISTS(SELECT 1 FROM (` + db.RevokedComputerSecretsSQL + `) r WHERE r.environment_id=c.environment_id AND r.computer_id=c.id)
- AND NOT EXISTS(SELECT 1 FROM secret_bindings b JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
-   WHERE b.environment_id=c.environment_id AND b.computer_id=c.id AND s.status<>'active')
 ) `
 
 type ProxyTrust struct {
@@ -67,10 +64,11 @@ func CaptureProxyTrust(ctx context.Context, database db.DBTX, host workergroup.H
 	return result, nil
 }
 
-// CaptureProtectedSecrets resolves a logical owner pin only while that
-// owner remains eligible on the requesting physical lease.
-// Origin, current revocation, complete selector coverage and expiry remain checked
-// for every request, even when the host reuses a previously issued TLS leaf.
+// CaptureProtectedSecrets resolves each Secret's current version for a live
+// owner on the requesting physical lease. Origin, revocation, complete selector
+// coverage and expiry are checked for every request, even when the host reuses
+// a previously issued TLS leaf, so rotation takes effect on the next request.
+// Revocation of one Secret never affects requests that need only other Secrets.
 func CaptureProtectedSecrets(ctx context.Context, database db.DBTX, host workergroup.HostPrincipal, instance uuid.UUID, origin string, selectors []string) ([]secret.ProtectedCapture, error) {
 	canonical, err := secretbinding.CanonicalOrigin(origin)
 	if err != nil || canonical != origin {
@@ -90,12 +88,11 @@ func CaptureProtectedSecrets(ctx context.Context, database db.DBTX, host workerg
  WHERE c.status IN ('starting','running') AND c.cancel_requested_at IS NULL
 ), candidates AS (
  SELECT 'hlmr_protected_'||encode(sha256(convert_to('helmr.runtime-secret-selector.v1|'||a.environment_id::text||'|'||o.kind||'|'||o.owner_id::text||'|'||o.owner_epoch::text||'|'||b.placeholder,'UTF8')),'hex') AS placeholder,
- a.environment_id,b.secret_id,x.version_id,v.version,v.nonce,v.ciphertext,a.certificate,a.not_after,a.authorized_at,a.claims_current
+ a.environment_id,b.secret_id,v.id AS version_id,v.version,v.nonce,v.ciphertext,a.certificate,a.not_after,a.authorized_at,a.claims_current,s.revoked_at IS NOT NULL AS revoked
  FROM authority a JOIN owners o ON o.environment_id=a.environment_id AND o.computer_id=a.id
  JOIN secret_bindings b ON b.environment_id=a.environment_id AND b.computer_id=a.id
- JOIN secret_exposures x ON x.environment_id=a.environment_id AND x.secret_id=b.secret_id
- AND ((o.kind='process' AND x.session_id=o.owner_id AND x.process_epoch=o.owner_epoch) OR (o.kind='command' AND x.command_id=o.owner_id))
- JOIN secret_versions v ON v.secret_id=x.secret_id AND v.id=x.version_id
+ JOIN secrets s ON (s.environment_id,s.id)=(b.environment_id,b.secret_id)
+ JOIN secret_versions v ON v.secret_id=s.id AND v.id=s.current_version_id
  WHERE a.status='active' AND b.mode='protected' AND $8=ANY(b.allowed_origins)
  AND NOT EXISTS(SELECT 1 FROM checkpoints cp WHERE cp.environment_id=a.environment_id AND cp.computer_id=a.id
  AND (cp.status IN ('capturing','sealed','ready','restoring','aborting') OR (cp.status='consumed' AND cp.controls_reconciled_at IS NULL)))
@@ -103,21 +100,33 @@ func CaptureProtectedSecrets(ctx context.Context, database db.DBTX, host workerg
 	if err != nil {
 		return nil, err
 	}
-	result, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (secret.ProtectedCapture, error) {
-		var result secret.ProtectedCapture
-		err := row.Scan(&result.Placeholder, &result.EnvironmentID, &result.SecretID, &result.VersionID, &result.Version, &result.Nonce, &result.Ciphertext, &result.Certificate, &result.NotAfter, &result.AuthorizedAt, &result.ClaimsCurrent)
-		return result, err
+	type candidate struct {
+		capture secret.ProtectedCapture
+		revoked bool
+	}
+	candidates, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (candidate, error) {
+		var c candidate
+		r := &c.capture
+		err := row.Scan(&r.Placeholder, &r.EnvironmentID, &r.SecretID, &r.VersionID, &r.Version, &r.Nonce, &r.Ciphertext, &r.Certificate, &r.NotAfter, &r.AuthorizedAt, &r.ClaimsCurrent, &c.revoked)
+		return c, err
 	})
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range result {
-		if !r.ClaimsCurrent {
+	result := make([]secret.ProtectedCapture, 0, len(candidates))
+	revoked := false
+	for _, c := range candidates {
+		if !c.capture.ClaimsCurrent {
 			return nil, workergroup.ErrStaleClaims
 		}
+		revoked = revoked || c.revoked
+		result = append(result, c.capture)
 	}
 	if len(result) != len(selectors) {
 		return nil, ErrDenied
+	}
+	if revoked {
+		return nil, secret.ErrProtectedRevoked
 	}
 	return result, nil
 }

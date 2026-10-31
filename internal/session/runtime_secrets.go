@@ -64,31 +64,18 @@ func RecordSessionStartExposure(ctx context.Context, auditPolicy auditpolicy.Pol
 			return err
 		}
 		ids := []uuid.UUID{}
+		raw := []uuid.UUID{}
 		for _, b := range bindings {
 			ids = append(ids, b.secret)
+			if b.mode == "raw" {
+				raw = append(raw, b.secret)
+			}
 		}
 		// Match the stable Secret lock order used by revocation and preparation before
-		// acquiring Computer/Session owners. Duplicate placements share one version.
-		rows, err := tx.Query(ctx, `SELECT id FROM secrets WHERE environment_id=$1 AND id=ANY($2::uuid[]) AND status='active' ORDER BY id FOR SHARE`, e.EnvironmentID, ids)
-		if err != nil {
+		// acquiring Computer/Session owners. The start check below then refuses a
+		// revoked raw binding; protected bindings resolve per request.
+		if _, err := tx.Exec(ctx, `SELECT id FROM secrets WHERE environment_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR SHARE`, e.EnvironmentID, ids); err != nil {
 			return err
-		}
-		active, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (uuid.UUID, error) {
-			var id uuid.UUID
-			err := row.Scan(&id)
-			return id, err
-		})
-		if err != nil {
-			return err
-		}
-		available := map[uuid.UUID]bool{}
-		for _, id := range active {
-			available[id] = true
-		}
-		for _, b := range bindings {
-			if !available[b.secret] {
-				return ErrDenied
-			}
 		}
 		if err = checkSessionStart(ctx, tx, host, e, attachment, &result.Start); err != nil {
 			return err
@@ -96,7 +83,7 @@ func RecordSessionStartExposure(ctx context.Context, auditPolicy auditpolicy.Pol
 		if result.Start.ComputerID != computerID {
 			return ErrDenied
 		}
-		exposures, err := computer.RecordSessionExposures(ctx, tx, e.EnvironmentID, e.SessionID, e.ProcessEpoch, ids)
+		exposures, err := computer.RecordSessionExposures(ctx, tx, e.EnvironmentID, e.SessionID, e.ProcessEpoch, raw)
 		if err != nil {
 			return err
 		}
@@ -105,21 +92,22 @@ func RecordSessionStartExposure(ctx context.Context, auditPolicy auditpolicy.Pol
 			return err
 		}
 		for _, exposure := range exposures {
-			if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: runtimeAuditEvidence(Execution{SessionID: e.SessionID, AuthorityGeneration: result.Start.Authority.Generation, ProcessEpoch: e.ProcessEpoch, WorkerHostID: e.WorkerHostID, AuthenticatedHostVersion: e.AuthenticatedHostVersion}), EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, ComputerID: computerID, Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: origin.kind(), InitiatorID: origin.id()}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID, RevocationGeneration: 0}}); err != nil {
+			if err = audit.Append(ctx, tx, auditPolicy, audit.Event{Evidence: runtimeAuditEvidence(Execution{SessionID: e.SessionID, AuthorityGeneration: result.Start.Authority.Generation, ProcessEpoch: e.ProcessEpoch, WorkerHostID: e.WorkerHostID, AuthenticatedHostVersion: e.AuthenticatedHostVersion}), EnvironmentID: e.EnvironmentID, SessionID: e.SessionID, ComputerID: computerID, Action: "secret.exposed", TargetKind: "secret", TargetID: exposure.SecretID, Causality: audit.Causality{InitiatorKind: origin.kind(), InitiatorID: origin.id()}, Details: audit.SecretExposureDetails{ExposureID: exposure.ID, VersionID: exposure.VersionID}}); err != nil {
 				return err
 			}
 		}
 		result.Secrets = make([]computer.ExposedSecret, 0, len(bindings))
 		result.ProtectedEnv = map[string]string{}
 		for _, b := range bindings {
+			if b.mode == "protected" {
+				result.ProtectedEnv[b.target] = secret.RuntimeSelector(e.EnvironmentID, "process", e.SessionID, e.ProcessEpoch, b.placeholder)
+				continue
+			}
 			value := computer.ExposedSecret{Target: b.target, Kind: b.kind, Mode: b.mode, AllowedOrigins: b.origins, SecretID: b.secret}
 			if err = tx.QueryRow(ctx, `SELECT x.version_id,v.version,v.nonce,v.ciphertext FROM secret_exposures x JOIN secret_versions v ON v.secret_id=x.secret_id AND v.id=x.version_id WHERE x.environment_id=$1 AND x.session_id=$2 AND x.process_epoch=$3 AND x.secret_id=$4`, e.EnvironmentID, e.SessionID, e.ProcessEpoch, b.secret).Scan(&value.VersionID, &value.Version, &value.Nonce, &value.Ciphertext); err != nil {
 				return err
 			}
 			result.Secrets = append(result.Secrets, value)
-			if b.mode == "protected" {
-				result.ProtectedEnv[b.target] = secret.RuntimeSelector(e.EnvironmentID, "process", e.SessionID, e.ProcessEpoch, b.placeholder)
-			}
 		}
 		if len(result.ProtectedEnv) > 0 {
 			var expiry time.Time

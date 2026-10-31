@@ -15,13 +15,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// revokedCommands seeds running Commands on a Computer whose Secret binding is
-// revoked, so every one is a recovery candidate.
-func revokedCommands(t *testing.T, f sessiontest.Fixture, count int) []uuid.UUID {
+// lostWriterCommands seeds running Commands whose Computer lease expired, so
+// every one is a recovery candidate whose writer was lost.
+func lostWriterCommands(t *testing.T, f sessiontest.Fixture, count int) []uuid.UUID {
 	t.Helper()
-	secretID := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secrets(id,environment_id,name,status,revoked_at) VALUES($1,$2,'TOKEN','revoked',clock_timestamp())`, secretID, f.Environment)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO secret_bindings(environment_id,computer_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.Environment, f.Computer, secretID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND computer_id=$2 AND epoch=1`, f.Environment, f.Computer)
 	ids := make([]uuid.UUID, 0, count)
 	for i := range count {
 		id := uuid.NewV7()
@@ -35,7 +33,7 @@ func revokedCommands(t *testing.T, f sessiontest.Fixture, count int) []uuid.UUID
 func convergedCount(t *testing.T, f sessiontest.Fixture) int {
 	t.Helper()
 	var n int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM commands WHERE environment_id=$1 AND cancel_requested_at IS NOT NULL`, f.Environment).Scan(&n); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM commands WHERE environment_id=$1 AND status='lost' AND terminal_at IS NOT NULL`, f.Environment).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	return n
@@ -133,14 +131,13 @@ func newPoisonDB(pool db.TxDB, poisoned ...uuid.UUID) poisonDB {
 	return poisonDB{poisonExecutor: &poisonExecutor{inner: pool, poisoned: set}, pool: pool}
 }
 
-// TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures is the progress
-// evidence behind retiring the targeted revocation notification: with more
+// TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures: with more
 // candidates than one page holds and failing candidates at the head of the
 // order, one pass still reaches every other Command.
 func TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures(t *testing.T) {
 	f := sessiontest.New(t)
 	const total, page = 600, 256
-	ids := revokedCommands(t, f, total)
+	ids := lostWriterCommands(t, f, total)
 	poisoned := []uuid.UUID{ids[0], ids[1], ids[300]}
 	database := newPoisonDB(f.Pool, poisoned...)
 
@@ -167,9 +164,9 @@ func TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures(t *testing.T)
 		t.Fatalf("converged %d, want every candidate except the %d failing ones", got, len(poisoned))
 	}
 	for _, id := range poisoned {
-		var requested bool
-		if err := f.Pool.QueryRow(t.Context(), `SELECT cancel_requested_at IS NOT NULL FROM commands WHERE id=$1`, id).Scan(&requested); err != nil || requested {
-			t.Fatalf("poisoned Command %s converged: %v %v", id, requested, err)
+		var settled bool
+		if err := f.Pool.QueryRow(t.Context(), `SELECT terminal_at IS NOT NULL FROM commands WHERE id=$1`, id).Scan(&settled); err != nil || settled {
+			t.Fatalf("poisoned Command %s converged: %v %v", id, settled, err)
 		}
 	}
 	// A second pass finds only the failing candidates again: bounded work,
@@ -191,7 +188,7 @@ func TestRecoveryPassVisitsEveryCandidateDespitePersistentFailures(t *testing.T)
 func TestRecoveryPassRestartsFromTheBeginningAfterInterruption(t *testing.T) {
 	f := sessiontest.New(t)
 	const total, page = 300, 100
-	revokedCommands(t, f, total)
+	lostWriterCommands(t, f, total)
 	position, more, err := RecoverBatch(t.Context(), auditpolicy.Policy{
 		RetentionSeconds: 3600,
 	}, f.Pool, RecoveryPosition{}, page)
@@ -228,7 +225,7 @@ func TestRecoveryPassRestartsFromTheBeginningAfterInterruption(t *testing.T) {
 		t.Fatalf("converged %d after restart, want %d", got, total)
 	}
 	var live bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='active' AND fenced_at IS NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer).Scan(&live); err != nil || !live {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT fenced_at IS NULL FROM computer_leases WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer).Scan(&live); err != nil || !live {
 		t.Fatalf("recovery changed the physical lease: %v %v", live, err)
 	}
 }

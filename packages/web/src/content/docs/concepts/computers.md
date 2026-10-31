@@ -114,6 +114,11 @@ bindings:
 Anything `prepare` writes to disk becomes part of the prepared image and is copied
 into every new Computer. Do not write preparation Secret values to files.
 
+Revoking a `prepareSecrets` Secret stops new preparations that need it and keeps
+images prepared with it from being used for new Computers. Existing Computers
+keep running; when the binding is raw, `helmr computer list --secret NAME` marks them as possibly holding
+the value through their image.
+
 Bindings use stable Secret IDs, never values. Runtime bindings are fixed when a
 Computer is created: it takes the definition's `secrets`, or the bindings passed
 explicitly to `client.computers.create`.

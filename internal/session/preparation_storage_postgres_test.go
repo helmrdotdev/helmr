@@ -202,7 +202,7 @@ func TestPreparationPublicationImageSequence(t *testing.T) {
 }
 
 func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
-	for _, change := range []string{"stop", "expire", "revoke"} {
+	for _, change := range []string{"stop", "expire"} {
 		t.Run(change, func(t *testing.T) {
 			p, key := newPreparationPublicationTest(t)
 			root := p.capture(t, key)
@@ -213,10 +213,6 @@ func TestPreparationPublicationRequiresLiveExecutor(t *testing.T) {
 				}
 			case "expire":
 				dbtest.MustExec(t, t.Context(), p.f.pool, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.ImageBuildID)
-			case "revoke":
-				if _, err := p.f.secrets.Revoke(t.Context(), dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, "revoke"); err != nil {
-					t.Fatal(err)
-				}
 			}
 			if err := p.publisher.Publish(t.Context(), *p.f.host(), p.ref, root, "late publish"); !errors.Is(err, computer.ErrDenied) {
 				t.Fatalf("late publication: %v", err)
@@ -252,15 +248,15 @@ func TestPreparationCertificationRechecksStorageIO(t *testing.T) {
 	}
 	guarded, _ := computer.NewImageBuildPublisher(p.f.pool, saveStatFunc(func(ctx context.Context, digest string) (cas.Object, error) {
 		// A separate transaction must complete while Stat is in flight.
-		revokeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		expireCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		if _, err := p.f.secrets.Revoke(revokeCtx, dbtest.SecretManager(t, p.f.pool, p.f.env), p.f.env, p.f.secretID, "during-stat"); err != nil {
+		if _, err := p.f.pool.Exec(expireCtx, `UPDATE image_builds SET executor_expires_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, p.f.env, p.ref.ImageBuildID); err != nil {
 			return cas.Object{}, err
 		}
 		return p.remote.Stat(ctx, digest)
 	}))
 	if err = guarded.CertifyBatch(t.Context(), *p.f.host(), p.ref, []blockformat.ObjectInspection{inspection}); !errors.Is(err, computer.ErrDenied) {
-		t.Fatalf("certified after revocation: %v", err)
+		t.Fatalf("certified after executor authority loss: %v", err)
 	}
 	object, _ := describeStoredObject(inspection)
 	var certified bool

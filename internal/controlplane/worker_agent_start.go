@@ -30,23 +30,23 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 	}
 	start, err := session.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
-		server.writeAgentWorkerError(w, r, err)
+		server.writeAgentStartError(w, r, execution, err)
 		return
 	}
 	program, err := server.sessionProgram(r.Context(), start)
 	if err != nil {
-		server.writeAgentWorkerError(w, r, err)
+		server.writeAgentStartError(w, r, execution, err)
 		return
 	}
 	exposure, err := session.RecordSessionStartExposure(r.Context(), server.auditPolicy, server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
-		server.writeAgentWorkerError(w, r, err)
+		server.writeAgentStartError(w, r, execution, err)
 		return
 	}
 	envelopes := make([]secret.DeliveryEnvelope, 0, len(exposure.Secrets))
 	for _, e := range exposure.Secrets {
 		envelopes = append(envelopes, secret.DeliveryEnvelope{Mode: e.Mode, PlacementKind: e.Kind, PlacementTarget: e.Target,
-			Secret:  db.Secret{ID: pgvalue.UUID(e.SecretID), EnvironmentID: pgvalue.UUID(execution.EnvironmentID), Status: "active"},
+			Secret:  db.Secret{ID: pgvalue.UUID(e.SecretID), EnvironmentID: pgvalue.UUID(execution.EnvironmentID)},
 			Version: db.SecretVersion{ID: pgvalue.UUID(e.VersionID), SecretID: pgvalue.UUID(e.SecretID), Version: e.Version, Nonce: e.Nonce, Ciphertext: e.Ciphertext}})
 	}
 	materials, err := server.secretDelivery.OpenDeliveries(execution.EnvironmentID, envelopes)
@@ -56,13 +56,13 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	if err != nil {
-		server.writeAgentWorkerError(w, r, err)
+		server.writeAgentStartError(w, r, execution, err)
 		return
 	}
 	deliveries, err := projectSecretDeliveries(materials)
 	defer clearComputerSecretDeliveries(deliveries)
 	if err != nil {
-		server.writeAgentWorkerError(w, r, err)
+		server.writeAgentStartError(w, r, execution, err)
 		return
 	}
 	var protected *workerapi.ProtectedEnv
@@ -73,7 +73,7 @@ func (server *Server) workerAgentStart(w http.ResponseWriter, r *http.Request) {
 	// admission check, including the exact transport that will receive setup.
 	start, err = session.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
-		server.writeAgentWorkerError(w, r, err)
+		server.writeAgentStartError(w, r, execution, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -142,7 +142,7 @@ func (server *Server) workerAgentStartRelease(w http.ResponseWriter, r *http.Req
 	}
 	start, err := session.AuthorizeSessionStart(r.Context(), server.tx, host, execution, request.AttachmentSequence)
 	if err != nil {
-		server.writeAgentWorkerError(w, r, err)
+		server.writeAgentStartError(w, r, execution, err)
 		return
 	}
 	if start.BundleDigest != request.BundleDigest {
@@ -150,4 +150,17 @@ func (server *Server) workerAgentStartRelease(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.AgentAuthorityResponse{AuthorityGeneration: start.Authority.Generation, ExpiresAt: start.Authority.ExpiresAt})
+}
+
+// A start refused for a revoked raw Secret is terminal for that start: settle
+// its queued input and stop the process before answering, so the host does not
+// retry it forever.
+func (server *Server) writeAgentStartError(w http.ResponseWriter, r *http.Request, execution session.Execution, err error) {
+	if errors.Is(err, secret.ErrDeliveryRevoked) {
+		if settleErr := session.RefuseRevokedSessionStart(r.Context(), server.auditPolicy, server.tx, execution); settleErr != nil {
+			server.writeAgentWorkerError(w, r, settleErr)
+			return
+		}
+	}
+	server.writeAgentWorkerError(w, r, err)
 }

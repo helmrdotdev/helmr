@@ -502,21 +502,18 @@ export async function runHealthyContinuation(options: { url: string; apiKey: str
    assert.equal((await holding.get({ signal })).status, "running")
    assert.deepEqual((await peer.session.get({ signal })).holds, [])
    assert.equal((await client.secrets.ref(secrets[0]!).revoke({ idempotencyKey: "revoke-exposed-raw" }, { signal })).status, "revoked")
-   peerOutcome = await holding.wait({ signal }); assert.equal(peerOutcome.status, "interrupted")
-   const held = await peer.session.get({ signal })
-   assert.equal(held.holds.length, 1)
-   assert.equal(held.holds[0]!.sessionId, peer.session.id)
-   assert.equal(held.holds[0]!.scope, "local")
-   assert.equal(held.holds[0]!.reason, "Computer exposed to a revoked Secret")
+   // Revocation stops provision only: running work and queued input continue.
    for (let sample = 0; sample < 10; sample++) {
-    const queued = await pending.get({ signal })
-    assert.equal(queued.status, "queued"); assert.equal(queued.startedAt, undefined)
-    assert.deepEqual((await peer.session.get({ signal })).holds, held.holds)
+    assert.equal((await holding.get({ signal })).status, "running")
+    assert.equal((await pending.get({ signal })).status, "queued")
+    assert.deepEqual((await peer.session.get({ signal })).holds, [])
     await delay(100, undefined, { signal })
    }
+   await holding.send(fixtureInput("release"), undefined, { signal }); peerOutcome = await holding.wait({ signal }); assert.equal(peerOutcome.status, "completed")
+   // The queued input may already have started on the same process; either way it was never refused.
    await peer.session.cancel({ idempotencyKey: "cancel-revoked-queue" }, { signal })
-   assert.equal((await pending.wait({ signal })).status, "cancelled")
-   secretRevocation = { publishedTurnIds, interruptedTurnId: holding.id, retainedTurnId: pending.id, holds: held.holds, explicitlyCancelled: true }
+   assert.ok(["cancelled", "completed", "interrupted"].includes((await pending.wait({ signal })).status))
+   secretRevocation = { publishedTurnIds, continuedTurnId: holding.id, retainedTurnId: pending.id, holds: [], explicitlyCancelled: true }
   } else {
    await holding.send(fixtureInput("release"), undefined, { signal }); peerOutcome = await holding.wait({ signal }); assert.equal(peerOutcome.status, "completed")
   }

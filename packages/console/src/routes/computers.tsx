@@ -1,4 +1,5 @@
 import { ApiError } from "../lib/api";
+import { useSearchParams } from "@solidjs/router";
 import { createInfiniteQuery } from "@tanstack/solid-query";
 import { createMemo, For, Show, type JSX } from "solid-js";
 import { SectionLayout } from "../components/SectionLayout";
@@ -7,7 +8,8 @@ import { computerHref } from "../features/computers/navigation";
 import { listTemplateDefinitions, templateResources } from "../lib/definitions";
 import { loadError } from "../lib/error";
 import { useScopeIDs } from "../lib/scope";
-import { listComputers, type ComputerListItem } from "../lib/computers";
+import { listComputers, type ComputerListItem, type ComputerSecretExposure } from "../lib/computers";
+import { Notice } from "../ui/Notice";
 import { DataTable, EmptyCell, LoadMore, RowActions } from "../ui/DataTable";
 import type { ActionMenuItem } from "../ui/ActionMenu";
 import { useCopyLink } from "../components/copyLink";
@@ -20,16 +22,29 @@ import { RelativeTime } from "../ui/RelativeTime";
 import { useAuditItem } from "../features/audit/auditLink";
 
 const COMPUTER_COLUMNS = ["Computer", "Status", "Key", "Template", "Last activity", "Created", { label: "Actions", srOnly: true }] as const;
+const SECRET_COMPUTER_COLUMNS = ["Computer", "Status", "Secret value", "Key", "Template", "Last activity", "Created", { label: "Actions", srOnly: true }] as const;
+
+const SECRET_EXPOSURE_LABELS: Record<ComputerSecretExposure, string> = {
+  received: "Received",
+  image: "May hold (image)",
+};
 const TEMPLATE_COLUMNS = ["Template", "Resources"] as const;
 
 const computersErrorMessage = (error: unknown) =>
   loadError(error, "Could not load computers.", { forbidden: "You do not have permission to view computers." });
 
-function ComputerRow(props: { computer: ComputerListItem; menu: ActionMenuItem[] }) {
+function ComputerRow(props: { computer: ComputerListItem; menu: ActionMenuItem[]; secretColumn: boolean }) {
   return (
     <tr>
       <td><IDText value={props.computer.id} mode="link" href={computerHref(props.computer.id)} /></td>
       <td><ComputerStatus computer={props.computer} /></td>
+      <Show when={props.secretColumn}>
+        <td>
+          <Show when={props.computer.secret_exposure} fallback={<EmptyCell />}>
+            {(exposure) => SECRET_EXPOSURE_LABELS[exposure()]}
+          </Show>
+        </td>
+      </Show>
       <td>
         <Show when={props.computer.key} fallback={<EmptyCell />}>
           {(key) => <code>{key()}</code>}
@@ -62,11 +77,16 @@ export function ComputerList() {
   const scope = useScopeIDs();
   const projectID = () => scope().projectID;
   const environmentID = () => scope().environmentID;
+  // `?secret=` lists only computers that received a raw value of that secret,
+  // so a secret can link to the computers that may still hold it.
+  const [params, setParams] = useSearchParams<{ secret?: string }>();
+  const secret = () => params.secret ?? "";
+  const columns = () => secret() ? SECRET_COMPUTER_COLUMNS : COMPUTER_COLUMNS;
   const computers = createInfiniteQuery(() => ({
-    queryKey: ["computers", "list", projectID(), environmentID()],
+    queryKey: ["computers", "list", projectID(), environmentID(), secret()],
     queryFn: ({ pageParam }) => listComputers(
       { projectID: projectID(), environmentID: environmentID() },
-      { cursor: pageParam || undefined, limit: 100 },
+      { secret: secret() || undefined, cursor: pageParam || undefined, limit: 100 },
     ),
     initialPageParam: "",
     getNextPageParam: (page) => page.next_cursor,
@@ -81,24 +101,29 @@ export function ComputerList() {
   return (
     <>
     <copyLink.LiveRegion />
+    <Show when={secret()}>
+      <Notice tone="info" class="mb-3">
+        Computers that received a raw value of <code>{secret()}</code>. Raw copies stay on these computers until you delete them; revoke the credential at its provider. <button type="button" class="underline" onClick={() => setParams({ secret: undefined })}>Clear filter</button>
+      </Notice>
+    </Show>
     <div class="mb-3 flex flex-col gap-2 empty:hidden"><controls.Feedback /></div>
     <QueryState
       query={computers}
-      pending={<TableSkeleton label="Loading computers" columns={COMPUTER_COLUMNS} minWidth="min-w-190" />}
+      pending={<TableSkeleton label="Loading computers" columns={columns()} minWidth="min-w-190" />}
       error={computersErrorMessage}
       empty={{
         when: (data) => data.pages.every((page) => page.computers.length === 0),
-        title: "No computers yet.",
-        hint: "Start an agent through the CLI or Slack, or create a computer with helmr computer create.",
+        title: secret() ? "No computers received a raw value of this secret." : "No computers yet.",
+        hint: secret() ? undefined : "Start an agent through the CLI or Slack, or create a computer with helmr computer create.",
       }}
     >
       {() => (
         <DataTable
-          columns={COMPUTER_COLUMNS}
+          columns={columns()}
           minWidth="min-w-190"
           footer={<LoadMore count={items().length} noun={{ one: "computer", other: "computers" }} hasMore={computers.hasNextPage} loading={computers.isFetchingNextPage} failed={computers.isFetchNextPageError} onLoadMore={() => void computers.fetchNextPage()} />}
         >
-          <For each={items()}>{(computer) => <ComputerRow computer={computer} menu={[...controls.items(computer), copyLink.item(computerHref(computer.id)), ...auditItem({ target: computer.id, target_kind: "computer" })]} />}</For>
+          <For each={items()}>{(computer) => <ComputerRow computer={computer} secretColumn={!!secret()} menu={[...controls.items(computer), copyLink.item(computerHref(computer.id)), ...auditItem({ target: computer.id, target_kind: "computer" })]} />}</For>
         </DataTable>
       )}
     </QueryState>

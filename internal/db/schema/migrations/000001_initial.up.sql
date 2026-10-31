@@ -259,18 +259,11 @@ CREATE TABLE secrets (
     id uuid PRIMARY KEY,
     environment_id uuid NOT NULL,
     name text NOT NULL CHECK (btrim(name) <> ''),
-    status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
-    current_version_id uuid,
+    current_version_id uuid NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
     revoked_at timestamptz,
     UNIQUE (environment_id, id),
     UNIQUE (environment_id, name),
-    CONSTRAINT secrets_lifecycle_check CHECK (
-        (status = 'active' AND current_version_id IS NOT NULL AND revoked_at IS NULL)
-        OR
-        (status = 'revoked' AND current_version_id IS NULL AND revoked_at IS NOT NULL)
-        ),
     FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT
 );
 

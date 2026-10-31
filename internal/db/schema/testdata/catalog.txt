@@ -728,13 +728,11 @@ column secret_versions.nonce bytea not null
 column secret_versions.secret_id uuid not null
 column secret_versions.version bigint not null
 column secrets.created_at timestamp with time zone not null default now()
-column secrets.current_version_id uuid
+column secrets.current_version_id uuid not null
 column secrets.environment_id uuid not null
 column secrets.id uuid not null
 column secrets.name text not null
 column secrets.revoked_at timestamp with time zone
-column secrets.status text not null default 'active'::text
-column secrets.updated_at timestamp with time zone not null default now()
 column session_controls.accepted_at timestamp with time zone not null default clock_timestamp()
 column session_controls.caller_id uuid not null
 column session_controls.caller_kind text not null
@@ -1915,8 +1913,6 @@ constraint secret_versions p PRIMARY KEY (id)
 constraint secret_versions u UNIQUE (secret_id, id)
 constraint secret_versions u UNIQUE (secret_id, version)
 constraint secrets c CHECK (btrim(name) <> ''::text)
-constraint secrets c CHECK (status = 'active'::text AND current_version_id IS NOT NULL AND revoked_at IS NULL OR status = 'revoked'::text AND current_version_id IS NULL AND revoked_at IS NOT NULL)
-constraint secrets c CHECK (status = ANY (ARRAY['active'::text, 'revoked'::text]))
 constraint secrets f FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE RESTRICT
 constraint secrets f secrets_current_version_fk FOREIGN KEY (id, current_version_id) REFERENCES secret_versions(secret_id, id) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED
 constraint secrets p PRIMARY KEY (id)

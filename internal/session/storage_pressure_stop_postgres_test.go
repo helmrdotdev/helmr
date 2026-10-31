@@ -6,13 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 
 	"github.com/helmrdotdev/helmr/internal/session"
-	"github.com/jackc/pgx/v5"
-	"uuid"
 )
 
 func pressureStopFixture(t *testing.T) (fixture, int64, session.SessionDelivery) {
@@ -180,35 +176,6 @@ func TestPressureStopExplicitControlsAndActualFailureKeepDeadline(t *testing.T) 
 				t.Fatalf("deadline = %v, want %v: %v", after, deadline, err)
 			}
 		})
-	}
-}
-
-func TestPressureStopRevocationRetainsShutdown(t *testing.T) {
-	f, a, _ := pressureStopFixture(t)
-	_, _, store, secretID, _, _ := runtimeSecretsOnFixture(t, f, f.execution())
-	if err := db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
-		_, err := computer.RecordSessionExposures(t.Context(), tx, f.env, f.session, 1, []uuid.UUID{secretID})
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Revoke(t.Context(), dbtest.SecretManager(t, f.pool, f.env), f.env, secretID, "revoke"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := session.ReconcileSessionLifecycle(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, session.SessionLifecyclePosition{}); err != nil {
-		t.Fatal(err)
-	}
-	var ended bool
-	if err := f.pool.QueryRow(t.Context(), `SELECT stop_deadline_at IS NOT NULL FROM session_processes WHERE session_id=$1`, f.session).Scan(&ended); err != nil || !ended {
-		t.Fatalf("revocation retained exception %v %v", ended, err)
-	}
-	// runtimeSecretsOnFixture reattaches; use that current attachment.
-	if err := f.pool.QueryRow(t.Context(), `SELECT attachment_sequence FROM session_processes WHERE session_id=$1`, f.session).Scan(&a); err != nil {
-		t.Fatal(err)
-	}
-	control, err := session.PrepareSessionDelivery(t.Context(), f.pool, *f.host(), f.execution(), a)
-	if err != nil || control.Kind != "shutdown" {
-		t.Fatalf("revoked control %+v %v", control, err)
 	}
 }
 

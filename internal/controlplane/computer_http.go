@@ -176,6 +176,7 @@ func apiComputerListItem(item computer.ListItem) api.ComputerListItem {
 		LastActivityAt: item.LastActivityAt,
 		CreatedAt:      item.CreatedAt,
 		UpdatedAt:      item.UpdatedAt,
+		SecretExposure: api.ComputerSecretExposure(item.SecretExposure),
 	}
 }
 
