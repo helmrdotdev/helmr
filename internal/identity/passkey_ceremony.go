@@ -29,7 +29,6 @@ type RegistrationOptions struct {
 
 type keyTarget struct {
 	user, operator, session, enrollment, repair uuid.UUID
-	epoch                                       int64
 	purpose                                     string
 	operatorScope                               bool
 }
@@ -50,15 +49,14 @@ func storeCeremony(ctx context.Context, tx pgx.Tx, session *webauthn.SessionData
 func loadCeremony(ctx context.Context, tx pgx.Tx, id uuid.UUID, binding []byte, ceremony string) (webauthn.SessionData, keyTarget, error) {
 	var data []byte
 	var user, operator, session, enrollment, repair pgtype.UUID
-	var epoch pgtype.Int8
 	var target keyTarget
 	var state webauthn.SessionData
-	err := tx.QueryRow(ctx, `SELECT c.verification_state,c.purpose,c.operator_scope,COALESCE(s.user_id,r.user_id),COALESCE(s.operator_id,e.operator_id),c.session_id,c.operator_passkey_enrollment_id,c.account_repair_enrollment_id,COALESCE(s.access_epoch,e.expected_access_epoch,r.expected_access_epoch)
+	err := tx.QueryRow(ctx, `SELECT c.verification_state,c.purpose,c.operator_scope,COALESCE(s.user_id,r.user_id),COALESCE(s.operator_id,e.operator_id),c.session_id,c.operator_passkey_enrollment_id,c.account_repair_enrollment_id
  FROM webauthn_challenges c
  LEFT JOIN login_sessions s ON s.id=c.session_id
  LEFT JOIN operator_passkey_enrollments e ON e.id=c.operator_passkey_enrollment_id
  LEFT JOIN account_repair_enrollments r ON r.id=c.account_repair_enrollment_id
- WHERE c.id=$1 AND c.browser_hash=$2 AND c.ceremony=$3 AND c.consumed_at IS NULL AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp() FOR UPDATE OF c`, id, binding, ceremony).Scan(&data, &target.purpose, &target.operatorScope, &user, &operator, &session, &enrollment, &repair, &epoch)
+ WHERE c.id=$1 AND c.browser_hash=$2 AND c.ceremony=$3 AND c.consumed_at IS NULL AND c.revoked_at IS NULL AND c.expires_at>clock_timestamp() FOR UPDATE OF c`, id, binding, ceremony).Scan(&data, &target.purpose, &target.operatorScope, &user, &operator, &session, &enrollment, &repair)
 	if isNoRows(err) {
 		return state, target, ErrInvalidToken
 	}
@@ -66,55 +64,48 @@ func loadCeremony(ctx context.Context, tx pgx.Tx, id uuid.UUID, binding []byte, 
 		return state, target, err
 	}
 	target.user, target.operator, target.session, target.enrollment, target.repair = nullableUUID(user), nullableUUID(operator), nullableUUID(session), nullableUUID(enrollment), nullableUUID(repair)
-	target.epoch = epoch.Int64
 	err = json.Unmarshal(data, &state)
 	return state, target, err
 }
 
-func loadKeyUser(ctx context.Context, tx pgx.Tx, userID, operatorID uuid.UUID) (passkeyUser, int64, error) {
+// loadKeyUser locks the account or operator that owns passkeys and loads its
+// live keys.
+func loadKeyUser(ctx context.Context, tx pgx.Tx, userID, operatorID uuid.UUID) (passkeyUser, error) {
 	var user passkeyUser
-	var epoch int64
 	var err error
 	if operatorID != uuid.Nil() {
-		err = tx.QueryRow(ctx, `SELECT webauthn_user_handle,label,access_epoch FROM platform_operators WHERE id=$1 FOR UPDATE`, operatorID).Scan(&user.handle, &user.name, &epoch)
+		err = tx.QueryRow(ctx, `SELECT webauthn_user_handle,label FROM platform_operators WHERE id=$1 FOR UPDATE`, operatorID).Scan(&user.handle, &user.name)
 	} else {
-		err = tx.QueryRow(ctx, `SELECT webauthn_user_handle,display_name,access_epoch FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&user.handle, &user.name, &epoch)
+		err = tx.QueryRow(ctx, `SELECT webauthn_user_handle,display_name FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&user.handle, &user.name)
 	}
 	if isNoRows(err) {
-		return user, epoch, ErrInvalidToken
+		return user, ErrInvalidToken
 	}
 	if err != nil {
-		return user, epoch, err
+		return user, err
 	}
 	rows, err := tx.Query(ctx, `SELECT credential_data FROM passkey_credentials WHERE revoked_at IS NULL AND (user_id=$1 OR operator_id=$2) ORDER BY id`, optionalUUID(userID), optionalUUID(operatorID))
 	if err != nil {
-		return user, epoch, err
+		return user, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var data []byte
 		if err = rows.Scan(&data); err != nil {
-			return user, epoch, err
+			return user, err
 		}
 		var key webauthn.Credential
 		if err = json.Unmarshal(data, &key); err != nil {
-			return user, epoch, err
+			return user, err
 		}
 		user.credentials = append(user.credentials, key)
 	}
-	return user, epoch, rows.Err()
+	return user, rows.Err()
 }
 
+// BeginPasskeyLogin starts a sign-in, or a confirmation of the existing
+// session when there is one.
 func BeginPasskeyLogin(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, operator bool, binding []byte, existing auth.Principal) (AssertionOptions, error) {
-	return beginPasskeyLogin(ctx, database, wa, operator, binding, existing, false)
-}
-func BeginOperatorRenew(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, binding []byte, p auth.Principal) (AssertionOptions, error) {
-	if p.OperatorID == uuid.Nil() || p.SessionID == uuid.Nil() {
-		return AssertionOptions{}, ErrInvalidToken
-	}
-	return beginPasskeyLogin(ctx, database, wa, true, binding, p, true)
-}
-func beginPasskeyLogin(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, operator bool, binding []byte, existing auth.Principal, renew bool) (AssertionOptions, error) {
 	if wa == nil {
 		return AssertionOptions{}, ErrInvalidToken
 	}
@@ -126,9 +117,6 @@ func beginPasskeyLogin(ctx context.Context, database db.TxBeginner, wa *webauthn
 	if existing.SessionID != uuid.Nil() {
 		target = keyTarget{purpose: "confirm", operatorScope: operator, session: existing.SessionID}
 	}
-	if renew {
-		target.purpose = "renew"
-	}
 	var id uuid.UUID
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		var e error
@@ -138,13 +126,7 @@ func beginPasskeyLogin(ctx context.Context, database db.TxBeginner, wa *webauthn
 	return AssertionOptions{ChallengeID: id, PublicKey: options.Response}, err
 }
 
-func FinishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config, wa *webauthn.WebAuthn, operator bool, id uuid.UUID, binding, credentialJSON []byte, rawSession string) (string, error) {
-	return finishPasskeyLogin(ctx, database, cfg, wa, operator, id, binding, credentialJSON, rawSession, false)
-}
-func FinishOperatorRenew(ctx context.Context, database db.TxBeginner, cfg Config, wa *webauthn.WebAuthn, id uuid.UUID, binding, response []byte, raw string) (string, error) {
-	return finishPasskeyLogin(ctx, database, cfg, wa, true, id, binding, response, raw, true)
-}
-func finishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config, wa *webauthn.WebAuthn, operator bool, id uuid.UUID, binding, credentialJSON []byte, rawSession string, renew bool) (result string, resultErr error) {
+func FinishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config, wa *webauthn.WebAuthn, operator bool, id uuid.UUID, binding, credentialJSON []byte, rawSession string) (result string, resultErr error) {
 	action := "identity.sign_in"
 	if operator {
 		action = "operator.sign_in"
@@ -172,7 +154,7 @@ func finishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config,
 		if operator != operatorID.Valid {
 			return ErrInvalidToken
 		}
-		user, epoch, err := loadKeyUser(ctx, tx, nullableUUID(userID), nullableUUID(operatorID))
+		user, err := loadKeyUser(ctx, tx, nullableUUID(userID), nullableUUID(operatorID))
 		if err != nil {
 			return err
 		}
@@ -180,13 +162,10 @@ func finishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config,
 		if err != nil {
 			return err
 		}
-		if (target.purpose != "login" && target.purpose != "confirm" && target.purpose != "renew") || target.operatorScope != operator {
+		if (target.purpose != "login" && target.purpose != "confirm") || target.operatorScope != operator {
 			return ErrInvalidToken
 		}
-		if renew != (target.purpose == "renew") {
-			return ErrInvalidToken
-		}
-		if (target.purpose == "confirm" || target.purpose == "renew") && (target.user != nullableUUID(userID) || target.operator != nullableUUID(operatorID) || target.epoch != epoch) {
+		if target.purpose == "confirm" && (target.user != nullableUUID(userID) || target.operator != nullableUUID(operatorID)) {
 			return ErrWrongAccount
 		}
 		if target.purpose == "login" && rawSession != "" {
@@ -229,22 +208,13 @@ func finishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config,
 			return err
 		}
 		if operator {
-			if target.purpose == "renew" {
-				old, _, e := AuthenticateOperator(ctx, tx, cfg, rawSession)
-				if e != nil {
-					return e
-				}
-				if old.SessionID != target.session || old.OperatorID != target.operator || old.AccessEpoch != target.epoch {
-					return ErrInvalidToken
-				}
-				raw, err = renewOperatorSession(ctx, tx, cfg, old, keyID, at)
-			} else if target.purpose == "confirm" {
-				raw, err = confirmOperatorSession(ctx, tx, cfg, target.session, rawSession, nullableUUID(operatorID), keyID, epoch, at)
+			if target.purpose == "confirm" {
+				raw, err = confirmOperatorSession(ctx, tx, cfg, target.session, rawSession, nullableUUID(operatorID), keyID, at)
 			} else {
-				raw, err = issueOperatorSession(ctx, tx, cfg, nullableUUID(operatorID), keyID, epoch, at)
+				raw, err = issueOperatorSession(ctx, tx, cfg, nullableUUID(operatorID), keyID, at)
 			}
 		} else {
-			proved := provedUser(nullableUUID(userID), uuid.Nil(), keyID, epoch, at, "passkey")
+			proved := provedUser(nullableUUID(userID), uuid.Nil(), keyID, at, "passkey")
 			if target.purpose == "confirm" {
 				hash, e := auth.HashToken(cfg.sessionKey, rawSession)
 				if e != nil {
@@ -263,7 +233,7 @@ func finishPasskeyLogin(ctx context.Context, database db.TxBeginner, cfg Config,
 func BeginAccountPasskey(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, p auth.Principal, binding []byte) (RegistrationOptions, error) {
 	var result RegistrationOptions
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		user, _, err := loadKeyUser(ctx, tx, p.UserID, uuid.Nil())
+		user, err := loadKeyUser(ctx, tx, p.UserID, uuid.Nil())
 		if err != nil {
 			return err
 		}
@@ -286,7 +256,7 @@ func FinishAccountPasskey(ctx context.Context, database db.TxBeginner, cfg Confi
 		return ErrInvalidToken
 	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		user, epoch, err := loadKeyUser(ctx, tx, p.UserID, uuid.Nil())
+		user, err := loadKeyUser(ctx, tx, p.UserID, uuid.Nil())
 		if err != nil {
 			return err
 		}
@@ -297,7 +267,7 @@ func FinishAccountPasskey(ctx context.Context, database db.TxBeginner, cfg Confi
 		if err != nil {
 			return err
 		}
-		if target.purpose != "register" || target.user != p.UserID || target.session != p.SessionID || target.epoch != epoch {
+		if target.purpose != "register" || target.operatorScope || target.user != p.UserID || target.session != p.SessionID {
 			return ErrInvalidToken
 		}
 		key, err := wa.CreateCredential(user, state, parsed)

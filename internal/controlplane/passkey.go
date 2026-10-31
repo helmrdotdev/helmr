@@ -190,35 +190,17 @@ func (s *Server) requireOperator(next http.Handler) http.Handler {
 }
 func (s *Server) mountOperatorRoutes(r chi.Router) {
 	r.Post("/enrollment/redeem", s.operatorRedeem)
-	r.Get("/enrollment/{id}", s.operatorEnrollmentState)
 	r.Post("/enrollment/{id}/options", s.operatorRegisterOptions)
 	r.Post("/enrollment/{id}/complete", s.operatorRegisterComplete)
-	r.Post("/enrollment/{id}/assert/options", s.operatorAssertOptions)
-	r.Post("/enrollment/{id}/assert/verify", s.operatorAssertVerify)
 	r.Post("/auth/options", s.operatorLoginOptions)
 	r.Post("/auth/verify", s.operatorLoginVerify)
 	r.Post("/auth/logout", s.operatorLogout)
-	r.With(s.requireOperator).Post("/auth/renew/options", s.operatorRenewOptions)
-	r.With(s.requireOperator).Post("/auth/renew/verify", s.operatorRenewVerify)
 	r.With(s.requireOperator).Get("/credentials", s.operatorCredentials)
-	r.With(s.requireOperator).Post("/credentials/enroll", s.operatorKeyEnrollment)
+	r.With(s.requireOperator).Post("/credentials/options", s.operatorKeyOptions)
+	r.With(s.requireOperator).Post("/credentials/complete", s.operatorKeyComplete)
 	r.With(s.requireOperator).Delete("/credentials/{id}", s.operatorRemoveKey)
 	r.With(s.requireOperator).Get("/me", s.operatorMe)
 	r.With(s.requireOperator).Get("/setup", s.operatorSetup)
-}
-func (s *Server) operatorEnrollmentState(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	id, binding, err := enrollmentRequest(w, r)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	result, err := identity.ReadOperatorEnrollment(r.Context(), s.tx, id, binding)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
 }
 func (s *Server) operatorRedeem(w http.ResponseWriter, r *http.Request) {
 	var request struct {
@@ -277,42 +259,7 @@ func (s *Server) operatorRegisterComplete(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(err))
 		return
 	}
-	if err = identity.CompleteOperatorRegistration(r.Context(), s.tx, s.webauthn, id, challenge, binding, request.Credential); err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"enrollment_id": id, "next": "assert"})
-}
-func (s *Server) operatorAssertOptions(w http.ResponseWriter, r *http.Request) {
-	id, binding, err := enrollmentRequest(w, r)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	result, err := identity.BeginOperatorEnrollmentAssertion(r.Context(), s.tx, s.webauthn, id, binding)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-func (s *Server) operatorAssertVerify(w http.ResponseWriter, r *http.Request) {
-	id, binding, err := enrollmentRequest(w, r)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	var request keyResponse
-	if err = decodeRequestJSON(r, &request); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	challenge, err := uuid.Parse(request.ChallengeID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if err = identity.VerifyOperatorEnrollment(r.Context(), s.tx, s.identity, s.webauthn, id, challenge, binding, request.Credential, request.Label); err != nil {
+	if err = identity.CompleteOperatorRegistration(r.Context(), s.tx, s.identity, s.webauthn, id, challenge, binding, request.Credential, request.Label); err != nil {
 		s.writeIdentityError(w, r, err)
 		return
 	}
@@ -415,43 +362,6 @@ func (s *Server) browserMutationGuard(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) operatorRenewOptions(w http.ResponseWriter, r *http.Request) {
-	binding, err := browserBinding(w, r, true)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	result, err := identity.BeginOperatorRenew(r.Context(), s.tx, s.webauthn, binding, principalFromContext(r.Context()))
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-func (s *Server) operatorRenewVerify(w http.ResponseWriter, r *http.Request) {
-	var input keyResponse
-	if err := decodeRequestJSON(r, &input); err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	id, err := uuid.Parse(input.ChallengeID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	binding, err := browserBinding(w, r, false)
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	raw, err := identity.FinishOperatorRenew(r.Context(), s.tx, s.identity, s.webauthn, id, binding, input.Credential, operatorToken(r))
-	if err != nil {
-		s.writeIdentityError(w, r, err)
-		return
-	}
-	setOperatorCookie(w, r, raw)
-	w.WriteHeader(http.StatusNoContent)
-}
 func (s *Server) operatorCredentials(w http.ResponseWriter, r *http.Request) {
 	p := principalFromContext(r.Context())
 	rows, err := s.tx.Query(r.Context(), `SELECT id,label,created_at,last_used_at FROM passkey_credentials WHERE operator_id=$1 AND revoked_at IS NULL ORDER BY created_at,id`, p.OperatorID)
@@ -476,18 +386,40 @@ func (s *Server) operatorCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"credentials": items})
 }
-func (s *Server) operatorKeyEnrollment(w http.ResponseWriter, r *http.Request) {
+func (s *Server) operatorKeyOptions(w http.ResponseWriter, r *http.Request) {
 	binding, err := browserBinding(w, r, true)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	result, err := identity.BeginOperatorKeyEnrollment(r.Context(), s.tx, principalFromContext(r.Context()), binding)
+	result, err := identity.BeginOperatorKey(r.Context(), s.tx, s.webauthn, principalFromContext(r.Context()), binding)
 	if err != nil {
 		s.writeIdentityError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+func (s *Server) operatorKeyComplete(w http.ResponseWriter, r *http.Request) {
+	var request keyResponse
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	id, err := uuid.Parse(request.ChallengeID)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	binding, err := browserBinding(w, r, false)
+	if err != nil {
+		s.writeIdentityError(w, r, err)
+		return
+	}
+	if err = identity.FinishOperatorKey(r.Context(), s.tx, s.identity, s.webauthn, principalFromContext(r.Context()), id, binding, request.Credential, request.Label); err != nil {
+		s.writeIdentityError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 func (s *Server) operatorRemoveKey(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))

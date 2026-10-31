@@ -292,6 +292,28 @@ func TestAdminMutationRequiresRecentOperatorProof(t *testing.T) {
 	}
 }
 
+// A key revoked after the request was admitted refuses the mutation at commit,
+// answers that the operator must sign in again and records the denied check.
+func TestOperatorKeyRevokedMidRequestIsRefused(t *testing.T) {
+	f := newSupplyHTTPFixture(t)
+	operator := f.operatorSession(t)
+	// Revoke the key inside the request's own transaction, after admission.
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION revoke_operator_keys() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN UPDATE passkey_credentials SET revoked_at=clock_timestamp() WHERE operator_id IS NOT NULL; RETURN NEW; END $$`)
+	dbtest.MustExec(t, t.Context(), f.pool, `CREATE TRIGGER revoke_operator_keys AFTER INSERT ON regions FOR EACH ROW EXECUTE FUNCTION revoke_operator_keys()`)
+	got := f.request(t, http.MethodPost, "/admin/api/v1/regions", operator, `{"id":"revoked","display_name":"Revoked"}`)
+	if got.Code != http.StatusUnauthorized || !strings.Contains(got.Body.String(), "authentication_invalid") {
+		t.Fatal(got.Code, got.Body)
+	}
+	var exists, recorded bool
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM regions WHERE id='revoked')`).Scan(&exists); err != nil || exists {
+		t.Fatal("mutation escaped rollback", exists, err)
+	}
+	if err := f.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM audit_events WHERE action='region.created' AND outcome='denied' AND actor_operator_id IS NOT NULL
+ AND authorization_evidence->>'decision'='denied' AND authorization_evidence->'checks' @> '[{"type":"platform_operator","observation_source":"transaction","result":"failed"}]')`).Scan(&recorded); err != nil || !recorded {
+		t.Fatal("refusal evidence was not recorded", recorded, err)
+	}
+}
+
 func TestOperatorProofExpiryAtCommitReturnsConfirmation(t *testing.T) {
 	f := newSupplyHTTPFixture(t)
 	p := dbtest.OperatorPrincipal(t, f.pool)

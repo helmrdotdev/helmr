@@ -66,7 +66,7 @@ func AcceptAccountInvitation(ctx context.Context, database db.TxBeginner, cfg Co
 		if err != nil {
 			return err
 		}
-		if current.UserID != p.UserID || current.AccessEpoch != p.AccessEpoch {
+		if current.UserID != p.UserID {
 			return ErrInvalidToken
 		}
 		var email, name, canonical string

@@ -14,6 +14,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/access"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -23,7 +24,7 @@ import (
 )
 
 func TestConsoleUpdateStreamRequiresCurrentSessionAuthority(t *testing.T) {
-	for _, mode := range []string{"membership-with-notification", "logout-without-notification"} {
+	for _, mode := range []string{"membership-with-notification", "logout-without-notification", "revoke-all-without-notification"} {
 		t.Run(mode, func(t *testing.T) {
 			f := sessiontest.New(t)
 			queries := db.New(f.Pool)
@@ -109,6 +110,19 @@ func TestConsoleUpdateStreamRequiresCurrentSessionAuthority(t *testing.T) {
 			if mode == "membership-with-notification" {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE org_id=$1 AND user_id=$2`, org, f.User)
 				if _, err := f.Pool.Exec(t.Context(), `SELECT pg_notify('helmr_changes',$1)`, "session:"+f.Session.String()); err != nil {
+					t.Fatal(err)
+				}
+			} else if mode == "revoke-all-without-notification" {
+				// The bearer was rotated above; sign out everywhere from that same session.
+				var id uuid.UUID
+				if err := f.Pool.QueryRow(t.Context(), `SELECT id FROM login_sessions WHERE user_id=$1 AND channel='browser' AND revoked_at IS NULL`, f.User).Scan(&id); err != nil {
+					t.Fatal(err)
+				}
+				browser, err := access.SessionPrincipal(t.Context(), f.Pool, id, uuid.Nil())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = identity.RevokeAccountAccess(t.Context(), f.Pool, identity.NewConfig(keys, auditpolicy.Policy{RetentionSeconds: 3600}), browser); err != nil {
 					t.Fatal(err)
 				}
 			} else {

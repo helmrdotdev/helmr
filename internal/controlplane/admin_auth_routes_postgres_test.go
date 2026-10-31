@@ -16,8 +16,8 @@ func TestAdminAuthenticationRouteBoundaries(t *testing.T) {
 	const id = "00000000-0000-7000-8000-000000000999"
 	protected := []struct{ method, path string }{
 		{"GET", "/me"}, {"GET", "/setup"}, {"GET", "/credentials"},
-		{"POST", "/credentials/enroll"}, {"DELETE", "/credentials/" + id},
-		{"POST", "/auth/renew/options"}, {"POST", "/auth/renew/verify"},
+		{"POST", "/credentials/options"}, {"POST", "/credentials/complete"},
+		{"DELETE", "/credentials/" + id},
 		{"POST", "/account-repairs/redeem"},
 		{"POST", "/account-repairs/" + id + "/options"},
 		{"POST", "/account-repairs/" + id + "/complete"},
@@ -43,16 +43,16 @@ func TestAdminAuthenticationRouteBoundaries(t *testing.T) {
 		}
 	}
 	// Old confirmation must block infrastructure mutation but permit the
-	// ceremony that obtains fresh proof and renews the session.
+	// ceremony that confirms and extends the session.
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE login_sessions SET issued_at=clock_timestamp()-interval '2 hours',authenticated_at=clock_timestamp()-interval '2 hours',expires_at=clock_timestamp()+interval '9 hours' WHERE channel='operator'`)
 	if got := f.request(t, "POST", "/admin/api/v1/regions", operator, `{"id":"blocked","display_name":"Blocked"}`); got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "recent_authentication_required") {
 		t.Fatalf("stale mutation: %d %s", got.Code, got.Body)
 	}
-	if got := f.request(t, "POST", "/admin/api/v1/auth/renew/options", operator, "{}"); got.Code != http.StatusOK {
-		t.Fatalf("stale renewal: %d %s", got.Code, got.Body)
+	if got := f.request(t, "POST", "/admin/api/v1/auth/options", operator, "{}"); got.Code != http.StatusOK {
+		t.Fatalf("stale confirmation: %d %s", got.Code, got.Body)
 	}
 	// Both anonymous ceremonies and authenticated mutations keep origin checks.
-	for _, path := range []string{"/auth/options", "/enrollment/redeem", "/auth/renew/options", "/account-repairs/redeem", "/regions"} {
+	for _, path := range []string{"/auth/options", "/enrollment/redeem", "/credentials/options", "/account-repairs/redeem", "/regions"} {
 		r := httptest.NewRequest("POST", "/admin/api/v1"+path, strings.NewReader("{}"))
 		f.authenticateRequest(r, operator)
 		r.Header.Set("Origin", "https://other.example.test")

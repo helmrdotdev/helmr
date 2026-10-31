@@ -228,7 +228,6 @@ type OperatorCheck struct {
 	Type              string    `json:"type"`
 	OperatorID        uuid.UUID `json:"operator_id"`
 	SessionID         uuid.UUID `json:"session_id"`
-	AccessEpoch       int64     `json:"access_epoch"`
 	ObservationSource string    `json:"observation_source"`
 	Result            string    `json:"result"`
 }
@@ -236,17 +235,17 @@ type OperatorCheck struct {
 func (OperatorCheck) auditCheck()      {}
 func (c OperatorCheck) result() string { return c.Result }
 func (c OperatorCheck) validate() error {
-	if c.Type != "platform_operator" || c.OperatorID == uuid.Nil() || c.SessionID == uuid.Nil() || c.AccessEpoch < 0 || !slices.Contains([]string{"request_authentication", "transaction"}, c.ObservationSource) || !slices.Contains([]string{"passed", "failed"}, c.Result) {
+	if c.Type != "platform_operator" || c.OperatorID == uuid.Nil() || c.SessionID == uuid.Nil() || !slices.Contains([]string{"request_authentication", "transaction"}, c.ObservationSource) || !slices.Contains([]string{"passed", "failed"}, c.Result) {
 		return errors.New("invalid operator check")
 	}
 	return nil
 }
 func PlatformOperator(p auth.Principal) (Evidence, error) {
 	e := FromPrincipal(p)
-	if p.Kind != auth.PrincipalKindOperator || p.OperatorID == uuid.Nil() || p.SessionID == uuid.Nil() || p.AccessEpoch < 0 {
+	if p.Kind != auth.PrincipalKindOperator || p.OperatorID == uuid.Nil() || p.SessionID == uuid.Nil() {
 		return e, errors.New("platform authority requires an operator session")
 	}
-	e.Authorization = Authorization{Decision: "allowed", Checks: []Check{OperatorCheck{Type: "platform_operator", OperatorID: p.OperatorID, SessionID: p.SessionID, AccessEpoch: p.AccessEpoch, ObservationSource: "request_authentication", Result: "passed"}}}
+	e.Authorization = Authorization{Decision: "allowed", Checks: []Check{OperatorCheck{Type: "platform_operator", OperatorID: p.OperatorID, SessionID: p.SessionID, ObservationSource: "request_authentication", Result: "passed"}}}
 	return e, nil
 }
 func Ownership(p auth.Principal) Authorization {

@@ -78,7 +78,6 @@ type signedInUser struct {
 	identityID      uuid.UUID
 	passkeyID       uuid.UUID
 	authenticatedAt time.Time
-	accessEpoch     int64
 }
 
 func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external ExternalIdentity) (signedInUser, error) {
@@ -96,15 +95,14 @@ func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external
 		if existing.RevokedAt.Valid {
 			return signedInUser{}, ErrIdentityConflict
 		}
-		var epoch int64
-		if err = tx.QueryRow(ctx, `SELECT access_epoch FROM users WHERE id=$1 FOR UPDATE`, existing.UserID).Scan(&epoch); err != nil {
+		if _, err = tx.Exec(ctx, `SELECT id FROM users WHERE id=$1 FOR UPDATE`, existing.UserID); err != nil {
 			return signedInUser{}, err
 		}
 		var at time.Time
 		if err = tx.QueryRow(ctx, `UPDATE auth_identities SET last_authenticated_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL RETURNING last_authenticated_at`, existing.ID).Scan(&at); err != nil {
 			return signedInUser{}, err
 		}
-		return provedExternal(pgvalue.MustUUIDValue(existing.UserID), pgvalue.MustUUIDValue(existing.ID), epoch, at, external), nil
+		return provedExternal(pgvalue.MustUUIDValue(existing.UserID), pgvalue.MustUUIDValue(existing.ID), at, external), nil
 	}
 	if !isNoRows(err) {
 		return signedInUser{}, err
@@ -139,10 +137,10 @@ func upsertExternalIdentity(ctx context.Context, tx pgx.Tx, cfg Config, external
 	if err != nil {
 		return signedInUser{}, err
 	}
-	return provedExternal(pgvalue.MustUUIDValue(user.ID), pgvalue.MustUUIDValue(credential.ID), user.AccessEpoch, credential.LastAuthenticatedAt.Time, external), nil
+	return provedExternal(pgvalue.MustUUIDValue(user.ID), pgvalue.MustUUIDValue(credential.ID), credential.LastAuthenticatedAt.Time, external), nil
 }
 
-func provedUser(user, identity, key uuid.UUID, epoch int64, at time.Time, method string) signedInUser {
+func provedUser(user, identity, key uuid.UUID, at time.Time, method string) signedInUser {
 	actor := audit.VerifiedLogin(user, method)
 	if method == "email" || method == "passkey" {
 		kind, id := "email_code", identity
@@ -151,7 +149,7 @@ func provedUser(user, identity, key uuid.UUID, epoch int64, at time.Time, method
 		}
 		actor.Authentication = audit.Authentication{Origin: "request", Result: "verified", CredentialKind: kind, CredentialID: id}
 	}
-	return signedInUser{id: pgvalue.UUID(user), identityID: identity, passkeyID: key, authenticatedAt: at, accessEpoch: epoch, actor: actor, authentication: audit.AuthenticationDetails{Method: method}}
+	return signedInUser{id: pgvalue.UUID(user), identityID: identity, passkeyID: key, authenticatedAt: at, actor: actor, authentication: audit.AuthenticationDetails{Method: method}}
 }
 func randomHandle() ([]byte, error) { h := make([]byte, 32); _, err := rand.Read(h); return h, err }
 
@@ -177,7 +175,7 @@ func issueLoginSession(ctx context.Context, tx pgx.Tx, cfg Config, user signedIn
 		return "", err
 	}
 	id := uuid.NewV7()
-	if _, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,token_hash,access_epoch,identity_id,passkey_id,authenticated_at,expires_at) VALUES($1,$2,'browser',$3,$4,$5,$6,$7,clock_timestamp()+interval '30 days')`, id, user.id, hash, user.accessEpoch, optionalUUID(user.identityID), optionalUUID(user.passkeyID), user.authenticatedAt); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,token_hash,identity_id,passkey_id,authenticated_at,expires_at) VALUES($1,$2,'browser',$3,$4,$5,$6,clock_timestamp()+interval '30 days')`, id, user.id, hash, optionalUUID(user.identityID), optionalUUID(user.passkeyID), user.authenticatedAt); err != nil {
 		return "", err
 	}
 	if err = appendSessionLifecycle(ctx, tx, cfg, user.actor, pgtype.UUID{}, "identity.sign_in", id, user.authentication); err != nil {
@@ -284,8 +282,10 @@ func RevokeLoginSession(ctx context.Context, database db.TxBeginner, cfg Config,
 	})
 }
 
-// SignInBrowserProvider preserves an existing account envelope on confirmation.
-func SignInBrowserProvider(ctx context.Context, database db.TxBeginner, cfg Config, external ExternalIdentity, raw string, sessionBound bool) (string, error) {
+// SignInBrowserProvider confirms the browser session that started the flow, or
+// signs in a browser that started it signed out. started is that session, or nil;
+// the browser must still present exactly it.
+func SignInBrowserProvider(ctx context.Context, database db.TxBeginner, cfg Config, external ExternalIdentity, raw string, started uuid.UUID) (string, error) {
 	var result string
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
 		user, err := upsertExternalIdentity(ctx, tx, cfg, external)
@@ -296,10 +296,10 @@ func SignInBrowserProvider(ctx context.Context, database db.TxBeginner, cfg Conf
 		if err != nil {
 			return err
 		}
+		if existing.SessionID != started {
+			return ErrWrongAccount
+		}
 		if existing.SessionID == uuid.Nil() {
-			if sessionBound {
-				return ErrInvalidToken
-			}
 			result, err = issueLoginSession(ctx, tx, cfg, user)
 			return err
 		}
@@ -321,8 +321,8 @@ func SignInBrowserProvider(ctx context.Context, database db.TxBeginner, cfg Conf
 	return result, err
 }
 
-func provedExternal(user, identity uuid.UUID, epoch int64, at time.Time, external ExternalIdentity) signedInUser {
-	u := provedUser(user, identity, uuid.Nil(), epoch, at, external.Provider)
+func provedExternal(user, identity uuid.UUID, at time.Time, external ExternalIdentity) signedInUser {
+	u := provedUser(user, identity, uuid.Nil(), at, external.Provider)
 	u.authentication = audit.AuthenticationDetails{Method: "provider", Provider: external.Provider, Subject: external.Subject}
 	return u
 }

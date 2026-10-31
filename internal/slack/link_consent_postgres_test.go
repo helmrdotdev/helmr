@@ -155,7 +155,7 @@ func TestRetiredSlackAuthorizationCanRelinkWithoutRevivingOldWork(t *testing.T) 
 }
 
 func TestSlackPendingConsentRetainsBrowserSessionAndMembership(t *testing.T) {
-	for _, change := range []string{"remove-reinvite", "browser-logout", "epoch"} {
+	for _, change := range []string{"remove-reinvite", "browser-logout"} {
 		t.Run(change, func(t *testing.T) {
 			f, _, org := credentialFixture(t)
 			p := f.Principal(t)
@@ -171,8 +171,6 @@ func TestSlackPendingConsentRetainsBrowserSessionAndMembership(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE id=$1; INSERT INTO org_members(id,org_id,user_id) VALUES($2,$3,$4)`, pgx.QueryExecModeSimpleProtocol, p.MemberID, uuid.NewV7(), org, f.User)
 			case "browser-logout":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, p.SessionID)
-			case "epoch":
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.User)
 			}
 			if err = LinkUser(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, actor, org, f.User, f.installation, who, LinkConsent{ID: id, BrowserHash: binding}); !errors.Is(err, ErrUserLinkDenied) {
 				t.Fatal("stale consent accepted", err)

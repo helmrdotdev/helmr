@@ -6,7 +6,6 @@ ALTER TABLE invitations DROP CONSTRAINT invitations_org_id_id_key;
 DROP TYPE magic_link_purpose;
 
 ALTER TABLE users DROP COLUMN admin;
-ALTER TABLE users ADD COLUMN access_epoch bigint NOT NULL DEFAULT 0 CHECK (access_epoch>=0);
 ALTER TABLE users ADD COLUMN webauthn_user_handle bytea NOT NULL DEFAULT uuid_send(gen_random_uuid());
 ALTER TABLE users ADD UNIQUE (webauthn_user_handle);
 -- New account handles also have an opaque, independently random database default.
@@ -31,7 +30,6 @@ CREATE TABLE platform_operators (
  id uuid PRIMARY KEY,
  label text NOT NULL CHECK (btrim(label)<>''),
  webauthn_user_handle bytea NOT NULL UNIQUE,
- access_epoch bigint NOT NULL DEFAULT 0 CHECK (access_epoch>=0),
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
@@ -56,7 +54,6 @@ ALTER TABLE login_sessions RENAME COLUMN created_at TO issued_at;
 ALTER TABLE login_sessions RENAME COLUMN last_seen_at TO last_human_activity_at;
 ALTER TABLE login_sessions ADD COLUMN operator_id uuid REFERENCES platform_operators(id);
 ALTER TABLE login_sessions ADD COLUMN channel text NOT NULL CHECK (channel IN ('browser','cli','operator'));
-ALTER TABLE login_sessions ADD COLUMN access_epoch bigint NOT NULL CHECK (access_epoch>=0);
 ALTER TABLE login_sessions ADD COLUMN member_id uuid;
 ALTER TABLE login_sessions ADD COLUMN identity_id uuid;
 ALTER TABLE login_sessions ADD COLUMN passkey_id uuid;
@@ -102,26 +99,19 @@ CREATE INDEX email_challenges_recent ON email_challenges(email,created_at DESC);
 CREATE TABLE operator_passkey_enrollments (
  id uuid PRIMARY KEY,
  operator_id uuid NOT NULL REFERENCES platform_operators(id),
- purpose text NOT NULL CHECK (purpose IN ('bootstrap','repair','add_key')),
  capability_hash bytea UNIQUE,
- expected_access_epoch bigint NOT NULL CHECK (expected_access_epoch>=0),
- issuer_session_id uuid REFERENCES login_sessions(id),
  browser_hash bytea,
- provisional_credential jsonb,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  expires_at timestamptz NOT NULL,
  consumed_at timestamptz,
  revoked_at timestamptz,
- CHECK ((purpose='add_key' AND issuer_session_id IS NOT NULL AND browser_hash IS NOT NULL AND capability_hash IS NULL)
-  OR (purpose IN ('bootstrap','repair') AND issuer_session_id IS NULL AND num_nonnulls(capability_hash,browser_hash)=1)),
- CHECK (provisional_credential IS NULL OR browser_hash IS NOT NULL)
+ CHECK (num_nonnulls(capability_hash,browser_hash)=1)
 );
 CREATE TABLE account_repair_enrollments (
  id uuid PRIMARY KEY,
  user_id uuid NOT NULL REFERENCES users(id),
  operator_id uuid NOT NULL REFERENCES platform_operators(id),
  capability_hash bytea NOT NULL UNIQUE,
- expected_access_epoch bigint NOT NULL CHECK (expected_access_epoch>=0),
  browser_hash bytea,
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  expires_at timestamptz NOT NULL,
@@ -131,7 +121,7 @@ CREATE TABLE account_repair_enrollments (
 CREATE TABLE webauthn_challenges (
  id uuid PRIMARY KEY,
  ceremony text NOT NULL CHECK (ceremony IN ('register','assert')),
- purpose text NOT NULL CHECK (purpose IN ('login','confirm','renew','register','enroll','repair')),
+ purpose text NOT NULL CHECK (purpose IN ('login','confirm','register','enroll','repair')),
  operator_scope boolean NOT NULL DEFAULT false,
  verification_state jsonb NOT NULL,
  browser_hash bytea NOT NULL,
@@ -143,9 +133,9 @@ CREATE TABLE webauthn_challenges (
  consumed_at timestamptz,
  revoked_at timestamptz,
  CHECK ((purpose='login' AND ceremony='assert' AND num_nonnulls(session_id,operator_passkey_enrollment_id,account_repair_enrollment_id)=0)
-  OR (purpose IN ('confirm','renew','register') AND session_id IS NOT NULL AND num_nonnulls(operator_passkey_enrollment_id,account_repair_enrollment_id)=0
-   AND ((purpose IN ('confirm','renew') AND ceremony='assert') OR (purpose='register' AND ceremony='register' AND NOT operator_scope)))
-  OR (purpose='enroll' AND operator_scope AND operator_passkey_enrollment_id IS NOT NULL AND num_nonnulls(session_id,account_repair_enrollment_id)=0)
+  OR (purpose IN ('confirm','register') AND session_id IS NOT NULL AND num_nonnulls(operator_passkey_enrollment_id,account_repair_enrollment_id)=0
+   AND ((purpose='confirm' AND ceremony='assert') OR (purpose='register' AND ceremony='register')))
+  OR (purpose='enroll' AND ceremony='register' AND operator_scope AND operator_passkey_enrollment_id IS NOT NULL AND num_nonnulls(session_id,account_repair_enrollment_id)=0)
   OR (purpose='repair' AND ceremony='register' AND NOT operator_scope AND account_repair_enrollment_id IS NOT NULL AND num_nonnulls(session_id,operator_passkey_enrollment_id)=0))
 );
 ALTER TABLE device_codes DROP CONSTRAINT device_codes_org_id_decided_by_member_id_fkey;

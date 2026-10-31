@@ -1,7 +1,6 @@
 package command
 
 import (
-	"fmt"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
 	"uuid"
@@ -62,25 +61,18 @@ func TestAdmittedCommandRetainsDispatchReceiptAfterRevocation(t *testing.T) {
 }
 
 func TestQueuedCommandSurvivesLogoutAndAccountRevocation(t *testing.T) {
-	for _, incident := range []bool{false, true} {
-		t.Run(fmt.Sprint(incident), func(t *testing.T) {
-			f := commandFixture(t)
-			c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("auth-lifetime"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
-			if incident {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, f.User)
-			}
-			claimed, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), f.claim())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if claimed.Start == nil || claimed.Start.Command.ID != c.ID {
-				t.Fatal("access revocation cancelled accepted command", claimed)
-			}
-
-		})
+	f := commandFixture(t)
+	c, err := Create(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.request("auth-lifetime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Revoking all access retires every session of the account.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, f.User)
+	claimed, err := Claim(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.host(), f.claim())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Start == nil || claimed.Start.Command.ID != c.ID {
+		t.Fatal("access revocation cancelled accepted command", claimed)
 	}
 }

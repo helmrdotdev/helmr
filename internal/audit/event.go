@@ -13,6 +13,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -71,7 +72,7 @@ type Event struct {
 // error so business changes roll back. Policy is explicit and has no default.
 func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) (resultErr error) {
 	defer func() {
-		if resultErr != nil && !errors.Is(resultErr, ErrCapture) && !errors.Is(resultErr, auth.ErrRecentProofRequired) {
+		if _, refused := errors.AsType[*Refusal](resultErr); resultErr != nil && !refused && !errors.Is(resultErr, ErrCapture) && !errors.Is(resultErr, auth.ErrRecentProofRequired) {
 			resultErr = errors.Join(ErrCapture, resultErr)
 		}
 	}()
@@ -107,15 +108,17 @@ func Append(ctx context.Context, tx pgx.Tx, policy auditpolicy.Policy, e Event) 
 	// Platform mutations cannot commit using authority revoked after request admission.
 	// Hold shared locks through the owner's commit so repair/key removal serializes.
 	if a.OperatorID != uuid.Nil() && e.Authorization.Decision == "allowed" {
-		var id uuid.UUID
-		var confirmed time.Time
-		if err := tx.QueryRow(ctx, `SELECT s.id,s.authenticated_at FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.passkey_id AND k.operator_id=o.id
-   WHERE s.id=$1 AND o.id=$2 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND o.access_epoch=s.access_epoch AND k.revoked_at IS NULL
-   FOR SHARE OF o,s,k`, e.Authentication.CredentialID, a.OperatorID).Scan(&id, &confirmed); err != nil {
+		current, err := db.New(tx).GetOperatorAuthority(ctx, optionalUUID(e.Authentication.CredentialID))
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("current operator authority: %w", err)
 		}
+		if err != nil || current.OperatorID != optionalUUID(a.OperatorID) {
+			// The session or its key ended after admission.
+			checks := append(slices.Clone(e.Authorization.Checks), OperatorCheck{Type: "platform_operator", OperatorID: a.OperatorID, SessionID: e.Authentication.CredentialID, ObservationSource: "transaction", Result: "failed"})
+			return &Refusal{Authorization: Authorization{Decision: "denied", Checks: checks}, Cause: auth.ErrUnauthenticated}
+		}
 		if e.Action != "audit.searched" {
-			if err := auth.RequireRecentProof(auth.Principal{Kind: auth.PrincipalKindOperator, AuthenticatedAt: confirmed}); err != nil {
+			if err := auth.RequireRecentProof(auth.Principal{Kind: auth.PrincipalKindOperator, AuthenticatedAt: current.AuthenticatedAt.Time}); err != nil {
 				return err
 			}
 		}

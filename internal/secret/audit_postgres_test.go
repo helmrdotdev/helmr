@@ -133,7 +133,7 @@ func TestSecretMutationRechecksExactHumanSession(t *testing.T) {
 			case "logout":
 				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1`, p.SessionID)
 			case "account":
-				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, user)
+				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE user_id=$1`, user)
 			case "membership":
 				dbtest.MustExec(t, t.Context(), d.Pool, `UPDATE org_members SET removed_at=clock_timestamp() WHERE id=$1`, member)
 				dbtest.MustExec(t, t.Context(), d.Pool, `INSERT INTO org_members(id,org_id,user_id) VALUES($1,$2,$3)`, uuid.NewV7(), org, user)

@@ -35,24 +35,27 @@ control-plane operator enroll --label "Deployment operator" --output-file /prote
 
 The command creates a new owner-readable file and never prints the capability.
 Keep it out of arguments, URLs, logs, source control and support bundles. Transfer
-it through your protected deployment process and open `/admin/login` in the Console. Redeem the capability, register a passkey and complete the separate key
-assertion. Enrollment expires after fifteen minutes; unfinished registration
-provides no operator authority. Remove the local capability file after use.
+it through your protected deployment process and open `/admin/login` in the Console. Redeem the capability and register a passkey; registration installs
+it as the operator's key. Enrollment expires after fifteen minutes; unfinished
+registration provides no operator authority. Remove the local capability file
+after use. If the new key cannot sign in, issue a new capability with `repair`.
 
-Operator sessions last twelve hours. Sensitive actions require confirmation within
-the last hour. They do not authorize ordinary organization resources. To create
+Operator sessions last twelve hours. Confirming your sign-in with an operator key
+keeps the session and gives it twelve hours from that confirmation. Sensitive
+actions require confirmation within the last hour. They do not authorize ordinary organization resources. To create
 the first self-hosted organization, sign in separately with the ordinary account
 that will own it, then complete setup with both identities. The deployment supports
 one organization. An existing organization's owner is not promoted to operator.
 
-To replace an operator's lost keys, use the same deployment command with `repair`
-and `--operator-id`. For self-hosted ordinary account repair, use `repair-account`
+To replace an operator's lost keys, use the same deployment command with `repair`,
+`--operator-id` and a new protected `--output-file`; the operator keeps its label. For self-hosted ordinary account repair, use `repair-account`
 with `--operator-id`, `--user-id` and a new protected `--output-file`; the operation
 requires explicit `DEPLOYMENT_MODE=self-hosted`. Ordinary account repair completes
 when the account holder registers a new key. Existing browser, CLI and Slack access is revoked; accepted work continues.
 Existing sign-in methods remain for the holder to review.
-Operator key replacement additionally verifies an assertion with the new key
-before retiring old keys. Neither operation is an email reset.
+Operator key replacement installs the newly registered key, retires the
+operator's other keys and signs out its sessions. Neither operation is an email
+reset.
 
 Accepted Sessions, Turns and Commands continue after logout, credential removal,
 account revocation, membership removal or API-key expiration. New requests,
@@ -90,11 +93,12 @@ inferred from the URL prefix.
 | --- | --- |
 | `POST /auth/options`, `/auth/verify` | Browser-bound challenge and a valid operator key; no existing operator session is required to sign in. |
 | `POST /enrollment/redeem` | Valid deployment-issued enrollment capability in the body, bound to the redeeming browser. |
-| `POST /enrollment/{id}/options`, `/complete`, `/assert/options`, `/assert/verify` | The matching restricted enrollment and browser binding; registration alone does not grant operator access. |
+| `POST /enrollment/{id}/options`, `/complete` | The matching restricted enrollment and browser binding. Completing registration installs the key and signs out the operator's sessions; it does not sign in. |
 | `GET /me`, `/setup`, `/credentials` | Current operator session. |
-| `POST /auth/renew/options`, `/auth/renew/verify` | Current operator session plus a fresh key assertion to complete renewal. Old confirmation does not prevent starting renewal. |
+| `POST /auth/options`, `/auth/verify` with an operator session | Confirms the current session with a fresh key assertion and extends it to twelve hours from that confirmation. Old confirmation does not prevent starting it. |
 | `POST /auth/logout` | Retires the presented operator session; does not require a fresh confirmation. |
-| `POST /credentials/enroll`, `DELETE /credentials/{id}` | Current operator session and the operation's fresh-key/retained-key checks. |
+| `POST /credentials/options`, `/credentials/complete` | Current operator session confirmed within the last hour at both steps; the registration is bound to that session and browser. |
+| `DELETE /credentials/{id}` | Current operator session confirmed within the last hour, signed in with a key other than the one being removed. |
 | `POST /account-repairs/*` | Self-hosted only; current operator session plus the repair capability, browser binding and operation-specific fresh-proof checks. |
 | Existing region, worker-group and pool APIs | Current operator session; mutations additionally require recent operator proof. |
 

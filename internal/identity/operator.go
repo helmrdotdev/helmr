@@ -3,11 +3,15 @@ package identity
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"time"
 	"uuid"
 
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -19,9 +23,15 @@ type OperatorEnrollment struct {
 	ExpiresAt  time.Time `json:"expires_at"`
 }
 
+// IssueOperatorEnrollment issues a capability that installs a new operator key.
+// A zero operatorID creates a new operator named label. Otherwise it repairs
+// that operator, which keeps its name, so label must be empty.
 func IssueOperatorEnrollment(ctx context.Context, database db.TxBeginner, label string, operatorID uuid.UUID) (OperatorEnrollment, error) {
-	if label == "" || len(label) > 200 {
+	if operatorID == uuid.Nil() && (label == "" || len(label) > 200) {
 		return OperatorEnrollment{}, invalidInput("operator label is required")
+	}
+	if operatorID != uuid.Nil() && label != "" {
+		return OperatorEnrollment{}, invalidInput("operator label is only set when the operator is created")
 	}
 	raw, err := auth.GenerateOpaque(32)
 	if err != nil {
@@ -30,25 +40,24 @@ func IssueOperatorEnrollment(ctx context.Context, database db.TxBeginner, label 
 	hash := sha256.Sum256([]byte(raw))
 	result := OperatorEnrollment{ID: uuid.NewV7(), Capability: raw}
 	err = db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		var epoch int64
-		purpose := "repair"
 		if operatorID == uuid.Nil() {
 			handle, err := randomHandle()
 			if err != nil {
 				return err
 			}
 			operatorID = uuid.NewV7()
-			purpose = "bootstrap"
 			if _, err = tx.Exec(ctx, `INSERT INTO platform_operators(id,label,webauthn_user_handle) VALUES($1,$2,$3)`, operatorID, label, handle); err != nil {
 				return err
 			}
-		} else if err = tx.QueryRow(ctx, `SELECT access_epoch FROM platform_operators WHERE id=$1 FOR UPDATE`, operatorID).Scan(&epoch); err != nil {
+		} else if err := tx.QueryRow(ctx, `SELECT id FROM platform_operators WHERE id=$1 FOR UPDATE`, operatorID).Scan(&operatorID); isNoRows(err) {
+			return ErrOperatorNotFound
+		} else if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE operator_passkey_enrollments SET revoked_at=clock_timestamp(),provisional_credential=NULL WHERE operator_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL`, operatorID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE operator_passkey_enrollments SET revoked_at=clock_timestamp() WHERE operator_id=$1 AND consumed_at IS NULL AND revoked_at IS NULL`, operatorID); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `INSERT INTO operator_passkey_enrollments(id,operator_id,purpose,capability_hash,expected_access_epoch,expires_at) VALUES($1,$2,$3,$4,$5,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, operatorID, purpose, hash[:], epoch).Scan(&result.ExpiresAt)
+		return tx.QueryRow(ctx, `INSERT INTO operator_passkey_enrollments(id,operator_id,capability_hash,expires_at) VALUES($1,$2,$3,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, operatorID, hash[:]).Scan(&result.ExpiresAt)
 	})
 	return result, err
 }
@@ -59,7 +68,7 @@ func RedeemOperatorEnrollment(ctx context.Context, database db.TxBeginner, raw s
 	hash := sha256.Sum256([]byte(raw))
 	var result OperatorEnrollment
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `UPDATE operator_passkey_enrollments e SET capability_hash=NULL,browser_hash=$2 WHERE capability_hash=$1 AND browser_hash IS NULL AND e.consumed_at IS NULL AND e.revoked_at IS NULL AND e.expires_at>clock_timestamp() AND EXISTS(SELECT 1 FROM platform_operators o WHERE o.id=e.operator_id AND o.access_epoch=e.expected_access_epoch) RETURNING e.id,e.expires_at`, hash[:], binding).Scan(&result.ID, &result.ExpiresAt)
+		err := tx.QueryRow(ctx, `UPDATE operator_passkey_enrollments SET capability_hash=NULL,browser_hash=$2 WHERE capability_hash=$1 AND browser_hash IS NULL AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at>clock_timestamp() RETURNING id,expires_at`, hash[:], binding).Scan(&result.ID, &result.ExpiresAt)
 		if isNoRows(err) {
 			return ErrInvalidToken
 		}
@@ -67,7 +76,7 @@ func RedeemOperatorEnrollment(ctx context.Context, database db.TxBeginner, raw s
 	})
 	return result, err
 }
-func issueOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, operator, key uuid.UUID, epoch int64, at time.Time) (string, error) {
+func issueOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, operator, key uuid.UUID, at time.Time) (string, error) {
 	raw, err := auth.GenerateOpaque(32)
 	if err != nil {
 		return "", err
@@ -77,14 +86,17 @@ func issueOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, operator, 
 		return "", err
 	}
 	id := uuid.NewV7()
-	_, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,operator_id,channel,token_hash,access_epoch,passkey_id,issued_at,authenticated_at,expires_at) VALUES($1,$2,'operator',$3,$4,$5,$6::timestamptz,$6::timestamptz,$6::timestamptz+interval '12 hours')`, id, operator, hash, epoch, key, at)
+	_, err = tx.Exec(ctx, `INSERT INTO login_sessions(id,operator_id,channel,token_hash,passkey_id,issued_at,authenticated_at,expires_at) VALUES($1,$2,'operator',$3,$4,$5::timestamptz,$5::timestamptz,$5::timestamptz+interval '12 hours')`, id, operator, hash, key, at)
 	if err != nil {
 		return "", err
 	}
 	p := auth.Principal{Kind: auth.PrincipalKindOperator, OperatorID: operator, SessionID: id}
 	return raw, operatorSecurityEvent(ctx, tx, cfg, p, "operator.sign_in", key)
 }
-func confirmOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, id uuid.UUID, old string, operator, key uuid.UUID, epoch int64, at time.Time) (string, error) {
+
+// confirmOperatorSession records a new proof on the same session, rotates its
+// token and gives it twelve hours from that proof.
+func confirmOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, id uuid.UUID, old string, operator, key uuid.UUID, at time.Time) (string, error) {
 	oldHash, err := auth.HashToken(cfg.sessionKey, old)
 	if err != nil {
 		return "", ErrInvalidToken
@@ -97,7 +109,8 @@ func confirmOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, id uuid.
 	if err != nil {
 		return "", err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE login_sessions SET token_hash=$3,authenticated_at=$4,passkey_id=$5 WHERE id=$1 AND token_hash=$2 AND operator_id=$6 AND access_epoch=$7 AND channel='operator' AND revoked_at IS NULL AND expires_at>$4`, id, oldHash, hash, at, key, operator, epoch)
+	tag, err := tx.Exec(ctx, `UPDATE login_sessions SET token_hash=$3,authenticated_at=$4::timestamptz,expires_at=$4::timestamptz+interval '12 hours',passkey_id=$5
+ WHERE id=$1 AND token_hash=$2 AND operator_id=$6 AND channel='operator' AND revoked_at IS NULL AND expires_at>$4::timestamptz`, id, oldHash, hash, at, key, operator)
 	if err != nil {
 		return "", err
 	}
@@ -111,34 +124,55 @@ func AuthenticateOperator(ctx context.Context, database db.DBTX, cfg Config, raw
 	if err != nil {
 		return auth.Principal{}, time.Time{}, err
 	}
-	p := auth.Principal{Kind: auth.PrincipalKindOperator, Channel: "operator"}
-	var expiry time.Time
-	err = database.QueryRow(ctx, `SELECT s.id,s.operator_id,s.passkey_id,s.access_epoch,s.authenticated_at,s.expires_at
- FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id
- JOIN passkey_credentials k ON k.id=s.passkey_id AND k.operator_id=o.id
- WHERE s.token_hash=$1 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp()
- AND o.access_epoch=s.access_epoch AND k.revoked_at IS NULL`, hash).Scan(&p.SessionID, &p.OperatorID, &p.PasskeyID, &p.AccessEpoch, &p.AuthenticatedAt, &expiry)
-	if isNoRows(err) {
-		return p, expiry, auth.ErrUnauthenticated
+	row, err := db.New(database).GetLoginSessionByTokenHash(ctx, hash)
+	if isNoRows(err) || (err == nil && row.Channel != "operator") {
+		return auth.Principal{}, time.Time{}, auth.ErrUnauthenticated
+	}
+	if err != nil {
+		return auth.Principal{}, time.Time{}, err
+	}
+	p, expiry, err := operatorFromSession(ctx, database, pgvalue.MustUUIDValue(row.ID))
+	if errors.Is(err, ErrInvalidToken) {
+		return auth.Principal{}, time.Time{}, auth.ErrUnauthenticated
 	}
 	return p, expiry, err
 }
 
-func renewOperatorSession(ctx context.Context, tx pgx.Tx, cfg Config, old auth.Principal, key uuid.UUID, at time.Time) (string, error) {
-	// Renewal is called only after a new assertion, never from activity refresh.
-	if _, err := tx.Exec(ctx, `UPDATE login_sessions SET revoked_at=clock_timestamp() WHERE id=$1 AND operator_id=$2`, old.SessionID, old.OperatorID); err != nil {
-		return "", err
+// operatorFromSession loads a live operator session whose sign-in key is still
+// live, and holds that authority through the caller's transaction.
+func operatorFromSession(ctx context.Context, q db.DBTX, id uuid.UUID) (auth.Principal, time.Time, error) {
+	row, err := db.New(q).GetOperatorAuthority(ctx, pgvalue.UUID(id))
+	if isNoRows(err) {
+		return auth.Principal{}, time.Time{}, ErrInvalidToken
 	}
-	return issueOperatorSession(ctx, tx, cfg, old.OperatorID, key, old.AccessEpoch, at)
+	if err != nil {
+		return auth.Principal{}, time.Time{}, err
+	}
+	p := auth.Principal{Kind: auth.PrincipalKindOperator, Channel: "operator", SessionID: id, OperatorID: pgvalue.MustUUIDValue(row.OperatorID), PasskeyID: pgvalue.MustUUIDValue(row.PasskeyID), AuthenticatedAt: row.AuthenticatedAt.Time}
+	return p, row.ExpiresAt.Time, nil
 }
 
-func operatorFromSession(ctx context.Context, tx pgx.Tx, id uuid.UUID) (auth.Principal, error) {
-	p := auth.Principal{Kind: auth.PrincipalKindOperator, Channel: "operator", SessionID: id}
-	err := tx.QueryRow(ctx, `SELECT s.operator_id,s.passkey_id,s.access_epoch,s.authenticated_at FROM login_sessions s JOIN platform_operators o ON o.id=s.operator_id JOIN passkey_credentials k ON k.id=s.passkey_id AND k.operator_id=o.id WHERE s.id=$1 AND s.channel='operator' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND s.access_epoch=o.access_epoch AND k.revoked_at IS NULL FOR SHARE OF o,s,k`, id).Scan(&p.OperatorID, &p.PasskeyID, &p.AccessEpoch, &p.AuthenticatedAt)
-	if isNoRows(err) {
-		return p, ErrInvalidToken
+// requireRecentOperator locks the operator, then requires that p is still one of
+// its live sessions and that it proved itself recently. It returns the session
+// as it is now.
+func requireRecentOperator(ctx context.Context, tx pgx.Tx, p auth.Principal) (auth.Principal, error) {
+	if p.OperatorID == uuid.Nil() || p.SessionID == uuid.Nil() {
+		return auth.Principal{}, ErrInvalidToken
 	}
-	return p, err
+	if _, err := tx.Exec(ctx, `SELECT id FROM platform_operators WHERE id=$1 FOR UPDATE`, p.OperatorID); err != nil {
+		return auth.Principal{}, err
+	}
+	current, _, err := operatorFromSession(ctx, tx, p.SessionID)
+	if err != nil {
+		return auth.Principal{}, err
+	}
+	if current.OperatorID != p.OperatorID {
+		return auth.Principal{}, ErrInvalidToken
+	}
+	if !auth.ProvedRecently(current.AuthenticatedAt, time.Now()) {
+		return auth.Principal{}, ErrRecentProofRequired
+	}
+	return current, nil
 }
 
 func RevokeOperatorSession(ctx context.Context, database db.TxBeginner, cfg Config, raw string) error {
@@ -168,37 +202,74 @@ func RevokeOperatorSession(ctx context.Context, database db.TxBeginner, cfg Conf
 	})
 }
 
-func BeginOperatorKeyEnrollment(ctx context.Context, database db.TxBeginner, p auth.Principal, binding []byte) (OperatorEnrollment, error) {
-	var result OperatorEnrollment
-	if len(binding) != sha256.Size {
-		return result, ErrInvalidToken
-	}
+// BeginOperatorKey starts registering another key for the signed-in operator.
+// The ceremony is bound to this session and browser.
+func BeginOperatorKey(ctx context.Context, database db.TxBeginner, wa *webauthn.WebAuthn, p auth.Principal, binding []byte) (RegistrationOptions, error) {
+	var result RegistrationOptions
 	err := db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if _, _, err := loadKeyUser(ctx, tx, uuid.Nil(), p.OperatorID); err != nil {
+		if _, err := requireRecentOperator(ctx, tx, p); err != nil {
 			return err
 		}
-		current, err := operatorFromSession(ctx, tx, p.SessionID)
+		user, err := loadKeyUser(ctx, tx, uuid.Nil(), p.OperatorID)
 		if err != nil {
 			return err
 		}
-		if current.OperatorID != p.OperatorID || time.Since(current.AuthenticatedAt) > time.Hour {
-			return ErrRecentProofRequired
+		options, state, err := wa.BeginRegistration(user)
+		if err != nil {
+			return err
 		}
-		result.ID = uuid.NewV7()
-		return tx.QueryRow(ctx, `INSERT INTO operator_passkey_enrollments(id,operator_id,purpose,expected_access_epoch,issuer_session_id,browser_hash,expires_at) VALUES($1,$2,'add_key',$3,$4,$5,clock_timestamp()+interval '15 minutes') RETURNING expires_at`, result.ID, p.OperatorID, current.AccessEpoch, p.SessionID, binding).Scan(&result.ExpiresAt)
+		id, err := storeCeremony(ctx, tx, state, "register", keyTarget{session: p.SessionID, purpose: "register", operatorScope: true}, binding)
+		result = RegistrationOptions{ChallengeID: id, PublicKey: options.Response}
+		return err
 	})
 	return result, err
 }
-func RemoveOperatorKey(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Principal, id uuid.UUID) error {
+
+// FinishOperatorKey installs the key registered by this session's own ceremony.
+func FinishOperatorKey(ctx context.Context, database db.TxBeginner, cfg Config, wa *webauthn.WebAuthn, p auth.Principal, id uuid.UUID, binding, credentialJSON []byte, label string) error {
+	parsed, err := protocol.ParseCredentialCreationResponseBytes(credentialJSON)
+	if err != nil {
+		return ErrInvalidToken
+	}
 	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
-		if _, _, err := loadKeyUser(ctx, tx, uuid.Nil(), p.OperatorID); err != nil {
-			return err
-		}
-		current, err := operatorFromSession(ctx, tx, p.SessionID)
+		current, err := requireRecentOperator(ctx, tx, p)
 		if err != nil {
 			return err
 		}
-		if current.OperatorID != p.OperatorID || current.PasskeyID == id || time.Since(current.AuthenticatedAt) > time.Hour {
+		user, err := loadKeyUser(ctx, tx, uuid.Nil(), p.OperatorID)
+		if err != nil {
+			return err
+		}
+		state, target, err := loadCeremony(ctx, tx, id, binding, "register")
+		if err != nil {
+			return err
+		}
+		if target.purpose != "register" || !target.operatorScope || target.operator != p.OperatorID || target.session != p.SessionID {
+			return ErrInvalidToken
+		}
+		key, err := wa.CreateCredential(user, state, parsed)
+		if err != nil {
+			return ErrInvalidToken
+		}
+		keyID, err := insertKey(ctx, tx, uuid.Nil(), p.OperatorID, label, key)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE webauthn_challenges SET consumed_at=clock_timestamp() WHERE id=$1`, id); err != nil {
+			return err
+		}
+		return operatorSecurityEvent(ctx, tx, cfg, current, "operator.credential_added", keyID)
+	})
+}
+
+func RemoveOperatorKey(ctx context.Context, database db.TxBeginner, cfg Config, p auth.Principal, id uuid.UUID) error {
+	return db.RunTx(ctx, database, func(tx pgx.Tx) error {
+		current, err := requireRecentOperator(ctx, tx, p)
+		if err != nil {
+			return err
+		}
+		// The key this session signed in with cannot remove itself.
+		if current.PasskeyID == id {
 			return ErrRecentProofRequired
 		}
 		tag, err := tx.Exec(ctx, `UPDATE passkey_credentials SET revoked_at=clock_timestamp() WHERE id=$1 AND operator_id=$2 AND revoked_at IS NULL`, id, p.OperatorID)

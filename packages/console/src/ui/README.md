@@ -155,7 +155,7 @@ Panel.
   security and Sign out. The app bar never names the organization.
 - **OperatorMenu** (`components/`). The admin bar's counterpart: the same
   `Popover` with the operator ID in its header, when the session ends (warning
-  tone under an hour), Renew session, Operator keys and Sign out operator.
+  tone under an hour), Extend session, Operator keys and Sign out operator.
 - **SettingsLayout** (`components/`). Settings pages have flat topic paths
   (`/settings/<topic>`); the navigation groups them by the level they apply to:
   Account, Project and Organization. Every settings page uses the full content

@@ -3,7 +3,6 @@ package access
 import (
 	"context"
 	"errors"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -23,14 +22,7 @@ func SessionPrincipal(ctx context.Context, database db.DBTX, sessionID, target u
 	if row.Channel != "browser" && row.Channel != "cli" {
 		return auth.Principal{}, ErrDenied
 	}
-	p := auth.Principal{Kind: auth.PrincipalKindSession, SessionID: sessionID, UserID: pgvalue.MustUUIDValue(row.UserID), AccessEpoch: row.AccessEpoch, Channel: row.Channel}
-	var epoch int64
-	if err = database.QueryRow(ctx, `SELECT access_epoch FROM users WHERE id=$1`, p.UserID).Scan(&epoch); err != nil {
-		return p, humanReadError(err)
-	}
-	if epoch != p.AccessEpoch {
-		return p, ErrDenied
-	}
+	p := auth.Principal{Kind: auth.PrincipalKindSession, SessionID: sessionID, UserID: pgvalue.MustUUIDValue(row.UserID), Channel: row.Channel}
 	p.IdentityID, p.PasskeyID, p.AuthenticatedAt = nullableID(row.IdentityID), nullableID(row.PasskeyID), row.AuthenticatedAt.Time
 	if row.Channel == "cli" {
 		p.OrgID, p.MemberID = pgvalue.MustUUIDValue(row.OrgID), pgvalue.MustUUIDValue(row.MemberID)
@@ -91,7 +83,7 @@ func currentMember(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.P
 		return auth.Principal{}, ErrDenied
 	}
 	var locked uuid.UUID
-	if err := q.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 AND access_epoch=$2 FOR SHARE`, prior.UserID, prior.AccessEpoch).Scan(&locked); err != nil {
+	if err := q.QueryRow(ctx, `SELECT id FROM users WHERE id=$1 FOR SHARE`, prior.UserID).Scan(&locked); err != nil {
 		return prior, humanReadError(err)
 	}
 	if err := q.QueryRow(ctx, `SELECT id FROM org_members WHERE id=$1 AND org_id=$2 AND user_id=$3 AND removed_at IS NULL AND suspended_at IS NULL FOR SHARE`, prior.MemberID, prior.OrgID, prior.UserID).Scan(&locked); err != nil {
@@ -123,8 +115,8 @@ func CurrentHuman(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Pr
 			return prior, humanReadError(err)
 		}
 		err = q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM login_sessions s
- WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND s.access_epoch=$3
- AND (s.channel='browser' OR (s.channel='cli' AND s.org_id=$4 AND s.member_id=$5)))`, prior.SessionID, prior.UserID, prior.AccessEpoch, prior.OrgID, prior.MemberID).Scan(&active)
+ WHERE s.id=$1 AND s.user_id=$2 AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp()
+ AND (s.channel='browser' OR (s.channel='cli' AND s.org_id=$3 AND s.member_id=$4)))`, prior.SessionID, prior.UserID, prior.OrgID, prior.MemberID).Scan(&active)
 	}
 	if err != nil {
 		return prior, err
@@ -135,17 +127,13 @@ func CurrentHuman(ctx context.Context, q db.DBTX, prior auth.Principal) (auth.Pr
 	return current, nil
 }
 
-func Recent(p auth.Principal, now time.Time) bool {
-	return !p.AuthenticatedAt.IsZero() && !p.AuthenticatedAt.After(now) && now.Sub(p.AuthenticatedAt) <= time.Hour
-}
-
 // SlackPrincipal loads only an exact independently issued link. A later link
 // for the same Slack actor never restores authority saved under an older ID.
 // The link's issue time stands in for a sign-in time; member and account
 // retirement revoke the link itself.
 func SlackPrincipal(ctx context.Context, q db.DBTX, id uuid.UUID) (auth.Principal, error) {
 	p := auth.Principal{Kind: auth.PrincipalKindSession, SlackLinkID: id, Channel: "slack"}
-	err := q.QueryRow(ctx, `SELECT l.org_id,l.member_id,l.user_id,u.access_epoch,l.linked_at FROM slack_user_links l JOIN users u ON u.id=l.user_id WHERE l.id=$1 AND l.revoked_at IS NULL`, id).Scan(&p.OrgID, &p.MemberID, &p.UserID, &p.AccessEpoch, &p.AuthenticatedAt)
+	err := q.QueryRow(ctx, `SELECT org_id,member_id,user_id,linked_at FROM slack_user_links WHERE id=$1 AND revoked_at IS NULL`, id).Scan(&p.OrgID, &p.MemberID, &p.UserID, &p.AuthenticatedAt)
 	if err != nil {
 		return p, humanReadError(err)
 	}

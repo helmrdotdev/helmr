@@ -280,7 +280,7 @@ func TestDeviceApprovalNeedsRecentBrowserSignIn(t *testing.T) {
 }
 
 func TestDeviceExchangeNeedsTheApprovingBrowserSession(t *testing.T) {
-	for _, change := range []string{"logout", "membership", "epoch"} {
+	for _, change := range []string{"logout", "membership"} {
 		t.Run(change, func(t *testing.T) {
 			f := newIdentityFixture(t)
 			ctx := t.Context()
@@ -306,8 +306,6 @@ func TestDeviceExchangeNeedsTheApprovingBrowserSession(t *testing.T) {
 				}
 			case "membership":
 				f.exec(t, `UPDATE org_members SET suspended_at=clock_timestamp() WHERE id=$1`, member)
-			case "epoch":
-				f.exec(t, `UPDATE users SET access_epoch=access_epoch+1 WHERE id=$1`, user)
 			}
 			if _, err = ExchangeDeviceCode(ctx, f.pool, f.cfg, start.DeviceCode); !errors.Is(err, ErrInvalidDeviceCode) {
 				t.Fatal("exchanged without the approving browser session", err)

@@ -76,7 +76,7 @@ test("ordinary passkey registration, sign-in, replay rejection and operator isol
   }
 });
 
-test("deployment-local operator enrollment requires registration and a working assertion", async ({ page, context, baseURL }) => {
+test("deployment-local operator enrollment installs the registered key", async ({ page, context, baseURL }) => {
   test.skip(Boolean(process.env.HELMR_E2E_BASE_URL), "Enrollment is restricted to this suite's owned local database");
   const { execFileSync } = await import("node:child_process");
   const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
@@ -105,14 +105,16 @@ test("deployment-local operator enrollment requires registration and a working a
     await page.getByLabel("Setup or repair capability", { exact: true }).fill(enrollment.capability);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(page.getByRole("button", { name: "Register key", exact: true })).toBeVisible();
+    // The operator flow does not depend on the ordinary account session.
     expect((await page.request.post("/api/auth/logout", {headers:{Origin:baseURL!},data:{}})).status()).toBe(204);
-    await page.reload();
     await page.getByRole("button", { name: "Register key", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Verify key", exact: true })).toBeVisible();
-    expect((await page.request.get("/admin/api/v1/me")).status()).toBe(403);
+    await expect(page.getByRole("status")).toContainText("Your key is ready. Sign in with it above.");
+    // A used capability cannot be redeemed again, for example after a reload.
     await page.reload();
-    await page.getByRole("button", { name: "Verify key", exact: true }).click();
-    await expect(page.getByRole("status")).toHaveText("Your key is ready. Sign in with it above.");
+    await page.getByRole("button", { name: "Set up or repair a key", exact: true }).click();
+    await page.getByLabel("Setup or repair capability", { exact: true }).fill(enrollment.capability);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(page.getByText(/has already been used or has expired\. Run control-plane operator enroll/)).toBeVisible();
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(403);
     await page.getByRole("button", { name: "Sign in with operator key", exact: true }).click();
     await expect(page).toHaveURL(/\/setup$/);
@@ -122,8 +124,8 @@ test("deployment-local operator enrollment requires registration and a working a
     await page.goto("/admin/operator-keys");
     await expect(page.getByRole("row").filter({ hasText: "Operator key" })).toBeVisible();
     await page.getByRole("button", { name: "Open operator menu", exact: true }).click();
-    await page.getByRole("menuitem", { name: "Renew session", exact: true }).click();
-    await expect(page.getByText("New 12-hour operator session started.", { exact: true })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Extend session", exact: true }).click();
+    await expect(page.getByText("Session extended to 12 hours from now.", { exact: true })).toBeVisible();
     // A recent confirmation is given in place with the operator key; the removal is not resent.
     let removals = 0;
     await page.route("**/admin/api/v1/credentials/*", route => {
@@ -158,6 +160,14 @@ test("deployment-local operator enrollment requires registration and a working a
     await expect(page.getByRole("alert")).toBeVisible();
     expect((await page.request.get("/api/me")).status()).toBe(403);
     expect((await page.request.get("/admin/api/v1/me")).status()).toBe(200);
+
+    // A signed-in operator adds another key with one registration.
+    await page.goto("/admin/operator-keys");
+    await page.getByRole("button", { name: "Add operator key", exact: true }).click();
+    await page.getByLabel("Key name", { exact: true }).fill("Second operator key");
+    await page.getByRole("button", { name: "Register key", exact: true }).click();
+    await expect(page.getByText("Operator key added.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("cell", { name: "Second operator key", exact: true })).toBeVisible();
 
     // Supervised ordinary recovery installs the key at registration, with no
     // second assertion. Its old access is retired; its existing methods remain.

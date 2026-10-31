@@ -139,8 +139,8 @@ func decideDeviceCode(ctx context.Context, database db.TxBeginner, cfg Config, a
 		if approve {
 			// A CLI login never needs recent proof again, so approving one
 			// needs a browser that signed in within the last hour.
-			if !access.Recent(approver, time.Now()) {
-				return ErrRecentProofRequired
+			if err := auth.RequireRecentProof(approver); err != nil {
+				return err
 			}
 			device, err = q.ApproveDeviceCode(ctx, db.ApproveDeviceCodeParams{
 				UserID:           pgvalue.UUID(approver.UserID),
@@ -274,8 +274,8 @@ func issueCLISession(ctx context.Context, tx pgx.Tx, cfg Config, p auth.Principa
 		return "", err
 	}
 	id := uuid.NewV7()
-	tag, err := tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,access_epoch,identity_id,passkey_id,authenticated_at,expires_at)
- SELECT $1,user_id,'cli',$3,$4,$5,access_epoch,identity_id,passkey_id,authenticated_at,clock_timestamp()+interval '30 days' FROM login_sessions WHERE id=$2 AND channel='browser'`, id, p.SessionID, p.OrgID, p.MemberID, hash)
+	tag, err := tx.Exec(ctx, `INSERT INTO login_sessions(id,user_id,channel,org_id,member_id,token_hash,identity_id,passkey_id,authenticated_at,expires_at)
+ SELECT $1,user_id,'cli',$3,$4,$5,identity_id,passkey_id,authenticated_at,clock_timestamp()+interval '30 days' FROM login_sessions WHERE id=$2 AND channel='browser'`, id, p.SessionID, p.OrgID, p.MemberID, hash)
 	if err != nil {
 		return "", err
 	}
