@@ -15,7 +15,7 @@ import (
 // deleting an Agent ends: its Sessions that are not closed and the Sessions
 // they own. Execution cleanup continues after the Agent is deleted.
 func CancelAgentSessions(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, agent uuid.UUID, actor audit.Evidence, dryRun bool) (int64, error) {
-	return cancelOwnedSessions(ctx, auditPolicy, tx, env, `agent_id=$2`, agent, actor, dryRun)
+	return cancelOwnedSessions(ctx, auditPolicy, tx, env, false, agent, actor, dryRun)
 }
 
 // CancelComputerSessions cancels, or with dryRun only counts, the Sessions
@@ -23,14 +23,28 @@ func CancelAgentSessions(ctx context.Context, auditPolicy auditpolicy.Policy, tx
 // and the Sessions they own. It takes ownership-tree locks before the Computer
 // lock, so it runs before the deletion locks the Computer.
 func CancelComputerSessions(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env, computerID uuid.UUID, actor audit.Evidence, dryRun bool) (int64, error) {
-	return cancelOwnedSessions(ctx, auditPolicy, tx, env, `computer_id=$2`, computerID, actor, dryRun)
+	return cancelOwnedSessions(ctx, auditPolicy, tx, env, true, computerID, actor, dryRun)
 }
 
-func cancelOwnedSessions(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env uuid.UUID, seed string, owner uuid.UUID, actor audit.Evidence, dryRun bool) (int64, error) {
-	read := func() ([]uuid.UUID, error) {
-		rows, err := tx.Query(ctx, `WITH RECURSIVE tree AS (SELECT id FROM sessions WHERE environment_id=$1 AND status<>'closed' AND `+seed+`
+// The Sessions an owner's deletion ends: those it seeds and the Sessions they own.
+const (
+	agentSessionTreeSQL = `WITH RECURSIVE tree AS (SELECT id FROM sessions WHERE environment_id=$1 AND status<>'closed' AND agent_id=$2
  UNION SELECT s.id FROM sessions s JOIN tree t ON s.parent_session_id=t.id WHERE s.environment_id=$1 AND s.status<>'closed')
- SELECT id FROM tree ORDER BY id`, env, owner)
+ SELECT id FROM tree ORDER BY id`
+	computerSessionTreeSQL = `WITH RECURSIVE tree AS (SELECT id FROM sessions WHERE environment_id=$1 AND status<>'closed' AND computer_id=$2
+ UNION SELECT s.id FROM sessions s JOIN tree t ON s.parent_session_id=t.id WHERE s.environment_id=$1 AND s.status<>'closed')
+ SELECT id FROM tree ORDER BY id`
+)
+
+func cancelOwnedSessions(ctx context.Context, auditPolicy auditpolicy.Policy, tx pgx.Tx, env uuid.UUID, byComputer bool, owner uuid.UUID, actor audit.Evidence, dryRun bool) (int64, error) {
+	read := func() ([]uuid.UUID, error) {
+		var rows pgx.Rows
+		var err error
+		if byComputer {
+			rows, err = tx.Query(ctx, computerSessionTreeSQL, env, owner)
+		} else {
+			rows, err = tx.Query(ctx, agentSessionTreeSQL, env, owner)
+		}
 		if err != nil {
 			return nil, err
 		}
