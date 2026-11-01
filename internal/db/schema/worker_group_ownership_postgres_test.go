@@ -62,6 +62,20 @@ func TestWorkerGroupOwnershipMigration(t *testing.T) {
 		INSERT INTO image_builds (environment_id, id, image_spec_id, idempotency_key, deadline_at)
 		SELECT id, '00000000-0000-0000-0000-000000000016', '00000000-0000-0000-0000-000000000005', 'queued', clock_timestamp()
 		FROM environments;
+		INSERT INTO deployments (environment_id, id, bundle_digest)
+		SELECT id, '00000000-0000-0000-0000-000000000004', 'sha256:' || repeat('1', 64) FROM environments;
+		INSERT INTO boot_seed_builds (
+			environment_id, id, deployment_id, image_spec_id, cpu_millis, memory_bytes, status, error_code,
+			deadline_at, executor_epoch, worker_host_id, worker_epoch, allocation_id, resource_policy_revision,
+			channel_credential_digest, reserved_memory_bytes, reserved_scratch_bytes, vm_platform_id, vm_vcpu_count,
+			cpu_config_digest, fenced_at, fence_evidence
+		)
+		SELECT id, '00000000-0000-0000-0000-000000000017', '00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000005',
+		       1000, 536870912, 'failed', 'executor_stopped',
+		       clock_timestamp(), 1, '00000000-0000-0000-0000-000000000013', 1, '00000000-0000-0000-0000-000000000018', 1,
+		       decode(repeat('0a', 32), 'hex'), 536870912, 1073741824, 'sha256:' || repeat('3', 64), 1,
+		       'sha256:' || repeat('a', 64), clock_timestamp(), 'stopped'
+		FROM environments;
 	`)
 	if err := Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
@@ -69,7 +83,8 @@ func TestWorkerGroupOwnershipMigration(t *testing.T) {
 	var deploymentGroup, recorded, queuedUnassigned bool
 	if err := pool.QueryRow(ctx, `SELECT
 		(SELECT owner_org_id IS NULL FROM worker_groups WHERE id='00000000-0000-0000-0000-000000000011'),
-		(SELECT worker_group_id='00000000-0000-0000-0000-000000000011' FROM image_builds WHERE id='00000000-0000-0000-0000-000000000014'),
+		(SELECT worker_group_id='00000000-0000-0000-0000-000000000011' FROM image_builds WHERE id='00000000-0000-0000-0000-000000000014')
+		AND (SELECT worker_group_id='00000000-0000-0000-0000-000000000011' FROM boot_seed_builds WHERE id='00000000-0000-0000-0000-000000000017'),
 		(SELECT worker_group_id IS NULL FROM image_builds WHERE id='00000000-0000-0000-0000-000000000016')`).Scan(&deploymentGroup, &recorded, &queuedUnassigned); err != nil {
 		t.Fatal(err)
 	}

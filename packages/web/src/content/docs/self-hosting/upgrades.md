@@ -65,7 +65,23 @@ discards definition policies and MCP scopes; an older release cannot enforce tho
 restrictions. Qualify the intended rollback and replacement Deployments before
 resuming work.
 
-## Prepare artifacts, recovery and authentication
+## Worker group ownership migration
+
+Migration `000004_worker_group_ownership` adds worker group ownership,
+environment placements and the worker group recorded on Computers, image builds
+and boot seeds. Existing groups become deployment groups, and builds that already
+ran on a host record that host's group.
+
+Releases before this migration assign builds to hosts without recording a group,
+which the migrated schema rejects. Stop preparation dispatch while the migration
+runs and until every service runs the new release. Disable automatic deployment
+rollback for this release, because the previous release cannot prepare Computers
+against the migrated database.
+
+The down migration refuses to run while any organization worker group exists.
+After a refusal the schema stays at version 4 while the migration table records
+version 3 as dirty; force the recorded version back to 4 before retrying.
+
 
 Record the exact source and target `helmr_version`, digest-pinned
 `controlplane_image`, `worker_ami_id`, signed release index, worker runtime/rootfs

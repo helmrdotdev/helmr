@@ -1,9 +1,11 @@
 -- Organization groups hold their organization's data and have no deployment
--- form, so downgrading requires that none remain.
+-- form, so downgrading requires that none remain. The lock keeps one from
+-- being created after the check.
+LOCK TABLE worker_groups IN ACCESS EXCLUSIVE MODE;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM worker_groups WHERE owner_org_id IS NOT NULL) THEN
-        RAISE EXCEPTION 'organization worker groups must be removed before downgrading';
+        RAISE EXCEPTION 'organization worker groups must be removed before downgrading; the schema remains at version 4';
     END IF;
 END
 $$;
