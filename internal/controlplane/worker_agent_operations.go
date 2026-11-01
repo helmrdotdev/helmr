@@ -308,7 +308,7 @@ func (server *Server) workerAgentSendTurn(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusOK, agentOperationFailure(request.RequestID, "invalid_arguments", "MCP mutation requires an idempotency key"))
 		return
 	}
-	receipt, err := session.SendTurn(r.Context(), server.auditPolicy, server.tx, caller, session.EnqueueRequest{EnvironmentID: caller.Execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Message}, turn)
+	receipt, err := session.SendTurn(r.Context(), server.auditPolicy, server.environmentExecutionLimits, server.tx, caller, session.EnqueueRequest{EnvironmentID: caller.Execution.EnvironmentID, SessionID: target, IdempotencyKey: input.IdempotencyKey, Input: input.Message}, turn)
 	if err != nil {
 		server.writeAgentAdmissionError(w, r, request.RequestID, err)
 		return

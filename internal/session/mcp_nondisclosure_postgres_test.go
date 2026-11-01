@@ -44,7 +44,7 @@ func TestRuntimeMCPScopeDenialPreservesTargetNondisclosure(t *testing.T) {
 			return err
 		},
 		"send_turn": func(target, turn uuid.UUID) error {
-			_, err := session.SendTurn(t.Context(), policy, f.pool, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: target, IdempotencyKey: "nondisclosure-send", Input: json.RawMessage(`[{"type":"text","text":"hello"}]`)}, turn)
+			_, err := session.SendTurn(t.Context(), policy, f.limits, f.pool, caller, session.EnqueueRequest{EnvironmentID: f.env, SessionID: target, IdempotencyKey: "nondisclosure-send", Input: json.RawMessage(`[{"type":"text","text":"hello"}]`)}, turn)
 			return err
 		},
 	}

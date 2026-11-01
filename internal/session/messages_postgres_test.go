@@ -26,7 +26,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID); !errors.Is(err, session.ErrMessageClosed) {
+	if _, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req, first.TurnID); !errors.Is(err, session.ErrMessageClosed) {
 		t.Fatalf("unregistered: %v", err)
 	}
 	if err := session.RuntimeRegisterMessages(t.Context(), f.pool, *f.host(), f.execution(), first.TurnID); err != nil {
@@ -55,7 +55,7 @@ func TestMessagesKeepExactDispositionAndDrain(t *testing.T) {
 		}
 	}
 	req.IdempotencyKey = "later"
-	later, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID)
+	later, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req, first.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[]`)}
-	admitted, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID)
+	admitted, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req, first.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,12 +135,12 @@ func TestMessagesCancellationAndExpiredRetry(t *testing.T) {
 		t.Fatalf("cancel didn't reject: %v %v", rejected, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE turn_messages SET message=NULL,payload_expired_at=clock_timestamp() WHERE id=$1`, admitted.MessageID)
-	repeated, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID)
+	repeated, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req, first.TurnID)
 	if err != nil || repeated.MessageID != admitted.MessageID {
 		t.Fatalf("expired retry: %+v %v", repeated, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE org_members SET is_owner=false,removed_at=clock_timestamp() WHERE user_id=$1`, f.user)
-	if _, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), req, first.TurnID); !errors.Is(err, session.ErrDenied) {
+	if _, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), req, first.TurnID); !errors.Is(err, session.ErrDenied) {
 		t.Fatalf("revoked retry: %v", err)
 	}
 }
@@ -160,7 +160,7 @@ func TestMessagesSteerClosingSessionWithoutEnqueueAuthority(t *testing.T) {
 	runtime := session.Caller{Kind: "session", MCPScopeID: f.mcpScope, ID: f.session, TurnID: first.TurnID, Execution: f.execution(), Host: f.host()}
 	for _, caller := range []session.Caller{f.caller()} {
 		req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, Input: json.RawMessage(`[]`)}
-		exact, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, caller, req, first.TurnID)
+		exact, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, caller, req, first.TurnID)
 		if err != nil || exact.MessageID == uuid.Nil() {
 			t.Fatalf("closing exact %s: %+v %v", caller.Kind, exact, err)
 		}
@@ -216,7 +216,7 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := session.EnqueueRequest{EnvironmentID: f.env, SessionID: test.target.session, IdempotencyKey: test.name, Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}
-			first, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, test.caller, req, turns[test.target.session])
+			first, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, test.caller, req, turns[test.target.session])
 			if !test.allowed {
 				if !errors.Is(err, session.ErrDenied) {
 					t.Fatalf("non-owned send: %v", err)
@@ -226,7 +226,7 @@ func TestRuntimeSendTurnRequiresOwnedTarget(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			replay, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, test.caller, req, turns[test.target.session])
+			replay, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, test.caller, req, turns[test.target.session])
 			if err != nil || replay != first {
 				t.Fatalf("retry: %+v %v", replay, err)
 			}

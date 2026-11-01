@@ -36,7 +36,7 @@ func TestOutputOnlyWakesReadersWhileNewWorkWakesWorker(t *testing.T) {
 	if observed = topics(); !observed["worker:"+f.worker.String()] || !observed["dispatch"] {
 		t.Fatalf("queued Turn did not wake execution: %v", observed)
 	}
-	_, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, running.TurnID)
+	_, err := session.SendTurn(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.limits, f.pool, f.caller(), session.EnqueueRequest{EnvironmentID: f.env, SessionID: f.session, IdempotencyKey: "steer", Input: json.RawMessage(`[{"type":"text","text":"steer"}]`)}, running.TurnID)
 	if err != nil {
 		t.Fatal(err)
 	}

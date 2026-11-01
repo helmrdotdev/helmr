@@ -29,12 +29,11 @@ type SendReceipt struct {
 func RouteSlackInput(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, trust computer.TrustIssuer, caller Caller, req EnqueueRequest) (SendReceipt, error) {
 	return admitSessionInput(ctx, auditPolicy, limits, pool, trust, caller, req, "slack_route", uuid.Nil())
 }
-func SendTurn(ctx context.Context, auditPolicy auditpolicy.Policy, pool db.TxBeginner, caller Caller, req EnqueueRequest, turn uuid.UUID) (SendReceipt, error) {
+func SendTurn(ctx context.Context, auditPolicy auditpolicy.Policy, limits org.ExecutionLimits, pool db.TxBeginner, caller Caller, req EnqueueRequest, turn uuid.UUID) (SendReceipt, error) {
 	if turn == uuid.Nil() {
 		return SendReceipt{}, ErrInvalidInput
 	}
-	// A message joins a running Turn and never admits a Turn or a Computer.
-	return admitSessionInput(ctx, auditPolicy, org.ExecutionLimits{}, pool, nil, caller, req, "turn_send", turn)
+	return admitSessionInput(ctx, auditPolicy, limits, pool, nil, caller, req, "turn_send", turn)
 }
 
 func messageRetry(ctx context.Context, tx pgx.Tx, caller Caller, req EnqueueRequest, method string, target uuid.UUID, digest [32]byte, result *SendReceipt) (bool, error) {
