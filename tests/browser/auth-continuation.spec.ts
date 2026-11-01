@@ -218,6 +218,7 @@ test("a request consumed elsewhere replaces the stale action error", async ({ pa
 test("organization page marks the current organization and returns to it",async({page,context})=>{
  await fixture(context,{loggedIn:true});
  await page.goto("/");
+ await expect(page.getByRole("heading", { name: "Create your first project", exact: true })).toBeVisible();
  await page.goto("/organizations");
  await expect(page.getByRole("heading",{name:"Choose an organization",exact:true})).toBeVisible();
  await expect(page.getByRole("button",{name:"Example org",exact:true})).toHaveAttribute("aria-current","true");
