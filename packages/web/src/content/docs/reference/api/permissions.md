@@ -233,7 +233,7 @@ they are not another user-managed collection.
 
 ## Ownership and initialization
 
-A new organization has seventeen standard Roles, no custom Groups and no All members
+A new organization has fifteen standard Roles, no custom Groups and no All members
 Grants. Its creator is an Owner and receives three explicit organization Grants:
 Access Administrator, Organization Structure Administrator and Auditor.
 
