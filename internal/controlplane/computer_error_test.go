@@ -80,7 +80,7 @@ func TestComputerSnapshotEncodesAsPublicResource(t *testing.T) {
 			{Secret: uuid.NewV7().String(), Env: &secretbinding.ReferenceEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}},
 			{Secret: uuid.NewV7().String(), File: &secretbinding.File{Path: "/run/secrets/key"}},
 		},
-		LastActivityAt: at, CreatedAt: at, UpdatedAt: at,
+		CreatedAt: at, UpdatedAt: at,
 	}
 	owner, err := json.Marshal(snapshot)
 	if err != nil {

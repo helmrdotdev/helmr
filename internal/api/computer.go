@@ -2,18 +2,16 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 type CreateComputerRequest struct {
-	Template          string                    `json:"template"`
-	DeleteAfterUnused lifetime.Policy           `json:"delete_after_unused_ms,omitzero"`
-	Key               *string                   `json:"key,omitempty"`
-	Secrets           []secretbinding.Reference `json:"secrets,omitempty"`
-	IdempotencyKey    string                    `json:"idempotency_key,omitempty"`
+	Template       string                    `json:"template"`
+	Key            *string                   `json:"key,omitempty"`
+	Secrets        []secretbinding.Reference `json:"secrets,omitempty"`
+	IdempotencyKey string                    `json:"idempotency_key,omitempty"`
 }
 
 type ComputerStatus string
@@ -53,7 +51,6 @@ type ComputerSnapshot struct {
 	DeploymentID        string                    `json:"deployment_id"`
 	Status              ComputerStatus            `json:"status"`
 	Secrets             []secretbinding.Reference `json:"secrets"`
-	LastActivityAt      time.Time                 `json:"last_activity_at"`
 	CreatedAt           time.Time                 `json:"created_at"`
 	UpdatedAt           time.Time                 `json:"updated_at"`
 }
@@ -70,7 +67,6 @@ type ComputerListItem struct {
 	DefinitionID        string                    `json:"template"`
 	DeploymentID        string                    `json:"deployment_id"`
 	Status              ComputerStatus            `json:"status"`
-	LastActivityAt      time.Time                 `json:"last_activity_at"`
 	CreatedAt           time.Time                 `json:"created_at"`
 	UpdatedAt           time.Time                 `json:"updated_at"`
 	// SecretExposure is present only when the list is filtered by Secret.
@@ -119,8 +115,4 @@ type DeleteComputerReceipt struct {
 	ComputerID        string `json:"computer_id"`
 	SessionsCancelled int64  `json:"sessions_cancelled"`
 	CommandsCancelled int64  `json:"commands_cancelled"`
-}
-
-type UpdateComputerRequest struct {
-	DeleteAfterUnused lifetime.Policy `json:"delete_after_unused_ms"`
 }

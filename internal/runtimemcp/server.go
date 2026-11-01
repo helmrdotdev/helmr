@@ -11,7 +11,6 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/helmrdotdev/helmr/internal/content"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/helmrdotdev/helmr/internal/mcppolicy"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -30,11 +29,10 @@ type agentsInput struct {
 	Cursor    string `json:"cursor,omitempty"`
 }
 type createInput struct {
-	CloseAfterIdle json.RawMessage `json:"closeAfterIdleMs,omitempty" jsonschema:"Idle retention in positive integer milliseconds; null disables idle closure. Omit to inherit the Agent definition."`
-	AgentID        string          `json:"agent"`
-	Input          any             `json:"input" jsonschema:"Finite JSON matching the target agent input contract; use agents discovery for its pinned schema."`
-	ComputerID     string          `json:"computerId,omitempty"`
-	IdempotencyKey string          `json:"idempotencyKey" jsonschema:"Reuse this key with identical arguments when the outcome is uncertain."`
+	AgentID        string `json:"agent"`
+	Input          any    `json:"input" jsonschema:"Finite JSON matching the target agent input contract; use agents discovery for its pinned schema."`
+	ComputerID     string `json:"computerId,omitempty"`
+	IdempotencyKey string `json:"idempotencyKey" jsonschema:"Reuse this key with identical arguments when the outcome is uncertain."`
 }
 type enqueueInput struct {
 	SessionID      string `json:"sessionId"`
@@ -147,12 +145,6 @@ func addScoped[I any](server *mcp.Server, policy mcppolicy.Policy, invoke Invoke
 	if operation := schema.Properties["operation"]; operation != nil {
 		operation.Enum = []any{"spawn", "start"}
 	}
-	if retention := schema.Properties["closeAfterIdleMs"]; retention != nil {
-		retention.Type = ""
-		retention.Types = []string{"integer", "null"}
-		retention.Properties = nil
-		retention.AdditionalProperties = nil
-	}
 	mcp.AddTool(server, &mcp.Tool{Name: name, Description: description, InputSchema: schema}, func(ctx context.Context, _ *mcp.CallToolRequest, input I) (*mcp.CallToolResult, any, error) {
 		if err := validate(input); err != nil {
 			return nil, nil, err
@@ -187,12 +179,6 @@ func validate(input any) error {
 			return errors.New("limit must be from 1 to 100")
 		}
 	case createInput:
-		if len(value.CloseAfterIdle) > 0 {
-			var policy lifetime.Policy
-			if err := json.Unmarshal(value.CloseAfterIdle, &policy); err != nil {
-				return err
-			}
-		}
 		raw, err := json.Marshal(value.Input)
 		if err != nil {
 			return err

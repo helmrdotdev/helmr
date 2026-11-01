@@ -236,7 +236,7 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	if denied.Code != http.StatusForbidden {
 		t.Fatalf("read key created Computer: %d %s", denied.Code, denied.Body.String())
 	}
-	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "computer SDK", RolePermissions: []auth.Permission{auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsRead, auth.PermissionComputersRead, auth.PermissionComputersCreate, auth.PermissionComputersUpdate, auth.PermissionSecretsCreate}})
+	sdkKey, err := issueAPIKeyWithRole(t, t.Context(), f.Pool, issuer, scope, testAPIKeyInput{Name: "computer SDK", RolePermissions: []auth.Permission{auth.PermissionAgentsRead, auth.PermissionTemplatesRead, auth.PermissionSessionsRead, auth.PermissionComputersRead, auth.PermissionComputersCreate, auth.PermissionSecretsCreate}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,10 +255,6 @@ func TestAgentDefinitionHTTP(t *testing.T) {
 	var commands api.ListComputerCommandsResponse
 	if err := json.Unmarshal(run("computer", "commands", "--id", f.Computer.String(), "--json"), &commands); err != nil || len(commands.Commands) != 0 {
 		t.Fatalf("computer commands: %+v %v", commands, err)
-	}
-	var updated api.ComputerSnapshot
-	if err := json.Unmarshal(run("computer", "update", "--id", f.Computer.String(), "--delete-after-unused", "1h", "--json"), &updated); err != nil || updated.DeleteAfterUnusedMs == nil || *updated.DeleteAfterUnusedMs != 3600000 {
-		t.Fatalf("computer update: %+v %v", updated, err)
 	}
 	get("/v1/computers/"+f.Computer.String()+"/members", sdkKey.Raw, http.StatusNotFound)
 	get("/v1/computers/"+f.Computer.String()+"/sessions", reader, http.StatusForbidden)

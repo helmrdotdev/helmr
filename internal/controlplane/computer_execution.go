@@ -39,7 +39,6 @@ func (s *Server) controlComputerExecutionHTTP(w http.ResponseWriter, r *http.Req
 	}
 	var body struct {
 		IdempotencyKey string `json:"idempotency_key"`
-		ExpectedScope  string `json:"expected_scope,omitempty"`
 	}
 	if err := decodeOptionalRequestJSON(r, &body); err != nil {
 		s.writeOperationError(w, r, badRequest(err))
@@ -53,7 +52,7 @@ func (s *Server) controlComputerExecutionHTTP(w http.ResponseWriter, r *http.Req
 	if key == "" {
 		key = uuid.NewV7().String()
 	}
-	result, err := session.ControlComputerExecution(r.Context(), s.auditPolicy, s.tx, caller, session.ComputerExecutionRequest{EnvironmentID: env, ComputerID: id, Kind: kind, IdempotencyKey: key, ExpectedScope: body.ExpectedScope})
+	result, err := session.ControlComputerExecution(r.Context(), s.auditPolicy, s.tx, caller, session.ComputerExecutionRequest{EnvironmentID: env, ComputerID: id, Kind: kind, IdempotencyKey: key})
 	if err != nil {
 		switch {
 		case errors.Is(err, session.ErrNotReady), errors.Is(err, computer.ErrNotReady):
@@ -70,8 +69,10 @@ func (s *Server) controlComputerExecutionHTTP(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusAccepted, result)
 }
 
-func (s *Server) computerExecutionScopeHTTP(w http.ResponseWriter, r *http.Request) {
-	_, env, err := s.agentRequestAuthority(r, auth.PermissionComputersRead)
+// computerHibernatePreviewHTTP reports how many open Sessions a hibernate
+// request would pause.
+func (s *Server) computerHibernatePreviewHTTP(w http.ResponseWriter, r *http.Request) {
+	caller, env, err := s.agentRequestAuthority(r, auth.PermissionComputersHibernate)
 	if err != nil {
 		s.writeAgentHTTPError(w, r, err)
 		return
@@ -81,24 +82,16 @@ func (s *Server) computerExecutionScopeHTTP(w http.ResponseWriter, r *http.Reque
 		s.writeAgentHTTPError(w, r, session.ErrInvalidInput)
 		return
 	}
-	var scope session.ExecutionScope
+	var count int64
 	err = db.RunTx(r.Context(), s.tx, func(tx pgx.Tx) error {
-		var exists bool
-		err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM computers WHERE environment_id=$1 AND id=$2)`, env, id).Scan(&exists)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			return session.ErrNotReady
-		}
-		scope, err = session.ReadComputerExecutionScope(r.Context(), tx, env, id)
+		count, err = session.ComputerHibernatePreview(r.Context(), tx, caller, env, id)
 		return err
 	})
 	if err != nil {
 		s.writeAgentHTTPError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, scope)
+	writeJSON(w, http.StatusOK, api.ComputerHibernatePreview{Sessions: count})
 }
 
 // sessionClosePreviewHTTP reports how many Sessions a close would close.

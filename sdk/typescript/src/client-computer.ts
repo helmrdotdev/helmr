@@ -1,4 +1,4 @@
-import { durationMilliseconds, retentionMilliseconds, type Retention } from "./duration"
+import { durationMilliseconds } from "./duration"
 import { encodeCommandLogQuery, parseCommandLogPage, streamCommandLogs, type CommandLogQuery, type CommandLogStreamQuery } from "./command-logs"
 import { parseCancelReceipt, parseCommandInfo, parseCommandReceipt, waitForCommand, type CommandRef, type CommandWaitOptions, type CommandOutcome, type TimedCommandWaitResult } from "./command"
 import type { CursorPage } from "./contract"
@@ -55,7 +55,7 @@ export interface ClientComputersApi {
 
 export interface ComputerTransport {
   request(
-    method: "GET" | "POST" | "DELETE" | "PATCH",
+    method: "GET" | "POST" | "DELETE",
     path: string,
     options?: Readonly<{ body?: unknown; signal?: AbortSignal }>,
   ): Promise<unknown>
@@ -78,7 +78,6 @@ export function createClientComputers(
           body: {
             template: request.template,
             ...(request.key === undefined ? {} : { key: request.key }),
-            ...(request.deleteAfterUnused === undefined ? {} : { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }),
             ...(request.secrets === undefined ? {} : { secrets }),
             ...(request.idempotencyKey === undefined ? {} : { idempotency_key: request.idempotencyKey }),
           },
@@ -160,9 +159,6 @@ export function createClientComputerRef(
     id: computerID,
     hibernate: (request?: ComputerExecutionRequest, options?: RequestOptions) => control("hibernate", request, options),
     wake: (request?: ComputerExecutionRequest, options?: RequestOptions) => control("wake", request, options),
-    async update(request: Readonly<{ deleteAfterUnused: Retention }>, options: RequestOptions = {}): Promise<Computer> {
-      return parseComputer(await transport.request("PATCH", path, { body: { delete_after_unused_ms: retentionMilliseconds(request.deleteAfterUnused, "deleteAfterUnused") }, ...(options.signal === undefined ? {} : { signal: options.signal }) }))
-    },
     sessions: usageCollection("sessions"),
     commands: usageCollection("commands"),
     async get(options: RequestOptions = {}): Promise<Computer> {

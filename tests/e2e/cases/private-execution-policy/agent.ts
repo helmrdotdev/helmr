@@ -27,7 +27,7 @@ export const blockedComputer = template({
 // including when this Agent's ordinary default Template is different.
 export const privatePolicyProbe = agent({
   id: "private-policy-probe", template: ordinaryComputer,
-  suspension: "manual", maxTurnDuration: "15m",
+  maxTurnDuration: "15m",
   init: async () => ({ nonce: randomUUID(), turns: 0 }),
   async turn(turn, ctx): Promise<JsonValue> {
     const input = z.object({ subject: z.enum(["ordinary", "finite", "blocked"]) }).strict().parse(fixtureValue(turn.input))

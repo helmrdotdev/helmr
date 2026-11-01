@@ -11,11 +11,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/identity"
-	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
-func TestComputerExecutionHTTPUsesCurrentAuthorityAndConfirmedScope(t *testing.T) {
+func TestComputerExecutionHTTPUsesCurrentAuthorityAndPreviewCount(t *testing.T) {
 	f := sessiontest.New(t)
 	queries := db.New(f.Pool)
 	cfg := completeServerConfig(t)
@@ -44,14 +43,16 @@ func TestComputerExecutionHTTPUsesCurrentAuthorityAndConfirmedScope(t *testing.T
 		}
 		return r.Body.Bytes()
 	}
-	var scope session.ExecutionScope
-	if err = json.Unmarshal(call("GET", base+"/execution-scope", "", 200), &scope); err != nil || len(scope.Sessions) != 1 {
-		t.Fatalf("scope: %+v %v", scope, err)
+	var preview struct {
+		Sessions int64 `json:"sessions"`
 	}
-	call("POST", base+"/hibernate", `{"idempotency_key":"sleep","expected_scope":"stale"}`, http.StatusConflict)
-	request, _ := json.Marshal(map[string]string{"idempotency_key": "sleep", "expected_scope": scope.Digest})
-	first := call("POST", base+"/hibernate", string(request), http.StatusAccepted)
-	if again := call("POST", base+"/hibernate", string(request), http.StatusAccepted); string(first) != string(again) {
+	if err = json.Unmarshal(call("GET", base+"/hibernate-preview", "", 200), &preview); err != nil || preview.Sessions != 1 {
+		t.Fatalf("preview: %+v %v", preview, err)
+	}
+	call("POST", base+"/hibernate", `{"idempotency_key":"sleep","expected_scope":"stale"}`, http.StatusBadRequest)
+	request := `{"idempotency_key":"sleep"}`
+	first := call("POST", base+"/hibernate", request, http.StatusAccepted)
+	if again := call("POST", base+"/hibernate", request, http.StatusAccepted); string(first) != string(again) {
 		t.Fatalf("duplicate operation changed: %s / %s", first, again)
 	}
 	read := call("GET", base, "", 200)
@@ -59,9 +60,9 @@ func TestComputerExecutionHTTPUsesCurrentAuthorityAndConfirmedScope(t *testing.T
 		t.Fatalf("missing operation state: %s", read)
 	}
 	f.SetPermissions(t, "sessions.read")
-	call("POST", base+"/hibernate", string(request), http.StatusForbidden)
+	call("POST", base+"/hibernate", request, http.StatusForbidden)
 	call("POST", base+"/wake", `{}`, http.StatusForbidden)
-	call("GET", base+"/execution-scope", "", http.StatusForbidden)
+	call("GET", base+"/hibernate-preview", "", http.StatusForbidden)
 	var turns int
 	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM turns WHERE session_id=$1`, f.Session).Scan(&turns); err != nil || turns != 0 {
 		t.Fatalf("lifecycle created Turn: %d %v", turns, err)

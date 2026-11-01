@@ -20,10 +20,9 @@ const terminalProcessPhysicallyStopped = `s.status='closed' AND p.status='stoppi
  AND NOT EXISTS(SELECT 1 FROM computer_leases live WHERE live.environment_id=p.environment_id AND live.computer_id=p.computer_id AND live.fenced_at IS NULL)`
 
 // mayBecomeIdle selects an open Session row s that the idle reconciler can
-// start timing: nothing is running, nothing runnable is queued and every child
-// is closed. Busy Sessions are not visited until their work settles.
+// start timing: nothing is running and nothing runnable is queued. Busy
+// Sessions are not visited until their work settles.
 const mayBecomeIdle = `NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='running')
- AND NOT EXISTS(SELECT 1 FROM sessions child WHERE child.environment_id=s.environment_id AND child.parent_session_id=s.id AND child.status<>'closed')
  AND (NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued') OR ` + db.SessionHeldSQL + `)`
 
 // RunSessionLifecycle owns deadline settlement and accepted terminal-control convergence
@@ -105,9 +104,12 @@ func reconcileSessionLifecycle(ctx context.Context, auditPolicy auditpolicy.Poli
 // lifecycle reconciliation after the given position.
 func lifecycleCandidates(ctx context.Context, database db.TxDB, after sessionLifecyclePosition) ([]sessionLifecyclePosition, error) {
 	rows, err := database.Query(ctx, `SELECT environment_id,session_id FROM (
-  SELECT environment_id,id AS session_id FROM sessions s WHERE status='open' AND close_after_idle_ms IS NOT NULL
-   AND ((idle_since IS NULL AND `+mayBecomeIdle+`) OR extract(epoch FROM (clock_timestamp()-idle_since))*1000>=close_after_idle_ms
-    OR EXISTS(SELECT 1 FROM computer_saves save WHERE save.environment_id=s.environment_id AND save.computer_id=s.computer_id AND save.requested_at>=s.idle_since AND (save.turn_id IS NULL OR EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=save.environment_id AND t.id=save.turn_id AND t.session_id=s.id))))
+  SELECT environment_id,id AS session_id FROM sessions s WHERE status='open' AND idle_since IS NULL AND `+mayBecomeIdle+`
+  UNION
+  SELECT s.environment_id,s.id FROM sessions s JOIN agent_definitions d ON (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)
+   WHERE s.status='open' AND d.close_after_idle_ms IS NOT NULL
+   AND NOT EXISTS(SELECT 1 FROM sessions child WHERE child.environment_id=s.environment_id AND child.parent_session_id=s.id AND child.status<>'closed')
+   AND extract(epoch FROM (clock_timestamp()-s.idle_since))*1000>=d.close_after_idle_ms
   UNION
  SELECT s.environment_id,s.id FROM sessions s JOIN computer_leases l ON (l.environment_id,l.computer_id)=(s.environment_id,s.computer_id) WHERE s.status IN ('open','closing') AND l.fenced_at IS NULL AND l.storage_pressure_since<=clock_timestamp()-interval '30 seconds'
   UNION

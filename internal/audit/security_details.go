@@ -49,13 +49,6 @@ func KnownMCPTool(tool string) bool {
 	return slices.Contains([]string{"list_agents", "list_computers", "spawn", "start", "inspect_turn", "inspect_session", "list_sessions", "send_turn", "interrupt_turn", "interrupt_session", "resume_session", "close_session", "cancel_session", "enqueue"}, tool)
 }
 
-type ComputerRetentionDetails struct {
-	Before *int64 `json:"before_ms"`
-	After  *int64 `json:"after_ms"`
-}
-
-func (ComputerRetentionDetails) auditDetails() {}
-
 type ComputerControlDetails struct {
 	Reason    string    `json:"reason,omitempty"`
 	RequestID uuid.UUID `json:"request_id"`

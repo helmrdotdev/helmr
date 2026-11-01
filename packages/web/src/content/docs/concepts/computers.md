@@ -172,9 +172,15 @@ prompt. Both return an accepted-operation receipt; observe `computer.get()` and
 retries return the same accepted operation. Hibernate rejects active foreground
 work; it does not cancel work or queue a deferred sleep instruction.
 
-Console provides the same actions and shows the affected Sessions before
-hibernation. A stale confirmation is rejected if that scope changes. Wake does
-not release Session holds, reopen closed Sessions or change Slack mute.
+Console provides the same actions and shows how many open Sessions hibernation
+pauses before you confirm; `GET /v1/computers/{computerID}/hibernate-preview`
+returns that count as `{ "sessions": N }`. Wake does not release Session holds,
+reopen closed Sessions or change Slack mute.
+
+Helmr also hibernates a Computer on its own when its Sessions' Agents set
+`hibernateAfterIdle` and every open Session has been idle that long, or when
+the Computer has had no open Session and no unsettled Command for 10 minutes.
+See [Hibernation](/docs/concepts/durability#hibernation).
 
 Starting a Session or a Command on a Computer starts or restores it as needed.
 This applies after explicit and automatic hibernation. Rejected wake admission
@@ -183,10 +189,10 @@ observing the operation state; they do not imply rollback.
 See [Durability](/docs/concepts/durability) for what is saved and when.
 
 A Computer is unused when all its Sessions are finished, its Commands have
-settled and its disk saves are complete. After `deleteAfterUnused`, Helmr deletes
-it. New work resets that interval. Change the policy on an existing Computer
-with `client.computers.ref(id).update({ deleteAfterUnused })`, or delete it
-explicitly. Deleting cancels its Sessions and the Sessions they started, and its
+settled and its disk saves are complete. After its origin Template's
+`deleteAfterUnused`, Helmr deletes it. New work resets that interval; internal
+saves do not. A Computer that should live longer is created from a Template
+with a longer period. Delete a Computer explicitly at any time. Deleting cancels its Sessions and the Sessions they started, and its
 unfinished Commands; `computers.delete` is enough.
 
 ## Commands

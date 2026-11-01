@@ -11,8 +11,9 @@ import (
 // rendering could acknowledge a change that the published card never showed.
 // Aliases s and t are the front Session and its Slack thread.
 const lifecycleStateSQL = `jsonb_build_object(
- 'computer_id',s.computer_id,'status',s.status,'policy',(SELECT d.suspension FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)),
- 'idle',s.close_after_idle_ms,'muted',t.input_muted,
+ 'computer_id',s.computer_id,'status',s.status,
+ 'hibernate_after',(SELECT d.hibernate_after_idle_ms FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)),
+ 'close_after',(SELECT d.close_after_idle_ms FROM agent_definitions d WHERE (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)),'muted',t.input_muted,
  'checkpoint',COALESCE((SELECT cp.status FROM checkpoints cp WHERE cp.environment_id=s.environment_id AND cp.computer_id=s.computer_id AND cp.status IN ('capturing','sealed','ready','restoring','aborting') ORDER BY cp.created_at DESC LIMIT 1),''),
  'awake',EXISTS(SELECT 1 FROM computer_leases l WHERE l.environment_id=s.environment_id AND l.computer_id=s.computer_id AND l.status='active' AND l.fenced_at IS NULL),
  'control',COALESCE((SELECT jsonb_build_object('kind',c.kind,'status',c.status,'failure',COALESCE(c.error_code,'')) FROM computer_controls c WHERE c.environment_id=s.environment_id AND c.computer_id=s.computer_id ORDER BY c.accepted_at DESC,c.id DESC LIMIT 1),'{}'::jsonb))`
@@ -20,12 +21,14 @@ const lifecycleStateSQL = `jsonb_build_object(
 type lifecycleState struct {
 	ComputerID *uuid.UUID `json:"computer_id"`
 	Status     string     `json:"status"`
-	Policy     string     `json:"policy"`
-	Idle       *int64     `json:"idle"`
-	Muted      bool       `json:"muted"`
-	Checkpoint string     `json:"checkpoint"`
-	Awake      bool       `json:"awake"`
-	Control    struct {
+	// HibernateAfter and CloseAfter are the pinned Agent definition's idle
+	// periods in milliseconds; nil means never.
+	HibernateAfter *int64 `json:"hibernate_after"`
+	CloseAfter     *int64 `json:"close_after"`
+	Muted          bool   `json:"muted"`
+	Checkpoint     string `json:"checkpoint"`
+	Awake          bool   `json:"awake"`
+	Control        struct {
 		Kind    string `json:"kind"`
 		Status  string `json:"status"`
 		Failure string `json:"failure"`

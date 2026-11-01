@@ -13,7 +13,7 @@ export const captureAbortComputer = template({
 
 export const captureAbortAgent = agent({
   id: "verification-capture-abort", template: captureAbortComputer, maxTurnDuration: "20m",
-  suspension: "after_turn",
+  hibernateAfterIdle: "1s",
   init: () => ({ nonce: randomUUID(), count: 0, marker: "" }),
   turn: async (turn, ctx) => {
     const { marker, cancelledMarker, cancelMember, cancelledCounter } = z.object({

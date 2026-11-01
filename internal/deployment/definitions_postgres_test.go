@@ -123,9 +123,10 @@ func TestTemplateDefinitionRegistrationRejectsForeignSecretAndConflictingStoredI
 func TestProgramDefinitionRegistrationPinsComputerAndPreservesAgentIdentity(t *testing.T) {
 	f := newDefinitionsFixture(t)
 	output := artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{Digest: artifacttest.Digest("program"), SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType}, Metadata: artifacttest.ProgramMetadata(t)}
-	duration, idle := int64(1101), int64(2203)
+	duration, idle, hibernate := int64(1101), int64(2203), int64(3307)
 	output.Metadata.Definitions[0].Agent.MaxTurnDurationMs = &duration
 	output.Metadata.Definitions[0].Agent.CloseAfterIdleMs = &idle
+	output.Metadata.Definitions[0].Agent.HibernateAfterIdleMs = &hibernate
 	register := func(deployment uuid.UUID) error {
 		return db.RunTx(t.Context(), f.pool, func(tx pgx.Tx) error {
 			if err := lockDefinitionTestEnvironment(t, tx, f.env); err != nil {
@@ -148,10 +149,10 @@ func TestProgramDefinitionRegistrationPinsComputerAndPreservesAgentIdentity(t *t
 	if err := f.pool.QueryRow(t.Context(), `SELECT count(DISTINCT d.agent_id),count(*) FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) WHERE d.environment_id=$1 AND a.key='build'`, f.env).Scan(&identities, &defs); err != nil || identities != 1 || defs != 2 {
 		t.Fatalf("stable identity %d/%d: %v", identities, defs, err)
 	}
-	var gotDuration, gotIdle int64
+	var gotDuration, gotIdle, gotHibernate int64
 	var computer string
-	if err := f.pool.QueryRow(t.Context(), `SELECT d.max_turn_duration_ms,d.close_after_idle_ms,t.key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key='build'`, f.env, second).Scan(&gotDuration, &gotIdle, &computer); err != nil || gotDuration != duration || gotIdle != idle || computer != "repo" {
-		t.Fatalf("pinned definition %d/%d/%s: %v", gotDuration, gotIdle, computer, err)
+	if err := f.pool.QueryRow(t.Context(), `SELECT d.max_turn_duration_ms,d.close_after_idle_ms,d.hibernate_after_idle_ms,t.key FROM agent_definitions d JOIN agents a ON (a.environment_id,a.id)=(d.environment_id,d.agent_id) JOIN templates t ON (t.environment_id,t.id)=(d.environment_id,d.template_id) WHERE d.environment_id=$1 AND d.deployment_id=$2 AND a.key='build'`, f.env, second).Scan(&gotDuration, &gotIdle, &gotHibernate, &computer); err != nil || gotDuration != duration || gotIdle != idle || gotHibernate != hibernate || computer != "repo" {
+		t.Fatalf("pinned definition %d/%d/%d/%s: %v", gotDuration, gotIdle, gotHibernate, computer, err)
 	}
 	// Even a direct write cannot bind an Agent to another deployment's Computer.
 	if _, err := f.pool.Exec(t.Context(), `UPDATE agent_definitions SET template_id='01900000-0000-7000-8000-000000000099' WHERE environment_id=$1 AND deployment_id=$2`, f.env, second); err == nil {

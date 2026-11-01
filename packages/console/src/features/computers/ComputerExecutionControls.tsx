@@ -1,9 +1,8 @@
-import { createEffect, createSignal, For, on, Show, type JSX } from "solid-js";
+import { createEffect, createSignal, on, Show, type JSX } from "solid-js";
 import { hasPermission } from "../../lib/auth";
-import { controlComputerExecution, getComputerExecutionScope, type ComputerListItem, type ComputerScope, type ExecutionScope } from "../../lib/computers";
+import { controlComputerExecution, getComputerHibernatePreview, type ComputerListItem, type ComputerScope } from "../../lib/computers";
 import { errorMessage } from "../../lib/error";
 import { useMe } from "../../lib/me";
-import { sessionConsolePath } from "../../lib/sessions";
 import type { ActionMenuItem } from "../../ui/ActionMenu";
 import { ConfirmDialog } from "../../ui/Dialog";
 import { IDText } from "../../ui/IDText";
@@ -26,7 +25,7 @@ function failureMessage(code: string | undefined): string {
 // request is in progress), and the notices and confirmation they need.
 export function createComputerControls(props: { computer: () => ComputerListItem | undefined; scope: () => ComputerScope; onChanged: () => Promise<unknown> }) {
   const me = useMe();
-  const [preview, setPreview] = createSignal<{ id: string; scope: ComputerScope; members: ExecutionScope; key: string }>();
+  const [preview, setPreview] = createSignal<{ id: string; scope: ComputerScope; sessions: number; key: string }>();
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const [receipt, setReceipt] = createSignal<string>();
@@ -37,7 +36,7 @@ export function createComputerControls(props: { computer: () => ComputerListItem
   const prepare = async (computer: ComputerListItem) => {
     setBusy(true); setError(undefined);
     const scope = { ...props.scope() };
-    try { setPreview({ id: computer.id, scope, members: await getComputerExecutionScope(computer.id, scope), key: crypto.randomUUID() }); }
+    try { setPreview({ id: computer.id, scope, sessions: (await getComputerHibernatePreview(computer.id, scope)).sessions, key: crypto.randomUUID() }); }
     catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
   };
@@ -68,14 +67,12 @@ export function createComputerControls(props: { computer: () => ComputerListItem
           <Show when={error()}>{message => <Notice tone="danger" role="alert">{message()}</Notice>}</Show>
           <Show when={receipt()}>{message => <Notice tone="info" role="status" onDismiss={() => setReceipt(undefined)}>{message()}</Notice>}</Show>
           <Show when={preview()} keyed>{target => <ConfirmDialog title="Hibernate computer" confirmLabel="Hibernate computer" onClose={() => setPreview(undefined)} target={<IDText value={target.id} />} onConfirm={async () => {
-            await controlComputerExecution(target.id, target.scope, "hibernate", target.key, target.members.digest);
+            await controlComputerExecution(target.id, target.scope, "hibernate", target.key);
             setReceipt("Hibernate accepted. Background progress pauses when capture succeeds. The computer state shows completion.");
             await props.onChanged();
           }}>
             <p>Background tasks on this computer will stop progressing until you wake it or send a new request. State is preserved when capture succeeds. Active foreground work prevents hibernation.</p>
-            <p>Affected sessions ({target.members.sessions.length}):</p>
-            <For each={target.members.sessions}>{id => <div><IDText value={id} mode="link" href={sessionConsolePath(id)} /></div>}</For>
-            <Show when={target.members.commands.length}><p>Active commands ({target.members.commands.length}):</p><For each={target.members.commands}>{id => <div><IDText value={id} /></div>}</For></Show>
+            <p>{target.sessions === 1 ? "1 open session pauses." : `${target.sessions} open sessions pause.`}</p>
           </ConfirmDialog>}</Show>
         </>
   );

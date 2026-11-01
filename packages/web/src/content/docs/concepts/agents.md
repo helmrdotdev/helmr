@@ -84,18 +84,22 @@ Validate application-specific input in the handler.
 
 | Option | Effect |
 | --- | --- |
-| `suspension` | `"manual"` (default) keeps background execution after Turns. `"after_turn"` permits suspension after a newly settled Turn, once all Computer members and capture checks allow it. |
 | `closeAfterIdle` | Closes a Session after it has been idle this long. Default 7 days. A positive duration (`"30m"`, `"1d"`, or milliseconds) or `"never"`. |
+| `hibernateAfterIdle` | Hibernates the Session's Computer after the Session has been idle this long. Default `"never"`, which keeps background work running. Same values as `closeAfterIdle`. See [Hibernation](/docs/concepts/durability#hibernation). |
 | `maxTurnDuration` | Limits running work, including human waits, until the result is durably recorded. Save finalization has its own recovery lifecycle. No default. |
 
-A Session is idle only when it has no running Turns, queued Turns that can run,
-pending questions, in-flight messages, child Sessions that are not closed or
-unfinished disk saves. A hold does not keep a Session open: queued Turns that a
-hold blocks are cancelled when it closes. A Session creation request can set its own `closeAfterIdle` for a new Session.
-Internal saves and retries do not restart the idle clock. Native starters explicitly use
-`suspension: "manual"` and `closeAfterIdle: "never"`. Other Agents retain the
-seven-day close default. Suspension policy is copied from the deployed Agent when
-the Session is created; later deployments do not change existing Sessions.
+A Session is idle when it has no running Turn, no queued Turn it can run, no
+pending question and no in-flight message. New input restarts its idle clock,
+even while the Session is held, and so does spawning a child Session. A Session
+does not close while it has child Sessions that are not closed or unfinished
+disk saves. A hold does not keep a Session open: queued Turns that a hold blocks
+are cancelled when it closes. Internal saves and retries do not restart the idle
+clock. Hibernation also waits for Commands on the Computer; see
+[Hibernation](/docs/concepts/durability#hibernation). The starters
+set neither option, so their Sessions close after seven idle days and their
+Computers are never hibernated automatically. A Session uses the periods of the
+Deployment it was created in; later deployments do not change existing
+Sessions.
 
 Closing on idle uses the normal [close](/docs/concepts/sessions#controls)
 lifecycle.

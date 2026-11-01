@@ -35,6 +35,7 @@ export const assistant = agent({
   id: "assistant",
   template: assistantComputer,
   closeAfterIdle: "1d",
+  hibernateAfterIdle: "5m",
   maxTurnDuration: "10m",
 
   async init(ctx) {
@@ -67,7 +68,8 @@ The Agent keeps two kinds of state:
   successfully. The Turn becomes `completed` when its result and response are
   committed; its disk save finishes in the background.
 
-`closeAfterIdle` closes the Session after a day without work, and
+`closeAfterIdle` closes the Session after a day without work,
+`hibernateAfterIdle` hibernates its Computer after five idle minutes, and
 `maxTurnDuration` limits each Turn. See [Agents](/docs/concepts/agents).
 
 ## Deploy and start
@@ -103,9 +105,9 @@ Wait for the new `turn_id`. The response now reads
 `Turn 2 in this process. Log entries: 2.` The counter in `initResult` kept its
 value because `init` did not run again.
 
-Leave the Session alone for a while, then enqueue `third`. When a Session has
-no work, Helmr hibernates its Computer with memory, processes and disk, and the
-next input resumes it where it stopped. The counter continues at 3 and
+Leave the Session alone for more than five minutes, then enqueue `third`. After
+five idle minutes Helmr hibernates its Computer with memory, processes and
+disk, and the next input resumes it where it stopped. The counter continues at 3 and
 `startedAs` is still `initial`.
 
 Follow progress at any time with:

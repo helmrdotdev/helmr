@@ -263,7 +263,7 @@ function ComputerRows(props: { computers: ComputerListItem[]; complete: boolean 
           <ListItem line>
             <span class="w-40 shrink-0"><Show when={computer.execution_wait} fallback={<StatusBadge resource="computer_residency" status={computer.residency} />}><StatusBadge resource="computer_wait" status="waiting" /></Show></span>
             <span class="min-w-0 flex-1"><IDText value={computer.id} mode="link" href={computerHref(computer.id)} /></span>
-            <span class={time}><RelativeTime value={computer.last_activity_at} /></span>
+            <span class={time}><RelativeTime value={computer.created_at} /></span>
           </ListItem>
         )}</For>
       </List>

@@ -35,7 +35,6 @@ type controlEnvelope struct {
 	Action          string        `json:"action"`
 	Target          controlTarget `json:"target"`
 	Computer        uuid.UUID     `json:"computer,omitempty"`
-	Scope           string        `json:"scope,omitempty"`
 	OptionID        string        `json:"option_id,omitempty"`
 	Actor           string        `json:"actor,omitempty"`
 	ExpiresAt       int64         `json:"expires_at"`
@@ -43,7 +42,7 @@ type controlEnvelope struct {
 }
 
 // Base lifecycle controls always recheck current membership and authorization.
-// Scoped confirmations and question responses remain time bounded.
+// Confirmations and question responses remain time bounded.
 func persistentLifecycleControl(action string) bool {
 	switch action {
 	case "sleep", "wake", "close", "help", "mute", "unmute":
@@ -60,11 +59,11 @@ func validControl(c controlEnvelope) bool {
 	}
 	switch c.Action {
 	case "sleep", "wake", "close", "help", "mute", "unmute":
-		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Scope == ""
+		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == ""
 	case "hibernate":
-		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Actor != "" && len(c.Scope) == 64 && c.Computer != uuid.Nil()
+		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Actor != "" && c.Computer != uuid.Nil()
 	case "confirm_close":
-		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Actor != "" && c.Scope == "" && c.Computer == uuid.Nil()
+		return t.Turn == uuid.Nil() && t.Ask == uuid.Nil() && c.OptionID == "" && c.SourceTimestamp == "" && c.Actor != "" && c.Computer == uuid.Nil()
 	case "open_answer", "submit_choices":
 		return t.Turn != uuid.Nil() && t.Ask != uuid.Nil() && c.Actor == "" && c.SourceTimestamp == "" && c.OptionID == ""
 	case "choose":

@@ -167,7 +167,6 @@ function SessionProperties(props: { session: Session }) {
       <Property label="Started from">
         <SessionOrigin session={props.session} id />
       </Property>
-      <Property label="Suspension">{props.session.suspension === "after_turn" ? "After a settled turn" : "Manual"}</Property>
       <Property label="Automatic close">{props.session.close_after_idle_ms == null ? "Off" : `${props.session.close_after_idle_ms / 86_400_000} days without new user work; background tasks may stop`}</Property>
       <Property label="Created"><RelativeTime value={props.session.created_at} /></Property>
       <Property label="Deployment"><IDText value={props.session.deployment_id} mode="link" href={deploymentHref(props.session.deployment_id)} /></Property>

@@ -12,7 +12,7 @@ describe("Agent declaration analysis", () => {
     const worker = agent({ id: "worker", template: template({ ...machine(), prepare, refresh: { every: "1h", maxAge: "1d" }, secrets: [{ secret: "API_TOKEN", env: { name: "TOKEN", mode: "raw" } }] }), init: () => { throw new Error("setup executed") }, turn: () => { throw new Error("turn executed") }, maxTurnDuration: "5m", closeAfterIdle: 1000, triggers: [triggers.cron("hourly", "0 * * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] })] })
     const result = compile(entry(worker))
     expect(result.buildPlan.definitions[1]?.manifest).toMatchObject({ prepare: true })
-    expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { suspension: "manual", templateDefinitionId: "machine", hasInit: true, inputKind: "text", maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })
+    expect(result.buildPlan.definitions[0]).toEqual({ kind: "agent", declaredId: "worker", manifest: { templateDefinitionId: "machine", hasInit: true, inputKind: "text", maxTurnDurationMs: 300000, closeAfterIdleMs: 1000, hibernateAfterIdleMs: null, triggers: { hourly: { cron: "0 * * * *", timezone: "Asia/Tokyo", input: [{ type: "text", text: "work" }] } } } })
     const declaration = result.buildPlan.definitions[1]!
     if (declaration.kind !== "template") throw new Error("Computer missing")
     expect(declaration.manifest.resources).toEqual({ milliCpu: 2000, memoryMiB: 4096, diskMiB: 16384 })
@@ -168,15 +168,18 @@ test("pins a literal cron Slack configuration and rejects malformed destinations
   }
 })
 
-test("retention omission, duration and never are distinct from execution timeouts", () => {
-  for (const policy of [undefined, "1d", "never"] as const) {
-    const worker = agent({ id: "worker", template: template({ ...machine(), ...(policy === undefined ? {} : { deleteAfterUnused: policy }) }), turn: () => null, ...(policy === undefined ? {} : { closeAfterIdle: policy }) })
+test("retention is written explicitly: omission is the default, never is null", () => {
+  const week = 7 * 86400000
+  for (const [policy, close, hibernate] of [[undefined, week, null], ["1d", 86400000, 86400000], ["never", null, null]] as const) {
+    const worker = agent({ id: "worker", template: template({ ...machine(), ...(policy === undefined ? {} : { deleteAfterUnused: policy }) }), turn: () => null, ...(policy === undefined ? {} : { closeAfterIdle: policy, hibernateAfterIdle: policy }) })
     const result = compile(entry(worker))
     const a = result.buildPlan.definitions.find(d => d.kind === "agent")!.manifest
     const c = result.buildPlan.definitions.find(d => d.kind === "template")!.manifest
-    expect(a).toMatchObject(policy === "never" ? { closeAfterIdleNever: true } : policy === "1d" ? { closeAfterIdleMs: 86400000 } : {})
-    expect(c).toMatchObject(policy === "never" ? { deleteAfterUnusedNever: true } : policy === "1d" ? { deleteAfterUnusedMs: 86400000 } : {})
-    if (policy === undefined) { expect(a).not.toHaveProperty("closeAfterIdleNever"); expect(a).not.toHaveProperty("closeAfterIdleMs"); expect(c).not.toHaveProperty("deleteAfterUnusedMs") }
+    expect(a).toMatchObject({ closeAfterIdleMs: close, hibernateAfterIdleMs: hibernate })
+    expect(c).toMatchObject({ deleteAfterUnusedMs: close })
+  }
+  for (const value of [null, 0, "0m", "soon", {}]) {
+    expect(() => compile(entry({ ...agent({ id: "worker", template: machine(), turn: () => null }), hibernateAfterIdle: value } as never))).toThrow()
   }
   expect(() => compile(entry(agent({ id: "worker", template: machine(), turn: () => null, maxTurnDuration: "never" })))).toThrow()
 })
@@ -201,13 +204,7 @@ test("unavailable schema descriptions do not disable validation or become an emp
 })
 
 
-test("suspension is an Agent policy with an explicit manual default", () => {
-  for (const suspension of [undefined, "manual", "after_turn"] as const) {
-    const worker = agent({ id: "worker", template: machine(), turn: () => null, ...(suspension === undefined ? {} : { suspension }) })
-    expect(compile(entry(worker)).buildPlan.definitions[0]?.manifest).toMatchObject({ suspension: suspension ?? "manual" })
-  }
+test("an unknown Agent member is rejected", () => {
   const worker = agent({ id: "worker", template: machine(), turn: () => null })
-  for (const suspension of [null, true, "idle", {}]) {
-    expect(() => compile(entry({ ...worker, suspension }))).toThrow("Agent suspension must be manual or after_turn")
-  }
+  expect(() => compile(entry({ ...worker, suspension: "after_turn" } as never))).toThrow("unknown members")
 })

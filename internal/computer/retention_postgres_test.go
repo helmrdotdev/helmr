@@ -10,14 +10,22 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/helmrdotdev/helmr/internal/session/sessiontest"
 )
 
-func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
+// setUnusedRetention sets the unused period on the Computer's origin Template
+// definition; nil means never.
+func setUnusedRetention(t *testing.T, f sessiontest.Fixture, ms *int64) {
+	t.Helper()
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE template_definitions d SET delete_after_unused_ms=$2 FROM computers c WHERE c.id=$1 AND (d.environment_id,d.template_id,d.deployment_id)=(c.environment_id,c.origin_template_id,c.origin_deployment_id)`, f.Computer, ms)
+}
+
+func TestComputerUnusedRetentionPreservesBusyAndNever(t *testing.T) {
 	f := sessiontest.New(t)
 	ctx := t.Context()
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET delete_after_unused_ms=3600000,unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
+	hour := int64(3600000)
+	setUnusedRetention(t, f, &hour)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
 	if _, err := reconcileUnused(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Environment, f.Computer); err != nil {
 		t.Fatal(err)
 	}
@@ -49,14 +57,7 @@ func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 	if deleted || since == nil {
 		t.Fatal("safe unused Computer did not start grace")
 	}
-	var scope Scope
-	scope.EnvironmentID = f.Environment
-	if err := f.Pool.QueryRow(ctx, `SELECT org_id,project_id FROM environments WHERE id=$1`, f.Environment).Scan(&scope.OrgID, &scope.ProjectID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := UpdateRetention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), scope, f.Computer, lifetime.Policy{Set: true}); err != nil {
-		t.Fatal(err)
-	}
+	setUnusedRetention(t, f, nil)
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
 	if _, err := reconcileUnused(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Environment, f.Computer); err != nil {
 		t.Fatal(err)
@@ -66,9 +67,7 @@ func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 		t.Fatal("never failed to preserve Computer")
 	}
 	ms := int64(1)
-	if _, err := UpdateRetention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), scope, f.Computer, lifetime.Policy{Set: true, Milliseconds: &ms}); err != nil {
-		t.Fatal(err)
-	}
+	setUnusedRetention(t, f, &ms)
 	if _, err := reconcileUnused(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Environment, f.Computer); err != nil {
 		t.Fatal(err)
 	}
@@ -76,31 +75,58 @@ func TestComputerUnusedRetentionPreservesBusyAndExplicitNever(t *testing.T) {
 	if !deleted {
 		t.Fatal("safe Computer with inert lease did not delete")
 	}
-	if _, err := UpdateRetention(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Principal(t), scope, f.Computer, lifetime.Policy{Set: true}); err == nil {
-		t.Fatal("deleted Computer was revived")
-	}
 }
 
-func TestComputerUnusedRestartsAfterSaveBetweenScans(t *testing.T) {
+func TestComputerUnusedDoesNotRestartAfterInternalSave(t *testing.T) {
 	f := sessiontest.New(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, f.Session)
 	dbtest.MustExec(t, ctx, f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, f.Session)
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET delete_after_unused_ms=60000,unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
+	minute := int64(60000)
+	setUnusedRetention(t, f, &minute)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,status,failure_evidence) VALUES($1,$2,$3,1,1,'failed','settled capture failure')`, f.Environment, uuid.NewV7(), f.Computer)
 	if _, err := reconcileUnused(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Environment, f.Computer); err != nil {
 		t.Fatal(err)
 	}
-	var renewed bool
-	if err := f.Pool.QueryRow(ctx, `SELECT deleted_at IS NULL AND unused_since>clock_timestamp()-interval '10 seconds' FROM computers WHERE id=$1`, f.Computer).Scan(&renewed); err != nil || !renewed {
-		t.Fatalf("Save did not restart unused interval: %v %v", renewed, err)
+	var deleted bool
+	if err := f.Pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM computers WHERE id=$1`, f.Computer).Scan(&deleted); err != nil || !deleted {
+		t.Fatalf("internal save extended the unused interval: %v %v", deleted, err)
+	}
+}
+
+func TestComputerUnusedPendingSaveDefersWithoutRestartingClock(t *testing.T) {
+	f := sessiontest.New(t)
+	ctx := t.Context()
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET status='closed',close_how='close' WHERE id=$1`, f.Session)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE session_processes SET status='stopped',fenced_at=clock_timestamp() WHERE session_id=$1`, f.Session)
+	minute := int64(60000)
+	setUnusedRetention(t, f, &minute)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET unused_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.Computer)
+	save := uuid.NewV7()
+	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq) VALUES($1,$2,$3,1,1)`, f.Environment, save, f.Computer)
+	if _, err := reconcileUnused(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Environment, f.Computer); err != nil {
+		t.Fatal(err)
+	}
+	var deleted, aged bool
+	if err := f.Pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL,unused_since<clock_timestamp()-interval '1 hour' FROM computers WHERE id=$1`, f.Computer).Scan(&deleted, &aged); err != nil || deleted || !aged {
+		t.Fatalf("pending save: deleted=%v clock kept=%v %v", deleted, aged, err)
+	}
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computer_saves SET status='failed',failure_evidence='settled capture failure' WHERE id=$1`, save)
+	if _, err := reconcileUnused(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.Pool, f.Environment, f.Computer); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM computers WHERE id=$1`, f.Computer).Scan(&deleted); err != nil || !deleted {
+		t.Fatalf("settled save granted a new unused period: %v %v", deleted, err)
 	}
 }
 
 func TestComputerUnusedScanSkipsFutureQuietClock(t *testing.T) {
 	f := sessiontest.New(t)
 	ctx := t.Context()
-	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET delete_after_unused_ms=86400000,unused_since=clock_timestamp() WHERE id=$1`, f.Computer)
+	day := int64(86400000)
+	setUnusedRetention(t, f, &day)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE computers SET unused_since=clock_timestamp() WHERE id=$1`, f.Computer)
 	tx, err := f.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

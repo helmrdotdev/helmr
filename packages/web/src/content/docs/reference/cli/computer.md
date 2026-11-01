@@ -12,7 +12,6 @@ helmr computer list [--key KEY | [--secret NAME] [--cursor CURSOR] [--limit N]] 
 helmr computer get (--id UUID | --key KEY) [--json]
 helmr computer sessions (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [--json]
 helmr computer commands (--id UUID | --key KEY) [--cursor CURSOR] [--limit N] [--json]
-helmr computer update (--id UUID | --key KEY) --delete-after-unused DURATION_OR_NEVER [--json]
 helmr computer delete (--id UUID | --key KEY) [--dry-run] [--idempotency-key KEY] [--json]
 helmr computer exec (--id UUID | --key KEY) [--idempotency-key KEY] -- COMMAND [ARG...]
 ```
@@ -95,9 +94,3 @@ helmr computer list --secret DATABASE_PASSWORD
 Use this list after revoking or rotating a Secret: raw copies already delivered
 stay on these Computers until you delete them.
 
-`update` changes only retention after the Computer becomes unused. For example:
-
-```sh
-helmr computer update --key repository --delete-after-unused 1h
-helmr computer update --key repository --delete-after-unused never
-```

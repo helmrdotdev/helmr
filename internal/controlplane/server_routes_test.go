@@ -112,7 +112,7 @@ GET /api/projects/{project}/environments/{environment}/commands/{commandID}/logs
 GET /api/projects/{project}/environments/{environment}/computers
 GET /api/projects/{project}/environments/{environment}/computers/{computerID}
 GET /api/projects/{project}/environments/{environment}/computers/{computerID}/commands
-GET /api/projects/{project}/environments/{environment}/computers/{computerID}/execution-scope
+GET /api/projects/{project}/environments/{environment}/computers/{computerID}/hibernate-preview
 GET /api/projects/{project}/environments/{environment}/computers/{computerID}/sessions
 GET /api/projects/{project}/environments/{environment}/deployments
 GET /api/projects/{project}/environments/{environment}/deployments/current
@@ -168,7 +168,7 @@ GET /v1/commands/{commandID}/logs
 GET /v1/computers
 GET /v1/computers/{computerID}
 GET /v1/computers/{computerID}/commands
-GET /v1/computers/{computerID}/execution-scope
+GET /v1/computers/{computerID}/hibernate-preview
 GET /v1/computers/{computerID}/sessions
 GET /v1/deployments
 GET /v1/deployments/current
@@ -198,11 +198,9 @@ PATCH /api/account
 PATCH /api/groups/{id}
 PATCH /api/projects/{project}
 PATCH /api/projects/{project}/environments/{environment}
-PATCH /api/projects/{project}/environments/{environment}/computers/{computerID}
 PATCH /api/projects/{project}/settings
 PATCH /api/role-grants/{id}
 PATCH /api/roles/{id}
-PATCH /v1/computers/{computerID}
 POST /admin/api/v1/account-repairs/redeem
 POST /admin/api/v1/account-repairs/{id}/complete
 POST /admin/api/v1/account-repairs/{id}/options

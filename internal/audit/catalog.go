@@ -162,7 +162,6 @@ var definitions = []Definition{
 	{"computer.deleted", "computer", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 	{"computer.restore_completed", "computer", []string{"succeeded"}, OrganizationScope, OrganizationAudience},
 	{"computer.checkpoint_published", "computer", []string{"succeeded"}, OrganizationScope, OrganizationAudience},
-	{"computer.retention_changed", "computer", []string{"succeeded", "denied", "failed"}, OrganizationScope, OrganizationAudience},
 }
 
 var catalog = func() map[string]Definition {

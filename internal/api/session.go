@@ -31,6 +31,12 @@ type CloseSessionRequest struct {
 type SessionClosePreview struct {
 	Sessions int64 `json:"sessions"`
 }
+
+// ComputerHibernatePreview counts the open Sessions a hibernate request would
+// pause.
+type ComputerHibernatePreview struct {
+	Sessions int64 `json:"sessions"`
+}
 type CancelSessionRequest struct {
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }

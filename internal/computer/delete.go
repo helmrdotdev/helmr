@@ -165,13 +165,14 @@ func cancelLiveCommands(ctx context.Context, auditPolicy auditpolicy.Policy, tx 
 	return int64(len(live)), nil
 }
 
-// unusedComputerBusySQL is the retention test for an unused Computer: no
-// Session, process, Command or save remains. Explicit deletion cancels these
-// instead.
+// unusedComputerBusySQL reports work that keeps a Computer in use: a Session,
+// a process or a Command. It also reports, separately, a save in progress,
+// which only defers deletion and never restarts the unused clock. Explicit
+// deletion cancels these instead.
 const unusedComputerBusySQL = `SELECT EXISTS(SELECT 1 FROM sessions WHERE environment_id=$1 AND computer_id=$2 AND status IN ('open','closing'))
  OR EXISTS(SELECT 1 FROM session_processes WHERE environment_id=$1 AND computer_id=$2 AND fenced_at IS NULL)
- OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND (terminal_at IS NULL OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL)))
- OR EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND status IN ('requested','captured'))`
+ OR EXISTS(SELECT 1 FROM commands WHERE environment_id=$1 AND computer_id=$2 AND (terminal_at IS NULL OR (computer_lease_epoch IS NOT NULL AND process_reconciled_at IS NULL))),
+ EXISTS(SELECT 1 FROM computer_saves WHERE environment_id=$1 AND computer_id=$2 AND status IN ('requested','captured'))`
 
 // deleteLocked marks a locked Computer deleted. The caller has settled its
 // logical members.

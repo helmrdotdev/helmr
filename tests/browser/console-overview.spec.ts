@@ -60,7 +60,7 @@ const usage = (days: number) => ({
 
 const computer = (suffix: string, residency: string, minutes: number, extra: Record<string, unknown> = {}) => ({
   id: id(suffix), template: "base", deployment_id: deploymentID, status: "available", execution_control: null, execution_wait: null, residency,
-  last_activity_at: ago(minutes), created_at: ago(900), updated_at: ago(minutes), ...extra,
+  created_at: ago(minutes), updated_at: ago(minutes), ...extra,
 });
 
 async function fixture(page: Page, overrides: Partial<State> = {}): Promise<State> {

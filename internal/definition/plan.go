@@ -210,7 +210,7 @@ func validateDefinitionInput(input Input) error {
 		if err := ValidateImageBuild(input.Template.ImageBuild, string(ArchitectureX8664)); err != nil {
 			return err
 		}
-		if err := ValidateUnusedPolicy(input.Template.DeleteAfterUnusedMs, input.Template.DeleteAfterUnusedNever); err != nil {
+		if err := ValidateUnusedPolicy(input.Template.DeleteAfterUnusedMs); err != nil {
 			return err
 		}
 		if _, _, err := ResolveTemplatePolicies(input.Template.Network, input.Template.PrepareNetwork, input.Template.Prepare, input.Template.Secrets, input.Template.PrepareSecrets); err != nil {

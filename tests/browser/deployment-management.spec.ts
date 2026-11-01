@@ -94,7 +94,7 @@ test("Computer exposes independently paged Sessions and Commands with its Templa
     } else if (url.pathname.endsWith("/commands")) {
       await route.fulfill({ json: { commands: [{ id: command, usage_state: "running", created_at: now }] } });
     } else {
-      await route.fulfill({ json: { id: computer, template: "browser", deployment_id: deploymentID, status: "available", residency: "cold", secrets: [], created_at: now, updated_at: now, last_activity_at: now } });
+      await route.fulfill({ json: { id: computer, template: "browser", deployment_id: deploymentID, status: "available", residency: "cold", secrets: [], created_at: now, updated_at: now } });
     }
   });
   await page.goto(`/computers/${computer}`);
@@ -129,7 +129,7 @@ test("Computer exposes independently paged Sessions and Commands with its Templa
 
 test("a Computer's status is its residency, its lifecycle only while deleting, in the header and the Computers list", async ({ page }) => {
   await catalog(page, ["computers.read", "sessions.read", "deployments.read"]);
-  const computer = (id: string, fields: Record<string, unknown>) => ({ id, template: "browser", deployment_id: deploymentID, status: "available", residency: "running", secrets: [], created_at: now, updated_at: now, last_activity_at: now, ...fields });
+  const computer = (id: string, fields: Record<string, unknown>) => ({ id, template: "browser", deployment_id: deploymentID, status: "available", residency: "running", secrets: [], created_at: now, updated_at: now, ...fields });
   const running = computer("00000000-0000-7000-8000-000000000711", {});
   const unavailable = computer("00000000-0000-7000-8000-000000000712", { residency: "unavailable", error: { code: "computer_preparation_failed", message: "The image could not be prepared." } });
   const deleting = computer("00000000-0000-7000-8000-000000000713", { status: "deleting", residency: "cold" });
@@ -141,7 +141,7 @@ test("a Computer's status is its residency, its lifecycle only while deleting, i
     else await route.fulfill({ json: [running, unavailable, deleting].find(item => url.pathname.endsWith(item.id)) });
   });
   await page.goto("/computers");
-  await expect(page.getByRole("columnheader")).toHaveText(["Computer", "Status", "Key", "Template", "Last activity", "Created", "Actions"]);
+  await expect(page.getByRole("columnheader")).toHaveText(["Computer", "Status", "Key", "Template", "Created", "Actions"]);
   await expect(page.getByRole("columnheader", { name: "Residency" })).toHaveCount(0);
   const row = (id: string) => page.getByRole("row").filter({ hasText: id.slice(-12) });
   await expect(row(running.id).getByRole("cell").nth(1)).toHaveText("Awake");
@@ -157,4 +157,28 @@ test("a Computer's status is its residency, its lifecycle only while deleting, i
   await page.goto(`/computers/${deleting.id}`);
   await expect(title.getByText("Deleting", { exact: true })).toBeVisible();
   await expect(title.getByText("Cold", { exact: true })).toHaveCount(0);
+});
+
+test("hibernating a Computer confirms with the count of open Sessions it pauses", async ({ page }) => {
+  await catalog(page, ["computers.read", "computers.hibernate", "sessions.read", "deployments.read"]);
+  const running = { id: "00000000-0000-7000-8000-000000000721", template: "browser", deployment_id: deploymentID, status: "available", residency: "running", execution_control: null, execution_wait: null, secrets: [], created_at: now, updated_at: now };
+  const bodies: unknown[] = [];
+  await page.route(`**${base}/computers**`, async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === `${base}/computers`) await route.fulfill({ json: { computers: [running] } });
+    else if (url.pathname.endsWith("/hibernate-preview")) await route.fulfill({ json: { sessions: 2 } });
+    else if (url.pathname.endsWith("/hibernate")) {
+      bodies.push(route.request().postDataJSON());
+      await route.fulfill({ status: 202, json: { id: "00000000-0000-7000-8000-000000000722", computer_id: running.id, kind: "hibernate", status: "accepted", accepted_at: now, settled_at: null } });
+    } else await route.fulfill({ json: running });
+  });
+  await page.goto("/computers");
+  await page.getByRole("button", { name: `Actions for ${running.id}` }).click();
+  await page.getByRole("menuitem", { name: "Hibernate", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Hibernate computer" });
+  await expect(dialog).toContainText("2 open sessions pause.");
+  await expect(dialog.getByRole("link")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Hibernate computer", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(bodies).toEqual([{ idempotency_key: expect.any(String) }]);
 });

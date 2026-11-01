@@ -72,7 +72,7 @@ class ClientTransport {
   }
 
   async request(
-    method: "GET" | "POST" | "DELETE" | "PATCH",
+    method: "GET" | "POST" | "DELETE",
     path: string,
     options: Readonly<{ body?: unknown; signal?: AbortSignal }> = {},
   ): Promise<unknown> {

@@ -58,12 +58,11 @@ func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.computers.Create(r.Context(), s.tx, computer.Request{Principal: principal,
-		Scope:             computerScope(principal.OrgID, projectID, environmentID),
-		DefinitionKey:     declaredID,
-		DeleteAfterUnused: request.DeleteAfterUnused,
-		Key:               request.Key,
-		Secrets:           request.Secrets,
-		IdempotencyKey:    idempotencyKey,
+		Scope:          computerScope(principal.OrgID, projectID, environmentID),
+		DefinitionKey:  declaredID,
+		Key:            request.Key,
+		Secrets:        request.Secrets,
+		IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		s.writeComputerError(w, r, err, computerCreateOperation, "create Computer failed")
@@ -163,17 +162,16 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 // apiComputerSnapshot is the public Computer resource of an owner snapshot.
 func apiComputerSnapshot(snapshot computer.Snapshot) api.ComputerSnapshot {
 	return api.ComputerSnapshot{ExecutionControl: apiComputerExecutionControl(snapshot.ExecutionControl), ExecutionWait: (*api.ComputerExecutionWait)(snapshot.ExecutionWait), DeleteAfterUnusedMs: snapshot.DeleteAfterUnusedMs, UnusedSince: snapshot.UnusedSince,
-		Residency:      api.ComputerResidency(snapshot.Residency),
-		Error:          snapshot.Error,
-		ID:             snapshot.ID,
-		Key:            snapshot.Key,
-		DefinitionID:   snapshot.DefinitionKey,
-		DeploymentID:   snapshot.DeploymentID,
-		Status:         api.ComputerStatus(snapshot.Status),
-		Secrets:        snapshot.Secrets,
-		LastActivityAt: snapshot.LastActivityAt,
-		CreatedAt:      snapshot.CreatedAt,
-		UpdatedAt:      snapshot.UpdatedAt,
+		Residency:    api.ComputerResidency(snapshot.Residency),
+		Error:        snapshot.Error,
+		ID:           snapshot.ID,
+		Key:          snapshot.Key,
+		DefinitionID: snapshot.DefinitionKey,
+		DeploymentID: snapshot.DeploymentID,
+		Status:       api.ComputerStatus(snapshot.Status),
+		Secrets:      snapshot.Secrets,
+		CreatedAt:    snapshot.CreatedAt,
+		UpdatedAt:    snapshot.UpdatedAt,
 	}
 }
 
@@ -186,45 +184,10 @@ func apiComputerListItem(item computer.ListItem) api.ComputerListItem {
 		DefinitionID:   item.DefinitionKey,
 		DeploymentID:   item.DeploymentID,
 		Status:         api.ComputerStatus(item.Status),
-		LastActivityAt: item.LastActivityAt,
 		CreatedAt:      item.CreatedAt,
 		UpdatedAt:      item.UpdatedAt,
 		SecretExposure: api.ComputerSecretExposure(item.SecretExposure),
 	}
-}
-
-func (s *Server) updateComputerHTTP(w http.ResponseWriter, r *http.Request) {
-	principal := principalFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
-	if err != nil {
-		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
-		return
-	}
-	if permissionErr := auth.Require(principal, auth.PermissionComputersUpdate, scope,
-		codedError{code: "permission_required", message: errPermissionRequired.Error()}); permissionErr != nil {
-		s.writeOperationError(w, r, forbidden(permissionErr))
-		return
-	}
-	id, err := ids.Parse(chi.URLParam(r, "computerID"))
-	if err != nil {
-		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_reference", message: "computer ID is invalid"}))
-		return
-	}
-	var request api.UpdateComputerRequest
-	if err = decodeRequestJSON(r, &request); err != nil {
-		if isRequestBodyTooLarge(err) {
-			s.writeOperationError(w, r, err)
-			return
-		}
-		s.writeOperationError(w, r, badRequest(codedError{code: "invalid_computer_update", message: err.Error()}))
-		return
-	}
-	snapshot, err := computer.UpdateRetention(r.Context(), s.auditPolicy, s.tx, principal, computerScope(principal.OrgID, projectID, environmentID), id, request.DeleteAfterUnused)
-	if err != nil {
-		s.writeComputerError(w, r, err, computerCreateOperation, "update Computer failed")
-		return
-	}
-	writeJSON(w, http.StatusOK, apiComputerSnapshot(snapshot))
 }
 
 func apiComputerExecutionControl(c *computer.ExecutionControl) *api.ComputerExecutionControl {

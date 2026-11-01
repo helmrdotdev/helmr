@@ -14,7 +14,6 @@ describe("HelmrClient Computers", () => {
       status: "available",
       residency: "cold",
       secrets: [],
-      last_activity_at: "2026-07-24T11:50:00Z",
       created_at: "2026-07-24T11:50:00Z",
       updated_at: "2026-07-24T11:50:00Z",
     }
@@ -31,7 +30,6 @@ describe("HelmrClient Computers", () => {
 				status: "available",
  residency: "unavailable",
  error: { code: "computer_recovery_required", message: "Computer requires recovery" },
-				last_activity_at: computer.last_activity_at,
 				created_at: computer.created_at,
 				updated_at: computer.updated_at,
 			}],
@@ -111,15 +109,9 @@ describe("HelmrClient Computers", () => {
       idempotency_key: "exec-1",
     })
 
-    responses.unshift(computer)
-    const preserved = await created.update({ deleteAfterUnused: "never" })
-    expect(preserved.deleteAfterUnused).toBe("never")
-    expect(requests[4]!.init?.method).toBe("PATCH")
-    expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({ delete_after_unused_ms: null })
-
     expect(await created.delete({ idempotencyKey: "delete-1" }, { signal })).toEqual({ computerId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32", sessionsCancelled: 1, commandsCancelled: 0 })
-    expect(requests[5]!.init?.method).toBe("DELETE")
-    expect(JSON.parse(String(requests[5]!.init?.body))).toEqual({
+    expect(requests[4]!.init?.method).toBe("DELETE")
+    expect(JSON.parse(String(requests[4]!.init?.body))).toEqual({
       idempotency_key: "delete-1",
     })
   })

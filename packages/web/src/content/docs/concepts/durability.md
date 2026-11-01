@@ -62,11 +62,38 @@ Computer's current state; there is no history of earlier saves to roll back to.
 
 ## Hibernation
 
-New Sessions default to `suspension: "manual"`: completing a Turn does not
-permit Helmr to stop native background progress. Choose `suspension: "after_turn"`
-on the Agent to permit suspension after a newly settled Turn, or explicitly
-request `computer.hibernate()` for the whole Computer. Every open Session on a
-shared Computer must permit automatic suspension.
+By default Helmr never hibernates a Computer on its own, so native background
+work keeps running between Turns. Set `hibernateAfterIdle` on the Agent to let
+Helmr hibernate the Computer after a Session stays idle that long, or call
+`computer.hibernate()` to hibernate the whole Computer now. Hibernation pauses
+background work until the Computer wakes.
+
+```ts
+export const assistant = agent({
+  id: "assistant",
+  template: workspace,
+  hibernateAfterIdle: "10m",
+  async turn(turn) { /* ... */ },
+})
+```
+
+A Session is idle when it has no running Turn, no queued Turn it can run, no
+pending question and no in-flight message. Its idle clock counts only the
+Session's own work: new input restarts it, even while the Session is held, and
+so does spawning a child Session. Queued Turns blocked by a hold and child
+Sessions that keep running do not stop it. `closeAfterIdle` uses this clock.
+
+The hibernation clock for `hibernateAfterIdle` starts from the latest of the
+Session's idle clock, the last Command settling on its Computer and the last
+wake request. Unsettled Commands on the Computer also prevent hibernation.
+Internal saves never restart either clock.
+
+On a shared Computer every open Session must allow it: the Computer hibernates
+only after each Session has been idle for its own period, and a Session whose
+Agent uses `"never"` keeps the Computer running, as does a Session that is
+still closing. A Computer with no open Session
+and no unsettled Command hibernates after 10 minutes without use, counted from
+its last Session closing, its last Command settling or its last wake request.
 
 Permission is separate from safe capture. Running or runnable queued Turns,
 Commands whose processes have not settled, saves and unfinished control operations
@@ -83,12 +110,12 @@ Physical resources stay charged until cleanup finishes.
 
 New authorized input or a Command wakes either automatically or explicitly
 hibernated Computers. An explicit `computer.wake()` creates no Turn and does not
-release Stop holds. In `after_turn` mode, it waits for another qualifying Turn
-completion before automatic suspension is armed again. A sleeping Computer
+release Stop holds; it restarts the idle time of the Computer's Sessions. A sleeping Computer
 reports `parked` residency and `restoring` while it resumes. It can resume on a
 different compatible Worker in the same Worker Group.
 
-Hibernation is separate from `closeAfterIdle`, which closes the Session. See
+Hibernation is separate from `closeAfterIdle`, which closes the Session; both
+periods count the same idle time. See
 [Agents](/docs/concepts/agents#session-lifetime-and-turn-limits).
 
 ## Process loss

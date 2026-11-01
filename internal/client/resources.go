@@ -269,16 +269,6 @@ func (c *Client) ListCommandLogs(ctx context.Context, id, cursor string, limit i
 	return result, nil
 }
 
-func (c *Client) UpdateComputer(ctx context.Context, computerID string, input api.UpdateComputerRequest, opts ComputerScopeOptions) (api.ComputerSnapshot, error) {
-	path, err := c.computerResourcePath(computerID, "", opts)
-	if err != nil {
-		return api.ComputerSnapshot{}, err
-	}
-	var response api.ComputerSnapshot
-	err = c.patchJSON(ctx, path, input, &response)
-	return response, err
-}
-
 type ComputerUsageOptions struct {
 	Cursor string
 	Limit  int32

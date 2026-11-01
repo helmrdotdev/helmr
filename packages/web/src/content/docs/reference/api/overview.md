@@ -46,7 +46,6 @@ shared by the Console and CLI and do not accept workload API keys.
 | `GET` | `/v1/sessions/{sessionID}/turns/{turnID}/asks/{askID}` |
 | `GET` | `/v1/templates` |
 | `GET` | `/v1/templates/{template}` |
-| `PATCH` | `/v1/computers/{computerID}` |
 | `POST` | `/v1/commands/{commandID}/cancel` |
 | `POST` | `/v1/computers` |
 | `POST` | `/v1/computers/{computerID}/exec` |
@@ -115,10 +114,6 @@ Secret creation only makes new names. Creating an existing active name returns
 Secret to reactivate it with its existing bindings. `idempotency_key` is
 optional for create, rotate and revoke.
 
-`PATCH /v1/computers/{computerID}` changes retention with
-`{"delete_after_unused_ms": <positive integer> | null}`; `null` means never delete.
-It requires `computers.update`.
-
 ## Conventions
 
 - Request and response bodies are JSON. Most fields use snake case. Secret
@@ -129,9 +124,10 @@ It requires `computers.update`.
   creation and enqueue carry `input`; a Turn message carries `message`, as in
   `{"message":[{"type":"text","text":"Continue"}]}`. Output and responses are
   Content arrays. See [Agent](/docs/reference/sdk/agent#content-rules).
-- Retention fields are milliseconds: `close_after_idle_ms` and
-  `delete_after_unused_ms` take a positive integer or `null` for never. Omit
-  them to inherit the definition.
+- Retention fields are read-only milliseconds from the definition: a Session's
+  `close_after_idle_ms` comes from its pinned Agent definition and a Computer's
+  `delete_after_unused_ms` from its origin Template. `null` means never.
+  Requests cannot override them.
 - Mutations accept an `idempotency_key`; question answers use
   `answer_id`. Reuse the same value and body to retry an uncertain request.
   See [Errors](/docs/reference/api/errors).

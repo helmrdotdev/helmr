@@ -11,7 +11,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +26,6 @@ func computerCommand() *cobra.Command {
 		computerListCommand(),
 		computerUsageCommand("sessions"),
 		computerUsageCommand("commands"),
-		computerUpdateCommand(),
 		computerDeleteCommand(),
 		computerCommandCommand(),
 	)
@@ -437,46 +435,6 @@ func computerUsageCommand(kind string) *cobra.Command {
 	cmd.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor for this collection.")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "Maximum items (default 50, maximum 100).")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON page.")
-	return cmd
-}
-
-func computerUpdateCommand() *cobra.Command {
-	var project, environment, retention string
-	var address computerAddressFlags
-	var jsonOutput bool
-	cmd := &cobra.Command{Use: "update", Short: "Update Computer retention.", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		policy := lifetime.Policy{Set: true}
-		if retention != "never" {
-			duration, err := parseDuration(retention)
-			if err != nil || duration.Milliseconds() <= 0 {
-				return errors.New("--delete-after-unused must be a positive duration or never")
-			}
-			ms := duration.Milliseconds()
-			policy.Milliseconds = &ms
-		}
-		cp, scope, err := scopedComputerClient(cmd, project, environment)
-		if err != nil {
-			return err
-		}
-		id, err := address.resolveID(cmd, cp, scope)
-		if err != nil {
-			return err
-		}
-		updated, err := cp.UpdateComputer(cmd.Context(), id, api.UpdateComputerRequest{DeleteAfterUnused: policy}, scope)
-		if err != nil {
-			return err
-		}
-		if jsonOutput {
-			return writeJSON(cmd.OutOrStdout(), updated)
-		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), updated.ID)
-		return err
-	}}
-	addScopeFlags(cmd, &project, &environment)
-	address.add(cmd)
-	cmd.Flags().StringVar(&retention, "delete-after-unused", "", "Retention after unused, such as 1h or never.")
-	_ = cmd.MarkFlagRequired("delete-after-unused")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit JSON.")
 	return cmd
 }
 

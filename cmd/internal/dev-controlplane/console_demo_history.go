@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -34,7 +35,6 @@ type demoSessionRow struct {
 	generation                                int64
 	createdAt                                 time.Time
 	eligibleAt, expiredAt                     time.Time
-	closeAfterIdleMS                          int64
 	nextTurn, nextEvent                       int64
 }
 
@@ -349,10 +349,10 @@ func (h *demoHistory) write(ctx context.Context, tx pgx.Tx, environment string, 
 		if root == "" {
 			root = s.id
 		}
-		b.Queue(`INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,status,close_how,authority_generation,next_turn_seq,next_event_seq,created_at,close_after_idle_ms,history_eligible_at,history_expired_at,origin_user_id)
-VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,NULLIF($17,''),$10,$11,$12,$13,$14,$15,$16,'00000000-0000-7000-8000-000000000101')`,
+		b.Queue(`INSERT INTO sessions(environment_id,id,agent_id,deployment_id,computer_id,root_session_id,parent_session_id,requester_session_id,causal_depth,status,close_how,authority_generation,next_turn_seq,next_event_seq,created_at,history_eligible_at,history_expired_at,origin_user_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8,$9,NULLIF($16,''),$10,$11,$12,$13,$14,$15,'00000000-0000-7000-8000-000000000101')`,
 			environment, s.id, s.agent, demoSeedDeploymentID, s.computer, root, demoNullable(s.parent), s.depth, s.status, s.generation,
-			s.nextTurn, s.nextEvent, s.createdAt, demoNullableInt(s.closeAfterIdleMS), demoTime(s.eligibleAt), demoTime(s.expiredAt), s.closeHow)
+			s.nextTurn, s.nextEvent, s.createdAt, demoTime(s.eligibleAt), demoTime(s.expiredAt), s.closeHow)
 	}
 	for _, p := range h.procs {
 		var failure any
@@ -440,6 +440,14 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 VALUES($1,$2,$3,$4,$5,$6,$7,'user',$8,'turn_send',$4,$9,$10,$11,$12,$13,$14)`,
 			environment, m.id, m.session, m.turn, m.epoch, m.seq, m.message, defaultUserID, demoSHA("message:"+m.id), m.status, demoNullable(m.reason), m.createdAt, demoTime(m.startedAt), demoTime(m.terminalAt))
 	}
+	// Open Sessions without work carry the idle clock the lifecycle owner keeps,
+	// from their last settled Turn or their creation.
+	b.Queue(`UPDATE sessions s SET idle_since=COALESCE((SELECT max(t.terminal_at) FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id),s.created_at)
+ WHERE s.environment_id=$1 AND s.status='open' AND s.idle_since IS NULL
+ AND NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='running')
+ AND (NOT EXISTS(SELECT 1 FROM turns t WHERE t.environment_id=s.environment_id AND t.session_id=s.id AND t.status='queued') OR `+db.SessionHeldSQL+`)
+ AND NOT EXISTS(SELECT 1 FROM turn_messages m WHERE m.environment_id=s.environment_id AND m.session_id=s.id AND m.status IN ('admitted','started'))
+ AND NOT EXISTS(SELECT 1 FROM turn_asks a WHERE a.environment_id=s.environment_id AND a.session_id=s.id AND a.status='pending')`, environment)
 	return tx.SendBatch(ctx, b).Close()
 }
 
@@ -475,13 +483,6 @@ func demoContent(text string) []byte { return demoJSON([]any{demoText(text)}) }
 
 func demoNullable(value string) any {
 	if value == "" {
-		return nil
-	}
-	return value
-}
-
-func demoNullableInt(value int64) any {
-	if value == 0 {
 		return nil
 	}
 	return value

@@ -142,9 +142,10 @@ of interrupts, only the ones it placed itself. See
 [Durability](/docs/concepts/durability).
 
 A hold does not keep a Session open. Queued Turns that a hold blocks are not
-work, so a held Session with nothing running is idle and `closeAfterIdle`
-closes it like any close, cancelling those Turns. This includes owned Sessions
-held by an interrupt on their parent.
+work, so a held Session with nothing running is idle: `closeAfterIdle`
+closes it like any close, cancelling those Turns, and `hibernateAfterIdle` can
+hibernate its Computer. This includes owned Sessions held by an interrupt on
+their parent.
 
 ## Events
 

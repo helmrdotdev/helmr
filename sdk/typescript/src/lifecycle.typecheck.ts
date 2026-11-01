@@ -32,7 +32,7 @@ export function lifecycleTypes(outcome: TurnOutcome<{ count: number }>, command:
   if (message.source.kind === "session") { const id: string = message.source.requesterSessionId; void id }
   if (isHelmrError(error)) { const code: string = error.code; void code }
   if (error instanceof ContentError) { const code: ContentError["code"] = error.code; void code }
-  void session.interrupt(); void session.turns.list(); void ref.update({ deleteAfterUnused: "never" })
+  void session.interrupt(); void session.turns.list()
   void ref.exec({ command: ["true"], idempotencyKey: "operation" })
 }
 const retention: Retention = "never"

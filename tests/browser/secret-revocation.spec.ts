@@ -12,7 +12,7 @@ test("Secret revocation explains its effect, keeps Update and links to Computers
   const project = { project: projectID, name: "Test", default_region_id: "local", is_default: true, environments: [environment], created_at: now, updated_at: now };
   const secret: Record<string, unknown> = { secret: secretID, status: "active", created_at: now };
   const base = `/api/projects/${projectID}/environments/${environmentID}`;
-  const computer = (id: string, exposure: string) => ({ id, template: "browser", deployment_id: "00000000-0000-7000-8000-000000000101", status: "available", residency: "cold", execution_control: null, execution_wait: null, created_at: now, updated_at: now, last_activity_at: now, secret_exposure: exposure });
+  const computer = (id: string, exposure: string) => ({ id, template: "browser", deployment_id: "00000000-0000-7000-8000-000000000101", status: "available", residency: "cold", execution_control: null, execution_wait: null, created_at: now, updated_at: now, secret_exposure: exposure });
   const received = "00000000-0000-7000-8000-000000000721";
   const image = "00000000-0000-7000-8000-000000000722";
   const computerQueries: string[] = [];

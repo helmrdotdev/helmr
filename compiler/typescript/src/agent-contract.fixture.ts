@@ -12,7 +12,7 @@ export function agentContractFixture() {
   })
   const coder = agent({
     id: "coder", template: workspace, init: () => null, turn: () => null,
-    maxTurnDuration: "5m", closeAfterIdle: "1h",
+    maxTurnDuration: "5m", closeAfterIdle: "1h", hibernateAfterIdle: "10m",
     triggers: [triggers.cron("nightly", "0 0 * * *", { timezone: "Asia/Tokyo", input: [{ type: "text", text: "Run the nightly check." }] })],
   })
   return analyze({ architecture: "x86_64", exports: [{ modulePath: "helmr/app/entry-0.mjs", exportName: "coder", value: coder }] })

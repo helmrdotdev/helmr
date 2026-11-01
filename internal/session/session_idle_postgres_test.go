@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/auditpolicy"
 	"testing"
@@ -11,15 +12,16 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/lifetime"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestSessionIdleClosesOnlyContinuouslyQuiescentSession(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$1`, f.session)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=1000,idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
+	setIdleClose(t, f.pool, f.session, 1000)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
 	admitted := f.enqueue(t, "before-expiry")
 	if err := session.ReconcileSessionIdle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
@@ -66,7 +68,8 @@ func TestSessionIdleClosesChildHeldByParentInterrupt(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	child := f.peer(t)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET parent_session_id=$1,requester_session_id=$1,root_session_id=$1,causal_depth=1,close_after_idle_ms=1000 WHERE id=$2;
+	setIdleClose(t, f.pool, child.session, 1000)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET parent_session_id=$1,requester_session_id=$1,root_session_id=$1,causal_depth=1 WHERE id=$2;
  UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$2`, pgx.QueryExecModeSimpleProtocol, f.session, child.session)
 	queued := child.enqueue(t, "child-work")
 	if _, err := session.ControlSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), controlRequest(f, "interrupt", "parent-stop")); err != nil {
@@ -93,7 +96,8 @@ func TestSessionIdleScanVisitsOnlySessionsThatMayBeIdle(t *testing.T) {
 	if id, err := dispatchTurnForTest(ctx, f.pool, f.execution()); err != nil || id.TurnID != admitted.TurnID {
 		t.Fatalf("dispatch %v %v", id, err)
 	}
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=60000,idle_since=NULL WHERE id=$1`, f.session)
+	setIdleClose(t, f.pool, f.session, 60000)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET idle_since=NULL WHERE id=$1`, f.session)
 	visits := func() bool {
 		t.Helper()
 		candidates, err := session.LifecycleCandidates(ctx, f.pool, session.SessionLifecyclePosition{})
@@ -123,31 +127,23 @@ func TestSessionIdleScanVisitsOnlySessionsThatMayBeIdle(t *testing.T) {
 	}
 }
 
-func TestStartSnapshotsIdlePolicyAndRejectsKeyedMismatch(t *testing.T) {
+func TestStartRejectsKeyedMismatch(t *testing.T) {
 	f := newAdmissionFixture(t)
 	key := "retained"
 	req := f.startRequest("first")
 	req.SessionKey = &key
 	a, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
-	if err != nil || a.CloseAfterIdleMs == nil || *a.CloseAfterIdleMs != lifetime.DefaultMilliseconds {
-		t.Fatalf("default: %+v %v", a, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE agent_definitions SET close_after_idle_never=true WHERE environment_id=$1`, f.env)
-	req.IdempotencyKey = "first"
 	b, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
-	if err != nil || b.SessionID != a.SessionID || !sameLifetime(a.CloseAfterIdleMs, b.CloseAfterIdleMs) {
-		t.Fatalf("redeployment changed policy: %+v %v", b, err)
+	if err != nil || b.SessionID != a.SessionID {
+		t.Fatalf("replay: %+v %v", b, err)
 	}
 	req.IdempotencyKey = "mismatch"
-	req.CloseAfterIdle = lifetime.Policy{Set: true}
+	req.Input = json.RawMessage(`[{"type":"text","text":"different"}]`)
 	if _, err = session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req); !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("keyed mismatch: %v", err)
-	}
-	req.SessionKey = nil
-	req.IdempotencyKey = "never"
-	c, err := session.Start(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), req)
-	if err != nil || c.CloseAfterIdleMs != nil {
-		t.Fatalf("explicit never: %+v %v", c, err)
 	}
 }
 
@@ -155,7 +151,8 @@ func TestSessionIdleDoesNotRestartAfterInternalSave(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$1`, f.session)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=60000,idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
+	setIdleClose(t, f.pool, f.session, 60000)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
 	// Internal capture attempts are not new user work.
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,status,failure_evidence) VALUES($1,$2,$3,1,1,'failed','settled capture failure')`, f.env, uuid.NewV7(), f.computer)
 	if err := session.ReconcileSessionIdle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
@@ -170,7 +167,8 @@ func TestSessionIdleDoesNotRestartAfterInternalSave(t *testing.T) {
 func TestSessionIdleBlocksUnacknowledgedResume(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=60000,idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
+	setIdleClose(t, f.pool, f.session, 60000)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
 	attachment, err := session.AcquireRuntimeAttachment(ctx, f.pool, *f.host(), f.execution())
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +208,8 @@ func TestSessionIdleBlocksUnfinishedCheckpointTransitions(t *testing.T) {
 			dbtest.MustExec(t, ctx, f.pool, `UPDATE computer_saves SET status='failed',failure_evidence='settled',requested_at=clock_timestamp()-interval '2 days' WHERE id=$1`, capture.SaveID)
 			dbtest.MustExec(t, ctx, f.pool, `UPDATE checkpoints SET status=$2 WHERE id=$1`, request.CheckpointID, checkpointState)
 			dbtest.MustExec(t, ctx, f.pool, `UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$1`, f.session)
-			dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=60000,idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
+			setIdleClose(t, f.pool, f.session, 60000)
+			dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
 			if err := session.ReconcileSessionIdle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
 				t.Fatal(err)
 			}
@@ -239,7 +238,8 @@ func TestSessionIdleIgnoresPeerTurnSave(t *testing.T) {
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE turns SET status='cancelled',terminal_at=clock_timestamp(),result_recorded_at=clock_timestamp(),result_digest=decode(repeat('00',32),'hex') WHERE id=$1`, admitted.TurnID)
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO computer_saves(environment_id,id,computer_id,computer_lease_epoch,seq,turn_id) VALUES($1,$2,$3,1,1,$4)`, f.env, uuid.NewV7(), f.computer, admitted.TurnID)
 	dbtest.MustExec(t, ctx, f.pool, `UPDATE session_processes SET control_kind='resume',control_acknowledged_at=clock_timestamp(),control_generation=1 WHERE session_id=$1`, f.session)
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=60000,idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
+	setIdleClose(t, f.pool, f.session, 60000)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET idle_since=clock_timestamp()-interval '1 day' WHERE id=$1`, f.session)
 	if err := session.ReconcileSessionIdle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +252,8 @@ func TestSessionIdleIgnoresPeerTurnSave(t *testing.T) {
 func TestSessionIdleScanSkipsFutureQuietClock(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET close_after_idle_ms=86400000,idle_since=clock_timestamp() WHERE id=$1`, f.session)
+	setIdleClose(t, f.pool, f.session, 86400000)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET idle_since=clock_timestamp() WHERE id=$1`, f.session)
 	tx, err := f.pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -268,33 +269,63 @@ func TestSessionIdleScanSkipsFutureQuietClock(t *testing.T) {
 	}
 }
 
-func TestStartPinsSuspensionPolicyAcrossDeploymentPromotion(t *testing.T) {
+func TestSessionReadsIdlePeriodFromPinnedDeployment(t *testing.T) {
 	f := newAdmissionFixture(t)
 	ctx := t.Context()
-	first, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("manual"))
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE agent_definitions SET close_after_idle_ms=60000 WHERE environment_id=$1`, f.env)
+	first, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("first"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	promoted := uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('e',64));
  INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,suspension,runtime_mcp_policy) SELECT environment_id,agent_id,$3,template_id,has_init,'after_turn',runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
+ INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,close_after_idle_ms,runtime_mcp_policy) SELECT environment_id,agent_id,$3,template_id,has_init,NULL,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
  UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.env, f.deployment, promoted)
-	second, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("after-turn"))
+	second, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("second"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := session.Start(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, nil, f.caller(), f.startRequest("manual"))
-	if err != nil || replay.SessionID != first.SessionID {
-		t.Fatalf("replay: %+v %v", replay, err)
-	}
+	finite := int64(60000)
 	for _, want := range []struct {
-		id     uuid.UUID
-		policy string
-	}{{first.SessionID, "manual"}, {second.SessionID, "after_turn"}} {
+		id    uuid.UUID
+		close *int64
+	}{{first.SessionID, &finite}, {second.SessionID, nil}} {
 		got, err := session.GetSession(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.caller(), f.env, want.id)
-		if err != nil || got.Suspension != want.policy {
-			t.Fatalf("policy = %q, want %q: %v", got.Suspension, want.policy, err)
+		if err != nil || !sameLifetime(got.CloseAfterIdleMs, want.close) {
+			t.Fatalf("idle period = %v, want %v: %v", got.CloseAfterIdleMs, want.close, err)
 		}
+	}
+}
+
+// setIdleClose sets the idle close period on the Agent definition the
+// Session is pinned to.
+func setIdleClose(t *testing.T, pool *pgxpool.Pool, sessionID uuid.UUID, ms int64) {
+	t.Helper()
+	dbtest.MustExec(t, t.Context(), pool, `UPDATE agent_definitions d SET close_after_idle_ms=$2 FROM sessions s WHERE s.id=$1 AND (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)`, sessionID, ms)
+}
+
+func TestSessionIdleClockStartsWithoutIdleClosePolicy(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE agent_definitions d SET close_after_idle_ms=NULL,hibernate_after_idle_ms=60000 FROM sessions s WHERE s.id=$1 AND (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id);
+ UPDATE sessions SET idle_since=NULL WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.session)
+	candidates, err := session.LifecycleCandidates(ctx, f.pool, session.SessionLifecyclePosition{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	visited := false
+	for _, c := range candidates {
+		visited = visited || c.Session() == f.session
+	}
+	if !visited {
+		t.Fatal("idle scan skipped a Session that never closes on idle")
+	}
+	if err := session.ReconcileSessionIdle(ctx, auditpolicy.Policy{RetentionSeconds: 3600}, f.pool, f.env, f.session); err != nil {
+		t.Fatal(err)
+	}
+	var open, timed bool
+	if err := f.pool.QueryRow(ctx, `SELECT status='open',idle_since IS NOT NULL FROM sessions WHERE id=$1`, f.session).Scan(&open, &timed); err != nil || !open || !timed {
+		t.Fatalf("idle clock: open=%v timed=%v %v", open, timed, err)
 	}
 }

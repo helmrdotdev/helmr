@@ -10,8 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/lifetime"
-
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -31,13 +29,12 @@ func NewCreator(ca TrustIssuer, policy auditpolicy.Policy) Creator {
 }
 
 type Request struct {
-	Principal         auth.Principal
-	DeleteAfterUnused lifetime.Policy
-	Scope             Scope
-	DefinitionKey     string
-	Key               *string
-	Secrets           []secretbinding.Reference
-	IdempotencyKey    string
+	Principal      auth.Principal
+	Scope          Scope
+	DefinitionKey  string
+	Key            *string
+	Secrets        []secretbinding.Reference
+	IdempotencyKey string
 }
 type Created struct {
 	ComputerID uuid.UUID
@@ -52,7 +49,7 @@ type createReceipt struct {
 // actual Computer bindings. A replay reads its retained receipt, never the
 // Environment's later current Deployment or current Secret versions.
 func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request) (Created, error) {
-	if !request.DeleteAfterUnused.Valid() || !definition.ValidDeclaredID(request.DefinitionKey) {
+	if !definition.ValidDeclaredID(request.DefinitionKey) {
 		return Created{}, invalidInput("invalid Template definition key")
 	}
 	if err := ValidateKey(request.Key); err != nil {
@@ -72,7 +69,7 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 	}
 	var retry *idempotency.Request
 	if request.IdempotencyKey != "" {
-		retry, err = idempotency.NewExternalComputerCreateRequest(request.Scope.EnvironmentID, request.DefinitionKey, request.IdempotencyKey, idempotency.ComputerCreateFingerprint{Key: request.Key, Secrets: raw, DeleteAfterUnused: request.DeleteAfterUnused})
+		retry, err = idempotency.NewExternalComputerCreateRequest(request.Scope.EnvironmentID, request.DefinitionKey, request.IdempotencyKey, idempotency.ComputerCreateFingerprint{Key: request.Key, Secrets: raw})
 		if err != nil {
 			return Created{}, invalidInput("%v", err)
 		}
@@ -105,11 +102,6 @@ func (c Creator) Create(ctx context.Context, txb db.TxBeginner, request Request)
 			id, err := CreateStandalone(ctx, tx, c.ca, request.Scope.EnvironmentID, *deployment, request.DefinitionKey, refs)
 			if err != nil {
 				return idempotency.Completion{}, err
-			}
-			if request.DeleteAfterUnused.Set {
-				if _, err = tx.Exec(ctx, `UPDATE computers SET delete_after_unused_ms=$3 WHERE environment_id=$1 AND id=$2`, request.Scope.EnvironmentID, id, request.DeleteAfterUnused.Milliseconds); err != nil {
-					return idempotency.Completion{}, err
-				}
 			}
 			if request.Key != nil {
 				if _, err = tx.Exec(ctx, `UPDATE computers SET key=$3 WHERE environment_id=$1 AND id=$2`, request.Scope.EnvironmentID, id, *request.Key); err != nil {

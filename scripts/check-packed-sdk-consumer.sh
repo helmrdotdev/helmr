@@ -94,7 +94,7 @@ const client = new HelmrClient({
     const body = init?.body === undefined ? undefined : JSON.parse(String(init.body))
     if (path === "/v1/sessions") {
       if (init?.method !== "POST" || body.input[0]?.type !== "text" || body.input[0]?.text !== "typed" || body.computer_id !== computerID || body.idempotency_key !== "start-1") throw new Error("invalid start envelope")
-      return Response.json({ session_id: sessionID, turn: { session_id: sessionID, turn_id: turnID, sequence: 1 }, close_after_idle_ms: 604800000 })
+      return Response.json({ session_id: sessionID, turn: { session_id: sessionID, turn_id: turnID, sequence: 1 } })
     }
     if (path === `/v1/sessions/${sessionID}/enqueue`) {
       if (body.input[0]?.text !== '{"issue":"APP-42"}' || body.idempotency_key !== "queue-1") throw new Error("invalid enqueue envelope")

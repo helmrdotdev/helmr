@@ -188,7 +188,7 @@ async function deniedTool(connection: RuntimeMcpConnectionOptions, signal: Abort
 }
 export const coordinator = agent({
   id: "execution-policy-coordinator", template: finiteComputer, runtimeMcp: maximum,
-  suspension: "manual", maxTurnDuration: "5m",
+  maxTurnDuration: "5m",
   async init(ctx) {
     const inherited = await ctx.mcp.getConnectionOptions()
     const explicit = await ctx.mcp.getConnectionOptions(maximum)

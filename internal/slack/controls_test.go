@@ -119,12 +119,11 @@ func TestLifecycleBaseControlPersistsButConfirmationExpires(t *testing.T) {
 	}
 	c.Action = "hibernate"
 	c.Actor = "human"
-	c.Scope = strings.Repeat("a", 64)
 	c.Computer = uuid.NewV7()
 	if _, err = encodeControl(key, c); err == nil {
 		t.Fatal("unbounded confirmation accepted")
 	}
-	c.Action, c.Scope, c.Computer = "confirm_close", "", uuid.Nil()
+	c.Action, c.Computer = "confirm_close", uuid.Nil()
 	if _, err = encodeControl(key, c); err == nil {
 		t.Fatal("unbounded close confirmation accepted")
 	}

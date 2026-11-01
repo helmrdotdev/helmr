@@ -21,8 +21,8 @@ import { TableSkeleton } from "../ui/Skeleton";
 import { RelativeTime } from "../ui/RelativeTime";
 import { useAuditItem } from "../features/audit/auditLink";
 
-const COMPUTER_COLUMNS = ["Computer", "Status", "Key", "Template", "Last activity", "Created", { label: "Actions", srOnly: true }] as const;
-const SECRET_COMPUTER_COLUMNS = ["Computer", "Status", "Secret value", "Key", "Template", "Last activity", "Created", { label: "Actions", srOnly: true }] as const;
+const COMPUTER_COLUMNS = ["Computer", "Status", "Key", "Template", "Created", { label: "Actions", srOnly: true }] as const;
+const SECRET_COMPUTER_COLUMNS = ["Computer", "Status", "Secret value", "Key", "Template", "Created", { label: "Actions", srOnly: true }] as const;
 
 const SECRET_EXPOSURE_LABELS: Record<ComputerSecretExposure, string> = {
   received: "Received",
@@ -51,7 +51,6 @@ function ComputerRow(props: { computer: ComputerListItem; menu: ActionMenuItem[]
         </Show>
       </td>
       <td><code>{props.computer.template}</code></td>
-      <td><RelativeTime value={props.computer.last_activity_at} /></td>
       <td><RelativeTime value={props.computer.created_at} /></td>
       <RowActions label={`Actions for ${props.computer.id}`} items={props.menu} />
     </tr>
