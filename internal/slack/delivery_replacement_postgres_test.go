@@ -275,6 +275,16 @@ func TestSlackReplyUnderSupersededRootIsRejectedImmediately(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT thread_ts FROM slack_threads WHERE id=$1`, f.thread).Scan(&root); err != nil || (kind == "abandoned") != (root == nil) {
 				t.Fatal("superseded reply rebound the thread", root, err)
 			}
+			intent, found, err := takeRejectedFeedback(t.Context(), f.Pool, testProjectionConfig())
+			if err != nil || !found || intent == nil {
+				t.Fatal("no hint for the superseded reply", found, err)
+			}
+			var body struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(intent.payload, &body); err != nil || body.Text != "This thread no longer continues its Session. Follow the Session in Console, or mention the Agent in a new thread to start a new Session." {
+				t.Fatalf("superseded hint: %q %v", body.Text, err)
+			}
 		})
 	}
 }
@@ -322,5 +332,57 @@ func TestSlackDeliveryStoppedAttentionListsOpenSessionsOnly(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET status='closed',close_how='close' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Session)
 	if got := list(); got.SlackDeliveryStoppedCount != 0 || len(got.SlackDeliveryStopped) != 0 {
 		t.Fatal("closed Session still listed", got.SlackDeliveryStopped)
+	}
+}
+
+func TestSlackFirstAttemptEvidenceSettlesOpeningBeforeItIsSentAgain(t *testing.T) {
+	f := newStatusFixture(t)
+	opening, reply, first := f.unboundOpening(t)
+	if err := f.finishUnknown(t, opening); err != nil {
+		t.Fatal(err)
+	}
+	var org uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT org_id FROM slack_installations WHERE id=$1`, f.installation).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	matched, err := confirmOpeningMessage(t.Context(), f.Pool, org, "team", observedClaim(t, first))
+	if err != nil || !matched {
+		t.Fatal("late first-attempt evidence not recognized", matched, err)
+	}
+	var settled bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT p.status='posted' AND p.message_ts='123.789' AND p.confirmed_revision=p.desired_revision AND p.error IS NULL AND t.thread_ts='123.789'
+ FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id WHERE p.id=$1`, opening).Scan(&settled); err != nil || !settled {
+		t.Fatal("pending opening not settled by evidence", settled, err)
+	}
+	f.due(t)
+	f.noPostClaim(t, opening)
+	later := f.postClaim(t, reply)
+	if string(mustField(t, later.Payload, "thread_ts")) != `"123.789"` {
+		t.Fatalf("reply did not follow the confirmed first root: %s", later.Payload)
+	}
+}
+
+func TestSlackReplyInBoundAbandonedThreadIsRejectedButCommandsApply(t *testing.T) {
+	f := newStatusFixture(t)
+	f.link(t)
+	opening := f.opening(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET status='failed',message_ts='123.456',posted_at=clock_timestamp(),confirmed_revision=desired_revision,delivery_disposed_at=clock_timestamp(),delivery_disposed_through_seq=0,closed_at=clock_timestamp(),error='history_no_match' WHERE id=$1`, opening)
+	var turns int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM turns WHERE environment_id=$1`, f.Environment).Scan(&turns); err != nil {
+		t.Fatal(err)
+	}
+	id := f.reply(t, "abandoned-reply", false)
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), id); err != nil {
+		t.Fatal(err)
+	}
+	var rejected bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status='rejected' AND r.error='thread_superseded' AND (SELECT count(*) FROM turns WHERE environment_id=$2)=$3 FROM slack_requests r WHERE r.id=$1`, id, f.Environment, turns).Scan(&rejected); err != nil || !rejected {
+		t.Fatal("reply in an abandoned bound thread was admitted", rejected, err)
+	}
+	mute := f.threadMessage(t, "abandoned-mute", "!mute", time.Now())
+	f.admitThreadMessage(t, mute)
+	var accepted bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='accepted' AND operation='mute' FROM slack_requests WHERE id=$1`, mute).Scan(&accepted); err != nil || !accepted {
+		t.Fatal("thread command rejected in an abandoned thread", accepted, err)
 	}
 }

@@ -159,7 +159,9 @@ func supersededOpening(ctx context.Context, pool db.TxBeginner, org uuid.UUID, t
 
 // Opening recognition uses the immutable operation and authenticated actual
 // sender, not a body digest that Slack can normalize. Historical/abandoned sends
-// remain recognizable without reviving execution or delivery.
+// remain recognizable without reviving execution or delivery. An opening waiting
+// to be sent once more is recognized by its current revision, so late evidence
+// of the first attempt settles it instead of sending a duplicate root.
 func confirmOpeningMessage(ctx context.Context, pool db.TxBeginner, org uuid.UUID, team string, message observedMessage) (bool, error) {
 	var metadata struct {
 		Type    string `json:"event_type"`
@@ -181,14 +183,14 @@ func confirmOpeningMessage(ctx context.Context, pool db.TxBeginner, org uuid.UUI
 		var currentRoot *string
 		var revision *int64
 		var state string
-		var disposed bool
-		err := tx.QueryRow(ctx, `SELECT t.id,p.id,t.thread_ts,p.inflight_revision,p.status,p.delivery_disposed_at IS NOT NULL
+		var disposed, resend bool
+		err := tx.QueryRow(ctx, `SELECT t.id,p.id,t.thread_ts,COALESCE(p.inflight_revision,CASE WHEN p.status='pending' AND t.opening_resent_at IS NOT NULL THEN p.desired_revision END),p.status,p.delivery_disposed_at IS NOT NULL,p.status='pending' AND t.opening_resent_at IS NOT NULL
  FROM slack_posts p JOIN slack_threads t ON t.id=p.thread_id
  JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_installations i ON i.id=c.installation_id
  WHERE p.id=$1 AND p.role='opening' AND t.front_session_id=p.session_id AND t.opening_post_key=p.post_key
  AND c.org_id=$2 AND c.team_id=$3 AND c.slack_channel_id=$4 AND i.app_id=$5 AND i.bot_user_id=$6
- AND (p.inflight_method='chat.postMessage' AND p.inflight_attempt_id IS NOT NULL OR p.message_ts=$7)
- FOR NO KEY UPDATE OF t,p`, postID, org, team, message.Channel, message.AppID, message.User, message.Timestamp).Scan(&thread, &post, &currentRoot, &revision, &state, &disposed)
+ AND (p.inflight_method='chat.postMessage' AND p.inflight_attempt_id IS NOT NULL OR p.message_ts=$7 OR (p.status='pending' AND t.opening_resent_at IS NOT NULL))
+ FOR NO KEY UPDATE OF t,p`, postID, org, team, message.Channel, message.AppID, message.User, message.Timestamp).Scan(&thread, &post, &currentRoot, &revision, &state, &disposed, &resend)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -199,10 +201,10 @@ func confirmOpeningMessage(ctx context.Context, pool db.TxBeginner, org uuid.UUI
 			matched = *currentRoot == message.Timestamp
 			return nil
 		}
-		if revision == nil || *revision != metadata.Payload.Revision || (state != "sending" && state != "uncertain" && !(state == "failed" && disposed)) {
+		if revision == nil || *revision != metadata.Payload.Revision || (state != "sending" && state != "uncertain" && !(state == "failed" && disposed) && !resend) {
 			return nil
 		}
-		if _, err = tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN desired_revision<=suppressed_revision THEN 'suppressed' ELSE 'posted' END,confirmed_revision=inflight_revision,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN error WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1::uuid`, post, message.Timestamp); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE slack_posts SET status=CASE WHEN delivery_disposed_at IS NOT NULL THEN 'failed' WHEN desired_revision<=suppressed_revision THEN 'suppressed' ELSE 'posted' END,confirmed_revision=$3,message_ts=$2,posted_at=COALESCE(posted_at,clock_timestamp()),claimed_until=NULL,error=CASE WHEN delivery_disposed_at IS NOT NULL THEN error WHEN desired_revision<=suppressed_revision THEN 'publication_authority_unavailable' ELSE NULL END,inflight_method=NULL,inflight_payload=NULL,inflight_digest=NULL,inflight_revision=NULL,inflight_attempt_id=NULL WHERE id=$1::uuid`, post, message.Timestamp, *revision); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE slack_threads SET thread_ts=$2 WHERE id=$1::uuid AND thread_ts IS NULL`, thread, message.Timestamp); err != nil {

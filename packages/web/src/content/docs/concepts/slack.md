@@ -284,9 +284,18 @@ unconfirmed. Helmr does not resend the uncertain content or its dependent
 continuations, with one exception: when the thread's first message is not
 found or its checks reach their limit, Helmr sends it once more in the same
 channel, and output already waiting for the thread follows whichever first
-message Slack confirms. Both attempts carry the same identity, so at most one
-duplicate first message can remain in the channel. Replies in a thread that no
-longer continues its Session are rejected with a hint.
+message Slack confirms. Evidence of the first attempt that arrives before the
+second send settles the message without sending it again. Both attempts carry
+the same identity, so at most one duplicate first message can remain in the
+channel.
+
+A thread no longer continues its Session when the Session moved to the other
+first message or the thread's delivery stopped. In a channel, a mention in such
+a thread is rejected right away with a hint; unmentioned replies there are
+ignored, as in any unrelated thread. A DM reply under such a first message waits
+for the message window and then expires. Once a stopped thread is bound to its
+first message, replies there are rejected with the same hint, and thread
+commands still apply to the Session.
 
 If the first message is still unconfirmed after it was sent again, its checks
 end early, or the connection can no longer verify the channel, later output to

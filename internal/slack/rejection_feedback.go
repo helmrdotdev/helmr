@@ -217,7 +217,10 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 				text = "This thread is no longer available. Send a new message outside this thread."
 			}
 		case "thread_superseded":
-			text = "This thread no longer continues its Session. Use the Session's current thread or Console, or mention the Agent in a new thread to start a new Session."
+			text = "This thread no longer continues its Session. Follow the Session in Console, or mention the Agent in a new thread to start a new Session."
+			if direct {
+				text = "This thread no longer continues its Session. Follow the Session in Console, or send a new message outside this thread to start a new Session."
+			}
 		case "binding_unavailable":
 			text = "That Slack destination is no longer available. Start a new thread in a connected channel or use the Helmr CLI."
 		case "content_invalid", "content_unsupported":

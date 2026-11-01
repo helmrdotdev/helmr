@@ -255,9 +255,6 @@ func collectDiagnostics(ctx context.Context, cmd *cobra.Command, project, enviro
 				if attention.Counts.FailedTurn != nil {
 					diagnosticCount(&report, "turns.failed", *attention.Counts.FailedTurn, "failed Turns requiring attention", "Read the affected Session events before retrying.", false)
 				}
-				if attention.Counts.SlackDeliveryStopped != nil {
-					diagnosticCount(&report, "slack.delivery", *attention.Counts.SlackDeliveryStopped, "open Sessions whose Slack delivery stopped", "Follow these Sessions in the Console; their Slack threads receive no further output.", true)
-				}
 				if attention.Counts.SlackReauthorization != nil {
 					diagnosticCount(&report, "slack.authorization", *attention.Counts.SlackReauthorization, "Slack connections needing authorization", "Reauthorize the existing Slack connection in the Console.", true)
 				}

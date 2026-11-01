@@ -88,18 +88,23 @@ const attentionFailedTurnsCountSQL = `SELECT count(*)` + attentionFailedTurnsFro
 
 // Slack delivery to a Session's thread stops when its opening is disposed as
 // unconfirmed or ended before a root was known; later output is suppressed while
-// the Session keeps working. It waits on a person until the Session closes.
+// the Session keeps working. It waits on a person until the Session closes. The
+// lateral read selects the thread's single opening through its unique key, so a
+// thread counts once.
 const attentionSlackDeliveryStoppedFromSQL = `
  FROM slack_threads th
- JOIN slack_posts o ON o.thread_id=th.id AND o.role='opening'
  JOIN sessions s ON (s.environment_id,s.id)=(th.environment_id,th.front_session_id)
  JOIN agents ag ON (ag.environment_id,ag.id)=(s.environment_id,s.agent_id)
+ JOIN slack_thread_sources src ON src.thread_id=th.id AND (src.environment_id,src.session_id)=(th.environment_id,th.front_session_id)
+ CROSS JOIN LATERAL (SELECT o.id,o.error,COALESCE(o.delivery_disposed_at,o.closed_at,o.created_at) AS stopped_at FROM slack_posts o
+ WHERE o.thread_source_id=src.id AND o.post_key=th.opening_post_key AND o.continuation_ordinal=0
+ AND o.environment_id=th.environment_id AND o.thread_id=th.id AND o.role='opening'
+ AND (o.delivery_disposed_at IS NOT NULL OR (th.thread_ts IS NULL AND o.status IN ('failed','suppressed')))) o
  WHERE th.environment_id=$1 AND s.status='open'
- AND (o.delivery_disposed_at IS NOT NULL OR (th.thread_ts IS NULL AND o.status IN ('failed','suppressed')))
  AND ` + attentionAccessSQL
 
-const attentionSlackDeliveryStoppedSQL = `SELECT o.id,s.id,ag.key,COALESCE(o.delivery_disposed_at,o.closed_at,o.created_at) AS stopped_at,COALESCE(o.error,''),count(*) OVER ()` + attentionSlackDeliveryStoppedFromSQL + `
- ORDER BY stopped_at,o.id LIMIT $4`
+const attentionSlackDeliveryStoppedSQL = `SELECT o.id,s.id,ag.key,o.stopped_at,COALESCE(o.error,''),count(*) OVER ()` + attentionSlackDeliveryStoppedFromSQL + `
+ ORDER BY o.stopped_at,o.id LIMIT $4`
 const attentionSlackDeliveryStoppedCountSQL = `SELECT count(*)` + attentionSlackDeliveryStoppedFromSQL
 
 // ListAttention reads the Environment's waiting work with the same authority as

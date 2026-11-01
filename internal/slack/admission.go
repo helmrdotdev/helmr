@@ -116,17 +116,24 @@ func readMessageAdmission(ctx context.Context, tx pgx.Tx, id uuid.UUID) (*messag
 		return reject(code)
 	}
 	var owner uuid.UUID
-	var deleted bool
+	var deleted, abandoned bool
 	var peer, peerTeam *string
-	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.connection_id,t.deleted_at IS NOT NULL,t.recipient_user_id,t.recipient_team_id
+	err = tx.QueryRow(ctx, `SELECT t.id,t.front_session_id,s.id,c.connection_id,t.deleted_at IS NOT NULL,t.recipient_user_id,t.recipient_team_id,
+ EXISTS(SELECT 1 FROM slack_posts opening WHERE opening.thread_id=t.id AND opening.role='opening' AND (opening.delivery_disposed_at IS NOT NULL OR (t.thread_ts IS NULL AND opening.status IN ('failed','suppressed'))))
  FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_thread_sources s ON s.thread_id=t.id AND s.session_id=t.front_session_id
- WHERE t.org_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted, &peer, &peerTeam)
+ WHERE t.org_id=$1 AND t.team_id=$2 AND t.slack_channel_id=$3 AND t.thread_ts=$4`, p.route.Target.OrganizationID, p.route.Target.TeamID, p.message.Channel, p.root).Scan(&p.thread, &p.session, &p.source, &owner, &deleted, &peer, &peerTeam, &abandoned)
 	if err == nil {
 		if owner != p.route.Target.ConnectionID || deleted {
 			return reject("thread_generation_unavailable")
 		}
 		if slackroute.IsDirectMessage(p.message.Channel) && (peer == nil || peerTeam == nil || *peer != actor || *peerTeam != p.route.Target.TeamID) {
 			return reject("permission_denied")
+		}
+		// Output to a thread whose opening was abandoned is suppressed, so
+		// conversational input there would never be answered in Slack. Thread
+		// commands still apply to the Session.
+		if abandoned && threadInputCommand(p.message.Text, p.route.Target.BotUserID) == "" {
+			return reject("thread_superseded")
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err

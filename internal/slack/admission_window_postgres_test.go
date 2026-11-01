@@ -28,11 +28,11 @@ func TestSlackReceiptWindowsKeepMessagesLongerThanGestures(t *testing.T) {
 	if response := serveSignedEvent(events, eventBody(t, "mention", map[string]any{"type": "app_mention", "user": "human", "channel": "C1", "ts": slackNow(), "text": "<@bot> work"})); response.Code != 200 {
 		t.Fatalf("mention receipt: %d", response.Code)
 	}
-	if got := window("mention"); got != MessageAdmissionWindow {
+	if got := window("mention"); got != messageAdmissionWindow {
 		t.Fatalf("mention window %s", got)
 	}
 	f.nativeStop(t, "native-stop")
-	if got := window("native-stop"); got != GestureExpiry {
+	if got := window("native-stop"); got != gestureExpiry {
 		t.Fatalf("native Stop window %s", got)
 	}
 	interactions := InteractionHandler{Database: f.Pool, AppID: "app", SigningSecret: []byte("fixture-secret"), ControlKey: []byte(strings.Repeat("k", 32))}
@@ -47,7 +47,7 @@ func TestSlackReceiptWindowsKeepMessagesLongerThanGestures(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT request_key FROM slack_requests WHERE request_key NOT IN ('mention','native-stop')`).Scan(&key); err != nil {
 		t.Fatal(err)
 	}
-	if got := window(key); got != GestureExpiry {
+	if got := window(key); got != gestureExpiry {
 		t.Fatalf("button window %s", got)
 	}
 }
@@ -57,7 +57,7 @@ func (f statusFixture) waitingMessage(t *testing.T, key string) uuid.UUID {
 	t.Helper()
 	payload, _ := json.Marshal(messageGesture{Channel: "C1", Timestamp: slackNow(), Text: "<@bot> new task"})
 	now := time.Now().UTC()
-	receipt, err := receiveGesture(t.Context(), f.Pool, inboundGesture{Installation: f.installation, Key: key, Actor: "human", OccurredAt: now, ExpiresAt: now.Add(MessageAdmissionWindow), Payload: payload})
+	receipt, err := receiveGesture(t.Context(), f.Pool, inboundGesture{Installation: f.installation, Key: key, Actor: "human", OccurredAt: now, ExpiresAt: now.Add(messageAdmissionWindow), Payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestSlackButtonGestureStillExpiresAfterFiveMinutes(t *testing.T) {
 	claims.Target.Turn, claims.Target.Ask, claims.OptionID = turn, ask, "yes"
 	claims.ExpiresAt = time.Now().Add(time.Hour).Unix()
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_installations SET authorized_at=clock_timestamp()-interval '1 hour',connected_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, f.installation)
-	clicked := time.Now().Add(-GestureExpiry - time.Second)
+	clicked := time.Now().Add(-gestureExpiry - time.Second)
 	stale := fmt.Sprintf("%d.%06d", clicked.Unix(), clicked.Nanosecond()/1000)
 	if response := serveSignedInteraction(interactions, interactionBody(t, interactions, claims, "human", stale)); response.Code != 200 {
 		t.Fatalf("button receipt: %d", response.Code)
@@ -181,5 +181,26 @@ func TestSlackButtonGestureStillExpiresAfterFiveMinutes(t *testing.T) {
 		var state string
 		_ = f.Pool.QueryRow(t.Context(), `SELECT coalesce(string_agg(status||':'||coalesce(error,''),','),'none') FROM slack_requests`).Scan(&state)
 		t.Fatal("button older than five minutes was not expired", rejected, state, err)
+	}
+}
+
+func TestSlackReplyWaitsWhileExecutionSettles(t *testing.T) {
+	f := newSlackAdmissionFixture(t)
+	f.link(t)
+	payload, _ := json.Marshal(messageGesture{Channel: "C1", Timestamp: slackNow(), Thread: "123.456", Text: "<@bot> follow-up"})
+	now := time.Now().UTC()
+	receipt, err := receiveGesture(t.Context(), f.Pool, inboundGesture{Installation: f.installation, Key: "settling", Actor: "human", OccurredAt: now, ExpiresAt: now.Add(messageAdmissionWindow), Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET execution_deadline_at=clock_timestamp()-interval '1 second' WHERE environment_id=$1 AND id=$2`, f.Environment, f.Computer)
+	if err := admitMessage(t.Context(), auditpolicy.Policy{RetentionSeconds: 3600}, sessiontest.ExecutionLimits(), f.Pool, nil, f.admissionClient(t), receipt.ID); err != nil {
+		t.Fatal(err)
+	}
+	var waiting bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='received' AND error='execution_settling' AND next_attempt_at>clock_timestamp()+interval '50 seconds' FROM slack_requests WHERE id=$1`, receipt.ID).Scan(&waiting); err != nil || !waiting {
+		var state string
+		_ = f.Pool.QueryRow(t.Context(), `SELECT status||':'||coalesce(error,'') FROM slack_requests WHERE id=$1`, receipt.ID).Scan(&state)
+		t.Fatal("settling execution did not defer the reply", waiting, state, err)
 	}
 }
