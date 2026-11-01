@@ -164,16 +164,19 @@ func TestStandardRolesContainOnlyExplicitCompatibleActions(t *testing.T) {
 		if organization && workload {
 			t.Fatalf("mixed scope role %s", role.Key)
 		}
-		if role.Key == "agent_user" {
+		if role.Key == "session_operator" {
 			for _, action := range []Permission{PermissionSessionsCreate, PermissionSessionsRead, PermissionSessionsSend, PermissionSessionsAnswer, PermissionSessionsResume, PermissionSessionsInterrupt, PermissionSessionsCancel, PermissionSessionsClose} {
 				if !seen[action] {
-					t.Fatalf("Agent User lacks %s", action)
+					t.Fatalf("Session Operator lacks %s", action)
 				}
 			}
 			if seen[PermissionComputersExecute] || seen[PermissionAgentConnectionsConfigure] {
-				t.Fatal("Agent User includes infrastructure management")
+				t.Fatal("Session Operator includes infrastructure management")
 			}
 		}
+	}
+	if !keys["session_operator"] {
+		t.Fatal("missing session_operator")
 	}
 }
 

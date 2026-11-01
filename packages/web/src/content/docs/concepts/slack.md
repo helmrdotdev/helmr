@@ -39,7 +39,7 @@ Slack participant does not grant these actions automatically.
 `sessions.read` for an Agent allows reading all its Sessions in Console, including
 other people's DMs and private-channel conversations. Each granted control action
 also applies across that Agent's Sessions, without requiring creation permission.
-The Agent User Role includes creation, reading and conversation controls. Input
+The Session Operator Role includes creation, reading and conversation controls. Input
 supplied through Console or the API can produce output in the Session's original
 Slack destination. DM delivery retains its original recipient identity and requires
 that recipient to hold `sessions.read`.

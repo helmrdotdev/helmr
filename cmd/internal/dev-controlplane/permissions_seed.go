@@ -48,7 +48,7 @@ INSERT INTO roles(id,org_id,name,description,permissions) VALUES
 INSERT INTO role_grants(id,org_id,group_id,role_id,environment_id,all_agents,created_by_user_id)
 SELECT uuidv7(),'00000000-0000-7000-8000-000000000201',g.group_id::uuid,r.id,g.environment_id::uuid,g.all_agents,'00000000-0000-7000-8000-000000000101'
 FROM (VALUES
- ('00000000-0000-7000-8000-000000002001','agent_user','00000000-0000-7000-8000-000000000401',false),
+ ('00000000-0000-7000-8000-000000002001','session_operator','00000000-0000-7000-8000-000000000401',false),
  ('00000000-0000-7000-8000-000000002002','session_viewer','00000000-0000-7000-8000-000000000401',true),
  ('00000000-0000-7000-8000-000000002002','session_operator','00000000-0000-7000-8000-000000000402',true),
  ('00000000-0000-7000-8000-000000002002','session_viewer','00000000-0000-7000-8000-000000000403',true),
@@ -68,7 +68,7 @@ SELECT uuidv7(),r.org_id,'00000000-0000-7000-8000-000000001101',r.id,e.id,true,'
 WHERE r.org_id='00000000-0000-7000-8000-000000000201' AND r.builtin_key='environment_resource_administrator';
 INSERT INTO role_grants(id,org_id,member_id,role_id,environment_id,all_agents,created_by_user_id)
 SELECT uuidv7(),org_id,'00000000-0000-7000-8000-000000001111',id,'00000000-0000-7000-8000-000000000401',false,'00000000-0000-7000-8000-000000000101' FROM roles
-WHERE org_id='00000000-0000-7000-8000-000000000201' AND builtin_key='agent_user';
+WHERE org_id='00000000-0000-7000-8000-000000000201' AND builtin_key='session_operator';
 INSERT INTO role_grant_agents(grant_id,environment_id,agent_id)
 SELECT id,environment_id,'00000000-0000-7000-8000-000000002101' FROM role_grants
 WHERE member_id='00000000-0000-7000-8000-000000001111';
