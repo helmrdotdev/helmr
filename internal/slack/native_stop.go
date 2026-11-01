@@ -46,7 +46,7 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 		if bot == e.User {
 			return nil
 		}
-		receipt, err := receiveGesture(ctx, tx, inboundGesture{Installation: installation, Key: envelope.EventID, Actor: e.User, OccurredAt: occurred, ExpiresAt: occurred.Add(5 * time.Minute), Payload: raw})
+		receipt, err := receiveGesture(ctx, tx, inboundGesture{Installation: installation, Key: envelope.EventID, Actor: e.User, OccurredAt: occurred, ExpiresAt: occurred.Add(GestureExpiry), Payload: raw})
 		if err != nil || receipt.Status != "received" {
 			return err
 		}

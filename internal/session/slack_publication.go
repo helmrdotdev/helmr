@@ -32,8 +32,9 @@ func slackContentNonempty(content json.RawMessage) bool {
 	return false
 }
 
-// Every Slack conversation is bound at admission. Output can never create a
-// replacement thread or change its sender after disconnection.
+// Every Slack conversation is bound at admission. Output never moves the Session
+// to another destination or changes its sender after disconnection; only an
+// unconfirmed opening may be sent once more in the same channel.
 func lockSlackPublication(ctx context.Context, tx pgx.Tx, env, session uuid.UUID) (slackPublication, error) {
 	var p slackPublication
 	err := tx.QueryRow(ctx, `SELECT t.slack_channel_binding_id FROM sessions s JOIN slack_threads t ON (t.environment_id,t.front_session_id)=(s.environment_id,s.root_session_id) JOIN slack_thread_sources src ON src.thread_id=t.id AND (src.environment_id,src.session_id)=(s.environment_id,s.id) WHERE s.environment_id=$1 AND s.id=$2`, env, session).Scan(&p.channel)

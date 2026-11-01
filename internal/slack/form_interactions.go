@@ -37,7 +37,7 @@ func (h InteractionHandler) receiveAnswerOpening(ctx context.Context, envelope i
 				return err
 			}
 			payload, _ := json.Marshal(controlGesture{Control: claims})
-			expires := source.Add(5 * time.Minute)
+			expires := source.Add(GestureExpiry)
 			if tokenExpiry := time.Unix(claims.ExpiresAt, 0); tokenExpiry.Before(expires) {
 				expires = tokenExpiry
 			}
@@ -57,7 +57,7 @@ func (h InteractionHandler) receiveAnswerOpening(ctx context.Context, envelope i
 		}
 		form := claims
 		form.Nonce, form.Action, form.Actor, form.SourceTimestamp = uuid.NewV7(), "answer", envelope.User.ID, action.Timestamp
-		if limit := source.Add(5 * time.Minute).Unix(); limit < form.ExpiresAt {
+		if limit := source.Add(GestureExpiry).Unix(); limit < form.ExpiresAt {
 			form.ExpiresAt = limit
 		}
 		signed, err := encodeControl(h.ControlKey, form)

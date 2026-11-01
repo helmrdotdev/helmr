@@ -36,7 +36,7 @@ func (f statusFixture) finishUnknown(t *testing.T, post uuid.UUID) error {
 	return err
 }
 
-func TestSlackDeliveryTerminationClosesPublicationWithoutReplacingRootOrReplaying(t *testing.T) {
+func TestSlackDeliveryTerminationClosesPublicationWithoutReplaying(t *testing.T) {
 	for _, unbound := range []bool{false, true} {
 		t.Run(fmt.Sprintf("unbound=%v", unbound), func(t *testing.T) {
 			f := newStatusFixture(t)
@@ -73,6 +73,19 @@ func TestSlackDeliveryTerminationClosesPublicationWithoutReplacingRootOrReplayin
 				f.noPostClaim(t, response)
 			}
 
+			if unbound {
+				// An unconfirmed opening is sent once more; delivery ends when the
+				// second attempt is also unconfirmed.
+				if err := f.finishUnknown(t, first); err != nil {
+					t.Fatal(err)
+				}
+				f.due(t)
+				f.noPostClaim(t, response)
+				claim = f.postClaim(t, first)
+				if err := FinishPost(t.Context(), f.Pool, auditpolicy.Policy{RetentionSeconds: 3600}, claim, DeliveryResult{Disposition: Uncertain}); err != nil {
+					t.Fatal(err)
+				}
+			}
 			for range 2 {
 				if err := f.finishUnknown(t, first); err != nil {
 					t.Fatal(err)
@@ -145,7 +158,7 @@ func TestSlackDeliveryHistoryChecksTerminateWithoutSending(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 			}))
 			want := 1
-			if mode == "page-budget" || mode == "rate-limit" {
+			if mode == "page-budget" || mode == "rate-limit" || mode == "unavailable" {
 				want = historyPageBudget
 			}
 			for range want {
@@ -171,10 +184,10 @@ func TestSlackDeliveryHistoryChecksTerminateWithoutSending(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND inflight_payload=$2 AND delivery_disposed_at IS NOT NULL FROM slack_posts WHERE id=$1`, post, claim.Payload).Scan(&safe); err != nil || !safe {
 				t.Fatal("negative evidence changed outcome", safe, err)
 			}
-			if mode == "rate-limit" {
-				var reason string
-				if err := f.Pool.QueryRow(t.Context(), `SELECT error FROM slack_posts WHERE id=$1`, post).Scan(&reason); err != nil || reason != "history_rate_limited" {
-					t.Fatal("rate limit reason lost", reason, err)
+			if reason := map[string]string{"rate-limit": "history_rate_limited", "unavailable": "history_unavailable"}[mode]; reason != "" {
+				var recorded string
+				if err := f.Pool.QueryRow(t.Context(), `SELECT error FROM slack_posts WHERE id=$1`, post).Scan(&recorded); err != nil || recorded != reason {
+					t.Fatal("retry reason lost", recorded, err)
 				}
 			}
 			f.due(t)

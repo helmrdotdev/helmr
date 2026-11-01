@@ -169,12 +169,12 @@ Checkpoint, hold and image-build references use `checkpoint_id`, `hold_id` and
 
 `GET /api/projects/{projectID}/environments/{envID}/attention/counts` returns
 complete authorized counts without execution content. Question/hold/failed-Turn
-counts are omitted when Session reads are unauthorized; Slack reauthorization
+and stopped Slack delivery counts are omitted when Session reads are unauthorized; Slack reauthorization
 counts require their own permission. No authorized category returns forbidden.
 This metadata read does not create audit facts. The Console badge polls counts
 every ten seconds; Overview requests the full attention response while displayed.
 A full attention response records content disclosure for the distinct union of
-Sessions represented by questions, holds and failed Turns. A capture failure
+Sessions represented by questions, holds, failed Turns and stopped Slack delivery. A capture failure
 withholds that content. Counts and content are separate snapshots.
 
 ## Retention and deployment prerequisites

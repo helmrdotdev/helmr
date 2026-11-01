@@ -100,6 +100,9 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			}
 		}
 		text := "Helmr could not accept that action. Check your access in Console, then try again."
+		// A message, unlike a control or lifecycle command, waits for execution
+		// through its admission window before it is rejected.
+		waited := payload.Control == nil && !payload.NativeStop && threadInputCommand(payload.Text, bot) == ""
 		var blocks []any
 		switch code {
 		case "permission_denied":
@@ -146,12 +149,21 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			text = "Cannot hibernate while foreground work or another control is active. Wait for it to settle or use the existing Stop control, then try again."
 		case "execution_settling":
 			text = "The previous execution timed out and is still settling. Try again shortly."
+			if waited {
+				text = "This message was not accepted within an hour because the previous execution was still settling. Send it again, or ask an administrator to check service health if this keeps happening."
+			}
 		case "execution_capacity_incompatible":
 			text = "No active Worker pool supports this Computer. Ask an administrator to configure a compatible Worker pool, then try again."
 		case "execution_capacity_exhausted":
 			text = "Worker capacity is full. Release an unused Computer or ask an administrator to raise the Worker maximum, then try again."
+			if waited {
+				text = "This message was not accepted within an hour because Worker capacity stayed full. Release an unused Computer or ask an administrator to raise the Worker maximum, then send it again."
+			}
 		case "execution_limit":
 			text = "Cannot start execution: the Environment execution quota is in use. Release an unused Computer or ask an administrator to raise the quota, then try again."
+			if waited {
+				text = "This message was not accepted within an hour because the Environment execution quota stayed in use. Release an unused Computer or ask an administrator to raise the quota, then send it again."
+			}
 		case "response_conflict":
 			text = "The affected scope changed. Use !sleep or !close again to review the current members."
 		case "mute":
@@ -204,6 +216,8 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			if direct {
 				text = "This thread is no longer available. Send a new message outside this thread."
 			}
+		case "thread_superseded":
+			text = "This thread no longer continues its Session. Use the Session's current thread or Console, or mention the Agent in a new thread to start a new Session."
 		case "binding_unavailable":
 			text = "That Slack destination is no longer available. Start a new thread in a connected channel or use the Helmr CLI."
 		case "content_invalid", "content_unsupported":

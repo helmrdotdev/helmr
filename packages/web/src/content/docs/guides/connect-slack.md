@@ -79,7 +79,7 @@ message outside a thread starts a new Session. Reply in that message's thread
 to continue; mentions are not needed in DM replies either. Replies to a closed
 Session, an account-linking hint or a thread without an accepted Session do not
 start new work. Send a new message outside the thread instead. An unbound reply
-may wait up to five minutes for its root to be accepted before a hint is sent.
+may wait up to one hour for its root to be accepted before a hint is sent.
 
 **DM records are shared under Helmr's existing Environment permissions.**
 Authorized members can inspect the Session's input and output in Console even

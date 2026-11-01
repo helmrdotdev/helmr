@@ -31,7 +31,7 @@ const TONES = {
   process: { starting: "waiting", ready: "active", stopping: "waiting", stopped: "expired", lost: "revoked", recovery_required: "revoked" },
   process_stop: { requested: "waiting", stopping: "waiting", stopped: "succeeded" },
   question: { pending: "waiting", answered: "succeeded", cancelled: "revoked" },
-  attention: { question: "waiting", hold: "waiting", failed_turn: "revoked", slack_reauthorization: "revoked" },
+  attention: { question: "waiting", hold: "waiting", failed_turn: "revoked", slack_delivery_stopped: "revoked", slack_reauthorization: "revoked" },
   session_work: { running: "active", queued: "waiting", held: "waiting" },
   computer_wait: { waiting: "waiting" },
   deployment_templates: { preparing: "waiting", failed: "revoked" },
@@ -43,7 +43,7 @@ const TONES = {
 const LABELS: Partial<Record<keyof typeof TONES, Record<string, string>>> = {
   computer_residency: { parked: "Sleeping", parking: "Hibernating", restoring: "Waking", running: "Awake" },
   agent: { defined: "In current deployment", not_defined: "Not in current deployment", deleted: "Deleted" },
-  attention: { question: "Question", hold: "Held", failed_turn: "Failed", slack_reauthorization: "Connection" },
+  attention: { question: "Question", hold: "Held", failed_turn: "Failed", slack_delivery_stopped: "Slack delivery", slack_reauthorization: "Connection" },
   computer_wait: { waiting: "Waiting for capacity" },
   deployment_templates: { preparing: "Templates preparing", failed: "Templates failed" },
 };

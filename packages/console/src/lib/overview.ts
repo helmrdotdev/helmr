@@ -76,7 +76,8 @@ const plural = (count: number, one: string, other: string) => `${count} ${count 
 
 // The problems that need someone, most urgent first, grouped by cause: an
 // Agent failing in the last hour, Computers that cannot run, held Sessions,
-// Slack connections that lost authorization, and questions left too long.
+// Sessions whose Slack delivery stopped, Slack connections that lost
+// authorization, and questions left too long.
 // Each source is optional; a part the caller cannot read adds nothing.
 export function overviewIssues(input: {
   now: number;
@@ -129,6 +130,16 @@ export function overviewIssues(input: {
       detail: `${hold.agent} · ${holdKindLabel(hold.hold_kind)}`,
       action: "Open",
       target: { kind: "session", sessionID: hold.session_id! },
+    });
+  }
+  for (const stopped of attention.filter((item) => item.kind === "slack_delivery_stopped" && item.session_id)) {
+    issues.push({
+      id: `slack-delivery:${stopped.id}`,
+      tone: "warning",
+      title: "Slack delivery stopped for a session",
+      detail: `${stopped.agent} · its Slack thread receives no further replies; the session keeps working`,
+      action: "Open",
+      target: { kind: "session", sessionID: stopped.session_id! },
     });
   }
   for (const lost of attention.filter((item) => item.kind === "slack_reauthorization")) {

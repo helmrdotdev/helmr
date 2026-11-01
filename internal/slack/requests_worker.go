@@ -63,7 +63,7 @@ func ReconcileRequest(ctx context.Context, auditPolicy auditpolicy.Policy, limit
 		return err
 	}
 	if !unexpired {
-		return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return rejectMessage(ctx, tx, id, "gesture_expired") })
+		return db.RunTx(ctx, pool, func(tx pgx.Tx) error { return expireRequest(ctx, tx, id) })
 	}
 	var payload struct {
 		NativeStop bool            `json:"native_stop"`

@@ -12,9 +12,10 @@ import (
 )
 
 // listAttentionHTTP returns what in the Environment is waiting on a person:
-// pending Questions, holds on open Sessions and failed Turns (read with the
-// authority to read Sessions), and Slack connections that need authorizing
-// again (only for callers who manage those Agents).
+// pending Questions, holds on open Sessions, failed Turns and open Sessions
+// whose Slack delivery stopped (read with the authority to read Sessions), and
+// Slack connections that need authorizing again (only for callers who manage
+// those Agents).
 func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 	caller, env, err := s.agentRequestAuthority(r, auth.PermissionSessionsRead)
 	if err != nil {
@@ -32,6 +33,7 @@ func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Counts.Question = &waiting.QuestionCount
 		response.Counts.Hold = &waiting.HoldCount
 		response.Counts.FailedTurn = &waiting.FailedTurnCount
+		response.Counts.SlackDeliveryStopped = &waiting.SlackDeliveryStoppedCount
 	}
 	for _, item := range waiting.Questions {
 		value := attentionItem(api.AttentionQuestion, item)
@@ -46,6 +48,13 @@ func (s *Server) listAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, item := range waiting.FailedTurns {
 		value := attentionItem(api.AttentionFailedTurn, item)
 		value.TurnSequence = item.TurnSequence
+		if item.Summary != "" {
+			value.ErrorCode = &item.Summary
+		}
+		response.Items = append(response.Items, value)
+	}
+	for _, item := range waiting.SlackDeliveryStopped {
+		value := attentionItem(api.AttentionSlackDeliveryStopped, item)
 		if item.Summary != "" {
 			value.ErrorCode = &item.Summary
 		}
@@ -106,6 +115,7 @@ func (s *Server) countAttentionHTTP(w http.ResponseWriter, r *http.Request) {
 		response.Counts.Question = &waiting.QuestionCount
 		response.Counts.Hold = &waiting.HoldCount
 		response.Counts.FailedTurn = &waiting.FailedTurnCount
+		response.Counts.SlackDeliveryStopped = &waiting.SlackDeliveryStoppedCount
 	}
 	principal := principalFromContext(r.Context())
 	if s.slackConfig != nil && principal.Kind == auth.PrincipalKindSession {

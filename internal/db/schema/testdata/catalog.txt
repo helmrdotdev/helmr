@@ -1014,6 +1014,7 @@ column slack_threads.input_unmuted_at timestamp with time zone
 column slack_threads.last_acknowledged_status text
 column slack_threads.next_attempt_at timestamp with time zone not null default clock_timestamp()
 column slack_threads.opening_post_key text
+column slack_threads.opening_resent_at timestamp with time zone
 column slack_threads.org_id uuid not null
 column slack_threads.projected_lifecycle_state jsonb
 column slack_threads.recipient_team_id text

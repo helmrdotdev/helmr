@@ -92,7 +92,7 @@ func TestSlackHistoryRateLimitIsSharedAndDoesNotReplayMutation(t *testing.T) {
 	f.noPostClaim(t, post)
 }
 
-func TestSlackHistoryExpiredCursorTerminatesWithoutDeliveryClaim(t *testing.T) {
+func TestSlackHistoryExpiredCursorRestartsFromFirstPage(t *testing.T) {
 	f := newStatusFixture(t)
 	post := f.post(t, 1, "content", "lifecycle", nil)
 	claim := f.postClaim(t, post)
@@ -100,16 +100,33 @@ func TestSlackHistoryExpiredCursorTerminatesWithoutDeliveryClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE slack_posts SET reconciliation_cursor='expired' WHERE id=$1`, post)
-	client := NewWebClient(credentialsFunc(func(context.Context, uuid.UUID, int64) (string, error) { return "fixture", nil }), roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":false,"error":"invalid_cursor"}`))}, nil
+	var cursors []string
+	client := NewWebClient(credentialsFunc(func(context.Context, uuid.UUID, int64) (string, error) { return "fixture", nil }), roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		cursors = append(cursors, r.URL.Query().Get("cursor"))
+		if r.Method != http.MethodGet {
+			t.Fatal("uncertain mutation resent")
+		}
+		if len(cursors) == 1 {
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":false,"error":"invalid_cursor"}`))}, nil
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"ok":true,"messages":[],"has_more":true,"response_metadata":{"next_cursor":"next-page"}}`))}, nil
 	}))
 	if read, err := ReconcileUnknownPost(t.Context(), f.Pool, client, post); err != nil || !read {
 		t.Fatalf("cursor error: %v %v", read, err)
 	}
-	var exact bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='failed' AND error='history_cursor_expired' AND delivery_disposed_at IS NOT NULL AND inflight_payload=$2 FROM slack_posts WHERE id=$1`, post, claim.Payload).Scan(&exact); err != nil || !exact {
-		t.Fatalf("cursor recovery changed delivery: %v %v", exact, err)
+	var restarted bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='uncertain' AND error='history_cursor_expired' AND reconciliation_cursor='' AND delivery_disposed_at IS NULL AND inflight_payload=$2 FROM slack_posts WHERE id=$1`, post, claim.Payload).Scan(&restarted); err != nil || !restarted {
+		t.Fatalf("expired cursor ended the check: %v %v", restarted, err)
 	}
+	f.historyDue(t, post)
+	if read, err := ReconcileUnknownPost(t.Context(), f.Pool, client, post); err != nil || !read || len(cursors) != 2 || cursors[0] != "expired" || cursors[1] != "" {
+		t.Fatalf("restart did not read the first page: %v %q %v", read, cursors, err)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='uncertain' AND reconciliation_cursor='next-page' AND reconciliation_pages=2 FROM slack_posts WHERE id=$1`, post).Scan(&restarted); err != nil || !restarted {
+		t.Fatalf("restarted scan lost its cursor: %v %v", restarted, err)
+	}
+	f.due(t)
+	f.noPostClaim(t, post)
 }
 
 func TestSlackHistoryConfirmationReleasesNewerDeliveryWithoutReadCooldown(t *testing.T) {

@@ -51,7 +51,7 @@ function DeliveryRow(props: { post: SlackDeliveryPost; open: boolean; onToggle: 
           <p class="m-0 whitespace-pre-wrap break-words text-console-text">{post().text}</p>
         </Show>
         <Show when={(post().status === "uncertain" || post().disposed_at) && post().confirmed_revision < post().desired_revision}><p class={ui.muted}>{checkReason(post())}</p></Show>
-        <Show when={!post().root_known}><p class={ui.muted}>{post().disposed_at ? "Thread delivery is unavailable. Later messages are suppressed; no replacement thread is created." : "The thread’s first message is unconfirmed. Later messages are waiting for bounded confirmation."}</p></Show>
+        <Show when={!post().root_known}><p class={ui.muted}>{post().disposed_at ? "Thread delivery stopped. Later messages are suppressed, and the session is listed under Needs attention until it closes." : "The thread’s first message is unconfirmed. Later messages are waiting for bounded confirmation."}</p></Show>
         <Show when={post().disposed_at}>
           <p class={ui.muted}>Remaining parts of this message will not be sent. Agent work continues.</p>
           <Show when={post().stream_status === "uncertain" || post().stream_status === "open"}><p class={ui.muted}>Slack stream termination remains unconfirmed. Retained evidence follows the session’s retention policy.</p></Show>

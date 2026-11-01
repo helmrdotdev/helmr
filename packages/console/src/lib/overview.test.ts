@@ -27,6 +27,7 @@ describe("overviewIssues", () => {
       computers: [computer("c1", { execution_wait: { reason: "environment_limit" } }), computer("c2", { execution_wait: { reason: "scheduling" } }), computer("c3", { residency: "unavailable" }), computer("c4", { status: "deleted", residency: "unavailable" })],
       attention: [
         item("hold", "2026-10-25T08:00:00Z", { hold_kind: "process_failed" }),
+        item("slack_delivery_stopped", "2026-10-25T08:30:00Z", { session_id: "s3", error_code: "history_no_match" }),
         item("slack_reauthorization", "2026-10-25T09:00:00Z", { workspace_name: "Acme" }),
         item("question", "2026-10-25T09:00:00Z"),
         item("question", "2026-10-25T09:30:00Z", { agent: "agent" }),
@@ -38,13 +39,15 @@ describe("overviewIssues", () => {
       ["warning", "2 computers are waiting for capacity"],
       ["warning", "1 computer is unavailable"],
       ["warning", "A session is held"],
+      ["warning", "Slack delivery stopped for a session"],
       ["warning", "Slack connection needs reauthorization"],
       ["neutral", "2 questions unanswered for over 2 hours"],
     ]);
     expect(issues[0]!.target).toEqual({ kind: "turn", sessionID: "s1", turnID: "t1" });
     expect(issues[1]!.detail).toContain("computer limit");
     expect(issues[3]!.detail).toBe("triage · process failed repeatedly");
-    expect(issues[5]!.detail).toBe("Asked by triage, agent");
+    expect(issues[4]!.target).toEqual({ kind: "session", sessionID: "s3" });
+    expect(issues[6]!.detail).toBe("Asked by triage, agent");
   });
 
   test("adds nothing for parts the caller cannot read", () => {

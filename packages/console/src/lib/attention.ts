@@ -3,10 +3,11 @@ import { request } from "./api";
 import { useScopeIDs } from "./scope";
 import type { ScopeIDs } from "./scope-link";
 
-export type AttentionKind = "question" | "hold" | "failed_turn" | "slack_reauthorization";
+export type AttentionKind = "question" | "hold" | "failed_turn" | "slack_delivery_stopped" | "slack_reauthorization";
 
 // One thing in the Environment waiting on a person. `id` names the Question,
-// hold, Turn or Slack connection; `at` is when it started waiting.
+// hold, Turn, Slack connection or Slack thread's opening message; `at` is when
+// it started waiting.
 export type AttentionItem = {
   kind: AttentionKind;
   id: string;
@@ -27,6 +28,7 @@ export type AttentionCounts = {
   question?: number;
   hold?: number;
   failed_turn?: number;
+  slack_delivery_stopped?: number;
   slack_reauthorization?: number;
 };
 
@@ -42,7 +44,7 @@ export function getAttention(scope: ScopeIDs): Promise<Attention> {
 
 // The number of waiting items across the kinds this person sees.
 export function attentionTotal(counts: AttentionCounts): number {
-  return (counts.question ?? 0) + (counts.hold ?? 0) + (counts.failed_turn ?? 0) + (counts.slack_reauthorization ?? 0);
+  return (counts.question ?? 0) + (counts.hold ?? 0) + (counts.failed_turn ?? 0) + (counts.slack_delivery_stopped ?? 0) + (counts.slack_reauthorization ?? 0);
 }
 
 // Content is fetched only by surfaces that display the waiting items.
