@@ -10,13 +10,14 @@ import (
 	"uuid"
 )
 
-// Control acknowledgements need no authored output event. Refresh their existing
-// cards and causal Stop notice without inventing a new public execution event.
+// Control acknowledgements and Computer transitions need no authored output
+// event. Refresh work and preparation cards and the causal Stop notice without
+// inventing a new public execution event.
 func projectControlState(ctx context.Context, tx pgx.Tx, o projectionOwner, authorized time.Time) (bool, error) {
 	if err := projectActivity(ctx, tx, o, authorized); err != nil {
 		return false, err
 	}
-	lifecycle, err := projectLifecycleCard(ctx, tx, o)
+	preparation, err := projectPreparation(ctx, tx, o)
 	if err != nil {
 		return false, err
 	}
@@ -25,7 +26,7 @@ func projectControlState(ctx context.Context, tx pgx.Tx, o projectionOwner, auth
 		return false, err
 	}
 	advanced, err := slackroute.AdvanceControlProjection(ctx, tx, o.participant, o.environment, o.session)
-	return lifecycle || notice || advanced, err
+	return preparation || notice || advanced, err
 }
 
 func projectStopNotices(ctx context.Context, tx pgx.Tx, o projectionOwner, authorized time.Time) (bool, error) {

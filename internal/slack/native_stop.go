@@ -50,6 +50,13 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 		if err != nil || receipt.Status != "received" {
 			return err
 		}
+		// Stop withdraws the person's own messages still waiting in this thread
+		// for execution; a withdrawn message never runs.
+		withdrawn, err := tx.Exec(ctx, `UPDATE slack_requests SET status='rejected',finished_at=clock_timestamp(),error='stopped_waiting'
+ WHERE installation_id=$1 AND status='received' AND wait_card IN ('posting','waiting') AND wait_channel=$2 AND wait_thread_ts=$3 AND slack_user_id=$4 AND source_occurred_at<=$5`, installation, e.Channel, e.Thread, e.User, occurred)
+		if err != nil {
+			return err
+		}
 		// Fill the observation once, in the same transaction as the first receipt.
 		// A retry must not acquire a newer front or execution generation.
 		tag, err := tx.Exec(ctx, `UPDATE slack_requests r SET thread_id=t.id,environment_id=s.environment_id,session_id=s.id,thread_source_id=src.id,observed_authority_generation=s.authority_generation,observed_next_turn_seq=s.next_turn_seq
@@ -64,6 +71,9 @@ func (h EventHandler) receiveNativeStop(ctx context.Context, envelope eventEnvel
 			var observed bool
 			if err = tx.QueryRow(ctx, `SELECT observed_authority_generation IS NOT NULL FROM slack_requests WHERE id=$1`, receipt.ID).Scan(&observed); err != nil {
 				return err
+			}
+			if !observed && withdrawn.RowsAffected() > 0 {
+				return rejectMessage(ctx, tx, receipt.ID, "input_ignored")
 			}
 			if !observed {
 				return rejectMessage(ctx, tx, receipt.ID, "stale_gesture")

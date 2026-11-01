@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 	"uuid"
-
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
 func TestSlackLifecycleCommandsRequireExactHumanSyntax(t *testing.T) {
@@ -48,6 +46,9 @@ func TestSlackLifecycleCommandsConfirmWithoutCreatingWork(t *testing.T) {
 			}
 			if !strings.Contains(string(feedback.payload), "blocks") {
 				t.Fatalf("no controls: %s", feedback.payload)
+			}
+			if command == "help" && (!strings.Contains(string(feedback.payload), "Automatic close") || !strings.Contains(string(feedback.payload), "helmr.lifecycle.sleep")) {
+				t.Fatalf("help lacks Computer policy or controls: %s", feedback.payload)
 			}
 			if command == "sleep" && (!strings.Contains(string(feedback.payload), "Hibernating pauses this Session.") || strings.Contains(string(feedback.payload), f.Session.String())) {
 				t.Fatalf("hibernate confirmation lacks its count or lists identities: %s", feedback.payload)
@@ -116,94 +117,6 @@ func TestSlackCloseConfirmationShowsCountAndRequiresItsActor(t *testing.T) {
 	var status string
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM sessions WHERE id=$1`, f.Session).Scan(&status); err != nil || status == "open" {
 		t.Fatalf("confirmed close left the Session open: %s %v", status, err)
-	}
-}
-
-func TestSlackLifecycleCardIsRetainedAndRefreshDoesNotCreateWork(t *testing.T) {
-	f := newStatusFixture(t)
-	f.link(t)
-	for range 2 {
-		if _, err := projectParticipant(t.Context(), f.Pool, f.participant, testProjectionConfig()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var posts, turns int
-	var raw []byte
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*),(SELECT count(*) FROM turns WHERE session_id=$1) FROM slack_posts WHERE thread_id=$2 AND post_key='execution-controls'`, f.Session, f.thread).Scan(&posts, &turns); err != nil || posts != 1 || turns != 0 {
-		t.Fatalf("card duplicated or admitted work: %d %d %v", posts, turns, err)
-	}
-	if err := f.Pool.QueryRow(t.Context(), `SELECT payload FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&raw); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), "Automatic close") {
-		t.Fatalf("missing effective policy: %s", raw)
-	}
-}
-
-func TestSlackLifecycleDiscoveryTracksStateWithoutPeriodicCardWrites(t *testing.T) {
-	f := newStatusFixture(t)
-	f.link(t)
-	drain := func() {
-		t.Helper()
-		for range 30 {
-			n, err := ReconcileProjection(t.Context(), f.Pool, testProjectionConfig(), 64)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if n == 0 {
-				return
-			}
-		}
-		t.Fatal("projection never drained")
-	}
-	drain()
-	var before, after int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_revision FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&before); err != nil {
-		t.Fatal(err)
-	}
-	for range 3 {
-		drain()
-	}
-	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_revision FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&after); err != nil || after != before {
-		t.Fatalf("idle card revised: %d -> %d %v", before, after, err)
-	}
-	// Promotion must not change the existing front Session's lifecycle policy.
-	promoted := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO deployments(environment_id,id,bundle_digest) VALUES($1,$3,'sha256:'||repeat('e',64));
- INSERT INTO template_definitions(environment_id,deployment_id,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy) SELECT environment_id,$3,template_id,image_spec_id,cpu_millis,memory_bytes,disk_bytes,network_policy,prepare_network_policy FROM template_definitions WHERE environment_id=$1 AND deployment_id=$2;
- INSERT INTO agent_definitions(environment_id,agent_id,deployment_id,template_id,has_init,hibernate_after_idle_ms,runtime_mcp_policy) SELECT environment_id,agent_id,$3,template_id,has_init,60000,runtime_mcp_policy FROM agent_definitions WHERE environment_id=$1 AND deployment_id=$2;
- UPDATE environments SET current_deployment_id=$3 WHERE id=$1`, pgx.QueryExecModeSimpleProtocol, f.Environment, f.Deployment, promoted)
-	drain()
-	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_revision FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&after); err != nil || after != before {
-		t.Fatalf("promotion changed pinned lifecycle card: %d -> %d %v", before, after, err)
-	}
-	// No Session event is emitted for this physical transition.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_leases SET status='lost' WHERE environment_id=$1 AND computer_id=$2`, f.Environment, f.Computer)
-	drain()
-	var payload []byte
-	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_revision,payload FROM slack_posts WHERE thread_id=$1 AND post_key='execution-controls'`, f.thread).Scan(&after, &payload); err != nil || after != before+1 || !strings.Contains(string(payload), "Computer not yet running") {
-		t.Fatalf("physical state not projected: %d -> %d %s %v", before, after, payload, err)
-	}
-}
-
-func TestSlackLifecycleRendersSampledState(t *testing.T) {
-	f := newStatusFixture(t)
-	target := controlTarget{Installation: f.installation, Thread: f.thread, Participant: f.participant, Environment: f.Environment, Session: f.Session}
-	if err := db.RunTx(t.Context(), f.Pool, func(tx pgx.Tx) error {
-		snapshot, _, err := readLifecycleState(t.Context(), tx, target)
-		if err != nil {
-			return err
-		}
-		if _, err = tx.Exec(t.Context(), `UPDATE agent_definitions d SET hibernate_after_idle_ms=60000 FROM sessions s WHERE s.id=$1 AND (d.environment_id,d.agent_id,d.deployment_id)=(s.environment_id,s.agent_id,s.deployment_id)`, f.Session); err != nil {
-			return err
-		}
-		text, _, err := lifecyclePresentationFromState(t.Context(), tx, testProjectionConfig(), target, "help", "", false, snapshot)
-		if err == nil && !strings.Contains(text, "Automatic hibernation: off") {
-			t.Fatalf("renderer mixed live state into snapshot: %s", text)
-		}
-		return err
-	}); err != nil {
-		t.Fatal(err)
 	}
 }
 

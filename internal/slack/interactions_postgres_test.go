@@ -108,7 +108,7 @@ func TestSlackPersistentLifecycleButtonAdmitsFreshGesture(t *testing.T) {
 	f := newStatusFixture(t)
 	f.link(t)
 	handler := InteractionHandler{Database: f.Pool, AppID: "app", SigningSecret: []byte("fixture-secret"), ControlKey: []byte(strings.Repeat("k", 32))}
-	claims := f.control("help")
+	claims := f.control("mute")
 	claims.ExpiresAt = 0
 	if response := serveSignedInteraction(handler, interactionBody(t, handler, claims, "human", slackNow())); response.Code != http.StatusOK {
 		t.Fatalf("callback: %d", response.Code)

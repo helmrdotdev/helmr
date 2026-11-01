@@ -132,7 +132,8 @@ func RunRequests(ctx context.Context, auditPolicy auditpolicy.Policy, limits exe
 		batch, cancel := context.WithTimeout(ctx, 30*time.Second)
 		_, err := ReconcileRequests(batch, auditPolicy, limits, pool, trust, config, client, 64)
 		_, feedbackErr := ReconcileRejectedFeedback(batch, pool, client, config, 4)
-		err = errors.Join(err, feedbackErr)
+		_, waitErr := ReconcileWaitCards(batch, pool, client, 8)
+		err = errors.Join(err, feedbackErr, waitErr)
 		cancel()
 		if ctx.Err() != nil {
 			return ctx.Err()

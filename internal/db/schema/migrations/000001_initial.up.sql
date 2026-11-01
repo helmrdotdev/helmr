@@ -2069,7 +2069,7 @@ CREATE TABLE slack_threads (
     team_id text NOT NULL,
     slack_channel_id text NOT NULL,
     thread_ts text CHECK (thread_ts<>''),
-    projected_lifecycle_state jsonb,
+    projected_preparation jsonb,
     opening_post_key text CHECK (opening_post_key<>''),
     opening_resent_at timestamptz,
     recipient_team_id text,
@@ -2147,6 +2147,11 @@ CREATE TABLE slack_requests (
     control_id uuid,
     finished_at timestamptz,
     error text,
+    wait_card text CHECK (wait_card IN ('posting', 'waiting', 'settled')),
+    wait_channel text CHECK (wait_channel<>''),
+    wait_thread_ts text CHECK (wait_thread_ts<>''),
+    wait_ts text CHECK (wait_ts<>''),
+    CHECK ((wait_channel IS NULL)=(wait_thread_ts IS NULL)),
     CHECK ((observed_authority_generation IS NULL)=(observed_next_turn_seq IS NULL)),
     CHECK (observed_authority_generation IS NULL OR (environment_id IS NOT NULL AND observed_authority_generation>0 AND observed_next_turn_seq>0)),
     UNIQUE (installation_id, request_key),
@@ -2173,6 +2178,8 @@ CREATE TABLE slack_requests (
 CREATE INDEX slack_requests_input_source ON slack_requests(environment_id, turn_id, message_id) WHERE status='accepted' AND operation IN ('start', 'enqueue', 'slack_route');
 
 CREATE INDEX slack_requests_due ON slack_requests(next_attempt_at, id) WHERE status='received';
+CREATE INDEX slack_requests_wait_due ON slack_requests(received_at, id) WHERE (status='received' AND wait_card IS NULL AND error IS NOT NULL) OR wait_card IN ('posting', 'waiting');
+CREATE INDEX slack_requests_waiting_thread ON slack_requests(installation_id, wait_channel, wait_thread_ts) WHERE status='received' AND wait_card IN ('posting', 'waiting');
 
 CREATE INDEX slack_requests_feedback_due ON slack_requests(finished_at, id) WHERE (status='rejected' OR (status='accepted' AND operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close'))) AND payload_expired_at IS NULL;
 
@@ -2188,7 +2195,7 @@ CREATE TABLE slack_posts (
     seq bigint NOT NULL CHECK (seq>0),
     post_key text NOT NULL CHECK (post_key<>''),
     continuation_ordinal integer NOT NULL DEFAULT 0 CHECK (continuation_ordinal>=0),
-    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'opening', 'controls')),
+    role text NOT NULL CHECK (role IN ('intermediate', 'question', 'response', 'lifecycle', 'request_feedback', 'opening', 'preparation')),
     turn_id uuid,
     ask_id uuid,
     request_id uuid,

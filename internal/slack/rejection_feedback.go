@@ -17,10 +17,21 @@ import (
 )
 
 type rejectionFeedback struct {
-	installation         uuid.UUID
-	credentialRevision   int64
-	payload              []byte
-	channel, actor, team string
+	installation                 uuid.UUID
+	credentialRevision           int64
+	payload                      []byte
+	method, channel, actor, team string
+}
+
+// sessionWideRefusal reports refusals caused by the Session or its execution
+// rather than by the person. They disclose nothing about the person's access,
+// so a channel thread keeps them for everyone who later reads it.
+func sessionWideRefusal(code string) bool {
+	switch code {
+	case "execution_settling", "execution_capacity_incompatible", "execution_capacity_exhausted", "execution_limit", "session_unavailable", "thread_superseded":
+		return true
+	}
+	return false
 }
 
 // takeRejectedFeedback disposes terminal rejected input or accepted input-control
@@ -37,10 +48,11 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		var actor, code, team, bot string
 		var active bool
 		var revision int64
-		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.slack_user_id,COALESCE(r.error,r.operation,''),i.credential_revision,i.team_id,i.bot_user_id,
+		var waitThread *string
+		err := tx.QueryRow(ctx, `SELECT r.id,r.installation_id,r.payload,r.slack_user_id,COALESCE(r.error,r.operation,''),i.credential_revision,i.team_id,i.bot_user_id,CASE WHEN r.wait_ts IS NOT NULL THEN r.wait_thread_ts END,
  i.disconnected_at IS NULL AND i.authorization_lost_at IS NULL AND r.source_occurred_at>=i.authorized_at AND r.source_occurred_at>=i.connected_at
  FROM slack_requests r JOIN slack_installations i ON i.id=r.installation_id
- WHERE (r.status='rejected' OR (r.status='accepted' AND r.operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close'))) AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &team, &bot, &active)
+ WHERE (r.status='rejected' OR (r.status='accepted' AND r.operation IN ('mute','unmute','sleep','wake','close','help','hibernate','confirm_close'))) AND r.payload_expired_at IS NULL ORDER BY r.finished_at,r.id LIMIT 1 FOR UPDATE OF r SKIP LOCKED`).Scan(&id, &installation, &raw, &actor, &code, &revision, &team, &bot, &waitThread, &active)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -58,11 +70,16 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			Channel    string           `json:"channel"`
 			Text       string           `json:"text"`
 			NativeStop bool             `json:"native_stop"`
+			Message    string           `json:"message_ts"`
 			Thread     string           `json:"thread_ts"`
 			Control    *controlEnvelope `json:"control"`
 		}
 		if json.Unmarshal(raw, &payload) != nil {
 			return nil
+		}
+		// A posted wait card opened a thread under a new message.
+		if payload.Thread == "" && waitThread != nil {
+			payload.Thread = *waitThread
 		}
 		channel := ""
 		if payload.Control != nil {
@@ -70,8 +87,12 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			if !validControl(*c) || c.Target.Installation != installation {
 				return nil
 			}
-			err = tx.QueryRow(ctx, `SELECT c.slack_channel_id FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_requests r ON r.id=$1
- WHERE t.id=$2 AND c.installation_id=r.installation_id AND pub.revoked_at IS NULL AND r.source_occurred_at>=pub.created_at AND (left(c.slack_channel_id,1)<>'D' OR (t.recipient_user_id=r.slack_user_id AND t.recipient_team_id=c.team_id))`, id, c.Target.Thread).Scan(&channel)
+			var root *string
+			err = tx.QueryRow(ctx, `SELECT c.slack_channel_id,t.thread_ts FROM slack_threads t JOIN slack_channel_bindings c ON c.id=t.slack_channel_binding_id JOIN slack_connections pub ON pub.id=c.connection_id JOIN slack_requests r ON r.id=$1
+ WHERE t.id=$2 AND c.installation_id=r.installation_id AND pub.revoked_at IS NULL AND r.source_occurred_at>=pub.created_at AND (left(c.slack_channel_id,1)<>'D' OR (t.recipient_user_id=r.slack_user_id AND t.recipient_team_id=c.team_id))`, id, c.Target.Thread).Scan(&channel, &root)
+			if root != nil {
+				payload.Thread = *root
+			}
 		} else {
 			err = tx.QueryRow(ctx, `SELECT $2::text FROM slack_connections pub JOIN slack_requests r ON r.id=$1
  WHERE pub.slack_installation_id=r.installation_id AND pub.revoked_at IS NULL AND r.source_occurred_at>=pub.created_at`, id, payload.Channel).Scan(&channel)
@@ -131,7 +152,7 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 				}
 				return err
 			}
-			text, blocks, err = lifecyclePresentation(ctx, tx, config, target, code, actor, true)
+			text, blocks, err = lifecyclePresentation(ctx, tx, config, target, code, actor)
 			if errors.Is(err, session.ErrDenied) || errors.Is(err, access.ErrDenied) {
 				return nil
 			}
@@ -140,36 +161,36 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 			}
 			payload.Thread = root
 		case "wake":
-			text = "Wake accepted. Check the Computer state for completion. No prompt was sent and Stop holds remain unchanged."
+			text = "Waking the Computer. Nothing was sent to the Agent."
 		case "hibernate":
-			text = "Hibernate accepted. Background progress pauses when capture succeeds. Check the Computer state for completion."
+			text = "Hibernating the Computer. Background work pauses once its state is saved."
 		case "confirm_close":
-			text = "Close accepted. The Session and its owned Sessions will close after accepted work settles. Wake cannot undo closure. Other work may still occupy the Computer."
+			text = "Closing this Session. Running work finishes; queued work and open questions are cancelled."
 		case "computer_busy":
-			text = "Cannot hibernate while foreground work or another control is active. Wait for it to settle or use the existing Stop control, then try again."
+			text = "The Computer cannot hibernate while work is running. Wait for it to finish or stop it, then try again."
 		case "execution_settling":
-			text = "The previous execution timed out and is still settling. Try again shortly."
+			text = "The previous run is still stopping. Try again in a moment."
 			if waited {
-				text = "This message was not accepted within an hour because the previous execution was still settling. Send it again, or ask an administrator to check service health if this keeps happening."
+				text = "Your message was not sent to the Agent: the previous run was still stopping after an hour. Send it again, or ask an administrator to check service health."
 			}
 		case "execution_capacity_incompatible":
-			text = "No active Worker pool supports this Computer. Ask an administrator to configure a compatible Worker pool, then try again."
+			text = "No Worker pool can run this Computer. Ask an administrator to set up a compatible Worker pool, then try again."
 		case "execution_capacity_exhausted":
-			text = "Worker capacity is full. Release an unused Computer or ask an administrator to raise the Worker maximum, then try again."
+			text = "Worker capacity is full. Try again later, or ask an administrator to raise the Worker maximum."
 			if waited {
-				text = "This message was not accepted within an hour because Worker capacity stayed full. Release an unused Computer or ask an administrator to raise the Worker maximum, then send it again."
+				text = "Your message was not sent to the Agent: Worker capacity stayed full for an hour. Send it again later, or ask an administrator to raise the Worker maximum."
 			}
 		case "execution_limit":
-			text = "Cannot start execution: the Environment execution quota is in use. Release an unused Computer or ask an administrator to raise the quota, then try again."
+			text = "This Environment is at its execution limit. Try again later, or ask an administrator to raise the limit."
 			if waited {
-				text = "This message was not accepted within an hour because the Environment execution quota stayed in use. Release an unused Computer or ask an administrator to raise the quota, then send it again."
+				text = "Your message was not sent to the Agent: this Environment stayed at its execution limit for an hour. Send it again later, or ask an administrator to raise the limit."
 			}
 		case "response_conflict":
-			text = "The affected scope changed. Use !sleep or !close again to review the current members."
+			text = "This changed while you were confirming it. Use !sleep or !close again."
 		case "mute":
-			text = "Thread input muted. Work already accepted and Agent replies continue. Use !unmute to resume automatic input, or mention the Agent to send just one message."
+			text = "Thread input muted. Replies here no longer reach the Agent; mention it to send one message, or use !unmute."
 		case "unmute":
-			text = "Thread input enabled. Future replies will reach the Agent without a mention. Muted messages will not be replayed."
+			text = "Thread input on. Replies here reach the Agent again; muted messages are not replayed."
 		case "command_unbound":
 			text = "Use thread commands in an existing Agent Session thread."
 
@@ -193,21 +214,23 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		case "answer_invalid":
 			text = "That answer does not match the question. Use the current question controls or inspect it in Console."
 		case "gesture_expired":
-			text = "This action was not accepted before its deadline. Use a new message or the latest controls if it is still needed. If this keeps happening, ask an administrator to check service health."
+			text = "This was not applied in time. Use the latest controls or send a new message. If this keeps happening, ask an administrator to check service health."
 			if direct {
-				text = "This action was not accepted before its deadline. Send a new message outside this thread or use the latest controls if it is still needed. If this keeps happening, ask an administrator to check service health."
+				text = "This was not applied in time. Use the latest controls or send a new message outside this thread. If this keeps happening, ask an administrator to check service health."
 			}
 		case "stale_gesture":
 			text = "This action is out of date. Send a new message or use the latest question controls to try again."
 			if direct {
 				text = "This action is out of date. Send a new message outside this thread or use the latest question controls to try again."
 			}
+		case "stopped_waiting":
+			text = "Stopped. Your message was not sent to the Agent."
 		case "session_closing":
-			text = "This Session is closing, so Stop has nothing to hold. Running work finishes; queued work and open questions are cancelled."
+			text = "This Session is closing, so there is nothing to stop. Running work finishes; queued work and open questions are cancelled."
 		case "session_unavailable":
-			text = "This Session is closed or unavailable. Mention the Agent in a new thread to start a new Session."
+			text = "This Session has ended. Mention the Agent in a new thread to start another."
 			if direct {
-				text = "This Session is closed or unavailable. Send a new message outside this thread to start a new Session."
+				text = "This Session has ended. Send a new message outside this thread to start another."
 			}
 		case "agent_unavailable":
 			text = "That Agent is unavailable. Check its connection in Console, then try again."
@@ -226,27 +249,35 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 		case "content_invalid", "content_unsupported":
 			text = "Helmr could not accept that input. Check the task's supported input in Console, then try again."
 		}
+		// Feedback answers in the conversation where the input was made. A
+		// private reply can join only an existing thread; a visible one may
+		// thread under the refused message itself.
 		body := map[string]any{"channel": channel, "text": text}
-		if lifecycleAction(code) && timestampPattern.MatchString(payload.Thread) {
-			body["thread_ts"] = payload.Thread
-		}
-		if direct {
+		method := "chat.postEphemeral"
+		thread := payload.Thread
+		if direct || sessionWideRefusal(code) {
+			method = "chat.postMessage"
+			if thread == "" {
+				thread = payload.Message
+			}
 			body["mrkdwn"] = false
 			body["parse"] = "none"
 			body["unfurl_links"] = false
 			body["unfurl_media"] = false
+		} else {
+			body["user"] = actor
+		}
+		if timestampPattern.MatchString(thread) {
+			body["thread_ts"] = thread
 		}
 		if len(blocks) > 0 {
 			body["blocks"] = blocks
-		}
-		if !direct {
-			body["user"] = actor
 		}
 		frozen, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		intent = &rejectionFeedback{installation: installation, credentialRevision: revision, payload: frozen, channel: channel, actor: actor, team: team}
+		intent = &rejectionFeedback{installation: installation, credentialRevision: revision, payload: frozen, method: method, channel: channel, actor: actor, team: team}
 		return nil
 	})
 	if err != nil {
@@ -256,10 +287,10 @@ func takeRejectedFeedback(ctx context.Context, pool db.TxBeginner, config Projec
 }
 
 // ReconcileRejectedFeedback consumes terminal receipts and input-control
-// confirmations, including receipts rejected
-// at ingress. The only remote operation is private to the authenticated actor;
-// Channel feedback is ephemeral; DM feedback is an ordinary private message.
-// Both use the same at-most-once attempt policy, not a new delivery queue.
+// confirmations, including receipts rejected at ingress. Feedback about the
+// person is ephemeral in channels; Session-wide refusals are visible thread
+// replies; DM feedback is an ordinary private message. All use the same
+// at-most-once attempt policy, not a new delivery queue.
 func ReconcileRejectedFeedback(ctx context.Context, pool db.TxBeginner, client *WebClient, config ProjectionConfig, limit int) (int, error) {
 	if client == nil || !config.valid() || limit < 1 || limit > 64 {
 		return 0, errGestureInvalid
@@ -270,14 +301,12 @@ func ReconcileRejectedFeedback(ctx context.Context, pool db.TxBeginner, client *
 			return n, err
 		}
 		if intent != nil {
-			method := "chat.postEphemeral"
 			if slackroute.IsDirectMessage(intent.channel) {
 				if _, err := client.verifyConversation(ctx, intent.installation, intent.credentialRevision, intent.team, intent.channel, intent.actor); err != nil {
 					continue
 				}
-				method = "chat.postMessage"
 			}
-			client.Call(ctx, intent.installation, intent.credentialRevision, method, intent.payload)
+			client.Call(ctx, intent.installation, intent.credentialRevision, intent.method, intent.payload)
 		}
 	}
 	return limit, nil
