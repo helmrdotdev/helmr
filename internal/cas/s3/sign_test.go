@@ -114,6 +114,15 @@ type completionClient struct {
 	exists    bool
 	read      bool
 	inPlace   bool
+	// unversioned storage returns no version IDs.
+	unversioned bool
+}
+
+func (c *completionClient) version(id string) *string {
+	if c.unversioned {
+		return nil
+	}
+	return aws.String(id)
 }
 
 func (c *completionClient) CompleteMultipartUpload(_ context.Context, input *awss3.CompleteMultipartUploadInput, _ ...func(*awss3.Options)) (*awss3.CompleteMultipartUploadOutput, error) {
@@ -150,7 +159,7 @@ func (c *completionClient) pinned(etag, source string) bool {
 
 func (c *completionClient) GetObject(_ context.Context, input *awss3.GetObjectInput, _ ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
 	c.read = true
-	return &awss3.GetObjectOutput{ETag: aws.String(`"staged"`), VersionId: aws.String("v1"), Body: io.NopCloser(bytes.NewReader(c.staged)), ContentLength: aws.Int64(int64(len(c.staged))), ContentType: aws.String(cas.CheckpointMemoryMediaType)}, nil
+	return &awss3.GetObjectOutput{ETag: aws.String(`"staged"`), VersionId: c.version("v1"), Body: io.NopCloser(bytes.NewReader(c.staged)), ContentLength: aws.Int64(int64(len(c.staged))), ContentType: aws.String(cas.CheckpointMemoryMediaType)}, nil
 }
 
 // CopyObject computes the full checksum of an in-place copy of the staged
@@ -162,7 +171,7 @@ func (c *completionClient) CopyObject(_ context.Context, input *awss3.CopyObject
 		}
 		c.inPlace = true
 		checksum, _ := descriptorChecksum(sha256sum.DigestBytes(c.staged))
-		return &awss3.CopyObjectOutput{VersionId: aws.String("v2"), CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"verified"`), ChecksumSHA256: aws.String(checksum)}}, nil
+		return &awss3.CopyObjectOutput{VersionId: c.version("v2"), CopyObjectResult: &types.CopyObjectResult{ETag: aws.String(`"verified"`), ChecksumSHA256: aws.String(checksum)}}, nil
 	}
 	if !c.pinned(aws.ToString(input.CopySourceIfMatch), aws.ToString(input.CopySource)) {
 		return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "copied a version other than the verified one"}
@@ -232,6 +241,24 @@ func TestCompleteUploadPublishesOnlyVerifiedStagedBytes(t *testing.T) {
 					t.Fatalf("poisoned completion = %v, deleted %v", err, client.deleted)
 				}
 			})
+		}
+	}
+}
+
+// An entity tag alone does not pin the verified bytes, so completion in
+// storage that returns no version publishes nothing.
+func TestCompleteUploadRequiresVersionedStorage(t *testing.T) {
+	staged := bytes.Repeat([]byte{7}, 96)
+	descriptor := cas.Descriptor{Digest: sha256sum.DigestBytes(staged), SizeBytes: int64(len(staged)), MediaType: cas.CheckpointMemoryMediaType}
+	upload := cas.Upload{ID: "upload-1", Owner: "019abcde-1234", PartSize: 64, Parts: 2}
+	for _, readBack := range []bool{false, true} {
+		client := &completionClient{staged: staged, unversioned: true}
+		store := &Store{org: testOrg, client: client, bucket: "bucket", prefix: "cas", multipartThresholdBytes: 64, multipartPartSizeBytes: 64}
+		if readBack {
+			store.copyObjectMaxBytes = 32
+		}
+		if _, err := store.CompleteUpload(t.Context(), descriptor, upload, []cas.CompletedPart{{Number: 1, ETag: "a"}, {Number: 2, ETag: "b"}}); err == nil || client.copied != "" {
+			t.Fatalf("read back %t: unversioned completion = %v, copied %q", readBack, err, client.copied)
 		}
 	}
 }

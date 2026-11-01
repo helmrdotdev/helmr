@@ -238,6 +238,7 @@ func (c *Store) CompleteUpload(ctx context.Context, expected cas.Descriptor, upl
 	defer c.removeStaged(ctx, staging)
 	// Promotion copies only the exact staged version that was verified, even if
 	// another completion of the same owner replaces the staging key meanwhile.
+	// An entity tag alone does not pin bytes, so the bucket must be versioned.
 	verify := c.verifyStaged
 	if expected.SizeBytes <= c.copyObjectMax() {
 		verify = c.checksumStaged
@@ -245,6 +246,9 @@ func (c *Store) CompleteUpload(ctx context.Context, expected cas.Descriptor, upl
 	etag, version, err := verify(ctx, staging, expected)
 	if err != nil {
 		return cas.Object{}, err
+	}
+	if version == "" {
+		return cas.Object{}, errors.New("storage returned no version for the staged object; the bucket must be versioned")
 	}
 	key, err := c.promoteStaged(ctx, staging, etag, version, expected)
 	if err != nil {
@@ -270,7 +274,7 @@ func (c *Store) removeStaged(ctx context.Context, staging string) {
 // checksumStaged has storage compute the staged object's full SHA-256 by
 // copying it in place, so its bytes never pass through the Control Plane. It
 // requires the descriptor's digest, size and media type and returns the entity
-// tag and, in a versioned bucket, the version of the copy it authenticated.
+// tag and version of the copy it authenticated.
 func (c *Store) checksumStaged(ctx context.Context, staging string, expected cas.Descriptor) (string, string, error) {
 	checksum, err := descriptorChecksum(expected.Digest)
 	if err != nil {
@@ -290,11 +294,12 @@ func (c *Store) checksumStaged(ctx context.Context, staging string, expected cas
 		return "", "", fmt.Errorf("%w: staged bytes differ from digest %s", cas.ErrRemoteIntegrity, expected.Digest)
 	}
 	etag, version := aws.ToString(copied.CopyObjectResult.ETag), aws.ToString(copied.VersionId)
-	head := &awss3.HeadObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(staging), IfMatch: aws.String(etag)}
-	if version != "" {
-		head.VersionId = aws.String(version)
+	if version == "" {
+		return "", "", errors.New("storage returned no version for the staged copy; the bucket must be versioned")
 	}
-	stat, err := c.client.HeadObject(ctx, head)
+	stat, err := c.client.HeadObject(ctx, &awss3.HeadObjectInput{
+		Bucket: aws.String(c.bucket), Key: aws.String(staging), IfMatch: aws.String(etag), VersionId: aws.String(version),
+	})
 	if err != nil {
 		return "", "", storageFailure(ctx, err)
 	}
@@ -306,7 +311,7 @@ func (c *Store) checksumStaged(ctx context.Context, staging string, expected cas
 
 // verifyStaged reads an object too large for one server-side copy back,
 // requires the descriptor's exact bytes, size and media type, and returns the
-// entity tag and, in a versioned bucket, the version of what it read.
+// entity tag and version of what it read.
 func (c *Store) verifyStaged(ctx context.Context, staging string, expected cas.Descriptor) (string, string, error) {
 	output, err := c.client.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(staging)})
 	if err != nil {
@@ -338,10 +343,7 @@ func (c *Store) promoteStaged(ctx context.Context, staging, etag, version string
 	if err != nil {
 		return "", err
 	}
-	source := url.PathEscape(c.bucket + "/" + staging)
-	if version != "" {
-		source += "?versionId=" + url.QueryEscape(version)
-	}
+	source := url.PathEscape(c.bucket+"/"+staging) + "?versionId=" + url.QueryEscape(version)
 	if expected.SizeBytes <= c.copyObjectMax() {
 		_, err = c.client.CopyObject(ctx, &awss3.CopyObjectInput{
 			Bucket: aws.String(c.bucket), Key: aws.String(key), CopySource: aws.String(source), CopySourceIfMatch: aws.String(etag),
