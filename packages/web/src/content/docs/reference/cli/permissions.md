@@ -17,7 +17,7 @@ Creating a Role or Group alone grants no access.
 
 ```sh
 helmr role list
-helmr role get --builtin agent_user
+helmr role get --builtin session_operator
 helmr role create "Operators" --permission sessions.send --permission sessions.create
 helmr role copy --builtin session_viewer --name "Observers"
 helmr role update "Observers" --description "Read production sessions"
@@ -53,16 +53,16 @@ read instead; inspect the new state before retrying a stale edit.
 ## Scoped Role Grants
 
 ```sh
-helmr role grant create --group Engineering --role "Agent user" \
+helmr role grant create --group Engineering --role "Session Operator" \
   --project operations --env production --agent invoice-checker
 helmr role grant create --group Engineering --role Operators \
   --project operations --env development --all-agents
-helmr role grant create --all-users --role "Agent user" \
+helmr role grant create --all-users --role "Session Operator" \
   --project operations --env production --agent invoice-checker
-helmr role grant create --user alice@example.com --role "Agent user" \
+helmr role grant create --user alice@example.com --role "Session Operator" \
   --project operations --env production --agent invoice-checker
 helmr role grant create --user alice@example.com --role "Access Administrator" --organization
-helmr role grant create --api-key-id API_KEY_UUID --role "Agent user" \
+helmr role grant create --api-key-id API_KEY_UUID --role "Session Operator" \
   --project operations --env production --agent invoice-checker
 helmr role grant list --api-key-id API_KEY_UUID
 helmr role grant list --group Engineering

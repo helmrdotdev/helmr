@@ -106,7 +106,7 @@ ask them to involve someone with `agent_connections.configure` on this Agent; do
 **HAND-OFF:** Explain that Slack conversations, including DMs, create Sessions
 readable by members with `sessions.read` for the assigned Agent. Creating, sending,
 answering, resuming and stopping each require their corresponding Session permission.
-The Agent User Role includes these conversation actions; creation alone does not
+The Session Operator Role includes these conversation actions; creation alone does not
 grant access to history or subsequent controls.
 Other authorized input can produce replies in the original Slack DM. The human can open the app’s
 Messages tab and send a new message without a mention, then reply in its thread

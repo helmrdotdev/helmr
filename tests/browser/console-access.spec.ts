@@ -19,7 +19,7 @@ const catalog = [
 const role = (id: string, name: string, permissions: string[], builtin: string | null, extra: Record<string, unknown> = {}) =>
   ({ id, name, description: `${name} description`, builtin_key: builtin, permissions, assignment_levels: [permissions.includes("assignments.create") ? "organization" : "environment"], api_key_assignable: !permissions.includes("assignments.create"), grant_count: 0, group_count: 0, updated_at: now, revision: 1, ...extra });
 const roles = [
-  role("role-user", "Agent user", ["sessions.create"], "agent_user", { grant_count: 1 }),
+  role("role-user", "Session operator", ["sessions.create"], "session_operator", { grant_count: 1 }),
   role("role-viewer", "Session viewer", ["sessions.read"], "session_viewer", { grant_count: 1 }),
   role("role-admin", "Access administrator", ["assignments.create"], "access_administrator", { grant_count: 1 }),
   role("role-ops", "Agent and secrets operator", ["sessions.create", "secrets.rotate"], null, { grant_count: 1 }),
@@ -67,7 +67,7 @@ async function fixture(page: Page) {
       { type: "organization", project: "", environment: "", permissions: ["assignments.create"], sources: [{ kind: "role_grant", subject_kind: "member", grant_id: "grant-admin", role_name: "Access administrator", permissions: ["assignments.create"] }] },
       { type: "agent", project: projectID, environment: environmentID, agent: "assistant", permissions: ["sessions.create", "secrets.rotate"], sources: [
         { kind: "role_grant", subject_kind: "group", group_id: "group-release", group_name: "Release team", grant_id: "grant-ops", role_name: "Agent and secrets operator", permissions: ["sessions.create", "secrets.rotate"] },
-        { kind: "role_grant", subject_kind: "all_members", grant_id: "grant-all", role_name: "Agent user", permissions: ["sessions.create"] },
+        { kind: "role_grant", subject_kind: "all_members", grant_id: "grant-all", role_name: "Session operator", permissions: ["sessions.create"] },
       ] },
     ] };
     else { await route.fulfill({ status: 404, json: { error: { code: "not_found", message: "not found" } } }); return; }
@@ -101,9 +101,9 @@ test("roles list the organization's roles first and lock the ones Helmr maintain
   const rows = page.getByRole("table").getByRole("row");
   await expect(rows.nth(1)).toContainText("Agent and secrets operator");
   await expect(rows.nth(1).getByRole("img", { name: "Managed by Helmr" })).toHaveCount(0);
-  await expect(rows.filter({ hasText: "Agent user" }).getByRole("img", { name: "Managed by Helmr" })).toBeVisible();
+  await expect(rows.filter({ hasText: "Session operator" }).getByRole("img", { name: "Managed by Helmr" })).toBeVisible();
   await expect(rows.filter({ hasText: "Access administrator" })).toContainText("Organization");
-  await rows.filter({ hasText: "Agent user" }).getByRole("link", { name: "Agent user" }).click();
+  await rows.filter({ hasText: "Session operator" }).getByRole("link", { name: "Session operator" }).click();
   await expect(page.getByRole("checkbox", { name: "Create sessions" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Save role" })).toHaveCount(0);
   await page.getByRole("button", { name: "Role actions", exact: true }).click();
@@ -143,7 +143,7 @@ test("granting to all members offers normal roles and all-agent targets", async 
   const dialog = page.getByRole("dialog", { name: "Grant access" });
   await dialog.getByRole("combobox", { name: "Role" }).click();
   await expect(page.getByRole("option")).toHaveCount(4);
-  await page.getByRole("option", { name: "Agent user" }).click();
+  await page.getByRole("option", { name: "Session operator" }).click();
   await expect(dialog.getByRole("button", { name: "All, including new ones" })).toBeVisible();
   await dialog.getByRole("checkbox", { name: "triage" }).check();
   // All members already use assistant through this role, so the grant adds triage to that assignment.
@@ -169,7 +169,7 @@ test("an agent's access lists who can use it and adds the agent to an existing a
   await page.getByRole("option", { name: "Second Member" }).click();
   await dialog.getByRole("combobox", { name: "Role" }).click();
   // The common dialog offers all environment Roles.
-  await expect(page.getByRole("option")).toHaveText(["Agent and secrets operator", "Agent user", "Session viewer"]);
+  await expect(page.getByRole("option")).toHaveText(["Agent and secrets operator", "Session operator", "Session viewer"]);
   await page.getByRole("option", { name: "Session viewer" }).click();
   await expect(dialog).toContainText("Second Member already has this role on assistant.");
   await expect(dialog.getByRole("checkbox", { name: "assistant" })).toBeDisabled();
