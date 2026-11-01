@@ -2071,8 +2071,6 @@ CREATE TABLE slack_threads (
     thread_ts text CHECK (thread_ts<>''),
     projected_lifecycle_state jsonb,
     opening_post_key text CHECK (opening_post_key<>''),
-    -- Set when an unconfirmed opening is sent once more; a second unconfirmed
-    -- opening ends delivery to the thread.
     opening_resent_at timestamptz,
     recipient_team_id text,
     recipient_user_id text,
