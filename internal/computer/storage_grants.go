@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
@@ -43,6 +42,10 @@ type WriteSigner interface {
 	CompleteUpload(ctx context.Context, expected cas.Descriptor, upload cas.Upload, parts []cas.CompletedPart) (cas.Object, error)
 	AbortUpload(ctx context.Context, upload cas.Upload, digest string) error
 }
+
+// maxStorageParts bounds one part grant request; the worker wire contract
+// batches requests to the same bound.
+const maxStorageParts = 32
 
 // StorageScope is the one authority a Host presents for storage grants.
 type StorageScope struct {
@@ -489,7 +492,7 @@ func (b *StorageBroker) ownedUpload(ctx context.Context, host workergroup.HostPr
 // Parts grants bounded part uploads of an owned multipart publication. A
 // renewed request re-signs the same parts.
 func (b *StorageBroker) Parts(ctx context.Context, host workergroup.HostPrincipal, scope StorageScope, object cas.Descriptor, uploadID string, parts []int32) ([]cas.SignedRequest, error) {
-	if len(parts) == 0 || len(parts) > workerapi.MaxStorageParts {
+	if len(parts) == 0 || len(parts) > maxStorageParts {
 		return nil, ErrInvalidInput
 	}
 	a, upload, err := b.ownedUpload(ctx, host, scope, object, uploadID)
