@@ -38,8 +38,9 @@ CREATE INDEX environment_placements_worker_group ON environment_placements(worke
 
 -- The organization group a Computer runs on, or NULL when it runs on the
 -- deployment capacity of its project's region. A Computer never moves between
--- groups. A pin records the Computer's organization, project and region so the
--- keys below admit only a group its organization owns in that region.
+-- groups; runtime privileges exclude updating the pin. A pin records the
+-- Computer's organization, project and region so the keys below admit only a
+-- group its organization owns in that region.
 ALTER TABLE computers
     ADD COLUMN worker_group_org_id uuid,
     ADD COLUMN worker_group_project_id uuid,

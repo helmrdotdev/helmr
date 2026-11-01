@@ -171,6 +171,17 @@ func TestWorkerGroupOwnerIsImmutableForRuntimePostgres(t *testing.T) {
 	if err := f.pool.QueryRow(t.Context(), `SELECT owner_org_id FROM worker_groups WHERE id=$1`, owned).Scan(&owner); err != nil || owner != f.org {
 		t.Fatalf("owner = %s, %v", owner, err)
 	}
+	// A Computer's pin is set when it is created and never moves.
+	var pinUpdatable, computerUpdatable bool
+	if err := runtime.QueryRow(t.Context(), `SELECT
+		bool_or(has_column_privilege('computers', c, 'UPDATE')),
+		has_column_privilege('computers', 'unused_since', 'UPDATE')
+		FROM unnest(ARRAY['worker_group_org_id','worker_group_project_id','worker_group_region_id','worker_group_id']) AS c`).Scan(&pinUpdatable, &computerUpdatable); err != nil {
+		t.Fatal(err)
+	}
+	if pinUpdatable || !computerUpdatable {
+		t.Fatalf("runtime computer update privileges: pin %t, other columns %t", pinUpdatable, computerUpdatable)
+	}
 }
 
 func TestPlacementsPostgres(t *testing.T) {

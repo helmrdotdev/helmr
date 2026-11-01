@@ -8,8 +8,10 @@ import (
 )
 
 // immutableColumns are columns the runtime role sets on insert and can never
-// update. An organization worker group's owner is fixed at creation.
+// update. An organization worker group's owner is fixed at creation, and a
+// Computer never moves between groups.
 var immutableColumns = map[string][]string{
+	"computers":     {"worker_group_org_id", "worker_group_project_id", "worker_group_region_id", "worker_group_id"},
 	"worker_groups": {"owner_org_id"},
 }
 
